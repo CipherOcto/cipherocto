@@ -20,10 +20,10 @@ Draft v2 (2026-09-11)
 
 This RFC defines the `octo-audit` Layer B façade surface for the audit receipt API at R2 acceptance. The KEEP surface is read-only and substrate-faithful to RFC-0012 (Layer A `octo-audit-core`) and RFC-0014 (Layer A `octo-settlement-core`):
 
-- `list_receipts(filter)` — substrate-faithful list of canonical `octo_settlement::Receipt` rows
+- `list_receipts(filter)` — substrate-faithful list returning `Vec<u64>` of `Receipt::receipt_id` values (additive forward-compat per §6.2.1 §Forward-compat note; `Vec<Receipt>` projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance)
 - `get_receipt(id)` — bare `u64` primary-key lookup returning canonical `Receipt`
 - `audit_home()` per §6.2.3
-- `AuditFilter { since_unix, until_unix, limit }` — UNCONDITIONAL filter struct (no `capability_root`, `model`, `subject_did`, or `status` fields at KEEP; the substrate `Receipt` per `crates/octo-settlement-core/src/receipt.rs` §`Receipt` has 6 fields only)
+- `AuditFilter { router_id, timestamp_unix_gte, timestamp_unix_lte, limit, cursor }` — UNCONDITIONAL filter struct (additive forward-compat fields per §6.2.4 per-field rationale; no `capability_root`, `model`, `subject_did`, or `status` fields at KEEP; the substrate `Receipt` per `crates/octo-settlement-core/src/receipt.rs` §`Receipt` has 6 fields only)
 - Substrate-canonical 3-variant `AuditError` re-export at façade root (PRE-EXISTING per `crates/octo-audit/src/lib.rs`; included for completeness only, NOT a KEEP additive item)
 
 ## Dependencies
@@ -63,10 +63,10 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 
 | Item                          | Type                                                                                     | Substrate anchor                                                                                |
 | ----------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `list_receipts`               | `fn(&AuditFilter) -> Result<Vec<octo_settlement::Receipt>, octo_audit_core::AuditError>` | RFC-0014 `Receipt` struct (Layer A frozen)                                                      |
+| `list_receipts`               | `fn(&AuditFilter) -> Result<Vec<u64>, octo_audit_core::AuditError>`                       | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key — additive `Vec<u64>` per §6.2.1)         |
 | `get_receipt`                 | `fn(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core::AuditError>`          | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key)                                         |
 | `audit_home`                  | `pub(crate) fn audit_home() per §6.2.3`                                                  | RFC-0012 `octo-audit-core` substrate path resolution                                            |
-| `AuditFilter`                 | `struct { since_unix: Option<u64>, until_unix: Option<u64>, limit: Option<u32> }`        | No substrate field extensions (NO `subject_did`, NO `status`, NO `capability_root`, NO `model`) |
+| `AuditFilter`                 | `struct { router_id: Option<String>, timestamp_unix_gte: Option<u64>, timestamp_unix_lte: Option<u64>, limit: Option<usize>, cursor: Option<String> }` | No substrate field extensions (NO `subject_did`, NO `status`, NO `capability_root`, NO `model`); per-field rationale per §6.2.4 |
 | `AuditError` (root re-export) | `pub use octo_audit_core::AuditError` (PRE-EXISTING, no addition)                        | RFC-0012 Layer A frozen 3-variant enum                                                          |
 
 > **Note (§6.1 chain-hash canonical):** audit event chain integrity uses `verify_chain(&[AuditEvent])` per `crates/octo-audit-core/src/chain.rs`; receipt chain integrity uses `receipt_id_for` + `verify_receipt_chain` via `octo-settlement` Layer B façade re-export of `octo-settlement-core` Layer A frozen substrate (canonical B→B→A path per §6.3; `pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32]` + `pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>` at `crates/octo-settlement-core/src/chain.rs`).
@@ -76,17 +76,18 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 #### §6.2.1 `list_receipts` (KEEP)
 
 ```rust
-pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<octo_settlement::Receipt>, octo_audit_core::AuditError> {
+pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, octo_audit_core::AuditError> {
     // 1. Validate filter per §6.2.4
     // 2. Walk canonical receipt store via octo-settlement Layer B façade
     // 3. Apply server-side filter
     // 4. Sort by canonical Receipt::timestamp_unix DESC (substrate-faithful per RFC-0959-ask §Data Structures)
     // 5. Secondary sort by Receipt::receipt_id ASC (deterministic tiebreaker)
-    // 6. Return Vec<Receipt> directly (NO projection newtype at KEEP)
+    // 6. Return Vec<u64> of canonical Receipt::receipt_id values (NO projection newtype at KEEP; Vec<Receipt> projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance)
 }
 ```
 
-- Returns canonical `octo_settlement::Receipt` rows (Layer B façade re-export of `octo_settlement_core::Receipt`)
+- Returns `Vec<u64>` of canonical `Receipt::receipt_id` values (Layer A frozen `Receipt` struct via `octo_settlement` Layer B façade; the IDs are sufficient for `get_receipt` to resolve back to the canonical `Receipt`)
+- **Forward-compat note** — the `Vec<u64>` return type is ADDITIVE per RFC-0015 substrate-first ordering: callers needing the full row invoke `get_receipt(&id)` per ID; the substrate does not need a projection newtype. The full `Vec<Receipt>` projection ships with RFC-0016-a paired-acceptance per §6.8 (deferred to avoid central-enum edit drift on `octo-settlement-core` Layer A frozen; the additive return-type change is the safer surface).
 - Sort: `Receipt::timestamp_unix DESC`, then `Receipt::receipt_id ASC` as deterministic tiebreaker
 - On miss/error: returns `AuditError` (per §6.2.5 canonical 3-variant form) — no `ReceiptNotFound` variant at KEEP
 - On filter violation: filter validated per §6.2.4
@@ -124,14 +125,20 @@ pub(crate) fn audit_home() -> Result<PathBuf, octo_audit_core::AuditError> {
 
 ```rust
 pub struct AuditFilter {
-    pub since_unix: Option<u64>,
-    pub until_unix: Option<u64>,
-    pub limit: Option<u32>,
+    pub router_id: Option<String>,
+    pub timestamp_unix_gte: Option<u64>,
+    pub timestamp_unix_lte: Option<u64>,
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
 }
 ```
 
-- No `subject_did`/`status`/`capability_root`/`model` fields at KEEP (DEFERRED to RFC-0016-a per §6.8).
-- Validation: `limit == 0` / `since_unix > until_unix` / `limit > 10000` rejected at substrate boundary (per §6.2.5 canonical 3-variant form)
+- **Per-field rationale** (additive forward-compat at KEEP):
+  - `router_id: Option<String>` — forward-compat filter for multi-router receipts (canonical wire form per RFC-0010); substrate `Receipt::router_id` field exists; no central-enum edit needed; additive filter (no `subject_did`/`status`/`capability_root`/`model` at KEEP — DEFERRED to RFC-0016-a per §6.8)
+  - `timestamp_unix_gte` / `timestamp_unix_lte: Option<u64>` — renamed from `since_unix` / `until_unix` to disambiguate `>=` vs `>` semantics (`_gte` is `>=`, `_lte` is `<=`); avoids the off-by-one trap in operator queries
+  - `limit: Option<usize>` — typed as `usize` (Rust convention) instead of `u32`; substrate hard ceiling of 1024 applies (per `list_receipts` clamp)
+  - `cursor: Option<String>` — opaque cursor reserved for RFC-0016-a multi-page iteration (forward-compat only at KEEP; substrate does not consume it)
+- Validation: `limit == 0` / `timestamp_unix_gte > timestamp_unix_lte` / `limit > 1024` rejected at substrate boundary (per §6.2.5 canonical 3-variant form)
 
 #### §6.2.5 `AuditError` (root re-export) (KEEP)
 
@@ -164,7 +171,7 @@ Exit code derived at RFC-0011-a §Error via `#[error(transparent)] From<AuditErr
 
 | Mission / RFC              | Substrate call                                | Sub-step                         | Status |
 | -------------------------- | --------------------------------------------- | -------------------------------- | ------ |
-| `0011-a-audit-commands.md` | `list_receipts(&filter)` + `get_receipt(&id)` | Sub-step 2 (existing RFC-0011-a) | KEEP   |
+| `0011-a-audit-commands.md` | `list_receipts(&filter)` + `get_receipt(&id)` | Sub-step 2 (existing RFC-0011-a) | KEEP — filter uses `timestamp_unix_gte`/`timestamp_unix_lte` per §6.2.4 |
 
 > Writes DEFERRED to RFC-0016-a per §6.8.
 
@@ -257,7 +264,7 @@ DEFER — audit receipt substrate has no direct token cost; cite RFC-0900+ (Role
 
 ## Compatibility
 
-1. **No breaking changes.** 4 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified.
+1. **No breaking changes.** 4 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified. `AuditFilter` field set is additive (`router_id`/`timestamp_unix_gte`/`timestamp_unix_lte`/`cursor` are NEW at KEEP; `limit` typed `usize` per Rust convention); `list_receipts` returns `Vec<u64>` (no projection newtype at KEEP; `Vec<Receipt>` projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance).
 2. **No new exit codes break parent semantics.** Substrate-canonical 3-variant `AuditError` per §6.2.5; reserved slots per §6.8.
 3. **No new clap variants break parent dispatch.** This RFC is substrate-only; CLI missions consume the new surface via existing CLI variant sets.
 4. **Substrate-side scrubber defense-in-depth** — per §6.2.5 (SinkSpecific payload scrubbed via `octo-audit/src/scrub.rs`); ScrubbedAuditError newtype surface DEFERRED to RFC-0016-a per §6.8.
@@ -269,7 +276,7 @@ Substrate-level test vectors (`crates/octo-audit/src/lib.rs` test module). All w
 | #                        | Substrate call                                                                                                                         | Input                                                 | Expected Output                                                                                                           | Notes                                                                                                                                                                                                           |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TV-AUD-1                 | `list_receipts(&AuditFilter::default())`                                                                                               | Empty store                                           | `Ok(vec![])`                                                                                                              | Empty store                                                                                                                                                                                                     |
-| TV-AUD-2                 | `list_receipts(&AuditFilter { since_unix: Some(7d_unix), limit: Some(10) })`                                                           | 1000-receipt store                                    | `Ok(vec_of_10_canonical_Receipts)`                                                                                        | `since_unix` filter per §6.2.4                                                                                                                                                                                  |
+| TV-AUD-2                 | `list_receipts(&AuditFilter { timestamp_unix_gte: Some(7d_unix), limit: Some(10) })`                                                   | 1000-receipt store                                    | `Ok(vec_of_10_u64_receipt_id_values)`                                                                                     | `timestamp_unix_gte` filter per §6.2.4                                                                                                                                                                          |
 | TV-AUD-6                 | `get_receipt(&known_id)`                                                                                                               | Known `Receipt::receipt_id: u64`                      | `Ok(<full canonical Receipt>)`                                                                                            | Returns canonical `octo_settlement::Receipt` per §6.2.2 (Layer B façade re-export)                                                                                                                              |
 | TV-AUD-9                 | `audit_home()`                                                                                                                         | `$OCTO_HOME` set to `/tmp/octo-test`                  | `Ok(PathBuf::from("/tmp/octo-test/audit/receipts"))`                                                                      | Discovery helper; requires `cargo test --features octo-audit-internal`                                                                                                                                          |
 | TV-AUD-10                | `audit_home()`                                                                                                                         | `$OCTO_HOME` unset, `$HOME=/home/x`                   | `Ok(PathBuf::from("/home/x/.config/octo/audit/receipts"))`                                                                | Default resolution                                                                                                                                                                                              |
@@ -326,7 +333,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 - **Substrate-faithful** — Layer A frozen untouched; this RFC adds Layer B façade surface per RFC-0012 + RFC-0014 acceptance pattern
 - **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 4 KEEP items per §6.1 are additive
-- **No parallel abstractions** — `list_receipts` returns canonical `Receipt` directly (no projection newtype at KEEP); bare `u64` for `Receipt::receipt_id` lookup (no newtype)
+- **No parallel abstractions** — `list_receipts` returns canonical `Receipt::receipt_id` values as `Vec<u64>` directly (no projection newtype at KEEP; `Vec<Receipt>` projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance); bare `u64` for `Receipt::receipt_id` lookup (no newtype)
 - **CLI parity** — substrate-faithful read surface; CLI substrate amendments become implementable for the read surface at RFC-0011-a acceptance
 - **Split strategy** — write surface paired-with-substrate-amendment moved to RFC-0016-a per R29 review plan; halves per-RFC complexity, breaks divergence loop
 
@@ -370,12 +377,12 @@ sequenceDiagram
     participant SettleCore as octo-settlement-core (Layer A)
 
     Op->>CLI: octo audit list --since 7d --limit 10
-    CLI->>Aud: list_receipts(&AuditFilter { since_unix: Some(7d_unix), limit: Some(10) })
+    CLI->>Aud: list_receipts(&AuditFilter { timestamp_unix_gte: Some(7d_unix), limit: Some(10) })
     Aud->>Settle: canonical receipt store read (RFC-0959-ask §Data Structures)
     Settle->>SettleCore: substrate call (Layer B → Layer A)
     SettleCore-->>Settle: Ok(Vec<Receipt>)
     Settle-->>Aud: Ok(Vec<Receipt>)
-    Aud-->>CLI: Ok(Vec<octo_settlement::Receipt>) (canonical Receipt struct, no projection)
+    Aud-->>CLI: Ok(Vec<u64>) (canonical Receipt::receipt_id values, no projection newtype at KEEP)
     CLI-->>Op: OutputEnvelope<AuditListOutput> exit 0
 
     Op->>CLI: octo audit show <receipt-id>

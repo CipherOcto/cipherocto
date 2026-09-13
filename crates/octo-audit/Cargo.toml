@@ -38,3 +38,11 @@ unsafe_code = "forbid"
 [lints.clippy]
 empty_line_after_doc_comments = "allow"
 doc_lazy_continuation = "allow"
+
+[features]
+# Default OFF — internal-only `audit_home()` surface per
+# RFC-0016 §6.2.3 + §Adversary Analysis row "canonical-path info leak".
+# Only the `octo-audit` Layer B façade (cli tests + future write-path
+# missions) can call `audit_home` when this flag is enabled; default
+# `cargo build` builds DO NOT include the function (compile-error guard).
+octo-audit-internal = []

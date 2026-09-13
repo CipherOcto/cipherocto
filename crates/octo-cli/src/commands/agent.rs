@@ -26,7 +26,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use serde::Serialize;
 
@@ -79,10 +78,11 @@ pub enum AgentAction {
         /// (`registered` / `running` / `terminated`).
         #[arg(long, value_name = "STATE")]
         state: Option<String>,
-        /// Maximum rows returned (clamped at 1024 per RFC-0015 §6.2.1
-        /// substrate hard ceiling). Default = 1024. `--limit 0` is
-        /// rejected up front as `InvalidLimit` (slot 45).
-        #[arg(long, value_name = "N", default_value_t = 1024u32)]
+        /// Maximum rows returned (clamped at the substrate hard
+        /// ceiling per RFC-0015 §6.2.1). Default = `SUBSTRATE_HARD_LIMIT`
+        /// (1024). `--limit 0` is rejected up front as `InvalidLimit`
+        /// (slot 45).
+        #[arg(long, value_name = "N", default_value_t = list::SUBSTRATE_HARD_LIMIT)]
         limit: u32,
         /// Opaque pagination cursor (Phase 2 forward-compat; rejected
         /// as `InvalidCursor` on malformed input, slot 46).
@@ -125,7 +125,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             cursor,
         } => list::handle(state.as_deref(), *limit, cursor.as_deref(), cli),
         AgentAction::Run { .. } | AgentAction::Destroy { .. } | AgentAction::Attach { .. } => {
-            pending_subcommand(action)
+            pending_subcommand()
         }
     }
 }
@@ -137,10 +137,46 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// chain; `pending` claims slot 39 to keep the range contiguous and
 /// distinguishable from `ManifestParseError`'s `path`/`reason`
 /// payload shape).
-fn pending_subcommand(_action: &AgentAction) -> Result<(), OctoCliError> {
+fn pending_subcommand() -> Result<(), OctoCliError> {
     Err(OctoCliError::Internal(
         "agent subcommand pending follow-on mission (0011-c-agent-{run,list,destroy,attach}-subcommand); only `octo agent create` is wired in this mission".to_string(),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers — `octo agent` subcommand family
+// ---------------------------------------------------------------------------
+
+/// Shared per-handler wallet + active-identity resolution.
+///
+/// Both `octo agent create` (write path) and `octo agent list` (read
+/// path) need the same `WalletStore::open()` → `active_identity()`
+/// → `did()` boilerplate to source the caller-attested DID for the
+/// substrate. This helper extracts the boilerplate so the handlers
+/// focus on their distinct write/read semantics.
+mod common {
+    use crate::error::{sanitize_substrate_error, OctoCliError};
+
+    /// Resolve the active identity DID via the wallet store.
+    ///
+    /// Maps the substrate `WalletError` variants to their CLI-shape
+    /// counterparts:
+    /// - `NotActive` → `OctoCliError::NoActiveIdentity`
+    /// - `Hsm` → `OctoCliError::HsmUnavailable` (sanitized)
+    /// - other → `OctoCliError::Internal` (sanitized)
+    pub(crate) fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliError> {
+        let store = octo_wallet::WalletStore::open().map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+        })?;
+        let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => {
+                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?;
+        Ok(active_key.did())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,18 +237,10 @@ mod create {
             None => None,
         };
 
-        // Open wallet + resolve active identity.
-        let store = octo_wallet::WalletStore::open().map_err(|e| {
-            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
-        })?;
-        let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
-            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
-        let active_did = active_key.did();
+        // Open wallet + resolve active identity (shared via
+        // `commands::agent::common::resolve_active_did` per the DRY
+        // helper extracted in R50.5).
+        let active_did = common::resolve_active_did()?;
 
         // Layer B substrate call.
         let cap_root = capability_root.unwrap_or(CapabilityId([0u8; 32]));
@@ -239,8 +267,6 @@ mod create {
             label: manifest.label.clone(),
             manifest_digest,
             registered_at_unix: now_unix_secs(),
-            registered_at: DateTime::<Utc>::from_timestamp(now_unix_secs() as i64, 0)
-                .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("epoch")),
         };
         // Envelope-boundary redaction context. For `agent create`
         // `holder_did == active_did` by construction; sibling
@@ -298,30 +324,39 @@ mod list {
     use octo_wallet::{AgentFilter, AgentState, AgentSummary};
 
     /// Substrate hard ceiling — RFC-0015 §6.2.1.
-    const SUBSTRATE_HARD_LIMIT: u32 = 1024;
+    pub(crate) const SUBSTRATE_HARD_LIMIT: u32 = 1024;
 
     /// Operator `--state` argument → substrate `AgentState`.
     ///
-    /// Lowercase stable labels per `AgentState::as_str`
-    /// (`registered` / `running` / `terminated`). Any other input
-    /// surfaces as `OctoCliError::InvalidFilter` (slot 16, mirrored
-    /// with `InvalidLimit` exit-code rationale).
+    /// Lowercase stable labels per `AgentState::as_str` (`registered`
+    /// / `running` / `terminated`). The valid label set is sourced
+    /// from `AgentState::iter()` so future `AgentState` extensions
+    /// automatically surface via the help text without per-handler
+    /// enumeration. Any other input surfaces as
+    /// `OctoCliError::InvalidFilter` (slot 16).
     pub(crate) fn parse_state_filter(s: &str) -> Result<AgentState, OctoCliError> {
-        match s {
-            "registered" => Ok(AgentState::Registered),
-            "running" => Ok(AgentState::Running),
-            "terminated" => Ok(AgentState::Terminated),
-            other => Err(OctoCliError::InvalidFilter(format!(
-                "unknown agent state `{other}` (allow: registered | running | terminated)"
-            ))),
+        for state in AgentState::iter() {
+            if state.as_str() == s {
+                return Ok(*state);
+            }
         }
+        let allow = AgentState::iter()
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        Err(OctoCliError::InvalidFilter(format!(
+            "unknown agent state `{s}` (allow: {allow})"
+        )))
     }
 
     /// Validate `--cursor` shape (Phase 1 cursors are reserved
-    /// forward-compat tokens, RFC-0015 §6.2.1). Phase 1 rejects all
-    /// non-empty cursors as `InvalidCursor` (slot 46) so the operator
-    /// gets an explicit error instead of substrate silently ignoring
-    /// the unknown pagination state.
+    /// forward-compat tokens, RFC-0015 §6.2.1). Phase 1 rejects
+    /// empty cursors as `InvalidCursor` (slot 46); any non-empty
+    /// cursor passes through to the substrate, which silently
+    /// ignores it (substrate `AgentFilter::cursor` is forward-compat
+    /// for Phase 2 multi-page iteration per RFC-0015 §6.2.1 cursor
+    /// semantics).
     pub(crate) fn validate_cursor(cursor: Option<&str>) -> Result<(), OctoCliError> {
         if let Some(c) = cursor {
             if c.is_empty() {
@@ -329,13 +364,6 @@ mod list {
                     "cursor must not be empty when supplied".to_string(),
                 ));
             }
-            // Phase 1 cursors are opaque; we reserve the right to add
-            // a hex-only check in Phase 2. For now any non-empty
-            // string is accepted as a forward-compat placeholder.
-            // (The exit-46 surface is reserved by the amendment chain
-            // for malformed inputs that the future substrate parser
-            // will surface.)
-            let _ = c;
         }
         Ok(())
     }
@@ -368,18 +396,9 @@ mod list {
 
         // 2. Open wallet + resolve active DID (read-only — no Auditor
         //    gating, this is a read subcommand per RFC-0011-c
-        //    §Roles and Authorities).
-        let store = octo_wallet::WalletStore::open().map_err(|e| {
-            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
-        })?;
-        let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
-            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
-        let active_did = active_key.did();
+        //    §Roles and Authorities). Shared via
+        //    `commands::agent::common::resolve_active_did`.
+        let active_did = common::resolve_active_did()?;
 
         // 3. Build substrate filter. `holder_did` stays None — the
         //    substrate enforces caller_did == effective_holder.
@@ -520,9 +539,6 @@ pub struct AgentCreateOutput {
     pub manifest_digest: String,
     /// Unix seconds at which the substrate recorded the registration.
     pub registered_at_unix: u64,
-    /// RFC 3339 UTC timestamp of registration (human-readable mirror
-    /// of `registered_at_unix`).
-    pub registered_at: DateTime<Utc>,
 }
 
 /// Render an output envelope for the given payload (serializable).
@@ -606,13 +622,10 @@ mod tests {
 
     #[test]
     fn pending_subcommand_returns_internal_error() {
-        // Use `Run` which is still wired to `pending_subcommand`
-        // (write-path mission `0011-c-agent-run-subcommand` deferred
-        // to Phase 2 per the substrate-first restructure).
-        let action = AgentAction::Run {
-            agent_id: "00000000-0000-0000-0000-000000000000".to_string(),
-        };
-        let err = pending_subcommand(&action).unwrap_err();
+        // `pending_subcommand()` is parameter-less (R50.5 MEDIUM
+        // simplification: dropped the unused `_action: &AgentAction`
+        // parameter — the dispatch site passes nothing).
+        let err = pending_subcommand().unwrap_err();
         // The pending-subcommand path emits `Internal` (exit 64) —
         // a deliberately loud failure mode that surfaces the
         // follow-on mission slug in the message so operators have a

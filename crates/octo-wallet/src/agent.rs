@@ -145,6 +145,23 @@ impl AgentState {
             AgentState::Terminated => "terminated",
         }
     }
+
+    /// Iterate all known stable states (canonical ordering).
+    ///
+    /// Used by `octo-cli` `parse_state_filter` to enumerate valid
+    /// `--state` argument values without duplicating the label list
+    /// per-crate. Backwards-compat: state additions land via
+    /// `#[non_exhaustive]` on the enum and `iter()` returns a fixed
+    /// slice of the three Phase 1 stable states, so future enum
+    /// extensions do not break callers that iterate the slice.
+    #[must_use]
+    pub fn iter() -> &'static [AgentState] {
+        &[
+            AgentState::Registered,
+            AgentState::Running,
+            AgentState::Terminated,
+        ]
+    }
 }
 
 /// One row of `list_owned_agents` — RFC-0011-c §9.10 `AgentSummary`.
@@ -228,17 +245,17 @@ pub fn list_owned_agents(
     let mut summaries: Vec<AgentSummary> = registry
         .values()
         .filter(|record| record.holder_did.as_str() == effective_holder)
-        .filter(|record| match filter.state {
-            Some(state) => {
-                // Phase 1 registry stores only Registered agents
-                // (write-path state transitions land with RFC-0015-a);
-                // pending agents never enter the registry until the
-                // state-machine substrate is wired. Surface future
-                // states per the AgentState enum without speculative
-                // writes.
-                record.manifest.label.is_some() && state == AgentState::Registered
-            }
-            None => true,
+        .filter(|_| match filter.state {
+            // Phase 1 registry stores only `Registered` agents
+            // (write-path state transitions land with RFC-0015-a);
+            // pending agents never enter the registry until the
+            // state-machine substrate is wired. Surface future states
+            // per the `AgentState` enum without speculative writes:
+            // `--state running|terminated` returns empty `Vec` (no
+            // such records exist), `--state registered` returns all
+            // records, bare `--list` returns all records.
+            Some(AgentState::Running | AgentState::Terminated) => false,
+            None | Some(AgentState::Registered) => true,
         })
         .map(|record| AgentSummary {
             agent_id: record.manifest.manifest_id,

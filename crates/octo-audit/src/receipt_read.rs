@@ -12,6 +12,7 @@
 //! 1024 entries.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "octo-audit-internal")]
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -37,9 +38,18 @@ pub(crate) fn registry() -> &'static Mutex<BTreeMap<u64, Receipt>> {
 /// Phase 1 fixture helper (parallels `register_agent`). Real
 /// persistence lands with the Stoolap DOMAIN adapter gated on
 /// RFC-0016-a acceptance.
+///
+/// Fail-closed on mutex poisoning (lens-8 ask): poisoning should
+/// NOT propagate as a panic to future callers (write-path missions,
+/// follow-on amendments). The lock is acquired opportunistically;
+/// on poison the insert is silently dropped — the test-fixture
+/// semantics (write-once registration before assertion) tolerate
+/// the loss; the future Stoolap DOMAIN adapter will surface its
+/// own poisoning error.
 pub fn insert_receipt(receipt: Receipt) {
-    let mut registry = registry().lock().expect("receipt registry mutex poisoned");
-    registry.insert(receipt.receipt_id, receipt);
+    if let Ok(mut registry) = registry().lock() {
+        registry.insert(receipt.receipt_id, receipt);
+    }
 }
 
 /// Filter for `list_receipts` — RFC-0016 §6.2.4.
@@ -108,16 +118,16 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
 /// (RFC-0016 §6.2.2).
 ///
 /// Returns the canonical `Receipt` on hit. The substrate does not
-/// leak existence — misses surface `AuditError::Chain(...)` per
-/// the existing envelope (no parallel abstraction per
+/// leak existence — misses surface `AuditError::SinkSpecific` per
+/// the canonical 3-variant form (no parallel abstraction per
 /// [[cipherocto-design-principles]]).
-pub fn get_receipt(id: u64) -> Result<Receipt, AuditError> {
+pub fn get_receipt(id: &u64) -> Result<Receipt, AuditError> {
     let registry = registry()
         .lock()
         .map_err(|_| AuditError::SinkSpecific("receipt registry mutex poisoned".into()))?;
 
     registry
-        .get(&id)
+        .get(id)
         .cloned()
         .ok_or_else(|| AuditError::SinkSpecific(format!("receipt_id {id} not found")))
 }
@@ -128,13 +138,24 @@ pub fn get_receipt(id: u64) -> Result<Receipt, AuditError> {
 /// Resolves to `$OCTO_HOME/audit/receipts` when `OCTO_HOME` is
 /// set; otherwise `~/.config/octo/audit/receipts` per parent RFC
 /// §Implicit Assumptions Audit "Operator config dir" row.
+///
+/// `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` per
+/// RFC-0016 §6.2.3 + §Adversary Analysis row "canonical-path info
+/// leak" — only the `octo-audit` Layer B façade can call this
+/// function (with the internal feature flag enabled), preventing
+/// accidental path leakage to downstream consumers (e.g., `octo-cli`
+/// in default builds). The function is fallible (returns
+/// `AuditError`) so callers surface IO errors uniformly with the
+/// rest of the receipt surface (no panic path on filesystem
+/// regression).
+#[cfg(feature = "octo-audit-internal")]
 #[must_use]
-pub fn audit_home() -> PathBuf {
+pub(crate) fn audit_home() -> Result<PathBuf, AuditError> {
     if let Ok(octo_home) = std::env::var("OCTO_HOME") {
-        PathBuf::from(octo_home).join("audit/receipts")
+        Ok(PathBuf::from(octo_home).join("audit/receipts"))
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(".config/octo/audit/receipts")
+        Ok(PathBuf::from(home).join(".config/octo/audit/receipts"))
     }
 }
 
@@ -163,21 +184,23 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
+    #[cfg(feature = "octo-audit-internal")]
     fn audit_home_returns_octo_home_path() {
         // No mutation needed; lock guards test ordering only.
         let _guard = TEST_LOCK.lock().unwrap();
 
         std::env::set_var("OCTO_HOME", "/tmp/octo-test");
-        let p = audit_home();
+        let p = audit_home().expect("audit_home resolves when OCTO_HOME is set");
         assert_eq!(p, PathBuf::from("/tmp/octo-test/audit/receipts"));
         std::env::remove_var("OCTO_HOME");
     }
 
     #[test]
+    #[cfg(feature = "octo-audit-internal")]
     fn audit_home_returns_default_when_no_octo_home() {
         let _guard = TEST_LOCK.lock().unwrap();
         std::env::remove_var("OCTO_HOME");
-        let p = audit_home();
+        let p = audit_home().expect("audit_home resolves with default fallback");
         assert!(
             p.ends_with(".config/octo/audit/receipts"),
             "default path should end in .config/octo/audit/receipts, got {p:?}",
@@ -262,7 +285,7 @@ mod tests {
         reg.insert(42, sample_receipt(42, 1_700_000_042));
         drop(reg);
 
-        let r = get_receipt(42).unwrap();
+        let r = get_receipt(&42u64).unwrap();
         assert_eq!(r.receipt_id, 42);
         assert_eq!(r.router_id, "did:octo:router-a");
     }
@@ -274,7 +297,7 @@ mod tests {
         reg.clear();
         drop(reg);
 
-        let err = get_receipt(999).unwrap_err();
+        let err = get_receipt(&999u64).unwrap_err();
         match err {
             AuditError::SinkSpecific(s) => {
                 assert!(

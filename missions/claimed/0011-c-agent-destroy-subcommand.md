@@ -64,7 +64,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [ ] `octo agent destroy <agent-id>` implemented + unit-tested (TV-AGT9, TV-AGT10 pass per RFC-0011-c §Test Vectors)
 - [ ] `AgentDestroyOutput` payload type implemented + unit-tested (`agent_id`, `state`, `terminated_at_unix`, `audit_log_entry`)
 - [ ] **Confirmation gate enforced** — `--confirm` required flag; absent → `ConfirmationRequired { command }` (exit 2 per parent RFC-0011 §Error Handling; the clap `requires` annotation surfaces the variant); no `--yes` / `--force` override
-- [ ] State transition ACTIVE → TERMINATED verified end-to-end against RFC-0002 §Agent State Machine
+- [ ] State transition Running → Terminated verified end-to-end against RFC-0002 §Agent State Machine
 - [ ] Audit log append verified end-to-end against RFC-0011-a §7.4 Substrate [ADD] signatures (when landed)
 - [ ] **Audit stub fallback** — if RFC-0011-a audit substrate is not yet Accepted, this mission ships as an audit-append-failed stub emitting `AuditSubstrateNotReady` (exit 52). Mission completion requires RFC-0011-a Accepted.
 - [ ] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
@@ -78,11 +78,11 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type        | Sub-step            | Notes                                                                                                                                                                                                               |
-| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AgentDestroyArgs`     | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                                                                                             |
-| `AgentDestroyOutput`   | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: [u8; 32]` (BLAKE3-256 chain-hash; hex-encoded by `OctoCliRedactor` for the wire form))           |
-| `ConfirmationRequired` | Sub-step 3 (errors) | Layer C/D; pre-existing `OctoCliError` variant carrying `command: String`; exit 2 per parent RFC-0011 §Error Handling (the clap `--confirm` `requires` annotation surfaces this when the operator forgets the flag) |
+| RFC-0011-c type        | Sub-step            | Notes                                                                                                                                                                                                                                               |
+| ---------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentDestroyArgs`     | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                                                                                                                             |
+| `AgentDestroyOutput`   | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: [u8; 32]` (BLAKE3-256 chain-hash; hex-encoded by `OctoCliRedactor` for the wire form))                                           |
+| `ConfirmationRequired` | (pre-existing)      | Layer C/D; pre-existing `OctoCliError` variant carrying `command: String`; exit 2 per parent RFC-0011 §Error Handling (the clap `--confirm` `requires` annotation surfaces this when the operator forgets the flag). **Not added by this mission.** |
 
 ## Implementation Guide
 

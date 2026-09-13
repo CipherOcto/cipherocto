@@ -241,7 +241,7 @@ pub struct CapabilityId(pub [u8; 32]);
 ///   Phase 2 follow-on swaps to the substrate monotonic clock per
 ///   RFC-0008 Class B determinism.
 /// - `audit_log_entry` is the canonical chain-hash from
-///   `append_audit_event`; `None` only when the state transition
+///   `append_agent_transition_event`; `None` only when the state transition
 ///   was an idempotent self-transition (no audit event emitted per
 ///   RFC-0015-a §6.1 idempotency contract) OR when the audit append
 ///   was rolled back (function never returns in that case, so
@@ -296,8 +296,8 @@ fn now_unix_secs() -> u64 {
 /// On a successful state-machine transition, this function constructs
 /// an `AuditEvent` with `event_kind = AuditEventKind::AgentTransition
 /// { agent_id, from, to, reason }` (the variant is cfg-gated via
-/// `octo-audit-internal`) and calls `append_audit_event` to commit it
-/// to the sink. If the audit append fails (e.g., sink not configured,
+/// `octo-audit-internal`) and calls `append_agent_transition_event`
+/// to commit it to the sink. If the audit append fails (e.g., sink not configured,
 /// feature flag off, IO error), the state transition is ROLLED BACK
 /// to the previous state and `WalletError::AuditUnavailable` is
 /// returned. The `agent_id` lookup result is consumed before the
@@ -452,17 +452,9 @@ pub fn list_owned_agents(
     let mut summaries: Vec<AgentSummary> = registry
         .values()
         .filter(|record| record.holder_did.as_str() == effective_holder)
-        .filter(|_| match filter.state {
-            // Phase 1 registry stores only `Registered` agents
-            // (write-path state transitions land with RFC-0015-a);
-            // pending agents never enter the registry until the
-            // state-machine substrate is wired. Surface future states
-            // per the `AgentState` enum without speculative writes:
-            // `--state running|terminated` returns empty `Vec` (no
-            // such records exist), `--state registered` returns all
-            // records, bare `--list` returns all records.
-            Some(AgentState::Running | AgentState::Terminated) => false,
-            None | Some(AgentState::Registered) => true,
+        .filter(|record| match filter.state {
+            Some(s) => record.state == s,
+            None => true,
         })
         .map(|record| AgentSummary {
             agent_id: record.manifest.manifest_id,

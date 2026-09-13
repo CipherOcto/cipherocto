@@ -259,10 +259,10 @@ concrete requirements surface.
 
 ### Cargo deps
 
-| Crate                                           | Why                                                                                                                                                              | Layer |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `octo-audit`                                    | Audit substrate (Layer C; NEW per RFC-0011-a §Substrate `[ADD]`); exposes `list_receipts`, `get_receipt`, `AuditFilter`, `AuditError`, `ReceiptId`, `audit_home` | C     |
-| `octo-settlement` (transitive via `octo-audit`) | Settlement substrate (Layer B per RFC-0959); source of `ReceiptRecord` projection                                                                                | B     |
+| Crate                                           | Why                                                                                                                                                                                                | Layer |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `octo-audit`                                    | Audit substrate (Layer B façade; depends on Layer A `octo-audit-core` per RFC-0012 §Module Layout); exposes `list_receipts`, `get_receipt`, `AuditFilter`, `AuditError`, `ReceiptId`, `audit_home` | B     |
+| `octo-settlement` (transitive via `octo-audit`) | Settlement substrate (Layer B per RFC-0959); source of `ReceiptRecord` projection                                                                                                                  | B     |
 
 No new direct deps in `crates/octo-cli` — audit substrate depends on
 `octo-settlement` transitively. The CLI depends on the audit substrate

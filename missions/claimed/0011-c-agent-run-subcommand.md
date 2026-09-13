@@ -64,7 +64,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 - [ ] `octo agent run <agent-id>` implemented + unit-tested (TV-AGT4, TV-AGT5 pass per RFC-0011-c §Test Vectors)
 - [ ] `AgentRunOutput` payload type implemented + unit-tested (`agent_id`, `state`, `runtime_handle`, `spawned_at_unix`)
-- [ ] State transition REGISTERED → ACTIVE → BUSY verified end-to-end against RFC-0002 §Agent State Machine
+- [ ] State transition Registered → Running verified end-to-end against RFC-0002 §Agent State Machine
 - [ ] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
 - [ ] `AgentNotFound(Uuid)` (exit 42), `InvalidStateTransition { from, to }` (exit 43), `RuntimeSpawnFailed { reason }` (exit 44) wired (per RFC-0011-c §9.8 slot allocation 39-52)
 - [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
@@ -94,7 +94,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Notes
 
-`agent run` performs **two** state transitions (REGISTERED → ACTIVE → BUSY) per RFC-0011-c §9.5 Agent State Machine Integration. The CLI does not collapse these into a single transition; the substrate enforces each transition separately per RFC-0002 §Agent State Machine.
+`agent run` performs the canonical `Registered → Running` edge per RFC-0011-c §9.5 Agent State Machine Integration. The substrate enforces the single transition per RFC-0002 §Agent State Machine (the `AgentState` enum is `Registered | Running | Terminated` per `octo_wallet::AgentState`).
 
 The `octo-runtime` substrate crate is required for `spawn_agent`. Until it lands, this subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
 
@@ -167,7 +167,7 @@ cargo test -p octo-cli --lib --tests  # green
 ## Cross-references
 
 - RFC-0011-c §9.3.2 `octo agent run` subcommand specification
-- RFC-0011-c §9.5 Agent State Machine Integration (REGISTERED → ACTIVE → BUSY mapping)
+- RFC-0011-c §9.5 Agent State Machine Integration (Registered → Running mapping)
 - RFC-0011-c §9.8 Error Handling (3 new variants: `AgentNotFound`, `InvalidStateTransition`, `RuntimeSpawnFailed`)
 - RFC-0011-c §9.1 Architecture (octo-runtime substrate dependency)
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections

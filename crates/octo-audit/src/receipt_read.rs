@@ -131,26 +131,6 @@ pub fn get_receipt(id: &u64) -> Result<Receipt, AuditError> {
         .ok_or_else(|| AuditError::SinkSpecific(format!("receipt_id {id} not found")))
 }
 
-/// Discover the canonical audit home directory
-/// (RFC-0016 §6.2.3; RFC-0011-a §Key Files `audit_home`).
-///
-/// Resolves to `$OCTO_HOME/audit/receipts` when `OCTO_HOME` is
-/// set; otherwise `~/.config/octo/audit/receipts` per parent RFC
-/// §Implicit Assumptions Audit "Operator config dir" row.
-///
-/// `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` per
-/// RFC-0016 §6.2.3 + §Adversary Analysis row "canonical-path info
-/// leak" — only the `octo-audit` Layer B façade can call this
-/// function (with the internal feature flag enabled), preventing
-/// accidental path leakage to downstream consumers (e.g., `octo-cli`
-/// in default builds). The Result return is RESERVED for a future
-/// Phase 2 IO-error path (filesystem stat failures on the canonical
-/// audit-receipts directory); Phase 1 env-var resolution is
-/// infallible (both branches construct `Ok(...)`).
-///
-/// `#[allow(dead_code)]` is required because the lib target's
-/// `dead_code` lint does not see the `#[cfg(test)]` test call sites
-/// (test target is a separate compilation unit); the function is
 /// Resolve the canonical audit home directory
 /// (RFC-0016 §6.2.3; RFC-0011-a §Key Files `audit_home`).
 ///

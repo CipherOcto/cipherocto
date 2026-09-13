@@ -10,8 +10,11 @@
 use std::sync::{Arc, Mutex};
 
 use crate::schema::apply_migrations;
-use crate::{Ask, AskState, Receipt, SettlementError, SettlementHashOpaque};
+use crate::{Ask, AskState, CanonicalReceipt, Receipt, SettlementError, SettlementHashOpaque};
 use octo_settlement::{scrub_adapter_error, scrub_adapter_error_with};
+use octo_settlement_core::{
+    receipt_id_for, AppendOnlyReceiptSink, SettlementError as CanonicalSettlementError,
+};
 
 /// Adapter-type registry for Pattern 6 redaction (RFC-0014-v3 §S5.1
 /// per-façade scrubber).
@@ -415,6 +418,135 @@ impl SettlementStore for StoolapStore {
             },
             state,
         ))
+    }
+}
+
+/// `AppendOnlyReceiptSink` impl for `StoolapStore` (RFC-0014 §Trait G3).
+///
+/// Persists the substrate-canonical `Receipt` (distinct from the
+/// domain `Receipt`: `receipt_id: u64` vs `receipt_id: [u8;32]` per
+/// RFC-0014 §Module Layout) into the `canonical_receipts` table
+/// (migration 007). The table is SEPARATE from the domain `asks` +
+/// `consumed_receipt_index` tables so the substrate-faithful canonical
+/// chain (used by `verify_receipt_chain`) is independent of the
+/// domain's settlement flow.
+///
+/// # Atomicity model
+///
+/// `self.db.lock()` serializes the whole `append` flow against
+/// concurrent calls in the same process; the `receipt_id INTEGER
+/// PRIMARY KEY` constraint enforces single-writer semantics across
+/// processes. A concurrent caller racing through the
+/// SELECT-MAX-then-INSERT window collides on the PK INSERT and
+/// surfaces `SettlementError::AlreadyExists` per RFC-0014 §Trait G3.
+impl AppendOnlyReceiptSink for StoolapStore {
+    fn append(&mut self, receipt: &CanonicalReceipt) -> Result<(), CanonicalSettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+
+        // Monotonicity check: last persisted receipt_id.
+        let last_rows = db
+            .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
+            .map_err(|e| {
+                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
+                    &e.to_string(),
+                    ADAPTER_TYPES,
+                ))
+            })?;
+        let last_id: Option<i64> = match last_rows.into_iter().next() {
+            None => None,
+            Some(Err(e)) => {
+                return Err(CanonicalSettlementError::SinkSpecific(
+                    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
+                ));
+            }
+            Some(Ok(row)) => row.get(0).map_err(|e| {
+                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
+                    &e.to_string(),
+                    ADAPTER_TYPES,
+                ))
+            })?,
+        };
+        // Empty table (last_id == None): no predecessor, accept any
+        // first receipt_id. Non-empty: enforce strict successor +
+        // flag duplicates distinctly from gaps (RFC-0014 §Trait G3).
+        if let Some(prev) = last_id {
+            let prev_u64 = prev.max(0) as u64;
+            if receipt.receipt_id == prev_u64 {
+                return Err(CanonicalSettlementError::AlreadyExists(receipt.receipt_id));
+            }
+            if receipt.receipt_id != prev_u64 + 1 {
+                return Err(CanonicalSettlementError::SequenceGap {
+                    receipt_id: receipt.receipt_id,
+                    prev: prev_u64,
+                });
+            }
+        }
+
+        // Compute canonical settlement_hash; reject mismatches. The
+        // domain separator (`cipherocto/reservation/v1/`) is part of
+        // the substrate `receipt_id_for` per RFC-0014 §Chain Helpers
+        // §Domain Separator (byte-pinned test vector).
+        let expected_hash = receipt_id_for(receipt);
+        if receipt.settlement_hash != expected_hash {
+            return Err(CanonicalSettlementError::ChainIntegrity {
+                receipt_id: receipt.receipt_id,
+            });
+        }
+
+        let insert_sql = "INSERT INTO canonical_receipts
+            (receipt_id, ask_id, settlement_hash, router_id, router_sig, timestamp_unix)
+            VALUES (?, ?, ?, ?, ?, ?)";
+        match db.execute(
+            insert_sql,
+            (
+                receipt.receipt_id as i64,
+                receipt.ask_id.to_vec(),
+                receipt.settlement_hash.to_vec(),
+                receipt.router_id.clone(),
+                receipt.router_sig.clone(),
+                receipt.timestamp_unix as i64,
+            ),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES).to_lowercase();
+                if msg.contains("unique") || msg.contains("duplicate") || msg.contains("primary") {
+                    Err(CanonicalSettlementError::AlreadyExists(receipt.receipt_id))
+                } else {
+                    Err(CanonicalSettlementError::SinkSpecific(
+                        scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
+                    ))
+                }
+            }
+        }
+    }
+
+    fn last_receipt_id(&self) -> Result<Option<u64>, CanonicalSettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+        let rows = db
+            .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
+            .map_err(|e| {
+                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
+                    &e.to_string(),
+                    ADAPTER_TYPES,
+                ))
+            })?;
+        let Some(row_result) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let row = row_result.map_err(|e| {
+            CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
+                &e.to_string(),
+                ADAPTER_TYPES,
+            ))
+        })?;
+        let last_id: Option<i64> = row.get(0).map_err(|e| {
+            CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
+                &e.to_string(),
+                ADAPTER_TYPES,
+            ))
+        })?;
+        Ok(last_id.map(|n| n as u64))
     }
 }
 

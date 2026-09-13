@@ -790,10 +790,11 @@ RFC-0959 §State Machine + the existing migrations define `CHECK (state IN ('Min
 
 ## Version History
 
-| Version | Date       | Changes       |
-| ------- | ---------- | ------------- |
-| 1.0     | 2026-09-10 | Initial draft |
-| 1.1     | 2026-09-10 | Accepted      | DRY CLOSED; promoted Draft → Accepted. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-09-10 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.1     | 2026-09-10 | Accepted                                                                                                                                                                                                                                                                                                                                                                                                                  | DRY CLOSED; promoted Draft → Accepted. |
+| 1.2     | 2026-09-13 | Mission 0014-settlement-sm-engine-migration LANDED (AppendOnlyReceiptSink impl on StoolapStore + migration 007 canonical_receipts table + 5 append_only_receipt_sink TVs; AC-2 substrate-faithful deferral — domain `Receipt { receipt_id: [u8;32] }` vs substrate `Receipt { receipt_id: u64 }` field-shape mismatch, breaks 6+ downstream crates, requires RFC-0014 amendment to add domain fields to substrate first). |
 
 ## Related RFCs
 

@@ -37,6 +37,9 @@ pub const MIGRATION_005_SQL: &str = include_str!("../migrations/005_create_polic
 /// Migration 006: consumed envelope index (RFC-0962 §6.3).
 pub const MIGRATION_006_SQL: &str = include_str!("../migrations/006_create_consumed_envelopes.sql");
 
+/// Migration 007: canonical receipt chain (RFC-0014 §Module Layout `sink`).
+pub const MIGRATION_007_SQL: &str = include_str!("../migrations/007_create_canonical_receipts.sql");
+
 /// Static list of `(version, sql)` migrations applied in order.
 pub const MIGRATIONS: &[(u32, &str)] = &[
     (1, MIGRATION_001_SQL),
@@ -45,6 +48,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (4, MIGRATION_004_SQL),
     (5, MIGRATION_005_SQL),
     (6, MIGRATION_006_SQL),
+    (7, MIGRATION_007_SQL),
 ];
 
 /// Substrate-form migration catalog: numeric versions + canonical `v<NNN>`
@@ -79,6 +83,11 @@ pub(super) static BUILTIN_MIGRATION_CATALOG:
         6,
         "v006__create_consumed_envelopes",
         MIGRATION_006_SQL,
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        7,
+        "v007__create_canonical_receipts",
+        MIGRATION_007_SQL,
     ),
 ];
 

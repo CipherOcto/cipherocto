@@ -293,7 +293,7 @@ Canonical fixture: `docs/07-developers/octo-cli-implementation-guide.md` §Audit
 - `octo-audit` (Layer B façade, depending on Layer A `octo-audit-core` per RFC-0012 §Module Layout; NOT NEW per RFC-0011-a §Substrate `[ADD]` which is the Layer B read-path extension) — thin read-only projection layer over `octo-settlement`; exposes `list_receipts`, `get_receipt`, `AuditFilter`, `AuditError`, `ReceiptId`, `audit_home`; owns NO persistence
 - `octo-settlement` (Layer B, RFC-0959) — source of truth for `ReceiptRecord`; audit substrate is a thin read-only projection per RFC-0011-a §Substrate-truth dependency
 
-Layer direction: C (CLI) → C (audit substrate) → B (settlement substrate). NO reverse deps. The audit substrate MUST NOT introduce new persistence — every read translates to a substrate call against `octo_settlement::ReceiptStore` per RFC-0011-a §Substrate-truth dependency.
+Layer direction: C (CLI) → B (audit substrate façade) → B (settlement substrate). NO reverse deps. The audit substrate MUST NOT introduce new persistence — every read translates to a substrate call against `octo_settlement::ReceiptStore` per RFC-0011-a §Substrate-truth dependency.
 
 ## Validation
 

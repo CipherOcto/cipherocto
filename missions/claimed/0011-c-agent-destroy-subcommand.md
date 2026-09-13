@@ -155,7 +155,7 @@ cargo test -p octo-cli --lib --tests  # green
 ## Backward compat
 
 - Additive only: `AgentAction::Destroy` variant added; no breaking changes to existing public API per RFC migration etiquette.
-- CLI exit codes match RFC-0011-c §9.8 Error Handling (1 new variant: exit 47 substrate / exit 2 CLI; slot allocation 39-52; `AuditSubstrateNotReady` exit 52 if RFC-0011-a substrate not landed).
+- CLI exit codes match RFC-0011-c §9.8 Error Handling (no new variants added by this mission; `ConfirmationRequired` exit 2 is pre-existing per parent RFC-0011 §Error Handling; `AuditSubstrateNotReady` exit 52 fallback if RFC-0011-a substrate not landed).
 - `OutputEnvelope<T>::schema_version = 4` pinned (RFC-0011-c §9.4 / §9.4.1 Divergence slot table). Field renames from parent v2:
   - `data: T` → `payload: T`
   - `generated_at: DateTime` → `executed_at_unix: u64`

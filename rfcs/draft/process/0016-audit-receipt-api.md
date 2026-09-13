@@ -61,13 +61,13 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 
 ### §6.1 Public surface (R2 KEEP)
 
-| Item                          | Type                                                                                     | Substrate anchor                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `list_receipts`               | `fn(&AuditFilter) -> Result<Vec<u64>, octo_audit_core::AuditError>`                       | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key — additive `Vec<u64>` per §6.2.1)         |
-| `get_receipt`                 | `fn(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core::AuditError>`          | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key)                                         |
-| `audit_home`                  | `pub(crate) fn audit_home() per §6.2.3`                                                  | RFC-0012 `octo-audit-core` substrate path resolution                                            |
+| Item                          | Type                                                                                                                                                   | Substrate anchor                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `list_receipts`               | `fn(&AuditFilter) -> Result<Vec<u64>, octo_audit_core::AuditError>`                                                                                    | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key — additive `Vec<u64>` per §6.2.1)                                        |
+| `get_receipt`                 | `fn(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core::AuditError>`                                                                        | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key)                                                                         |
+| `audit_home`                  | `pub(crate) fn audit_home() per §6.2.3`                                                                                                                | RFC-0012 `octo-audit-core` substrate path resolution                                                                            |
 | `AuditFilter`                 | `struct { router_id: Option<String>, timestamp_unix_gte: Option<u64>, timestamp_unix_lte: Option<u64>, limit: Option<usize>, cursor: Option<String> }` | No substrate field extensions (NO `subject_did`, NO `status`, NO `capability_root`, NO `model`); per-field rationale per §6.2.4 |
-| `AuditError` (root re-export) | `pub use octo_audit_core::AuditError` (PRE-EXISTING, no addition)                        | RFC-0012 Layer A frozen 3-variant enum                                                          |
+| `AuditError` (root re-export) | `pub use octo_audit_core::AuditError` (PRE-EXISTING, no addition)                                                                                      | RFC-0012 Layer A frozen 3-variant enum                                                                                          |
 
 > **Note (§6.1 chain-hash canonical):** audit event chain integrity uses `verify_chain(&[AuditEvent])` per `crates/octo-audit-core/src/chain.rs`; receipt chain integrity uses `receipt_id_for` + `verify_receipt_chain` via `octo-settlement` Layer B façade re-export of `octo-settlement-core` Layer A frozen substrate (canonical B→B→A path per §6.3; `pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32]` + `pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>` at `crates/octo-settlement-core/src/chain.rs`).
 
@@ -169,8 +169,8 @@ Exit code derived at RFC-0011-a §Error via `#[error(transparent)] From<AuditErr
 
 ### §6.5 CLI integration contract
 
-| Mission / RFC              | Substrate call                                | Sub-step                         | Status |
-| -------------------------- | --------------------------------------------- | -------------------------------- | ------ |
+| Mission / RFC              | Substrate call                                | Sub-step                         | Status                                                                  |
+| -------------------------- | --------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
 | `0011-a-audit-commands.md` | `list_receipts(&filter)` + `get_receipt(&id)` | Sub-step 2 (existing RFC-0011-a) | KEEP — filter uses `timestamp_unix_gte`/`timestamp_unix_lte` per §6.2.4 |
 
 > Writes DEFERRED to RFC-0016-a per §6.8.

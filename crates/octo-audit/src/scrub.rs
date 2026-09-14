@@ -232,11 +232,13 @@ static RE_WIF_BASE58: Lazy<Regex> = Lazy::new(|| {
 /// Pattern 18 — X.509 cert serial `0x`-prefixed hex (RFC-0016-a §6.9
 /// pattern 12).
 ///
-/// Matches `0x` followed by exactly 64 hex chars (32-byte cert serial
-/// per RFC-5280 §5.1.2.3). Distinct from Pattern 1 (which catches
-/// raw ≥32 hex without `0x` prefix).
+/// Matches `0x` followed by 16-64 hex chars (typical cert serials per
+/// RFC-5280 §5.1.2.3 permit up to 20 octets / 40 hex; observed certs
+/// use 8-16 bytes / 16-32 hex, plus the upper bound for compliance
+/// with the 32-byte cap). Distinct from Pattern 1 (which catches raw
+/// ≥32 hex without `0x` prefix).
 static RE_X509_SERIAL_HEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b0x[A-Fa-f0-9]{64}\b").expect("Pattern 18 X.509 cert serial regex compiles")
+    Regex::new(r"\b0x[A-Fa-f0-9]{16,64}\b").expect("Pattern 18 X.509 cert serial regex compiles")
 });
 
 /// Redact a single adapter-error string using the canonical 10-pattern

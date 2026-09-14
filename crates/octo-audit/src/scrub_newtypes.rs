@@ -1,23 +1,23 @@
 //! Substrate-side second-pass scrubber applied at the façade
 //! boundary (RFC-0016-a §6.8).
 //!
-//! Layer B façade-only — the canonical 13-pattern substrate-side
+//! Layer B façade-only — the canonical 18-pattern substrate-side
 //! scrubber at `octo_audit::scrub::scrub_adapter_error` is applied
 //! by `redact_substrate_error` BEFORE constructing CLI envelopes.
-//! When ANY of the 13 patterns matches, the entire payload is
+//! When ANY of the 18 patterns matches, the entire payload is
 //! replaced with the canonical `<REDACTED>` marker per RFC-0016-a
 //! §6.8 (the marker is preserved verbatim on subsequent passes per
 //! the R21 L-2 idempotency rule).
 
 use crate::scrub::scrub_adapter_error;
 
-/// Canonical `<REDACTED>` marker emitted when any of the 13
+/// Canonical `<REDACTED>` marker emitted when any of the 18
 /// substrate-side scrubber patterns matches the input (RFC-0016-a
 /// §6.8). The marker is preserved verbatim on subsequent scrub
 /// passes per the R21 L-2 idempotency rule.
 const REDACTED_MARKER: &str = "<REDACTED>";
 
-/// Apply the canonical 13-pattern substrate-side scrubber to `raw`
+/// Apply the canonical 18-pattern substrate-side scrubber to `raw`
 /// (RFC-0016-a §6.8 second-pass defense-in-depth at the façade
 /// boundary).
 ///

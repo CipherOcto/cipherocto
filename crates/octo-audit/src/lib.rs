@@ -75,7 +75,7 @@ pub use receipt_summary::ReceiptSummary;
 
 // RFC-0016-a §6.8 paired-acceptance: substrate-side second-pass
 // scrubber applied at the façade boundary. `redact_substrate_error`
-// collapses any payload matching one of the 13 scrubber patterns
+// collapses any payload matching one of the 18 scrubber patterns
 // to the canonical `<REDACTED>` marker (per spec §6.8); verbatim
 // strings pass through unchanged. CLI envelopes route substrate
 // `SinkSpecific` / `InvalidFilter` / `ReceiptNotFound` /

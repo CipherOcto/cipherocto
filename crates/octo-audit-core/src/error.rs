@@ -70,7 +70,7 @@ pub enum AuditError {
     /// Carries the scrubbed canonical path (e.g.
     /// `<OCTO_HOME>/audit/receipts`) per test vectors
     /// `TV-AUD-permission-check-1` + `TV-AUD-permission-check-2`.
-    /// Substrate-side scrubber applies the 13-pattern list before
+    /// Substrate-side scrubber applies the 18-pattern list before
     /// the CLI envelope maps to `OctoCliError::PermissionDenied`.
     #[error("permission denied: {0}")]
     PermissionDenied(String),
@@ -87,7 +87,7 @@ pub enum AuditError {
     /// themselves add no diagnostic value at the error-site (Layer A
     /// substrate surface; the CLI envelope maps to
     /// `OctoCliError::Internal` with a redacted reason via the CLI
-    /// 13-pattern scrubber).
+    /// 18-pattern scrubber).
     #[error("chain_hash mismatch at event_id {event_id}")]
     ChainHashMismatch {
         /// The event_id whose caller-supplied `chain_hash` failed

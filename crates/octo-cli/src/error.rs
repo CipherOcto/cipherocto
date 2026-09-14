@@ -742,16 +742,21 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
 /// (per-variant mapping; not a catch-all `Internal` wrapper).
 ///
 /// **Defense-in-depth scrub pass (RFC-0016-a §6.8 + R1 reviewer
-/// HIGH findings C8 + C9):** every payload-bearing variant
-/// (ReceiptNotFound, InvalidFilter, PermissionDenied, SinkSpecific)
-/// routes through `octo_audit::redact_substrate_error` before
+/// HIGH findings C8 + C9):** the three CLI-shape payload-bearing
+/// variants (ReceiptNotFound, InvalidFilter, PermissionDenied)
+/// route through `octo_audit::redact_substrate_error` before
 /// constructing the CLI envelope. If the substrate payload matches
-/// any of the 13 canonical scrubber patterns (hex digest, JWT,
+/// any of the 18 canonical scrubber patterns (hex digest, JWT,
 /// WIF, BIP39 mnemonic, capability-secret base64, PEM/PGP/OpenSSH
 /// private-key blocks, etc.), the entire payload collapses to the
-/// canonical `<REDACTED>` marker. This is the second pass at the
-/// CLI boundary; the substrate-side scrubber (defect 1a) is the
-/// first pass.
+/// canonical `<REDACTED>` marker. The SinkSpecific arm uses the
+/// lighter `sanitize_substrate_error` + `cap_substrate_payload`
+/// pipeline (4-marker pattern: `SQL:`, `query:`, `sqlite3_open`,
+/// `crates/octo-`) because its payloads are substrate-internal
+/// Stoolap error strings — the full 18-pattern sweep would be
+/// over-redaction for that adapter-specific channel. This is the
+/// second pass at the CLI boundary; the substrate-side scrubber
+/// (defect 1a) is the first pass.
 ///
 /// Mapping table per RFC-0016-a §6.7:
 ///
@@ -815,7 +820,7 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // follow-on amendments without a paired CLI-shape
             // mapping) collapse to `Internal(reason)` per the same
             // pattern as `SinkSpecific`. Sanitizer applies the
-            // 13-pattern scrubber so an unknown future variant that
+            // 18-pattern scrubber so an unknown future variant that
             // accidentally carries a key/path leaks only
             // `<redacted-*>` markers.
             _ => Self::Internal(sanitize_substrate_error(&format!(

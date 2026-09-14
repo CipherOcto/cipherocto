@@ -23,7 +23,7 @@
 
 use std::fmt;
 
-use octo_audit_core::{AppendOnlyAuditSink, AuditError, AuditEvent};
+use octo_audit_core::{compute_chain_hash, AppendOnlyAuditSink, AuditError, AuditEvent};
 
 /// Canonical BLAKE3-256 chain-hash of an `AuditEvent` row
 /// (RFC-0016-a §6.3 + RFC-0012 §Trait G3).
@@ -48,35 +48,68 @@ impl ChainHash {
     }
 }
 
+/// Display form: lowercase 64-char hex (no `0x` prefix);
+/// canonical RFC-0012 wire form.
 impl fmt::Display for ChainHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 
 /// Append a pre-constructed `AuditEvent` to a `&mut AppendOnlyAuditSink`
 /// (RFC-0016-a §6.2 + RFC-0012 §Trait G3 single-writer lock + §6.11
-/// read-stall-while-write invariant).
+/// read-stall-while-write invariant + §6.10 canonical-bytes-on-write
+/// invariant).
 ///
-/// Returns the canonical `ChainHash` on success. The Rust borrow
-/// checker enforces single-writer per sink instance at the type level
-/// (`&mut self`) so concurrent writers must serialize via an external
-/// `Mutex` (out of scope per RFC-0016-a §Implicit Assumptions
-/// Audit #5). Concurrent readers (`list_receipts`, `get_receipt` from
-/// RFC-0016 KEEP) block for the duration of the write per RFC-0016-a
-/// §6.11.
+/// **Canonical-bytes-on-write (§6.10):** the façade recomputes the
+/// canonical `chain_hash` from the supplied `event` via
+/// `compute_chain_hash` (BLAKE3 over the canonical byte encoding) and
+/// compares it against `event.chain_hash`. On mismatch, the call
+/// short-circuits with `AuditError::ChainHashMismatch` and the sink
+/// is NOT touched. On match, the sink receives the caller-supplied
+/// event (the `chain_hash` field is already correct) and the canonical
+/// `ChainHash` is returned.
+///
+/// The Rust borrow checker enforces single-writer per sink instance at
+/// the type level (`&mut self`) so concurrent writers must serialize
+/// via an external `Mutex` (out of scope per RFC-0016-a §Implicit
+/// Assumptions Audit #5). Concurrent readers (`list_receipts`,
+/// `get_receipt` from RFC-0016 KEEP) block for the duration of the
+/// write per RFC-0016-a §6.11.
 ///
 /// # Errors
 ///
-/// - `AuditError::SequenceGap` / `AuditError::AlreadyExists` — surfaced
-///   from the underlying `AppendOnlyAuditSink::append` call per
-///   RFC-0012 §Trait G3.
+/// - `AuditError::ChainHashMismatch { canonical, supplied }` —
+///   caller-supplied `event.chain_hash` does not match the BLAKE3
+///   recomputation over canonical bytes (§6.10 invariant). Sink is
+///   NOT called.
+/// - `AuditError::SequenceGap` / `AuditError::AlreadyExists` /
+///   `AuditError::SinkSpecific` — surfaced from the underlying
+///   `AppendOnlyAuditSink::append` call per RFC-0012 §Trait G3.
 pub fn append_audit_event(
     sink: &mut dyn AppendOnlyAuditSink,
     event: AuditEvent,
 ) -> Result<ChainHash, AuditError> {
+    // §6.10 canonical-bytes-on-write invariant: recompute the
+    // canonical `chain_hash` from the supplied event and reject
+    // mismatches BEFORE the sink is called. This is the substrate-
+    // faithful "defense in depth" check — the sink may trust the
+    // caller's chain_hash (per RFC-0012-v2 trait contract), but
+    // THIS façade enforces the invariant at the write boundary so
+    // chain-integrity violations are caught at the canonical
+    // boundary rather than discovered later during verify_chain.
+    let canonical = compute_chain_hash(&event);
+    if event.chain_hash != canonical {
+        return Err(AuditError::ChainHashMismatch {
+            canonical,
+            supplied: event.chain_hash,
+        });
+    }
     sink.append(&event)?;
-    Ok(ChainHash(event.chain_hash))
+    Ok(ChainHash(canonical))
 }
 
 #[cfg(test)]
@@ -96,6 +129,12 @@ mod tests {
                 events: Mutex::new(Vec::new()),
                 last_id: Mutex::new(None),
             }
+        }
+        fn last_id(&self) -> Result<Option<u64>, AuditError> {
+            self.last_id
+                .lock()
+                .map_err(|_| AuditError::SinkSpecific("mock last_id poisoned".into()))
+                .map(|g| *g)
         }
     }
 
@@ -158,9 +197,11 @@ mod tests {
     fn append_audit_event_returns_chain_hash_from_sink() {
         let mut sink = MockSink::new();
         let mut event = make_event(0);
-        // Substrate-faithful: the sink assigns chain_hash on append
-        // (RFC-0012-v2 canonical-bytes-on-write invariant). Mirror
-        // that in the MockSink by computing it before append.
+        // Substrate-faithful: the sink stores whatever chain_hash
+        // the caller supplies; THIS façade recomputes
+        // compute_chain_hash(&event) and rejects mismatches BEFORE
+        // sink.append is called. So the caller must pre-set
+        // `event.chain_hash` to the canonical value to pass.
         event.chain_hash = compute_chain_hash(&event);
         let expected = event.chain_hash;
         let result = append_audit_event(&mut sink, event).expect("append succeeds");
@@ -168,6 +209,37 @@ mod tests {
             result.0, expected,
             "ChainHash MUST equal compute_chain_hash(event)"
         );
+    }
+
+    #[test]
+    fn append_audit_event_rejects_chain_hash_mismatch() {
+        // Substrate-faithful canonical-bytes-on-write invariant
+        // (RFC-0016-a §6.10 + TV-AUD-7-canonical-bytes): caller
+        // supplies a bogus `chain_hash`; façade recomputes
+        // BLAKE3 over canonical bytes and rejects the mismatch
+        // WITHOUT calling sink.append.
+        let mut sink = MockSink::new();
+        let mut event = make_event(0);
+        // Bogus caller-supplied chain_hash (all 0xFF).
+        event.chain_hash = [0xFFu8; 32];
+        let result = append_audit_event(&mut sink, event);
+        match result {
+            Err(AuditError::ChainHashMismatch {
+                canonical,
+                supplied,
+            }) => {
+                assert_eq!(supplied, [0xFFu8; 32]);
+                assert_ne!(canonical, supplied, "canonical must differ from supplied");
+                // Canonical is whatever BLAKE3 produces over the
+                // zero-event (Sync kind, id=0, ts=1700000000) — we
+                // just verify it differs from the bogus supplied
+                // bytes here. The exact canonical form is pinned by
+                // a separate octo-audit-core canonical-bytes test.
+            }
+            other => panic!("expected ChainHashMismatch, got {other:?}"),
+        }
+        // Sink MUST NOT have been called.
+        assert_eq!(sink.last_id().unwrap(), None, "sink must NOT be touched");
     }
 
     #[test]
@@ -183,7 +255,9 @@ mod tests {
             }
         }
         let mut sink = FailingSink;
-        let result = append_audit_event(&mut sink, make_event(0));
+        let mut event = make_event(0);
+        event.chain_hash = compute_chain_hash(&event);
+        let result = append_audit_event(&mut sink, event);
         assert!(
             matches!(result, Err(AuditError::SinkSpecific(msg)) if msg == "intentional failure")
         );

@@ -68,6 +68,24 @@ pub enum AuditError {
     /// the CLI envelope maps to `OctoCliError::PermissionDenied`.
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+
+    /// Substrate-canonical chain-hash mismatch (RFC-0016-a §6.10
+    /// canonical-bytes-on-write invariant). Returned by the Layer B
+    /// `append_audit_event` façade when the caller-supplied
+    /// `event.chain_hash` does NOT match `compute_chain_hash(&event)`
+    /// over canonical bytes. Sink is NOT called. `canonical` is the
+    /// freshly-recomputed BLAKE3-256 digest; `supplied` is the raw
+    /// 32-byte value the caller passed in. This is a SUBSTRATE
+    /// shape (not CLI-shape) so it lives at Layer A; the CLI
+    /// envelope maps it to `OctoCliError::Internal` with a redacted
+    /// reason via the CLI 13-pattern scrubber.
+    #[error("chain_hash mismatch: caller supplied does not match canonical compute_chain_hash")]
+    ChainHashMismatch {
+        /// Freshly-recomputed BLAKE3-256 digest over canonical bytes.
+        canonical: [u8; 32],
+        /// Caller-supplied 32-byte `chain_hash` field on the event.
+        supplied: [u8; 32],
+    },
 }
 
 /// Chain-integrity error variants returned by `verify_chain`.

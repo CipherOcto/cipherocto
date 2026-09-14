@@ -321,7 +321,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 - **Pure-CLI state-machine** — substrate delegates transition validation to CLI; rejected: violates substrate-faithful principle; CLI bypass becomes possible.
 - **Async transition callbacks** — `transition_agent` returns a future and signals completion via a channel; rejected: adds runtime complexity for no operator-visible benefit; substrate sync semantics match RFC-0002 §Agent State Machine intent.
 - **Composite state variants** — keep ACTIVE + BUSY in the substrate enum per RFC-0002 spec; rejected: substrate-faithful principle (the three-state form is canonical in the substrate); a future RFC-0002 amendment may restore the split.
-- **Per-(holder_did, agent_id) `parking_lot::Mutex::try_lock`** — use a non-blocking parking_lot try_lock per (holder_did, agent_id) tuple for concurrent-call rejection; rejected: substrate uses GLOBAL `AGENT_REGISTRY` `std::sync::Mutex::lock()` (canonical pattern per `agent.rs` line 44); mutex poison maps to `WalletError::Config(String)` per the existing module-wide mapping.
+- **Per-(holder_did, agent_id) `parking_lot::Mutex::try_lock`** — use a non-blocking parking_lot try_lock per (holder_did, agent_id) tuple for concurrent-call rejection; rejected: substrate uses GLOBAL `AGENT_REGISTRY` `std::sync::Mutex::lock()` (canonical pattern per `§AGENT_REGISTRY` in `agent` module); mutex poison maps to `WalletError::Config(String)` per the existing module-wide mapping.
 
 ## Implementation Phases
 
@@ -365,7 +365,7 @@ No changes to Layer A crates from RFC-0015-a alone (the `AuditEventKind::AgentTr
 
 ## Version History
 
-- v1.0 (2026-09-11) Initial draft. Sibling amendment to RFC-0015 carrying the write-path surface (`transition_agent` + paired `WalletError` variants + `TransitionReceipt` projection + std Mutex lock-mode + audit append + rollback contract). Paired with RFC-0012 acceptance.
+- 2026-09-11 — Initial draft. Sibling amendment to RFC-0015 carrying the write-path surface (`transition_agent` + paired `WalletError` variants + `TransitionReceipt` projection + std Mutex lock-mode + audit append + rollback contract). Paired with RFC-0012 acceptance.
 
 ## Related RFCs
 

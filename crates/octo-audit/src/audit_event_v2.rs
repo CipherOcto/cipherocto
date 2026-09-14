@@ -10,7 +10,7 @@
 //! is the Layer B façade write path that wraps the Layer A frozen
 //! substrate trait (`AppendOnlyAuditSink::append`). The Rust borrow
 //! checker enforces single-writer per sink instance at the type level
-//! (`&mut self`) per RFC-0012-v2 + RFC-0016-a §6.11 read-stall-while-write
+//! (`&mut self`) per RFC-0012 + RFC-0016-a §6.11 read-stall-while-write
 //! invariant — concurrent readers (`list_receipts`, `get_receipt` from
 //! RFC-0016 KEEP) block for the duration of the write.
 //!
@@ -82,7 +82,7 @@ impl fmt::Display for ChainHash {
 ///
 /// # Errors
 ///
-/// - `AuditError::ChainHashMismatch { canonical, supplied }` —
+/// - `AuditError::ChainHashMismatch { event_id }` —
 ///   caller-supplied `event.chain_hash` does not match the BLAKE3
 ///   recomputation over canonical bytes (§6.10 invariant). Sink is
 ///   NOT called.
@@ -97,7 +97,7 @@ pub fn append_audit_event(
     // canonical `chain_hash` from the supplied event and reject
     // mismatches BEFORE the sink is called. This is the substrate-
     // faithful "defense in depth" check — the sink may trust the
-    // caller's chain_hash (per RFC-0012-v2 trait contract), but
+    // caller's chain_hash (per RFC-0012 trait contract), but
     // THIS façade enforces the invariant at the write boundary so
     // chain-integrity violations are caught at the canonical
     // boundary rather than discovered later during verify_chain.

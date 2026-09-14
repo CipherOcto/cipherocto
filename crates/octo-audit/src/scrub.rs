@@ -235,16 +235,6 @@ static RE_X509_SERIAL_HEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b0x[A-Fa-f0-9]{64}\b").expect("Pattern 18 X.509 cert serial regex compiles")
 });
 
-/// Pattern 13 — `<REDACTED>` idempotency marker (RFC-0016-a §6.9
-/// pattern 13 + R21 L-2 rule).
-///
-/// The literal `<REDACTED>` marker is preserved verbatim — never
-/// double-scrubbed. Pattern implementations MUST NOT replace this
-/// marker with another `<REDACTED>` (would be a no-op but consumes
-/// output cap budget). The marker is preserved by virtue of NOT
-/// matching any other scrub pattern (no explicit preservation pass
-/// required).
-
 /// Redact a single adapter-error string using the canonical 10-pattern
 /// scrubber. Input/output caps enforced (see module docs).
 ///

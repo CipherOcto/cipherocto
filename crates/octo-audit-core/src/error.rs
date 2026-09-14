@@ -16,9 +16,8 @@ use thiserror::Error;
 pub enum AuditError {
     /// Event ID is not the successor of the last persisted event.
     ///
-    /// RFC-0016-a §6.7 paired substrate column; test vectors
-    /// `TV-AUD-sequence-gap-1` / `TV-AUD-sequence-gap-2` (caller
-    /// appends `event_id = N+2` after `event_id = N`).
+    /// RFC-0016-a §6.7 paired substrate column (caller appends
+    /// `event_id = N+2` after `event_id = N`).
     #[error("sequence gap: event_id {event_id} after {prev}")]
     SequenceGap {
         /// The non-monotonic event_id that triggered the gap.
@@ -29,8 +28,8 @@ pub enum AuditError {
 
     /// Attempted to append a duplicate event_id (idempotent re-append).
     ///
-    /// RFC-0016-a §6.7 paired substrate column; test vector
-    /// `TV-AUD-already-exists-1` (caller re-appends the same event_id).
+    /// RFC-0016-a §6.7 paired substrate column (caller re-appends
+    /// the same event_id).
     #[error("event_id {0} already persisted")]
     AlreadyExists(u64),
 

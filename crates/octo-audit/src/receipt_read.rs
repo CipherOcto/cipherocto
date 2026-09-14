@@ -137,7 +137,7 @@ const MAX_LIMIT: u32 = 10_000;
 ///
 /// Sorted by `timestamp_unix DESC` with `receipt_id ASC`
 /// tiebreaker. Returns empty `Vec` when zero matches (NOT an
-/// error). Limit clamp at 1024. Read-only — no state mutation.
+/// error). Limit clamp at 10_000 (MAX_LIMIT). Read-only — no state mutation.
 ///
 /// Honors BOTH the RFC-0016 KEEP filter fields (`router_id`,
 /// `timestamp_unix_gte/lte`, `cursor`) AND the RFC-0016-a additive

@@ -15,6 +15,10 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum AuditError {
     /// Event ID is not the successor of the last persisted event.
+    ///
+    /// RFC-0016-a §6.7 paired substrate column; test vectors
+    /// `TV-AUD-sequence-gap-1` / `TV-AUD-sequence-gap-2` (caller
+    /// appends `event_id = N+2` after `event_id = N`).
     #[error("sequence gap: event_id {event_id} after {prev}")]
     SequenceGap {
         /// The non-monotonic event_id that triggered the gap.
@@ -24,6 +28,9 @@ pub enum AuditError {
     },
 
     /// Attempted to append a duplicate event_id (idempotent re-append).
+    ///
+    /// RFC-0016-a §6.7 paired substrate column; test vector
+    /// `TV-AUD-already-exists-1` (caller re-appends the same event_id).
     #[error("event_id {0} already persisted")]
     AlreadyExists(u64),
 
@@ -73,23 +80,26 @@ pub enum AuditError {
     /// canonical-bytes-on-write invariant). Returned by the Layer B
     /// `append_audit_event` façade when the caller-supplied
     /// `event.chain_hash` does NOT match `compute_chain_hash(&event)`
-    /// over canonical bytes. Sink is NOT called. `canonical` is the
-    /// freshly-recomputed BLAKE3-256 digest; `supplied` is the raw
-    /// 32-byte value the caller passed in. This is a SUBSTRATE
-    /// shape (not CLI-shape) so it lives at Layer A; the CLI
-    /// envelope maps it to `OctoCliError::Internal` with a redacted
-    /// reason via the CLI 13-pattern scrubber.
-    #[error("chain_hash mismatch: caller supplied does not match canonical compute_chain_hash")]
+    /// over canonical bytes. Sink is NOT called.
+    ///
+    /// Carries the failing `event_id` only — the freshly-recomputed
+    /// canonical digest is recoverable via `compute_chain_hash(&event)`
+    /// and the supplied digest is the raw caller input, so the digests
+    /// themselves add no diagnostic value at the error-site (Layer A
+    /// substrate surface; the CLI envelope maps to
+    /// `OctoCliError::Internal` with a redacted reason via the CLI
+    /// 13-pattern scrubber).
+    #[error("chain_hash mismatch at event_id {event_id}")]
     ChainHashMismatch {
-        /// Freshly-recomputed BLAKE3-256 digest over canonical bytes.
-        canonical: [u8; 32],
-        /// Caller-supplied 32-byte `chain_hash` field on the event.
-        supplied: [u8; 32],
+        /// The event_id whose caller-supplied `chain_hash` failed
+        /// the canonical-bytes recompute.
+        event_id: u64,
     },
 }
 
 /// Chain-integrity error variants returned by `verify_chain`.
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AuditChainError {
     /// `event_id` is not the successor of the previous event's `event_id`.
     #[error("sequence gap at event_id {event_id} (previous was {prev})")]
@@ -109,7 +119,7 @@ pub enum AuditChainError {
 
     /// `at_millis_unix` decreased between consecutive events.
     ///
-    /// RFC-0012-v3 §S6.2 (paired substrate amendment — defect 4 oracle):
+    /// RFC-0012 §S6.2 (paired substrate amendment — defect 4 oracle):
     /// `prev` + `current` numeric timestamps are RETAINED at the source
     /// (programmatic chain-integrity verification needs them) but the
     /// `Display` impl emits `<redacted-timestamp>` only — `event_id`
@@ -129,7 +139,7 @@ pub enum AuditChainError {
 }
 
 /// Opaque unix-millis timestamp newtype whose `Display` impl emits
-/// `<redacted-timestamp>` (RFC-0012-v3 §S6.2 — paired substrate
+/// `<redacted-timestamp>` (RFC-0012 §S6.2 — paired substrate
 /// amendment; defect 4 oracle).
 ///
 /// The raw u64 is preserved at `Debug` + `source()` so programmatic
@@ -160,7 +170,7 @@ impl std::fmt::Debug for TimestampOpaque {
         // `dbg!()` / `unwrap_or_else(|e| panic!("{:?}", e))` paths
         // cannot leak via accidental Debug formatting either. Mirror of
         // `SettlementHashOpaque` symmetry-rationale comment in
-        // RFC-0014-v3 §S5.2.
+        // RFC-0014 §S5.2.
         f.write_str("TimestampOpaque(<redacted-timestamp>)")
     }
 }

@@ -142,21 +142,25 @@ static RE_OPENSSH_PRIVATE: Lazy<Regex> = Lazy::new(|| {
 /// KEY-----`, `-----BEGIN ENCRYPTED PRIVATE KEY-----`, etc.
 ///
 /// **R1 MED C23 cascade-order invariant:** the prefix `[A-Z0-9 ]+`
-/// would also match `PGP` / `OPENSSH`, so this regex PATTERN
-/// SUBSUMES the PGP and OpenSSH specific patterns at the regex-
-/// level. Correctness therefore depends on `Pattern 11` (PGP) +
+/// would also match `OPENSSH`, so this regex PATTERN SUBSUMES the
+/// OpenSSH specific pattern at the regex-level. PGP is NOT
+/// subsumed — PGP block markers terminate with `BLOCK` (`-----END
+/// PGP PRIVATE KEY BLOCK-----`) which falls outside this regex's
+/// `PRIVATE KEY-----` anchor. Correctness therefore depends on
 /// `Pattern 12` (OpenSSH) running FIRST in the `scrub_adapter_error`
-/// cascade — they replace the block with a sentinel token before
+/// cascade — it replaces the block with a sentinel token before
 /// this pattern ever sees the literal BEGIN marker. A future
-/// re-ordering (e.g. moving PEM above PGP for "consistency") would
-/// silently collapse PGP blocks to `<redacted-pem-private>` instead
-/// of `<redacted-pgp-private>` — wrong sentinel + leaky
-/// classification. Do NOT reorder Patterns 11/12/13 without
-/// first consulting the cascade-order invariant test below.
+/// re-ordering (e.g. moving PEM above OpenSSH for "consistency")
+/// would silently collapse OpenSSH blocks to `<redacted-pem-private>`
+/// instead of `<redacted-openssh-private>` — wrong sentinel + leaky
+/// classification. Do NOT reorder Patterns 12/13 without first
+/// consulting the cascade-order invariant test below.
 ///
 /// The cascade-order invariant is enforced by
-/// `scrub_pgp_not_subsumed_by_pem_cascade_order` test — that test
-/// would fail loudly if the order were ever swapped.
+/// `scrub_openssh_subsumed_by_pem_cascade_order` test — that test
+/// would fail loudly if the order were ever swapped. PGP's
+/// independence from Pattern 13 is pinned by
+/// `scrub_pem_does_not_match_pgp_trailing_block`.
 static RE_PEM_PRIVATE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)-----BEGIN(?: [A-Z0-9 ]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9 ]+)? PRIVATE KEY-----",
@@ -237,10 +241,9 @@ static RE_X509_SERIAL_HEX: Lazy<Regex> = Lazy::new(|| {
 /// The literal `<REDACTED>` marker is preserved verbatim — never
 /// double-scrubbed. Pattern implementations MUST NOT replace this
 /// marker with another `<REDACTED>` (would be a no-op but consumes
-/// output cap budget). The marker is checked AFTER all other patterns
-/// fire and is left untouched (no regex match — the marker is
-/// preserved by virtue of NOT matching any other scrub pattern).
-const REDACTED_MARKER: &str = "<REDACTED>";
+/// output cap budget). The marker is preserved by virtue of NOT
+/// matching any other scrub pattern (no explicit preservation pass
+/// required).
 
 /// Redact a single adapter-error string using the canonical 10-pattern
 /// scrubber. Input/output caps enforced (see module docs).
@@ -360,9 +363,6 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     out = RE_PEM_PRIVATE
         .replace_all(&out, "<redacted-pem-private>")
         .into_owned();
-    // Pattern 13 idempotency: no-op check — `<REDACTED>` marker is
-    // preserved by virtue of NOT matching any other scrub pattern.
-    let _ = REDACTED_MARKER;
     // Enforce output cap.
     if out.len() > MAX_OUTPUT_BYTES {
         // Truncate at a char boundary.
@@ -374,16 +374,6 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
         out.push_str(REDACTED_TOO_LONG);
     }
     out
-}
-
-/// Static-check helper: validates that a registry slice is non-empty.
-/// Adapter constructors should call this at startup to fail-loud on
-/// registry omission (better than runtime panic at first append).
-pub fn scrub_registry_validate(adapter_types: &[&str]) {
-    assert!(
-        !adapter_types.is_empty(),
-        "empty ADAPTER_TYPES registry — register adapter type names (e.g. [\"StoolapAuditSink\"]) or call scrub_adapter_error instead"
-    );
 }
 
 #[cfg(test)]
@@ -533,34 +523,50 @@ mod tests {
     }
 
     // R1 MED C23 cascade-order invariant. Pattern 13 PEM regex
-    // SUBSUMES the PGP / OpenSSH specific patterns at the regex
-    // level (the `[A-Z0-9 ]+` prefix would match PGP / OPENSSH).
-    // Correctness depends on Pattern 11 (PGP) + Pattern 12 (OpenSSH)
-    // running FIRST in the cascade. This test fails LOUDLY if
-    // anyone reorders Patterns 11/12/13 in `scrub_adapter_error`.
+    // SUBSUMES the OpenSSH specific pattern (Pattern 12) at the
+    // regex level — the `[A-Z0-9 ]+` prefix would match `OPENSSH`,
+    // so Pattern 13's `-----BEGIN(?: [A-Z0-9 ]+)? PRIVATE KEY-----`
+    // anchor matches the OpenSSH BEGIN/END markers directly.
+    // Correctness depends on Pattern 12 running FIRST in the cascade.
+    // This test fails LOUDLY if anyone reorders Patterns 12/13 in
+    // `scrub_adapter_error`.
     #[test]
-    fn scrub_pgp_not_subsumed_by_pem_cascade_order() {
-        let pgp_block =
-            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQHYABEH\n-----END PGP PRIVATE KEY BLOCK-----";
-        let out = scrub_adapter_error_with(pgp_block, &[]);
+    fn scrub_openssh_subsumed_by_pem_cascade_order() {
+        let openssh_block = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----";
+        let out = scrub_adapter_error_with(openssh_block, &[]);
         assert!(
-            out.contains("<redacted-pgp-private>"),
-            "PGP block must emit <redacted-pgp-private>, got: {out}",
+            out.contains("<redacted-openssh-private>"),
+            "OpenSSH block must emit <redacted-openssh-private>, got: {out}",
         );
         assert!(
             !out.contains("<redacted-pem-private>"),
-            "PEM cascade order violated: PGP block was subsumed by Pattern 13, got: {out}",
+            "PEM cascade order violated: OpenSSH block was subsumed by Pattern 13, got: {out}",
         );
+    }
 
-        let openssh_block = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----";
-        let out2 = scrub_adapter_error_with(openssh_block, &[]);
+    // R2 MED Correctness M1 — PGP is NOT actually subsumed by Pattern
+    // 13 at the regex level. PGP blocks terminate with `-----END PGP
+    // PRIVATE KEY BLOCK-----` — the trailing `BLOCK` word falls outside
+    // Pattern 13's `PRIVATE KEY-----` anchor. This test pins the
+    // independence so any future Pattern 13 anchor tightening
+    // (e.g. dropping the `(?: [A-Z0-9 ]+)?` optional prefix) is
+    // caught immediately.
+    #[test]
+    fn scrub_pem_does_not_match_pgp_trailing_block() {
+        let pgp_block =
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQHYABEH\n-----END PGP PRIVATE KEY BLOCK-----";
+        // Pattern 13 regex MUST NOT match the PGP block alone —
+        // proves PGP blocks are independently handled by Pattern 11
+        // and are NOT silently collapsed into `<redacted-pem-private>`.
         assert!(
-            out2.contains("<redacted-openssh-private>"),
-            "OpenSSH block must emit <redacted-openssh-private>, got: {out2}",
+            !RE_PEM_PRIVATE.is_match(pgp_block),
+            "Pattern 13 must NOT match PGP block — trailing `BLOCK` is outside the `PRIVATE KEY-----` anchor; got match for input: {pgp_block}",
         );
+        // End-to-end check: full cascade still emits PGP sentinel.
+        let out = scrub_adapter_error_with(pgp_block, &[]);
         assert!(
-            !out2.contains("<redacted-pem-private>"),
-            "PEM cascade order violated: OpenSSH block was subsumed by Pattern 13, got: {out2}",
+            out.contains("<redacted-pgp-private>"),
+            "PGP cascade must emit <redacted-pgp-private>, got: {out}",
         );
     }
 

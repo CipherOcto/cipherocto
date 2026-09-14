@@ -104,8 +104,7 @@ pub fn append_audit_event(
     let canonical = compute_chain_hash(&event);
     if event.chain_hash != canonical {
         return Err(AuditError::ChainHashMismatch {
-            canonical,
-            supplied: event.chain_hash,
+            event_id: event.event_id,
         });
     }
     sink.append(&event)?;
@@ -224,17 +223,13 @@ mod tests {
         event.chain_hash = [0xFFu8; 32];
         let result = append_audit_event(&mut sink, event);
         match result {
-            Err(AuditError::ChainHashMismatch {
-                canonical,
-                supplied,
-            }) => {
-                assert_eq!(supplied, [0xFFu8; 32]);
-                assert_ne!(canonical, supplied, "canonical must differ from supplied");
-                // Canonical is whatever BLAKE3 produces over the
-                // zero-event (Sync kind, id=0, ts=1700000000) — we
-                // just verify it differs from the bogus supplied
-                // bytes here. The exact canonical form is pinned by
-                // a separate octo-audit-core canonical-bytes test.
+            Err(AuditError::ChainHashMismatch { event_id }) => {
+                // Bogus caller-supplied chain_hash must yield a
+                // ChainHashMismatch at the exact failing event_id,
+                // and the sink MUST NOT have been touched. The exact
+                // canonical digest form is pinned by a separate
+                // octo-audit-core canonical-bytes test.
+                assert_eq!(event_id, 0, "failing event_id must match make_event(0)");
             }
             other => panic!("expected ChainHashMismatch, got {other:?}"),
         }

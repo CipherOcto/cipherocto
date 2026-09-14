@@ -9,7 +9,7 @@
 //! Filter parsing mirrors `list_owned_agents`: server-side filter
 //! plus deterministic sorting (by `timestamp_unix DESC`, `receipt_id
 //! ASC` tiebreaker) plus clamp at the substrate hard ceiling of
-//! 1024 entries.
+//! 10_000 entries.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

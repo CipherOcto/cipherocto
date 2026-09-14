@@ -44,7 +44,7 @@ pub mod storage;
 // 13 patterns additive (Patterns 11/12/13 = PGP / OpenSSH / PEM
 // private-key blocks).
 pub mod scrub;
-pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_validate};
+pub use scrub::{scrub_adapter_error, scrub_adapter_error_with};
 
 // RFC-0016 §6.2 read-path surface (list_receipts + get_receipt +
 // audit_home + AuditFilter). Phase 1 process-global registry; Stoolap

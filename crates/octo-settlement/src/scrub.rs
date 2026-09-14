@@ -131,14 +131,6 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     out
 }
 
-/// Static-check helper: validates that a registry slice is non-empty.
-pub fn scrub_registry_validate(adapter_types: &[&str]) {
-    assert!(
-        !adapter_types.is_empty(),
-        "empty ADAPTER_TYPES registry — register adapter type names (e.g. [\"StoolapStore\"]) or call scrub_adapter_error instead"
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

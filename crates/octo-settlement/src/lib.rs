@@ -37,4 +37,4 @@ pub use octo_settlement_core::CHAIN_DOMAIN_SEPARATOR;
 // R34.5 trade-off (cross-RFC shared-utility extraction deferred to
 // v2.1+ at §FW6).
 pub mod scrub;
-pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_validate};
+pub use scrub::{scrub_adapter_error, scrub_adapter_error_with};

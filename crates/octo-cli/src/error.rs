@@ -947,15 +947,34 @@ mod tests {
 
     #[test]
     fn cap_substrate_payload_respects_utf8_boundary() {
-        // 4 KiB + a multi-byte UTF-8 codepoint straddling the cap.
-        // The cap search MUST back up to the prior char boundary so
-        // we never slice a codepoint.
-        let mut s = "z".repeat(SUBSTRATE_PAYLOAD_CAP - 2);
-        s.push('ã'); // 2-byte UTF-8 sequence
+        // 4 KiB - 1 ASCII bytes + a 2-byte UTF-8 codepoint = 4 KiB + 1
+        // bytes total. The cap cuts between the last ASCII byte and
+        // the first byte of the multi-byte codepoint — without the
+        // boundary-safe backtracking loop the output would slice the
+        // codepoint mid-sequence and produce invalid UTF-8.
+        let mut s = "z".repeat(SUBSTRATE_PAYLOAD_CAP - 1);
+        s.push('ã'); // 2-byte UTF-8 sequence straddling the cap
         let out = cap_substrate_payload(&s);
+        // Output MUST be valid UTF-8 (no codepoint sliced).
         assert!(
             std::str::from_utf8(out.as_bytes()).is_ok(),
             "cap output MUST be valid UTF-8",
+        );
+        // Truncation marker MUST be present (input was 1 byte over cap).
+        assert!(
+            out.ends_with(" [truncated]"),
+            "cap over-cap output MUST carry the [truncated] marker",
+        );
+        // Preserved prefix MUST hold exactly SUBSTRATE_PAYLOAD_CAP - 1
+        // ASCII chars (the multi-byte codepoint was dropped, not split).
+        let prefix_len = out
+            .strip_suffix(" [truncated]")
+            .expect("marker present")
+            .len();
+        assert_eq!(
+            prefix_len,
+            SUBSTRATE_PAYLOAD_CAP - 1,
+            "preserved prefix MUST be SUBSTRATE_PAYLOAD_CAP - 1 ASCII bytes",
         );
     }
     #[test]

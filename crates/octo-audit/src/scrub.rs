@@ -134,11 +134,84 @@ static RE_OPENSSH_PRIVATE: Lazy<Regex> = Lazy::new(|| {
 /// Matches any `-----BEGIN ... PRIVATE KEY-----` armored block
 /// (RSA, EC, DSA, generic, encrypted). Catches variants not covered
 /// by PGP / OpenSSH specific markers (Patterns 11 + 12 above).
+///
+/// The type prefix `[A-Z0-9 ]+` is OPTIONAL via the non-capturing
+/// `(?:...)?` group — this catches the generic PKCS#8 form
+/// `-----BEGIN PRIVATE KEY-----` (no type prefix) AND the typed
+/// forms `-----BEGIN RSA PRIVATE KEY-----`, `-----BEGIN EC PRIVATE
+/// KEY-----`, `-----BEGIN ENCRYPTED PRIVATE KEY-----`, etc.
 static RE_PEM_PRIVATE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)-----BEGIN [A-Z0-9 ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]+ PRIVATE KEY-----",
+        r"(?i)-----BEGIN(?: [A-Z0-9 ]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9 ]+)? PRIVATE KEY-----",
     )
     .expect("Pattern 13 PEM private regex compiles")
+});
+
+/// Pattern 14 — capability-secret base64 (RFC-0016-a §6.9 pattern 2).
+///
+/// Matches padded (`=` / `==` suffix) OR unpadded-with-`+`/`/`
+/// base64 strings in the 43+ body range. The disambiguation
+/// requirements (43-86 body + `={1,2}` padding OR `+/` followed
+/// by 42+ chars) prevent:
+///   - pure-hex digests (no `=` / `+` / `/`) — falls through to
+///     Pattern 1 (hex ≥32);
+///   - short paths / URL fragments containing `/` (would otherwise
+///     match the `[+/]` alt 2 if no minimum length enforced).
+static RE_CAPABILITY_SECRET_B64: Lazy<Regex> = Lazy::new(|| {
+    // No trailing `\b`: the `={1,2}` alt ends with a non-word
+    // char (post-`=`) which would fail `\b` against end-of-string
+    // (also non-word). The leading `\b` is sufficient — the body
+    // alphabet (`[A-Za-z0-9+/]`) excludes whitespace, punctuation,
+    // and `=` so the match naturally terminates at any of those
+    // chars or end-of-input.
+    Regex::new(r"\b(?:[A-Za-z0-9+/]{43,86}={1,2}|[A-Za-z0-9+/]*[+/][A-Za-z0-9+/]{42,85})")
+        .expect("Pattern 14 capability-secret base64 regex compiles")
+});
+
+/// Pattern 15 — BIP39 mnemonic phrase (RFC-0016-a §6.9 pattern 5).
+///
+/// Matches 12 / 15 / 18 / 21 / 24-word BIP39 mnemonic sequences.
+/// Each word is 3-8 lowercase ASCII letters; words separated by
+/// single space. Anchored on word boundaries so it does not match
+/// ordinary English prose (the 12+ length makes false-positive
+/// probability negligible).
+static RE_BIP39_MNEMONIC: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b(?:[a-z]{3,8})(?: [a-z]{3,8}){11,23}\b")
+        .expect("Pattern 15 BIP39 mnemonic regex compiles")
+});
+
+/// Pattern 16 — JWT three-segment form (RFC-0016-a §6.9 pattern 6).
+///
+/// Matches `header.payload.signature` where each segment is base64url
+/// (URL-safe alphabet `[A-Za-z0-9_-]`). The two literal `.` separators
+/// are required. Does NOT match JWT headers alone or signature alone
+/// (would catch base64 in normal text).
+static RE_JWT_THREE_SEGMENT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+        .expect("Pattern 16 JWT regex compiles")
+});
+
+/// Pattern 17 — WIF base58 private-key form (RFC-0016-a §6.9
+/// pattern 7).
+///
+/// Matches 50-52 char base58 strings (Bitcoin WIF: uncompressed
+/// 51 chars, compressed 52 chars). Base58 alphabet
+/// `[A-HJ-NP-Za-km-z1-9]` (excludes `0`, `O`, `I`, `l`).
+/// Word-boundary anchored; length + base58-alphabet checks
+/// disambiguate from general base64 / hex strings (Pattern 14
+/// + Pattern 1 respectively).
+static RE_WIF_BASE58: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[1-9A-HJ-NP-Za-km-z]{50,52}\b").expect("Pattern 17 WIF regex compiles")
+});
+
+/// Pattern 18 — X.509 cert serial `0x`-prefixed hex (RFC-0016-a §6.9
+/// pattern 12).
+///
+/// Matches `0x` followed by exactly 64 hex chars (32-byte cert serial
+/// per RFC-5280 §5.1.2.3). Distinct from Pattern 1 (which catches
+/// raw ≥32 hex without `0x` prefix).
+static RE_X509_SERIAL_HEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b0x[A-Fa-f0-9]{64}\b").expect("Pattern 18 X.509 cert serial regex compiles")
 });
 
 /// Pattern 13 — `<REDACTED>` idempotency marker (RFC-0016-a §6.9
@@ -206,6 +279,39 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
             out = out.replace(at, "<redacted-adapter>");
         }
     }
+    // Patterns 14-18 (RFC-0016-a §6.9 paired-acceptance crypto /
+    // secret-form patterns) MUST run BEFORE Pattern 1 (hex ≥32) and
+    // Pattern 14 (capability-secret-b64). X.509 cert serials and
+    // JWT / WIF strings overlap with Pattern 1 (hex body) and
+    // Pattern 14 (base64 secret) respectively — running first lets
+    // each pattern catch its specific shape before the more generic
+    // patterns fire and consume the substrings.
+    //
+    // Order rationale (RFC-0016-a §6.9 paired-acceptance):
+    //   - Pattern 18 (X.509 `0x` + 64 hex) before Pattern 1 (≥32 hex)
+    //     so the `0x` prefix narrows the match to cert serials.
+    //   - Pattern 16 (JWT three-segment) before Pattern 14 (capability
+    //     base64) so the three-segment anchor (`header.payload.sig`)
+    //     catches JWTs first; Pattern 14 only sees free-standing
+    //     base64 secrets after.
+    //   - Pattern 17 (WIF base58) before Pattern 14 for the same
+    //     reason — base58 is a subset alphabet that Pattern 14
+    //     would otherwise catch as a "secret".
+    out = RE_X509_SERIAL_HEX
+        .replace_all(&out, "<redacted-x509-serial>")
+        .into_owned();
+    out = RE_JWT_THREE_SEGMENT
+        .replace_all(&out, "<redacted-jwt>")
+        .into_owned();
+    out = RE_WIF_BASE58
+        .replace_all(&out, "<redacted-wif>")
+        .into_owned();
+    out = RE_CAPABILITY_SECRET_B64
+        .replace_all(&out, "<redacted-secret-b64>")
+        .into_owned();
+    out = RE_BIP39_MNEMONIC
+        .replace_all(&out, "<redacted-mnemonic>")
+        .into_owned();
     // Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e — order does not matter
     // because each pattern replaces with a unique sentinel; we apply
     // them in canonical order for determinism.
@@ -387,5 +493,71 @@ mod tests {
         // precondition (avoids boilerplate at adapter init).
         let out = scrub_adapter_error_with("", &[]);
         assert_eq!(out, "");
+    }
+
+    #[test]
+    fn scrub_pem_generic_pkcs8() {
+        // Pattern 13 must catch the type-less PKCS#8 form
+        // `-----BEGIN PRIVATE KEY-----` (no `RSA` / `EC` /
+        // `ENCRYPTED` prefix). R1 reviewer (correctness CRITICAL #2).
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAA==\n-----END PRIVATE KEY-----";
+        let out = scrub_adapter_error_with(pem, &[]);
+        assert!(out.contains("<redacted-pem-private>"));
+        assert!(!out.contains("MIIEvQIBADAN"));
+    }
+
+    #[test]
+    fn scrub_pem_rsa_typed() {
+        let pem =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        let out = scrub_adapter_error_with(pem, &[]);
+        assert!(out.contains("<redacted-pem-private>"));
+        assert!(!out.contains("MIIEowIBAAK"));
+    }
+
+    #[test]
+    fn scrub_capability_secret_b64_padded() {
+        // 64-byte capability-secret base64 = 88 chars + `=` padding.
+        let b64 = "aGVsbG93b3JsZHNlY3JldGtleWZvcm9jdG9jdG9jdG9jdG9jdG9jdG9jdG9jdG9jMDA=";
+        let out = scrub_adapter_error_with(b64, &[]);
+        assert!(out.contains("<redacted-secret-b64>"));
+        assert!(!out.contains("aGVsbG93"));
+    }
+
+    #[test]
+    fn scrub_bip39_mnemonic_12_words() {
+        // 12 lowercase ASCII words, each 3-8 letters, separated by
+        // single spaces. R1 reviewer (correctness CRITICAL #3).
+        let mnemonic =
+            "abandon ability able about above absent absorb abstract absurd abuse access accident";
+        let out = scrub_adapter_error_with(mnemonic, &[]);
+        assert!(out.contains("<redacted-mnemonic>"));
+        assert!(!out.contains("abandon ability"));
+    }
+
+    #[test]
+    fn scrub_jwt_three_segment() {
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let out = scrub_adapter_error_with(jwt, &[]);
+        assert!(out.contains("<redacted-jwt>"));
+        assert!(!out.contains("eyJhbGciOi"));
+    }
+
+    #[test]
+    fn scrub_wif_base58() {
+        // 51-char WIF (Bitcoin uncompressed: `5` prefix + 51 chars total).
+        let wif = "5Kb8kLf9zgWQnogidDA76MzPL6TsZZY36hWXMssSzNydYXYB9iW1";
+        let out = scrub_adapter_error_with(wif, &[]);
+        assert!(out.contains("<redacted-wif>"));
+        assert!(!out.contains("5Kb8kLf9"));
+    }
+
+    #[test]
+    fn scrub_x509_cert_serial_hex() {
+        // `0x` prefix + 64 hex chars (32-byte cert serial).
+        let serial = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let out = scrub_adapter_error_with(serial, &[]);
+        assert!(out.contains("<redacted-x509-serial>"));
+        assert!(!out.contains("0123456789abcdef"));
     }
 }

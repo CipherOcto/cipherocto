@@ -21,6 +21,8 @@ use octo_settlement::Receipt;
 
 use octo_audit_core::AuditError;
 
+use crate::StatusRef;
+
 /// Process-global in-memory receipt registry (Phase 1).
 ///
 /// Indexed by `receipt_id`. The static is intentionally
@@ -99,9 +101,11 @@ pub struct AuditFilter {
     /// RFC-0016-a §6.6 additive multi-valued status filter
     /// (UNION semantics): receipt is included if its `status` is
     /// `==` ANY element of this `Vec`. Empty `Vec` = no status
-    /// filter (all statuses match).
+    /// filter (all statuses match). `StatusRef` is the canonical
+    /// alias for `octo_settlement::ReceiptStatus` (RFC-0014-v2
+    /// substrate re-export).
     #[serde(default)]
-    pub status: Vec<octo_settlement::ReceiptStatus>,
+    pub status: Vec<StatusRef>,
     /// RFC-0016-a §6.6 additive model-name filter (exact match).
     #[serde(default)]
     pub model: Option<String>,
@@ -110,12 +114,22 @@ pub struct AuditFilter {
     #[serde(default)]
     pub capability_root: Option<[u8; 32]>,
     /// Maximum rows returned (`None` = no cap; substrate applies
-    /// a hard ceiling of 1024). RFC-0016 KEEP.
-    pub limit: Option<usize>,
+    /// a hard ceiling of `MAX_LIMIT = 10000` per TV-AUD-4c).
+    /// `u32` (not `usize`) per RFC-0016-a §6.6 additive filter
+    /// spec: portable across 32-bit and 64-bit platforms; bounded
+    /// to a sane upper limit; serde + JSON stable wire form.
+    pub limit: Option<u32>,
     /// Opaque cursor (forward-compat for Phase 2 multi-page
     /// iteration). RFC-0016 KEEP.
     pub cursor: Option<String>,
 }
+
+/// Maximum `AuditFilter::limit` value accepted by
+/// `list_receipts` (RFC-0016-a §6.6 + TV-AUD-4c substrate contract).
+/// Limits above this ceiling are rejected with
+/// `AuditError::InvalidFilter` so the operator gets an explicit
+/// substrate-shape error rather than a silently-clamped result.
+const MAX_LIMIT: u32 = 10_000;
 
 /// List receipt IDs (`Vec<u64>` of `receipt_id` values) matching
 /// `filter` (RFC-0016 §6.2.1 + RFC-0016-a §6.6 additive filter
@@ -133,12 +147,25 @@ pub struct AuditFilter {
 /// for the upper bound — i.e. the tightest range of either filter
 /// form is honored.
 pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
-    let limit = filter.limit.unwrap_or(1024).min(1024);
-
-    // RFC-0016-a §6.6 additive field combinations: `since_unix` is
-    // an alias for `timestamp_unix_gte` (effective lower bound =
-    // tightest of the two); `until_unix` aliases `timestamp_unix_lte`
-    // (effective upper bound = tightest of the two).
+    // RFC-0016-a §6.6 + TV-AUD-4: substrate-side validation.
+    // `limit = 0` is meaningless (would return zero rows always);
+    // reject explicitly. `limit > MAX_LIMIT` is rejected per
+    // TV-AUD-4c — operators get an explicit substrate-shape error
+    // rather than a silently-clamped result. `since_unix > until_unix`
+    // is rejected so the empty-result set is never silently returned
+    // for an inverted range.
+    if let Some(n) = filter.limit {
+        if n == 0 {
+            return Err(AuditError::InvalidFilter(
+                "limit must be >= 1 (TV-AUD-4)".into(),
+            ));
+        }
+        if n > MAX_LIMIT {
+            return Err(AuditError::InvalidFilter(format!(
+                "limit must be <= {MAX_LIMIT} (TV-AUD-4c)"
+            )));
+        }
+    }
     let effective_gte = match (filter.timestamp_unix_gte, filter.since_unix) {
         (Some(a), Some(b)) => Some(a.max(b)),
         (Some(a), None) => Some(a),
@@ -151,6 +178,15 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
         (None, Some(b)) => Some(b),
         (None, None) => None,
     };
+    if let (Some(gte), Some(lte)) = (effective_gte, effective_lte) {
+        if gte > lte {
+            return Err(AuditError::InvalidFilter(format!(
+                "since_unix ({gte}) > until_unix ({lte}) (TV-AUD-4b)"
+            )));
+        }
+    }
+
+    let limit = filter.limit.unwrap_or(MAX_LIMIT);
 
     let registry = registry()
         .lock()
@@ -200,26 +236,31 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
             .cmp(&ra.timestamp_unix)
             .then_with(|| a.cmp(b))
     });
-    ids.truncate(limit);
+    ids.truncate(limit as usize);
     Ok(ids)
 }
 
-/// Point-lookup of a `Receipt` by canonical `receipt_id`
-/// (RFC-0016 §6.2.2).
+/// Point-lookup of a `Receipt` by canonical `ReceiptId`
+/// (RFC-0016 §6.2.2 + RFC-0016-a §6.4 `ReceiptId(pub u64)` newtype).
 ///
-/// Returns the canonical `Receipt` on hit. The substrate does not
-/// leak existence — misses surface `AuditError::SinkSpecific` per
-/// the canonical 3-variant form (no parallel abstraction per
-/// [[cipherocto-design-principles]]).
-pub fn get_receipt(id: &u64) -> Result<Receipt, AuditError> {
+/// Returns the canonical `Receipt` on hit. Misses surface
+/// `AuditError::ReceiptNotFound(decimal)` — the canonical CLI-shape
+/// variant per RFC-0016-a §6.7. The miss carries the requested
+/// `receipt_id` in canonical decimal form (matches the CLI
+/// `ReceiptNotFound(String)` envelope payload and the TV-AUD-2
+/// substrate-faithful test vector).
+///
+/// The mutex-poison error stays `SinkSpecific` (preserves the
+/// pre-RFC-0016-a 3-variant form for non-miss internal failures).
+pub fn get_receipt(id: &octo_settlement::ReceiptId) -> Result<Receipt, AuditError> {
     let registry = registry()
         .lock()
         .map_err(|_| AuditError::SinkSpecific("receipt registry mutex poisoned".into()))?;
 
     registry
-        .get(id)
+        .get(&id.0)
         .cloned()
-        .ok_or_else(|| AuditError::SinkSpecific(format!("receipt_id {id} not found")))
+        .ok_or_else(|| AuditError::ReceiptNotFound(id.0.to_string()))
 }
 
 /// Resolve the canonical audit home directory
@@ -367,28 +408,71 @@ mod tests {
         reg.insert(42, sample_receipt(42, 1_700_000_042));
         drop(reg);
 
-        let r = get_receipt(&42u64).unwrap();
+        let r = get_receipt(&octo_settlement::ReceiptId::new(42)).unwrap();
         assert_eq!(r.receipt_id, 42);
         assert_eq!(r.router_id, "did:octo:router-a");
     }
 
     #[test]
-    fn get_receipt_miss_returns_sink_specific() {
+    fn get_receipt_miss_returns_receipt_not_found() {
         let _guard = TEST_LOCK.lock().unwrap();
         let mut reg = registry().lock().unwrap();
         reg.clear();
         drop(reg);
 
-        let err = get_receipt(&999u64).unwrap_err();
+        let err = get_receipt(&octo_settlement::ReceiptId::new(999)).unwrap_err();
         match err {
-            AuditError::SinkSpecific(s) => {
-                assert!(
-                    s.contains("999"),
-                    "error carries the missed receipt_id: {s}"
+            AuditError::ReceiptNotFound(s) => {
+                assert_eq!(
+                    s, "999",
+                    "ReceiptNotFound carries canonical decimal receipt_id"
                 );
             }
-            other => panic!("expected SinkSpecific, got {other:?}"),
+            other => panic!("expected ReceiptNotFound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn list_receipts_rejects_zero_limit() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let filter = AuditFilter {
+            limit: Some(0),
+            ..Default::default()
+        };
+        let err = list_receipts(&filter).unwrap_err();
+        assert!(
+            matches!(err, AuditError::InvalidFilter(_)),
+            "limit=0 must surface InvalidFilter (TV-AUD-4), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn list_receipts_rejects_over_limit() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let filter = AuditFilter {
+            limit: Some(10_001),
+            ..Default::default()
+        };
+        let err = list_receipts(&filter).unwrap_err();
+        assert!(
+            matches!(err, AuditError::InvalidFilter(_)),
+            "limit>10000 must surface InvalidFilter (TV-AUD-4c), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn list_receipts_rejects_inverted_timestamp_range() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let filter = AuditFilter {
+            since_unix: Some(2_000),
+            until_unix: Some(1_000),
+            ..Default::default()
+        };
+        let err = list_receipts(&filter).unwrap_err();
+        assert!(
+            matches!(err, AuditError::InvalidFilter(_)),
+            "since>until must surface InvalidFilter (TV-AUD-4b), got {err:?}"
+        );
     }
 
     #[test]

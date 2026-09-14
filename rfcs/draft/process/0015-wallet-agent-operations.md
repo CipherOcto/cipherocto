@@ -4,6 +4,8 @@
 
 Draft v2 (2026-09-11)
 
+> **KEEP-only rewrite.** This draft carries ONLY substrate-faithful additive public surface on `octo-wallet` (Layer B years-stable). Write-path surface (`transition_agent` + paired write-path `WalletError` variants + audit append of `AuditEventKind::AgentTransition` rows + `parking_lot` dep for per-agent lock-mode) DEFERRED to RFC-0015-a. RFC-0015-a acceptance requires paired acceptance of future Layer A substrate amendments adding `AuditEventKind` extensions (per RFC-0012 (Extension-over-enumeration pattern); typed-discriminator namespace, NOT central-enum variant additions).
+
 ## Authors
 
 - Authored by `@cipherocto` per RFC-0011-c agent lifecycle amendment + RFC-0002 §Agent State Machine substrate authority.
@@ -16,7 +18,7 @@ Draft v2 (2026-09-11)
 
 This RFC defines the canonical agent operations substrate as **three additive public functions + four additive error variants** on the existing `octo-wallet` (Layer B years-stable per CLAUDE.md §Rust crate-level stability):
 
-1. **`pub fn list_owned_agents(caller_did: &Did, filter: &AgentFilter) -> Result<Vec<AgentSummary>, WalletError>`** — NEW ADDITIVE read function per §6.2.1. The `AgentFilter` / `AgentSummary` / `AgentState` types are substrate-faithful to `crates/octo-wallet/src/agent.rs` per `AgentFilter` / `AgentSummary` / `AgentState`. Server-side filter on `holder_did`, `state`, `limit`, `cursor`; returns `Vec<AgentSummary>` per-call (cursor is forward-compat opaque token).
+1. **`pub fn list_owned_agents(caller_did: &Did, filter: &AgentFilter) -> Result<Vec<AgentSummary>, WalletError>`** — NEW ADDITIVE read function per §6.2.1. The `AgentFilter` / `AgentSummary` / `AgentState` types are substrate-faithful to `crates/octo-wallet/src/agent.rs` per `AgentFilter` / `AgentSummary` / `AgentState`. Server-side filter on `holder_did`, `state`, `limit`; returns `Vec<AgentSummary>` per-call.
 2. **`pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>`** — NEW ADDITIVE point-lookup function per §6.2.6 (lookup_agent). Returns the canonical `AgentManifest` on hit; returns `WalletError::AgentNotFound(uuid)` on miss.
 3. **`pub fn validate_reason(reason: &str) -> Result<(), WalletError>`** — NEW ADDITIVE primitive string-level control-char filter per §6.2.5 (validate_reason). Pure function on UTF-8 input; no substrate amendment required at the primitive level (the variant it returns is the only substrate addition).
 4. **`WalletError::AgentNotFound(Uuid)`** — NEW ADDITIVE enum variant per §6.2.3. Mirrors the existing `WalletError::AgentAlreadyExists(Uuid)` shape; provides a KEEP source for the new `lookup_agent` function.
@@ -26,7 +28,7 @@ This RFC defines the canonical agent operations substrate as **three additive pu
 
 The write-path surface (`transition_agent` + paired `WalletError::AlreadyInTransition` + `WalletError::InvalidStateTransition` + `WalletError::AuditUnavailable`) is **DEFERRED** (see §6.7).
 
-The substrate is intentionally **read-only on RFC-0015 v2 acceptance** — `register_agent` already exists at `cli_fns.rs`. No new persistence, no new envelopes. Domain consumers are CLI missions `0011-c-agent-{list,attach}-subcommand` (KEEP at v2 acceptance) and `0011-c-agent-{run,destroy}-subcommand` (DEFERRED to RFC-0015-a acceptance). RFC-0002 §Agent State Machine is the canonical state authority.
+The substrate is intentionally **read-only at RFC-0015 KEEP** — `register_agent` already exists at `cli_fns.rs`. No new persistence, no new envelopes. Domain consumers are CLI missions `0011-c-agent-{list,attach}-subcommand` (KEEP at acceptance) and `0011-c-agent-{run,destroy}-subcommand` (DEFERRED to RFC-0015-a acceptance). RFC-0002 §Agent State Machine is the canonical state authority.
 
 **Substrate-faithful note (mandatory):** RFC-0002 §Agent State Machine spec diagram declares a five-state model (`REGISTERED → ACTIVE → BUSY → ACTIVE → TERMINATED`). The substrate enum (`AgentState` in `octo-wallet`) currently implements a **three-state model** (`Registered`, `Running`, `Terminated`). Per the substrate-faithful principle (per RFC-0012/0013/0014 acceptance pattern), this RFC treats the substrate as canonical — the `Running` variant collapses RFC-0002's `ACTIVE` and `BUSY` working state into a single observable runtime state. A future amendment (RFC-0002-v2) may split the substrate enum back to match the spec diagram; until then, CLI surfaces `Running` as both ACTIVE and BUSY (per RFC-0011-c `AgentState` rendering rule).
 
@@ -45,10 +47,10 @@ The substrate is intentionally **read-only on RFC-0015 v2 acceptance** — `regi
 
 - **RFC-0015-a** — `octo-wallet` Agent Write-Path Amendment (per §6.7).
 
-**Substrate amendment dependencies (informational — apply to RFC-0015-a, NOT to this RFC-0015 v2):**
+**Substrate amendment dependencies (informational — apply to RFC-0015-a, NOT to this RFC-0015):**
 
 - **AuditEventKind `AgentTransition` extension** — per §6.7 (canonical mechanism: typed-discriminator namespace, NOT a central-enum variant). **(NOT YET IMPLEMENTED — future substrate amendment paired with RFC-0015-a acceptance.)**
-- **RFC-0002-v2** — `AgentState` 5-state ACTIVE/BUSY split (companion amendment per §Summary "Substrate-faithful note"). **(DRAFT — informational; not on the RFC-0015 v2 critical path.)**
+- **RFC-0002-v2** — `AgentState` 5-state ACTIVE/BUSY split (companion amendment per §Summary "Substrate-faithful note"). **(DRAFT — informational; not on the RFC-0015 critical path.)**
 
 ## Design Goals
 
@@ -56,25 +58,25 @@ The substrate is intentionally **read-only on RFC-0015 v2 acceptance** — `regi
 2. **Substrate-faithful** — function names, parameter shapes, return types match the canonical CLI consumer contracts in RFC-0011-c §9.3 (no parallel abstractions per [[cipherocto-design-principles]]).
 3. **Layer B stability** — public functions are additive within the years-stable identity substrate; no PQC-migration impact per CLAUDE.md §Architectural Principles.
 4. **No new persistence** — `list_owned_agents` + `lookup_agent` + `validate_reason` operate on the existing `AgentManifest` / `AgentSummary` registry stored in `octo-wallet`; no new IO surface, no new envelopes.
-5. **Read returns ordered results** — `list_owned_agents` returns summaries sorted by `registered_at_unix DESC` for deterministic CLI + scripting output; `cursor` token is forward-compat for Phase 2 multi-page iteration.
+5. **Read returns ordered results** — `list_owned_agents` returns summaries sorted by `registered_at_unix DESC` for deterministic CLI + scripting output.
 6. **Caller-attestation pattern** — read functions take `caller_did: &Did` parameter; substrate enforces `caller_did == filter.holder_did` to close the multi-DID enumeration attack surface (HIGH sec fix).
 7. **Pairing discipline** — write-path surface lives in RFC-0015-a; KEEP-only RFC-0015 describes the read path; cross-RFC forward-pointers are bidirectional.
 
 ## Motivation
 
-The 6 RFC-0011-c CLI missions (`0011-c-agent-create`, `...-run`, `...-list`, `...-destroy`, `...-attach`) reference substrate functions on `octo-wallet`. RFC-0015 v2 closes the **read-path** gap:
+The 6 RFC-0011-c CLI missions (`0011-c-agent-create`, `...-run`, `...-list`, `...-destroy`, `...-attach`) reference substrate functions on `octo-wallet`. RFC-0015 closes the **read-path** gap:
 
-- `octo_wallet::list_owned_agents` — **MISSING** before RFC-0015 v2; CLI consumer `0011-c-agent-list-subcommand` Sub-step 3 cannot dispatch.
-- `octo_wallet::lookup_agent` — **MISSING** before RFC-0015 v2; CLI consumer `0011-c-agent-show-subcommand` Sub-step 3 cannot dispatch.
-- `octo_wallet::validate_reason` — **MISSING** before RFC-0015 v2; control-char filter primitive required at the substrate boundary for any future caller (CLI, wallet-on-host daemon, programmatic API).
+- `octo_wallet::list_owned_agents` — **MISSING** before RFC-0015; CLI consumer `0011-c-agent-list-subcommand` Sub-step 3 cannot dispatch.
+- `octo_wallet::lookup_agent` — **MISSING** before RFC-0015; CLI consumer `0011-c-agent-show-subcommand` Sub-step 3 cannot dispatch.
+- `octo_wallet::validate_reason` — **MISSING** before RFC-0015; control-char filter primitive required at the substrate boundary for any future caller (CLI, wallet-on-host daemon, programmatic API).
 
-The substrate's existing surface is **types-only**: `AgentManifest`, `AgentState`, `AgentSummary`, `AgentFilter`, `CapabilityId`, plus the `cli_fns::register_agent` function (which materializes an `AgentManifest` from a parsed RFC-0002 JSON document). Reads + the reason-control filter primitive are missing; RFC-0015 v2 closes that gap. The **write-path gap** (`transition_agent` + paired `WalletError` variants) lives in RFC-0015-a.
+The substrate's existing surface is **types-only**: `AgentManifest`, `AgentState`, `AgentSummary`, `AgentFilter`, `CapabilityId`, plus the `cli_fns::register_agent` function (which materializes an `AgentManifest` from a parsed RFC-0002 JSON document). Reads + the reason-control filter primitive are missing; RFC-0015 closes that gap. The **write-path gap** (`transition_agent` + paired `WalletError` variants) lives in RFC-0015-a.
 
 ## Roles and Authorities
 
 | Role                | Authority                                                                                      | Audit trail                |
 | ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| Operator (human/CI) | `list_owned_agents` + `lookup_agent` + `validate_reason` (read-only on v2 acceptance)          | CLI log per RFC-0011-a     |
+| Operator (human/CI) | `list_owned_agents` + `lookup_agent` + `validate_reason` (read-only at KEEP)                   | CLI log per RFC-0011-c     |
 | Wallet substrate    | Source of truth for `AgentManifest` + `AgentSummary`; rejects unauthorized callers             | Internal state machine log |
 | CLI (octo-cli)      | Operator UX over substrate functions; never bypasses substrate caller-attestation (per §6.2.1) | Same as operator           |
 
@@ -94,13 +96,13 @@ graph LR
   Wallet -- "walk in-process registry" --> State
 ```
 
-**v2 scope note:** the KEEP flow is the three solid `CLI → Wallet → State` edges. The write path (`transition_agent` + state-machine write + audit append) is **DEFERRED** to RFC-0015-a. At v2 acceptance, `Wallet` exposes the three read-side primitives only.
+**Scope note:** the KEEP flow is the three solid `CLI → Wallet → State` edges. The write path (`transition_agent` + state-machine write + audit append) is **DEFERRED** to RFC-0015-a. At acceptance, `Wallet` exposes the three read-side primitives only.
 
-Layer direction: CLI (Layer C/D) → `octo-wallet` (Layer B). No direct B→A edges in v2 KEEP.
+Layer direction: CLI (Layer C/D) → `octo-wallet` (Layer B). No direct B→A edges in KEEP.
 
 ### §6.2 Public surface additions (`crates/octo-wallet/src/agent.rs`)
 
-Seven additive items = 3 functions + 4 error variants, layered atop the existing `AgentManifest` / `AgentState` / `AgentSummary` / `AgentFilter` / `CapabilityId` types already present in the same file:
+Seven additive KEEP items = 3 functions (§6.2.1, §6.2.5, §6.2.6) + 4 substrate error variants (§6.2.3, §6.2.4, §6.2.5 ×2), layered atop the existing `AgentManifest` / `AgentState` / `AgentSummary` / `AgentFilter` / `CapabilityId` types already present in the same file:
 
 1. **`list_owned_agents`** — read function (§6.2.1)
 2. **`lookup_agent`** — point-lookup function (§6.2.6 lookup_agent)
@@ -111,6 +113,8 @@ Seven additive items = 3 functions + 4 error variants, layered atop the existing
 7. **`WalletError::ReasonTooLong(usize)`** — error variant (§6.2.5 validate_reason)
 
 The write function `transition_agent` + paired write-path variants are DEFERRED (see §6.2.2).
+
+> **§6.2.7 additions** — 3 additional KEEP additive items (1 `#[non_exhaustive]` attribute + 2 CLI-error variants) land separately per §6.2.7; the §6.2.x function-and-variant list above enumerates the substrate-path surface only.
 
 #### §6.2.1 `list_owned_agents` (KEEP)
 
@@ -128,7 +132,6 @@ The write function `transition_agent` + paired write-path variants are DEFERRED 
 /// Sorting: `registered_at_unix DESC` (deterministic across calls).
 /// Limit: substrate applies a hard ceiling of 1024 (per `AgentFilter::limit`
 /// docs); values exceeding 1024 clamp to 1024 with no error.
-/// Cursor: opaque forward-compat token (none today; reserved for Phase 2).
 /// Read-only: no state mutation.
 pub fn list_owned_agents(
     caller_did: &Did,
@@ -139,13 +142,12 @@ pub struct AgentFilter {
     pub holder_did: Option<String>, // canonical RFC-0010 wire form per `crates/octo-wallet/src/agent.rs` §`AgentFilter`
     pub state: Option<AgentState>,
     pub limit: Option<usize>,    // None = substrate default 1024; hard ceiling 1024; values > 1024 clamp with no error
-    pub cursor: Option<String>,  // forward-compat opaque token; reserved for Phase 2
 }
 ```
 
-- **Filter semantics** — server-side `holder_did == filter.holder_did.unwrap_or(caller_did.as_str().to_owned())`; substrate enforces `filter.holder_did.is_none() || filter.holder_did.as_deref() == Some(caller_did.as_str())` per RFC-0009 §Identity (mismatch → `WalletError::ForbiddenHolderMismatch`). `state == filter.state` (exact match, no wildcards); `limit` clamp; `cursor` reserved (ignored on Phase 2 reads). **Canonicalization note:** the substrate does NOT canonicalize per RFC-0010 — bytes-equality on canonical form is substrate-faithful. The CLI mission MUST pre-canonicalize via `Did::from_str` (RFC-0010 §Chain-id Derivation) before calling `list_owned_agents`.
+- **Filter semantics** — server-side `holder_did == filter.holder_did.unwrap_or(caller_did.as_str().to_owned())`; substrate enforces `filter.holder_did.is_none() || filter.holder_did.as_deref() == Some(caller_did.as_str())` per RFC-0009 §Identity (mismatch → `WalletError::ForbiddenHolderMismatch`). `state == filter.state` (exact match, no wildcards); `limit` clamp. **Canonicalization note:** the substrate does NOT canonicalize per RFC-0010 — bytes-equality on canonical form is substrate-faithful. The CLI mission MUST pre-canonicalize via `Did::from_str` (RFC-0010 §Chain-id Derivation) before calling `list_owned_agents`.
 - **Return semantics** — empty `Vec` when zero matches (NOT an error); summaries sorted by `registered_at_unix DESC`, with secondary sort by `agent_id` (canonical UUID v5; namespace+name based, deterministic per substrate implementation) ASC as deterministic tiebreaker for entries sharing the same `registered_at_unix`.
-- **Error semantics** — `WalletError::Config` on registry corruption (unrecoverable); `WalletError::Io` on disk read failure; `WalletError::ForbiddenHolderMismatch` (NEW) on caller/filter DID mismatch; `WalletError::Config(String)` on malformed cursor (cursor reserved for Phase 2; substrate rejects malformed input upfront; reuses the existing `Config(String)` variant per `crates/octo-wallet/src/error.rs` §`WalletError::Config`).
+- **Error semantics** — `WalletError::Config` on registry corruption (unrecoverable); `WalletError::Io` on disk read failure; `WalletError::ForbiddenHolderMismatch` (NEW) on caller/filter DID mismatch.
 
 #### §6.2.2 `transition_agent` (DEFERRED — RFC-0015-a)
 
@@ -161,7 +163,7 @@ AgentNotFound(Uuid),
 
 - Mirrors the existing `WalletError::AgentAlreadyExists(Uuid)` shape for symmetry.
 - CLI maps to `OctoCliError::AgentNotFound(Uuid)` (exit 42 per RFC-0011-c §9.8 slot allocation).
-- **KEEP source (v2):** raised by `lookup_agent(caller_did, uuid)` per §6.2.6 (lookup_agent) on miss.
+- **KEEP source (v2):** raised by `lookup_agent(caller_did, uuid)` per §6.2.6 on miss.
 
 #### §6.2.4 `WalletError::ForbiddenHolderMismatch` (KEEP)
 
@@ -173,11 +175,9 @@ ForbiddenHolderMismatch,
 ```
 
 - **Where raised:** `list_owned_agents(caller_did, filter)` when `filter.holder_did.is_some()` and `filter.holder_did != caller_did` (per §6.2.1 enforcement); also raised by `lookup_agent(caller_did, uuid)` per §6.2.6 (lookup_agent) on caller/holder mismatch.
-- **CLI mapping:** Exit code 17 → `OctoCliError::ForbiddenHolderMismatch` (NEW ADDITIVE CLI variant proposed per §6.2.7 — substrate addition to `crates/octo-cli/src/error.rs` §`OctoCliError`; mirrors the §6.2.7 `WalletError` ADDITIVE pattern). Maps to exit code 17 per RFC-0011 §Exit Codes 17-63 reserved range (NOT slot 13 which is `PolicyNotFound`; NOT slot 37 which is owned by RFC-0011-g `UnknownAttestationKind`).
+- **CLI mapping:** Exit code 37 → `OctoCliError::ForbiddenHolderMismatch` (NEW ADDITIVE CLI variant per §6.2.7 — substrate addition to `crates/octo-cli/src/error.rs` §`OctoCliError`; mirrors the §6.2.4 `WalletError` ADDITIVE pattern). Slot 37 is the canonical allocation per RFC-0011 §Exit Codes 17-63 reserved range; see Appendix B for the full envelope cross-reference.
 
 #### §6.2.5 `validate_reason` (KEEP)
-
-**Status:** KEEP at RFC-0015 v2 acceptance — substrate-faithful primitive; pure string-level filter with no substrate amendment required beyond the paired NEW ADDITIVE error variants below.
 
 ```rust
 /// Substrate-faithful control-character filter primitive.
@@ -196,11 +196,9 @@ ForbiddenHolderMismatch,
 pub fn validate_reason(reason: &str) -> Result<(), WalletError>;
 ```
 
-- **C1 range gap (canonical):** the primitive rejects only `U+0000`-`U+001F` and `U+007F`; the C1 range (`U+0080`-`U+009F`, including `U+0085` NEL, `U+009B` 8-bit CSI, `U+009D` 8-bit OSC) passes the filter. Modern UTF-8 terminals render the C1 range safely; some legacy / non-UTF-8 terminals may interpret them as control sequences. A future RFC-0015-v2 amendment may widen the filter to include the C1 range.
+- **C1 range gap (canonical):** the primitive rejects only `U+0000`-`U+001F` and `U+007F`; the C1 range (`U+0080`-`U+009F`, including `U+0085` NEL, `U+009B` 8-bit CSI, `U+009D` 8-bit OSC) passes the filter. Modern UTF-8 terminals render the C1 range safely; some legacy / non-UTF-8 terminals may interpret them as control sequences. A future RFC-0015 amendment may widen the filter to include the C1 range.
 
 #### §6.2.6 `lookup_agent` (KEEP)
-
-**Status:** KEEP at RFC-0015 v2 acceptance — substrate-faithful point lookup; companion to §6.2.3 `WalletError::AgentNotFound(Uuid)`.
 
 ```rust
 /// Point lookup of an agent manifest by canonical UUID.
@@ -216,34 +214,31 @@ pub fn lookup_agent(
 ) -> Result<AgentManifest, WalletError>;
 ```
 
-- **Where raised:** invoked by `0011-c-agent-show-subcommand` (CLI consumer; RFC-0011-c §9.3.x) for point-lookup.
+- **Where raised:** invoked by `0011-c-agent-show-subcommand` (CLI consumer; RFC-0011-c §9.3 `octo agent show` subcommand specification) for point-lookup.
 - **Error semantics:** `WalletError::AgentNotFound(uuid)` on miss (KEEP per §6.2.3); `WalletError::ForbiddenHolderMismatch` on caller/holder mismatch per §6.2.4.
 
-#### §6.2.7 Substrate additions (KEEP — RFC-0015 v2 amendments)
+#### §6.2.7 CLI-error additions + `#[non_exhaustive]` (KEEP)
 
-Three paired substrate additions land with RFC-0015 v2 KEEP acceptance; all are additive and substrate-faithful to existing patterns:
+Three additive items land with RFC-0015 KEEP acceptance; the `WalletError` variants themselves are fully specified at §6.2.3-§6.2.5 (canonical substrate paths):
 
-1. **`#[non_exhaustive]` attribute on `WalletError` enum** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Mirrors the existing `OctoCliError` pattern at `crates/octo-cli/src/error.rs` §`OctoCliError` (per `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth). Future-proofs the enum against downstream exhaustive-match breaks per RFC migration etiquette; any new `WalletError` variant added by RFC-0015 v2 KEEP (or any future RFC) will not break downstream consumers.
-2. **`OctoCliError::ForbiddenHolderMismatch` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Unit variant shape mirrors `OctoCliError::NoActiveIdentity` per `crates/octo-cli/src/error.rs` §`OctoCliError::NoActiveIdentity` — the canonical unit-variant pattern (substrate-faithful byte-for-byte; no payload matches `WalletError::ForbiddenHolderMismatch` unit substrate variant). Maps to exit code 17 per RFC-0011 §Exit Codes 17-63 reserved range (NOT slot 13 which is `PolicyNotFound`; NOT slot 37 which is owned by RFC-0011-g `UnknownAttestationKind`). Source substrate variant: `WalletError::ForbiddenHolderMismatch` per §6.2.4.
+1. **`#[non_exhaustive]` attribute on `WalletError` enum** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Mirrors the existing `OctoCliError` pattern at `crates/octo-cli/src/error.rs` §`OctoCliError` (per `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth). Future-proofs the enum against downstream exhaustive-match breaks per RFC migration etiquette; any new `WalletError` variant added by RFC-0015 KEEP (or any future RFC) will not break downstream consumers.
+2. **`OctoCliError::ForbiddenHolderMismatch` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Unit variant shape mirrors `OctoCliError::NoActiveIdentity` per `crates/octo-cli/src/error.rs` §`OctoCliError::NoActiveIdentity` — the canonical unit-variant pattern (substrate-faithful byte-for-byte; no payload matches `WalletError::ForbiddenHolderMismatch` unit substrate variant). Maps to exit code 37 per RFC-0011 §Exit Codes 17-63 reserved range (slot 37 is the canonical allocation; canonical at substrate hard-check 2026-09-13). Source substrate variant: `WalletError::ForbiddenHolderMismatch` per §6.2.4.
 3. **`OctoCliError::AgentNotFound(Uuid)` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant shape mirrors `OctoCliError::AgentAlreadyExists(uuid::Uuid)` (exit 41) per `crates/octo-cli/src/error.rs` §`OctoCliError::AgentAlreadyExists` — canonical `Uuid`-payload tuple pattern. Maps to exit code 42 per RFC-0011-c §9.8 slot allocation. Source substrate variant: `WalletError::AgentNotFound(Uuid)` per §6.2.3.
-4. **`WalletError::AgentNotFound(Uuid)` NEW ADDITIVE variant** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant shape mirrors the existing `WalletError::AgentAlreadyExists(Uuid)` per `crates/octo-wallet/src/error.rs` §`WalletError::AgentAlreadyExists` — canonical `Uuid`-payload tuple pattern. Mirrors the §6.2.3 substrate path.
-5. **`WalletError::ForbiddenHolderMismatch` NEW ADDITIVE variant** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Unit variant; mirrors the §6.2.4 substrate path. Mapped to `OctoCliError::ForbiddenHolderMismatch` (item 2 above) at the CLI façade.
-6. **`WalletError::ReasonContainsControlChars(String)` NEW ADDITIVE variant** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant carries offending character as a `String` payload in hex-escaped code-point notation. Mirrors the §6.2.5 `validate_reason` substrate path.
-7. **`WalletError::ReasonTooLong(usize)` NEW ADDITIVE variant** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant carries offending byte length as a `usize` payload. Mirrors the §6.2.5 `validate_reason` substrate path.
 
 ### §6.3 Error envelope
 
-Canonical substrate-variant → CLI-variant → exit-code cross-reference lives in §Appendix B. `WalletError` variants at RFC-0015 v2 KEEP are 4 NEW ADDITIVE additions (`AgentNotFound`, `ForbiddenHolderMismatch`, `ReasonContainsControlChars`, `ReasonTooLong`); write-path variants are DEFERRED — see §6.7. CLI mapping follows RFC-0011-a §7.4 Substrate `[ADD]` error-envelope pattern (substrate variant → CLI variant → exit code) byte-for-byte.
+Canonical substrate-variant → CLI-variant → exit-code cross-reference lives in §Appendix B. `WalletError` variants at RFC-0015 KEEP are 4 NEW ADDITIVE additions (`AgentNotFound`, `ForbiddenHolderMismatch`, `ReasonContainsControlChars`, `ReasonTooLong`); write-path variants are DEFERRED — see §6.7. CLI mapping follows RFC-0011-a §7.4 Substrate `[ADD]` error-envelope pattern (substrate variant → CLI variant → exit code) byte-for-byte.
 
 ### §6.4 CLI integration contract
 
 CLI missions consuming this substrate:
 
-| Mission                             | Substrate call                                                          | Sub-step               |
-| ----------------------------------- | ----------------------------------------------------------------------- | ---------------------- |
-| `0011-c-agent-create-subcommand.md` | `octo_wallet::cli_fns::register_agent` (EXISTING)                       | Sub-step 3 (existing)  |
-| `0011-c-agent-list-subcommand.md`   | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)  | Sub-step 3 (NEW, KEEP) |
-| `0011-c-agent-attach-subcommand.md` | (read-only; uses `octo_runtime::attach`) — substrate is read-only at v2 | N/A                    |
+| Mission                             | Substrate call                                                            | Sub-step               |
+| ----------------------------------- | ------------------------------------------------------------------------- | ---------------------- |
+| `0011-c-agent-create-subcommand.md` | `octo_wallet::cli_fns::register_agent` (EXISTING)                         | Sub-step 3 (existing)  |
+| `0011-c-agent-list-subcommand.md`   | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)    | Sub-step 3 (NEW, KEEP) |
+| `0011-c-agent-show-subcommand.md`   | `octo_wallet::lookup_agent(caller_did, uuid)` (NEW per §6.2.6)            | Sub-step 3 (NEW, KEEP) |
+| `0011-c-agent-attach-subcommand.md` | (read-only; uses `octo_runtime::attach`) — substrate is read-only at KEEP | N/A                    |
 
 Writes DEFERRED to RFC-0015-a per §6.7.
 
@@ -254,15 +249,7 @@ Writes DEFERRED to RFC-0015-a per §6.7.
 
 ### §6.6 RFC-0008 Execution Class Mapping
 
-| Operation                                 | Execution class | Rationale                                          |
-| ----------------------------------------- | --------------- | -------------------------------------------------- |
-| `list_owned_agents`                       | Class A (read)  | No state mutation; observable in any environment   |
-| `lookup_agent`                            | Class A (read)  | No state mutation; point lookup by canonical UUID  |
-| `validate_reason`                         | Class A (read)  | Pure string-level filter; no IO, no state mutation |
-| `WalletError::AgentNotFound`              | Class A         | Pure error mapping                                 |
-| `WalletError::ForbiddenHolderMismatch`    | Class A         | Pure error mapping; no state mutation              |
-| `WalletError::ReasonContainsControlChars` | Class A         | Pure error mapping                                 |
-| `WalletError::ReasonTooLong`              | Class A         | Pure error mapping                                 |
+All RFC-0015 KEEP items (3 functions + 4 error variants per §6.2.1 + §6.2.3-§6.2.6) are Class A (read) per RFC-0008 §Execution Class Mapping. No state mutation; observable in any environment.
 
 CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate per parent §Confirmation Flag Matrix).
 
@@ -272,7 +259,7 @@ The write-path surface (`transition_agent` + paired `WalletError::{AlreadyInTran
 
 **`rfcs/draft/process/0015-a-wallet-agent-write-path.md`**
 
-Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with a future Layer A substrate amendment (per §Dependencies).
+Acceptance of RFC-0015 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with a future Layer A substrate amendment (per §Dependencies).
 
 ## Performance Targets
 
@@ -284,7 +271,7 @@ Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RF
 
 1. **Substrate is canonical for `AgentState`** — CLI never pattern-matches on `AgentState` string representation; serde-derived lowercase string is for display only per `#[serde(rename_all = "lowercase")]` on the enum.
 2. **Reason string is UTF-8, ≤256 chars, no control chars** — substrate enforces length cap + control-char filter (`U+0000`-`U+001F`, `U+007F`) at the substrate boundary per §6.2.5 (validate_reason). CLI parser caps length at parse time (exit 16 per `OctoCliError::InvalidFilter`) as upstream defense-in-depth per RFC-0011-c §Security considerations.
-3. **`register_agent` precedes any read** — substrate assumes the `agent_id` returned by `register_agent` exists in the in-memory registry before any `list_owned_agents` call returns a non-empty `Vec`; CLI precondition check. `register_agent` is the EXISTING `octo_wallet::cli_fns::register_agent(manifest: &AgentManifest, capability_root: &CapabilityId, active_did: &Did) -> Result<uuid::Uuid, WalletError>` per `crates/octo-wallet/src/cli_fns.rs` §`register_agent` — returns the assigned `agent_id` Uuid for subsequent list / destroy calls. RFC-0015 v2 KEEP does NOT add a new `register_agent` function — the existing CLI FFI function is the canonical substrate contract.
+3. **`register_agent` precedes any read** — substrate assumes the `agent_id` returned by `register_agent` exists in the in-memory registry before any `list_owned_agents` call returns a non-empty `Vec`; CLI precondition check. `register_agent` is the EXISTING `octo_wallet::cli_fns::register_agent(manifest: &AgentManifest, capability_root: &CapabilityId, active_did: &Did) -> Result<uuid::Uuid, WalletError>` per `crates/octo-wallet/src/cli_fns.rs` §`register_agent` — returns the assigned `agent_id` Uuid for subsequent list / destroy calls. RFC-0015 KEEP does NOT add a new `register_agent` function — the existing CLI FFI function is the canonical substrate contract.
 4. **Operator config dir writable** — agent registry persists to `$OCTO_HOME/wallet/agents`; substrate raises `WalletError::Config(String)` on registry-corruption / unwritable paths (per §6.2.1 error semantics + `crates/octo-wallet/src/error.rs` §`WalletError::Config` variant). CLI surfaces `OctoCliError::NoOctoHome` upstream (exit 27 per `crates/octo-cli/src/error.rs` §`NoOctoHome`) when the substrate path is fully unreachable; the substrate-faithful principle: CLI maps substrate errors to CLI exit codes at the façade boundary per RFC-0011-a §7.4 Substrate `[ADD]` error-envelope pattern.
 5. **`caller_did` provenance from active identity handle (HSM-bound)** — the substrate does NOT authenticate `caller_did`; it only enforces `caller_did == agent.holder_did` (per §6.2.1). A fabricated `caller_did` (compromised CLI passing an arbitrary DID string) would pass the substrate check trivially. The CLI / programmatic caller MUST source `caller_did` from the active identity handle (HSM-bound per `crates/octo-wallet/src/identity.rs` §`IdentityKey` + `crates/octo-wallet/src/identity_record.rs` §`IdentityRecord` + RFC-0009 §Identity Struct + §HsmAdapter Integration) at the Layer B façade boundary. The substrate-faithful pattern: `caller_did: &Did` is borrowed from an HSM-bound identity record retrieved from process session state. The substrate does not look up the HSM itself. Per-process trust boundary assumed at the façade boundary.
 
@@ -325,9 +312,9 @@ DEFER — agent read operations have no direct token cost; cite RFC-0900+ (Role 
 
 ## Compatibility
 
-1. **No breaking changes.** Seven additive items (3 functions + 4 error variants) on `octo-wallet` (Layer B years-stable); no existing public API modified.
+1. **No breaking changes to function-level public API.** Seven additive items (3 functions + 4 error variants + 1 `#[non_exhaustive]` attribute + 2 CLI error variants) on `octo-wallet` (Layer B years-stable); no existing public function modified. The `#[non_exhaustive]` attribute on `WalletError` is the canonical Rust additive enum-extension mechanism per [[cipherocto-design-principles]] (Extension-over-enumeration pattern) and is forward-compat — downstream exhaustive matches stop compiling after this change, which is the intentional trade-off (substrate-faithful semver-major addition within an additive layer; document at the CLI substrate re-export boundary per RFC-0011-a §Migration Etiquette).
 2. **No `schema_version` bump.** The `OutputEnvelope<T>` envelope carries no new fields; CLI mission output schemas unchanged.
-3. **No new exit codes for the new errors.** `AgentNotFound` (42) per RFC-0011-c §9.8 slot allocation; `ForbiddenHolderMismatch` (37) per RFC-0011 §Exit Codes 17-63 reserved range (slot 37 free per substrate exit_code mapping). The slot-16 mappings (`ReasonContainsControlChars`, `ReasonTooLong`) reuse `InvalidFilter` (16). The slot-43 mappings (`AlreadyInTransition`, `InvalidStateTransition`) and slot-52 (`AuditUnavailable`) remain RESERVED for the post-RFC-0015-a acceptance write-path variants — they are NOT consumed at RFC-0015 v2 KEEP.
+3. **No new exit codes for the new errors.** `AgentNotFound` (42) per RFC-0011-c §9.8 slot allocation; `ForbiddenHolderMismatch` (37) per RFC-0011 §Exit Codes 17-63 reserved range (slot 37 is the canonical allocation; see Appendix B). The slot-16 mappings (`ReasonContainsControlChars`, `ReasonTooLong`) reuse `InvalidFilter` (16). The slot-43 mappings (`AlreadyInTransition`, `InvalidStateTransition`) and slot-52 (`AuditUnavailable`) remain RESERVED for the post-RFC-0015-a acceptance write-path variants — they are NOT consumed at RFC-0015 KEEP.
 4. **No new clap variants.** Existing `AgentAction` enum (RFC-0011-c §9.3 dispatch) absorbs the new substrate calls; the missions land their variant-per-subcommand as planned.
 
 ## Test Vectors
@@ -345,7 +332,6 @@ Substrate-level test vectors (`crates/octo-wallet/src/agent.rs` test module). Wr
 | TV-WLT-AGT-13e | `validate_reason("\r\n[ADMIN] approved")` (unit test)                                                                         | CRLF-injection reason                                                    | `Err(WalletError::ReasonContainsControlChars("<U+000D>".to_string()))` (variant payload `String` carries hex-escaped code-point notation for the FIRST occurrence per §6.2.5 multi-char return semantics — `\r` is encountered before `\n`) | Verifies filter rejects `U+000A` LF / `U+000D` CR                                                                                     |
 | TV-WLT-AGT-13h | `validate_reason("a".repeat(257))` (unit test)                                                                                | Reason > 256 chars (boundary exceedance per §6.2.5 length cap)           | `Err(WalletError::ReasonTooLong(257))` (payload `usize` is the offending byte length per §6.2.5 (validate_reason) + §6.3)                                                                                                                   | Verifies 256-char length cap enforcement                                                                                              |
 | TV-WLT-AGT-14  | `list_owned_agents(caller_did, &AgentFilter { holder_did: None, limit: Some(0) })`                                            | Empty registry + limit=0                                                 | `Ok(Vec::new())` (limit=0 not rejected at list path; `AgentFilter.limit` is clamp-only per §6.2.1 limit semantics)                                                                                                                          | limit=0 edge case (substrate applies limit clamp; returns empty Vec)                                                                  |
-| TV-WLT-AGT-15  | `list_owned_agents(caller_did, &AgentFilter { holder_did: None, cursor: Some("invalid") })`                                   | Malformed cursor (forward-compat opaque token per §6.2.1)                | `Err(WalletError::Config("cursor decode failed".into()))` (substrate applies cursor decode at read boundary; malformed cursor is rejected upfront per §6.2.1 filter semantics; reuses existing `WalletError::Config(String)` variant)       | Cursor malformed edge case (cursor reserved for Phase 2; substrate rejects malformed input)                                           |
 | TV-WLT-AGT-16  | `register_agent(manifest, cap_root, active_did)` then `register_agent(same_manifest, same_cap_root, same_active_did)`         | Duplicate register call (idempotency check)                              | Second call: `Err(WalletError::AgentAlreadyExists(uuid_v5))` per `octo_wallet::cli_fns::register_agent` (substrate-faithful idempotency contract; UUIDv5 deterministic per substrate §6.2.1 ordering note)                                  | Idempotency check (existing `WalletError::AgentAlreadyExists(Uuid)` raises on duplicate)                                              |
 | TV-WLT-AGT-17  | `AgentManifest::from_json(path, "{invalid_json}")` (parse-stage before `register_agent`; canonical substrate parse-fail path) | Manifest parse failure (RFC-0002 JSON wire form)                         | `Err(WalletError::ManifestParse { path: <path>.into(), reason: <serde_err>.into() })` per `crates/octo-wallet/src/agent.rs` §`AgentManifest::from_json` (substrate-faithful parse contract per RFC-0002 §Manifest Schema)                   | Manifest parse fail (existing `WalletError::ManifestParse { path, reason }` struct variant per substrate hard-check 2026-09-11)       |
 | TV-WLT-AGT-18  | `sign()` invoked with identity in `Revoked` lifecycle state per RFC-0009 §Identity Struct                                     | Revoked identity `sign()` attempt                                        | `Err(WalletError::NotActive { current_state: LifecycleState::Revoked })` per `crates/octo-wallet/src/error.rs` §`NotActive` (substrate-faithful identity-lifecycle guard per RFC-0009)                                                      | Revoked identity cannot sign (existing `WalletError::NotActive { current_state }` struct variant per substrate hard-check 2026-09-11) |
@@ -359,32 +345,32 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 ## Alternatives Considered
 
-- **Pure-CLI state-machine** — substrate delegates transition validation to CLI; rejected: violates substrate-faithful principle; CLI bypass becomes possible. (Note: applies to RFC-0015-a write path; RFC-0015 v2 has no state-machine surface.)
+- **Pure-CLI state-machine** — substrate delegates transition validation to CLI; rejected: violates substrate-faithful principle; CLI bypass becomes possible. (Note: applies to RFC-0015-a write path; RFC-0015 has no state-machine surface.)
 - **Composite state variants** — keep ACTIVE + BUSY in the substrate enum per RFC-0002 spec; rejected: substrate-faithful principle (the three-state form is canonical in the substrate); RFC-0002-v2 amendment may restore the split later.
 
 ## Implementation Phases
 
-- **Phase 1 (this RFC, v2 KEEP)** — substrate function additions only; 7 KEEP items = 3 functions (`list_owned_agents` + `lookup_agent` + `validate_reason`) + 4 error variants (`WalletError::AgentNotFound(Uuid)` + `WalletError::ForbiddenHolderMismatch` + `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)`) land on `octo-wallet` Layer B; no CLI changes; no `transition_agent`.
-- **Phase 2 (RFC-0011-c read-only missions)** — CLI missions `0011-c-agent-{create,list,show,attach}-subcommand` consume the read surface; mutation traces per RFC-0011-c §Test Vectors. **Cursor support:** the `cursor: Option<String>` field on `AgentFilter` (per §6.2.1) is RESERVED for Phase 2 multi-page iteration; the substrate accepts and returns the cursor as opaque, but the CLI does not surface cursor-based iteration at Phase 2 — the cursor is forward-compat for >1024-agent registries (see Future Work §`list_owned_agents` cursor support).
+- **Phase 1 (this RFC, KEEP)** — substrate function additions only; 7 KEEP items = 3 functions (`list_owned_agents` + `lookup_agent` + `validate_reason`) + 4 substrate error variants (`WalletError::AgentNotFound(Uuid)` + `WalletError::ForbiddenHolderMismatch` + `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)` per §6.2.3-§6.2.5) + 3 CLI-side additions (`#[non_exhaustive]` on `WalletError` + `OctoCliError::ForbiddenHolderMismatch` + `OctoCliError::AgentNotFound(Uuid)` per §6.2.7); no `transition_agent`.
+- **Phase 2 (RFC-0011-c read-only missions)** — CLI missions `0011-c-agent-{create,list,show,attach}-subcommand` consume the read surface; mutation traces per RFC-0011-c §Test Vectors.
 - **Phase 2.5 (RFC-0015-a acceptance, paired with a future Layer A substrate amendment)** — `transition_agent` + paired write-path `WalletError` variants land on `octo-wallet` Layer B (see §6.7).
 - **Phase 3 (RFC-0011-c write missions)** — CLI missions `0011-c-agent-{run,destroy}-subcommand` consume the write surface (post-RFC-0015-a acceptance); mutation traces per RFC-0011-c §Test Vectors.
 
 ## Key Files to Modify
 
-- `crates/octo-wallet/Cargo.toml` — **NO new deps at v2 KEEP.** No `parking_lot` entry; that dep is paired with the DEFERRED write-path Phase 2.5 lock-mode contract and lands with RFC-0015-a.
+- `crates/octo-wallet/Cargo.toml` — **NO new deps at KEEP.** No `parking_lot` entry; that dep is paired with the DEFERRED write-path Phase 2.5 lock-mode contract and lands with RFC-0015-a.
 - `crates/octo-wallet/src/agent.rs` — append `list_owned_agents` + `lookup_agent` + `validate_reason` (existing types; ~80 LoC incl. tests). `transition_agent` is DEFERRED (see §6.7).
-- `crates/octo-wallet/src/error.rs` — append 4 KEEP variants per §6.2.3-§6.2.6. The DEFERRED write-path variants `AlreadyInTransition(Uuid)` + `InvalidStateTransition { from, to }` + `AuditUnavailable` are NOT added at v2 — they land with RFC-0015-a.
+- `crates/octo-wallet/src/error.rs` — append 4 KEEP variants per §6.2.3-§6.2.6. The DEFERRED write-path variants `AlreadyInTransition(Uuid)` + `InvalidStateTransition { from, to }` + `AuditUnavailable` are NOT added at KEEP — they land with RFC-0015-a.
 - `crates/octo-wallet/src/lib.rs` — re-export the new functions (no breaking change to existing public surface).
 
 **Layer placement table (M-4 amendment — explicit layer discipline per CLAUDE.md §Rust crate-level stability):**
 
-| Crate             | Layer                                            | Substrate anchor (§symbol ref)                                                                                            | Role at RFC-0015 v2 KEEP                                                                                                                                                                                 |
-| ----------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `octo-wallet`     | Layer B façade (RFC-0011-c)                      | `crates/octo-wallet/src/agent.rs` §`AgentManifest` + `crates/octo-wallet/src/error.rs` §`WalletError`                     | Façade; KEEP additive items (`list_owned_agents` + `lookup_agent` + `validate_reason` + 4 error variants) land here at v2                                                                                |
-| `octo-ident`      | Layer B identity substrate (RFC-0010 + RFC-0009) | `crates/octo-ident/src/lib.rs` §`WireDid` + §`CanonicalCodec` (RFC-0010 wire form + BLAKE3-keyed codec)                   | Pre-existing B→B hop dep for `caller_did: &Did` parameters on §6.2.1/§6.2.6 substrate functions; no RFC-0015 addition (codec unchanged at v2 KEEP)                                                       |
-| `octo-audit-core` | Layer A frozen (RFC-0012)                        | `§`AuditEventKind`enum (3 variants:`Insert`, `Revoke`, `Sync`+`#[non_exhaustive]` per Extension-over-enumeration pattern) | Canonical substrate for paired-DEFER `transition_agent` audit append — DEFERRED to Phase 2.5 (lands with future substrate amendment + RFC-0015-a); `octo-wallet` has NO `octo-audit-core` dep at v2 KEEP |
+| Crate             | Layer                                            | Substrate anchor (§symbol ref)                                                                                            | Role at RFC-0015 KEEP                                                                                                                                                                                 |
+| ----------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-wallet`     | Layer B façade (RFC-0011-c)                      | `crates/octo-wallet/src/agent.rs` §`AgentManifest` + `crates/octo-wallet/src/error.rs` §`WalletError`                     | Façade; KEEP additive items (`list_owned_agents` + `lookup_agent` + `validate_reason` + 4 error variants) land here at KEEP                                                                           |
+| `octo-ident`      | Layer B identity substrate (RFC-0010 + RFC-0009) | `crates/octo-ident/src/lib.rs` §`WireDid` + §`CanonicalCodec` (RFC-0010 wire form + BLAKE3-keyed codec)                   | Pre-existing B→B hop dep for `caller_did: &Did` parameters on §6.2.1/§6.2.6 substrate functions; no RFC-0015 addition (codec unchanged at KEEP)                                                       |
+| `octo-audit-core` | Layer A frozen (RFC-0012)                        | `§`AuditEventKind`enum (3 variants:`Insert`, `Revoke`, `Sync`+`#[non_exhaustive]` per Extension-over-enumeration pattern) | Canonical substrate for paired-DEFER `transition_agent` audit append — DEFERRED to Phase 2.5 (lands with future substrate amendment + RFC-0015-a); `octo-wallet` has NO `octo-audit-core` dep at KEEP |
 
-Layer direction (v2 KEEP): `octo-wallet` (Layer B) → `octo-ident` (Layer B, identity substrate per RFC-0010 + RFC-0009) for DID codec + identity substrate hops; no direct B→A edges at v2 KEEP. The `octo-wallet` → `octo-audit-core` B→A edge is DEFERRED to Phase 2.5, paired with RFC-0015-a acceptance + a future Layer A substrate amendment; at v2 KEEP, `octo-wallet` (Layer B) has zero direct `octo-audit-core` dep (substrate hard-check 2026-09-13). Canonical façade-to-substrate hops per CLAUDE.md §Architectural Principles.
+Layer direction (KEEP): `octo-wallet` (Layer B) → `octo-ident` (Layer B, identity substrate per RFC-0010 + RFC-0009) for DID codec + identity substrate hops; no direct B→A edges at KEEP. The `octo-wallet` → `octo-audit-core` B→A edge is DEFERRED to Phase 2.5, paired with RFC-0015-a acceptance + a future Layer A substrate amendment; at KEEP, `octo-wallet` (Layer B) has zero direct `octo-audit-core` dep (substrate hard-check 2026-09-13). Canonical façade-to-substrate hops per CLAUDE.md §Architectural Principles.
 
 No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; no envelope / redactor / exit-code table changes.
 
@@ -394,12 +380,12 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 - `list_owned_agents` cursor support — opaque cursor token for >1024-agent registries (Phase 2).
 - `transition_agent` batch API — multi-agent transition in one substrate call (Phase 4 RFC-0002-v2 companion).
 - RFC-0002-v2 amendment — restore the five-state ACTIVE/BUSY split if operator demand surfaces (out of scope here).
-- RFC-0015-v2 amendment — widen `validate_reason` control-char filter to include the C1 range (`U+0080`-`U+009F`) for legacy-terminal support (out of scope here; C1 gap per §6.2.5).
+- RFC-0015 amendment — widen `validate_reason` control-char filter to include the C1 range (`U+0080`-`U+009F`) for legacy-terminal support (out of scope here; C1 gap per §6.2.5).
 
 ## Rationale
 
 - **Substrate-faithful** — substrate is canonical per RFC-0012/0013/0014 acceptance pattern; the three-state `AgentState` enum is canonical even when it differs from the RFC-0002 spec diagram.
-- **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the new functions + 4 KEEP error variants are additive; the 5 DEFERRED variants land with RFC-0015-a per §6.7.
+- **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 3 KEEP functions + 4 KEEP `WalletError` variants + `#[non_exhaustive]` attribute + 2 KEEP `OctoCliError` variants are additive per §6.2 + §6.2.7; the 5 DEFERRED variants land with RFC-0015-a per §6.7.
 - **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per [[cipherocto-design-principles]] §No parallel abstractions).
 - **Pairing discipline** — RFC-0015 (this RFC) + RFC-0015-a (write-path amendment) follow the extension-over-enumeration pattern per [[cipherocto-design-principles]]; no central enum edit at Layer A.
 
@@ -417,8 +403,8 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 - RFC-0010 — Canonical DID Codec (DID parsing for `holder_did` filter field)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
 - RFC-0015-a — `octo-wallet` Agent Write-Path Amendment (sibling; DEFERRED write-path surface)
-- RFC-0012 — Audit Substrate (sibling; Layer A frozen `AuditEventKind` extension mechanism per (Extension-over-enumeration pattern); the `AgentTransition` extension is the substrate addition paired with RFC-0015-a write-path acceptance — NOT yet implemented)
-- [[cipherocto-design-principles]] — Layer model + substrate-faithful principle; §RFC-0015 / §RFC-0015-a pair follows the extension-over-enumeration pattern (no central enum edit at Layer A)
+- RFC-0012 — Audit Substrate (sibling; Layer A frozen `AuditEventKind` extension mechanism per Extension-over-enumeration pattern); the `AgentTransition` extension is the substrate addition paired with RFC-0015-a write-path acceptance — NOT yet implemented
+- [[cipherocto-design-principles]] — Layer model + substrate-faithful principle; this RFC + RFC-0015-a pair follows the extension-over-enumeration pattern (no central enum edit at Layer A)
 
 ## Related Use Cases
 
@@ -432,7 +418,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 ```rust
 // crates/octo-wallet/src/agent.rs (append to existing module)
 
-// KEEP at RFC-0015 v2 acceptance:
+// KEEP at RFC-0015 acceptance:
 
 pub fn list_owned_agents(
     caller_did: &Did,
@@ -483,12 +469,12 @@ pub fn validate_reason(reason: &str) -> Result<(), WalletError> {
 | `WalletError::AgentNotFound(uuid)`                 | `OctoCliError::AgentNotFound(uuid)`       | 42       | §9.8 slot 42    | KEEP                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `WalletError::ForbiddenHolderMismatch`             | `OctoCliError::ForbiddenHolderMismatch`   | 37       | parent reserved | KEEP (NEW; NEW ADDITIVE CLI variant per §6.2.7; exit 37 per RFC-0011 §Exit Codes slot allocation — NOT slot 13; slot 13 is `PolicyNotFound`)                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `WalletError::ReasonContainsControlChars(String)`  | `OctoCliError::InvalidFilter(reason)`     | 16       | parent reserved | KEEP (payload `String` declared inline as `WalletError::ReasonContainsControlChars(String)` — thiserror tuple-payload enum-variant pattern, NOT a standalone newtype struct; payload carries hex-escaped code-point notation, NEVER raw byte, to prevent attacker-byte echo via `Display` impl). Both `ReasonContainsControlChars` and `ReasonTooLong` collapse to the same `InvalidFilter` (exit 16) CLI variant — acceptable loss of discrimination between ANSI injection and length-cap failures; a future RFC-0015-a amendment may add discriminable CLI variants. |
-| `WalletError::ReasonTooLong(len)`                  | `OctoCliError::InvalidFilter(reason)`     | 16       | parent reserved | KEEP (payload `usize` declared inline as `WalletError::ReasonTooLong(usize)` — thiserror tuple-payload enum-variant pattern, NOT a standalone newtype struct; consumed by KEEP `validate_reason` primitive at v2 acceptance AND DEFERRED `transition_agent` write path Phase 2.5; collapses to same `InvalidFilter` (exit 16) per collapse rationale above)                                                                                                                                                                                                             |
+| `WalletError::ReasonTooLong(len)`                  | `OctoCliError::InvalidFilter(reason)`     | 16       | parent reserved | KEEP (payload `usize` declared inline as `WalletError::ReasonTooLong(usize)` — thiserror tuple-payload enum-variant pattern, NOT a standalone newtype struct; consumed by KEEP `validate_reason` primitive at acceptance AND DEFERRED `transition_agent` write path Phase 2.5; collapses to same `InvalidFilter` (exit 16) per collapse rationale above)                                                                                                                                                                                                                |
 | `WalletError::AlreadyInTransition(uuid)`           | `OctoCliError::AlreadyInTransition(uuid)` | 43       | §9.8 slot 43    | DEFERRED NEW ADDITIVE (landed with RFC-0015-a per RFC-0015-a §6.3 + §Appendix B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `WalletError::InvalidStateTransition { from, to }` | `OctoCliError::AlreadyInTransition(uuid)` | 43       | §9.8 slot 43    | DEFERRED NEW ADDITIVE (landed with RFC-0015-a per RFC-0015-a §6.3 + §Appendix B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `WalletError::AuditUnavailable`                    | `OctoCliError::AuditSubstrateNotReady`    | 52       | RFC-0011-c §9.8 | DEFERRED NEW ADDITIVE (landed with RFC-0015-a per RFC-0015-a §6.3 + §Appendix B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-### Appendix C. Mermaid diagram — CLI → substrate → registry flow (v2 KEEP read-only — see §6.7)
+### Appendix C. Mermaid diagram — CLI → substrate → registry flow (KEEP read-only — see §6.7)
 
 ```mermaid
 sequenceDiagram

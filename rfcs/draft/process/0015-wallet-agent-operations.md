@@ -8,11 +8,13 @@ Draft v3 (2026-09-13)
 
 ## Authors
 
-- Authored by `@cipherocto` per RFC-0011-c agent lifecycle amendment + RFC-0002 §Agent State Machine substrate authority.
+- `@cipherocto`
+- `@mmacedoeu`
 
 ## Maintainers
 
-- Maintainer: `@cipherocto` per RFC-0011-c amendment chain.
+- `@cipherocto`
+- `@mmacedoeu`
 
 ## Summary
 
@@ -90,7 +92,7 @@ Per the substrate-faithful principle (CLAUDE.md §Architectural Principles; RFC-
 
 #### §Pre-existing Substrate (KEEP — already shipped)
 
-Six substrate items shipped on `next` HEAD per the cited commits:
+Eight substrate items shipped on `next` HEAD per the cited commits:
 
 | #   | Item                                                                                     | Substrate anchor                                                               | Source commit |
 | --- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------- |
@@ -100,13 +102,8 @@ Six substrate items shipped on `next` HEAD per the cited commits:
 | 4   | `WalletError::AgentNotFound(Uuid)`                                                       | `crates/octo-wallet/src/error.rs` §AgentNotFound                               | `533b07a4`    |
 | 5   | `WalletError::ForbiddenHolderMismatch`                                                   | `crates/octo-wallet/src/error.rs` §ForbiddenHolderMismatch                     | `533b07a4`    |
 | 6   | `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)`  | `crates/octo-wallet/src/error.rs` §ReasonContainsControlChars + §ReasonTooLong | `533b07a4`    |
-
-Plus two CLI-side substrate items shipped on the same path:
-
-| #   | Item                                              | Substrate anchor                                        | Source commit |
-| --- | ------------------------------------------------- | ------------------------------------------------------- | ------------- |
-| 7   | `OctoCliError::AgentNotFound(Uuid)` → exit 42     | `crates/octo-cli/src/error.rs` §AgentNotFound           | `533b07a4`    |
-| 8   | `OctoCliError::ForbiddenHolderMismatch` → exit 17 | `crates/octo-cli/src/error.rs` §ForbiddenHolderMismatch | `533b07a4`    |
+| 7   | `OctoCliError::AgentNotFound(Uuid)` → exit 42                                            | `crates/octo-cli/src/error.rs` §AgentNotFound                                  | `533b07a4`    |
+| 8   | `OctoCliError::ForbiddenHolderMismatch` → exit 17                                        | `crates/octo-cli/src/error.rs` §ForbiddenHolderMismatch                        | `533b07a4`    |
 
 The `#[non_exhaustive]` attribute on `WalletError` was already shipped on `next` HEAD prior to this RFC cycle (per `crates/octo-wallet/src/error.rs` §WalletError); it is NOT counted as a KEEP additive item. The substrate-faithful read: the attribute ships pre-marked, and the additive coupling via the 4 new KEEP variants is what triggers the consumer migration concern documented in §Compatibility #1.
 

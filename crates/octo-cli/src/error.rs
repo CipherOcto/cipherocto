@@ -792,15 +792,17 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // that don't have a CLI-shape mapping. The reason string
             // is sanitized at render time by `sanitize_substrate_error`.
             octo_audit::AuditError::SequenceGap { event_id, prev } => {
-                Self::Internal(sanitize_substrate_error(&format!(
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                     "audit sequence gap: event_id {event_id} after {prev}"
-                )))
+                ))))
             }
-            octo_audit::AuditError::AlreadyExists(event_id) => Self::Internal(
-                sanitize_substrate_error(&format!("audit event_id {event_id} already persisted")),
-            ),
+            octo_audit::AuditError::AlreadyExists(event_id) => {
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
+                    "audit event_id {event_id} already persisted"
+                ))))
+            }
             octo_audit::AuditError::SinkSpecific(msg) => Self::Internal(sanitize_substrate_error(
-                &format!("audit sink-specific error: {msg}"),
+                &cap_substrate_payload(&format!("audit sink-specific error: {msg}")),
             )),
             // `#[non_exhaustive]` on `AuditError` (RFC-0016-a §6.7
             // substrate column) means downstream exhaustive matches
@@ -815,6 +817,38 @@ impl From<octo_audit::AuditError> for OctoCliError {
                 "audit substrate error: {e}"
             ))),
         }
+    }
+}
+
+/// 4 KiB upper bound on substrate error payload size before
+/// sanitization (R1 reviewer MED C13 — SinkSpecific payload cap).
+/// Substrate `SinkSpecific(msg)` carries unbounded adapter-emitted
+/// text (Stoolap transaction diagnostics can include arbitrary
+/// SQL fragments + stack frames). Cap before sanitizer so the CLI
+/// envelope stays bounded regardless of substrate noise — matches
+/// the octo-settlement scrubber's `MAX_INPUT_BYTES = 4 * 1024`.
+pub(crate) const SUBSTRATE_PAYLOAD_CAP: usize = 4 * 1024;
+
+/// Cap `s` at [`SUBSTRATE_PAYLOAD_CAP`] bytes (R1 MED C13).
+/// Returns the slice with ` [truncated]` appended when oversize so
+/// the operator sees that the cap fired (rather than a silent
+/// truncation that hides the existence of overflow). Operates on
+/// `&str` to avoid forcing an allocation on the bounded path.
+pub(crate) fn cap_substrate_payload(s: &str) -> String {
+    if s.len() <= SUBSTRATE_PAYLOAD_CAP {
+        s.to_string()
+    } else {
+        // Truncate at the nearest char boundary at-or-before the
+        // cap so we never split a UTF-8 codepoint. Append a
+        // ` [truncated]` marker so operators can see the cap fired.
+        let mut end = SUBSTRATE_PAYLOAD_CAP;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut out = String::with_capacity(end + 14);
+        out.push_str(&s[..end]);
+        out.push_str(" [truncated]");
+        out
     }
 }
 
@@ -888,6 +922,42 @@ mod tests {
     use super::*;
     use thiserror::Error;
 
+    // R1 MED C13 — cap_substrate_payload boundary tests.
+    #[test]
+    fn cap_substrate_payload_under_cap_passes_through() {
+        let s = "x".repeat(SUBSTRATE_PAYLOAD_CAP);
+        let out = cap_substrate_payload(&s);
+        assert_eq!(out, s, "under-cap input passes through verbatim");
+    }
+
+    #[test]
+    fn cap_substrate_payload_over_cap_truncates_with_marker() {
+        let s = "y".repeat(SUBSTRATE_PAYLOAD_CAP + 100);
+        let out = cap_substrate_payload(&s);
+        assert!(
+            out.ends_with(" [truncated]"),
+            "over-cap output carries [truncated] marker, got tail: {}",
+            &out[out.len().saturating_sub(20)..],
+        );
+        assert!(
+            out.len() <= SUBSTRATE_PAYLOAD_CAP + " [truncated]".len(),
+            "over-cap output must be <= cap + marker suffix",
+        );
+    }
+
+    #[test]
+    fn cap_substrate_payload_respects_utf8_boundary() {
+        // 4 KiB + a multi-byte UTF-8 codepoint straddling the cap.
+        // The cap search MUST back up to the prior char boundary so
+        // we never slice a codepoint.
+        let mut s = "z".repeat(SUBSTRATE_PAYLOAD_CAP - 2);
+        s.push('ã'); // 2-byte UTF-8 sequence
+        let out = cap_substrate_payload(&s);
+        assert!(
+            std::str::from_utf8(out.as_bytes()).is_ok(),
+            "cap output MUST be valid UTF-8",
+        );
+    }
     #[test]
     fn tv_err2_internal_no_substrate_leak() {
         let e = OctoCliError::Internal("SQL: select * from wallet".into());

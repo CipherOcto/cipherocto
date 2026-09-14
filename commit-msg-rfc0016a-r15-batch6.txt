@@ -1,0 +1,59 @@
+fix(octo-audit + octo-cli): RFC-0016-a R1.5 batch 6 misc findings
+
+R1 reviewer MED C13 plus C15 plus C23 plus C26 plus
+LOW C22, C25, C30-C34 aggregation:
+
+C13 SinkSpecific payload cap (MED):
+
+- Add cap_substrate_payload plus SUBSTRATE_PAYLOAD_CAP equals
+  4 KiB helpers in octo-cli src error.rs to bound substrate
+  error payload size before sanitization.
+- SinkSpecific arm plus SequenceGap arm plus AlreadyExists arm
+  all route through cap_substrate_payload before
+  sanitize_substrate_error so unbounded adapter-emitted text
+  cannot blow up the CLI envelope. Matches the
+  octo-settlement scrubber MAX_INPUT_BYTES equals 4 KiB.
+- Three new tests: under-cap passes through verbatim,
+  over-cap truncates with marker suffix, multi-byte UTF-8
+  boundary at the cap respects char boundaries.
+
+C15 plus C23 PEM cascade order (MED):
+
+- Pattern 13 PEM regex SUBSUMES the PGP plus OpenSSH specific
+  patterns at the regex level because the prefix bracket A-Z0-9
+  space plus bracket would match PGP or OPENSSH. Correctness
+  therefore depends on Pattern 11 plus Pattern 12 running FIRST
+  in the scrub_adapter_error cascade.
+- Negative lookaheads were attempted but the regex crate does
+  not support lookarounds. The hardening path is therefore
+  documentation plus an explicit cascade-order invariant test.
+- scrub.rs Pattern 13 doc comment now describes the cascade-
+  order invariant plus the failure mode if the order is ever
+  swapped. References the new test name for grep-ability.
+- New scrub_pgp_not_subsumed_by_pem_cascade_order test asserts
+  that PGP and OpenSSH blocks emit their dedicated sentinels
+  rather than being silently collapsed to redacted-pem-private
+  by the subsuming Pattern 13. Test fails loudly on cascade
+  reorder.
+
+C26 dual timestamp fields (MED):
+
+- The dual timestamp filter form (timestamp_unix_gte plus
+  since_unix alias) was already documented at the struct level
+  in receipt_read.rs AuditFilter doc. No silent intersection
+  change required — keep as is.
+
+C22, C25, C30-C34 LOW:
+
+- Skipped per LOW tier prioritization. Path sentinel in
+  PermissionDenied doc is illustrative example, not literal
+  payload. ReceiptSummary derives Clone only, no Copy needed
+  for the use case.
+
+Verified:
+
+- cargo test octo-audit features octo-audit-internal lib 53
+  passing
+- cargo test octo-cli lib 241 passing
+- clippy plus D warnings clean across audit plus cli
+- fmt applied. NO PUSH.

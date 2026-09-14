@@ -140,6 +140,23 @@ static RE_OPENSSH_PRIVATE: Lazy<Regex> = Lazy::new(|| {
 /// `-----BEGIN PRIVATE KEY-----` (no type prefix) AND the typed
 /// forms `-----BEGIN RSA PRIVATE KEY-----`, `-----BEGIN EC PRIVATE
 /// KEY-----`, `-----BEGIN ENCRYPTED PRIVATE KEY-----`, etc.
+///
+/// **R1 MED C23 cascade-order invariant:** the prefix `[A-Z0-9 ]+`
+/// would also match `PGP` / `OPENSSH`, so this regex PATTERN
+/// SUBSUMES the PGP and OpenSSH specific patterns at the regex-
+/// level. Correctness therefore depends on `Pattern 11` (PGP) +
+/// `Pattern 12` (OpenSSH) running FIRST in the `scrub_adapter_error`
+/// cascade — they replace the block with a sentinel token before
+/// this pattern ever sees the literal BEGIN marker. A future
+/// re-ordering (e.g. moving PEM above PGP for "consistency") would
+/// silently collapse PGP blocks to `<redacted-pem-private>` instead
+/// of `<redacted-pgp-private>` — wrong sentinel + leaky
+/// classification. Do NOT reorder Patterns 11/12/13 without
+/// first consulting the cascade-order invariant test below.
+///
+/// The cascade-order invariant is enforced by
+/// `scrub_pgp_not_subsumed_by_pem_cascade_order` test — that test
+/// would fail loudly if the order were ever swapped.
 static RE_PEM_PRIVATE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)-----BEGIN(?: [A-Z0-9 ]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9 ]+)? PRIVATE KEY-----",
@@ -513,6 +530,38 @@ mod tests {
         let out = scrub_adapter_error_with(pem, &[]);
         assert!(out.contains("<redacted-pem-private>"));
         assert!(!out.contains("MIIEowIBAAK"));
+    }
+
+    // R1 MED C23 cascade-order invariant. Pattern 13 PEM regex
+    // SUBSUMES the PGP / OpenSSH specific patterns at the regex
+    // level (the `[A-Z0-9 ]+` prefix would match PGP / OPENSSH).
+    // Correctness depends on Pattern 11 (PGP) + Pattern 12 (OpenSSH)
+    // running FIRST in the cascade. This test fails LOUDLY if
+    // anyone reorders Patterns 11/12/13 in `scrub_adapter_error`.
+    #[test]
+    fn scrub_pgp_not_subsumed_by_pem_cascade_order() {
+        let pgp_block =
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQHYABEH\n-----END PGP PRIVATE KEY BLOCK-----";
+        let out = scrub_adapter_error_with(pgp_block, &[]);
+        assert!(
+            out.contains("<redacted-pgp-private>"),
+            "PGP block must emit <redacted-pgp-private>, got: {out}",
+        );
+        assert!(
+            !out.contains("<redacted-pem-private>"),
+            "PEM cascade order violated: PGP block was subsumed by Pattern 13, got: {out}",
+        );
+
+        let openssh_block = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----";
+        let out2 = scrub_adapter_error_with(openssh_block, &[]);
+        assert!(
+            out2.contains("<redacted-openssh-private>"),
+            "OpenSSH block must emit <redacted-openssh-private>, got: {out2}",
+        );
+        assert!(
+            !out2.contains("<redacted-pem-private>"),
+            "PEM cascade order violated: OpenSSH block was subsumed by Pattern 13, got: {out2}",
+        );
     }
 
     #[test]

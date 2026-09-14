@@ -16,7 +16,7 @@ Draft (2026-09-11)
 
 This RFC is a **sibling amendment** to RFC-0015 carrying the **write-path surface** that RFC-0015 v2 deliberately DEFERRED:
 
-1. **`pub fn transition_agent(caller_did: &Did, uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<AgentSummary, WalletError>`** — NEW ADDITIVE write function per §6.1. Paired with `AuditEventKind::AgentTransition` (RFC-0012-v2 substrate amendment). Substrate-faithful caller-attestation + per-`(holder_did, agent_id)` `parking_lot::Mutex::try_lock()` lock-mode (TOCTOU mitigation) + audit append + rollback contract.
+1. **`pub fn transition_agent(caller_did: &Did, uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>`** — NEW ADDITIVE write function per §6.1. Paired with `AuditEventKind::AgentTransition` (RFC-0012-v2 substrate amendment). Substrate-faithful caller-attestation + per-`(holder_did, agent_id)` `parking_lot::Mutex::try_lock()` lock-mode (TOCTOU mitigation) + audit append + rollback contract.
 2. **`WalletError::AlreadyInTransition(Uuid)`** — NEW ADDITIVE enum variant per §6.3. Raised on concurrent `transition_agent` call against the same `(holder_did, agent_id)`.
 3. **`WalletError::InvalidStateTransition { from, to }`** — NEW ADDITIVE enum variant per §6.3. Raised on illegal transition (e.g., `Terminated → Terminated` per TV-WLT-AGT-5).
 4. **`WalletError::AuditUnavailable`** — NEW ADDITIVE enum variant per §6.3. Raised when `AppendOnlyAuditSink` is unreachable OR fails closed (per the rollback contract in §6.1 (5)).
@@ -121,7 +121,7 @@ pub fn transition_agent(
     uuid: Uuid,
     target: AgentState,
     reason: Option<&str>,
-) -> Result<AgentSummary, WalletError>;
+) -> Result<TransitionReceipt, WalletError>;
 ```
 
 - **(1) TOCTOU mitigation** — `parking_lot::Mutex::try_lock()` AFTER holder_did resolution; non-blocking; second caller observes `AlreadyInTransition` immediately. The lock is held across reason filter + state-machine work + audit append and released after the audit append completes (or rolls back). `current_state` is re-read INSIDE the lock. The lock mode is `parking_lot::Mutex::try_lock()` (non-blocking; immediate `AlreadyInTransition` return on contention) — NOT `lock()` (blocking) which would risk substrate-internal deadlock under load. **Rationale for `parking_lot` over std:** `parking_lot::Mutex` provides `try_lock()` without poisoning — Rust std `Mutex::try_lock()` poisons on holder-panic; parking_lot returns lock error without poisoning the lock state, allowing graceful Phase 2.5 deferred-write-path fallback to canonical substrate `WalletError::AlreadyInTransition` rather than poisoned-lock panics.

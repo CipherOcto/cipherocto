@@ -1,118 +1,42 @@
-//! Type-level scrub enforcement newtypes (RFC-0016-a §6.8).
+//! Substrate-side second-pass scrubber applied at the façade
+//! boundary (RFC-0016-a §6.8).
 //!
 //! Layer B façade-only — the canonical 13-pattern substrate-side
 //! scrubber at `octo_audit::scrub::scrub_adapter_error` is applied
-//! BEFORE constructing these variants (defense-in-depth second pass
-//! at the Layer B façade boundary). The `<REDACTED>` marker is
-//! preserved verbatim per the R21 L-2 idempotency rule (no
-//! double-scrub).
-//!
-//! ## Layer discipline
-//!
-//! Both newtypes live in `octo-audit` (Layer B façade). They
-//! type-erasure their payload (`SinkSpecific(String)` payload string;
-//! `AuditError` envelope) so downstream callers (CLI / DOMAIN
-//! adapters) cannot re-introduce raw secret material after the
-//! substrate-side scrub pass — the type system enforces it.
-
-use std::fmt;
-
-use octo_audit_core::AuditError;
+//! by `redact_substrate_error` BEFORE constructing CLI envelopes.
+//! When ANY of the 13 patterns matches, the entire payload is
+//! replaced with the canonical `<REDACTED>` marker per RFC-0016-a
+//! §6.8 (the marker is preserved verbatim on subsequent passes per
+//! the R21 L-2 idempotency rule).
 
 use crate::scrub::scrub_adapter_error;
 
-/// Type-level scrub envelope around `AuditError`
-/// (RFC-0016-a §6.8).
+/// Canonical `<REDACTED>` marker emitted when any of the 13
+/// substrate-side scrubber patterns matches the input (RFC-0016-a
+/// §6.8). The marker is preserved verbatim on subsequent scrub
+/// passes per the R21 L-2 idempotency rule.
+const REDACTED_MARKER: &str = "<REDACTED>";
+
+/// Apply the canonical 13-pattern substrate-side scrubber to `raw`
+/// (RFC-0016-a §6.8 second-pass defense-in-depth at the façade
+/// boundary).
 ///
-/// Construction MUST go through [`ScrubbedAuditError::new`] which
-/// applies the canonical 13-pattern substrate-side scrubber to every
-/// `SinkSpecific(String)` payload BEFORE wrapping in the
-/// `ScrubbedAuditError` envelope. Defense-in-depth second pass at
-/// the Layer B façade boundary.
-#[derive(Debug)]
-pub struct ScrubbedAuditError(pub AuditError);
-
-impl ScrubbedAuditError {
-    /// Apply the canonical 13-pattern substrate-side scrubber to every
-    /// `SinkSpecific(String)` payload, then wrap in the
-    /// `ScrubbedAuditError` envelope. Fail-closed: any payload that
-    /// matches a scrub pattern is replaced with `<REDACTED>` before
-    /// construction.
-    pub fn new(err: AuditError) -> Self {
-        let scrubbed = match err {
-            AuditError::SinkSpecific(msg) => AuditError::SinkSpecific(scrub_adapter_error(&msg)),
-            other => other,
-        };
-        Self(scrubbed)
-    }
-
-    /// Borrow the inner `AuditError` envelope.
-    #[must_use]
-    pub fn inner(&self) -> &AuditError {
-        &self.0
-    }
-
-    /// Consume the envelope and return the inner `AuditError`.
-    #[must_use]
-    pub fn into_inner(self) -> AuditError {
-        self.0
-    }
-}
-
-impl fmt::Display for ScrubbedAuditError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Display delegates to AuditError display, which already
-        // renders `SinkSpecific("<msg>")` via thiserror.
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ScrubbedAuditError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.0)
-    }
-}
-
-/// Canonical `<REDACTED>`-marked string payload
-/// (RFC-0016-a §6.8).
-///
-/// Construction MUST go through [`ScrubbedString::new`] which applies
-/// the canonical 13-pattern substrate-side scrubber (R21 L-2
-/// idempotency rule: the literal `<REDACTED>` marker is preserved
-/// verbatim, never double-scrubbed).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScrubbedString(pub String);
-
-impl ScrubbedString {
-    /// Apply canonical 13-pattern substrate-side scrubber and produce
-    /// `<REDACTED>` marker if any pattern matches. The `<REDACTED>`
-    /// marker itself is preserved verbatim (R21 L-2 idempotency rule).
-    pub fn new(raw: &str) -> Self {
-        Self(scrub_adapter_error(raw))
-    }
-
-    /// Borrow the inner scrubbed string.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Consume the envelope and return the inner string.
-    #[must_use]
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for ScrubbedString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<ScrubbedString> for String {
-    fn from(s: ScrubbedString) -> Self {
-        s.0
+/// - If `raw` matches NO scrub pattern, the verbatim string is
+///   returned (no allocation).
+/// - If `raw` DOES match any pattern, the canonical `<REDACTED>`
+///   marker is returned (replaces the entire payload, not just the
+///   matched span — the spec mandates "any pattern match → emit
+///   `<REDACTED>`" rather than per-sentinel substitution at the
+///   façade boundary).
+/// - The `<REDACTED>` marker itself is preserved verbatim on
+///   subsequent passes (R21 L-2 idempotency).
+#[must_use]
+pub fn redact_substrate_error(raw: &str) -> String {
+    let scrubbed = scrub_adapter_error(raw);
+    if scrubbed == raw {
+        raw.to_string()
+    } else {
+        REDACTED_MARKER.to_string()
     }
 }
 
@@ -121,61 +45,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scrubbed_string_passes_through_safe_text() {
-        let s = ScrubbedString::new("hello world");
-        assert_eq!(s.as_str(), "hello world");
+    fn safe_text_passes_through_verbatim() {
+        let s = redact_substrate_error("hello world");
+        assert_eq!(s, "hello world");
     }
 
     #[test]
-    fn scrubbed_string_redacts_hex_digest() {
+    fn hex_digest_collapses_to_redacted_marker() {
+        // 64-char hex matches Pattern 1 (≥32 hex). Per spec §6.8
+        // the entire payload collapses to `<REDACTED>` rather than
+        // being replaced by the per-pattern `<redacted-hex>`
+        // sentinel (that sentinel is the substrate-side form; the
+        // façade boundary collapses to the canonical marker).
         let hex64 = "a".repeat(64);
-        let s = ScrubbedString::new(&hex64);
-        // Pattern 1 (32+ char hex) catches 64-char hex → sentinel is
-        // `<redacted-hex>` per the canonical scrubber output.
-        assert!(
-            s.as_str().contains("<redacted-hex>"),
-            "64-char hex MUST be redacted, got: {}",
-            s.as_str(),
+        let s = redact_substrate_error(&hex64);
+        assert_eq!(
+            s, "<REDACTED>",
+            "matched pattern MUST collapse to <REDACTED>, got: {s}",
         );
-        assert!(
-            !s.as_str().contains(&hex64),
-            "raw hex MUST NOT survive, got: {}",
-            s.as_str(),
-        );
+        assert!(!s.contains(&hex64), "raw hex MUST NOT survive, got: {s}");
     }
 
     #[test]
-    fn scrubbed_string_preserves_redacted_marker_idempotent() {
+    fn redacted_marker_is_idempotent() {
         // R21 L-2 idempotency rule: the literal `<REDACTED>` marker
         // is preserved verbatim, not double-scrubbed.
-        let s = ScrubbedString::new("user-supplied field: <REDACTED>");
-        assert!(s.as_str().contains("<REDACTED>"));
+        let s = redact_substrate_error("user-supplied field: <REDACTED>");
+        assert!(s.contains("<REDACTED>"));
         assert!(
-            !s.as_str().contains("<<REDACTED>"),
-            "must NOT double-redact the marker, got: {}",
-            s.as_str(),
+            !s.contains("<<REDACTED>"),
+            "must NOT double-redact the marker, got: {s}",
         );
     }
 
     #[test]
-    fn scrubbed_audit_error_redacts_sink_specific_payload() {
-        let hex64 = "b".repeat(64);
-        let raw = AuditError::SinkSpecific(format!("privkey: {hex64}"));
-        let scrubbed = ScrubbedAuditError::new(raw);
-        match scrubbed.inner() {
-            AuditError::SinkSpecific(msg) => {
-                // After the scrubber pass, the 64-char hex is replaced
-                // with the lowercase `<redacted-hex>` sentinel.
-                assert!(
-                    msg.contains("<redacted-hex>"),
-                    "hex payload MUST be redacted in scrubbed error, got: {msg}",
-                );
-                assert!(
-                    !msg.contains(&hex64),
-                    "raw hex MUST NOT survive, got: {msg}",
-                );
-            }
-            other => panic!("expected SinkSpecific, got {other:?}"),
-        }
+    fn pem_block_collapses_to_redacted_marker() {
+        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAA\n-----END RSA PRIVATE KEY-----";
+        let s = redact_substrate_error(pem);
+        assert_eq!(
+            s, "<REDACTED>",
+            "PEM block MUST collapse to <REDACTED>, got: {s}",
+        );
+    }
+
+    #[test]
+    fn jwt_three_segment_collapses_to_redacted_marker() {
+        let jwt =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let s = redact_substrate_error(jwt);
+        assert_eq!(s, "<REDACTED>", "JWT MUST collapse to <REDACTED>, got: {s}");
     }
 }

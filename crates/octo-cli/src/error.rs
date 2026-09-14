@@ -741,28 +741,52 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
 /// substrate-faithful per RFC-0011-a `ADD` envelope pattern
 /// (per-variant mapping; not a catch-all `Internal` wrapper).
 ///
+/// **Defense-in-depth scrub pass (RFC-0016-a §6.8 + R1 reviewer
+/// HIGH findings C8 + C9):** every payload-bearing variant
+/// (ReceiptNotFound, InvalidFilter, PermissionDenied, SinkSpecific)
+/// routes through `octo_audit::redact_substrate_error` before
+/// constructing the CLI envelope. If the substrate payload matches
+/// any of the 13 canonical scrubber patterns (hex digest, JWT,
+/// WIF, BIP39 mnemonic, capability-secret base64, PEM/PGP/OpenSSH
+/// private-key blocks, etc.), the entire payload collapses to the
+/// canonical `<REDACTED>` marker. This is the second pass at the
+/// CLI boundary; the substrate-side scrubber (defect 1a) is the
+/// first pass.
+///
 /// Mapping table per RFC-0016-a §6.7:
 ///
 /// | Substrate variant                       | CLI variant                              | Exit |
 /// | --------------------------------------- | ---------------------------------------- | ---- |
-/// | `AuditError::ReceiptNotFound(s)`        | `OctoCliError::ReceiptNotFound(s)`       | 17   |
-/// | `AuditError::InvalidFilter(s)`          | `OctoCliError::InvalidFilter(s)`         | 16   |
-/// | `AuditError::PermissionDenied(s)`       | `OctoCliError::PermissionDenied(s)`      | 13   |
+/// | `AuditError::ReceiptNotFound(s)`        | `OctoCliError::ReceiptNotFound(redact)`  | 17   |
+/// | `AuditError::InvalidFilter(s)`          | `OctoCliError::InvalidFilter(redact)`    | 16   |
+/// | `AuditError::PermissionDenied(s)`       | `OctoCliError::PermissionDenied(redact)` | 13   |
 /// | `AuditError::AuditAppendFailed(_)`      | `OctoCliError::AuditSubstrateNotReady`   | 52   |
+/// | `AuditError::ChainHashMismatch { .. }`  | `OctoCliError::Internal(reason)`         | 64   |
 /// | `AuditError::SequenceGap { .. }`        | `OctoCliError::Internal(reason)`         | 64   |
 /// | `AuditError::AlreadyExists(_)`          | `OctoCliError::Internal(reason)`         | 64   |
 /// | `AuditError::SinkSpecific(_)`           | `OctoCliError::Internal(reason)`         | 64   |
 impl From<octo_audit::AuditError> for OctoCliError {
     fn from(e: octo_audit::AuditError) -> Self {
+        // Use a closure to keep the §6.8 redact pass DRY across the
+        // 4 payload-bearing variants. The closure is invoked
+        // exactly once per arm.
+        let redact = |payload: &str| octo_audit::redact_substrate_error(payload);
         match e {
-            octo_audit::AuditError::ReceiptNotFound(s) => Self::ReceiptNotFound(s),
-            octo_audit::AuditError::InvalidFilter(s) => Self::InvalidFilter(s),
-            octo_audit::AuditError::PermissionDenied(s) => Self::PermissionDenied(s),
+            octo_audit::AuditError::ReceiptNotFound(s) => Self::ReceiptNotFound(redact(&s)),
+            octo_audit::AuditError::InvalidFilter(s) => Self::InvalidFilter(redact(&s)),
+            octo_audit::AuditError::PermissionDenied(s) => Self::PermissionDenied(redact(&s)),
             // Substrate-faithful: `AuditAppendFailed(reason)` collapses
             // to operator-facing `AuditSubstrateNotReady` (unit variant)
             // — the reason is substrate-internal and intentionally NOT
             // surfaced to the CLI per RFC-0016-a §6.7 table footnote.
             octo_audit::AuditError::AuditAppendFailed(_) => Self::AuditSubstrateNotReady,
+            // ChainHashMismatch carries the canonical + supplied
+            // 32-byte digests; we never want them in a CLI
+            // envelope (32 bytes of hex is a side-channel for the
+            // canonical hash). Collapse to a generic reason.
+            octo_audit::AuditError::ChainHashMismatch { .. } => {
+                Self::Internal("audit chain_hash mismatch".to_string())
+            }
             // Original 3 substrate variants map to `Internal` (exit 64)
             // — these are pre-RFC-0016-a substrate-faithful failures
             // that don't have a CLI-shape mapping. The reason string
@@ -1158,10 +1182,20 @@ mod tests {
         assert!(matches!(r, OctoCliError::InvalidFilter(ref s) if s == "limit out of range"));
         assert_eq!(r.exit_code(), 16);
 
-        // PermissionDenied (exit 13)
+        // PermissionDenied (exit 13). Substrate payload
+        // `/var/lib/octo/audit` matches Pattern 8 (absolute path)
+        // so the defense-in-depth §6.8 scrub pass collapses the
+        // payload to the canonical `<REDACTED>` marker per the
+        // R1 reviewer HIGH finding C9 fix. CLI envelope carries
+        // the marker (not the raw path) so the operator gets an
+        // explicit substrate-shape signal without leaking the
+        // audit home directory into log streams.
         let r: OctoCliError =
             octo_audit::AuditError::PermissionDenied("/var/lib/octo/audit".into()).into();
-        assert!(matches!(r, OctoCliError::PermissionDenied(ref s) if s == "/var/lib/octo/audit"));
+        assert!(
+            matches!(r, OctoCliError::PermissionDenied(ref s) if s == "<REDACTED>"),
+            "PermissionDenied path payload MUST be redacted at the CLI boundary (R1 C9), got {r:?}"
+        );
         assert_eq!(r.exit_code(), 13);
 
         // AuditAppendFailed (exit 52; reason dropped per §6.7 footnote)

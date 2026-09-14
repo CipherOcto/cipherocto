@@ -71,12 +71,17 @@ pub use audit_event_v2::{append_audit_event, ChainHash};
 pub mod receipt_summary;
 pub use receipt_summary::ReceiptSummary;
 
-// RFC-0016-a §6.8 paired-acceptance: type-level scrub enforcement
-// newtypes — `ScrubbedAuditError(AuditError)` + `ScrubbedString(String)`
-// pair. Construction MUST go through `::new(...)` which applies the
-// canonical 13-pattern substrate-side scrubber before wrapping.
+// RFC-0016-a §6.8 paired-acceptance: substrate-side second-pass
+// scrubber applied at the façade boundary. `redact_substrate_error`
+// collapses any payload matching one of the 13 scrubber patterns
+// to the canonical `<REDACTED>` marker (per spec §6.8); verbatim
+// strings pass through unchanged. CLI envelopes route substrate
+// `SinkSpecific` / `InvalidFilter` / `ReceiptNotFound` /
+// `PermissionDenied` payloads through this function before
+// constructing CLI-shape variants, so the type system can no
+// longer carry raw secret material past the façade boundary.
 pub mod scrub_newtypes;
-pub use scrub_newtypes::{ScrubbedAuditError, ScrubbedString};
+pub use scrub_newtypes::redact_substrate_error;
 
 // RFC-0016-a §6.6 paired-acceptance: `StatusRef` type alias for the
 // canonical Layer A frozen `ReceiptStatus` enum re-exported through

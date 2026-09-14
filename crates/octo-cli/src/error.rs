@@ -778,6 +778,18 @@ impl From<octo_audit::AuditError> for OctoCliError {
             octo_audit::AuditError::SinkSpecific(msg) => Self::Internal(sanitize_substrate_error(
                 &format!("audit sink-specific error: {msg}"),
             )),
+            // `#[non_exhaustive]` on `AuditError` (RFC-0016-a §6.7
+            // substrate column) means downstream exhaustive matches
+            // MUST wildcard. Future substrate variants (added by
+            // follow-on amendments without a paired CLI-shape
+            // mapping) collapse to `Internal(reason)` per the same
+            // pattern as `SinkSpecific`. Sanitizer applies the
+            // 13-pattern scrubber so an unknown future variant that
+            // accidentally carries a key/path leaks only
+            // `<redacted-*>` markers.
+            _ => Self::Internal(sanitize_substrate_error(&format!(
+                "audit substrate error: {e}"
+            ))),
         }
     }
 }

@@ -6,7 +6,13 @@ use thiserror::Error;
 /// Cross-trait audit error envelope. Concrete sinks MAY return
 /// `AuditError::SinkSpecific` for adapter-specific failures
 /// (e.g. `StoolapAuditSink` Stoolap transaction errors).
+///
+/// `#[non_exhaustive]` per Layer A frozen contract (CLAUDE.md
+/// §Architectural Principles + RFC-0016-a §6.7 substrate column):
+/// downstream exhaustive match arms MUST use wildcard patterns.
+/// New variants land additively without breaking downstream.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AuditError {
     /// Event ID is not the successor of the last persisted event.
     #[error("sequence gap: event_id {event_id} after {prev}")]

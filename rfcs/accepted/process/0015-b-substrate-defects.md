@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-14)
+Accepted (2026-09-14)
 
 > **Substrate-defect paired amendment per RFC-0015 + RFC-0015-a + RFC-0016 plateau declaration 2026-09-14.** This amendment restates surviving substrate defects (post-canonicalization against RFC-0015-a §6.1 canonical `std::sync::Mutex` GLOBAL `AGENT_REGISTRY` pattern + RFC-0012 Layer A frozen contract) as additive §X.1-§X.5 requirements. Paired with `missions/claimed/0015-b-substrate-defect-impl.md` per RFC-0015-a §6.5 paired-acceptance bridge.
 
@@ -331,6 +331,7 @@ The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The p
 | 1.0     | 2026-09-14 | Initial substrate-defect paired amendment per plateau declaration |
 | 1.1     | 2026-09-14 | R1.5: std::sync::Mutex substrate; 7→5 defects; §X renumber        |
 | 1.2     | 2026-09-14 | R2.5: defect 5 demoted; 5→4 defects; TV drops                     |
+| 1.3     | 2026-09-14 | Accepted: R4+R5 zero-finding → DRY CLOSED                         |
 
 ## Related RFCs
 

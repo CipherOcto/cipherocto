@@ -751,9 +751,10 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
 /// private-key blocks, etc.), the entire payload collapses to the
 /// canonical `<REDACTED>` marker. The SinkSpecific arm uses the
 /// lighter `sanitize_substrate_error` + `cap_substrate_payload`
-/// pipeline (3 string markers — `SQL:`, `query:`, `sqlite3_open`
-/// — plus the `crates/octo-` path prefix handled separately by
-/// `ERROR_MARKERS`; see the `sanitize_substrate_error` impl)
+/// pipeline (3 string markers in `ERROR_MARKERS` —
+/// `SQL:`, `query:`, `sqlite3_open` — plus the `crates/octo-`
+/// path prefix; see the `sanitize_substrate_error` impl
+/// constants)
 /// because its payloads are substrate-internal Stoolap error
 /// strings — the full 18-pattern sweep would be
 /// over-redaction for that adapter-specific channel. This is the

@@ -102,7 +102,7 @@ pub struct AuditFilter {
     /// (UNION semantics): receipt is included if its `status` is
     /// `==` ANY element of this `Vec`. Empty `Vec` = no status
     /// filter (all statuses match). `StatusRef` is the canonical
-    /// alias for `octo_settlement::ReceiptStatus` (RFC-0014-v2
+    /// alias for `octo_settlement::ReceiptStatus` (RFC-0014
     /// substrate re-export).
     #[serde(default)]
     pub status: Vec<StatusRef>,

@@ -15,7 +15,7 @@
 //! extension adds the 3 patterns as additive `RE_PGP_PRIVATE` /
 //! `RE_OPENSSH_PRIVATE` / `RE_PEM_PRIVATE` static regexes.
 //!
-//! Per RFC-0014-v2 §FW6, the canonical scrubber pattern list lives there
+//! Per RFC-0014 §FW6, the canonical scrubber pattern list lives there
 //! (single source of truth). This module re-implements the 13 patterns
 //! at the `octo-audit` façade (Layer B) per the R34.5 trade-off
 //! (per-façade duplication accepted at v2.0.0; may collapse into

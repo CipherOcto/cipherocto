@@ -40,15 +40,51 @@ pub mod storage;
 // `scrub_adapter_error` + `scrub_adapter_error_with` entry points so
 // DOMAIN adapters can call them without depending on a generic
 // shared-utility crate (which the R34.5 trade-off explicitly
-// deferred to v2.1+).
+// deferred to v2.1+). RFC-0016-a §6.9 paired-acceptance extends to
+// 13 patterns additive (Patterns 11/12/13 = PGP / OpenSSH / PEM
+// private-key blocks).
 pub mod scrub;
 pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_validate};
 
 // RFC-0016 §6.2 read-path surface (list_receipts + get_receipt +
 // audit_home + AuditFilter). Phase 1 process-global registry; Stoolap
 // DOMAIN adapter lands with RFC-0016-a paired-acceptance unblock.
+// RFC-0016-a §6.6 extends `AuditFilter` additively (subject_did,
+// status UNION, model, capability_root, since_unix / until_unix).
 pub mod receipt_read;
 pub use receipt_read::{audit_home, get_receipt, insert_receipt, list_receipts, AuditFilter};
+
+// RFC-0016-a §6.2 + §6.3 paired-acceptance write-path surface:
+// `ChainHash(pub [u8; 32])` canonical BLAKE3 chain-hash newtype with
+// `Display` (lowercase hex) + `append_audit_event(sink: &mut, event)
+// -> Result<ChainHash, AuditError>` Layer B façade write function.
+// The Rust borrow checker enforces single-writer per sink instance
+// at the type level (`&mut self`) per RFC-0012 §Trait G3 +
+// RFC-0016-a §6.11 read-stall-while-write invariant.
+pub mod audit_event_v2;
+pub use audit_event_v2::{append_audit_event, ChainHash};
+
+// RFC-0016-a §6.5 paired-acceptance: `ReceiptSummary` canonical
+// projection struct + `from_canonical(Receipt) -> Self` mapper. The
+// CLI list command renders rows as `ReceiptSummary` without exposing
+// every canonical `Receipt` field.
+pub mod receipt_summary;
+pub use receipt_summary::ReceiptSummary;
+
+// RFC-0016-a §6.8 paired-acceptance: type-level scrub enforcement
+// newtypes — `ScrubbedAuditError(AuditError)` + `ScrubbedString(String)`
+// pair. Construction MUST go through `::new(...)` which applies the
+// canonical 13-pattern substrate-side scrubber before wrapping.
+pub mod scrub_newtypes;
+pub use scrub_newtypes::{ScrubbedAuditError, ScrubbedString};
+
+// RFC-0016-a §6.6 paired-acceptance: `StatusRef` type alias for the
+// canonical Layer A frozen `ReceiptStatus` enum re-exported through
+// the `octo-settlement` Layer B façade. Used by `AuditFilter.status`
+// (UNION semantics over multiple status values).
+/// Canonical `ReceiptStatus` type alias for `AuditFilter::status`
+/// list elements (RFC-0016-a §6.6).
+pub type StatusRef = octo_settlement::ReceiptStatus;
 
 // RFC-0015-a §6.1 paired-acceptance bridge: audit write-path façade.
 // Process-global sink registry + `append_agent_transition_event`

@@ -51,35 +51,106 @@ pub fn insert_receipt(receipt: Receipt) {
     }
 }
 
-/// Filter for `list_receipts` — RFC-0016 §6.2.4.
+/// Filter for `list_receipts` — RFC-0016 §6.2.4 + RFC-0016-a §6.6 paired
+/// extension.
 ///
-/// All-`None` returns the unfiltered receipt set, sorted by
-/// `timestamp_unix DESC` with `receipt_id ASC` tiebreaker.
+/// The KEEP RFC-0016 surface (`router_id`, `timestamp_unix_gte/lte`,
+/// `cursor`, `limit`) is preserved verbatim — RFC-0016-a §Compatibility
+/// #4 keeps the `list_receipts(filter: &AuditFilter) -> Result<Vec<Receipt>, AuditError>`
+/// signature valid. The RFC-0016-a additive fields (`since_unix`,
+/// `until_unix`, `subject_did`, `status`, `model`, `capability_root`)
+/// extend the struct without breaking existing callers; both
+/// timestamp filter forms are honored at the read boundary
+/// (`timestamp_unix_gte/lte` legacy + `since_unix/until_unix` new).
+///
+/// All-`None` (or all-additive-`None`) returns the unfiltered receipt
+/// set, sorted by `timestamp_unix DESC` with `receipt_id ASC`
+/// tiebreaker.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditFilter {
     /// Restrict to receipts whose `router_id` equals this string
-    /// (RFC-0010 canonical wire form).
+    /// (RFC-0010 canonical wire form; RFC-0016 KEEP).
     pub router_id: Option<String>,
-    /// Minimum timestamp (`>=`). None = unbounded below.
+    /// Minimum timestamp (`>=`); RFC-0016 KEEP field name.
+    /// None = unbounded below. Honored at the read boundary alongside
+    /// the RFC-0016-a `since_unix` alias.
     pub timestamp_unix_gte: Option<u64>,
-    /// Maximum timestamp (`<=`). None = unbounded above.
+    /// Maximum timestamp (`<=`); RFC-0016 KEEP field name.
+    /// None = unbounded above. Honored at the read boundary alongside
+    /// the RFC-0016-a `until_unix` alias.
     pub timestamp_unix_lte: Option<u64>,
+    /// RFC-0016-a §6.6 additive field: minimum timestamp (`>=`).
+    /// Canonical name; `timestamp_unix_gte` is the legacy RFC-0016
+    /// KEEP alias. Either OR both may be set — the read boundary
+    /// uses the `max(gte, since_unix)` of the two.
+    #[serde(default)]
+    pub since_unix: Option<u64>,
+    /// RFC-0016-a §6.6 additive field: maximum timestamp (`<=`).
+    /// Canonical name; `timestamp_unix_lte` is the legacy RFC-0016
+    /// KEEP alias. Either OR both may be set — the read boundary
+    /// uses the `min(lte, until_unix)` of the two.
+    #[serde(default)]
+    pub until_unix: Option<u64>,
+    /// RFC-0016-a §6.6 additive ACL: restrict to receipts whose
+    /// `subject_did` equals this canonical DID wire form
+    /// (multi-tenant per-process trust boundary).
+    #[serde(default)]
+    pub subject_did: Option<String>,
+    /// RFC-0016-a §6.6 additive multi-valued status filter
+    /// (UNION semantics): receipt is included if its `status` is
+    /// `==` ANY element of this `Vec`. Empty `Vec` = no status
+    /// filter (all statuses match).
+    #[serde(default)]
+    pub status: Vec<octo_settlement::ReceiptStatus>,
+    /// RFC-0016-a §6.6 additive model-name filter (exact match).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// RFC-0016-a §6.6 additive capability-root filter (exact
+    /// match against the 32-byte BLAKE3 digest).
+    #[serde(default)]
+    pub capability_root: Option<[u8; 32]>,
     /// Maximum rows returned (`None` = no cap; substrate applies
-    /// a hard ceiling of 1024).
+    /// a hard ceiling of 1024). RFC-0016 KEEP.
     pub limit: Option<usize>,
     /// Opaque cursor (forward-compat for Phase 2 multi-page
-    /// iteration).
+    /// iteration). RFC-0016 KEEP.
     pub cursor: Option<String>,
 }
 
 /// List receipt IDs (`Vec<u64>` of `receipt_id` values) matching
-/// `filter` (RFC-0016 §6.2.1).
+/// `filter` (RFC-0016 §6.2.1 + RFC-0016-a §6.6 additive filter
+/// fields).
 ///
 /// Sorted by `timestamp_unix DESC` with `receipt_id ASC`
 /// tiebreaker. Returns empty `Vec` when zero matches (NOT an
 /// error). Limit clamp at 1024. Read-only — no state mutation.
+///
+/// Honors BOTH the RFC-0016 KEEP filter fields (`router_id`,
+/// `timestamp_unix_gte/lte`, `cursor`) AND the RFC-0016-a additive
+/// fields (`since_unix`, `until_unix`, `subject_did`, `status` UNION,
+/// `model`, `capability_root`). The timestamp filters use
+/// `max(gte, since_unix)` for the lower bound and `min(lte, until_unix)`
+/// for the upper bound — i.e. the tightest range of either filter
+/// form is honored.
 pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
     let limit = filter.limit.unwrap_or(1024).min(1024);
+
+    // RFC-0016-a §6.6 additive field combinations: `since_unix` is
+    // an alias for `timestamp_unix_gte` (effective lower bound =
+    // tightest of the two); `until_unix` aliases `timestamp_unix_lte`
+    // (effective upper bound = tightest of the two).
+    let effective_gte = match (filter.timestamp_unix_gte, filter.since_unix) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    let effective_lte = match (filter.timestamp_unix_lte, filter.until_unix) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
 
     let registry = registry()
         .lock()
@@ -91,13 +162,33 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<u64>, AuditError> {
             Some(rid) => r.router_id == *rid,
             None => true,
         })
-        .filter(|r| match filter.timestamp_unix_gte {
+        .filter(|r| match effective_gte {
             Some(gte) => r.timestamp_unix >= gte,
             None => true,
         })
-        .filter(|r| match filter.timestamp_unix_lte {
+        .filter(|r| match effective_lte {
             Some(lte) => r.timestamp_unix <= lte,
             None => true,
+        })
+        .filter(|r| match &filter.subject_did {
+            Some(did) => r.subject_did == *did,
+            None => true,
+        })
+        .filter(|r| match &filter.model {
+            Some(m) => r.model == *m,
+            None => true,
+        })
+        .filter(|r| match filter.capability_root {
+            Some(cr) => r.capability_root == cr,
+            None => true,
+        })
+        .filter(|r| {
+            // RFC-0016-a §6.6 UNION semantics: empty Vec = no
+            // status filter (all statuses match).
+            if filter.status.is_empty() {
+                return true;
+            }
+            filter.status.iter().any(|s| s == &r.status)
         })
         .map(|r| r.receipt_id)
         .collect();

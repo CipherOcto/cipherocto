@@ -405,6 +405,27 @@ pub enum OctoCliError {
     #[error("audit substrate not ready: register the audit sink or enable the octo-audit-internal feature")]
     AuditSubstrateNotReady,
 
+    /// Receipt id not found in the receipt store (RFC-0016-a §6.7
+    /// paired-with-RFC-0011-a; canonical decimal `u64` form).
+    /// Mapped from `octo_audit_core::AuditError::ReceiptNotFound` at
+    /// the dispatch boundary. Exit 17 per RFC-0016-a §6.7 table;
+    /// shares the slot with `InvalidTtlHops` + `ForbiddenHolderMismatch`
+    /// per the established amendment-chain shared-slot pattern
+    /// (operator-unambiguous within their respective command surfaces).
+    #[error("receipt not found: {0}")]
+    ReceiptNotFound(String),
+
+    /// Per-process trust boundary violated on the audit substrate
+    /// (RFC-0016-a §6.7 paired-with-RFC-0011-a; canonical scrubbed
+    /// path form). Mapped from
+    /// `octo_audit_core::AuditError::PermissionDenied` at the dispatch
+    /// boundary. Exit 13 per RFC-0016-a §6.7 table; shares the slot
+    /// with `PolicyNotFound` (both are operator-input validation
+    /// failures on access credentials — operator-unambiguous within
+    /// their respective command surfaces).
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
     /// `octo agent attach` observed the target agent exists but is
     /// not in `Running` state (RFC-0011-c §9.8 + RFC-0015-a §6.3,
     /// slot 48 reserved by the agent amendment chain). Exit 48.
@@ -486,6 +507,16 @@ impl OctoCliError {
             Self::AlreadyInTransition(_) => 43,
             Self::InvalidStateTransition { .. } => 43,
             Self::AuditSubstrateNotReady => 52,
+            // RFC-0016-a §6.7 paired-with-RFC-0011-a CLI-shape
+            // variants. Shares slot 17 with `InvalidTtlHops` +
+            // `ForbiddenHolderMismatch` (amendment-chain shared-slot
+            // pattern; operator-unambiguous within respective command
+            // surfaces).
+            Self::ReceiptNotFound(_) => 17,
+            // Shares slot 13 with `PolicyNotFound` (operator-input
+            // validation failures on access credentials; operator-
+            // unambiguous within respective command surfaces).
+            Self::PermissionDenied(_) => 13,
             Self::AgentNotRunning(_) => 48,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
@@ -616,6 +647,16 @@ impl OctoCliError {
             Self::AuditSubstrateNotReady => {
                 "the audit chain sink is not configured; run with --features octo-audit-internal OR ensure the runtime adapter has called `register_audit_sink` at startup".to_string()
             }
+            Self::ReceiptNotFound(receipt_id) => {
+                format!(
+                    "receipt `{receipt_id}` is not present in the receipt store; verify the receipt_id (canonical decimal u64 form) or list receipts with `octo audit list` to find available ids"
+                )
+            }
+            Self::PermissionDenied(path) => {
+                format!(
+                    "the audit substrate denied access to `{path}`; per-process trust boundary enforced — ensure the receipt store parent directory is owned by the process UID and mode 0700 (RFC-0016-a §Security 3)"
+                )
+            }
             Self::AgentNotRunning(_) => {
                 "the target agent exists but is not in `Running` state; run `octo agent run` before `octo agent attach`".to_string()
             }
@@ -687,6 +728,57 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
         Ok(())
     } else {
         Err(OctoCliError::StdinSecretRefused)
+    }
+}
+
+/// RFC-0016-a §6.7 + RFC-0011-a canonical `[ADD]` error envelope
+/// conversion from `octo_audit_core::AuditError`.
+///
+/// Manual `impl From` rather than thiserror's `#[from]` attribute
+/// at variant level — multiple variants converting from the same
+/// source type would create conflicting `From` impls (one per
+/// variant). The manual match keeps the substrate → CLI mapping
+/// substrate-faithful per RFC-0011-a `ADD` envelope pattern
+/// (per-variant mapping; not a catch-all `Internal` wrapper).
+///
+/// Mapping table per RFC-0016-a §6.7:
+///
+/// | Substrate variant                       | CLI variant                              | Exit |
+/// | --------------------------------------- | ---------------------------------------- | ---- |
+/// | `AuditError::ReceiptNotFound(s)`        | `OctoCliError::ReceiptNotFound(s)`       | 17   |
+/// | `AuditError::InvalidFilter(s)`          | `OctoCliError::InvalidFilter(s)`         | 16   |
+/// | `AuditError::PermissionDenied(s)`       | `OctoCliError::PermissionDenied(s)`      | 13   |
+/// | `AuditError::AuditAppendFailed(_)`      | `OctoCliError::AuditSubstrateNotReady`   | 52   |
+/// | `AuditError::SequenceGap { .. }`        | `OctoCliError::Internal(reason)`         | 64   |
+/// | `AuditError::AlreadyExists(_)`          | `OctoCliError::Internal(reason)`         | 64   |
+/// | `AuditError::SinkSpecific(_)`           | `OctoCliError::Internal(reason)`         | 64   |
+impl From<octo_audit::AuditError> for OctoCliError {
+    fn from(e: octo_audit::AuditError) -> Self {
+        match e {
+            octo_audit::AuditError::ReceiptNotFound(s) => Self::ReceiptNotFound(s),
+            octo_audit::AuditError::InvalidFilter(s) => Self::InvalidFilter(s),
+            octo_audit::AuditError::PermissionDenied(s) => Self::PermissionDenied(s),
+            // Substrate-faithful: `AuditAppendFailed(reason)` collapses
+            // to operator-facing `AuditSubstrateNotReady` (unit variant)
+            // — the reason is substrate-internal and intentionally NOT
+            // surfaced to the CLI per RFC-0016-a §6.7 table footnote.
+            octo_audit::AuditError::AuditAppendFailed(_) => Self::AuditSubstrateNotReady,
+            // Original 3 substrate variants map to `Internal` (exit 64)
+            // — these are pre-RFC-0016-a substrate-faithful failures
+            // that don't have a CLI-shape mapping. The reason string
+            // is sanitized at render time by `sanitize_substrate_error`.
+            octo_audit::AuditError::SequenceGap { event_id, prev } => {
+                Self::Internal(sanitize_substrate_error(&format!(
+                    "audit sequence gap: event_id {event_id} after {prev}"
+                )))
+            }
+            octo_audit::AuditError::AlreadyExists(event_id) => Self::Internal(
+                sanitize_substrate_error(&format!("audit event_id {event_id} already persisted")),
+            ),
+            octo_audit::AuditError::SinkSpecific(msg) => Self::Internal(sanitize_substrate_error(
+                &format!("audit sink-specific error: {msg}"),
+            )),
+        }
     }
 }
 
@@ -953,6 +1045,12 @@ mod tests {
             ),
             (OctoCliError::CapabilityValidationFailed(2), 40),
             (OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()), 41),
+            // RFC-0016-a §6.7 paired-with-RFC-0011-a CLI-shape variants.
+            (OctoCliError::ReceiptNotFound("12345".into()), 17),
+            (
+                OctoCliError::PermissionDenied("/var/lib/octo/audit/receipts".into()),
+                13,
+            ),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");
@@ -1027,5 +1125,56 @@ mod tests {
             timeout_hint.contains("30000") || timeout_hint.contains("timeout"),
             "RpcTimeout hint must mention timeout / ceiling, got: {timeout_hint}"
         );
+    }
+
+    /// RFC-0016-a §6.7 + RFC-0011-a `ADD` envelope conversion:
+    /// `octo_audit::AuditError` → `OctoCliError` per-variant mapping.
+    /// Pins the substrate → CLI envelope so a future substrate variant
+    /// addition lands a corresponding `match` arm or compile fails
+    /// here (the `AuditError` enum is NOT `#[non_exhaustive]` at the
+    /// substrate layer; new variants require paired envelope update).
+    #[test]
+    fn tv_rfc0016a_audit_error_envelope_mapping() {
+        // ReceiptNotFound (exit 17)
+        let r: OctoCliError = octo_audit::AuditError::ReceiptNotFound("12345".into()).into();
+        assert!(matches!(r, OctoCliError::ReceiptNotFound(ref s) if s == "12345"));
+        assert_eq!(r.exit_code(), 17);
+
+        // InvalidFilter (exit 16)
+        let r: OctoCliError =
+            octo_audit::AuditError::InvalidFilter("limit out of range".into()).into();
+        assert!(matches!(r, OctoCliError::InvalidFilter(ref s) if s == "limit out of range"));
+        assert_eq!(r.exit_code(), 16);
+
+        // PermissionDenied (exit 13)
+        let r: OctoCliError =
+            octo_audit::AuditError::PermissionDenied("/var/lib/octo/audit".into()).into();
+        assert!(matches!(r, OctoCliError::PermissionDenied(ref s) if s == "/var/lib/octo/audit"));
+        assert_eq!(r.exit_code(), 13);
+
+        // AuditAppendFailed (exit 52; reason dropped per §6.7 footnote)
+        let r: OctoCliError =
+            octo_audit::AuditError::AuditAppendFailed("internal reason".into()).into();
+        assert!(matches!(r, OctoCliError::AuditSubstrateNotReady));
+        assert_eq!(r.exit_code(), 52);
+
+        // SequenceGap (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::SequenceGap {
+            event_id: 5,
+            prev: 3,
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+
+        // AlreadyExists (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::AlreadyExists(42).into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+
+        // SinkSpecific (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::SinkSpecific("adapter down".into()).into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
     }
 }

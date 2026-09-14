@@ -36,6 +36,32 @@ pub enum AuditError {
     /// breaking existing matchers.
     #[error("audit append failed: {0}")]
     AuditAppendFailed(String),
+
+    /// CLI-shape variant — receipt id not found in the receipt store
+    /// (RFC-0016-a §6.7 paired-with-RFC-0011-a; exit code 17).
+    /// Carries the canonical decimal `u64` form of the requested
+    /// receipt_id (CLI-friendly; per test vector
+    /// `Err(OctoCliError::ReceiptNotFound("<decimal-u64>".into()))`).
+    #[error("receipt not found: {0}")]
+    ReceiptNotFound(String),
+
+    /// CLI-shape variant — operator filter expression failed substrate
+    /// validation (RFC-0016-a §6.7 paired-with-RFC-0011-a; exit code
+    /// 16). Carries the reason string (limit-out-of-range,
+    /// since_unix > until_unix, etc.) per test vectors
+    /// `TV-AUD-4` / `TV-AUD-4b` / `TV-AUD-4c`.
+    #[error("invalid filter: {0}")]
+    InvalidFilter(String),
+
+    /// CLI-shape variant — per-process trust boundary violated
+    /// (RFC-0016-a §6.7 paired-with-RFC-0011-a; exit code 13).
+    /// Carries the scrubbed canonical path (e.g.
+    /// `<OCTO_HOME>/audit/receipts`) per test vectors
+    /// `TV-AUD-permission-check-1` + `TV-AUD-permission-check-2`.
+    /// Substrate-side scrubber applies the 13-pattern list before
+    /// the CLI envelope maps to `OctoCliError::PermissionDenied`.
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
 }
 
 /// Chain-integrity error variants returned by `verify_chain`.

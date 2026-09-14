@@ -54,6 +54,10 @@ octo-mesh = { path = "../octo-mesh", version = "0.1.0" }                     # L
 # CLI plugs an in-process Phase 1 adapter into until `octo-vault-stoolap`
 # (Layer D production adapter) lands.
 octo-vault = { path = "../octo-vault", version = "0.1.0" }                   # Layer B vault substrate — RFC-0011-e
+# Layer B audit substrate — RFC-0011-a + RFC-0016-a. `octo_audit::AuditError`
+# re-export is consumed by the canonical `[ADD]` error envelope
+# conversion in `error.rs` (RFC-0011-a per-variant mapping pattern).
+octo-audit = { path = "../octo-audit", version = "0.1.0" }                   # Layer B audit substrate — RFC-0011-a + RFC-0016-a
 
 # === Mesh forward substrate (Layer 1 + Layer C) — RFC-0011-f §Subcommand Taxonomy ===
 # Layer 1 stable: NodeEnvelope + RecipientRef + Authorization + PayloadKindId

@@ -9,7 +9,6 @@
 //! `receipt_id_for` hash continues over the ORIGINAL 6 fields only
 //! so existing receipts (written before RFC-0016-a) remain
 /// chain-valid.
-
 use serde::{Deserialize, Serialize};
 
 /// Canonical settlement receipt struct. Field shape byte-identical to
@@ -105,7 +104,7 @@ impl ReceiptStatus {
 /// `Copy + Hash + Ord` so it composes with `BTreeMap<ReceiptId,
 /// Receipt>` ordering invariants. `Display` emits the canonical
 /// decimal `u64` form per RFC-0016-a §6.4 substrate contract.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ReceiptId(pub u64);
 
 impl ReceiptId {

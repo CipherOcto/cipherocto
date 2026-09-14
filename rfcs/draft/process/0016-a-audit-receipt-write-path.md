@@ -490,12 +490,12 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ## Version History
 
-| Version | Date       | Changes                   |
-| ------- | ---------- | ------------------------- |
-| v1.3    | 2026-09-14 | subject_did→String sweep. |
-| v1.2    | 2026-09-14 | R2.5 sweep.               |
-| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. |
-| v1.0    | 2026-09-11 | Initial draft.            |
+| Version | Date       | Changes               |
+| ------- | ---------- | --------------------- |
+| v1.3    | 2026-09-14 | subject→String sweep. |
+| v1.2    | 2026-09-14 | R2.5 sweep.           |
+| v1.1    | 2026-09-14 | Substrate Sweep.      |
+| v1.0    | 2026-09-11 | Initial draft.        |
 
 ## Related RFCs
 

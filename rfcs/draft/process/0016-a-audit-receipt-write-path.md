@@ -32,7 +32,7 @@ This amendment specifies the write-path + projection + ACL + scrubber surface th
 
 - **RFC-0016** — Audit Receipt API (KEEP substrate-faithful read surface; this amendment is the sibling)
 - **RFC-0012-v2** — required for `append_audit_event` (AuditEventKind extensions + canonical-bytes-on-write invariant + single-writer lock)
-- **RFC-0014-v2** — required for `ReceiptStatus` enum + `ReceiptSummary` projection + `AuditFilter.subject_did` ACL + `receipt_id_for_digest` reverse-mapping function
+- **RFC-0014-v2** — required for `ReceiptStatus` enum + `ReceiptSummary` projection + `receipt_id_for_digest` reverse-mapping function
 - **RFC-0011-a** — required for CLI-shape `[ADD]` error envelope pattern (per-variant `From<AuditError>` conversions at `octo-cli/src/error.rs` boundary)
 
 ## Pairing invariant
@@ -349,7 +349,7 @@ DEFER — audit receipt write path has no direct token cost; cite RFC-0900+ (Rol
 
 1. **Substrate-amendment dependency** — every type/variant here requires paired RFC-0012-v2 + RFC-0014-v2 + RFC-0011-a acceptance
 2. **CLI exit-code additions** — slots 17 (ReceiptNotFound), 16 (InvalidFilter), 13 (PermissionDenied), 52 (AuditSubstrateNotReady) are pre-allocated per RFC-0011 §Exit Codes + RFC-0011-c §9.8 slot 52; this amendment consumes those slots
-3. **Façade re-export additions** — `pub use octo_settlement_core::ReceiptStatus` adds re-export to `octo-audit` Layer B façade (Layer B → Layer B hop per CLAUDE.md §Architectural Principles)
+3. **Façade re-export additions** — `pub use octo_settlement_core::ReceiptStatus` adds re-export to `octo-audit` Layer B façade (Layer B façade re-exports Layer A canonical enum per CLAUDE.md §Stable Abstractions Principle — Layer B depends on Layer A)
 4. **Backward compat with RFC-0016 KEEP** — RFC-0016 KEEP's `list_receipts(filter: &AuditFilter) -> Result<Vec<Receipt>, AuditError>` signature remains valid (canonical `Receipt` projection); this amendment adds `ReceiptSummary` projection as ADDITIVE overload (separate function `list_receipt_summaries`)
 5. **Substrate-side scrubber patterns** — canonical 18-pattern list per §6.9 supersedes RFC-0016 KEEP §Compatibility #4 8-pattern list
 
@@ -495,7 +495,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 | v1.3    | 2026-09-14 | R6.5 sweep: subject_did `Did` → `String` (façade `octo-ident`-dep-free). |
 | v1.2    | 2026-09-14 | R2.5 sweep: scrub newtype, P4, Display, `dyn`, TV, limit.                |
 | v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.       |
-| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                 |
+| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 §6.9.                      |
 
 ## Related RFCs
 

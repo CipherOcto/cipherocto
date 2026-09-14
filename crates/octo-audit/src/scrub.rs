@@ -42,7 +42,7 @@
 //!
 //! ## Compilation posture
 //!
-//! Patterns 1-5e (10 regexes) + Pattern 6 (substring) + Patterns 11-18
+//! Patterns 1-5e (9 regexes) + Pattern 6 (substring) + Patterns 11-18
 //! (8 additive crypto/secret-form regexes for RFC-0016-a §6.9) pre-
 //! compiled via `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 is
 //! substring-replace (no regex compilation needed); registry entries

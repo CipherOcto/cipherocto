@@ -24,7 +24,7 @@ Draft (2026-09-11; v1.1 amendment in flight 2026-09-14 — Substrate-Faithful Sw
 
 This amendment specifies the write-path + projection + ACL + scrubber surface that completes RFC-0016 once the required substrate amendments land. Pairing invariants:
 
-- **RFC-0012-v2** — `octo-audit-core::AuditEventKind` extends with `AgentTransition { agent_uuid, from, to, reason_hash, prev_chain_hash }` + `Redaction { prev_hash, reason }` (Layer A frozen extension; CLAUDE.md §Extension over enumeration pattern)
+- **RFC-0012-v2** — `octo-audit-core::AuditEventKind` extends with `AgentTransition { agent_id, from, to, reason }` + `Redaction { prev_hash, reason }` (Layer A frozen extension; CLAUDE.md §Extension over enumeration pattern; `prev_chain_hash` lives on outer `AuditEvent` struct, NOT inside `AgentTransition` variant per substrate `crates/octo-audit-core/src/event.rs:72-83`)
 - **RFC-0014-v2** — `octo-settlement-core::ReceiptStatus { Ok, Partial, Reject }` enum + `Receipt` field extensions (`model: String`, `cost_dqa: u64`, `capability_root: [u8; 32]`, `subject_did: Did`) + `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (Layer A frozen extension)
 - **RFC-0011-a** — canonical `[ADD]` error envelope pattern: per-variant `#[error(transparent)] From<AuditError>` conversions at `octo-cli/src/error.rs` boundary land CLI-shape variants `ReceiptNotFound(String)` + `InvalidFilter(String)` + `PermissionDenied` + `AuditSubstrateNotReady` (Layer B façade envelope substrate)
 
@@ -225,16 +225,16 @@ Per RFC-0011-a canonical `[ADD]` error envelope pattern, per-variant `#[error(tr
 
 /// Scrub `raw` of secret material matching any of the §6.9 canonical patterns.
 /// Returns `<REDACTED>` if any pattern matches; otherwise returns `raw` verbatim.
-/// An already-redacted marker (`<REDACTED>` literal) is preserved verbatim
-/// to avoid double-redaction (idempotency invariant per R21 L-2).
+/// Idempotency invariant (R21 L-2): already-redacted payloads collapse to the
+/// canonical marker because `scrub_adapter_error` preserves `<REDACTED>` verbatim
+/// per `crates/octo-audit/src/scrub.rs:350` (the marker is itself in the safe
+/// alphanumeric set and never re-matches a pattern).
 pub fn redact_substrate_error(raw: &str) -> String {
-    if raw.contains("<REDACTED>") {
-        return raw.to_string();
-    }
-    if crate::scrub::matches_any_canonical_pattern(raw) {
-        "<REDACTED>".to_string()
-    } else {
+    let scrubbed = scrub_adapter_error(raw);
+    if scrubbed == raw {
         raw.to_string()
+    } else {
+        REDACTED_MARKER.to_string()
     }
 }
 ```
@@ -270,7 +270,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 
 `AppendOnlyAuditSink::append` MUST:
 
-1. Re-canonicalize ALL fields (including `at_unix`, `agent_uuid`, `from`, `to`, `reason_hash`, `prev_chain_hash`) via `canonical_bytes(event)`
+1. Re-canonicalize ALL fields (including `at_unix`, `agent_id`, `from`, `to`, `reason`, plus outer `AuditEvent::prev_chain_hash`) via `canonical_bytes(event)`
 2. Compute BLAKE3 chain-hash over canonical bytes (NOT caller-supplied payload)
 3. Verify canonical bytes match chain-link hash (reject on mismatch per RFC-0012 §Adversary Analysis)
 4. Persist canonical bytes (NOT caller payload)
@@ -413,9 +413,9 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED at R2; expan
 
 - `crates/octo-audit/src/lib.rs` — add `append_audit_event` + `ChainHash` newtype + `redact_substrate_error` helper + `scrub` patterns module
 - `crates/octo-audit/src/scrub.rs` — canonical 18-pattern substrate-side scrubber (pre-existing RFC-0016 substrate)
-- `crates/octo-audit-core/src/event.rs` — RFC-0012-v2: `AuditEventKind` extends with `AgentTransition { agent_uuid: Uuid, from: AgentState, to: AgentState, reason_hash: [u8; 32], prev_chain_hash: [u8; 32] }` + `Redaction { prev_hash: ChainHash, reason: String }`
+- `crates/octo-audit-core/src/event.rs` — RFC-0012-v2: `AgentTransition { agent_id: String, from: String, to: String, reason: Option<String> }` + `Redaction { prev_hash: ChainHash, reason: String }` (substrate-faithful per `crates/octo-audit-core/src/event.rs:72-83`; `prev_chain_hash` is on outer `AuditEvent` struct, NOT inside the variant)
 - `crates/octo-settlement-core/src/receipt.rs` — RFC-0014-v2: `Receipt` extends with `model: String` + `cost_dqa: u64` + `capability_root: [u8; 32]` + `subject_did: Did` + `status: ReceiptStatus` (enum defined in same file at `receipt.rs`; `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration)
-- `crates/octo-settlement-core/src/id.rs` — RFC-0014-v2: NEW; `ReceiptId(pub u64)` newtype + `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping
+- `crates/octo-settlement-core/src/chain.rs` — RFC-0014-v2: `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (substrate-faithful per `crates/octo-settlement-core/src/chain.rs:78`; the phantom `id.rs` reference is replaced with the actual file)
 - `crates/octo-audit-core/src/sink.rs` — RFC-0012-v2: `AppendOnlyAuditSink::append` adds `canonical_bytes(event)` + single-writer lock + read-stall
 - `crates/octo-cli/src/error.rs` — RFC-0011-a: per-variant `#[error(transparent)] From<octo_audit_core::AuditError>` conversions + CLI-shape variant constructors
 
@@ -472,7 +472,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 | 11  | §Test Vectors Notes column: rewrite 9 stale pattern references (TV-AUD-4e, 11a, 11b, 11c, 11d, 11e, 11f, 11h, 11i, 11j) to substrate canonical numbers (§6.9 row mapping)           | Substrate canonical pattern numbering per `octo_audit::scrub` docstring + §6.9 row table: pattern 1 = hex ≥32; 11 = PGP; 12 = OpenSSH; 13 = PEM; 14 = capability-secret base64; 15 = BIP39; 16 = JWT; 17 = WIF; 18 = X.509                                                                                                                                | Each TV-AUD Notes pattern ref cites the substrate-canonical pattern number per §6.9 table                        |
 | 12  | §6.7 mapping table: re-order ChainHashMismatch row to follow substrate enum declaration order                                                                                       | `crates/octo-audit-core/src/error.rs` `AuditError` declaration order: SequenceGap → AlreadyExists → SinkSpecific → ChainHashMismatch (last collapsed variant per R2.5). Pre-v1.2 RFC ordering placed ChainHashMismatch before SinkSpecific (out of substrate enum order)                                                                                  | §6.7 rows follow substrate enum declaration order (SequenceGap, AlreadyExists, SinkSpecific, ChainHashMismatch)  |
 | 13  | §6.6 AuditFilter.limit type: `Option<u32>` → `Option<usize>`                                                                                                                        | `crates/octo-audit/src/receipt_read.rs` `pub limit: Option<u32>` (current substrate) vs `rfcs/accepted/process/0012-v2-audit-substrate-amendment.md` §S4 canonical pin `Option<usize>`. v1.2 aligns RFC to RFC-0012-v2 §S4 canonical; substrate change `u32` → `usize` DEFERRED to paired acceptance of RFC-0016-a + RFC-0012-v2 (paired acceptance gate) | §6.6 + §Appendix A both declare `pub limit: Option<usize>` to match RFC-0012-v2 §S4                              |
-| 14  | §Key Files: `crates/octo-settlement-core/src/status.rs` (phantom) → `crates/octo-settlement-core/src/receipt.rs` (actual)                                                           | `crates/octo-settlement-core/src/receipt.rs` `pub enum ReceiptStatus { Ok, Partial, Reject }` at module-internal L70. Pre-v1.2 RFC claimed a separate `status.rs` file which does not exist                                                                                                                                                               | §Key Files cites actual substrate file path                                                                      |
+| 14  | §Key Files: `crates/octo-settlement-core/src/status.rs` (phantom) → `crates/octo-settlement-core/src/receipt.rs` (actual)                                                           | `crates/octo-settlement-core/src/receipt.rs` `pub enum ReceiptStatus { Ok, Partial, Reject }` at the `ReceiptStatus` declaration (module-internal). Pre-v1.2 RFC claimed a separate `status.rs` file which does not exist                                                                                                                                 | §Key Files cites actual substrate file path                                                                      |
 | 15  | §6.9 Pattern 1 label "(lookaround-anchored)" → "(word-boundary-anchored)"; Pattern 17 label "(51 chars)" → "(50-52 chars, canonical 51)"                                            | Substrate regexes use `\b` (word boundary) not lookahead; WIF regex literal is `\b[1-9A-HJ-NP-Za-km-z]{50,52}\b` (50-52 chars range)                                                                                                                                                                                                                      | Pattern 1 + Pattern 17 labels match substrate regex literals                                                     |
 | 16  | §Version History: convert bulleted list to 3-column table per BLUEPRINT.md §RFC Process precedent                                                                                   | Per BLUEPRINT.md §RFC Process + RFC-0015-b §Version History canonical precedent                                                                                                                                                                                                                                                                           | VH is 3-column `\| Version \| Date \| Changes \|` table with ≤10-word rows                                       |
 
@@ -611,7 +611,7 @@ sequenceDiagram
     participant Core as octo-audit-core (Layer A)
     participant Scrub as octo-audit/scrub.rs (Layer B)
 
-    Wallet->>Aud: append_audit_event(&mut dyn sink, AgentTransition { agent_uuid, from, to, ... })
+    Wallet->>Aud: append_audit_event(&mut dyn sink, AgentTransition { agent_id, from, to, reason })
     Aud->>Sink: &mut borrow acquires single-writer lock
     Sink->>Core: canonical_bytes(event) re-canonicalizes ALL fields
     Core-->>Sink: canonical_bytes_buf

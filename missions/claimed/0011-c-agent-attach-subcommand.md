@@ -198,6 +198,20 @@ Mission CAN proceed once user transitions `status: Claimed` →
 `status: In Progress` per [[Initiative user-only]] + [[git-workflow]].
 Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
+## RFC-0015-b substrate-defect dependency
+
+7 substrate defects documented for RFC-0015-b paired amendment per
+`docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
+RFC-0015-b is the formal amendment surface; this mission interacts
+with 2 of the 7 defects:
+
+- **Defect 1** (`WalletError::AlreadyInTransition(Uuid)` dead surface) — once RFC-0015-b activates the variant for concurrent-call detection, this mission's CLI surface must include the mirror `OctoCliError::AlreadyInTransition(Uuid)` exit-code path (already declared at RFC-0015-a acceptance; re-verified at amendment landing).
+- **Defect 3** (`lookup_agent` existence-leak — `AgentNotFound` vs `ForbiddenHolderMismatch`) — this mission is the primary caller of `lookup_agent` (precondition for `agent attach` per RFC-0011-c §9.3.5). The amendment normalizes both unknown + not-owned cases to `AgentNotFound`, eliminating the multi-DID enumeration side-channel. CLI behavior unchanged (signature preserved) but security posture improves.
+
+Remaining 5 defects (2 doc-comment drift, 4 TOCTOU window, 5 phantom-event window, 6 missing state-machine tests, 7 RFC parity gap) do NOT affect this mission's CLI surface.
+
+**Hard sequencing:** RFC-0015-b acceptance (Draft → Accepted) is required BEFORE this mission's CLI implementation lands (per [[no-phantom-mission-pointer]] rule).
+
 ## Claimant
 
 @unassigned

@@ -385,6 +385,21 @@ surface lands. Mission remains `status: Claimed` per
 requires RFC-0011-a Accepted + substrate `[ADD]` landed per YAML
 frontmatter `release_gate`.
 
+## RFC-0015-b substrate-defect dependency
+
+7 substrate defects documented for RFC-0015-b paired amendment per
+`docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
+RFC-0015-b is the formal amendment surface; this mission interacts
+INDIRECTLY with 1 of the 7 defects via the audit-append pipeline:
+
+- **Defect 5** (phantom-event window on audit-append + rollback) — this mission consumes the audit receipt chain via `list_receipts` + `get_receipt` (read-only path). The amendment adds monotonic state-version field for phantom-event detection. **If RFC-0015-b lands BEFORE this mission**, the read-path surface MUST add a verification step that rejects receipts with state-version inconsistencies (per the audit-chain integrity contract). **If this mission lands FIRST**, the read-path implementation ships WITHOUT the verification step; a follow-up amendment adds it post-hoc.
+
+Direct dependency: NONE (this mission's read path does not call `transition_agent` or `lookup_agent`).
+
+Remaining 6 defects (1 AlreadyInTransition dead surface, 2 doc-comment drift, 3 lookup_agent existence-leak, 4 TOCTOU window, 6 missing state-machine tests, 7 RFC parity gap) do NOT affect this mission's CLI surface.
+
+**Soft sequencing (not blocking):** RFC-0015-b acceptance is RECOMMENDED but not REQUIRED for this mission's implementation. The audit-append write-path defect affects the producer side (destroy mission); this mission is the consumer side (read path).
+
 ## Claimant
 
 @unassigned

@@ -2,13 +2,13 @@
 
 ## Status
 
-Draft (2026-09-11; v1.1 amendment in flight 2026-09-14 — Substrate-Faithful Sweep per paired implementation R1-R11 DRY loop)
+Draft (2026-09-11; v1.3 amendment in flight 2026-09-14 — Substrate-Faithful Sweep per paired implementation R1-R11 DRY loop + R6.5 R6-c subject_did type-drift closure)
 
 > **Sibling amendment to RFC-0016.** This document carries the DEFERRED write-path surface that requires paired acceptance of RFC-0012-v2 (Layer A `octo-audit-core::AuditEventKind` extensions) + RFC-0014-v2 (Layer A `octo-settlement-core::ReceiptStatus` enum + `Receipt` field extensions + `receipt_id_for_digest` reverse-mapping function) + RFC-0011-a (CLI-shape `[ADD]` error envelope). Without all three substrate amendments, the surface described here cannot land.
 
 > **R29 split plan:** RFC-0016 KEEP (substrate-faithful read surface) at `rfcs/draft/process/0016-audit-receipt-api.md` was slimmed to 5 KEEP items per §6.1 + substrate-canonical 3-variant `AuditError` re-export per §6.2.5. This amendment carries the remaining 12+ DEFERRED items per §Dependencies pairing invariant.
 
-> **v1.1 Substrate-Faithful Sweep (2026-09-14):** see §Substrate-Faithful Amendment Trail for per-amendment ground-truth + acceptance criteria.
+> **v1.3 Substrate-Faithful Sweep (2026-09-14):** see §Substrate-Faithful Amendment Trail for per-amendment ground-truth + acceptance criteria.
 
 ## Authors
 
@@ -65,19 +65,19 @@ The KEEP RFC-0016 covers the read surface only. Operators and CLI missions requi
 
 ### §6.1 Public surface additions (paired-with-substrate-amendment)
 
-| Item                                                | Type                                                                                                          | Substrate amendment required                                              |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `append_audit_event`                                | `fn(sink: &mut dyn AppendOnlyAuditSink, event: AuditEvent) -> Result<ChainHash, octo_audit_core::AuditError>` | RFC-0012-v2 (AuditEventKind extensions + single-writer lock)              |
-| `ChainHash(pub [u8; 32])` newtype                   | paired with `append_audit_event` return type                                                                  | RFC-0012-v2                                                               |
-| `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping          | RFC-0014-v2                                                               |
-| `ReceiptStatus` re-export                           | `pub use octo_settlement_core::ReceiptStatus`                                                                 | RFC-0014-v2                                                               |
-| `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change        | RFC-0014-v2                                                               |
-| `AuditFilter.subject_did`                           | `pub subject_did: Option<Did>` (ACL field)                                                                    | RFC-0014-v2 (Receipt.subject_did substrate field)                         |
-| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                | RFC-0014-v2 (canonical ReceiptStatus enum)                                |
-| `StatusRef` type alias                              | `pub type StatusRef = ReceiptStatus` (canonical Layer A enum re-export)                                       | RFC-0014-v2                                                               |
-| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                   | RFC-0012-v2 + RFC-0011-a                                                  |
-| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied, AuditSubstrateNotReady}`   | RFC-0011-a per-variant `From<AuditError>` conversions                     |
-| `redact_substrate_error` helper function            | `pub fn redact_substrate_error(raw: &str) -> String` (18-pattern sweep per §6.9 + `<REDACTED>` idempotency)   | RFC-0012-v2 (substrate canonical patterns) + RFC-0011-a (CLI integration) |
+| Item                                                | Type                                                                                                           | Substrate amendment required                                              |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `append_audit_event`                                | `fn(sink: &mut dyn AppendOnlyAuditSink, event: AuditEvent) -> Result<ChainHash, octo_audit_core::AuditError>`  | RFC-0012-v2 (AuditEventKind extensions + single-writer lock)              |
+| `ChainHash(pub [u8; 32])` newtype                   | paired with `append_audit_event` return type                                                                   | RFC-0012-v2                                                               |
+| `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping           | RFC-0014-v2                                                               |
+| `ReceiptStatus` re-export                           | `pub use octo_settlement_core::ReceiptStatus`                                                                  | RFC-0014-v2                                                               |
+| `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change         | RFC-0014-v2                                                               |
+| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016-a (additive — façade stays free of `octo-ident` `Did` dep)       |
+| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                 | RFC-0014-v2 (canonical ReceiptStatus enum)                                |
+| `StatusRef` type alias                              | `pub type StatusRef = ReceiptStatus` (canonical Layer A enum re-export)                                        | RFC-0014-v2                                                               |
+| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                    | RFC-0012-v2 + RFC-0011-a                                                  |
+| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied, AuditSubstrateNotReady}`    | RFC-0011-a per-variant `From<AuditError>` conversions                     |
+| `redact_substrate_error` helper function            | `pub fn redact_substrate_error(raw: &str) -> String` (18-pattern sweep per §6.9 + `<REDACTED>` idempotency)    | RFC-0012-v2 (substrate canonical patterns) + RFC-0011-a (CLI integration) |
 
 ### §6.2 Function contract: `append_audit_event`
 
@@ -151,7 +151,7 @@ pub struct ReceiptSummary {
     pub model: String,
     pub cost_dqa: u64,
     pub capability_root: [u8; 32],
-    pub subject_did: Did,
+    pub subject_did: String,  // canonical DID wire form as String (façade free of octo-ident Did dep per §6.6 additive rationale)
     pub executed_at_unix: u64,  // alias for Receipt::timestamp_unix (canonical substrate field)
     pub status: ReceiptStatus,
 }
@@ -184,7 +184,7 @@ pub struct AuditFilter {
     pub limit: Option<usize>,
 
     // RFC-0016-a additions:
-    pub subject_did: Option<Did>,    // multi-tenant ACL; pairs with RFC-0014-v2 Receipt.subject_did field
+    pub subject_did: Option<String>, // multi-tenant ACL; canonical DID wire form as String per §6.6 additive rationale (façade free of octo-ident Did dep)
     pub status: Vec<StatusRef>,      // UNION semantics per RFC-0011-a §Filters --include-reject
 }
 
@@ -329,7 +329,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 
 **Adversary:** Co-tenant on shared receipt store attempts to read another tenant's receipts by omitting `subject_did` filter.
 
-**Mitigation:** `AuditFilter.subject_did: Option<Did>` ACL field enforces per-tenant scoping at façade boundary; CLI missions MUST pass `subject_did` per tenant credentials.
+**Mitigation:** `AuditFilter.subject_did: Option<String>` ACL field enforces per-tenant scoping at façade boundary; CLI missions MUST pass `subject_did` per tenant credentials.
 
 ## Adversary Analysis (5-Question Test)
 
@@ -478,13 +478,24 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 **Amendment acceptance test (v1.2 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
 
+### v1.3 — R6.5 Substrate-Sweep (2026-09-14)
+
+| #   | Amendment                                                                                                                                                                                                                     | Substrate ground truth                                                                                                                                                                                                                                                                                                     | Acceptance criterion                                                                                                                                              |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 17  | §6.6 AuditFilter.subject_did: `Option<Did>` → `Option<String>` (canonical DID wire form as `String`; façade stays free of `octo-ident` `Did` dep per §6.6 additive rationale)                                                 | `crates/octo-audit/src/receipt_read.rs` `AuditFilter::subject_did` field declaration: `pub subject_did: Option<String>` at the `AuditFilter` struct declaration. Pre-v1.3 RFC declared `Option<Did>` which would force the façade to take an `octo-ident` Layer B dep                                                      | §6.1 Status table row + §6.6 struct declaration + §Adversary Analysis mitigation paragraph + §6.6 KEEP-block duplicate all declare `Option<String>`               |
+| 18  | §6.4 ReceiptSummary.subject_did: `Did` → `String` (canonical DID wire form as `String`; same façade-free-of-`octo-ident`-dep rationale as amendment 17)                                                                       | `crates/octo-audit/src/receipt_summary.rs` `ReceiptSummary::subject_did` field declaration: `pub subject_did: String` at the `ReceiptSummary` struct declaration. Pre-v1.3 RFC declared `Did` which contradicted the §6.6 additive rationale (the projection struct serves the same façade boundary as `AuditFilter`)      | §6.4 struct declaration + §6.5 Mermaid/block-redecl diagram both declare `String`; §6.4 from_canonical maps `receipt.subject_did: String` → `subject_did: String` |
+| 19  | §6.1 Status table row for `AuditFilter.subject_did`: change substrate amendment attribution from `RFC-0014-v2 (Receipt.subject_did substrate field)` to `RFC-0016-a (additive — façade stays free of `octo-ident` `Did` dep)` | Per substrate §6.6 additive rationale (canonical DID wire form as `String`); the `AuditFilter.subject_did` field is RFC-0016-a additive, NOT an RFC-0014-v2 paired-substrate field. RFC-0014-v2's `Receipt.subject_did` is the substrate data field; RFC-0016-a's `AuditFilter.subject_did` is the ACL filter on top of it | §6.1 Status table row attributes `AuditFilter.subject_did` to RFC-0016-a additive, not RFC-0014-v2 pairing                                                        |
+
+**Amendment acceptance test (v1.3 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
+
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                            |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.2    | 2026-09-14 | R2.5 sweep: scrubber newtype phantom + Pattern 4 regex + ChainHash Display + append_audit_event `dyn` + TV renumbering + `AuditFilter.limit` type. |
-| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.                                                                                 |
-| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                                                                                           |
+| Version | Date       | Changes                                                                                                                                                |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1.3    | 2026-09-14 | R6.5 sweep: `AuditFilter.subject_did` `Option<Did>` → `Option<String>` + `ReceiptSummary.subject_did` `Did` → `String` (facade `octo-ident`-dep-free). |
+| v1.2    | 2026-09-14 | R2.5 sweep: scrubber newtype phantom + Pattern 4 regex + ChainHash Display + append_audit_event `dyn` + TV renumbering + `AuditFilter.limit` type.     |
+| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.                                                                                     |
+| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                                                                                               |
 
 ## Related RFCs
 
@@ -560,7 +571,7 @@ pub struct ReceiptSummary {
     pub model: String,
     pub cost_dqa: u64,
     pub capability_root: [u8; 32],
-    pub subject_did: Did,
+    pub subject_did: String,  // canonical DID wire form as String (façade free of octo-ident Did dep per §6.6 additive rationale)
     pub executed_at_unix: u64,  // alias for Receipt::timestamp_unix
     pub status: ReceiptStatus,
 }
@@ -572,7 +583,7 @@ pub struct AuditFilter {
     pub capability_root: Option<[u8; 32]>,
     pub model: Option<String>,
     pub limit: Option<usize>,
-    pub subject_did: Option<Did>,
+    pub subject_did: Option<String>,
     pub status: Vec<StatusRef>,
 }
 

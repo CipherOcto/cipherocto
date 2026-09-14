@@ -349,7 +349,7 @@ DEFER — audit receipt write path has no direct token cost; cite RFC-0900+ (Rol
 
 1. **Substrate-amendment dependency** — every type/variant here requires paired RFC-0012-v2 + RFC-0014-v2 + RFC-0011-a acceptance
 2. **CLI exit-code additions** — slots 17 (ReceiptNotFound), 16 (InvalidFilter), 13 (PermissionDenied), 52 (AuditSubstrateNotReady) are pre-allocated per RFC-0011 §Exit Codes + RFC-0011-c §9.8 slot 52; this amendment consumes those slots
-3. **Façade re-export additions** — `pub use octo_settlement_core::ReceiptStatus` adds re-export to `octo-audit` Layer B façade (Layer B façade re-exports Layer A canonical enum per CLAUDE.md §Stable Abstractions Principle — Layer B depends on Layer A)
+3. **Façade re-export additions** — `pub use octo_settlement_core::ReceiptStatus` adds re-export to `octo-audit` Layer B façade (Layer B re-exports Layer A canonical enum per CLAUDE.md §Stable Abstractions Principle)
 4. **Backward compat with RFC-0016 KEEP** — RFC-0016 KEEP's `list_receipts(filter: &AuditFilter) -> Result<Vec<Receipt>, AuditError>` signature remains valid (canonical `Receipt` projection); this amendment adds `ReceiptSummary` projection as ADDITIVE overload (separate function `list_receipt_summaries`)
 5. **Substrate-side scrubber patterns** — canonical 18-pattern list per §6.9 supersedes RFC-0016 KEEP §Compatibility #4 8-pattern list
 
@@ -480,22 +480,22 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ### v1.3 — R6.5 Substrate-Sweep (2026-09-14)
 
-| #   | Amendment                                                                                                                               | Substrate ground truth                                                                                                                                           | Acceptance criterion                                                                                                              |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 17  | §6.6 AuditFilter.subject_did: `Option<Did>` → `Option<String>` (façade stays free of `octo-ident` `Did` dep)                            | `crates/octo-audit/src/receipt_read.rs` `AuditFilter::subject_did` field declaration: `pub subject_did: Option<String>` at the `AuditFilter` struct declaration  | §6.1 Status table row + §6.6 struct declaration + §6.6 KEEP-block duplicate all declare `Option<String>`                          |
-| 18  | §6.5 ReceiptSummary.subject_did: `Did` → `String`                                                                                       | `crates/octo-audit/src/receipt_summary.rs` `ReceiptSummary::subject_did` field declaration: `pub subject_did: String` at the `ReceiptSummary` struct declaration | §6.5 struct declaration + §6.5 Mermaid/block-redecl diagram both declare `String`; §6.5 from_canonical maps `receipt.subject_did` |
-| 19  | §6.1 Status table row for `AuditFilter.subject_did`: attribute to `RFC-0016-a` (additive — façade stays free of `octo-ident` `Did` dep) | Per §6.6 additive rationale; `AuditFilter.subject_did` is RFC-0016-a additive, NOT an RFC-0014-v2 paired-substrate field                                         | §6.1 Status table row attributes `AuditFilter.subject_did` to RFC-0016-a additive                                                 |
+| #   | Amendment                                                                                 | Substrate ground truth                                                                                                                                           | Acceptance criterion                                                                                                              |
+| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 17  | §6.6 AuditFilter.subject_did: `Option<Did>` → `Option<String>`                            | `crates/octo-audit/src/receipt_read.rs` `AuditFilter::subject_did` field declaration: `pub subject_did: Option<String>` at the `AuditFilter` struct declaration  | §6.1 Status table row + §6.6 struct declaration + §6.6 KEEP-block duplicate all declare `Option<String>`                          |
+| 18  | §6.5 ReceiptSummary.subject_did: `Did` → `String`                                         | `crates/octo-audit/src/receipt_summary.rs` `ReceiptSummary::subject_did` field declaration: `pub subject_did: String` at the `ReceiptSummary` struct declaration | §6.5 struct declaration + §6.5 Mermaid/block-redecl diagram both declare `String`; §6.5 from_canonical maps `receipt.subject_did` |
+| 19  | §6.1 Status table row for `AuditFilter.subject_did`: attribute to `RFC-0016-a` (additive) | Per §6.6 additive rationale; `AuditFilter.subject_did` is RFC-0016-a additive, NOT an RFC-0014-v2 paired-substrate field                                         | §6.1 Status table row attributes `AuditFilter.subject_did` to RFC-0016-a additive                                                 |
 
 **Amendment acceptance test (v1.3 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
 
 ## Version History
 
-| Version | Date       | Changes                                                                  |
-| ------- | ---------- | ------------------------------------------------------------------------ |
-| v1.3    | 2026-09-14 | R6.5 sweep: subject_did `Did` → `String` (façade `octo-ident`-dep-free). |
-| v1.2    | 2026-09-14 | R2.5 sweep: scrub newtype, P4, Display, `dyn`, TV, limit.                |
-| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.       |
-| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 §6.9.                      |
+| Version | Date       | Changes                                         |
+| ------- | ---------- | ----------------------------------------------- |
+| v1.3    | 2026-09-14 | subject_did Did→String; octo-ident-free facade. |
+| v1.2    | 2026-09-14 | R2.5 sweep: scrub+Display+dyn+limit.            |
+| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See Trail.            |
+| v1.0    | 2026-09-11 | Initial draft. Cited RFC-0016 §6.9.             |
 
 ## Related RFCs
 

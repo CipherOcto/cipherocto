@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-11; v1.3 amendment in flight 2026-09-14 — Substrate-Faithful Sweep per paired implementation R1-R11 DRY loop + R6.5 R6-c subject_did type-drift closure)
+Draft (2026-09-11; v1.3 amendment in flight 2026-09-14)
 
 > **Sibling amendment to RFC-0016.** This document carries the DEFERRED write-path surface that requires paired acceptance of RFC-0012-v2 (Layer A `octo-audit-core::AuditEventKind` extensions) + RFC-0014-v2 (Layer A `octo-settlement-core::ReceiptStatus` enum + `Receipt` field extensions + `receipt_id_for_digest` reverse-mapping function) + RFC-0011-a (CLI-shape `[ADD]` error envelope). Without all three substrate amendments, the surface described here cannot land.
 
@@ -24,8 +24,8 @@ Draft (2026-09-11; v1.3 amendment in flight 2026-09-14 — Substrate-Faithful Sw
 
 This amendment specifies the write-path + projection + ACL + scrubber surface that completes RFC-0016 once the required substrate amendments land. Pairing invariants:
 
-- **RFC-0012-v2** — `octo-audit-core::AuditEventKind` extends with `AgentTransition { agent_id, from, to, reason }` + `Redaction { prev_hash, reason }` (Layer A frozen extension; CLAUDE.md §Extension over enumeration pattern; `prev_chain_hash` lives on outer `AuditEvent` struct, NOT inside `AgentTransition` variant per substrate `crates/octo-audit-core/src/event.rs:72-83`)
-- **RFC-0014-v2** — `octo-settlement-core::ReceiptStatus { Ok, Partial, Reject }` enum + `Receipt` field extensions (`model: String`, `cost_dqa: u64`, `capability_root: [u8; 32]`, `subject_did: Did`) + `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (Layer A frozen extension)
+- **RFC-0012-v2** — `octo-audit-core::AuditEventKind` extends with `AgentTransition { agent_id, from, to, reason }` + `Redaction { prev_hash, reason }` (Layer A frozen extension; CLAUDE.md §Extension over enumeration pattern; `prev_chain_hash` lives on outer `AuditEvent` struct, NOT inside `AgentTransition` variant per substrate canonical placement at the `AuditEvent` struct declaration)
+- **RFC-0014-v2** — `octo-settlement-core::ReceiptStatus { Ok, Partial, Reject }` enum + `Receipt` field extensions (`model: String`, `cost_dqa: u64`, `capability_root: [u8; 32]`, `subject_did: String`) + `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (Layer A frozen extension)
 - **RFC-0011-a** — canonical `[ADD]` error envelope pattern: per-variant `#[error(transparent)] From<AuditError>` conversions at `octo-cli/src/error.rs` boundary land CLI-shape variants `ReceiptNotFound(String)` + `InvalidFilter(String)` + `PermissionDenied` + `AuditSubstrateNotReady` (Layer B façade envelope substrate)
 
 ## Dependencies
@@ -72,7 +72,7 @@ The KEEP RFC-0016 covers the read surface only. Operators and CLI missions requi
 | `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping           | RFC-0014-v2                                                               |
 | `ReceiptStatus` re-export                           | `pub use octo_settlement_core::ReceiptStatus`                                                                  | RFC-0014-v2                                                               |
 | `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change         | RFC-0014-v2                                                               |
-| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016-a (additive — façade stays free of `octo-ident` `Did` dep)       |
+| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016-a                                                                |
 | `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                 | RFC-0014-v2 (canonical ReceiptStatus enum)                                |
 | `StatusRef` type alias                              | `pub type StatusRef = ReceiptStatus` (canonical Layer A enum re-export)                                        | RFC-0014-v2                                                               |
 | `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                    | RFC-0012-v2 + RFC-0011-a                                                  |
@@ -194,7 +194,7 @@ pub type StatusRef = ReceiptStatus;
 
 ### §6.7 CLI-shape error variants (paired with RFC-0011-a)
 
-Per RFC-0011-a canonical `[ADD]` error envelope pattern, per-variant `#[error(transparent)] From<AuditError>` conversions land at `octo-cli/src/error.rs`:
+Per RFC-0011-a canonical `[ADD]` error envelope pattern, `From<AuditError>` conversions land at `octo-cli/src/error.rs`. The 4 substrate variants below collapse to a single `OctoCliError::Internal(reason)` (CLI exit 64) per substrate envelope convention; the 2 distinct CLI-shape variants are RFC-0016-a additive surface:
 
 | Substrate variant (paired-with-RFC-0011-a)                    | CLI variant                              | CLI exit | RFC-0011-a slot            |
 | ------------------------------------------------------------- | ---------------------------------------- | -------- | -------------------------- |
@@ -413,9 +413,9 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED at R2; expan
 
 - `crates/octo-audit/src/lib.rs` — add `append_audit_event` + `ChainHash` newtype + `redact_substrate_error` helper + `scrub` patterns module
 - `crates/octo-audit/src/scrub.rs` — canonical 18-pattern substrate-side scrubber (pre-existing RFC-0016 substrate)
-- `crates/octo-audit-core/src/event.rs` — RFC-0012-v2: `AgentTransition { agent_id: String, from: String, to: String, reason: Option<String> }` + `Redaction { prev_hash: ChainHash, reason: String }` (substrate-faithful per `crates/octo-audit-core/src/event.rs:72-83`; `prev_chain_hash` is on outer `AuditEvent` struct, NOT inside the variant)
-- `crates/octo-settlement-core/src/receipt.rs` — RFC-0014-v2: `Receipt` extends with `model: String` + `cost_dqa: u64` + `capability_root: [u8; 32]` + `subject_did: Did` + `status: ReceiptStatus` (enum defined in same file at `receipt.rs`; `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration)
-- `crates/octo-settlement-core/src/chain.rs` — RFC-0014-v2: `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (substrate-faithful per `crates/octo-settlement-core/src/chain.rs:78`; the phantom `id.rs` reference is replaced with the actual file)
+- `crates/octo-audit-core/src/event.rs` — RFC-0012-v2: `AgentTransition { agent_id: String, from: String, to: String, reason: Option<String> }` + `Redaction { prev_hash: ChainHash, reason: String }` (substrate-faithful per the `AuditEventKind` enum declaration; `prev_chain_hash` is on outer `AuditEvent` struct, NOT inside the variant)
+- `crates/octo-settlement-core/src/receipt.rs` — RFC-0014-v2: `Receipt` extends with `model: String` + `cost_dqa: u64` + `capability_root: [u8; 32]` + `subject_did: String` + `status: ReceiptStatus` (enum defined in same file at `receipt.rs`; `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration)
+- `crates/octo-settlement-core/src/chain.rs` — RFC-0014-v2: `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (substrate-faithful per the `receipt_id_for_digest` function declaration in the `chain.rs` file; the phantom `id.rs` reference is replaced with the actual file)
 - `crates/octo-audit-core/src/sink.rs` — RFC-0012-v2: `AppendOnlyAuditSink::append` adds `canonical_bytes(event)` + single-writer lock + read-stall
 - `crates/octo-cli/src/error.rs` — RFC-0011-a: per-variant `#[error(transparent)] From<octo_audit_core::AuditError>` conversions + CLI-shape variant constructors
 
@@ -490,12 +490,12 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v1.3    | 2026-09-14 | R6.5 sweep: `AuditFilter.subject_did` `Option<Did>` → `Option<String>` + `ReceiptSummary.subject_did` `Did` → `String` (facade `octo-ident`-dep-free). |
-| v1.2    | 2026-09-14 | R2.5 sweep: scrubber newtype phantom + Pattern 4 regex + ChainHash Display + append_audit_event `dyn` + TV renumbering + `AuditFilter.limit` type.     |
-| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.                                                                                     |
-| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                                                                                               |
+| Version | Date       | Changes                                                                                                                                            |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.3    | 2026-09-14 | R6.5 sweep: subject_did `Did` → `String` (façade `octo-ident`-dep-free).                                                                           |
+| v1.2    | 2026-09-14 | R2.5 sweep: scrubber newtype phantom + Pattern 4 regex + ChainHash Display + append_audit_event `dyn` + TV renumbering + `AuditFilter.limit` type. |
+| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.                                                                                 |
+| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                                                                                           |
 
 ## Related RFCs
 

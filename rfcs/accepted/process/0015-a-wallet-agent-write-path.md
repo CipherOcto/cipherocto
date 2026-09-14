@@ -4,7 +4,7 @@
 
 Accepted v3 (2026-09-14)
 
-> **Write-path sibling amendment per RFC-0015 R40 restructure.** Paired with sibling RFC-0015 (KEEP-only rewrite per RFC-0015 R40 restructure). RFC-0015 spec lives in `rfcs/draft/process/0015-wallet-agent-operations.md`.
+> **Write-path sibling amendment per RFC-0015 R40 restructure.** Paired with sibling RFC-0015 (KEEP-only rewrite per RFC-0015 R40 restructure). RFC-0015 spec lives in `rfcs/accepted/process/0015-wallet-agent-operations.md`.
 
 ## Authors
 
@@ -216,7 +216,7 @@ CLI surfaces `Class B` operations via `--confirm` per RFC-0011 §Confirmation Fl
 
 ### §6.9 Forward Pointer — read path lives in RFC-0015
 
-The read-path surface (`list_owned_agents` + `lookup_agent` + `validate_reason` + paired `WalletError::{AgentNotFound(Uuid), ForbiddenHolderMismatch, ReasonContainsControlChars(String), ReasonTooLong(usize)}`) lives in RFC-0015 KEEP. See `rfcs/draft/process/0015-wallet-agent-operations.md`.
+The read-path surface (`list_owned_agents` + `lookup_agent` + `validate_reason` + paired `WalletError::{AgentNotFound(Uuid), ForbiddenHolderMismatch, ReasonContainsControlChars(String), ReasonTooLong(usize)}`) lives in RFC-0015 KEEP. See `rfcs/accepted/process/0015-wallet-agent-operations.md`.
 
 Acceptance of RFC-0015-a does NOT authorize the read path independently; the missions in RFC-0011-c §9.3 list / show / create / attach require RFC-0015 acceptance first (parallel sibling RFC). The missions in RFC-0011-c §9.3 run / destroy require RFC-0015-a acceptance.
 

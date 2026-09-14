@@ -4,7 +4,7 @@
 
 Accepted v3 (2026-09-14)
 
-> **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]). RFC-0015-a spec lives in `rfcs/draft/process/0015-a-wallet-agent-write-path.md`.
+> **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]). RFC-0015-a spec lives in `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`.
 
 ## Authors
 
@@ -255,7 +255,7 @@ The write-path contract (`transition_agent` + paired `WalletError::{AlreadyInTra
 
 The write-path substrate items are already shipped on `next` HEAD per commit `e09f3e3a` (substrate-first ordering per RFC-0015 R40 restructure); RFC-0015-a acceptance is the formal acceptance step that authorizes them as the write-path contract. Until RFC-0015-a acceptance lands, RFC-0015 KEEP does NOT authorize CLI missions to invoke the write-path surface.
 
-**`rfcs/draft/process/0015-a-wallet-agent-write-path.md`** carries the full write-path spec per §6.1 of that RFC.
+**`rfcs/accepted/process/0015-a-wallet-agent-write-path.md`** carries the full write-path spec per §6.1 of that RFC.
 
 ## Performance Targets
 

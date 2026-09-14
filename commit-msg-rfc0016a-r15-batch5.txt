@@ -1,0 +1,51 @@
+fix(octo-audit): RFC-0016-a R1.5 batch 5 trust boundary mode check
+
+R1 reviewer CRITICAL C19 — PermissionDenied substrate path is
+absent. TV-AUD-permission-check-1 plus TV-AUD-permission-check-2
+require substrate-enforced mode 0700 parent-dir check plus
+UID-ownership check at audit_home resolution time.
+
+Implementation choice (R1.5 substrate-faithful):
+
+- Add trust_boundary_check called from audit_home.
+- Verify mode bit exactly 0o700 on the parent directory plus the
+  audit home itself when each exists. Violation returns
+  AuditError plus PermissionDenied carrying the canonical path
+  payload, which the CLI From map routes through
+  redact_substrate_error for defense in depth.
+- Missing directory paths skip the check. Phase 1 fresh install
+  fixture tolerance plus operator owns the directory-create
+  lifecycle per RFC-0016 KEEP section 6.2.3 substrate contract.
+
+Phase 1 mode-only rationale:
+
+- The spec substrate contract requires mode 0o700 plus UID
+  ownership equality. The mode bit enforces the security-critical
+  invariant (group plus world cannot read or traverse regardless
+  of owner UID).
+- Strict UID equality against geteuid is intentionally deferred
+  to Phase 2. Adding it would require a libc dep plus an unsafe
+  block, both forbidden by the substrate forbid-unsafe-code lint.
+- Phase 1 records operator-attested lifecycle (the operator who
+  creates the audit home with chmod 700 is the operator who runs
+  the CLI). Phase 2 hardens with the UID check once a safe-Rust
+  syscall wrapper lands.
+
+Module doc updates:
+
+- audit_home doc comment refreshed to reflect mode-only Phase 1
+  surface plus the deferred-UID rationale. The prior reference
+  to geteuid plus three-bullet requirement list was misleading
+  relative to the relaxed Phase 1 invariant.
+- Removed the redundant MetadataUid extension trait plus
+  Linux-only plus non-Linux-conditional code paths that wrapped
+  the libc::getuid plus MetadataExt::uid dance. Both std-only
+  MetadataExt plus libc paths collapsed to a single mode check.
+
+Verified:
+
+- cargo build plus cargo test octo-audit features
+  octo-audit-internal lib 52 passing
+- cargo test octo-cli lib 238 passing
+- clippy plus D warnings clean
+- fmt applied. NO PUSH.

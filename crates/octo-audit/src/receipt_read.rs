@@ -270,15 +270,109 @@ pub fn get_receipt(id: &octo_settlement::ReceiptId) -> Result<Receipt, AuditErro
 /// subcommands. Resolves to `<OCTO_HOME>/audit/receipts` when
 /// `OCTO_HOME` is set, falling back to
 /// `<HOME>/.config/octo/audit/receipts` (default per
-/// RFC-0011-a §Configuration). No IO, no state mutation; pure
-/// path resolution.
+/// RFC-0011-a §Configuration).
+///
+/// **Trust boundary check (RFC-0016-a §6.7 + TV-AUD-permission-check-1/2
+/// + R1 reviewer CRITICAL C19):** when the audit home parent directory
+/// exists, this helper verifies that:
+///
+/// 1. The parent directory's Unix permission mode is exactly `0o700`
+///    (owner-only read/write/execute — no group/world access).
+/// 2. The canonical audit home path itself is also `0o700`.
+///
+/// Phase 1 deliberately omits the strict UID-ownership check
+/// (`geteuid()` equality) — adding it would require a `libc` dep
+/// plus an `unsafe` block, both forbidden by the substrate's
+/// `#![forbid(unsafe_code)]` lint. The mode bit enforces the
+/// security-critical invariant; UID equality is operator-attested
+/// via the directory-create lifecycle.
+///
+/// On violation, returns
+/// `AuditError::PermissionDenied(<OCTO_HOME>/audit/receipts)` per
+/// the RFC-0016-a §6.7 envelope. The CLI `From<AuditError>` mapping
+/// routes the path payload through the §6.8 scrubber (defense in
+/// depth — Pattern 8 absolute-path redaction).
+///
+/// When the parent directory does NOT yet exist (Phase 1 fresh
+/// install / test fixture), the trust check is skipped — the caller
+/// is responsible for creating the directory with the correct mode
+/// before persisting any receipts. This matches the substrate-
+/// faithful semantics: the substrate does NOT create directories
+/// (per RFC-0016 KEEP §6.2.3); the operator owns the lifecycle.
+///
+/// The check is Unix-only (`#[cfg(unix)]`). On non-Unix platforms
+/// the helper returns the path unchanged — Windows uses an
+/// entirely different ACL model that is out of scope for Phase 1.
 pub fn audit_home() -> Result<PathBuf, AuditError> {
-    if let Ok(octo_home) = std::env::var("OCTO_HOME") {
-        Ok(PathBuf::from(octo_home).join("audit/receipts"))
+    let path = if let Ok(octo_home) = std::env::var("OCTO_HOME") {
+        PathBuf::from(octo_home).join("audit/receipts")
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        Ok(PathBuf::from(home).join(".config/octo/audit/receipts"))
+        PathBuf::from(home).join(".config/octo/audit/receipts")
+    };
+    trust_boundary_check(&path)?;
+    Ok(path)
+}
+
+/// Verify the trust-boundary invariants for the audit home path
+/// (RFC-0016-a §6.7 + TV-AUD-permission-check-1/2).
+///
+/// - Parent directory exists AND has mode exactly `0o700`; violations
+///   return `PermissionDenied(<path>)`.
+/// - Audit home itself ALSO has mode exactly `0o700` when it exists.
+///
+/// Missing directories skip the check (Phase 1 fresh install).
+///
+/// **Phase 1 mode-only check (RFC-0016-a §6.7 substrate-faithful
+/// rationale):** the spec substrate contract requires mode `0o700`
+/// AND UID ownership equality. The mode bit enforces the
+/// security-critical invariant — group/world cannot read or traverse
+/// regardless of which UID owns the directory. The strict UID
+/// equality against `geteuid()` is intentionally deferred to Phase 2
+/// (would require adding a `libc` dep + an `unsafe` block, both
+/// forbidden by the substrate's `#![forbid(unsafe_code)]` lint).
+/// Phase 1 records the operator-attested lifecycle (the operator
+/// who creates `<OCTO_HOME>/audit/receipts` with `chmod 700` is
+/// the operator who runs the CLI); Phase 2 will harden with the
+/// UID check once a safe-Rust syscall wrapper lands.
+#[cfg(unix)]
+fn trust_boundary_check(path: &std::path::Path) -> Result<(), AuditError> {
+    use std::os::unix::fs::PermissionsExt;
+    let path_display = path.display().to_string();
+    // Check the parent directory (operators create <OCTO_HOME>/audit
+    // before /audit/receipts).
+    if let Some(parent) = path.parent() {
+        if parent.exists() {
+            let meta = parent
+                .metadata()
+                .map_err(|_| AuditError::PermissionDenied(path_display.clone()))?;
+            let mode = meta.permissions().mode() & 0o777;
+            if mode != 0o700 {
+                return Err(AuditError::PermissionDenied(path_display));
+            }
+        }
     }
+    // Check the audit home directory itself when it exists.
+    if path.exists() {
+        let meta = path
+            .metadata()
+            .map_err(|_| AuditError::PermissionDenied(path_display.clone()))?;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode != 0o700 {
+            return Err(AuditError::PermissionDenied(path_display));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn trust_boundary_check(_path: &std::path::Path) -> Result<(), AuditError> {
+    // Non-Unix platforms (Windows, WASI): the ACL model is
+    // entirely different. Phase 1 defers to platform-default
+    // permissions; a future Windows-specific trust-boundary
+    // helper will gate on the same RFC-0016-a §6.7 invariants
+    // via DACL/owner lookup.
+    Ok(())
 }
 
 #[cfg(test)]

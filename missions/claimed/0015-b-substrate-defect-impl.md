@@ -1,3 +1,23 @@
+---
+name: 0015-b-substrate-defect-impl
+description: Implement the 7 substrate defects per RFC-0015-b X.1 through X.7 paired amendment
+metadata:
+  type: substrate-implementation
+  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
+  created: 2026-09-14
+  v: "1.0"
+  depends_on:
+    - RFC-0015-b
+    - RFC-0015
+    - RFC-0015-a
+    - RFC-0016
+    - mission 0015-b-substrate-defect-amendment
+release_gate: RFC-0015-b Accepted
+status: Claimed
+claimed_by: mmacedoeu
+claimed_at: 2026-09-14
+---
+
 # 0015-b-substrate-defect-impl — RFC-0015-b paired substrate implementation
 
 **Status:** Open

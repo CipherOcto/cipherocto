@@ -1,3 +1,21 @@
+---
+name: 0015-b-substrate-defect-amendment
+description: Draft RFC-0015-b paired amendment addressing 7 substrate defects from plateau declaration
+metadata:
+  type: rfc-amendment-draft
+  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
+  created: 2026-09-14
+  v: "1.0"
+  depends_on:
+    - RFC-0015
+    - RFC-0015-a
+    - RFC-0016
+    - mission 0015-b-substrate-defect-impl
+status: Claimed
+claimed_by: mmacedoeu
+claimed_at: 2026-09-14
+---
+
 # 0015-b-substrate-defect-amendment — RFC-0015-b substrate-defect paired amendment
 
 **Status:** Open

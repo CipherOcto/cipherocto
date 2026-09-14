@@ -1,3 +1,23 @@
+---
+name: 0016-a-audit-write-path-promotion
+description: DRY loop plus promote RFC-0016-a Draft to Accepted post-RFC-0015-b landing
+metadata:
+  type: rfc-promotion
+  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
+  created: 2026-09-14
+  v: "1.0"
+  depends_on:
+    - RFC-0016
+    - RFC-0015-a
+    - RFC-0015-b
+    - mission 0015-b-substrate-defect-amendment
+    - mission 0015-b-substrate-defect-impl
+release_gate: RFC-0015-b Accepted + 0015-b-substrate-defect-impl Closed
+status: Claimed
+claimed_by: mmacedoeu
+claimed_at: 2026-09-14
+---
+
 # 0016-a-audit-write-path-promotion — RFC-0016-a write-path amendment promotion
 
 **Status:** Open

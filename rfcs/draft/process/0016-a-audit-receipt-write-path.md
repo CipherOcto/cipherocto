@@ -65,19 +65,19 @@ The KEEP RFC-0016 covers the read surface only. Operators and CLI missions requi
 
 ### §6.1 Public surface additions (paired-with-substrate-amendment)
 
-| Item                                                | Type                                                                                                           | Substrate amendment required                                              |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `append_audit_event`                                | `fn(sink: &mut dyn AppendOnlyAuditSink, event: AuditEvent) -> Result<ChainHash, octo_audit_core::AuditError>`  | RFC-0012-v2 (AuditEventKind extensions + single-writer lock)              |
-| `ChainHash(pub [u8; 32])` newtype                   | paired with `append_audit_event` return type                                                                   | RFC-0012-v2                                                               |
-| `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping           | RFC-0014-v2                                                               |
-| `ReceiptStatus` re-export                           | `pub use octo_settlement_core::ReceiptStatus`                                                                  | RFC-0014-v2                                                               |
-| `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change         | RFC-0014-v2                                                               |
-| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016-a                                                                |
-| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                 | RFC-0014-v2 (canonical ReceiptStatus enum)                                |
-| `StatusRef` type alias                              | `pub type StatusRef = ReceiptStatus` (canonical Layer A enum re-export)                                        | RFC-0014-v2                                                               |
-| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                    | RFC-0012-v2 + RFC-0011-a                                                  |
-| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied, AuditSubstrateNotReady}`    | RFC-0011-a per-variant `From<AuditError>` conversions                     |
-| `redact_substrate_error` helper function            | `pub fn redact_substrate_error(raw: &str) -> String` (18-pattern sweep per §6.9 + `<REDACTED>` idempotency)    | RFC-0012-v2 (substrate canonical patterns) + RFC-0011-a (CLI integration) |
+| Item                                                | Type                                                                                                           | Substrate amendment required                                 |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `append_audit_event`                                | `fn(sink: &mut dyn AppendOnlyAuditSink, event: AuditEvent) -> Result<ChainHash, octo_audit_core::AuditError>`  | RFC-0012-v2 (AuditEventKind extensions + single-writer lock) |
+| `ChainHash(pub [u8; 32])` newtype                   | paired with `append_audit_event` return type                                                                   | RFC-0012-v2                                                  |
+| `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping           | RFC-0014-v2                                                  |
+| `ReceiptStatus` re-export                           | `pub use octo_settlement_core::ReceiptStatus`                                                                  | RFC-0014-v2                                                  |
+| `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change         | RFC-0014-v2                                                  |
+| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016-a                                                   |
+| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                 | RFC-0014-v2 (canonical ReceiptStatus enum)                   |
+| `StatusRef` type alias                              | `pub type StatusRef = ReceiptStatus` (canonical Layer A enum re-export)                                        | RFC-0014-v2                                                  |
+| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                    | RFC-0012-v2 + RFC-0011-a                                     |
+| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied, AuditSubstrateNotReady}`    | RFC-0011-a per-variant `From<AuditError>` conversions        |
+| `redact_substrate_error` helper function            | `pub fn redact_substrate_error(raw: &str) -> String` (18-pattern sweep per §6.9 + `<REDACTED>` idempotency)    | RFC-0012-v2 + RFC-0011-a                                     |
 
 ### §6.2 Function contract: `append_audit_event`
 
@@ -196,18 +196,15 @@ pub type StatusRef = ReceiptStatus;
 
 Per RFC-0011-a canonical `[ADD]` error envelope pattern, `From<AuditError>` conversions land at `octo-cli/src/error.rs`. The 4 substrate variants below collapse to a single `OctoCliError::Internal(reason)` (CLI exit 64) per substrate envelope convention; the 4 distinct CLI-shape variants are RFC-0016-a additive surface:
 
-| Substrate variant (paired-with-RFC-0011-a)                    | CLI variant                              | CLI exit | RFC-0011-a slot            |
-| ------------------------------------------------------------- | ---------------------------------------- | -------- | -------------------------- |
-| `octo_audit_core::AuditError::SequenceGap { event_id, prev }` | `OctoCliError::Internal(reason)`         | 64       | parent reserved            |
-| `octo_audit_core::AuditError::AlreadyExists(u64)`             | `OctoCliError::Internal(reason)`         | 64       | parent reserved            |
-| `octo_audit_core::AuditError::SinkSpecific(String)`           | `OctoCliError::Internal(reason)`         | 64       | parent reserved            |
-| `octo_audit_core::AuditError::ChainHashMismatch { event_id }` | `OctoCliError::Internal(reason)`         | 64       | parent reserved            |
-| (CLI-shape, RFC-0016-a) `ReceiptNotFound(decimal)`            | `OctoCliError::ReceiptNotFound(decimal)` | 17       | RFC-0011-a §Error Handling |
-| (CLI-shape, RFC-0016-a) `InvalidFilter(reason)`               | `OctoCliError::InvalidFilter(reason)`    | 16       | parent reserved            |
-| (CLI-shape, RFC-0016-a) `PermissionDenied(reason)`            | `OctoCliError::PermissionDenied`         | 13       | RFC-0011 §Exit Codes       |
-| (CLI-shape, RFC-0016-a) `AuditAppendFailed(reason)`           | `OctoCliError::AuditSubstrateNotReady`   | 52       | RFC-0011-c §9.8 slot 52    |
+| Substrate variant (paired-with-RFC-0011-a)                                                                                                 | CLI variant                              | CLI exit | RFC-0011-a slot            |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- | -------- | -------------------------- |
+| `SequenceGap { event_id, prev }` / `AlreadyExists(u64)` / `SinkSpecific(String)` / `ChainHashMismatch { event_id }` (4 substrate variants) | `OctoCliError::Internal(reason)`         | 64       | parent reserved            |
+| (CLI-shape, RFC-0016-a) `ReceiptNotFound(decimal)`                                                                                         | `OctoCliError::ReceiptNotFound(decimal)` | 17       | RFC-0011-a §Error Handling |
+| (CLI-shape, RFC-0016-a) `InvalidFilter(reason)`                                                                                            | `OctoCliError::InvalidFilter(reason)`    | 16       | parent reserved            |
+| (CLI-shape, RFC-0016-a) `PermissionDenied(reason)`                                                                                         | `OctoCliError::PermissionDenied`         | 13       | RFC-0011 §Exit Codes       |
+| (CLI-shape, RFC-0016-a) `AuditAppendFailed(reason)`                                                                                        | `OctoCliError::AuditSubstrateNotReady`   | 52       | RFC-0011-c §9.8 slot 52    |
 
-> **Substrate-faithful note (R2.5 collapse):** `AuditError::ChainHashMismatch { event_id }` is the collapsed form per the R2.5 review (pre-R2.5 carried two variants with raw digest leak surface; collapse removed leak). Note: `ChainHashMismatch` is a structured substrate variant (not a `SinkSpecific(String)` payload) — only `SinkSpecific(String)` payloads are scrubbed by the §6.9 scrubber; the `event_id: u64` is not scrubbed and is rendered verbatim in operator diagnostics. The paired RFC-0011-a per-variant `From<AuditError>` conversion at `octo-cli/src/error.rs` maps `ChainHashMismatch { event_id }` into `OctoCliError::Internal(reason)` (CLI exit 64) per the canonical `[ADD]` envelope pattern.
+> **Substrate-faithful note:** R2.5 collapse rationale documented at §v1.1 amendment #3. Only `SinkSpecific(String)` payloads are scrubbed by §6.9; structured variants like `ChainHashMismatch { event_id }` render verbatim in operator diagnostics.
 
 ### §6.8 Scrub helper (Layer B façade — `redact_substrate_error` function)
 

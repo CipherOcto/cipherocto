@@ -8,7 +8,7 @@ Draft (2026-09-11; v1.3 amendment in flight 2026-09-14)
 
 > **R29 split plan:** RFC-0016 KEEP (substrate-faithful read surface) at `rfcs/draft/process/0016-audit-receipt-api.md` was slimmed to 5 KEEP items per §6.1 + substrate-canonical 3-variant `AuditError` re-export per §6.2.5. This amendment carries the remaining 12+ DEFERRED items per §Dependencies pairing invariant.
 
-> **v1.3 Substrate-Faithful Sweep (2026-09-14):** see §Substrate-Faithful Amendment Trail for per-amendment ground-truth + acceptance criteria.
+> **v1.3 Substrate Sweep (2026-09-14):** see §Substrate-Faithful Amendment Trail for per-amendment ground-truth + acceptance criteria.
 
 ## Authors
 
@@ -450,7 +450,7 @@ Layer direction: `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `oct
 
 This section documents per-amendment substrate-faithful sweeps that reconcile RFC text to paired implementation substrate reality. Each amendment entry cites the DRY loop round + reviewer that flagged the drift + the substrate ground-truth identifier (canonical file:section per CLAUDE.md §RFC Reference Conventions Reaffirmed; section refs not line refs in prose).
 
-### v1.1 — Substrate-Faithful Sweep (2026-09-14)
+### v1.1 — Substrate Sweep (2026-09-14)
 
 | #   | Amendment                                                                                                                                                       | Substrate ground truth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Acceptance criterion                                                                                                                                                                       |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -480,22 +480,22 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ### v1.3 — R6.5 Substrate-Sweep (2026-09-14)
 
-| #   | Amendment                                                                                 | Substrate ground truth                                                                                                                                           | Acceptance criterion                                                                                                              |
-| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 17  | §6.6 AuditFilter.subject_did: `Option<Did>` → `Option<String>`                            | `crates/octo-audit/src/receipt_read.rs` `AuditFilter::subject_did` field declaration: `pub subject_did: Option<String>` at the `AuditFilter` struct declaration  | §6.1 Status table row + §6.6 struct declaration + §6.6 KEEP-block duplicate all declare `Option<String>`                          |
-| 18  | §6.5 ReceiptSummary.subject_did: `Did` → `String`                                         | `crates/octo-audit/src/receipt_summary.rs` `ReceiptSummary::subject_did` field declaration: `pub subject_did: String` at the `ReceiptSummary` struct declaration | §6.5 struct declaration + §6.5 Mermaid/block-redecl diagram both declare `String`; §6.5 from_canonical maps `receipt.subject_did` |
-| 19  | §6.1 Status table row for `AuditFilter.subject_did`: attribute to `RFC-0016-a` (additive) | Per §6.6 additive rationale; `AuditFilter.subject_did` is RFC-0016-a additive, NOT an RFC-0014-v2 paired-substrate field                                         | §6.1 Status table row attributes `AuditFilter.subject_did` to RFC-0016-a additive                                                 |
+| #   | Amendment                                                                                 | Substrate ground truth                                                                                                                                           | Acceptance criterion                                                                                     |
+| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 17  | §6.6 AuditFilter.subject_did: `Option<Did>` → `Option<String>`                            | `crates/octo-audit/src/receipt_read.rs` `AuditFilter::subject_did` field declaration: `pub subject_did: Option<String>` at the `AuditFilter` struct declaration  | §6.1 Status table row + §6.6 struct declaration + §6.6 KEEP-block duplicate all declare `Option<String>` |
+| 18  | §6.5 ReceiptSummary.subject_did: `Did` → `String`                                         | `crates/octo-audit/src/receipt_summary.rs` `ReceiptSummary::subject_did` field declaration: `pub subject_did: String` at the `ReceiptSummary` struct declaration | §6.5 struct declaration declares `String`; §6.5 from_canonical maps `receipt.subject_did`                |
+| 19  | §6.1 Status table row for `AuditFilter.subject_did`: attribute to `RFC-0016-a` (additive) | Per §6.6 additive rationale; `AuditFilter.subject_did` is RFC-0016-a additive, NOT an RFC-0014-v2 paired-substrate field                                         | §6.1 Status table row attributes `AuditFilter.subject_did` to RFC-0016-a additive                        |
 
 **Amendment acceptance test (v1.3 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
 
 ## Version History
 
-| Version | Date       | Changes               |
-| ------- | ---------- | --------------------- |
-| v1.3    | 2026-09-14 | subject→String sweep. |
-| v1.2    | 2026-09-14 | R2.5 sweep.           |
-| v1.1    | 2026-09-14 | Substrate Sweep.      |
-| v1.0    | 2026-09-11 | Initial draft.        |
+| Version | Date       | Changes          |
+| ------- | ---------- | ---------------- |
+| v1.3    | 2026-09-14 | subject String.  |
+| v1.2    | 2026-09-14 | R2.5 sweep.      |
+| v1.1    | 2026-09-14 | Substrate Sweep. |
+| v1.0    | 2026-09-11 | Initial draft.   |
 
 ## Related RFCs
 

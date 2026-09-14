@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft v3 (2026-09-13)
+Accepted v3 (2026-09-14)
 
 > **KEEP-only rewrite per RFC-0016 R29 review plan + R2.5 substrate-first restructure.** This draft carries ONLY substrate-faithful additions on the `octo-audit` Layer B façade per §6.1 §Pre-existing Substrate. Write-path surface DEFERRED to RFC-0016-a per §6.1 §Amendment Surface.
 
@@ -310,6 +310,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 ## Version History
 
+- 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied. Substrate-defect amendment backlog documented (RFC-0016-b paired amendment). Audit `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
 - 2026-09-11 — Initial draft. Read substrate-faithful surface (RFC-0002 + RFC-0011-c).
 - 2026-09-11 — KEEP-only rewrite. Dropped write-path surface → forward pointer to RFC-0016-a.
 - 2026-09-13 — R2.5 substrate-first restructure per Option C split. §6.1 split into §Pre-existing Substrate (4 items + 3 PRE-EXISTING re-exports with substrate anchors) + §Amendment Surface (DEFERRED to RFC-0016-a per [[deferred-vs-unspecified]]). `audit_home` visibility drift corrected (substrate-canonical `pub fn`, NOT `pub(crate)` + `#[cfg(octo-audit-internal)]`). `AuditFilter` corrected to 5 fields including `cursor`. Validation rules dropped (substrate silently clamps `limit` to 1024). `verify_chain` claim scoped to opt-in (NOT auto-invoked by read path). `octo-settlement` façade walk claim corrected to direct static `RECEIPT_REGISTRY` walk. Multi-tenant restriction restatement collapsed (4× → 1×). RFC-0012 §S5.1 scrubber pin retained. RFC-0011-a version pins dropped.

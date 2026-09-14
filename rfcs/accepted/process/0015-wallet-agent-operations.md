@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft v3 (2026-09-13)
+Accepted v3 (2026-09-14)
 
 > **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]). RFC-0015-a spec lives in `rfcs/draft/process/0015-a-wallet-agent-write-path.md`.
 
@@ -389,6 +389,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.) at RFC-0015 KEEP acceptan
 
 ## Version History
 
+- 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied. 7 substrate-defect items documented in amendment backlog (RFC-0015-b paired amendment). Audit `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
 - 2026-09-13 — R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per [[deferred-vs-unspecified]]). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
 - 2026-09-11 — KEEP-only substrate-faithful rewrite. Drop `transition_agent` write-path surface + paired DEFERRED `WalletError` variants + DEFERRED TVs to RFC-0015-a (write-path amendment). Write-path GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode (paired-DEFER to RFC-0015-a acceptance).
 - 2026-09-11 — Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 + RFC-0011-c).

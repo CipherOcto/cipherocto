@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft v3 (2026-09-14)
+Accepted v3 (2026-09-14)
 
 > **Write-path sibling amendment per RFC-0015 R40 restructure.** Paired with sibling RFC-0015 (KEEP-only rewrite per RFC-0015 R40 restructure). RFC-0015 spec lives in `rfcs/draft/process/0015-wallet-agent-operations.md`.
 
@@ -365,6 +365,8 @@ No changes to Layer A crates from RFC-0015-a alone (the `AuditEventKind::AgentTr
 
 ## Version History
 
+- 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied (§6.1 (1) lock-acquisition wording, §6.1 (5) audit append + rollback contract consolidation, §6.1 (6) reason-length bytes, §6.1 (7) AlreadyInTransition dead-variant contract, §6.2 TransitionReceipt Layer B designation, §6.4 self-loop rule uniform, TV-WLT-AGT-11b/11c append_audit_event canonicalization). 7 substrate-defect items documented in amendment backlog (RFC-0015-b paired amendment).
+- 2026-09-13 — R12.5 fix: §6.1 (5) Audit append + rollback contract consolidated, §6.1 (7) AlreadyInTransition dead-variant contract consolidated, TV-WLT-AGT-11b/11c append_audit_event → append_agent_transition_event per substrate, Key Files Cargo.toml narrative updated, Implicit Assumptions row 7 dedup with RFC-0015 row 5, Adversary Analysis UUID echo row reconciled to cite Security Considerations row 2, Test Vectors sub-letter scheme documented.
 - 2026-09-11 — Initial draft. Sibling amendment to RFC-0015 carrying the write-path surface (`transition_agent` + paired `WalletError` variants + `TransitionReceipt` projection + std Mutex lock-mode + audit append + rollback contract). Paired with RFC-0012 acceptance.
 
 ## Related RFCs

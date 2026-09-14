@@ -19,7 +19,7 @@ Draft v3 (2026-09-13)
 This RFC documents the canonical agent operations substrate on `octo-wallet` (Layer B years-stable per CLAUDE.md §Rust crate-level stability). The KEEP surface splits into two sections per the substrate-faithful principle (CLAUDE.md §Architectural Principles; RFC-0012/0013/0014 acceptance pattern):
 
 - **§6.2 §Pre-existing Substrate** (already shipped on `next` HEAD per commits `533b07a4` + `4222fb41`): `list_owned_agents` + `lookup_agent` + `validate_reason` + 4 `WalletError` variants + 2 `OctoCliError` variants per the table there.
-- **§6.2 §Amendment Surface** (DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]): write-path substrate `transition_agent` + 3 write-path `WalletError` variants + 1 `OctoCliError::AuditSubstrateNotReady` variant. Substrate items shipped on `next` HEAD per commit `e09f3e3a`; RFC-0015-a acceptance is the formal authorization step.
+- **§6.2 §Amendment Surface** (DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]): write-path substrate `transition_agent` + 3 write-path `WalletError` variants + 3 `OctoCliError` mirrors (`AlreadyInTransition` + `InvalidStateTransition` + `AuditSubstrateNotReady`). Substrate items shipped on `next` HEAD per commit `e09f3e3a`; RFC-0015-a acceptance is the formal authorization step.
 
 The substrate is intentionally **read-only at RFC-0015 KEEP** — `register_agent` already exists at `cli_fns.rs`. No new persistence, no new envelopes. Domain consumers are CLI missions `0011-c-agent-{list,show,attach}-subcommand` (KEEP at acceptance) and `0011-c-agent-{run,destroy}-subcommand` (DEFERRED to RFC-0015-a acceptance). RFC-0002 §Agent State Machine is the canonical state authority.
 
@@ -156,7 +156,7 @@ pub struct AgentFilter {
 }
 ```
 
-- **Filter semantics** — server-side `holder_did == filter.holder_did.unwrap_or(caller_did.as_str().to_owned())`; substrate enforces `filter.holder_did.is_none() || filter.holder_did.as_deref() == Some(caller_did.as_str())` per RFC-0009 §Identity (mismatch → `WalletError::ForbiddenHolderMismatch`). `state == filter.state` (exact match, no wildcards); `limit` clamp. **Canonicalization note:** the substrate does NOT canonicalize per RFC-0010 — bytes-equality on canonical form is substrate-faithful. The CLI mission MUST pre-canonicalize via `Did::from_str` (RFC-0010 §Chain-id Derivation) before calling `list_owned_agents`.
+- **Filter semantics** — substrate enforces `filter.holder_did.is_none() || filter.holder_did.as_deref() == Some(caller_did.as_str())` per RFC-0009 §Identity (`&str == &str` comparison; mismatch → `WalletError::ForbiddenHolderMismatch`). `state == filter.state` (exact match, no wildcards); `limit` clamp. **Canonicalization note:** the substrate does NOT canonicalize per RFC-0010 — bytes-equality on canonical form is substrate-faithful. The CLI mission MUST pre-canonicalize via `Did::from_str` (RFC-0010 §Chain-id Derivation) before calling `list_owned_agents`.
 - **Return semantics** — empty `Vec` when zero matches (NOT an error); summaries sorted by `registered_at_unix DESC`, with secondary sort by `agent_id` (canonical UUID v5; namespace+name based, deterministic per substrate implementation) ASC as deterministic tiebreaker for entries sharing the same `registered_at_unix`.
 - **Error semantics** — `WalletError::Config` on registry corruption (unrecoverable); `WalletError::Io` on disk read failure; `WalletError::ForbiddenHolderMismatch` (NEW) on caller/filter DID mismatch.
 
@@ -384,7 +384,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.) at RFC-0015 KEEP acceptan
 ## Rationale
 
 - **Substrate-faithful** — substrate is canonical per RFC-0012/0013/0014 acceptance pattern; the three-state `AgentState` enum is canonical even when it differs from the RFC-0002 spec diagram.
-- **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 8 items per §6.2 §Pre-existing Substrate are additive; the 5 write-path items per §6.2 §Amendment Surface are formally authorized via RFC-0015-a acceptance.
+- **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 8 items per §6.2 §Pre-existing Substrate are additive; the 7 write-path items per §6.2 §Amendment Surface are formally authorized via RFC-0015-a acceptance.
 - **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per [[cipherocto-design-principles]] §No parallel abstractions).
 - **Pairing discipline** — RFC-0015 (read-path) + RFC-0015-a (write-path) follow the extension-over-enumeration pattern per [[cipherocto-design-principles]]; no central enum edit at Layer A.
 

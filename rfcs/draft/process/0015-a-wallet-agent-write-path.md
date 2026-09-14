@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft (2026-09-11)
+Draft v3 (2026-09-14)
+
+> **Write-path sibling amendment per RFC-0015 R40 restructure.** Paired with sibling RFC-0015 (KEEP-only rewrite per RFC-0015 R40 restructure). RFC-0015 spec lives in `rfcs/draft/process/0015-wallet-agent-operations.md`.
 
 ## Authors
 
@@ -14,14 +16,9 @@ Draft (2026-09-11)
 
 ## Summary
 
-This RFC is a **sibling amendment** to RFC-0015 carrying the **write-path surface** that RFC-0015 deliberately DEFERRED:
+This RFC is a **sibling amendment** to RFC-0015 carrying the **write-path surface** that RFC-0015 deliberately DEFERRED. The canonical spec lives in §6.1 (`transition_agent`) + §6.2 (`TransitionReceipt` projection) + §6.3 (error envelope). RFC-0015 `§Pre-existing Substrate` (read-path) + `§Amendment Surface` (write-path) split is the KEEP / amendment pairing pattern.
 
-1. **`pub fn transition_agent(caller_did: &Did, uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>`** — NEW ADDITIVE write function per §6.1. Paired with `AuditEventKind::AgentTransition` (RFC-0012 substrate amendment). Substrate-faithful caller-attestation + `std::sync::Mutex` lock on GLOBAL `AGENT_REGISTRY: OnceLock<Mutex<BTreeMap<Uuid, AgentRecord>>>` (TOCTOU mitigation; mutex poison → `WalletError::Config(String)`) + audit append + rollback contract.
-2. **`WalletError::AlreadyInTransition(Uuid)`** — NEW ADDITIVE enum variant per §6.3. Raised when the substrate's in-flight transition guard detects a second concurrent `transition_agent` call against the same `agent_id` (substrate-side state, not lock-contention).
-3. **`WalletError::InvalidStateTransition { from, to }`** — NEW ADDITIVE enum variant per §6.3. Raised on illegal transition (e.g., `Registered → Terminated`). Substrate keeps SEPARATE variant per `crates/octo-wallet/src/error.rs` §InvalidStateTransition; CLI mirrors with separate `OctoCliError::InvalidStateTransition { from, to }` per `crates/octo-cli/src/error.rs` §InvalidStateTransition.
-4. **`WalletError::AuditUnavailable(String)`** — NEW ADDITIVE enum variant per §6.3. Raised when `AppendOnlyAuditSink` is unreachable OR fails closed (per the rollback contract in §6.1 (5)). The String payload carries the substrate-level `Debug`-formatted `AuditError` (per §transition_agent audit append branch: `.map_err(|e| WalletError::AuditUnavailable(format!("{e:?}")))`).
-
-The three new error variants + the `transition_agent` function + the audit append of `AgentTransition` rows land at RFC-0015-a acceptance paired with RFC-0012 acceptance (Layer A `AuditEventKind::AgentTransition` variant addition to `octo-audit-core`). No new Cargo.toml dep lands (substrate uses `std::sync::Mutex` already in §AgentRecord struct).
+The `transition_agent` write function + 3 write-path `WalletError` variants + 3 `OctoCliError` mirrors (`AlreadyInTransition` + `InvalidStateTransition` + `AuditSubstrateNotReady`) + the audit append of `AuditEventKind::AgentTransition` rows land at RFC-0015-a acceptance paired with RFC-0012 acceptance (Layer A `AuditEventKind::AgentTransition` variant addition to `octo-audit-core`). No NEW Cargo.toml dep lands at RFC-0015-a acceptance (substrate uses `std::sync::Mutex` already in `crates/octo-wallet/src/agent.rs` + the `octo-audit` Layer B façade dep is pre-existing per substrate-first ordering).
 
 **Pairing invariant:** Acceptance of RFC-0015-a REQUIRES paired acceptance of RFC-0012 (Layer A `AuditEventKind::AgentTransition` variant in `octo-audit-core`) per CLAUDE.md §Extension over enumeration + §Layer B depends on A (stable substrate). Without RFC-0012 acceptance, `transition_agent` cannot persist state-machine transitions to the canonical `AppendOnlyAuditSink`.
 
@@ -126,7 +123,7 @@ pub fn transition_agent(
 - **(3) State-machine authority** — substrate rejects invalid transitions with `WalletError::InvalidStateTransition { from: AgentState, to: AgentState }` (canonical payload shape per §InvalidStateTransition). The `#[non_exhaustive]` enum attribute permits future expansion. Canonical transitions per §state_machine_matches_arm (substrate-canonical `matches!` arm): `Registered → Running` + `Running → Terminated`. All other transitions are rejected with `InvalidStateTransition`. Substrate keeps SEPARATE variant from `AlreadyInTransition(Uuid)` (per §AlreadyInTransition); CLI mirrors with separate `OctoCliError::InvalidStateTransition { from, to }` per §InvalidStateTransition (both share exit 43 per §exit_codes write-path slot).
 - **(4) Idempotency on same-state** — `transition_agent(caller_did, uuid, current_state, _)` is **idempotent on all states** (no terminal carve-out): the substrate returns `Ok(TransitionReceipt { previous_state == current_state, audit_log_entry: [0u8; 32], transitioned_at_unix: <wall-clock>, agent_id: <uuid>, .. })` without audit append per substrate test `transition_agent_self_transition_is_idempotent` (per §transition_agent_self_transition_is_idempotent). Replay protection on terminal state lives in the state-machine guard (§6.1 (3)): `Running → Terminated` succeeds; subsequent `Terminated → Terminated` is the idempotent no-op above (no audit event; safe-replay). `Registered → Terminated` is rejected with `InvalidStateTransition` (substrate-canonical).
 - **(5) Audit append + rollback contract** — every successful non-idempotent transition appends an `AuditEventKind::AgentTransition { agent_id, from, to, reason }` row to the canonical `AppendOnlyAuditSink` per RFC-0012 (parent `AuditEvent::at_millis_unix` carries the timestamp — variant payload does NOT carry `at_unix`). Substrate-faithful symmetry: parent struct is the canonical timestamp carrier; variants carry transition-specific payload only. On audit append failure (`AuditError` variant returned from `append_audit_event`):
-  - The substrate maps the error to `WalletError::AuditUnavailable(String)` (canonical String payload). The String is cfg-gated per the `octo-audit-internal` feature flag: when the feature is enabled, the substrate uses `format!("{e:?}")` (Debug-formatted `AuditError` per §transition_agent audit append branch); when the feature is disabled, the substrate uses a static placeholder string `"octo-audit-internal feature not enabled (RFC-0015-a §6.5 paired-acceptance bridge)"` per the feature-off branch. The wallet surface contract is the same in both branches: `WalletError::AuditUnavailable(String)`.
+  - The substrate maps the error to `WalletError::AuditUnavailable(String)` (canonical String payload per `WalletError::AuditUnavailable` mapping). The String is cfg-gated per the `octo-audit-internal` feature flag: when the feature is enabled, the substrate uses `format!("{e:?}")` (Debug-formatted `AuditError` per `agent.rs` §transition_agent audit append branch); when the feature is disabled, the substrate uses a static placeholder string per the `agent.rs` §transition_agent feature-off `cfg(not(feature = "octo-audit-internal"))` arm. The wallet surface contract is the same in both branches: `WalletError::AuditUnavailable(String)`.
   - The in-memory state mutation is rolled back to `from` (per §transition_agent_rollback).
   - The function returns `Err(WalletError::AuditUnavailable(_))` (fail-closed).
   - Defense-in-depth: the audit append is the source of truth for the transition log; in-memory state is the source of truth for current `AgentState`. On fail-closed audit-append failure, the state mutation MUST be rolled back so the registry remains consistent.
@@ -230,7 +227,7 @@ Acceptance of RFC-0015-a does NOT authorize the read path independently; the mis
 
 ## Implicit Assumptions Audit
 
-1. **Single-writer per `agent_id`** — enforced via the GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock per §6.1 (1) + §6.1 (7). Concurrent calls observe `WalletError::AlreadyInTransition` at the in-flight transition guard level (not lock contention; the std Mutex serializes rather than rejects-on-contention).
+1. **Single-writer per `agent_id`** — enforced via the GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock per §6.1 (1) + §6.1 (7). Concurrent calls serialize at the GLOBAL std Mutex lock acquisition (canonical substrate pattern); the second caller waits for the first to complete and observes the post-first-call state (no `AlreadyInTransition` construction at RFC-0015-a acceptance per §6.1 (7); the variant surface is reserved for a future paired-acceptance substrate amendment).
 2. **Substrate is canonical for `AgentState`** — CLI never pattern-matches on `AgentState` string representation; serde-derived lowercase string is for display only per `#[serde(rename_all = "lowercase")]` on the enum (per §Display for AgentState `as_str` impl).
 3. **Reason string is UTF-8, ≤256 chars, no control chars** — `transition_agent` calls `validate_reason` (RFC-0015 KEEP primitive per §6.2.5 validate_reason) upstream; the primitive's length cap + control-char filter applies.
 4. **`register_agent` precedes any transition** — substrate assumes the `agent_id` returned by `register_agent` exists in the in-memory registry before any `transition_agent` call can succeed; CLI precondition check (CLI missions `0011-c-agent-{run,destroy}-subcommand` Sub-step 2 enforces via `lookup_agent`).
@@ -345,7 +342,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 | `octo-wallet`     | Layer B façade (RFC-0011-c) | `crates/octo-wallet/src/agent.rs` §AgentManifest + `crates/octo-wallet/src/error.rs` §WalletError | Façade; RFC-0015-a additive items (`transition_agent` + `TransitionReceipt` + 3 error variants) land here                 |
 | `octo-audit-core` | Layer A frozen (RFC-0012)   | `AuditEventKind` enum                                                                             | Canonical substrate for paired RFC-0012 `AuditEventKind::AgentTransition` variant (lands with RFC-0012 paired acceptance) |
 
-Layer direction: `octo-wallet` (Layer B) → `octo-audit-core` (Layer A frozen) for the audit append (paired with RFC-0012). Layer B → Layer A is the canonical façade-to-substrate hop per CLAUDE.md §Architectural Principles. The `IdentityHandle` for the caller-attestation provenance (HSM-bound) lives in `crates/octo-wallet/src/identity.rs` per the RFC-0015 substrate (NOT in a separate `octo-wallet-core` crate — that crate is not a workspace member); the substrate-faithful pattern is `caller_did: &Did` borrowed from an HSM-bound `IdentityHandle` retrieved from process session state at the Layer B façade boundary.
+Layer direction: `octo-wallet` (Layer B) → `octo-audit` (Layer B façade) → `octo-audit-core` (Layer A frozen) for the audit append (paired with RFC-0012). Canonical hop is B→B→A through façade per CLAUDE.md §Architectural Principles (`Layer B depends on A`); the intermediate `octo-audit` Layer B façade hop is pre-existing per the RFC-0015 §Layer direction + §Implementation Phases Phase 2.5 wording, and the `crates/octo-wallet/src/agent.rs` `agent.rs` §transition_agent dispatches through the `octo-audit` façade re-export per `append_agent_transition_event`. The `IdentityHandle` for the caller-attestation provenance (HSM-bound) lives in `crates/octo-wallet/src/identity.rs` per the RFC-0015 substrate (NOT in a separate `octo-wallet-core` crate — that crate is not a workspace member); the substrate-faithful pattern is `caller_did: &Did` borrowed from an HSM-bound `IdentityHandle` retrieved from process session state at the Layer B façade boundary.
 
 No changes to Layer A crates from RFC-0015-a alone (the `AuditEventKind::AgentTransition` amendment is in the paired RFC-0012); no CLI binary changes; no envelope / redactor / exit-code table changes.
 
@@ -487,11 +484,6 @@ sequenceDiagram
             Audit-->>Wal: Err(AuditError::..)
             Wal->>Wal: ROLLBACK in-memory state to `from` per §6.1 (5)
             Wal-->>CLI: Err(WalletError::AuditUnavailable(<Debug-formatted string>))
-        else AlreadyExists (idempotent-retry)
-            AuditCore-->>Audit: Err(AuditError::AlreadyExists(event_id))
-            Audit-->>Wal: Err(AuditError::AlreadyExists(event_id))
-            Wal->>Wal: do NOT rollback; recognize existing chain-hash per §6.1 (5)
-            Wal-->>CLI: Ok(TransitionReceipt { audit_log_entry: existing_chain_hash, .. })
         else Ok (success)
             AuditCore-->>Audit: Ok(ChainHash)
             Audit-->>Wal: Ok(ChainHash)
@@ -502,4 +494,4 @@ sequenceDiagram
     CLI-->>Op: OutputEnvelope<TransitionOutput> exit 0 or 43 or 52
 ```
 
-> **RFC-0015-a scope note:** the sequence diagram illustrates the `transition_agent` write path through `octo-audit-core` paired with RFC-0012 (`AuditEventKind::AgentTransition` variant in `octo-audit-core`). Lock mode is `std::sync::Mutex` on GLOBAL `AGENT_REGISTRY` per §AGENT_REGISTRY; rollback contract per §6.1 (5): `SinkSpecific` / `SequenceGap` fail-closed (with state rollback to `from`); `AlreadyExists` is idempotent-retry (no rollback). Idempotency on same-state (§6.1 (4)) returns `Ok(TransitionReceipt { audit_log_entry: [0u8; 32], .. })` with NO audit append (no terminal carve-out per substrate-canonical test `transition_agent_self_transition_is_idempotent` at §transition_agent_self_transition_is_idempotent).
+> **RFC-0015-a scope note:** the sequence diagram illustrates the `transition_agent` write path through `octo-audit-core` paired with RFC-0012 (`AuditEventKind::AgentTransition` variant in `octo-audit-core`). Lock mode is `std::sync::Mutex` on GLOBAL `AGENT_REGISTRY` per §AGENT_REGISTRY; rollback contract per §6.1 (5): all `AuditError` variants including `AlreadyExists` propagate through the blanket `.map_err` and trigger fail-closed rollback. No special-case for `AlreadyExists` (substrate canonical behavior per `agent.rs` §transition_agent audit append branch). Idempotency on same-state (§6.1 (4)) returns `Ok(TransitionReceipt { audit_log_entry: [0u8; 32], .. })` with NO audit append (no terminal carve-out per substrate-canonical test `transition_agent_self_transition_is_idempotent` at §transition_agent_self_transition_is_idempotent).

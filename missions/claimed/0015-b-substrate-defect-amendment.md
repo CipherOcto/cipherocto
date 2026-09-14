@@ -10,7 +10,6 @@ metadata:
     - RFC-0015
     - RFC-0015-a
     - RFC-0016
-    - mission 0015-b-substrate-defect-impl
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-14

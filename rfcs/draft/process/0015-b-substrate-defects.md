@@ -54,7 +54,7 @@ The amendment is **strictly additive** — no breaking changes to existing publi
 2. **`AlreadyInTransition` activation via canonical pattern** — in-flight `transitioning: bool` flag on `AgentRecord`, checked INSIDE the canonical GLOBAL `std::sync::Mutex` (parent RFC-0015-a §6.1 (1)). NO new lock primitive. NO new Cargo.toml dep.
 3. **Existence-leak closure** — `lookup_agent` normalizes unknown + not-owned cases to `WalletError::AgentNotFound`, closing the multi-DID enumeration attack surface per parent RFC-0015 §Design Goals G6.
 4. **State-machine test coverage** — 1 new canonical edge (`Terminated → Running` cross-state rejection). Concurrent in-flight rejection lives at §X.1 test TV-WLT-AGT-29 (not duplicated here).
-5. **RFC parity refresh** — RFC-0015-a `#### §Amendment Surface` heading added (mirrors RFC-0015 line 110 structure); 1 additive row for `transitioning: bool` + 1 forward-pointer row for defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle.
+5. **RFC parity refresh** — RFC-0015-a `#### §Amendment Surface` heading added (mirrors RFC-0015 §Amendment Surface structure); 1 additive row for `transitioning: bool` + 1 forward-pointer row for defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle.
 
 ## Motivation
 
@@ -70,7 +70,7 @@ The 7 substrate defects from the plateau declaration were re-examined against th
 | 4   | `transition_agent` TOCTOU window                | PHANTOM — `validate_reason` is pure function; canonical validate-first → lock-after → re-read inside lock pattern already closes the actual TOCTOU window per parent §6.1 (1) + §6.1 (6)                 |
 | 5   | Phantom-event window on audit-append + rollback | DEFERRED — `state_version` field is Layer B + chain-tip accessor is Layer A frozen; full closure requires paired RFC-0012-v4 Layer A amendment (out of RFC-0015-b scope per [[deferred-vs-unspecified]]) |
 | 6   | Missing state-machine tests                     | REAL — 1 new edge (`Terminated → Running`; concurrent in-flight lives at §X.1 test TV-WLT-AGT-29; rest duplicate parent RFC-0015-a TVs)                                                                  |
-| 7   | RFC-0015-a §Amendment Surface parity gap        | REAL but small — 1 additive row + 1 forward-pointer row; targets NEW `#### §Amendment Surface` heading on RFC-0015-a (mirrors RFC-0015 line 110 structure)                                               |
+| 7   | RFC-0015-a §Amendment Surface parity gap        | REAL but small — 1 additive row + 1 forward-pointer row; targets NEW `#### §Amendment Surface` heading on RFC-0015-a (mirrors RFC-0015 §Amendment Surface structure)                                     |
 
 **4 defects survive canonicalization** as substantive §X.x requirements. Defect 2 is folded into the §X.1 impl sub-step (doc-comment hygiene is impl-time). Defect 4 is rejected as a substrate contract change (the canonical validate-first pattern per parent §6.1 (1) + §6.1 (6) is correct; the TOCTOU motivation was based on a flawed premise that `validate_reason` reads the registry, which it does not per parent §6.1 (6) — `validate_reason` is a pure function over the reason string). Defect 5 is DEFERRED to RFC-0012-v4 paired Layer A amendment cycle (Layer A frozen per CLAUDE.md §Layer A stability requires separate semver-major cycle).
 
@@ -128,6 +128,10 @@ The 7 substrate defects from the plateau declaration were re-examined against th
 - [ ] Test vector TV-WLT-AGT-25 verifies not-owned Uuid (caller_did != holder_did) → `Err(AgentNotFound(uuid))` (existence-leak closure; genuinely new)
 - [ ] Happy-path + unknown-UUID scenarios PRESERVED by parent TV-WLT-AGT-22 + TV-WLT-AGT-23 (not duplicated per [[no-phantom-mission-pointer]])
 
+### §X.2.1 `read_agent_state` out-of-scope forward-pointer
+
+**Note:** `crates/octo-wallet/src/agent.rs` §read_agent_state (lines ~515-529) carries the IDENTICAL existence-leak surface as §lookup_agent (returns `AgentNotFound` on Uuid miss + `ForbiddenHolderMismatch` on holder mismatch). RFC-0015-b §X.2 scopes the closure to `lookup_agent` ONLY (read-state path owned by RFC-0015 KEEP per [[deferred-vs-unspecified]]). The parallel closure for `read_agent_state` is DEFERRED to a RFC-0015 follow-on amendment cycle (read-path owner; out of RFC-0015-b scope per paired-acceptance discipline). Forward-pointer retained here per substrate-faithful single-source-of-truth principle.
+
 ### §X.3 State-machine test coverage (1 new canonical edge)
 
 **Defect:** `crates/octo-wallet/src/agent.rs` test module lacks coverage for 1 genuinely new state-machine edge. Existing RFC-0015-a TVs (TV-WLT-AGT-3, 4, 5, 6, 7, 8, 9, 10, 11, 11b, 11c) cover the canonical happy-path + idempotent + invalid-edge surface; concurrent in-flight rejection lives at §X.1 test TV-WLT-AGT-29 (canonical home). 1 edge remains under-tested.
@@ -152,9 +156,9 @@ Concurrent in-flight rejection test coverage lives canonically at §X.1 TV-WLT-A
 
 ### §X.4 RFC-0015-a `#### §Amendment Surface` parity refresh
 
-**Defect:** RFC-0015-a lacks a `#### §Amendment Surface` heading at acceptance time. Per substrate-faithful single-source-of-truth principle + [[deferred-vs-unspecified]] (RFC-0015 line 110 §Amendment Surface is DEFERRED to RFC-0015-a — canonical home for additive write-path items), additive items landed post-RFC-0015-a acceptance require a parity refresh in RFC-0015-a itself.
+**Defect:** RFC-0015-a lacks a `#### §Amendment Surface` heading at acceptance time. Per substrate-faithful single-source-of-truth principle + [[deferred-vs-unspecified]] (RFC-0015 §Amendment Surface §Amendment Surface is DEFERRED to RFC-0015-a — canonical home for additive write-path items), additive items landed post-RFC-0015-a acceptance require a parity refresh in RFC-0015-a itself.
 
-**Requirement:** paired impl mission adds a NEW `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 line 110 structure) with the following rows:
+**Requirement:** paired impl mission adds a NEW `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface structure) with the following rows:
 
 1. `AgentRecord.transitioning: bool` (additive field per §X.1; default `false`; serde-defaulted per parent RFC-0015-a additive-field precedent)
 
@@ -172,7 +176,7 @@ Add timestamp entry:
 
 **Acceptance Criteria:**
 
-- [ ] NEW `#### §Amendment Surface` heading added to RFC-0015-a (mirrors RFC-0015 line 110 structure)
+- [ ] NEW `#### §Amendment Surface` heading added to RFC-0015-a (mirrors RFC-0015 §Amendment Surface structure)
 - [ ] 1 additive row (`transitioning: bool` per §X.1)
 - [ ] 1 forward-pointer row (defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle)
 - [ ] Timestamp column updated with RFC-0015-b Acceptance date
@@ -183,7 +187,7 @@ Add timestamp entry:
 | Operation                                | Class | Rationale                                                          |
 | ---------------------------------------- | ----- | ------------------------------------------------------------------ |
 | `transition_agent` (post-§X.1 + §X.2)    | B     | Substrate-level state-machine guard; deterministic per parent §6.1 |
-| `lookup_agent` (post-§X.2 normalization) | A     | Read; deterministic result per parent RFC-0015-a §6.7              |
+| `lookup_agent` (post-§X.2 normalization) | A     | Read; deterministic result per RFC-0015 §6.7                       |
 
 Per RFC-0008 §Execution Class Mapping, the substrate operation is the unit of classification; internal sub-steps inherit the parent's class. Sub-step elaboration is omitted (single source of truth at parent RFC-0015-a §6.8 + RFC-0015 §6.7).
 
@@ -277,12 +281,10 @@ Substrate-level test vectors (canonical numbering per parent RFC-0015-a §Test V
 ### Phase 2: Substrate Implementation (paired mission)
 
 - [ ] `missions/claimed/0015-b-substrate-defect-impl.md` lands per paired acceptance bridge (parent RFC-0015-a §6.5)
-- [ ] Sub-step 1: §X.1 in-flight flag activation (AgentRecord.transitioning + transition_agent in-flight check + RAII guard + doc-comment hygiene)
-- [ ] Sub-step 2: §X.2 lookup_agent existence-leak closure
+- [ ] Sub-step 1: §X.1 in-flight flag activation (AgentRecord.transitioning + transition_agent in-flight check + RAII guard + doc-comment hygiene) + TV-WLT-AGT-29 test
+- [ ] Sub-step 2: §X.2 lookup_agent existence-leak closure + TV-WLT-AGT-25 not-owned test (happy-path + unknown-UUID covered by parent TV-WLT-AGT-22 + TV-WLT-AGT-23)
 - [ ] Sub-step 3: §X.3 state-machine test coverage (TV-WLT-AGT-27)
-- [ ] Sub-step 4: §X.1 test (TV-WLT-AGT-29)
-- [ ] Sub-step 5: §X.2 not-owned test (TV-WLT-AGT-25); happy-path + unknown-UUID covered by parent TV-WLT-AGT-22 + TV-WLT-AGT-23
-- [ ] Sub-step 6: §X.4 RFC-0015-a `#### §Amendment Surface` heading + 2 rows + timestamp entry
+- [ ] Sub-step 4: §X.4 RFC-0015-a `#### §Amendment Surface` heading + 2 rows + timestamp entry
 - [ ] `cargo fmt --all -- --check` clean
 - [ ] `cargo clippy --workspace --features full --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-wallet --lib agent` green
@@ -324,11 +326,11 @@ The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The p
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-09-14 | Initial substrate-defect paired amendment per plateau declaration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.1     | 2026-09-14 | R1.5 fix: rewrote against canonical `std::sync::Mutex` substrate (Option A); collapsed 7 → 5 defects; rejected defect 4 TOCTOU contract change; folded defect 2 into §X.1 impl sub-step; renumbered §X sections; fixed phantom §6.4 → §6.5 paired-acceptance bridge cite; removed `parking_lot::Mutex::try_lock` Option D (rejected on canonical substrate grounds); fixed all file:line refs → §symbol refs per [[no-line-refs-anywhere]]; collapsed §X.8/§X.9/§X.10 cross-cutting sections (forward-pointers to parent RFC-0015-a + RFC-0012-v2 paired amendment)                                                                                                                                                                           |
-| 1.2     | 2026-09-14 | R2.5 fix: demoted defect 5 phantom-event to RFC-0012-v4 paired Layer A cycle (Layer A frozen per CLAUDE.md §Layer A stability); deleted §X.4 phantom-event forward-pointer section; renumbered §X.5 → §X.4 + §X.6 → §X.5; dropped TV-WLT-AGT-24/26 (duplicate parent TV-WLT-AGT-22/23) + TV-WLT-AGT-28 (subsumed by TV-WLT-AGT-29) + TV-WLT-AGT-30/31 (defect 5 demoted); collapsed 5 → 4 surviving defects; updated §Key Files to Modify (drop `state_version` field + `AuditChainInconsistent` variant); dropped Phase 4 RFC-0012-v2 + Phase 2 sub-step 6 conditional; corrected §X.6 lookup_agent rationale cite (drop phantom parent §6.7); §X.5 acceptance: 2 rows instead of 3 (drop conditional `state_version` row); VH entry trimmed |
+| Version | Date       | Changes                                                                                     |
+| ------- | ---------- | ------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-09-14 | Initial substrate-defect paired amendment per plateau declaration                           |
+| 1.1     | 2026-09-14 | R1.5 fix: canonical std::sync::Mutex substrate; 7→5 defects; §X renumber; phantom §6.4→§6.5 |
+| 1.2     | 2026-09-14 | R2.5 fix: defect 5 demoted RFC-0012-v4; §X renumber; 5→4 defects; TV drops                  |
 
 ## Related RFCs
 

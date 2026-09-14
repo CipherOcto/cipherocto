@@ -1,11 +1,11 @@
 ---
 name: 0015-b-substrate-defect-impl
-description: Implement the 4 surviving substrate defects per RFC-0015-b X.1 through X.5 paired amendment (defect 5 demoted to RFC-0012-v4 paired Layer A cycle)
+description: Implement the 4 surviving substrate defects per RFC-0015-b X.1 through X.4 paired amendment (defect 5 demoted to RFC-0012-v4 paired Layer A cycle)
 metadata:
   type: substrate-implementation
   originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-14
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0015-b
     - RFC-0015
@@ -20,19 +20,19 @@ claimed_at: 2026-09-14
 # 0015-b-substrate-defect-impl — RFC-0015-b paired substrate implementation
 
 **Status:** Open
-**Substrate:** RFC-0015-b §X.1 + §X.2 + §X.3 + §X.5 (defect 5 demoted to RFC-0012-v4 paired Layer A cycle; out of scope for this mission)
+**Substrate:** RFC-0015-b §X.1 + §X.2 + §X.3 + §X.4 (defect 5 demoted to RFC-0012-v4 paired Layer A cycle; out of scope for this mission)
 **Parent:** RFC-0015-b (substrate-defect paired amendment; see `missions/claimed/0015-b-substrate-defect-amendment.md`)
 **Depends on:** RFC-0015-b Accepted; RFC-0015 Accepted; RFC-0015-a Accepted
 
 ## Scope
 
-Implement the **4 surviving canonical-substrate defects** documented in RFC-0015-b §X.1, §X.2, §X.3, §X.5. This is the **paired substrate implementation** mission that lands post-RFC-0015-b acceptance. Per RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge, the amendment RFC and this implementation mission form a unit.
+Implement the **4 surviving canonical-substrate defects** documented in RFC-0015-b §X.1, §X.2, §X.3, §X.4. This is the **paired substrate implementation** mission that lands post-RFC-0015-b acceptance. Per RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge, the amendment RFC and this implementation mission form a unit.
 
 Defect 5 (phantom-event window on audit-append + rollback) is **DEFERRED** to a separate RFC-0012-v4 paired Layer A amendment cycle (requires `state_version: u64` field on `AuditEvent` + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` in `octo-audit-core` Layer A frozen per CLAUDE.md §Layer A stability). Out of scope for this mission.
 
 ## Why this exists
 
-Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13 DRY plateau surfaced 7 substrate defects that were out of scope for the RFC DRY loop. RFC-0015-b §Motivation table (post-R2.5 fix) reclassifies the defects against the canonical substrate patterns established at parent RFC-0015-a acceptance: **5 defects survive canonicalization, 1 defect (defect 4 TOCTOU) is rejected as a substrate contract change based on a flawed premise, and 1 defect (defect 5 phantom-event) is DEFERRED to the separate RFC-0012-v4 Layer A amendment cycle.** This mission implements the 4 surviving canonical-substrate defects.
+Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13 DRY plateau surfaced 7 substrate defects that were out of scope for the RFC DRY loop. RFC-0015-b §Motivation table (post-R2.5 fix) reclassifies the defects against the canonical substrate patterns established at parent RFC-0015-a acceptance: **4 defects survive canonicalization, 2 defects are rejected (defect 4 TOCTOU flawed premise; defect 5 demoted), and 1 defect (defect 5 phantom-event) is DEFERRED to the separate RFC-0012-v4 Layer A amendment cycle.** This mission implements the 4 surviving canonical-substrate defects.
 
 ## Mission sub-steps (one per RFC-0015-b §X.x)
 
@@ -69,7 +69,7 @@ Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13
 
 **File:** `crates/octo-wallet/src/agent.rs` (test module)
 
-- 2 genuinely new state-machine edge TVs:
+- 1 genuinely new state-machine edge TV:
 
 | TV            | Edge                   | Expected                                                                                                                                                |
 | ------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,11 +78,11 @@ Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13
 - Concurrent in-flight rejection coverage is canonical home at Sub-step 1 §X.1 test `TV-WLT-AGT-29` (NOT duplicated here per R2.5 MED finding #1).
 - Existing parent RFC-0015-a TVs (TV-WLT-AGT-3 through 11c) cover the canonical happy-path + idempotent + invalid-edge surface; no duplication.
 
-### Sub-step 4 — RFC-0015-a §Amendment Surface parity refresh (§X.5)
+### Sub-step 4 — RFC-0015-a §Amendment Surface parity refresh (§X.4)
 
 **File:** `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`
 
-- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface at line 110 structure per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per [[deferred-vs-unspecified]]).
+- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per [[deferred-vs-unspecified]]).
 - 1 additive row in the new §Amendment Surface table:
 
   | Substrate item                                                                 | Layer | Source                                       | Notes                                                                   |
@@ -96,14 +96,6 @@ Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13
   | Defect 5 phantom-event detection (`state_version` + `audit_chain.tip.state_version`) | A     | DEFERRED to RFC-0012-v4 paired Layer A amendment cycle | Out of RFC-0015-b scope |
 
 - Add timestamp entry: "Substrate-defect amendment landing (RFC-0015-b Acceptance) 2026-09-14"
-
-## Layer direction (per [[cipherocto-design-principles]])
-
-- `octo-wallet` (Layer B) — substrate mutations: `transitioning: bool` field addition (Sub-step 1), `lookup_agent` normalization (Sub-step 2), state-machine edge TVs (Sub-step 3). NO new Cargo.toml dep.
-- `octo-wallet/src/error.rs` (Layer B) — doc-comment hygiene for `AlreadyInTransition` variant (Sub-step 1).
-- `octo-audit-core` (Layer A frozen) — NO changes from this mission. Defect 5 phantom-event detection is DEFERRED to RFC-0012-v4 paired amendment cycle per CLAUDE.md §Layer A stability (semver-major only).
-- `octo-cli` (Layer C/D) — NO code changes. CLI error exit mappings (`AlreadyInTransition` exit 43, `AgentNotFound` exit 42) pre-existing at parent RFC-0015-a acceptance per parent §Appendix B.
-- `rfcs/accepted/process/0015-a-wallet-agent-write-path.md` — RFC text refresh: new `#### §Amendment Surface` heading + 2 rows (Sub-step 4).
 
 ## Acceptance Criteria
 
@@ -138,12 +130,12 @@ R3 (DRY verification round 2 = DRY CLOSED) → closure artifacts
 
 ## Cross-references
 
-- RFC-0015-b §X.1 + §X.2 + §X.3 + §X.5 (defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle)
+- RFC-0015-b §X.1 + §X.2 + §X.3 + §X.4 (defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle)
 - `missions/claimed/0015-b-substrate-defect-amendment.md` (paired amendment RFC)
 - `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md` §Deferred substrate defects
 - `crates/octo-wallet/src/agent.rs` (substrate target)
 - `crates/octo-wallet/src/error.rs` (doc-comment hygiene target)
-- `rfcs/accepted/process/0015-a-wallet-agent-write-path.md` (RFC text refresh target for §X.5; new `#### §Amendment Surface` heading added)
+- `rfcs/accepted/process/0015-a-wallet-agent-write-path.md` (RFC text refresh target for §X.4; new `#### §Amendment Surface` heading added)
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
 - RFC-0015-a §6.1 (canonical lock primitive + acquisition order + audit append + rollback contract)
 - RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge (paired-acceptance discipline)
@@ -166,3 +158,4 @@ accepted RFC, not a phantom pointer.
 | ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0     | 2026-09-14 | Initial paired impl mission drafted against pre-R1.5 RFC draft (parking_lot + lock-then-validate + 7 defects)                                                                                                                                                                                                                                                                                                                                                     |
 | 1.1     | 2026-09-14 | R2.5 fix: aligned with RFC-0015-b R1.5 canonical-substrate rewrite. Demoted defect 5 to RFC-0012-v4 paired Layer A cycle (out of scope). Rejected defect 4 TOCTOU contract change (deleted Sub-step 3). Rewrote Sub-step 1 (in-flight flag; NO parking_lot). Retargeted Sub-step 4 from RFC-0015 §Pre-existing Substrate to RFC-0015-a new `#### §Amendment Surface` heading. Reduced TV count from 11 to 3 (no duplication of parent RFC-0015-a + RFC-0015 TVs). |
+| 1.2     | 2026-09-14 | R3.5 fix: §X.4 renumber propagation + Sub-step cleanup                                                                                                                                                                                                                                                                                                                                                                                                            |

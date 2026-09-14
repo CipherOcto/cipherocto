@@ -92,35 +92,35 @@ Per the substrate-faithful principle (CLAUDE.md §Architectural Principles; RFC-
 
 Six substrate items shipped on `next` HEAD per the cited commits:
 
-| #   | Item                                                                                     | Substrate anchor                               | Source commit |
-| --- | ---------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------- |
-| 1   | `pub fn list_owned_agents(caller_did, filter) -> Result<Vec<AgentSummary>, WalletError>` | `crates/octo-wallet/src/agent.rs:434`          | `533b07a4`    |
-| 2   | `pub fn lookup_agent(caller_did, uuid) -> Result<AgentManifest, WalletError>`            | `crates/octo-wallet/src/agent.rs:486`          | `533b07a4`    |
-| 3   | `pub fn validate_reason(reason) -> Result<(), WalletError>`                              | `crates/octo-wallet/src/agent.rs:546`          | `533b07a4`    |
-| 4   | `WalletError::AgentNotFound(Uuid)`                                                       | `crates/octo-wallet/src/error.rs:155`          | `533b07a4`    |
-| 5   | `WalletError::ForbiddenHolderMismatch`                                                   | `crates/octo-wallet/src/error.rs:164`          | `533b07a4`    |
-| 6   | `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)`  | `crates/octo-wallet/src/error.rs:174` + `:180` | `533b07a4`    |
+| #   | Item                                                                                     | Substrate anchor                                                                   | Source commit |
+| --- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------- |
+| 1   | `pub fn list_owned_agents(caller_did, filter) -> Result<Vec<AgentSummary>, WalletError>` | `crates/octo-wallet/src/agent.rs` §`list_owned_agents`                             | `533b07a4`    |
+| 2   | `pub fn lookup_agent(caller_did, uuid) -> Result<AgentManifest, WalletError>`            | `crates/octo-wallet/src/agent.rs` §`lookup_agent`                                  | `533b07a4`    |
+| 3   | `pub fn validate_reason(reason) -> Result<(), WalletError>`                              | `crates/octo-wallet/src/agent.rs` §`validate_reason`                               | `533b07a4`    |
+| 4   | `WalletError::AgentNotFound(Uuid)`                                                       | `crates/octo-wallet/src/error.rs` §`AgentNotFound`                                 | `533b07a4`    |
+| 5   | `WalletError::ForbiddenHolderMismatch`                                                   | `crates/octo-wallet/src/error.rs` §`ForbiddenHolderMismatch`                       | `533b07a4`    |
+| 6   | `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)`  | `crates/octo-wallet/src/error.rs` §`ReasonContainsControlChars` + §`ReasonTooLong` | `533b07a4`    |
 
 Plus two CLI-side substrate items shipped on the same path:
 
-| #   | Item                                              | Substrate anchor                   | Source commit |
-| --- | ------------------------------------------------- | ---------------------------------- | ------------- |
-| 7   | `OctoCliError::AgentNotFound(Uuid)` → exit 42     | `crates/octo-cli/src/error.rs:367` | `533b07a4`    |
-| 8   | `OctoCliError::ForbiddenHolderMismatch` → exit 17 | `crates/octo-cli/src/error.rs:375` | `533b07a4`    |
+| #   | Item                                              | Substrate anchor                                          | Source commit |
+| --- | ------------------------------------------------- | --------------------------------------------------------- | ------------- |
+| 7   | `OctoCliError::AgentNotFound(Uuid)` → exit 42     | `crates/octo-cli/src/error.rs` §`AgentNotFound`           | `533b07a4`    |
+| 8   | `OctoCliError::ForbiddenHolderMismatch` → exit 17 | `crates/octo-cli/src/error.rs` §`ForbiddenHolderMismatch` | `533b07a4`    |
 
-The `#[non_exhaustive]` attribute on `WalletError` was already shipped on `next` HEAD prior to this RFC cycle (per `crates/octo-wallet/src/error.rs:17`); it is NOT counted as a KEEP additive item. The substrate-faithful read: the attribute ships pre-marked, and the additive coupling via the 4 new KEEP variants is what triggers the consumer migration concern documented in §Compatibility #1.
+The `#[non_exhaustive]` attribute on `WalletError` was already shipped on `next` HEAD prior to this RFC cycle (per `crates/octo-wallet/src/error.rs` §`WalletError`); it is NOT counted as a KEEP additive item. The substrate-faithful read: the attribute ships pre-marked, and the additive coupling via the 4 new KEEP variants is what triggers the consumer migration concern documented in §Compatibility #1.
 
 #### §Amendment Surface (DEFERRED — RFC-0015-a)
 
 Five write-path items DEFERRED to RFC-0015-a. Fully spec-ed per [[deferred-vs-unspecified]] so the contract is locked at RFC-0015 acceptance time even though acceptance is paused:
 
-| #   | Item                                                                                                                            | Substrate anchor (post-RFC-0015-a acceptance)                                         | RFC-0015-a spec section |
-| --- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------- |
-| 9   | `pub fn transition_agent(caller_did, uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>` | `crates/octo-wallet/src/agent.rs:311` (already shipped on `next` HEAD per `e09f3e3a`) | RFC-0015-a §6.1         |
-| 10  | `WalletError::AlreadyInTransition(Uuid)`                                                                                        | `crates/octo-wallet/src/error.rs:190`                                                 | RFC-0015-a §6.2         |
-| 11  | `WalletError::InvalidStateTransition { from, to }`                                                                              | `crates/octo-wallet/src/error.rs:202`                                                 | RFC-0015-a §6.2         |
-| 12  | `WalletError::AuditUnavailable(String)`                                                                                         | `crates/octo-wallet/src/error.rs:219`                                                 | RFC-0015-a §6.2         |
-| 13  | `OctoCliError::AuditSubstrateNotReady` → exit 52                                                                                | `crates/octo-cli/src/error.rs` (already shipped on `next` HEAD per `e09f3e3a`)        | RFC-0015-a §6.3         |
+| #   | Item                                                                                                                            | Substrate anchor (post-RFC-0015-a acceptance)                                                            | RFC-0015-a spec section |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 9   | `pub fn transition_agent(caller_did, uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>` | `crates/octo-wallet/src/agent.rs` §`transition_agent` (already shipped on `next` HEAD per `e09f3e3a`)    | RFC-0015-a §6.1         |
+| 10  | `WalletError::AlreadyInTransition(Uuid)`                                                                                        | `crates/octo-wallet/src/error.rs` §`AlreadyInTransition`                                                 | RFC-0015-a §6.2         |
+| 11  | `WalletError::InvalidStateTransition { from, to }`                                                                              | `crates/octo-wallet/src/error.rs` §`InvalidStateTransition`                                              | RFC-0015-a §6.2         |
+| 12  | `WalletError::AuditUnavailable(String)`                                                                                         | `crates/octo-wallet/src/error.rs` §`AuditUnavailable`                                                    | RFC-0015-a §6.2         |
+| 13  | `OctoCliError::AuditSubstrateNotReady` → exit 52                                                                                | `crates/octo-cli/src/error.rs` §`AuditSubstrateNotReady` (already shipped on `next` HEAD per `e09f3e3a`) | RFC-0015-a §6.3         |
 
 Items 9 + 13 are already shipped on `next` HEAD per `e09f3e3a`; they are listed here for RFC-0015 documentation completeness but RFC-0015 KEEP does NOT authorize them — RFC-0015-a acceptance is required for the write-path contract to take effect (paired with a future Layer A substrate amendment adding `AuditEventKind::AgentTransition` extension per RFC-0012 (Extension-over-enumeration pattern)).
 
@@ -267,7 +267,7 @@ CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate per p
 
 ### §6.7 Forward Pointer — write-path surface lives in RFC-0015-a
 
-The write-path contract (`transition_agent` + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable}` + audit append of `AuditEventKind::AgentTransition` rows + the `parking_lot` Cargo.toml entry for per-agent lock-mode) is DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]] (fully spec-ed so the contract is locked at RFC-0015 acceptance time).
+The write-path contract (`transition_agent` + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable(String)}` + audit append of `AuditEventKind::AgentTransition` rows + the GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode per `crates/octo-wallet/src/agent.rs` §`AGENT_REGISTRY`) is DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]] (fully spec-ed so the contract is locked at RFC-0015 acceptance time).
 
 The write-path substrate items are already shipped on `next` HEAD per commit `e09f3e3a` (substrate-first ordering per RFC-0015 R40 restructure); RFC-0015-a acceptance is the formal acceptance step that authorizes them as the write-path contract. Until RFC-0015-a acceptance lands, RFC-0015 KEEP does NOT authorize CLI missions to invoke the write-path surface.
 
@@ -369,7 +369,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 ## Key Files to Modify
 
-- `crates/octo-wallet/Cargo.toml` — **NO new deps at KEEP.** No `parking_lot` entry; that dep is paired with the DEFERRED write-path Phase 2.5 lock-mode contract and lands with RFC-0015-a.
+- `crates/octo-wallet/Cargo.toml` — **NO new deps at KEEP.** The write-path substrate uses `std::sync::Mutex` (already in `crates/octo-wallet/src/agent.rs` §`AGENT_REGISTRY`) per RFC-0015-a §6.1 (1).-0015-a.
 - `crates/octo-wallet/src/agent.rs` — append `list_owned_agents` + `lookup_agent` + `validate_reason` (existing types; ~80 LoC incl. tests). `transition_agent` is DEFERRED (see §6.7).
 - `crates/octo-wallet/src/error.rs` — append 4 KEEP variants per §6.2.3-§6.2.6. The DEFERRED write-path variants `AlreadyInTransition(Uuid)` + `InvalidStateTransition { from, to }` + `AuditUnavailable` are NOT added at KEEP — they land with RFC-0015-a.
 - `crates/octo-wallet/src/lib.rs` — re-export the new functions (no breaking change to existing public surface).
@@ -402,9 +402,9 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 
 ## Version History
 
-- v3 (2026-09-13) R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per [[deferred-vs-unspecified]]). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
-- v2 (2026-09-11) KEEP-only substrate-faithful rewrite. Drop `transition_agent` write-path surface + paired DEFERRED `WalletError` variants + DEFERRED TVs to RFC-0015-a (write-path amendment). Phase 2.5 lock-mode contract + `parking_lot` dep paired-DEFER to RFC-0015-a acceptance.
-- v1.0 (2026-09-11) Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 + RFC-0011-c).
+- 2026-09-13 — R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per [[deferred-vs-unspecified]]). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
+- 2026-09-11 — KEEP-only substrate-faithful rewrite. Drop `transition_agent` write-path surface + paired DEFERRED `WalletError` variants + DEFERRED TVs to RFC-0015-a (write-path amendment). Write-path GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode (paired-DEFER to RFC-0015-a acceptance).
+- 2026-09-11 — Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 + RFC-0011-c).
 
 ## Related RFCs
 

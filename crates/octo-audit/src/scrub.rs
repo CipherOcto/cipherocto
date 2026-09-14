@@ -1,25 +1,28 @@
-//! Canonical 13-pattern scrubber for adapter-error redaction.
+//! Canonical 18-pattern scrubber for adapter-error redaction.
 //!
 //! The base 10 patterns (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e + the
-//! Pattern 6 adapter-type-name substring) implement the RFC-0012-v3 §S5.1
-//! + RFC-0014-v3 §S5.1 paired substrate amendment (v2.0.0 per-façade
-//! surface).
+//! Pattern 6 adapter-type-name substring) implement the RFC-0012 §S5.1
+//! + RFC-0014 §S5.1 paired substrate amendment (per-façade surface).
 //!
-//! Patterns 11, 12, 13 land as the RFC-0016-a §6.9 paired-acceptance
-//! extension: the 3 NEW crypto-key-block formats (PGP private key block,
-//! OpenSSH private key block, PEM private key block) catch the
-//! RFC-0016-a §Adversary Analysis "CLI-shape error variant leakage"
-//! threat (private-key material surfacing through `SinkSpecific(String)`
-//! error payloads). Per [[cipherocto-design-principles]] §No premature
-//! coupling, the v2.0.0 base 10 stays in place — the v2.1+ RFC-0016-a
-//! extension adds the 3 patterns as additive `RE_PGP_PRIVATE` /
-//! `RE_OPENSSH_PRIVATE` / `RE_PEM_PRIVATE` static regexes.
+//! Patterns 11-18 land as the RFC-0016-a §6.9 paired-acceptance
+//! extension: 8 crypto/secret-form patterns defend against private-key /
+//! secret-material leakage through `SinkSpecific(String)` error
+//! payloads per RFC-0016-a §Adversary Analysis "CLI-shape error variant
+//! leakage" threat model. Patterns 11-13 catch PGP / OpenSSH / PEM
+//! private-key blocks; Patterns 14-18 catch capability-secret-b64 /
+//! BIP39 mnemonic / JWT three-segment / WIF base58 / X.509 cert
+//! serial. Per [[cipherocto-design-principles]] §No premature
+//! coupling, the base 10 stays in place — the RFC-0016-a extension
+//! adds the 8 patterns as additive static regexes
+//! (`RE_PGP_PRIVATE` / `RE_OPENSSH_PRIVATE` / `RE_PEM_PRIVATE` /
+//! `RE_CAPABILITY_SECRET` / `RE_BIP39` / `RE_JWT` / `RE_WIF` /
+//! `RE_X509_SERIAL`).
 //!
 //! Per RFC-0014 §FW6, the canonical scrubber pattern list lives there
-//! (single source of truth). This module re-implements the 13 patterns
+//! (single source of truth). This module re-implements the 18 patterns
 //! at the `octo-audit` façade (Layer B) per the R34.5 trade-off
-//! (per-façade duplication accepted at v2.0.0; may collapse into
-//! `octo-foundation::scrub` at v2.1+).
+//! (per-façade duplication accepted; may collapse into
+//! `octo-foundation::scrub` at a future substrate amendment).
 //!
 //! ## Layer model
 //!
@@ -39,11 +42,12 @@
 //!
 //! ## Compilation posture
 //!
-//! Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e pre-compiled via
-//! `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 is substring-replace
-//! (no regex compilation needed); registry entries are adapter-type
-//! names like `StoolapAuditSink`. Per-call cost is `Regex::replace_all`
-//! + `String::replace` (no recompile).
+//! Patterns 1-5e (10 regexes) + Pattern 6 (substring) + Patterns 11-18
+//! (8 additive crypto/secret-form regexes for RFC-0016-a §6.9) pre-
+//! compiled via `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 is
+//! substring-replace (no regex compilation needed); registry entries
+//! are adapter-type names like `StoolapAuditSink`. Per-call cost is
+//! `Regex::replace_all` + `String::replace` (no recompile).
 
 use once_cell::sync::Lazy;
 use regex::Regex;

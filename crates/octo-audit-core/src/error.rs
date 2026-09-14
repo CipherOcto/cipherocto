@@ -97,6 +97,10 @@ pub enum AuditError {
 }
 
 /// Chain-integrity error variants returned by `verify_chain`.
+/// `#[non_exhaustive]` per Layer A frozen contract (CLAUDE.md
+/// §Architectural Principles + RFC-0016-a §6.7 substrate column):
+/// downstream exhaustive match arms MUST use wildcard patterns.
+/// New variants land additively without breaking downstream.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AuditChainError {

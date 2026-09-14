@@ -35,14 +35,16 @@ pub use octo_audit_core::AuditEventKind;
 // `0012-audit-stoolap-sink`).
 pub mod storage;
 
-// RFC-0012-v3 substrate amendment: per-façade 10-pattern scrubber
+// RFC-0012 substrate amendment: per-façade 10-pattern scrubber
 // (defect 1a — DOMAIN adapter error-chain redaction). Re-exports the
 // `scrub_adapter_error` + `scrub_adapter_error_with` entry points so
 // DOMAIN adapters can call them without depending on a generic
 // shared-utility crate (which the R34.5 trade-off explicitly
-// deferred to v2.1+). RFC-0016-a §6.9 paired-acceptance extends to
-// 13 patterns additive (Patterns 11/12/13 = PGP / OpenSSH / PEM
-// private-key blocks).
+// deferred to §FW6). RFC-0016-a §6.9 paired-acceptance extends the
+// octo-audit façade to 18 patterns additive (base 10 + 8 RFC-0016-a
+// §6.9 crypto/secret-form patterns: PGP / OpenSSH / PEM private-key
+// blocks, X.509 cert serial, JWT three-segment, WIF base58,
+// capability-secret-b64, BIP39 mnemonic).
 pub mod scrub;
 pub use scrub::{scrub_adapter_error, scrub_adapter_error_with};
 
@@ -97,7 +99,8 @@ pub type StatusRef = octo_settlement::ReceiptStatus;
 // §6.4 paired-acceptance bridge contract; the whole module is
 // INVISIBLE in default builds (the substrate `AuditEventKind` does
 // not expose `AgentTransition` without the feature). Permanent
-// once RFC-0012-v2 lands.
+// once RFC-0015-a paired-acceptance lands (deferred — see RFC-0015-a
+// §6.4 paired-DOMAIN-acceptance TODO for the cfg-drop trigger).
 #[cfg(feature = "octo-audit-internal")]
 pub mod audit_write;
 #[cfg(feature = "octo-audit-internal")]

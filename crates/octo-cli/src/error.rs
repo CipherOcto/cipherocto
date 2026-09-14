@@ -780,12 +780,17 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // — the reason is substrate-internal and intentionally NOT
             // surfaced to the CLI per RFC-0016-a §6.7 table footnote.
             octo_audit::AuditError::AuditAppendFailed(_) => Self::AuditSubstrateNotReady,
-            // ChainHashMismatch carries the canonical + supplied
-            // 32-byte digests; we never want them in a CLI
-            // envelope (32 bytes of hex is a side-channel for the
-            // canonical hash). Collapse to a generic reason.
-            octo_audit::AuditError::ChainHashMismatch { .. } => {
-                Self::Internal("audit chain_hash mismatch".to_string())
+            // ChainHashMismatch was collapsed at the substrate layer
+            // (R2.5) to `event_id: u64` only — no canonical/supplied
+            // digests on the surface. Preserve `event_id` in the CLI
+            // reason for parity with the `SequenceGap` / `AlreadyExists`
+            // arms (each retains its event_id for diagnostic value);
+            // the digest payloads were the original
+            // 32-byte-hex-side-channel rationale for collapse.
+            octo_audit::AuditError::ChainHashMismatch { event_id } => {
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
+                    "audit chain_hash mismatch at event_id {event_id}"
+                ))))
             }
             // Original 3 substrate variants map to `Internal` (exit 64)
             // — these are pre-RFC-0016-a substrate-faithful failures
@@ -1256,8 +1261,12 @@ mod tests {
     /// `octo_audit::AuditError` → `OctoCliError` per-variant mapping.
     /// Pins the substrate → CLI envelope so a future substrate variant
     /// addition lands a corresponding `match` arm or compile fails
-    /// here (the `AuditError` enum is NOT `#[non_exhaustive]` at the
-    /// substrate layer; new variants require paired envelope update).
+    /// here — `AuditError` IS `#[non_exhaustive]` at the substrate
+    /// layer (octo-audit-core Layer A frozen contract per
+    /// CLAUDE.md §Architectural Principles), so additive substrate
+    /// variants collapse to the wildcard `_` arm and surface as
+    /// `Internal(reason)` exit code 64. Per-variant mapping below is
+    /// exhaustive TODAY (8 variants listed) but additive-safe.
     #[test]
     fn tv_rfc0016a_audit_error_envelope_mapping() {
         // ReceiptNotFound (exit 17)

@@ -1,15 +1,18 @@
-//! Canonical 10-pattern scrubber for adapter-error redaction (RFC-0014-v3
-//! §S5.1 — paired substrate amendment with RFC-0012-v3).
+//! Canonical 10-pattern scrubber for adapter-error redaction (RFC-0014
+//! §S5.1 — paired substrate amendment with RFC-0012).
 //!
-//! Per RFC-0014-v2 §FW6, the canonical scrubber pattern list lives there
+//! Per RFC-0014 §FW6, the canonical scrubber pattern list lives there
 //! (single source of truth). This module re-implements the 10 patterns at
 //! the `octo-settlement` façade (Layer B) per the R34.5 trade-off
-//! (per-façade duplication accepted at v2.0.0; may collapse into
-//! `octo-foundation::scrub` at v2.1+).
+//! (per-façade duplication accepted; may collapse into
+//! `octo-foundation::scrub` at a future substrate amendment).
 //!
-//! See `octo_audit::scrub` module docs for full pattern spec; this file
-//! is byte-identical except for the module header (per-façade
-//! duplication is the load-bearing substrate change).
+//! See `octo_audit::scrub` module docs for full pattern spec; the two
+//! files intentionally diverge on the empty-registry precondition
+//! (octo-audit lifted per RFC-0016-a §6.9 paired-acceptance; octo-
+//! settlement retains per the §FW6 single-source-of-truth contract).
+//! All Patterns 1-5e + Pattern 6 + the §FW6 4 KiB input/output caps
+//! remain byte-equivalent across both façades.
 //!
 //! ## Compilation posture
 //!

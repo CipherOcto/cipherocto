@@ -19,7 +19,7 @@ use octo_audit_core::{
 };
 use octo_storage_core::Database;
 
-/// Adapter-type registry for Pattern 6 redaction (RFC-0012-v3 §S5.1
+/// Adapter-type registry for Pattern 6 redaction (RFC-0012 §S5.1
 /// per-façade scrubber).
 const ADAPTER_TYPES: &[&str] = &["StoolapAuditSink"];
 

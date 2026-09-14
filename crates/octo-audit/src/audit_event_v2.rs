@@ -10,9 +10,28 @@
 //! is the Layer B façade write path that wraps the Layer A frozen
 //! substrate trait (`AppendOnlyAuditSink::append`). The Rust borrow
 //! checker enforces single-writer per sink instance at the type level
-//! (`&mut self`) per RFC-0012 + RFC-0016-a §6.11 read-stall-while-write
-//! invariant — concurrent readers (`list_receipts`, `get_receipt` from
-//! RFC-0016 KEEP) block for the duration of the write.
+//! (`&mut self`) per RFC-0012 — concurrent-reader serialization is
+//! deferred to the DOMAIN adapter paired-acceptance TODO (see
+//! RFC-0016-a §6.11 read-stall-while-write note: readers
+//! `list_receipts`, `get_receipt` from RFC-0016 KEEP touch a separate
+//! `RECEIPT_REGISTRY` Mutex at the façade level; shared R/W primitive
+//! selected per DOMAIN impl, e.g. `audit_write.rs` `AUDIT_SINK` Mutex).
+//!
+//! ## §6.10 canonical-bytes-on-write invariant (active)
+//!
+//! The façade recomputes the canonical `chain_hash` from the supplied
+//! `event` via `compute_chain_hash` (BLAKE3 over the canonical byte
+//! encoding) and short-circuits with `AuditError::ChainHashMismatch` on
+//! mismatch BEFORE the sink is called. Canonical encoding owned by
+//! Layer A; the façade is read-only with respect to the encoding.
+//!
+//! ## §6.11 read-stall-while-write invariant (deferred)
+//!
+//! Reader/writer serialization is UNVERIFIABLE at this façade layer
+//! because `list_receipts`/`get_receipt` use a separate Mutex from the
+//! writer sink. The §6.11 acceptance criterion is gated on the
+//! DOMAIN adapter paired-acceptance round (see RFC-0016-a §6.11
+//! paired-DOMAIN-acceptance TODO).
 //!
 //! ## Layer discipline
 //!
@@ -213,10 +232,18 @@ mod tests {
     #[test]
     fn append_audit_event_rejects_chain_hash_mismatch() {
         // Substrate-faithful canonical-bytes-on-write invariant
-        // (RFC-0016-a §6.10 + TV-AUD-7-canonical-bytes): caller
-        // supplies a bogus `chain_hash`; façade recomputes
-        // BLAKE3 over canonical bytes and rejects the mismatch
-        // WITHOUT calling sink.append.
+        // (RFC-0016-a §6.10): caller supplies a bogus `chain_hash`;
+        // façade recomputes BLAKE3 over canonical bytes and rejects
+        // the mismatch WITHOUT calling sink.append.
+        //
+        // Known-defect annotation: the RFC §6.7 Test Vectors table
+        // pins TV-AUD-7-canonical-bytes expectation as
+        // `Err(AuditError::SinkSpecific("canonical bytes mismatch"))`
+        // while the impl returns
+        // `Err(AuditError::ChainHashMismatch { event_id })` (R2.5
+        // collapse to bare `event_id`; paired-DOMAIN-acceptance
+        // alignment defer per R5 substrate-faithfulness review 2026-
+        // 09-14 — see audit doc).
         let mut sink = MockSink::new();
         let mut event = make_event(0);
         // Bogus caller-supplied chain_hash (all 0xFF).

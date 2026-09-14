@@ -31,10 +31,9 @@ pub use octo_settlement_core::SettlementError;
 pub use octo_settlement_core::SettlementStore;
 pub use octo_settlement_core::CHAIN_DOMAIN_SEPARATOR;
 
-// RFC-0014-v3 substrate amendment: per-façade 10-pattern scrubber
+// RFC-0014 substrate amendment: per-façade 10-pattern scrubber
 // (defect 1b — DOMAIN adapter error-chain redaction). Per-façade
-// duplication with `octo_audit::scrub` accepted at v2.0.0 per the
-// R34.5 trade-off (cross-RFC shared-utility extraction deferred to
-// v2.1+ at §FW6).
+// duplication with `octo_audit::scrub` accepted per the R34.5 trade-off
+// (cross-RFC shared-utility extraction deferred to §FW6).
 pub mod scrub;
 pub use scrub::{scrub_adapter_error, scrub_adapter_error_with};

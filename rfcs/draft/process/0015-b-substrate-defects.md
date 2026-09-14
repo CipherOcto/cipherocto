@@ -330,7 +330,7 @@ The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The p
 | ------- | ---------- | ------------------------------------------------------------------------------------------- |
 | 1.0     | 2026-09-14 | Initial substrate-defect paired amendment per plateau declaration                           |
 | 1.1     | 2026-09-14 | R1.5 fix: canonical std::sync::Mutex substrate; 7→5 defects; §X renumber; phantom §6.4→§6.5 |
-| 1.2     | 2026-09-14 | R2.5 fix: defect 5 demoted RFC-0012-v4; §X renumber; 5→4 defects; TV drops                  |
+| 1.2     | 2026-09-14 | R2.5: defect 5 demoted; 5→4 defects; TV drops                                               |
 
 ## Related RFCs
 

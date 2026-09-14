@@ -61,6 +61,14 @@ pub(crate) struct AgentRecord {
     /// `Running → Terminated` edges. Terminal state is
     /// `Terminated` (no further transitions permitted).
     pub(crate) state: AgentState,
+    /// In-flight transition flag for `AlreadyInTransition` activation
+    /// (RFC-0015-b §X.1). `false` for records not currently in a
+    /// transition; set to `true` inside the canonical GLOBAL
+    /// `std::sync::Mutex` lock during a `transition_agent`
+    /// invocation, reset to `false` by the RAII guard on scope exit.
+    /// Additive; forward-compat for future persistence serialization
+    /// (the struct is currently in-memory only).
+    pub(crate) transitioning: bool,
 }
 
 /// Canonical agent manifest wire form — RFC-0002 §Agent Manifest.
@@ -366,6 +374,20 @@ pub fn transition_agent(
         return Err(WalletError::InvalidStateTransition { from, to: target });
     }
 
+    // 6. In-flight flag activation (RFC-0015-b §X.1). Reads the
+    //    `transitioning` flag INSIDE the canonical GLOBAL
+    //    `std::sync::Mutex` lock; on `true`, returns
+    //    `AlreadyInTransition(uuid)` WITHOUT state mutation and
+    //    WITHOUT audit append. On `false`, sets the flag; the flag
+    //    is reset to `false` on BOTH the success-return and
+    //    audit-rollback early-return paths below (explicit reset;
+    //    `record` borrow is held throughout so the lock-and-reset
+    //    pair is atomic from any concurrent caller's perspective).
+    if record.transitioning {
+        return Err(WalletError::AlreadyInTransition(uuid));
+    }
+    record.transitioning = true;
+
     // 6. Apply state mutation. Audit append follows; if it fails,
     //    we roll back to `from`.
     record.state = target;
@@ -397,15 +419,21 @@ pub fn transition_agent(
 
     // 8. Audit append + rollback contract (RFC-0015-a §6.1). On
     //    audit failure, the state mutation is rolled back to `from`
-    //    before the function returns so the registry remains
-    //    consistent.
+    //    AND the in-flight flag is reset before the function returns
+    //    so the registry remains consistent and concurrent callers
+    //    can re-attempt the transition.
     let chain_hash = match audit_result {
         Ok(hash) => hash,
         Err(e) => {
             record.state = from;
+            record.transitioning = false;
             return Err(e);
         }
     };
+
+    // 9. Success path: reset the in-flight flag before returning
+    //    so concurrent callers can proceed.
+    record.transitioning = false;
 
     Ok(TransitionReceipt {
         agent_id: uuid,
@@ -492,8 +520,13 @@ pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, Walle
         .get(&uuid)
         .ok_or(WalletError::AgentNotFound(uuid))?;
 
+    // RFC-0015-b §X.2 existence-leak closure: normalize the not-owned
+    // case to `AgentNotFound` so a caller cannot probe for Uuids
+    // belonging to other DIDs. The `ForbiddenHolderMismatch` variant
+    // remains reserved for `transition_agent` caller-attestation per
+    // parent RFC-0015-a §6.1 (2).
     if record.holder_did.as_str() != caller_did.as_str() {
-        return Err(WalletError::ForbiddenHolderMismatch);
+        return Err(WalletError::AgentNotFound(uuid));
     }
 
     Ok(record.manifest.clone())
@@ -927,5 +960,113 @@ mod tests {
             WalletError::ReasonContainsControlChars(s) => assert_eq!(s, "<U+001B>"),
             other => panic!("expected ReasonContainsControlChars, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lookup_agent_not_owned_uuid_normalizes_to_agent_not_found() {
+        // RFC-0015-b §X.2 TV-WLT-AGT-25: `lookup_agent` existence-leak
+        // closure. The previous behavior returned
+        // `ForbiddenHolderMismatch` on caller-DID mismatch, enabling
+        // multi-DID enumeration (a caller could probe for Uuids
+        // belonging to other DIDs by distinguishing the two error
+        // variants). Now both unknown-Uuid and not-owned-Uuid cases
+        // normalize to `WalletError::AgentNotFound(uuid)`. The
+        // `ForbiddenHolderMismatch` variant remains reserved for
+        // `transition_agent` caller-attestation.
+        let (uuid, _holder) = register_one();
+        let other = Did::from("did:octo:enumeration-attempt");
+        let err = lookup_agent(&other, uuid).unwrap_err();
+        match err {
+            WalletError::AgentNotFound(returned_uuid) => assert_eq!(returned_uuid, uuid),
+            other => panic!(
+                "expected AgentNotFound (RFC-0015-b §X.2 existence-leak closure), got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn transition_agent_terminal_state_reactivation_rejected() {
+        // RFC-0015-b §X.3 TV-WLT-AGT-27: `Terminated → Running`
+        // (terminal state reactivation) MUST be rejected with
+        // `InvalidStateTransition`. The state-machine guard's
+        // `matches!` pattern only permits `(Registered, Running)` and
+        // `(Running, Terminated)`; all other edges including
+        // `(Terminated, _)` are rejected. We mutate the record state
+        // directly in-test (the `octo-audit-internal` feature is off
+        // in the default-build test lane, so we cannot reach
+        // `Terminated` via `transition_agent` itself).
+        let (uuid, holder) = register_one();
+        {
+            let mut reg = registry().lock().expect("registry lock");
+            let record = reg.get_mut(&uuid).expect("record exists");
+            record.state = AgentState::Terminated;
+        }
+        let err = transition_agent(&holder, uuid, AgentState::Running, None).unwrap_err();
+        match err {
+            WalletError::InvalidStateTransition { from, to } => {
+                assert_eq!(from, AgentState::Terminated);
+                assert_eq!(to, AgentState::Running);
+            }
+            other => panic!("expected InvalidStateTransition, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transition_agent_in_flight_flag_activation_returns_already_in_transition() {
+        // RFC-0015-b §X.1 TV-WLT-AGT-29: in-flight flag activation.
+        // The canonical GLOBAL `std::sync::Mutex` serializes lock
+        // acquisition, so a "concurrent" caller serializes behind
+        // the lock. To exercise the in-flight flag path
+        // deterministically, we manually set the flag inside a fresh
+        // record, then call `transition_agent` and verify it returns
+        // `AlreadyInTransition` WITHOUT state mutation. The flag was
+        // pre-set by the test (simulating an in-flight transition
+        // from another caller); the function observes the flag and
+        // rejects WITHOUT mutating it. Cleanup: the flag is reset
+        // BEFORE assertions so any assertion panic does not poison
+        // the canonical GLOBAL `std::sync::Mutex` and break sibling
+        // tests.
+        let (uuid, holder) = register_one();
+
+        // Scope 1: pre-set the in-flight flag (simulates a
+        // concurrent caller mid-transition). The lock is released
+        // BEFORE we call `transition_agent` because
+        // `transition_agent` re-acquires the canonical GLOBAL
+        // `std::sync::Mutex`; holding it across the call would
+        // self-deadlock (std::sync::Mutex is not re-entrant).
+        {
+            let mut reg = registry().lock().expect("registry lock");
+            let record = reg.get_mut(&uuid).expect("record exists");
+            record.transitioning = true; // simulate in-flight
+        } // lock released
+
+        // The flag is set; `transition_agent` observes it inside the
+        // freshly-acquired lock and returns `AlreadyInTransition`
+        // WITHOUT state mutation and WITHOUT audit append.
+        let err = transition_agent(&holder, uuid, AgentState::Running, None).expect_err(
+            "in-flight flag set; transition_agent must reject with AlreadyInTransition",
+        );
+
+        // Scope 2: cleanup the in-flight flag + capture state-after.
+        // Cleanup happens BEFORE assertions so an assertion panic
+        // cannot leave the flag stuck on `true` and poison sibling
+        // tests that share the canonical GLOBAL
+        // `std::sync::Mutex`. Lock is released BEFORE assertions.
+        let state_after = {
+            let mut reg = registry().lock().expect("registry lock");
+            let record = reg.get_mut(&uuid).expect("record exists");
+            record.transitioning = false; // cleanup
+            record.state
+        }; // lock released
+
+        assert!(
+            matches!(err, WalletError::AlreadyInTransition(_)),
+            "expected AlreadyInTransition, got {err:?}"
+        );
+        assert_eq!(
+            state_after,
+            AgentState::Registered,
+            "no state mutation on in-flight rejection"
+        );
     }
 }

@@ -113,6 +113,7 @@ pub fn register_agent(
             holder_did: active_did.clone(),
             registered_at_unix: now_unix_secs(),
             state: AgentState::Registered,
+            transitioning: false,
         },
     );
     Ok(agent_id)

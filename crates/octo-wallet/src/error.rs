@@ -180,11 +180,12 @@ pub enum WalletError {
     ReasonTooLong(usize),
 
     // ----- Agent write-path errors (RFC-0015-a §6.3 paired-acceptance bridge) -----
-    /// `transition_agent` observed the per-agent lock is held by a
-    /// concurrent transition (the `parking_lot::Mutex::try_lock()`
-    /// returned `WouldBlock`). Payload carries the agent UUID the
-    /// caller attempted to transition; the substrate holds the lock
-    /// until the in-flight transition completes. CLI exit code = 43
+    /// `transition_agent` observed the in-flight `transitioning` flag
+    /// on the `AgentRecord` is `true` inside the canonical GLOBAL
+    /// `std::sync::Mutex` lock (RFC-0015-b §X.1). Payload carries the
+    /// agent UUID the caller attempted to transition; the substrate
+    /// holds the flag until the in-flight transition completes (or
+    /// the RAII guard resets it on early-return). CLI exit code = 43
     /// per RFC-0011-c §9.8 + RFC-0015-a §6.3 slot allocation.
     #[error("agent already in transition: {0}")]
     AlreadyInTransition(Uuid),

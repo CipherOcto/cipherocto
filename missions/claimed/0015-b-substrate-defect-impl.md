@@ -158,4 +158,4 @@ accepted RFC, not a phantom pointer.
 | ------- | ---------- | -------------------------------------------------------------- |
 | 1.0     | 2026-09-14 | Initial paired impl mission; pre-R1.5 RFC draft                |
 | 1.1     | 2026-09-14 | R2.5: defect 5 demoted; defect 4 rejected; Sub-step 4 retarget |
-| 1.2     | 2026-09-14 | R3.5: §X.4 renumber + Sub-step cleanup                         |     |
+| 1.2     | 2026-09-14 | R3.5: §X.4 renumber + Sub-step cleanup                         |

@@ -23,6 +23,7 @@ fn make_canonical_receipt(id: u64, ask: [u8; 32], ts: u64) -> CanonicalReceipt {
         router_id: "did:oct:router".to_owned(),
         router_sig: vec![0xaa, 0xbb],
         timestamp_unix: ts,
+        ..Default::default()
     };
     r.settlement_hash = receipt_id_for(&r);
     r

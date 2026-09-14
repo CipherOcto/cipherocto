@@ -33,6 +33,7 @@ fn make_receipt(id: u64, ask: [u8; 32], ts: u64, sig: Vec<u8>) -> Receipt {
         router_id: "did:oct:router".to_owned(),
         router_sig: sig,
         timestamp_unix: ts,
+        ..Default::default()
     };
     r.settlement_hash = receipt_id_for(&r);
     r

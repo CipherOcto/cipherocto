@@ -17,11 +17,14 @@
 
 // Explicit curated re-export (RFC-0014 §Module Layout).
 pub use octo_settlement_core::receipt_id_for;
+pub use octo_settlement_core::receipt_id_for_digest;
 pub use octo_settlement_core::verify_receipt_chain;
 pub use octo_settlement_core::AppendOnlyReceiptSink;
 pub use octo_settlement_core::Ask;
 pub use octo_settlement_core::AskState;
 pub use octo_settlement_core::Receipt;
+pub use octo_settlement_core::ReceiptId;
+pub use octo_settlement_core::ReceiptStatus;
 pub use octo_settlement_core::Reservation;
 pub use octo_settlement_core::ReservationState;
 pub use octo_settlement_core::SettlementError;

@@ -52,6 +52,7 @@ fn mission_02_receipt_id_for_consumes_domain_separator() {
         router_id: "did:oct:router".to_owned(),
         router_sig: vec![0xde, 0xad],
         timestamp_unix: 1700,
+        ..Default::default()
     };
     let mut expected = blake3::Hasher::new_keyed(&[0; 32]);
     expected.update(CHAIN_DOMAIN_SEPARATOR);

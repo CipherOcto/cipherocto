@@ -7,9 +7,16 @@
 //!
 //! `receipt_id_for` produces the canonical receipt ID for a given
 //! (ask_id, prev_receipt_hash) pair.
+//!
+//! `receipt_id_for_digest` (RFC-0014-v2 + RFC-0016-a §6.4) provides
+//! the canonical reverse-mapping from a settlement-hash digest to
+//! its `ReceiptId`. The DOMAIN adapter (Layer B sink) registers the
+//! concrete reverse-mapping callback at startup; the substrate
+//! signature is frozen and the default returns `None` (forward-defer
+//! per RFC-0014-v2 §FW2 paired-deferral contract).
 
 use crate::error::SettlementError;
-use crate::receipt::Receipt;
+use crate::receipt::{Receipt, ReceiptId};
 
 /// Canonical domain separator for the settlement receipt chain.
 ///
@@ -56,6 +63,29 @@ pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// Reverse-mapping from a canonical `settlement_hash` digest to its
+/// `ReceiptId` (RFC-0016-a §6.4 + RFC-0014-v2 §Extension).
+///
+/// Substrate-level signature: returns `Option<ReceiptId>` (None when
+/// the digest is unmapped). The DOMAIN adapter (Layer B sink) is
+/// responsible for registering a real reverse-mapping callback that
+/// walks the persisted receipt index; the substrate stub returns
+/// `None` until a DOMAIN adapter registers. This pattern preserves
+/// the Layer A frozen signature contract (no DOMAIN deps in substrate)
+/// while giving the CLI a typed `From<[u8; 32]> for ReceiptId`
+/// conversion that surfaces `<REDACTED>` + `<ReceiptNotFound>` per
+/// the canonical `[ADD]` error envelope.
+pub fn receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId> {
+    // Substrate-side stub: the DOMAIN adapter (e.g. Stoolap-backed
+    // `quota-router-sm-engine::StoolapReceiptSink`) registers a real
+    // reverse-mapping callback at startup; this stub returns `None`
+    // until the registration lands. The signature is frozen so the
+    // CLI conversion compiles today; the runtime behavior is documented
+    // as `None → ReceiptNotFound` per RFC-0016-a §6.4 contract.
+    let _ = digest;
+    None
+}
+
 /// Verify a chain of receipts. Returns `Ok(())` on a valid chain;
 /// returns `Err(SettlementError)` on the first detected violation.
 ///
@@ -99,6 +129,7 @@ mod tests {
             router_id: "did:oct:router".to_owned(),
             router_sig: vec![0xaa, 0xbb],
             timestamp_unix: ts,
+            ..Default::default()
         };
         r.settlement_hash = receipt_id_for(&r);
         r

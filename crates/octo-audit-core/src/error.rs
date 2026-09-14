@@ -24,6 +24,18 @@ pub enum AuditError {
     /// Sink-specific failure (e.g. Stoolap Transaction aborted).
     #[error("sink-specific error: {0}")]
     SinkSpecific(String),
+
+    /// `append_audit_event` write-path failure (RFC-0016-a §6.2).
+    /// Carries the substrate-side scrubbed reason string from the
+    /// underlying `AppendOnlyAuditSink::append` call (the
+    /// sink-faithful byte-form reason; the CLI `From<AuditError>`
+    /// conversion wraps it in `OctoCliError::AuditSubstrateNotReady`
+    /// per RFC-0011-a canonical `[ADD]` error envelope pattern).
+    /// `#[non_exhaustive]` carries through the `AuditError` enum
+    /// (already gated) so the variant lands additively without
+    /// breaking existing matchers.
+    #[error("audit append failed: {0}")]
+    AuditAppendFailed(String),
 }
 
 /// Chain-integrity error variants returned by `verify_chain`.

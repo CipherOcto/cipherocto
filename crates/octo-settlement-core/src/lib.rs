@@ -48,9 +48,11 @@ pub mod store;
 
 pub use ask::Ask;
 pub use ask::AskState;
-pub use chain::{receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR};
+pub use chain::{
+    receipt_id_for, receipt_id_for_digest, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR,
+};
 pub use error::{SettlementError, SettlementHashOpaque};
-pub use receipt::Receipt;
+pub use receipt::{Receipt, ReceiptId, ReceiptStatus};
 pub use reservation::{Reservation, ReservationState};
 pub use sink::AppendOnlyReceiptSink;
 pub use store::SettlementStore;

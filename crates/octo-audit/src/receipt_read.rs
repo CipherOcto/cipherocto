@@ -164,6 +164,7 @@ mod tests {
             router_id: "did:octo:router-a".to_string(),
             router_sig: vec![0xCC; 64],
             timestamp_unix: ts,
+            ..Default::default()
         }
     }
 

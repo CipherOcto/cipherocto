@@ -751,9 +751,11 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
 /// private-key blocks, etc.), the entire payload collapses to the
 /// canonical `<REDACTED>` marker. The SinkSpecific arm uses the
 /// lighter `sanitize_substrate_error` + `cap_substrate_payload`
-/// pipeline (4-marker pattern: `SQL:`, `query:`, `sqlite3_open`,
-/// `crates/octo-`) because its payloads are substrate-internal
-/// Stoolap error strings — the full 18-pattern sweep would be
+/// pipeline (3 string markers — `SQL:`, `query:`, `sqlite3_open`
+/// — plus the `crates/octo-` path prefix handled separately by
+/// `ERROR_MARKERS`; see the `sanitize_substrate_error` impl)
+/// because its payloads are substrate-internal Stoolap error
+/// strings — the full 18-pattern sweep would be
 /// over-redaction for that adapter-specific channel. This is the
 /// second pass at the CLI boundary; the substrate-side scrubber
 /// (defect 1a) is the first pass.
@@ -820,8 +822,10 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // follow-on amendments without a paired CLI-shape
             // mapping) collapse to `Internal(reason)` per the same
             // pattern as `SinkSpecific`. Sanitizer applies the
-            // 18-pattern scrubber so an unknown future variant that
-            // accidentally carries a key/path leaks only
+            // lightweight 3-string-marker pattern plus the
+            // `crates/octo-` path prefix (see `sanitize_substrate_error`
+            // impl + `ERROR_MARKERS`) so an unknown future variant
+            // that accidentally carries a key/path leaks only
             // `<redacted-*>` markers.
             _ => Self::Internal(sanitize_substrate_error(&format!(
                 "audit substrate error: {e}"

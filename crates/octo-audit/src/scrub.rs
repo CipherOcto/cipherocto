@@ -304,7 +304,7 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     // patterns fire and consume the substrings.
     //
     // Order rationale (RFC-0016-a §6.9 paired-acceptance):
-    //   - Pattern 18 (X.509 `0x` + 64 hex) before Pattern 1 (≥32 hex)
+    //   - Pattern 18 (X.509 `0x` + 16-64 hex) before Pattern 1 (≥32 hex)
     //     so the `0x` prefix narrows the match to cert serials.
     //   - Pattern 16 (JWT three-segment) before Pattern 14 (capability
     //     base64) so the three-segment anchor (`header.payload.sig`)

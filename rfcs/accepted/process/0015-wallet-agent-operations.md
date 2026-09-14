@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v3 (2026-09-14)
+Accepted v3.1 (2026-09-14)
 
 > **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]). RFC-0015-a spec lives in `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`.
 
@@ -317,7 +317,7 @@ DEFER — agent read operations have no direct token cost; cite RFC-0900+ (Role 
 
 Substrate-level test vectors (in the `octo-wallet` Layer B façade test module per §6.2 read surface). Write-path vectors (the `transition_agent` TV-WLT-AGT-3 through TV-WLT-AGT-11c series) are defined in RFC-0015-a §Test Vectors (write-path amendment paired with this RFC at substrate-faithful KEEP/amendment split per §Pre-existing Substrate).
 
-**Numbering scheme:** each RFC owns its TV series — RFC-0015 owns TV-WLT-AGT-1/2/12-23 (read path; sub-letter 13a-13h within `validate_reason`); RFC-0015-a owns TV-WLT-AGT-3-11c (write path). Gaps between series are intentional (cross-RFC partitioning). Sub-letter scheme: `TV-<PREFIX>-<N><x>` denotes a sub-test variant of parent `TV-<PREFIX>-<N>`.
+**Numbering scheme:** see RFC-0016 §Test Vectors for canonical scheme + sub-letter convention. RFC-0015 owns TV-WLT-AGT-1/2/12-23 (read path; sub-letter 13a-13h within `validate_reason`); RFC-0015-a owns TV-WLT-AGT-3-11c (write path). Gaps between series are intentional (cross-RFC partitioning).
 
 | #              | Substrate call                                                                                                                  | Input                                                                    | Expected Output                                                                                                                                                                                                                             | Notes                                                                                                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -389,6 +389,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.) at RFC-0015 KEEP acceptan
 
 ## Version History
 
+- 2026-09-14 — v3.1 doubling cleanup: §Test Vectors numbering scheme restated at canonical RFC-0016 §Test Vectors (collapsed from 3× restatement across 0015 + 0015-a + 0016 to 1× canonical at 0016 + 2× cross-refs).
 - 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied. 7 substrate-defect items documented in amendment backlog (RFC-0015-b paired amendment). Audit `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
 - 2026-09-13 — R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per [[deferred-vs-unspecified]]). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
 - 2026-09-11 — KEEP-only substrate-faithful rewrite. Drop `transition_agent` write-path surface + paired DEFERRED `WalletError` variants + DEFERRED TVs to RFC-0015-a (write-path amendment). Write-path GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode (paired-DEFER to RFC-0015-a acceptance).

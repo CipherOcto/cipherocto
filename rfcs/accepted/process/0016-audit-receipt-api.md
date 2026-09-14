@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v3 (2026-09-14)
+Accepted v3.1 (2026-09-14)
 
 > **KEEP-only rewrite per RFC-0016 R29 review plan + R2.5 substrate-first restructure.** This draft carries ONLY substrate-faithful additions on the `octo-audit` Layer B façade per §6.1 §Pre-existing Substrate. Write-path surface DEFERRED to RFC-0016-a per §6.1 §Amendment Surface.
 
@@ -310,6 +310,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 ## Version History
 
+- 2026-09-14 — v3.1 doubling cleanup: §Test Vectors numbering scheme promoted to canonical (3× restatement across 0015 + 0015-a + 0016 collapsed to 1× canonical here + 2× cross-refs).
 - 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied. Substrate-defect amendment backlog documented (RFC-0016-b paired amendment). Audit `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
 - 2026-09-11 — Initial draft. Read substrate-faithful surface (RFC-0002 + RFC-0011-c).
 - 2026-09-11 — KEEP-only rewrite. Dropped write-path surface → forward pointer to RFC-0016-a.

@@ -407,7 +407,7 @@ pub enum OctoCliError {
 
     /// Receipt id not found in the receipt store (RFC-0016-a §6.7
     /// paired-with-RFC-0011-a; canonical decimal `u64` form).
-    /// Mapped from `octo_audit_core::AuditError::ReceiptNotFound` at
+    /// Mapped from `octo_audit::AuditError::ReceiptNotFound` at
     /// the dispatch boundary. Exit 17 per RFC-0016-a §6.7 table;
     /// shares the slot with `InvalidTtlHops` + `ForbiddenHolderMismatch`
     /// per the established amendment-chain shared-slot pattern
@@ -418,7 +418,7 @@ pub enum OctoCliError {
     /// Per-process trust boundary violated on the audit substrate
     /// (RFC-0016-a §6.7 paired-with-RFC-0011-a; canonical scrubbed
     /// path form). Mapped from
-    /// `octo_audit_core::AuditError::PermissionDenied` at the dispatch
+    /// `octo_audit::AuditError::PermissionDenied` at the dispatch
     /// boundary. Exit 13 per RFC-0016-a §6.7 table; shares the slot
     /// with `PolicyNotFound` (both are operator-input validation
     /// failures on access credentials — operator-unambiguous within
@@ -732,7 +732,7 @@ pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
 }
 
 /// RFC-0016-a §6.7 + RFC-0011-a canonical `[ADD]` error envelope
-/// conversion from `octo_audit_core::AuditError`.
+/// conversion from `octo_audit::AuditError`.
 ///
 /// Manual `impl From` rather than thiserror's `#[from]` attribute
 /// at variant level — multiple variants converting from the same

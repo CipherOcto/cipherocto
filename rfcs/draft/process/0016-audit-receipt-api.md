@@ -73,7 +73,7 @@ Substrate-faithfulness: `list_receipts` + `get_receipt` walk the process-global 
 
 #### §Amendment Surface (DEFERRED — RFC-0016-a)
 
-The canonical DEFERRED surface ships with `0016-a-audit-receipt-write-path.md` per §6.7 (with substrate anchors + canonical RFC refs). §6.7 is the single source of truth for the DEFERRED item list; this section is a one-line pointer to avoid drift.
+See §6.7 Forward Pointer.
 
 ### §6.2 Function contracts
 
@@ -246,15 +246,13 @@ DEFER — audit receipt substrate has no direct token cost; cite RFC-0900+ (Role
 
 Substrate-level test vectors (§octo-audit::lib (root re-export) test module). All write-path vectors are DEFERRED to RFC-0016-a per §6.7.
 
-**Numbering scheme:** RFC-0016 owns TV-AUD-1-11k (read path); sub-letter 11a-11k are sub-test variants of parent TV-AUD-11 (per-row receipt chain verification surface). RFC-0016-a (DEFERRED) owns the write-path series. Sub-letter scheme: `TV-<PREFIX>-<N><x>` denotes a sub-test variant of parent `TV-<PREFIX>-<N>`.
+**Numbering scheme:** RFC-0016 owns TV-AUD-1-11k (read path); sub-letter 11a-11k are sub-test variants of parent TV-AUD-11 (per-row receipt chain verification surface). RFC-0016-a (DEFERRED) owns the write-path series. Sub-letter scheme: `TV-<PREFIX>-<N><x>` denotes a sub-test variant of parent `TV-<PREFIX>-<N>`. **Sub-letter convention:** sub-letters start at `b` (parent = base case); TV-AUD-3 has sub-variants `3b/3c` (no `3a` because parent IS the base case); TV-AUD-4 has `4b/4c/4d/4e`. TV-AUD-11's `11a-11k` is an exceptional dense sub-variant family (per-row chain verification; not every test gets its own ID).
 
 | #         | Substrate call                                                                       | Input                                | Expected Output                                            | Notes                                                                              |
 | --------- | ------------------------------------------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | TV-AUD-1  | `list_receipts(&AuditFilter::default())`                                             | Empty store                          | `Ok(vec![])`                                               | Empty store                                                                        |
 | TV-AUD-2  | `list_receipts(&AuditFilter { timestamp_unix_gte: Some(7d_unix), limit: Some(10) })` | 1000-receipt store                   | `Ok(vec_of_10_u64_receipt_id_values)`                      | `timestamp_unix_gte` filter per §6.2.4                                             |
 | TV-AUD-6  | `get_receipt(&known_id)`                                                             | Known `Receipt::receipt_id: u64`     | `Ok(<full canonical Receipt>)`                             | Returns canonical `octo_settlement::Receipt` per §6.2.2 (Layer B façade re-export) |
-| TV-AUD-9  | `audit_home()`                                                                       | `$OCTO_HOME` set to `/tmp/octo-test` | `Ok(PathBuf::from("/tmp/octo-test/audit/receipts"))`       | Discovery helper; requires `cargo test --features octo-audit-internal`             |
-| TV-AUD-10 | `audit_home()`                                                                       | `$OCTO_HOME` unset, `$HOME=/home/x`  | `Ok(PathBuf::from("/home/x/.config/octo/audit/receipts"))` | Default resolution                                                                 |
 | TV-AUD-9  | `audit_home()`                                                                       | `$OCTO_HOME` set to `/tmp/octo-test` | `Ok(PathBuf::from("/tmp/octo-test/audit/receipts"))`       | Discovery helper; requires `cargo test --features octo-audit-internal`             |
 | TV-AUD-10 | `audit_home()`                                                                       | `$OCTO_HOME` unset, `$HOME=/home/x`  | `Ok(PathBuf::from("/home/x/.config/octo/audit/receipts"))` | Default resolution                                                                 |
 

@@ -490,12 +490,12 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                            |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.3    | 2026-09-14 | R6.5 sweep: subject_did `Did` → `String` (façade `octo-ident`-dep-free).                                                                           |
-| v1.2    | 2026-09-14 | R2.5 sweep: scrubber newtype phantom + Pattern 4 regex + ChainHash Display + append_audit_event `dyn` + TV renumbering + `AuditFilter.limit` type. |
-| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.                                                                                 |
-| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                                                                                           |
+| Version | Date       | Changes                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------ |
+| v1.3    | 2026-09-14 | R6.5 sweep: subject_did `Did` → `String` (façade `octo-ident`-dep-free). |
+| v1.2    | 2026-09-14 | R2.5 sweep: scrub newtype, P4, Display, `dyn`, TV, limit.                |
+| v1.1    | 2026-09-14 | Substrate-Faithful Sweep. See §Substrate-Faithful Amendment Trail.       |
+| v1.0    | 2026-09-11 | Initial draft. DEFERRED surface from RFC-0016 v1.0 §6.9.                 |
 
 ## Related RFCs
 

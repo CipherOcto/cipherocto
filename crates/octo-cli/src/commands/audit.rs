@@ -309,16 +309,10 @@ fn build_audit_filter(
     now_unix: u64,
 ) -> Result<AuditFilter, OctoCliError> {
     // Auditor-mode constraint (RFC-0011-a §Security Considerations
-    // row 2): silently drop the `--status` filter so reject rows
-    // can never be hidden from the auditor view. The CLI enforces
-    // this at the dispatch boundary; the substrate is
-    // substrate-faithful and never sees the filter when dropped.
-    //
-    // Defer: Auditor `--status` silent-drop stderr-warn is Phase 2
-    // per RFC-0011-a §Future Work. Today the operator gets no
-    // signal that the filter was dropped — acceptable per the
-    // security contract (the auditor always sees the full set) but
-    // not yet operator-friendly.
+    // row 2): drop `--status` so reject rows can never be hidden
+    // from the auditor view. Substrate faithful (never sees the
+    // filter when dropped).
+    // Defer: stderr-warn on silent drop is Phase 2.
     let mut status = if mode == OperatorMode::Auditor {
         Vec::new()
     } else {
@@ -336,23 +330,16 @@ fn build_audit_filter(
         status.push(ReceiptStatus::Reject);
     }
 
-    // Convert `--since` / `--until` duration-seconds-from-now to
-    // absolute unix timestamps. The substrate `since_unix` /
-    // `until_unix` fields are ABSOLUTE unix-seconds (per
-    // `octo_audit::list_receipts` filter semantics); CLI surfaces
-    // the duration grammar per RFC-0011-a §Filters but must
-    // materialise absolute values at the dispatch boundary so the
-    // filter actually narrows the rowset. Without this conversion
-    // `--since 7d` would filter `timestamp_unix >= 604800` (Jan
-    // 1970) and silently no-op.
+    // `--since`/`--until` are duration-seconds-from-now; substrate
+    // `since_unix`/`until_unix` are ABSOLUTE unix-seconds. Without
+    // this subtraction `--since 7d` would filter
+    // `timestamp_unix >= 604800` (Jan 1970) and silently no-op.
     //
-    // Inverted `since_unix > until_unix` produces an empty-result
-    // set on the substrate (NOT an error here). The substrate's
-    // `InvalidFilter` arm is for *strictly* inverted ranges
-    // (`since_unix > until_unix`) per TV-AUD-4b; an inverted range
-    // that arises from operator input is the caller's
-    // responsibility to catch at the parse layer (which today we
-    // don't — see H3 doc-block on `parse_duration_secs`).
+    // Inverted `since_unix > until_unix` yields an empty-result set
+    // on the substrate (NOT an error here); `InvalidFilter` is for
+    // strictly inverted ranges per TV-AUD-4b, and operator-input
+    // inversion is the parse layer's responsibility (H3 on
+    // `parse_duration_secs`).
     let since_unix = args.since.map(|secs| now_unix.saturating_sub(secs));
     let until_unix = args.until.map(|secs| now_unix.saturating_sub(secs));
 

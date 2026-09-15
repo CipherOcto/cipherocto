@@ -95,6 +95,11 @@ pub enum AgentAction {
         /// Target agent id (UUID form, hex).
         #[arg(long, value_name = "UUID")]
         agent_id: String,
+        /// Optional human-readable destroy reason (audit-log payload).
+        /// Surfaces via `validate_reason` (256-byte cap +
+        /// control-character rejection per RFC-0015 §6.2.5).
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
     },
     /// Attach to a running agent's control plane
     /// (RFC-0011-c §9.3.5). Wired by `0011-c-agent-attach-subcommand`.
@@ -124,8 +129,9 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             limit,
             cursor,
         } => list::handle(state.as_deref(), *limit, cursor.as_deref(), cli),
-        AgentAction::Run { .. } | AgentAction::Destroy { .. } | AgentAction::Attach { .. } => {
-            pending_subcommand()
+        AgentAction::Run { .. } | AgentAction::Attach { .. } => pending_subcommand(),
+        AgentAction::Destroy { agent_id, reason } => {
+            destroy::handle(agent_id, reason.as_deref(), cli)
         }
     }
 }
@@ -561,6 +567,155 @@ fn render_envelope<T: serde::Serialize>(
 }
 
 // ---------------------------------------------------------------------------
+// `octo agent destroy` handler
+// ---------------------------------------------------------------------------
+
+mod destroy {
+    //! `octo agent destroy --agent-id <uuid> --confirm [--reason <text>] [--json]`
+    //!
+    //! RFC-0011-c §9.3.4. The only agent subcommand with a hard
+    //! confirmation gate (parent RFC-0011 §Error Handling); `--yes` /
+    //! `--force` are NOT provided per RFC-0011-c §Security. The clap
+    //! `confirm` flag is REQUIRED — absent → `ConfirmationRequired
+    //! { command: "agent destroy" }` (exit 2 per parent §Error
+    //! Handling).
+    //!
+    //! Substrate: `octo_wallet::transition_agent(caller_did, uuid,
+    //! AgentState::Terminated, reason)` (RFC-0015-a Appendix A;
+    //! `Registered → Running` and `Running → Terminated` are the only
+    //! valid forward edges). The substrate owns the audit append
+    //! (`AuditEventKind::AgentTransition` cfg-gated variant,
+    //! RFC-0015-a §6.1 rollback contract) and returns the BLAKE3-256
+    //! chain-hash via `TransitionReceipt.audit_log_entry`.
+
+    use super::*;
+    use octo_wallet::agent::transition_agent as wallet_transition_agent;
+    use octo_wallet::{AgentState, TransitionReceipt};
+
+    /// Parse the operator-supplied `--agent-id <UUID>` hex into the
+    /// substrate `Uuid`. A parse failure maps to `AgentNotFound(nil)`
+    /// (slot 42; the substrate treats unknown UUIDs identically to
+    /// malformed IDs per the lookup-agent canonicalization).
+    fn parse_uuid(hex: &str) -> Result<uuid::Uuid, OctoCliError> {
+        uuid::Uuid::parse_str(hex).map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))
+    }
+
+    /// Handle `octo agent destroy --agent-id <uuid> --confirm [--reason] [--json]`.
+    ///
+    /// Exit codes:
+    /// - 0: success (transition recorded, audit appended)
+    /// - 2: `--confirm` missing (`ConfirmationRequired { command }`)
+    /// - 5: HSM unavailable
+    /// - 42: agent not found / unparseable UUID
+    /// - 43: `AlreadyInTransition` / `InvalidStateTransition`
+    /// - 52: audit substrate not ready (`AuditSubstrateNotReady`)
+    /// - 64: unexpected substrate error
+    pub fn handle(
+        agent_id_hex: &str,
+        reason: Option<&str>,
+        cli: &Octo,
+    ) -> Result<(), OctoCliError> {
+        // 1. Confirmation gate — RFC-0011-c §Security. The
+        //    `--confirm` flag is the global `OperatorModeFlags.confirm`
+        //    per `crates/octo-cli/src/flags.rs` §OperatorModeFlags.
+        //    `agent destroy` is the ONLY agent subcommand with a hard
+        //    confirmation gate; `--yes` / `--force` are NOT provided
+        //    per parent RFC-0011 §Security Considerations 1a.
+        if !cli.mode.confirm {
+            return Err(OctoCliError::ConfirmationRequired {
+                command: "agent destroy".to_string(),
+            });
+        }
+
+        // 2. Auditor is read-only (RFC-0011 §Compatibility + RFC-0011-c
+        //    §Roles and Authorities).
+        if matches!(cli.mode.mode, OperatorMode::Auditor) {
+            return Err(OctoCliError::AuditorDenied {
+                command: "agent destroy".to_string(),
+            });
+        }
+
+        // 3. Parse agent id + resolve active DID.
+        let agent_id = parse_uuid(agent_id_hex)?;
+        let active_did = common::resolve_active_did()?;
+
+        // 4. Substrate `transition_agent` — emits the
+        //    `AgentTransition` audit event internally; rolls back the
+        //    state change on audit-append failure
+        //    (`AuditUnavailable` per RFC-0015-a §6.1 rollback
+        //    contract).
+        let receipt: TransitionReceipt =
+            wallet_transition_agent(&active_did, agent_id, AgentState::Terminated, reason)
+                .map_err(|e| match e {
+                    octo_wallet::WalletError::AlreadyInTransition(uuid) => {
+                        OctoCliError::AlreadyInTransition(uuid)
+                    }
+                    octo_wallet::WalletError::InvalidStateTransition { from, to } => {
+                        let from_s = format!("{from:?}").to_lowercase();
+                        let to_s = format!("{to:?}").to_lowercase();
+                        OctoCliError::InvalidStateTransition {
+                            from: from_s,
+                            to: to_s,
+                        }
+                    }
+                    octo_wallet::WalletError::AuditUnavailable(_) => {
+                        OctoCliError::AuditSubstrateNotReady
+                    }
+                    octo_wallet::WalletError::AgentNotFound(uuid) => {
+                        OctoCliError::AgentNotFound(uuid)
+                    }
+                    octo_wallet::WalletError::Hsm(_) => {
+                        OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+                    }
+                    other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+                })?;
+
+        // 5. JSON override (TTY parity) — flip the CLI JSON flag for
+        //    `render_envelope`. The envelope schema itself is fixed
+        //    (`schema_version = 4` per parent RFC-0011-c §9.4.1).
+        let output = AgentDestroyOutput {
+            agent_id: RedactedIdentifier::new(agent_id.to_string()),
+            state: receipt.current_state.as_str().to_string(),
+            terminated_at_unix: receipt.transitioned_at_unix,
+            audit_log_entry: hex::encode(receipt.audit_log_entry),
+        };
+        let redactor = RedactionContext::new()
+            .with_active_did(active_did.as_str())
+            .with_holder_did(active_did.as_str())
+            .with_agent_id(agent_id.to_string());
+        render_envelope("octo.agent.destroy.v1", output, cli, &redactor)
+    }
+}
+
+/// `octo agent destroy` payload — RFC-0011-c §9.3.4 Output Envelope.
+///
+/// Symmetric with `AgentCreateOutput` (created in mission
+/// `0011-c-agent-create-subcommand` + redaction envelope amendment).
+/// The `agent_id` is wrapped in [`RedactedIdentifier`] for envelope-
+/// boundary symmetry; the redactor un-redacts for the active DID
+/// holder. The `audit_log_entry` is the BLAKE3-256 chain-hash in hex
+/// form (64 lowercase chars).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct AgentDestroyOutput {
+    /// Deterministic `agent_id` (RFC-0011-c §9.10 substrate signature).
+    /// Wrapped in [`RedactedIdentifier`] for envelope-boundary
+    /// symmetry with `agent create` per
+    /// `0011-c-agent-redaction-envelope` §Scope sub-step 2.
+    #[schemars(with = "String")]
+    pub agent_id: RedactedIdentifier,
+    /// Lifecycle state label — always `terminated` for the destroy
+    /// command (the substrate rejects any other end state per
+    /// RFC-0015-a Appendix A state-machine guard).
+    pub state: String,
+    /// Unix seconds at which the substrate applied the
+    /// `Running → Terminated` transition.
+    pub terminated_at_unix: u64,
+    /// BLAKE3-256 chain-hash of the committed audit event (lowercase
+    /// hex form; 64 chars).
+    pub audit_log_entry: String,
+}
+
+// ---------------------------------------------------------------------------
 // Tests — manifest parse + capability-root parse + error variants
 // ---------------------------------------------------------------------------
 
@@ -817,6 +972,92 @@ mod tests {
         assert_eq!(
             count, "integer",
             "AgentListOutput.count must round-trip as JSON Schema `integer`, got {count:?}",
+        );
+    }
+
+    // ----- `octo agent destroy` tests (RFC-0011-c §9.3.4) -----
+
+    /// Pin the schemars contract for `AgentDestroyOutput`: `agent_id`
+    /// is wrapped in `RedactedIdentifier` with `#[schemars(with = "String")]`
+    /// so the JSON Schema declares `string`. Symmetric with the
+    /// `agent create` + `agent list` schemars pins.
+    #[test]
+    fn agent_destroy_output_schema_declares_agent_id_as_string() {
+        use schemars::schema_for;
+        let schema = schema_for!(AgentDestroyOutput);
+        let json = serde_json::to_value(&schema).expect("schema is JSON");
+        let agent_id = json
+            .pointer("/properties/agent_id/type")
+            .and_then(|v| v.as_str())
+            .expect("agent_id schema must declare a type");
+        assert_eq!(
+            agent_id, "string",
+            "agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
+        let state = json
+            .pointer("/properties/state/type")
+            .and_then(|v| v.as_str())
+            .expect("state schema must declare a type");
+        assert_eq!(
+            state, "string",
+            "state must round-trip as JSON Schema `string`, got {state:?}",
+        );
+        let audit = json
+            .pointer("/properties/audit_log_entry/type")
+            .and_then(|v| v.as_str())
+            .expect("audit_log_entry schema must declare a type");
+        assert_eq!(
+            audit, "string",
+            "audit_log_entry must round-trip as JSON Schema `string`, got {audit:?}",
+        );
+    }
+
+    /// TV-AGT10 — confirmation gate. Absence of `--confirm` MUST yield
+    /// `ConfirmationRequired { command }` (exit 2 per parent RFC-0011
+    /// §Error Handling). `agent destroy` is the ONLY agent
+    /// subcommand with a hard confirmation gate (RFC-0011-c
+    /// §Security); `--yes` / `--force` are NOT provided per the same
+    /// §Security paragraph.
+    #[test]
+    fn destroy_missing_confirm_exits_2() {
+        let e = OctoCliError::ConfirmationRequired {
+            command: "agent destroy".to_string(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            2,
+            "ConfirmationRequired MUST exit 2 (parent RFC-0011 §Error Handling), got {}",
+            e.exit_code()
+        );
+    }
+
+    /// TV-AGT9 — substrate `Running → Terminated` transition returns
+    /// `TransitionReceipt`. Pin the slot allocations: `AgentNotFound`
+    /// (42), `AlreadyInTransition` (43), `InvalidStateTransition`
+    /// (43), `AuditSubstrateNotReady` (52).
+    #[test]
+    fn destroy_exit_code_slots_pinned() {
+        let e = OctoCliError::AgentNotFound(uuid::Uuid::nil());
+        assert_eq!(e.exit_code(), 42, "AgentNotFound slot 42");
+        let e = OctoCliError::AlreadyInTransition(uuid::Uuid::nil());
+        assert_eq!(
+            e.exit_code(),
+            43,
+            "AlreadyInTransition slot 43 (write-path state error)"
+        );
+        let e = OctoCliError::InvalidStateTransition {
+            from: "registered".to_string(),
+            to: "terminated".to_string(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            43,
+            "InvalidStateTransition slot 43 (write-path state error)"
+        );
+        assert_eq!(
+            OctoCliError::AuditSubstrateNotReady.exit_code(),
+            52,
+            "AuditSubstrateNotReady slot 52 (audit-substrate fallback)"
         );
     }
 }

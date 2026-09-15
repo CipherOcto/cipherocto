@@ -113,14 +113,14 @@ pub struct ListArgs {
     /// the visible row set is `status-filter ∪ reject-rows` so the
     /// operator still sees reject rows alongside the requested
     /// status filter. RFC-0011-a §Filters `--include-reject`.
-    #[arg(long)]
+    #[arg(long, requires = "status")]
     pub include_reject: bool,
     /// Explicitly acknowledge the reject-hiding intent of a
     /// non-reject-only `--status` filter. RFC-0011-a §Filters
     /// `--confirm-acknowledge`. Substrate-faithful: the
     /// confirmation happens at the CLI dispatch boundary; the
     /// substrate remains unaware of operator confirmation.
-    #[arg(long)]
+    #[arg(long, requires = "status")]
     pub confirm_acknowledge: bool,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
@@ -325,19 +325,10 @@ fn build_audit_filter(
         args.status.clone()
     };
 
-    // --include-reject UNION-forward (RFC-0011-a §Filters
-    // `--include-reject` UNION semantics). When the operator passes
-    // `--include-reject` together with a non-reject-only `--status`
-    // filter, push `ReceiptStatus::Reject` into the substrate
-    // filter's `status` Vec so the substrate returns the UNION
-    // (`filter-result ∪ reject-rows`). Client-side mutation only —
-    // no parallel substrate field; the substrate `AuditFilter.status`
-    // is a UNION over its members per RFC-0016-a §6.6.
-    //
-    // Auditor mode is unaffected: `status` is already `Vec::new()`
-    // (the auditor MUST see every receipt regardless of which
-    // status filter was requested per RFC-0011-a §Security
-    // Considerations row 2).
+    // Client-side UNION forward per RFC-0011-a §Filters
+    // --include-reject; substrate AuditFilter.status is UNION
+    // over members (RFC-0016-a §6.6). Auditor-mode unaffected:
+    // status already Vec::new() above.
     if mode != OperatorMode::Auditor
         && args.include_reject
         && !status.contains(&ReceiptStatus::Reject)
@@ -1039,6 +1030,10 @@ mod tests {
         }
     }
 
+    fn human_filter(args: &ListArgs) -> AuditFilter {
+        build_audit_filter(args, OperatorMode::Human, 1_000_000).unwrap()
+    }
+
     fn build_cli_with_mode(mode: OperatorMode) -> Octo {
         // Build a minimal CLI with the requested mode baked in. The
         // parse should always succeed (the args are well-formed);
@@ -1120,7 +1115,7 @@ mod tests {
         // call — the substrate fixture is empty in tests so an
         // end-to-end row assertion would not surface a defect.
         let args = make_args_with_status(vec![ReceiptStatus::Ok], true, false);
-        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        let filter = human_filter(&args);
         assert!(
             filter.status.contains(&ReceiptStatus::Reject),
             "UNION-forward contract: --include-reject must push Reject into AuditFilter.status; got {:?}",
@@ -1141,7 +1136,7 @@ mod tests {
         // so duplicates would not change the result set but would
         // waste a Vec slot and confuse substrate-faithful readers.
         let args = make_args_with_status(vec![ReceiptStatus::Reject], true, false);
-        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        let filter = human_filter(&args);
         assert_eq!(
             filter
                 .status
@@ -1161,7 +1156,7 @@ mod tests {
         // gate's whole purpose — the operator would see reject rows
         // even when they explicitly asked for non-reject only).
         let args = make_args_with_status(vec![ReceiptStatus::Ok], false, false);
-        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        let filter = human_filter(&args);
         assert!(
             !filter.status.contains(&ReceiptStatus::Reject),
             "without --include-reject, AuditFilter.status must NOT contain Reject; got {:?}",

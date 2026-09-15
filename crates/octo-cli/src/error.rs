@@ -1330,5 +1330,14 @@ mod tests {
         let r: OctoCliError = octo_audit::AuditError::SinkSpecific("adapter down".into()).into();
         assert!(matches!(r, OctoCliError::Internal(_)));
         assert_eq!(r.exit_code(), 64);
+
+        // ChainHashMismatch (exit 64 via Internal — RFC-0016-a §6.7
+        // 8th collapse-group variant; canonical-error mapping per
+        // RFC-0016-a §6.7 + sanitize_substrate_error scrub at the
+        // CLI boundary).
+        let r: OctoCliError =
+            octo_audit::AuditError::ChainHashMismatch { event_id: 7 }.into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
     }
 }

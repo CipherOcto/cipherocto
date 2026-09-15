@@ -64,7 +64,9 @@ pub use scrub::{scrub_adapter_error, scrub_adapter_error_with};
 // RFC-0016-a §6.6 extends `AuditFilter` additively (subject_did,
 // status UNION, model, capability_root, since_unix / until_unix).
 pub mod receipt_read;
-pub use receipt_read::{audit_home, get_receipt, insert_receipt, list_receipts, AuditFilter};
+pub use receipt_read::{
+    audit_home, get_receipt, insert_receipt, list_receipts, AuditFilter, MAX_LIMIT,
+};
 
 // RFC-0016-a §6.2 + §6.3 paired-acceptance write-path surface:
 // `ChainHash(pub [u8; 32])` canonical BLAKE3 chain-hash newtype with

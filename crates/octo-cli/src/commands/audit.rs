@@ -26,7 +26,12 @@
 //! per the audit amendment contract — the substrate-faithful path
 //! always returns the FULL set when the filter is dropped.
 
-#![allow(clippy::module_name_repetitions)]
+#![allow(
+    clippy::module_name_repetitions,
+    reason = "intentional repetition for canonical CLI surface types: AuditAction / AuditListOutput / AuditShowOutput / ReceiptSummaryOutput mirror the substrate names verbatim so the CLI envelope reads substrate-faithfully (per RFC-0011-a §Output Envelope)."
+)]
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use serde::Serialize;
@@ -37,7 +42,7 @@ use crate::output::OutputEnvelope;
 use crate::Octo;
 
 use octo_audit::{
-    audit_home, get_receipt, list_receipts, AuditError, AuditFilter, ReceiptSummary, StatusRef,
+    audit_home, get_receipt, list_receipts, AuditError, AuditFilter, ReceiptSummary, MAX_LIMIT,
 };
 use octo_settlement::{Receipt, ReceiptId, ReceiptStatus};
 
@@ -117,11 +122,13 @@ pub struct AuditListOutput {
     /// `receipt_id ASC` tiebreaker (substrate-faithful per
     /// `list_receipts`).
     pub receipts: Vec<ReceiptSummaryOutput>,
-    /// Count BEFORE `--limit` truncation (RFC-0011-a §Subcommand
-    /// Taxonomy `list` Notes — `total_matched` semantics distinct
-    /// from returned count).
-    pub total_matched: usize,
-    /// `true` when `total_matched == limit` and the substrate may
+    /// Row count in `receipts` (post-substrate-truncation). The
+    /// substrate's `list_receipts` clamps to `MAX_LIMIT` before
+    /// returning so this field always equals the visible row count;
+    /// the pre-truncation total is not exposed by the substrate
+    /// (forward-compat Phase 2 cursor path).
+    pub count_returned: usize,
+    /// `true` when `count_returned == limit` and the substrate may
     /// have more rows above the ceiling. Operators narrow the
     /// filter and re-invoke (Phase 1 has no cursor pagination per
     /// `AuditFilter::cursor` forward-compat field).
@@ -187,10 +194,16 @@ pub struct ReceiptRecordOutput {
     pub settlement_hash: String,
     /// Router node DID (RFC-0010 canonical wire form).
     pub router_id: String,
-    /// Router signature length in bytes (raw signature bytes are
-    /// substrate-internal; CLI surfaces only the byte count to
-    /// avoid leaking signature material).
-    pub router_sig_bytes: usize,
+    /// Router signature length in bytes. Deliberately a fixed-size
+    /// `u64` (NOT substrate-faithful `usize`) so the wire form is
+    /// deterministic across platforms (RFC-0011 §Determinism
+    /// Requirements — `usize` JSON serializes as 4 or 8 bytes
+    /// depending on target, breaking consumer parsers). The raw
+    /// signature bytes themselves stay substrate-internal; the CLI
+    /// surfaces only the byte count to avoid leaking signature
+    /// material. `u64` admits PQ forward-compat (signatures
+    /// >2^32 bytes) while remaining deterministic.
+    pub router_sig_bytes: u64,
     /// Wall-clock timestamp in unix seconds.
     pub timestamp_unix: u64,
     /// Model identifier (RFC-0014-v2 extension).
@@ -213,24 +226,40 @@ pub struct ReceiptRecordOutput {
 /// Considerations row 2) before reaching the substrate.
 ///
 /// Returns the canonical `AuditFilter` (Layer B substrate-faithful)
-/// plus the effective limit (for `has_more` derivation).
+/// plus the effective limit (for `count_returned` derivation).
 fn build_audit_filter(args: &ListArgs, mode: OperatorMode) -> AuditFilter {
     // Auditor-mode constraint (RFC-0011-a §Security Considerations
     // row 2): silently drop the `--status` filter so reject rows
     // can never be hidden from the auditor view. The CLI enforces
     // this at the dispatch boundary; the substrate is
     // substrate-faithful and never sees the filter when dropped.
-    let status: Vec<StatusRef> = if mode == OperatorMode::Auditor {
+    let status = if mode == OperatorMode::Auditor {
         Vec::new()
     } else {
         args.status.clone()
     };
+
+    // Convert `--since` / `--until` duration-seconds-from-now to
+    // absolute unix timestamps. The substrate `since_unix` /
+    // `until_unix` fields are ABSOLUTE unix-seconds (per
+    // `octo_audit::list_receipts` filter semantics); CLI surfaces
+    // the duration grammar per RFC-0011-a §Filters but must
+    // materialise absolute values at the dispatch boundary so the
+    // filter actually narrows the rowset. Without this conversion
+    // `--since 7d` would filter `timestamp_unix >= 604800` (Jan
+    // 1970) and silently no-op.
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let since_unix = args.since.map(|secs| now_unix.saturating_sub(secs));
+    let until_unix = args.until.map(|secs| now_unix.saturating_sub(secs));
+
     AuditFilter {
         router_id: None,
         timestamp_unix_gte: None,
         timestamp_unix_lte: None,
-        since_unix: args.since,
-        until_unix: args.until,
+        since_unix,
+        until_unix,
         subject_did: None,
         status,
         model: args.model.clone(),
@@ -245,28 +274,32 @@ fn build_audit_filter(args: &ListArgs, mode: OperatorMode) -> AuditFilter {
 /// `get_receipt` + `ReceiptSummary::from_canonical` per RFC-0016-a
 /// §6.5.
 pub fn list(args: &ListArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // Pre-flight trust-boundary check (RFC-0016-a §6.7): substrate
+    // `audit_home()` exercises its `$OCTO_HOME` resolution + 0700
+    // permission check before the actual read path runs. The
+    // PathBuf itself is unused by the JSON envelope (operators can
+    // resolve via `octo audit show` diagnostics); the call exists
+    // purely to fail fast on a misconfigured home dir.
     let _ = audit_home().map_err(map_audit_error)?;
 
     let filter = build_audit_filter(args, cli.mode.mode);
 
     // Capture the substrate hard ceiling before the call so
     // `has_more` derives from a substrate-faithful reference.
-    let effective_limit = filter.limit.unwrap_or(10_000);
+    let effective_limit = filter.limit.unwrap_or(MAX_LIMIT);
 
     let ids = list_receipts(&filter).map_err(map_audit_error)?;
 
-    // Surface explicit `AuditResponseTooLarge` when the matched set
-    // would exceed the substrate hard ceiling. Substrate also
-    // rejects over-ceiling limits at call time (TV-AUD-4c) so this
-    // arm is unreachable for `limit > 10_000` — but covers the
-    // future case where the substrate ceiling rises and the CLI
-    // retains its stricter contract per RFC-0011-a §Filters.
-    if ids.len() > effective_limit as usize {
-        return Err(OctoCliError::AuditResponseTooLarge {
-            matched: ids.len(),
-            limit: effective_limit as usize,
-        });
-    }
+    // Note: `AuditResponseTooLarge` (exit 19) is a forward-compat
+    // variant. Currently unreachable from CLI input — the
+    // substrate's `list_receipts` clamps to `MAX_LIMIT` before
+    // returning, and `parse_limit` rejects over-ceiling values at
+    // the dispatch boundary. The variant is reserved for a future
+    // Phase 2 cursor path or a substrate-ceiling raise; the
+    // `tv_err4_exit_code_mapping` test pins the canonical exit
+    // code either way. We do NOT add a redundant guard here
+    // because the substrate is already the source of truth for
+    // the limit.
 
     // For each id, fetch the canonical `Receipt` + project to
     // `ReceiptSummary`. Per-id misses (`AuditError::ReceiptNotFound`)
@@ -281,12 +314,12 @@ pub fn list(args: &ListArgs, cli: &Octo) -> Result<(), OctoCliError> {
         )));
     }
 
-    let total_matched = summaries.len();
-    let has_more = total_matched == effective_limit as usize && total_matched > 0;
+    let count_returned = summaries.len();
+    let has_more = count_returned == effective_limit as usize && count_returned > 0;
 
     let payload = AuditListOutput {
         receipts: summaries,
-        total_matched,
+        count_returned,
         has_more,
     };
     let env = OutputEnvelope::new("octo.audit.list.v1", payload);
@@ -323,26 +356,33 @@ pub fn dispatch(action: &AuditAction, cli: &Octo) -> Result<(), OctoCliError> {
 // === Substrate → CLI error envelope mapping (RFC-0016-a §6.7) ===
 
 /// Manual mapping for audit substrate errors surfaced at the
-/// dispatch boundary. Mirrors the established
-/// `From<octo_audit::AuditError>` pattern (error.rs line 856) for
-/// the canonical 4-variant shape (`ReceiptNotFound`, `InvalidFilter`,
-/// `PermissionDenied`, `AuditAppendFailed`) and routes everything
-/// else through `AuditReadFailed` (exit 18) per RFC-0011-a
-/// §Error Handling — the audit-amendment-chain CLI-shape envelope.
+/// dispatch boundary. Routes the canonical 4-variant shape
+/// (`ReceiptNotFound`, `InvalidFilter`, `PermissionDenied`,
+/// `AuditAppendFailed`) through the established
+/// `From<octo_audit::AuditError>` impl in error.rs (which
+/// preserves the §6.8 `redact_substrate_error` defense-in-depth
+/// scrubber pass + canonical exit codes), then re-routes ONLY
+/// `#[non_exhaustive]` additive variants to `AuditReadFailed`
+/// (exit 18) per RFC-0011-a amendment-chain convention — the
+/// audit surface has a canonical exit-code slot rather than
+/// collapsing to generic `Internal` (exit 64).
 fn map_audit_error(e: AuditError) -> OctoCliError {
-    match e {
-        AuditError::ReceiptNotFound(s) => OctoCliError::ReceiptNotFound(s),
-        AuditError::InvalidFilter(s) => OctoCliError::InvalidFilter(s),
-        AuditError::PermissionDenied(s) => OctoCliError::PermissionDenied(s),
-        AuditError::AuditAppendFailed(_) => OctoCliError::AuditSubstrateNotReady,
-        // `#[non_exhaustive]` on `AuditError` (RFC-0016-a §6.7) —
-        // additive substrate variants collapse to `AuditReadFailed`
-        // (exit 18) rather than `Internal` (exit 64) so the
-        // audit-amendment exit-code slot is canonical for the
-        // audit command surface.
-        other => OctoCliError::AuditReadFailed(sanitize_substrate_error(&format!(
-            "audit substrate read failure: {other:?}"
-        ))),
+    // Capture the substrate Debug repr BEFORE consuming `e` via
+    // the canonical From impl (preserves the §6.8 scrubber pass).
+    let src_debug = format!("{e:?}");
+    let canonical = OctoCliError::from(e);
+    // Canonical 4 → canonical `OctoCliError` variant
+    // (preserves §6.8 scrubber + exit code).
+    // Additive `#[non_exhaustive]` variants → `Internal` (exit 64)
+    // per the canonical From impl. Re-route those to
+    // `AuditReadFailed` (exit 18) so the audit amendment chain has
+    // its own canonical slot.
+    if matches!(canonical, OctoCliError::Internal(_)) {
+        OctoCliError::AuditReadFailed(sanitize_substrate_error(&format!(
+            "audit substrate read failure: {src_debug}"
+        )))
+    } else {
+        canonical
     }
 }
 
@@ -367,7 +407,9 @@ fn receipt_to_output(r: &Receipt) -> ReceiptRecordOutput {
         ask_id: hex::encode(r.ask_id),
         settlement_hash: hex::encode(r.settlement_hash),
         router_id: r.router_id.clone(),
-        router_sig_bytes: r.router_sig.len(),
+        // Cast `usize` → `u64` per `ReceiptRecordOutput.router_sig_bytes`
+        // doc-block (deterministic wire-form guarantee).
+        router_sig_bytes: r.router_sig.len() as u64,
         timestamp_unix: r.timestamp_unix,
         model: r.model.clone(),
         cost_dqa: r.cost_dqa,
@@ -455,15 +497,16 @@ fn parse_capability_root_hex(s: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// `--limit` value_parser: 1..=10_000 (substrate hard ceiling per
-/// RFC-0011-a §Filters + TV-AUD-4c). Zero / over-ceiling input is
-/// rejected at the CLI boundary so the substrate never sees an
-/// inverted range.
+/// `--limit` value_parser: 1..=`octo_audit::MAX_LIMIT` (substrate
+/// hard ceiling per RFC-0011-a §Filters + TV-AUD-4c). The constant
+/// is sourced from the substrate facade so a future ceiling raise
+/// propagates without a CLI-side change (no parallel abstraction).
+/// Zero / over-ceiling input is rejected at the CLI boundary so the
+/// substrate never sees an inverted range.
 fn parse_limit(s: &str) -> Result<u32, String> {
     let n: u32 = s
         .parse()
         .map_err(|_| format!("limit must be a positive integer (got `{s}`)"))?;
-    const MAX_LIMIT: u32 = 10_000;
     if n == 0 {
         return Err("limit must be >= 1".into());
     }
@@ -474,10 +517,12 @@ fn parse_limit(s: &str) -> Result<u32, String> {
 }
 
 /// `octo audit show <id>` positional value_parser: decimal `u64`.
-/// Surfaces `InvalidFilter` (exit 16) per RFC-0011-a §Subcommand
-/// Taxonomy `show` Args — format violations route through
-/// `OctoCliError::InvalidFilter` for scripting-consumer-domain-error
-/// semantics.
+/// Format violations surface via clap's `value_parser` failure path
+/// → `OctoCliError::ClapParse` (exit 2) per `error.rs` exit-code
+/// mapping. NOT exit 16 (`InvalidFilter`) — script authors must
+/// consult the clap failure shape, not the substrate's InvalidFilter
+/// variant (which only fires for substrate-side filter validation
+/// failures, not CLI argument parsing).
 fn parse_receipt_id(s: &str) -> Result<ReceiptId, String> {
     let n: u64 = s
         .parse()
@@ -486,7 +531,6 @@ fn parse_receipt_id(s: &str) -> Result<ReceiptId, String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_pass_by_value)]
 mod tests {
     use super::*;
     use clap::Parser;
@@ -650,13 +694,19 @@ mod tests {
         };
         let f = build_audit_filter(&args, OperatorMode::Auditor);
         // Auditor-mode drops ONLY the status filter — other
-        // fields (since, until, capability_root, model, limit)
-        // pass through so the operator can still narrow by
-        // time window / model / capability-root without
+        // fields pass through so the operator can still narrow
+        // by time window / model / capability-root without
         // accidentally hiding reject rows via the dropped
-        // status filter alone.
-        assert_eq!(f.since_unix, Some(100));
-        assert_eq!(f.until_unix, Some(200));
+        // status filter alone. The since/until values are
+        // durations (seconds) per RFC-0011-a §Filters grammar
+        // — the dispatch boundary converts to absolute
+        // timestamps relative to now.
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        assert_eq!(f.since_unix, now_unix.checked_sub(100));
+        assert_eq!(f.until_unix, now_unix.checked_sub(200));
         assert_eq!(f.capability_root, Some(cap_root));
         assert_eq!(f.model.as_deref(), Some("llama-3.1-8b"));
         assert_eq!(f.limit, Some(50));
@@ -728,7 +778,7 @@ mod tests {
         // `Redact | Export | Watch` land in a follow-on amendment.
         let list = TestCli::try_parse_from(["test", "list"]).unwrap();
         let show = TestCli::try_parse_from(["test", "show", "1"]).unwrap();
-        matches!(list.action, AuditAction::List(_));
-        matches!(show.action, AuditAction::Show(_));
+        assert!(matches!(list.action, AuditAction::List(_)));
+        assert!(matches!(show.action, AuditAction::Show(_)));
     }
 }

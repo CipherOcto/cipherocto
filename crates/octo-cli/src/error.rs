@@ -432,6 +432,29 @@ pub enum OctoCliError {
     #[error("agent not running: {0}")]
     AgentNotRunning(uuid::Uuid),
 
+    /// `octo agent attach` reached the runtime substrate boundary but
+    /// the `octo-runtime` crate is not yet wired into the CLI
+    /// dispatch path (per RFC-0011-c §Implementation Phases Phase 1
+    /// release gate; substrate `octo_runtime::attach` exists but the
+    /// in-process `RuntimeHandle` mint pathway requires the
+    /// `octo agent run --detach` integration that ships in a follow-on
+    /// mission). Exit 51 per RFC-0011-c §9.8 slot allocation.
+    #[error("runtime substrate not ready: octo agent run --detach must ship before attach can bind to a live RuntimeHandle (per RFC-0011-c §Implementation Phases Phase 1)")]
+    RuntimeSubstrateNotReady,
+
+    /// `octo_runtime::attach` returned a substrate-level failure
+    /// (handle revoked, channel closed, invalid attach token).
+    /// Mapped from `octo_runtime::RuntimeError::HandleRevoked` /
+    /// `RuntimeError::RuntimeAttachFailed { reason }` /
+    /// `RuntimeError::EventStreamClosed` at the dispatch boundary.
+    /// Exit 49 per RFC-0011-c §9.8.
+    #[error("runtime attach failed: {reason}")]
+    RuntimeAttachFailed {
+        /// Substrate-internal failure reason (sanitized by CLI via
+        /// `sanitize_substrate_error`).
+        reason: String,
+    },
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -518,6 +541,8 @@ impl OctoCliError {
             // unambiguous within respective command surfaces).
             Self::PermissionDenied(_) => 13,
             Self::AgentNotRunning(_) => 48,
+            Self::RuntimeSubstrateNotReady => 51,
+            Self::RuntimeAttachFailed { .. } => 49,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -659,6 +684,12 @@ impl OctoCliError {
             }
             Self::AgentNotRunning(_) => {
                 "the target agent exists but is not in `Running` state; run `octo agent run` before `octo agent attach`".to_string()
+            }
+            Self::RuntimeSubstrateNotReady => {
+                "the runtime substrate boundary is reached but the in-process RuntimeHandle mint pathway is not yet wired (per RFC-0011-c §Implementation Phases Phase 1); ship `octo agent run --detach` in a follow-on mission to bind attach to a live spawn".to_string()
+            }
+            Self::RuntimeAttachFailed { .. } => {
+                "the runtime attach call failed at the substrate boundary (handle revoked, channel closed, or invalid attach token); verify the agent is in `Running` state via `octo agent list` and the spawn has not been terminated".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
@@ -1191,6 +1222,14 @@ mod tests {
                 OctoCliError::PermissionDenied("/var/lib/octo/audit/receipts".into()),
                 13,
             ),
+            // RFC-0011-c §9.8 + RFC-0015-a §6.3: agent amendment chain
+            // attach-path slots (48/49/51) — paired with the substrate
+            // `octo_runtime::RuntimeError::exit_code` table so the CLI
+            // boundary and the substrate boundary agree on slot
+            // allocation.
+            (OctoCliError::AgentNotRunning(uuid::Uuid::nil()), 48),
+            (OctoCliError::RuntimeAttachFailed { reason: "x".into() }, 49),
+            (OctoCliError::RuntimeSubstrateNotReady, 51),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");

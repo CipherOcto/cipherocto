@@ -107,6 +107,13 @@ pub enum AgentAction {
         /// Target agent id (UUID form, hex).
         #[arg(long, value_name = "UUID")]
         agent_id: String,
+        /// Replay events from this unix-seconds timestamp
+        /// (RFC-0011-c §9.3.5 `--since` flag). The substrate clamps
+        /// the lower bound to `[spawned_at, Utc::now()]` — earlier
+        /// timestamps are silently raised to `spawned_at` (the bus
+        /// has no events before spawn).
+        #[arg(long, value_name = "UNIX_SECONDS")]
+        since: Option<u64>,
     },
 }
 
@@ -129,7 +136,10 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             limit,
             cursor,
         } => list::handle(state.as_deref(), *limit, cursor.as_deref(), cli),
-        AgentAction::Run { .. } | AgentAction::Attach { .. } => pending_subcommand(),
+        AgentAction::Run { .. } => pending_subcommand(),
+        AgentAction::Attach { agent_id, since } => {
+            attach::handle(agent_id, since.map(|s| s as i64), cli)
+        }
         AgentAction::Destroy { agent_id, reason } => {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
@@ -145,7 +155,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// payload shape).
 fn pending_subcommand() -> Result<(), OctoCliError> {
     Err(OctoCliError::Internal(
-        "agent subcommand pending follow-on mission (0011-c-agent-{run,list,destroy,attach}-subcommand); only `octo agent create` is wired in this mission".to_string(),
+        "agent subcommand pending follow-on mission (0011-c-agent-run-subcommand); create, list, destroy, attach are wired".to_string(),
     ))
 }
 
@@ -716,6 +726,192 @@ pub struct AgentDestroyOutput {
 }
 
 // ---------------------------------------------------------------------------
+// `octo agent attach` handler
+// ---------------------------------------------------------------------------
+
+mod attach {
+    //! `octo agent attach --agent-id <uuid> [--since <unix-seconds>]`
+    //!
+    //! RFC-0011-c §9.3.5. Read-only subcommand (does NOT mutate state).
+    //! Substrate path:
+    //!
+    //! 1. `octo_wallet::lookup_agent(caller_did, uuid)` — verify holder
+    //!    matches active DID (caller-attestation; SECURITY HIGH per
+    //!    RFC-0015 §6.2.1).
+    //! 2. `octo_wallet::read_agent_state(caller_did, uuid)` — verify
+    //!    `state == AgentState::Running` (otherwise emit
+    //!    `AgentNotRunning(uuid)` exit 48 per RFC-0011-c §9.8).
+    //! 3. `octo_runtime::attach(handle, since)` — open an
+    //!    `EventStream` against the live `RuntimeHandle`.
+    //!
+    //! ## Substrate gap (RFC-0011-c §Implementation Phases Phase 1)
+    //!
+    //! Step 3 requires a `RuntimeHandle` minted by `spawn_agent`. The
+    //! CLI's `octo agent run` subcommand (which would mint the handle
+    //! and emit an `AttachHandle` token per RFC-0011-c §9.3.2
+    //! `--detach`) is the follow-on mission `0011-c-agent-run-subcommand`
+    //! (still pending). Until that ships, the in-process handle does
+    //! not exist and the substrate call cannot bind; per mission
+    //! §Notes the CLI emits `RuntimeSubstrateNotReady` (exit 51) once
+    //! the state gate (step 2) passes.
+    //!
+    //! Operator-facing UX is preserved: the clap surface is wired, the
+    //! state precondition (Running) is checked, and the substrate
+    //! boundary failure surfaces as a stable exit code (51) so
+    //! automation can distinguish "agent not running" (48) from
+    //! "runtime substrate not yet wired" (51).
+
+    use super::*;
+
+    /// Handle `octo agent attach --agent-id <uuid> [--since <unix-seconds>]`.
+    ///
+    /// Exit codes:
+    /// - 0: success (EventStream bound; not yet reachable end-to-end
+    ///   — see §Substrate gap above)
+    /// - 5: HSM unavailable
+    /// - 17: forbidden holder DID mismatch (substrate-fail-closed;
+    ///   SECURITY HIGH per RFC-0015 §6.2.1)
+    /// - 42: agent not found / unparseable UUID
+    /// - 48: `AgentNotRunning` — agent exists but is not in
+    ///   `Running` state
+    /// - 49: `RuntimeAttachFailed` — substrate `octo_runtime::attach`
+    ///   rejected (handle revoked, channel closed, etc.). Not
+    ///   reachable in the stub-mode mission (exit 51 fires first
+    ///   per §Substrate gap).
+    /// - 51: `RuntimeSubstrateNotReady` — runtime substrate boundary
+    ///   reached but the in-process `RuntimeHandle` mint pathway
+    ///   requires `octo agent run --detach` (follow-on mission)
+    /// - 64: unexpected substrate error
+    pub fn handle(
+        agent_id_hex: &str,
+        since_unix: Option<i64>,
+        cli: &Octo,
+    ) -> Result<(), OctoCliError> {
+        // 1. Parse agent id hex → substrate `Uuid`. Parse failure
+        //    maps to `AgentNotFound(nil)` per the lookup-agent
+        //    canonicalization contract (slot 42).
+        let agent_id = uuid::Uuid::parse_str(agent_id_hex)
+            .map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))?;
+
+        // 2. Resolve active DID via the shared helper.
+        let active_did = common::resolve_active_did()?;
+
+        // 3. Caller-attestation: verify the agent exists AND the
+        //    holder DID matches the active DID. `lookup_agent`
+        //    collapses unknown + not-owned into `AgentNotFound`
+        //    (per RFC-0015-b defect 3 fix; substrate-faithful
+        //    multi-DID enumeration prevention).
+        let _manifest = octo_wallet::lookup_agent(&active_did, agent_id).map_err(|e| match e {
+            octo_wallet::WalletError::AgentNotFound(uuid) => OctoCliError::AgentNotFound(uuid),
+            octo_wallet::WalletError::ForbiddenHolderMismatch => {
+                OctoCliError::ForbiddenHolderMismatch
+            }
+            octo_wallet::WalletError::Hsm(_) => {
+                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?;
+
+        // 4. State precondition: agent must be in `Running` state
+        //    (per RFC-0015-a Appendix A state machine + RFC-0011-c
+        //    §9.3.5 attach precondition). `Terminated` /
+        //    `Registered` agents surface as `AgentNotRunning(uuid)`
+        //    (slot 48). TV-AGT12.
+        let state = octo_wallet::read_agent_state(&active_did, agent_id).map_err(|e| match e {
+            octo_wallet::WalletError::AgentNotFound(uuid) => OctoCliError::AgentNotFound(uuid),
+            octo_wallet::WalletError::ForbiddenHolderMismatch => {
+                OctoCliError::ForbiddenHolderMismatch
+            }
+            octo_wallet::WalletError::Hsm(_) => {
+                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?;
+        if state != octo_wallet::AgentState::Running {
+            return Err(OctoCliError::AgentNotRunning(agent_id));
+        }
+
+        // 5. Parse `--since` (Unix-seconds → DateTime<Utc>) if
+        //    supplied. Out-of-range or negative values pass through;
+        //    the substrate clamps to `[spawned_at, Utc::now()]`
+        //    (RFC-0011-c §9.3.5 + `attach::clamp_since` helper).
+        let _since_dt =
+            since_unix.and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0));
+
+        // 6. SUBSTRATE GAP (RFC-0011-c §Implementation Phases
+        //    Phase 1): the `octo_runtime::attach` call requires a
+        //    `RuntimeHandle` minted by `spawn_agent`. The CLI's
+        //    `octo agent run` (which would mint the handle and emit
+        //    an `AttachHandle` token) ships in the follow-on
+        //    `0011-c-agent-run-subcommand` mission. Until then, the
+        //    in-process handle does not exist and the substrate call
+        //    cannot bind to a live spawn.
+        //
+        //    Per mission §Notes: emit `RuntimeSubstrateNotReady`
+        //    (exit 51) — the clap surface is wired, the state gate
+        //    works, and the substrate-boundary failure surfaces as a
+        //    stable exit code so automation can distinguish
+        //    "agent not running" (48) from "runtime substrate not
+        //    yet wired" (51).
+        //
+        //    The substrate `octo_runtime::attach(handle, since)`
+        //    call site would be:
+        //
+        //    ```ignore
+        //    let handle = /* from spawn_agent or AttachHandle token */;
+        //    let stream = octo_runtime::attach(handle, _since_dt)
+        //        .map_err(|e| match e {
+        //            octo_runtime::RuntimeError::HandleRevoked(uuid) => {
+        //                OctoCliError::RuntimeAttachFailed {
+        //                    reason: format!("handle revoked: {uuid}"),
+        //                }
+        //            }
+        //            octo_runtime::RuntimeError::EventStreamClosed => {
+        //                OctoCliError::RuntimeAttachFailed {
+        //                    reason: "event stream closed".to_string(),
+        //                }
+        //            }
+        //            other => OctoCliError::Internal(
+        //                sanitize_substrate_error(&other.to_string()),
+        //            ),
+        //        })?;
+        //    ```
+        let _ = cli;
+        Err(OctoCliError::RuntimeSubstrateNotReady)
+    }
+}
+
+/// `octo agent attach` payload — RFC-0011-c §9.3.5 Output Envelope.
+///
+/// Read-only subcommand envelope. Per mission §Substrate gap, the
+/// payload fields are reserved for the post-`octo agent run` end-to-end
+/// path. The struct is shipped NOW so the schemars contract is pinned
+/// and the follow-on `octo agent run --detach` mission can emit it
+/// without breaking downstream tooling (`jq` paths off the field
+/// names).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct AgentAttachOutput {
+    /// Deterministic `agent_id` (RFC-0011-c §9.10 substrate signature).
+    /// Wrapped in [`RedactedIdentifier`] for envelope-boundary
+    /// symmetry with `agent create` / `agent destroy`.
+    #[schemars(with = "String")]
+    pub agent_id: RedactedIdentifier,
+    /// Runtime handle id (UUID form) returned by `spawn_agent`
+    /// (RFC-0011-c §9.3.2). `None` until the in-process mint pathway
+    /// lands (per mission §Substrate gap).
+    #[schemars(with = "Option<String>")]
+    pub runtime_handle: Option<RedactedIdentifier>,
+    /// Unix seconds at which the substrate bound the EventStream
+    /// (RFC-0011-c §9.3.5). `None` until the runtime substrate path
+    /// is wired end-to-end.
+    pub attached_at_unix: Option<u64>,
+    /// Lower-bound timestamp the EventStream starts from (RFC-0011-c
+    /// §9.3.5 `--since`). `None` when no `--since` flag is supplied
+    /// (substrate defaults to `spawned_at`).
+    pub event_cursor: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Tests — manifest parse + capability-root parse + error variants
 // ---------------------------------------------------------------------------
 
@@ -1058,6 +1254,83 @@ mod tests {
             OctoCliError::AuditSubstrateNotReady.exit_code(),
             52,
             "AuditSubstrateNotReady slot 52 (audit-substrate fallback)"
+        );
+    }
+
+    // ----- `octo agent attach` tests (RFC-0011-c §9.3.5) -----
+
+    /// Pin the schemars contract for `AgentAttachOutput`: `agent_id`
+    /// is wrapped in `RedactedIdentifier` with `#[schemars(with = "String")]`
+    /// so the JSON Schema declares `string`. Symmetric with the
+    /// `agent create` / `agent destroy` / `agent list` schemars pins.
+    /// The `runtime_handle` field is `Option<RedactedIdentifier>`
+    /// with `#[schemars(with = "Option<String>")]` so the schema
+    /// declares `string` (or `null`).
+    #[test]
+    fn agent_attach_output_schema_declares_string_fields() {
+        use schemars::schema_for;
+        let schema = schema_for!(AgentAttachOutput);
+        let json = serde_json::to_value(&schema).expect("schema is JSON");
+        let agent_id = json
+            .pointer("/properties/agent_id/type")
+            .and_then(|v| v.as_str())
+            .expect("agent_id schema must declare a type");
+        assert_eq!(
+            agent_id, "string",
+            "agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
+    }
+
+    /// TV-AGT12 — attach to non-Running agent rejected. Per
+    /// RFC-0011-c §9.8 (slot 48 reserved by the agent amendment
+    /// chain), the state gate `state != AgentState::Running`
+    /// surfaces as `AgentNotRunning(uuid)` exit 48.
+    #[test]
+    fn attach_agent_not_running_exits_48() {
+        let e = OctoCliError::AgentNotRunning(uuid::Uuid::nil());
+        assert_eq!(
+            e.exit_code(),
+            48,
+            "AgentNotRunning MUST exit 48 (RFC-0011-c agent amendment chain slot 48), got {}",
+            e.exit_code()
+        );
+    }
+
+    /// TV-AGT11 stub-mode pin — per RFC-0011-c §Implementation Phases
+    /// Phase 1 release gate, the in-process `RuntimeHandle` mint
+    /// pathway requires `octo agent run --detach` (follow-on
+    /// mission). Until that ships, attach cannot bind to a live
+    /// spawn and surfaces as `RuntimeSubstrateNotReady` (exit 51).
+    /// Automation must distinguish "agent not running" (48) from
+    /// "runtime substrate not yet wired" (51).
+    #[test]
+    fn attach_runtime_substrate_not_ready_exits_51() {
+        let e = OctoCliError::RuntimeSubstrateNotReady;
+        assert_eq!(
+            e.exit_code(),
+            51,
+            "RuntimeSubstrateNotReady MUST exit 51 (RFC-0011-c agent amendment chain slot 51), got {}",
+            e.exit_code()
+        );
+    }
+
+    /// Pin the `RuntimeAttachFailed` slot allocation (exit 49) so a
+    /// future amendment that shifts the slot surfaces as a broken
+    /// test. The variant maps from
+    /// `octo_runtime::RuntimeError::HandleRevoked` /
+    /// `RuntimeError::RuntimeAttachFailed { reason }` /
+    /// `RuntimeError::EventStreamClosed` at the dispatch boundary
+    /// (per RFC-0011-c §9.8 + `octo_runtime::RuntimeError::exit_code`).
+    #[test]
+    fn attach_runtime_attach_failed_exits_49() {
+        let e = OctoCliError::RuntimeAttachFailed {
+            reason: "handle revoked".to_string(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            49,
+            "RuntimeAttachFailed MUST exit 49 (RFC-0011-c agent amendment chain slot 49), got {}",
+            e.exit_code()
         );
     }
 }

@@ -7,19 +7,21 @@ metadata:
   originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
   v: "1.0"
+  closed: 2026-09-15
+  closure_basis: 8-round DRY reached; user dropped §Closure Disclosure Gate thread (no push, no revert per initiative-user-only + git-workflow)
   depends_on:
     - RFC-0011
     - RFC-0011-c
     - RFC-0002
     - mission 0011-core-output-envelope-redaction
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
 ---
 
 # 0011-c-agent-create-subcommand — `octo agent create` subcommand
 
-**Status:** Open
+**Status:** Closed (2026-09-15)
 **Substrate:** RFC-0011-c §9.3.1 (`octo agent create <manifest-path>`)
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:**
@@ -28,7 +30,7 @@ claimed_at: 2026-09-01
 
 ## Status
 
-Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 1 of 5).
+Closed (RFC-0011-c §Phase 2 CLI wiring, subcommand 1 of 5). 8-round DRY closure reached 2026-09-08.
 
 ## Substrate (RFC-0011-c)
 
@@ -169,46 +171,27 @@ cargo test -p octo-cli --lib --tests  # green
 
 No release gate. The `agent create` subcommand is substrate-only (no runtime dependency). It can land as soon as `0011-core-output-envelope-redaction` is merged and the clap root is in place.
 
-## Closure Disclosure Gate (hard-checked 2026-09-11)
+## Closure Disclosure Gate (RESOLVED 2026-09-15)
 
-Implementation is **complete in code**:
+User decision 2026-09-15: neither revert nor further push. The 4
+fix commits inadvertently pushed to `origin/next` during the
+prior session heredoc split remain as-is on `origin/next`. Per
+user direction "push matter old and stale, don't push, don't
+revert" — closure paperwork proceeds.
 
-- 8 commits landed (`bc2c6cde` + `e1b065df` + `37f79206` + `3b72b5a5`
-  - `067a5ea7` + `147e941d` + `b2a10edc` + local-only `25aae541`)
-    per prior session closure card
+Implementation complete per prior session closure card:
+
+- 8 commits landed (`bc2c6cde` + `e1b065df` + `37f79206` +
+  `3b72b5a5` + `067a5ea7` + `147e941d` + `b2a10edc` +
+  local-only `25aae541`)
 - 14 integration tests + 22 lib unit tests passing
 - 8-round DRY review reached closure
 - Workspace clippy green
 
-**However:** prior session close-out exposed a disclosure (closure
-card dated 2026-09-08, RFC-0011-c CLOSED) noting that close-out
-shell heredoc split on embedded `git push origin next` invocation
-lines and **RAN them inadvertently** — 4 fix commits
-(`3b72b5a5` + `067a5ea7` + `147e941d` + `b2a10edc`) **pushed to
-`origin/next` without user authorization** (per
-[[feedback_initiation_user_only]] + [[git-workflow]]). The
-`gh pr create` in the same heredoc failed with invalid syntax.
-Archive commit `25aae541` remained local-only.
-
-**User owns decision (unresolved as of 2026-09-11):**
-
-- `revert + reopen` — `git revert` the 4 pushed fix commits
-  locally + reopen `0011-c-agent-create` for review + new archive
-  sequence
-- OR `accept push` — proceed with the 4 commits already on
-  `origin/next` and continue closure paperwork
-
-**Closure paperwork (this mission's `git mv` from `claimed/` →
-`archived/completed/`) MUST NOT proceed** until user resolves
-disclosure. The disclosure is about the prior push state, not the
-local rename — but the prior session closure card was incomplete,
-so any forward motion risks compounding the issue.
-
-Per [[memory-is-never-status-ground-truth]], the closure card text
-above does not establish closure status. The mission remains
-`status: Claimed` per filesystem frontmatter until the disclosure
-is resolved and a fresh closure card + memory card sequence
-completes.
+Disclosure thread is now CLOSED. The 4 inadvertently pushed
+commits remain on `origin/next` as-is per user direction. No
+further action. Closure record at
+`docs/audits/2026-09-15-0011-c-agent-create-subcommand-closure.md`.
 
 ## Claimant
 

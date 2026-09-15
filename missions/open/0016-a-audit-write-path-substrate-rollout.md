@@ -66,12 +66,8 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
    - `list_receipts` substrate-faithful return type remains `Vec<u64>` (per §list_receipts in `crates/octo-audit/src/receipt_read.rs` — `Result<Vec<u64>, AuditError>`). CLI presentation layer wraps as `ReceiptId` for operator display (presentation-only, no substrate change)
    - Verification grep: no caller site uses raw `[u8; 32]` for `ReceiptId`. Every consumer resolves through `octo_settlement::ReceiptId` import path
 
-4. **CLI §6.7 error variant wiring verification** — Two test files at `crates/octo-cli/tests/` exercise every §6.7 RFC-0016-a substrate error variant mapping to `OctoCliError`: `error_envelope_collapse_group.rs` (collapse-group) per AC-11a, `error_envelope_additive_variants.rs` (additive) per AC-11b:
-   - Collapse-group (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) → `OctoCliError::Internal(redacted_reason)` → exit 64 (per RFC-0016-a §6.7 + §OctoCliError mapping table in `crates/octo-cli/src/error.rs`)
-   - `AuditError::AuditAppendFailed(reason)` → `OctoCliError::AuditSubstrateNotReady` → exit 52
-   - `AuditError::ReceiptNotFound(decimal)` → `OctoCliError::ReceiptNotFound(redacted_id)` → exit 17
-   - `AuditError::InvalidFilter(reason)` → `OctoCliError::InvalidFilter(redacted_reason)` → exit 16
-   - `AuditError::PermissionDenied(reason)` → `OctoCliError::PermissionDenied(redacted_reason)` → exit 13
+4. **CLI §6.7 error variant wiring verification** — Extend the existing in-source unit test `tv_rfc0016a_audit_error_envelope_mapping` at `crates/octo-cli/src/error.rs` (under `mod tests`) to cover every §6.7 RFC-0016-a substrate error variant mapping to `OctoCliError` per AC-11. Existing test already covers 7 of 8 §6.7 mappings (ReceiptNotFound exit 17, InvalidFilter exit 16, PermissionDenied exit 13, AuditAppendFailed exit 52, SequenceGap exit 64, AlreadyExists exit 64, SinkSpecific exit 64). Extension adds the single missing collapse-group case:
+   - `AuditError::ChainHashMismatch { .. }` → `OctoCliError::Internal(redacted_reason)` → exit 64 (the 8th collapse-group variant per RFC-0016-a §6.7 + `impl From<octo_audit::AuditError> for OctoCliError` mapping table at `crates/octo-cli/src/error.rs`)
    - `redact_substrate_error` applied to every reason payload per RFC-0016-a §6.8
 
 5. **Parent RFC cross-reference update** — append RFC-0016-a §Related RFCs note linking to RFC-0016 + RFC-0015-a + RFC-0014-v2 (paired-acceptance pointer, existing RFC-0014 unversioned row preserved). Verify RFC-0016 §Related RFCs row for RFC-0016-a is present (paired-amendment pointer, row already exists, verification only).
@@ -94,8 +90,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - [ ] AC-8: NEW `crates/octo-audit/tests/read_stalls_while_write_invariant.rs` PASSES (N=8 concurrent readers + 1 writer. Readers see atomic pre/post-write states)
 - [ ] AC-9: NEW Stoolap DOMAIN adapter conformance assertion — every DOMAIN adapter site (`crates/octo-audit/src/storage/*.rs`) routes through the gated adapter (no direct table access bypass). Atomic pre/post-write invariant holds regardless of R/W primitive choice
 - [ ] AC-10: `ReceiptId(pub u64)` paired-acceptance verification — `octo-audit-core` consumer-resolution grep (no crate-root re-export, consumers resolve via `octo_audit` façade wrapper) + `ReceiptSummary::receipt_id` field shape + grep assertion that no caller site uses raw `[u8; 32]` for `ReceiptId`
-- [ ] AC-11a: NEW `crates/octo-cli/tests/error_envelope_collapse_group.rs` PASSES (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch all map to `OctoCliError::Internal(redacted_reason)` → exit 64)
-- [ ] AC-11b: NEW `crates/octo-cli/tests/error_envelope_additive_variants.rs` PASSES (4 additive substrate variants map to documented `OctoCliError` variants at exits 52/17/16/13 respectively)
+- [ ] AC-11: EXISTING in-source unit test `tv_rfc0016a_audit_error_envelope_mapping` at `crates/octo-cli/src/error.rs` extended with the 8th `AuditError::ChainHashMismatch { .. }` case (≤6 lines added to the test function). Full coverage = all 8 §6.7 RFC-0016-a mappings verified (ReceiptNotFound exit 17, InvalidFilter exit 16, PermissionDenied exit 13, AuditAppendFailed exit 52, SequenceGap exit 64, AlreadyExists exit 64, SinkSpecific exit 64, ChainHashMismatch exit 64)
 - [ ] AC-12: RFC-0016-a §Related RFCs table appended with row pointing to RFC-0014-v2 (paired-acceptance for §6.4, existing RFC-0014 unversioned row is preserved) — row text: `RFC-0014-v2 — §S3 ReceiptId newtype paired with §6.4 verification`
 - [ ] AC-13: RFC-0016 §Related RFCs table verification — RFC-0016-a row already present (paired-amendment pointer), no append required. Verification confirms row text reads `RFC-0016-a — Audit Receipt Write-Path Amendment (sibling; DEFERRED surface per §6.1 §Amendment Surface)`
 - [ ] AC-14: Cite sweep clean for any RFC parent updates (`timeout 30 scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE per [[feedback-validate-cites-timeout]])
@@ -137,8 +132,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 | `rsw-single-writer-guarantee`            | 2 writer threads call `append_audit_event` concurrently                                                    | one succeeds, the other gets `AuditError::ChainHashMismatch` (or `WouldBlock`)   |
 | `rsw-stoolap-domain-adapter-conformance` | grep `crates/octo-audit/src/storage/*.rs` for direct table access                                          | every flagged site routes through gated adapter (R/W primitive agnostic)         |
 | `rid-paired-acceptance-verification`     | grep workspace for raw `[u8; 32]` use sites of `ReceiptId`                                                 | 0 matches. Every consumer resolves via `octo_settlement::ReceiptId` import path  |
-| `cli-error-envelope-collapse-group`      | every collapse-group `AuditError` variant (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) | maps to `OctoCliError::Internal(redacted_reason)` → exit 64                      |
-| `cli-error-envelope-additive-variants`   | 4 §6.7 additive `AuditError` variants                                                                      | map to documented `OctoCliError` variants at exits 52/17/16/13 respectively      |
+| `cli-error-envelope-all-variants`        | 8 §6.7 `AuditError` variants (4 additive + 4 collapse-group)                                              | each maps to documented `OctoCliError` variant at correct exit (additive 52/17/16/13, collapse-group all 64) |
 
 ## Cross-references
 

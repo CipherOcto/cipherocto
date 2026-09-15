@@ -21,6 +21,7 @@
 
 #![allow(unused_imports)]
 
+use octo_audit::CHAIN_HASH_SIZE;
 use octo_settlement::ReceiptId;
 
 /// RFC-0016-a §6.4 — `ReceiptId` newtype IS re-exported at
@@ -50,7 +51,7 @@ fn rid_receipt_summary_field_shape() {
         ask_id: "00".repeat(32),
         model: "test-model".to_owned(),
         cost_dqa: 100,
-        capability_root: [0u8; 32],
+        capability_root: [0u8; CHAIN_HASH_SIZE],
         subject_did: "did:oct:test".to_owned(),
         executed_at_unix: 1_000,
         status: octo_settlement::ReceiptStatus::Ok,
@@ -81,7 +82,7 @@ fn rid_audit_core_does_not_reexport_receipt_id() {
     // (Layer A frozen per RFC-0014 §Module Layout).
     assert!(
         !audit_core_lib.contains("ReceiptId"),
-        "octo-audit-core Layer A frozen substrate MUST NOT export ReceiptId (RFC-0014 §Module Layout + RFC-0014-v2 §S3 paired-acceptance). Found ReceiptId reference in octo-audit-core/src/lib.rs:\n{audit_core_lib}"
+        "octo-audit-core Layer A frozen substrate MUST NOT export ReceiptId (RFC-0014 §Module Layout + RFC-0014-v2 §S3 paired-acceptance)"
     );
 }
 

@@ -15,7 +15,7 @@
 
 use octo_audit::{
     append_audit_event, compute_chain_hash, AppendOnlyAuditSink, AuditError, AuditEvent,
-    AuditEventKind,
+    AuditEventKind, CHAIN_HASH_SIZE,
 };
 use std::sync::Mutex;
 
@@ -140,7 +140,7 @@ fn cb_compute_chain_hash_each_variant_agent_transition() {
 // invariant).
 #[test]
 fn cb_append_audit_event_returns_compute_chain_hash() {
-    let event = make_event(10, 5_000, [0u8; 32], AuditEventKind::Insert);
+    let event = make_event(10, 5_000, [0u8; CHAIN_HASH_SIZE], AuditEventKind::Insert);
     let expected = compute_chain_hash(&event);
 
     let mut sink = MockSink::new();

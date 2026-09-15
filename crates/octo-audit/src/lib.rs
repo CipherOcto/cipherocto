@@ -27,6 +27,11 @@ pub use octo_audit_core::AuditError;
 pub use octo_audit_core::AuditEvent;
 pub use octo_audit_core::AuditEventKind;
 
+/// Canonical 32-byte hash-field length (Layer B presentation constant).
+/// Pairs the `[u8; 32]` shape of `ChainHash`, `cap_root_hash`,
+/// `prev_chain_hash`, and `ReceiptId` opaque blob across the substrate.
+pub const CHAIN_HASH_SIZE: usize = 32;
+
 // Storage adapter module — concrete sinks (e.g. Stoolap) live here at
 // the DOMAIN layer. Per RFC-0012 §Trait G3 mitigation, concrete impls
 // keep the `&mut self` requirement to preserve type-level append-only

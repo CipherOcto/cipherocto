@@ -91,7 +91,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - [ ] AC-5: `cargo test -p octo-wallet --lib` passes (transition_agent + AgentRecord tests stay green)
 - [ ] AC-6: `cargo test -p octo-cli --lib` passes (error variant tests stay green)
 - [ ] AC-7: NEW `crates/octo-audit/tests/canonical_bytes_invariant.rs` PASSES (≥10 tests covering each AuditEventKind variant + re-canonicalization idempotency)
-- [ ] AC-8: NEW `crates/octo-audit-core/tests/read_stalls_while_write_invariant.rs` PASSES (N=8 concurrent readers + 1 writer; readers see atomic pre/post-write states)
+- [ ] AC-8: NEW `crates/octo-audit/tests/read_stalls_while_write_invariant.rs` PASSES (N=8 concurrent readers + 1 writer; readers see atomic pre/post-write states)
 - [ ] AC-9: NEW Stoolap DOMAIN adapter conformance assertion — every DOMAIN adapter site (`crates/octo-audit/src/storage/*.rs`) routes through the gated adapter (no direct table access bypass); atomic pre/post-write invariant holds regardless of R/W primitive choice
 - [ ] AC-10: `ReceiptId(pub u64)` paired-acceptance verification — `octo-audit-core` consumer-resolution grep (no crate-root re-export; consumers resolve via `octo_audit` façade wrapper) + `ReceiptSummary::receipt_id` field shape + grep assertion that no caller site uses raw `[u8; 32]` for `ReceiptId`
 - [ ] AC-11a: NEW `crates/octo-cli/tests/error_envelope_collapse_group.rs` PASSES (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch all map to `OctoCliError::Internal(redacted_reason)` → exit 64)

@@ -263,7 +263,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 
 `octo_audit::append_audit_event` (Layer B façade) MUST:
 
-1. Re-canonicalize the canonical-form fields (`event_id`, `node_did`, `event_kind` tag byte, `cap_root_hash`, `at_millis_unix`, `prev_chain_hash`) via the Layer A free function `compute_chain_hash(&event)` (BLAKE3 over canonical bytes). Substrate `canonical_bytes` collapses `event_kind` to a single tag byte; variant payload fields (`agent_id`, `from`, `to`, `reason`) are NOT extracted into the canonical-byte buffer. Note: `AgentTransition` variant (tag byte 3) is `#[cfg(feature = "octo-audit-internal")]`-gated (see §Implicit Assumptions item 7); invisible in default builds.
+1. Re-canonicalize the canonical-form fields (`event_id`, `node_did`, `event_kind` tag byte, `cap_root_hash`, `at_millis_unix`, `prev_chain_hash`) via the Layer A free function `compute_chain_hash(&event)` (BLAKE3 over canonical bytes). Substrate `canonical_bytes` collapses `event_kind` to a single tag byte; variant payload fields (`agent_id`, `from`, `to`, `reason`) are NOT extracted into the canonical-byte buffer. (cfg-gate acknowledgment per §Implicit Assumptions item 7.)
 2. Compare `compute_chain_hash(&event)` against `event.chain_hash`; on mismatch, short-circuit with `Err(AuditError::ChainHashMismatch { event_id })` BEFORE the sink is called.
 3. Call `sink.append(&event)?` only after the canonical-bytes check passes (canonical encoding owned by Layer A; façade is read-only with respect to the encoding).
 
@@ -275,11 +275,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 
 The read-stall-while-write acceptance criterion is UNVERIFIABLE at this façade layer because `list_receipts` + `get_receipt` from RFC-0016 touch a separate `RECEIPT_REGISTRY` Mutex from the writer sink. Per the substrate `crates/octo-audit/src/audit_event_v2.rs` module-level docstring (which declares the same read-stall invariant at the DOMAIN adapter layer), the §6.11 acceptance criterion is gated on the DOMAIN adapter paired-acceptance round (each DOMAIN impl owns the choice of R/W primitive — single shared mutex, `RwLock`, or sharded — and must demonstrate the read-stall property end-to-end at acceptance time).
 
-Substrate-faithful form of the invariant (substrate trait contract — RFC-0012-v2 §S2 substrate spec):
-
-1. `AppendOnlyAuditSink::append(&mut self, event)` enforces single-writer per instance via Rust `&mut self` (type-level; the borrow checker rejects concurrent `&mut` on the same instance).
-2. Concurrent readers (`list_receipts` + `get_receipt` from RFC-0016) MUST stall (block) for the duration of the write — DOMAIN adapter paired-acceptance round validates this property end-to-end.
-3. Lock released on success OR failure (idempotent cleanup).
+Substrate-faithful form per RFC-0012-v2 §S2
 
 **Acceptance criterion:** acceptance of RFC-0012 DOMAIN adapter without demonstrating read-stall at the paired-acceptance round is a regression on the read-during-write race. The façade `append_audit_event` cannot enforce this property in isolation; it is a paired-substrate-acceptance gate.
 
@@ -491,17 +487,30 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 **Amendment acceptance test (v1.6 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
 
+### v1.7 — R32.5 + R34.5 Substrate Sweep (2026-09-15)
+
+| #   | Amendment                                                                                                                                   | Substrate ground truth                                                                                                                                     | Acceptance criterion                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 29  | §Implicit Assumptions item 6 cite-chain: include Trail v1.6 row 28 + WalletError Layer B reference                                          | Trail v1.6 row 28 enumerates Layer-by-Layer classification                                                                                                 | §IA #6 cross-refs Trail v1.5 row 20 + Trail v1.6 row 28                                                                                                     |
+| 30  | §Trail v1.5 row 20: ambiguous 6-enum arithmetic → explicit Layer-by-Layer classification (4 Layer A + 1 Layer B + 1 Layer C)                | Substrate enum anchors (4 Layer A frozen + 1 Layer B façade + 1 Layer C consumer-side)                                                                     | §Trail v1.5 row 20 enumerates 6 enums by name with correct Layer classification                                                                             |
+| 31  | §Trail v1.6 row 28: Layer-by-Layer classification explicit                                                                                  | Substrate enum anchors                                                                                                                                     | §Trail v1.6 row 28 enumerates 6 enums by name with correct Layer classification                                                                             |
+| 32  | §6.10 item 1 inline cfg-gate acknowledgment → cross-ref §IA item 7                                                                          | §IA item 7 cross-refs Trail v1.5 row 21                                                                                                                    | §6.10 item 1 cites §IA item 7                                                                                                                               |
+| 33  | §6.11 71-word 3-item substrate trait contract block → 1 sentence cite per RFC-0012-v2 §S2                                                   | RFC-0012-v2 §S2 is canonical substrate spec                                                                                                                | §6.11 substrate-faithful form line cites RFC-0012-v2 §S2                                                                                                    |
+| 34  | RFC-0014-v2 + RFC-0012-v2 version-pin in 7 prose sites (§6.5 header + body, §6.11 form, Trail v1.5 row 20, Trail v1.6 row 24 + 25, Mermaid) | §S2 anchors exist in v2 amendments; RFC-0014-v3 + RFC-0012-v3 have different §S numbering; validate_cites.sh requires version pin for §S anchor resolution | DEFERRED per R31.5 commit pattern (pre-existing structural trade-off; CLAUDE.md §RFC Reference Conventions Reaffirmed overridden by cite-anchor validation) |
+
+**Amendment acceptance test (v1.7 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
+
 ## Version History
 
-| Version | Date       | Changes                                                                     |
-| ------- | ---------- | --------------------------------------------------------------------------- |
-| v1.7    | 2026-09-15 | R32.5 sweep (Layer-by-Layer classification + per-item scope + 5-site enum). |
-| v1.6    | 2026-09-15 | R30.5 sweep (phantom anchors + 8-variant + 7 items + 6-enum enumeration).   |
-| v1.5    | 2026-09-14 | R22.5 sweep.                                                                |
-| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String.                            |
-| v1.2    | 2026-09-14 | R2.5 sweep.                                                                 |
-| v1.1    | 2026-09-14 | Substrate Sweep.                                                            |
-| v1.0    | 2026-09-11 | Initial draft.                                                              |
+| Version | Date       | Changes                                                                                           |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| v1.7    | 2026-09-15 | R32.5 + R34.5 sweep (Layer classification + Trail row + 6-enum + version-pin trade-off document). |
+| v1.6    | 2026-09-15 | R30.5 sweep (phantom anchors + 8-variant + 7 items + 6-enum enumeration).                         |
+| v1.5    | 2026-09-14 | R22.5 sweep.                                                                                      |
+| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String.                                                  |
+| v1.2    | 2026-09-14 | R2.5 sweep.                                                                                       |
+| v1.1    | 2026-09-14 | Substrate Sweep.                                                                                  |
+| v1.0    | 2026-09-11 | Initial draft.                                                                                    |
 
 ## Related RFCs
 

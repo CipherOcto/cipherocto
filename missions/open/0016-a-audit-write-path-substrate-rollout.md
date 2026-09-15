@@ -66,7 +66,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
    - `list_receipts` substrate-faithful return type remains `Vec<u64>` (per §list_receipts in `crates/octo-audit/src/receipt_read.rs` — `Result<Vec<u64>, AuditError>`); CLI presentation layer wraps as `ReceiptId` for operator display (presentation-only, no substrate change)
    - Verification grep: no caller site uses raw `[u8; 32]` for `ReceiptId`; every consumer resolves through `octo_settlement::ReceiptId` import path
 
-4. **CLI §6.7 error variant wiring verification** — `crates/octo-cli/tests/error_envelope_audit_write_path.rs` exercises every §6.7 RFC-0016-a additive substrate error variant mapping to `OctoCliError`:
+4. **CLI §6.7 error variant wiring verification** — Two test files at `crates/octo-cli/tests/` exercise every §6.7 RFC-0016-a substrate error variant mapping to `OctoCliError`: `error_envelope_collapse_group.rs` (collapse-group) per AC-11a, `error_envelope_additive_variants.rs` (additive) per AC-11b:
    - Collapse-group (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) → `OctoCliError::Internal(redacted_reason)` → exit 64 (per RFC-0016-a §6.7 + §OctoCliError mapping table in `crates/octo-cli/src/error.rs`)
    - `AuditError::AuditAppendFailed(reason)` → `OctoCliError::AuditSubstrateNotReady` → exit 52
    - `AuditError::ReceiptNotFound(decimal)` → `OctoCliError::NotFound(redacted_id)` → exit 17
@@ -109,7 +109,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - **RFC-0015-a** — write-path surface contract for agent transitions; `transition_agent` calls `append_agent_transition_event`.
 - **RFC-0014-v2** — `ReceiptId(pub u64)` newtype at `octo-settlement-core::receipt` per §S3 (paired-acceptance for §6.4 verification). AC-10 active.
 - **RFC-0012-v2** — substrate amendments for the audit chain; `compute_chain_hash` paired with §S5.
-- **parent RFC-0016** (`rfcs/accepted/process/0016-audit-receipt-api.md`) — needs §D Cross-references table appended (AC-13).
+- **parent RFC-0016** (`rfcs/accepted/process/0016-audit-receipt-api.md`) — §Related RFCs row verification only (AC-13); no edit required since RFC-0016-a row is already present.
 - **parent RFC-0016-a** (`rfcs/accepted/process/0016-a-audit-receipt-write-path.md`) — needs §Related RFCs table appended (AC-12).
 - **paired impl mission** (`missions/claimed/0015-b-substrate-defect-impl.md`) — paired implementation that landed §6 substrate code (Claimed status; not yet archived).
 

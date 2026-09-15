@@ -2,11 +2,11 @@
 
 ## Status
 
-Draft (2026-09-11; v1.5 amendment in flight 2026-09-14)
+Draft (2026-09-11; v1.6 amendment in flight 2026-09-15)
 
 > **Sibling amendment to RFC-0016.** This document carries the DEFERRED write-path surface whose acceptance is bound by the canonical pairing invariant (see §Pairing invariant).
 
-> **R29 split plan:** RFC-0016 (substrate-faithful read surface) at `rfcs/draft/process/0016-audit-receipt-api.md` was slimmed to 5 KEEP items per §6.1 + substrate-canonical 3-variant `AuditError` re-export per §6.2.5; this amendment carries the remaining 12+ DEFERRED items per §Pairing invariant.
+> **R29 split plan:** RFC-0016 (substrate-faithful read surface) at `rfcs/accepted/process/0016-audit-receipt-api.md` was slimmed per §6.1 to 7 items (4 KEEP + 3 PRE-EXISTING) + substrate-canonical 8-variant `AuditError` re-export per §6.2.5; this amendment carries the remaining 12+ DEFERRED items per §Pairing invariant.
 
 > **v1.3 Substrate Sweep (2026-09-14):** see §Substrate-Faithful Amendment Trail for per-amendment ground-truth + acceptance criteria.
 
@@ -31,7 +31,7 @@ This amendment specifies the write-path + projection + ACL + scrubber surface th
 
 ## Pairing invariant
 
-> Acceptance of RFC-0016 REQUIRES paired acceptance of RFC-0012 + RFC-0014 + RFC-0011. See §Layer placement for crate-layer mapping + §Implicit Assumptions for extension-surface invariants.
+> Acceptance of RFC-0016 REQUIRES paired acceptance of RFC-0012 + RFC-0014 + RFC-0011. See §Key Files (Layer placement table) for crate-layer mapping + §Implicit Assumptions for extension-surface invariants.
 
 ## Design Goals
 
@@ -138,11 +138,11 @@ impl Display for ReceiptId {
 // `octo_settlement::receipt_id_for_digest(&digest) -> Option<ReceiptId>` (free function returning Option).
 ```
 
-### §6.5 `ReceiptSummary` projection struct (paired with RFC-0014 §S5)
+### §6.5 `ReceiptSummary` projection struct (paired with RFC-0014-v2 §S2)
 
 ```rust
 /// Compact summary projection of canonical Receipt for CLI list output.
-/// Pairs with RFC-0014 §S5 Receipt field extensions.
+/// Pairs with RFC-0014-v2 §S2 Receipt 6-field canonical form.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptSummary {
     pub receipt_id: ReceiptId,
@@ -199,7 +199,7 @@ Per RFC-0011 canonical `[ADD]` error envelope pattern, `From<AuditError>` conver
 
 | Substrate variant (paired with RFC-0011; row 1 = CLI-shape collapse group, rows 2-5 = one-to-one CLI-shape mapping in substrate enum declaration order) | CLI variant                              | CLI exit | RFC-0011 slot                |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | -------- | ---------------------------- |
-| `[collapse group per Trail v1.2 row 12]`                                                                                                                | `OctoCliError::Internal(reason)`         | 64       | parent reserved              |
+| `[collapse group: SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch]`                                                                      | `OctoCliError::Internal(reason)`         | 64       | parent reserved              |
 | (CLI-shape, RFC-0016) `AuditAppendFailed(reason)`                                                                                                       | `OctoCliError::AuditSubstrateNotReady`   | 52       | RFC-0011 §Exit Codes slot 52 |
 | (CLI-shape, RFC-0016) `ReceiptNotFound(decimal)`                                                                                                        | `OctoCliError::ReceiptNotFound(decimal)` | 17       | RFC-0011 §Error Handling     |
 | (CLI-shape, RFC-0016) `InvalidFilter(reason)`                                                                                                           | `OctoCliError::InvalidFilter(reason)`    | 16       | parent reserved              |
@@ -275,7 +275,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 
 The read-stall-while-write acceptance criterion is UNVERIFIABLE at this façade layer because `list_receipts` + `get_receipt` from RFC-0016 touch a separate `RECEIPT_REGISTRY` Mutex from the writer sink. Per substrate `audit_event_v2.rs` §6.11 module-level docstring, the §6.11 acceptance criterion is gated on the DOMAIN adapter paired-acceptance round (each DOMAIN impl owns the choice of R/W primitive — single shared mutex, `RwLock`, or sharded — and must demonstrate the read-stall property end-to-end at acceptance time).
 
-Substrate-faithful form of the invariant (substrate trait contract — RFC-0012 §S5 substrate spec):
+Substrate-faithful form of the invariant (substrate trait contract — RFC-0012-v2 §S2 substrate spec):
 
 1. `AppendOnlyAuditSink::append(&mut self, event)` enforces single-writer per instance via Rust `&mut self` (type-level; the borrow checker rejects concurrent `&mut` on the same instance).
 2. Concurrent readers (`list_receipts` + `get_receipt` from RFC-0016) MUST stall (block) for the duration of the write — DOMAIN adapter paired-acceptance round validates this property end-to-end.
@@ -445,7 +445,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 6   | §6.8 + §6.1 row + §Implementation Phases + §Key Files + §Compatibility + §Layer placement + §Appendix A + Mermaid: replace phantom `ScrubbedAuditError` / `ScrubbedString` newtypes | `crates/octo-audit/src/scrub_newtypes.rs` free function form (per §6.8)                                                                 | All 8+ locations swept; free function form canonical                          |
 | 7   | §6.9 Pattern 4 regex: `\b[A-Z]{5}\b` → `(?i)\b(?:SQLSTATE_[A-Z0-9]{5}\|errno \d+\|error code \d+)\b`                                                                                | `crates/octo-audit/src/scrub.rs` `RE_SQLSTATE` regex literal per §6.9 row                                                               | §6.9 Pattern 4 row documents substrate-faithful regex literal                 |
-| 8   | §6.2 + §6.3 + §Appendix A + §Implementation Phases + §Alternatives + §Implicit Assumptions: `append_audit_event` signature gains `dyn` keyword on `&mut AppendOnlyAuditSink`        | `crates/octo-audit/src/audit_event_v2.rs` `pub fn append_audit_event(sink: &mut dyn ...)` Rust 2021 trait-object syntax                 | All `append_audit_event` signature sites use `&mut dyn AppendOnlyAuditSink`   |
+| 8   | §6.2: `append_audit_event` signature gains `dyn` keyword on `&mut AppendOnlyAuditSink`                                                                                              | §6.2 canonical function contract per `octo_audit` Layer B façade anchor                                                                 | §6.2 declares `&mut dyn AppendOnlyAuditSink` Rust 2021 trait-object syntax    |
 | 9   | §6.3 ChainHash::Display: replace `hex::encode(self.0)` with zero-allocation per-byte loop                                                                                           | `crates/octo-audit/src/audit_event_v2.rs` `impl fmt::Display for ChainHash` zero-alloc per-byte loop; avoids `hex` crate                | §6.3 displays zero-alloc per-byte loop; matches substrate                     |
 | 10  | §Test Vectors TV-AUD-7-canonical-bytes expected output: `SinkSpecific("canonical bytes mismatch")` → `ChainHashMismatch { event_id }`                                               | `crates/octo-audit/src/audit_event_v2.rs` `append_audit_event` returns `ChainHashMismatch { event_id }` per R2.5 collapse               | TV-AUD-7-canonical-bytes expected output reflects collapsed substrate variant |
 | 11  | §Test Vectors Notes column: rewrite 11 stale pattern references (TV-AUD-4e, 11a, 11b, 11c, 11d, 11e, 11f, 11h, 11i, 11j, 11k) to substrate canonical numbers (§6.9 row mapping)     | Substrate canonical pattern numbering per §6.9 row table                                                                                | Each TV-AUD Notes pattern ref cites §6.9 canonical #                          |
@@ -471,21 +471,35 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ### v1.5 — R22.5 Substrate Sweep (2026-09-14)
 
-| #   | Amendment                                                                | Substrate ground truth                                                                                                                                                                         | Acceptance criterion                                                                         |
-| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 20  | §Implicit Assumptions item 6 `#[non_exhaustive]` set extended to 6 enums | Layer A frozen per RFC-0012 + RFC-0014-v2: 4 enums (4 Layer A frozen + 2 consumer-side). Substrate canonical citation per §Implicit Assumptions item 6.                                        | §Implicit Assumptions item 6 documents the six-enum `#[non_exhaustive]` set                  |
-| 21  | §6.2 + §6.10: `AuditEventKind::AgentTransition` cfg-gate acknowledgment  | `crates/octo-audit-core/src/event.rs` `AgentTransition` variant under `#[cfg(feature = "octo-audit-internal")]` (paired-layer visibility via Layer B Cargo.toml); invisible in default builds. | §6.2 + §6.10 acknowledge cfg-gate (canonical §6.10 invariant ownership statement unaffected) |
-| 22  | §IA #6: `#[non_exhaustive]` extension surface + cfg-gate acknowledgment  | §IA #6 cross-refs Trail v1.5 rows 20 + 21 (single source per R30.5b si simplification)                                                                                                         | §IA #6 cross-refs Trail v1.5 rows 20 + 21                                                    |
+| #   | Amendment                                                                | Substrate ground truth                                                                                                                                                                                                                                             | Acceptance criterion                                                                                                                                          |
+| --- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 20  | §Implicit Assumptions item 6 `#[non_exhaustive]` set extended to 6 enums | Layer A frozen per RFC-0012 + RFC-0014-v2: `AuditError` (8-var) + `AuditEventKind` + `AuditChainError` + `ReceiptStatus` (4-var). Consumer-side Layer C: `WalletError` + `OctoCliError`. All 6 carry `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration | §Implicit Assumptions item 6 documents the six-enum `#[non_exhaustive]` set with per-enum substrate anchors (without file:line per [[no-line-refs-anywhere]]) |
+| 21  | §6.2 + §6.10: `AuditEventKind::AgentTransition` cfg-gate acknowledgment  | `crates/octo-audit-core/src/event.rs` `AgentTransition` variant under `#[cfg(feature = "octo-audit-internal")]` (paired-layer visibility via Layer B Cargo.toml); invisible in default builds.                                                                     | §6.2 + §6.10 acknowledge cfg-gate (canonical §6.10 invariant ownership statement unaffected)                                                                  |
+| 22  | §IA #6: `#[non_exhaustive]` extension surface + cfg-gate acknowledgment  | §IA #6 cross-refs Trail v1.5 rows 20 + 21 (single source per R30.5b si simplification)                                                                                                                                                                             | §IA #6 cross-refs Trail v1.5 rows 20 + 21                                                                                                                     |
+
+### v1.6 — R30.5 Substrate Sweep (2026-09-15)
+
+| #   | Amendment                                                                                                                                                                                                 | Substrate ground truth                                                                                                                   | Acceptance criterion                                                                                                                      |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 23  | §Status header 3 CRITICAL corrections (RFC-0016 path `rfcs/draft/` → `rfcs/accepted/`; AuditError count 3 → 8; KEEP item count 5 → 7 = 4 KEEP + 3 PRE-EXISTING)                                           | RFC-0016 promoted per task #818 closure; substrate `crates/octo-audit-core/src/error.rs` declares 8-variant AuditError                   | §Status line 9 cites RFC-0016 accepted-path + 8-variant count + 7-item count (single source per CLAUDE.md §Stable Abstractions Principle) |
+| 24  | §Pairing invariant + §6.5 header: phantom `§Layer placement` / `§S5` anchors → `§Key Files (Layer placement table)` / `§S2` (Receipt 6-field canonical form per RFC-0014-v2)                              | §Key Files Layer placement table is canonical crate-layer mapping; RFC-0014-v2 §S2 declares Receipt canonical form                       | §Pairing invariant cites §Key Files; §6.5 header cites RFC-0014-v2 §S2                                                                    |
+| 25  | §6.10 + §6.11 + §Implementation Phases Phase 1 + §Key Files row + Appendix B Mermaid: phantom `RFC-0012 §S5` (`AuditEvent` struct unchanged) → `§S2` (`AppendOnlyAuditSink::append` invariants canonical) | RFC-0012-v2 §S2 declares `AppendOnlyAuditSink::append` invariants                                                                        | All 5 §S5 references replaced with §S2                                                                                                    |
+| 26  | §6.7 row 1: collapse-group placeholder → explicit 4-variant enumeration (`SequenceGap` + `AlreadyExists` + `SinkSpecific` + `ChainHashMismatch`)                                                          | `crates/octo-audit-core/src/error.rs` AuditError declaration order                                                                       | §6.7 row 1 enumerates the 4 collapse-group variants verbatim per substrate enum order                                                     |
+| 27  | Trail v1.2 row 8: stale over-citation (5+ sites) → single §6.2 canonical site only                                                                                                                        | §6.2 is canonical function contract declaration                                                                                          | Trail v1.2 row 8 cites only §6.2                                                                                                          |
+| 28  | Trail v1.5 row 20: ambiguous 6-enum arithmetic → explicit 4 Layer A frozen + 2 consumer-side enum list                                                                                                    | 4 Layer A frozen: `AuditError` + `AuditEventKind` + `AuditChainError` + `ReceiptStatus`; 2 consumer-side: `WalletError` + `OctoCliError` | Trail v1.5 row 20 enumerates all 6 enums by name with Layer classification                                                                |
+
+**Amendment acceptance test (v1.6 cumulative):** every amendment lands at substrate-faithful parity with paired implementation substrate. See per-amendment rows above for ground-truth citations.
 
 ## Version History
 
-| Version | Date       | Changes                                          |
-| ------- | ---------- | ------------------------------------------------ |
-| v1.5    | 2026-09-14 | R22.5 sweep.                                     |
-| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String. |
-| v1.2    | 2026-09-14 | R2.5 sweep.                                      |
-| v1.1    | 2026-09-14 | Substrate Sweep.                                 |
-| v1.0    | 2026-09-11 | Initial draft.                                   |
+| Version | Date       | Changes                                                                   |
+| ------- | ---------- | ------------------------------------------------------------------------- |
+| v1.6    | 2026-09-15 | R30.5 sweep (phantom anchors + 8-variant + 7 items + 6-enum enumeration). |
+| v1.5    | 2026-09-14 | R22.5 sweep.                                                              |
+| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String.                          |
+| v1.2    | 2026-09-14 | R2.5 sweep.                                                               |
+| v1.1    | 2026-09-14 | Substrate Sweep.                                                          |
+| v1.0    | 2026-09-11 | Initial draft.                                                            |
 
 ## Related RFCs
 
@@ -542,7 +556,7 @@ sequenceDiagram
     Aud->>Core: compute_chain_hash(&event) — Layer A free function (canonical-bytes-on-write invariant §6.10)
     Core-->>Aud: canonical_chain_hash
     Aud->>Aud: compare canonical vs event.chain_hash; mismatch → ChainHashMismatch short-circuit
-    Aud->>Sink: sink.append(&event) — substrate trait owns monotonicity + persistence (RFC-0012 §S5 substrate spec)
+    Aud->>Sink: sink.append(&event) — substrate trait owns monotonicity + persistence (RFC-0012-v2 §S2 substrate spec)
     Sink-->>Aud: Ok(())
     Aud-->>Wallet: Ok(ChainHash(canonical))
     Note over Aud: Concurrent readers (`list_receipts`, `get_receipt`) stall until DOMAIN-adapter lock release (§6.11 paired-acceptance gate)

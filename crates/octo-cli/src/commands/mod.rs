@@ -1,6 +1,7 @@
 //! Command dispatch — RFC-0011 §Binary Surface.
 
 pub mod agent;
+pub mod audit;
 pub mod capability;
 pub mod governance;
 pub mod identity;
@@ -13,6 +14,7 @@ pub mod stub;
 pub mod vault;
 
 pub use agent::AgentAction;
+pub use audit::AuditAction;
 pub use governance::GovernanceAction;
 pub use mesh::MeshAction;
 pub use peer::PeerAction;
@@ -47,5 +49,6 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
         Commands::Vault { action } => vault::dispatch(action, cli),
         Commands::Agent { action } => agent::dispatch(action, cli),
         Commands::Governance { action } => governance::dispatch(action, cli),
+        Commands::Audit { action } => audit::dispatch(action, cli),
     }
 }

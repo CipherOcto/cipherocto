@@ -58,6 +58,14 @@ octo-vault = { path = "../octo-vault", version = "0.1.0" }                   # L
 # re-export is consumed by the canonical `[ADD]` error envelope
 # conversion in `error.rs` (RFC-0011-a per-variant mapping pattern).
 octo-audit = { path = "../octo-audit", version = "0.1.0" }                   # Layer B audit substrate — RFC-0011-a + RFC-0016-a
+# Layer B settlement substrate — RFC-0014 / RFC-0959. `octo audit list/show`
+# consumes `octo_settlement::ReceiptId` (canonical u64 newtype) +
+# `octo_settlement::Receipt` for point-lookup projection per RFC-0011-a
+# §Substrate-truth dependency. Transitively available via octo-audit
+# (Layer B → Layer B) but the CLI's `commands/audit.rs` references
+# `octo_settlement::ReceiptId` directly in clap value_parser signatures
+# so the path dep is declared verbatim.
+octo-settlement = { path = "../octo-settlement", version = "0.1.0" }       # Layer B settlement substrate — RFC-0014 / RFC-0959
 # Layer B governance substrate — RFC-0011-g Phase 1. `octo governance snapshot`
 # consumes the `snapshot()` projection + `OctoGovernanceSnapshotCache`
 # (LRU + 600s TTL) per RFC-0011-g §Substrate `[ADD]`. Layer A frozen

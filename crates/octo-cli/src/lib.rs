@@ -10,6 +10,7 @@ pub mod output;
 pub mod redact;
 
 pub use commands::agent::AgentAction;
+pub use commands::audit::AuditAction;
 pub use commands::governance::GovernanceAction;
 pub use commands::peer::PeerAction;
 pub use error::{sanitize_substrate_error, OctoCliError};
@@ -123,6 +124,17 @@ pub enum Commands {
         /// Governance subcommand.
         #[command(subcommand)]
         action: GovernanceAction,
+    },
+    /// Settlement-receipt read surface (RFC-0011-a §Subcommand Taxonomy).
+    ///
+    /// Phase 1 lands `octo audit list` + `octo audit show`
+    /// (mission `0011-a-audit-commands`); the `redact | export |
+    /// watch` surface lands in follow-on amendments per RFC-0011-a
+    /// §Future Work.
+    Audit {
+        /// Audit subcommand.
+        #[command(subcommand)]
+        action: AuditAction,
     },
 }
 

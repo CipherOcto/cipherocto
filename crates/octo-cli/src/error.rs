@@ -426,6 +426,38 @@ pub enum OctoCliError {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
+    /// Substrate-faithful read pipeline failure on the audit surface
+    /// (RFC-0011-a §Error Handling). Surfaces from the
+    /// `list_receipts` / `get_receipt` substrate path when the
+    /// substrate returns a non-`ReceiptNotFound` / non-`InvalidFilter`
+    /// / non-`PermissionDenied` failure (e.g. `SinkSpecific` adapter
+    /// failure, registry mutex poisoning). Exit 18 per RFC-0011-a
+    /// §Error Handling — first occupant of the parent-reserved
+    /// 17-63 range after `ReceiptNotFound` (17). Shares the slot
+    /// with `MeshCapabilityInsufficient` (amendment-chain shared-
+    /// slot pattern; operator-unambiguous within their respective
+    /// command surfaces).
+    #[error("audit read failed: {0}")]
+    AuditReadFailed(String),
+
+    /// `octo audit list` matched more rows than the substrate hard
+    /// ceiling (RFC-0011-a §Filters; substrate `MAX_LIMIT = 10_000`
+    /// per TV-AUD-4c). The operator gets an explicit signal — not a
+    /// silently-clamped truncation — so the next call can narrow the
+    /// filter and re-invoke. Exit 19 per RFC-0011-a §Error Handling
+    /// — first occupant of the parent-reserved 17-63 range after
+    /// `ReceiptNotFound` (17) + `AuditReadFailed` (18). Shares the
+    /// slot with `EnvelopeAuthorizationFailed` (amendment-chain
+    /// shared-slot pattern; operator-unambiguous within their
+    /// respective command surfaces).
+    #[error("audit response too large: matched {matched}, limit {limit} (RFC-0011-a §Filters MAX_LIMIT)")]
+    AuditResponseTooLarge {
+        /// Number of rows that matched the filter (before truncation).
+        matched: usize,
+        /// Substrate hard ceiling (`MAX_LIMIT = 10_000`).
+        limit: usize,
+    },
+
     /// `octo agent attach` observed the target agent exists but is
     /// not in `Running` state (RFC-0011-c §9.8 + RFC-0015-a §6.3,
     /// slot 48 reserved by the agent amendment chain). Exit 48.
@@ -577,6 +609,14 @@ impl OctoCliError {
             // validation failures on access credentials; operator-
             // unambiguous within respective command surfaces).
             Self::PermissionDenied(_) => 13,
+            // Shares slot 18 with `MeshCapabilityInsufficient`
+            // (amendment-chain shared-slot pattern; operator-
+            // unambiguous within their respective command surfaces).
+            Self::AuditReadFailed(_) => 18,
+            // Shares slot 19 with `EnvelopeAuthorizationFailed`
+            // (amendment-chain shared-slot pattern; operator-
+            // unambiguous within their respective command surfaces).
+            Self::AuditResponseTooLarge { .. } => 19,
             Self::AgentNotRunning(_) => 48,
             Self::RuntimeSubstrateNotReady => 51,
             Self::RuntimeAttachFailed { .. } => 49,
@@ -720,6 +760,16 @@ impl OctoCliError {
             Self::PermissionDenied(path) => {
                 format!(
                     "the audit substrate denied access to `{path}`; per-process trust boundary enforced — ensure the receipt store parent directory is owned by the process UID and mode 0700 (RFC-0016-a §Security 3)"
+                )
+            }
+            Self::AuditReadFailed(reason) => {
+                format!(
+                    "the audit substrate read pipeline failed: `{reason}`; this is a substrate-internal failure distinct from a missing receipt (`ReceiptNotFound`, exit 17) or filter rejection (`InvalidFilter`, exit 16). Check the substrate logs and retry"
+                )
+            }
+            Self::AuditResponseTooLarge { matched, limit } => {
+                format!(
+                    "the audit list matched {matched} rows, exceeding the substrate hard ceiling of {limit} (RFC-0011-a §Filters `MAX_LIMIT = 10_000` per TV-AUD-4c); narrow the filter (e.g. `--since`, `--until`, `--subject-did`, `--model`, `--status`) and re-invoke — there is no cursor pagination in Phase 1"
                 )
             }
             Self::AgentNotRunning(_) => {
@@ -1270,6 +1320,21 @@ mod tests {
             (
                 OctoCliError::PermissionDenied("/var/lib/octo/audit/receipts".into()),
                 13,
+            ),
+            // RFC-0011-a §Error Handling: audit read-path slots
+            // (18/19) — first occupants of the parent-reserved 17-63
+            // range after `ReceiptNotFound` (17). `AuditReadFailed`
+            // covers substrate-fallback failures distinct from
+            // `ReceiptNotFound` / `InvalidFilter` / `PermissionDenied`;
+            // `AuditResponseTooLarge` surfaces when the substrate
+            // rejects a list call that would exceed `MAX_LIMIT`.
+            (OctoCliError::AuditReadFailed("sink down".into()), 18),
+            (
+                OctoCliError::AuditResponseTooLarge {
+                    matched: 12_345,
+                    limit: 10_000,
+                },
+                19,
             ),
             // RFC-0011-c §9.8 + RFC-0015-a §6.3: agent amendment chain
             // attach-path slots (48/49/51) — paired with the substrate

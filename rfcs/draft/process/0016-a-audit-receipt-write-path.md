@@ -47,7 +47,7 @@ The KEEP items from RFC-0016 cover the read surface only. Operators and CLI miss
 - `ReceiptSummary` projection: CLI missions can render `list_receipts` rows as compact summaries without exposing every canonical `Receipt` field
 - `AuditFilter.subject_did` ACL: multi-tenant deployments can enforce per-tenant read scoping
 - CLI-shape error variants: CLI missions can surface substrate errors with operator-friendly exit codes (17 = ReceiptNotFound, 16 = InvalidFilter, 13 = PermissionDenied, 52 = AuditSubstrateNotReady)
-- Defense-in-depth scrubber helper: `redact_substrate_error(raw: &str) -> String` applied at the CLI boundary prevents secret material from leaking through `SinkSpecific(String)` payload even if the substrate-side scrubber pattern misses an edge case; canonical `<REDACTED>` marker preserved verbatim (no double-scrub) per R21 L-2 idempotency rule
+- Defense-in-depth scrubber helper: `redact_substrate_error(raw: &str) -> String` applied at the CLI boundary prevents secret material from leaking through `SinkSpecific(String)` payload even if the substrate-side scrubber pattern misses an edge case; canonical `<REDACTED>` marker idempotency per §6.8
 
 ## Roles and Authorities
 
@@ -59,35 +59,34 @@ The KEEP items from RFC-0016 cover the read surface only. Operators and CLI miss
 
 ### §6.1 Public surface additions (paired-with-substrate-amendment)
 
-| Item                                                | Type                                                                                                           | Substrate amendment required                              |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `append_audit_event`                                | `fn(sink: &mut dyn AppendOnlyAuditSink, event: AuditEvent) -> Result<ChainHash, octo_audit::AuditError>`       | RFC-0012 (AuditEventKind extensions + single-writer lock) |
-| `ChainHash(pub [u8; 32])` newtype                   | paired with `append_audit_event` return type                                                                   | RFC-0012                                                  |
-| `ReceiptId(pub u64)` newtype                        | paired with `get_receipt(id: &ReceiptId)` signature change + `receipt_id_for_digest` reverse-mapping           | RFC-0014                                                  |
-| `ReceiptStatus` re-export                           | `pub type StatusRef = octo_settlement::ReceiptStatus` (Layer B façade type alias per §Layer placement)         | RFC-0014                                                  |
-| `ReceiptSummary` projection struct                  | paired with `list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, ...>` signature change         | RFC-0014                                                  |
-| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale) | RFC-0016                                                  |
-| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                 | RFC-0014 (canonical ReceiptStatus enum)                   |
-| `StatusRef` type alias                              | `pub type StatusRef = octo_settlement::ReceiptStatus` (canonical Layer A enum re-export via Layer B façade)    | RFC-0014                                                  |
-| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                    | RFC-0012 + RFC-0011                                       |
-| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied, AuditSubstrateNotReady}`    | RFC-0011 per-variant `From<AuditError>` conversions       |
-| `redact_substrate_error` helper function            | `pub fn redact_substrate_error(raw: &str) -> String` (18-pattern sweep per §6.9 + `<REDACTED>` idempotency)    | RFC-0012 + RFC-0011                                       |
+| Item                                                | Type                                                                                                                  | Substrate amendment required                        |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `append_audit_event`                                | see §6.2 (substrate 4-step façade sequence per `audit_event_v2.rs`)                                                   | RFC-0012 (AuditEventKind extensions)                |
+| `ChainHash(pub [u8; 32])` newtype                   | see §6.3 (substrate-canonical accessors `as_bytes` + `to_hex` per `audit_event_v2.rs`)                                | RFC-0012                                            |
+| `ReceiptId(pub u64)` newtype                        | see §6.4 (paired with `receipt_id_for_digest` reverse-mapping)                                                        | RFC-0014                                            |
+| `StatusRef` type alias (canonical)                  | `pub type StatusRef = octo_settlement::ReceiptStatus` (Layer B façade type alias; one canonical declaration per §6.6) | RFC-0014                                            |
+| `ReceiptSummary` projection struct                  | see §6.5 (substrate-canonical `from_canonical` mapper)                                                                | RFC-0014                                            |
+| `AuditFilter.subject_did`                           | `pub subject_did: Option<String>` (ACL field; canonical DID wire form as `String` per §6.6 additive rationale)        | RFC-0016                                            |
+| `AuditFilter.status` (multi-valued)                 | `pub status: Vec<StatusRef>` (UNION semantics)                                                                        | RFC-0014 (canonical ReceiptStatus enum)             |
+| `AuditError::AuditAppendFailed` variant reservation | paired with `append_audit_event` write path                                                                           | RFC-0012 + RFC-0011                                 |
+| CLI-shape error variants                            | `OctoCliError::{ReceiptNotFound(decimal), InvalidFilter(reason), PermissionDenied(reason), AuditSubstrateNotReady}`   | RFC-0011 per-variant `From<AuditError>` conversions |
+| `redact_substrate_error` helper function            | see §6.8 (free function form per `scrub_newtypes.rs`; 18-pattern sweep per §6.9 + `<REDACTED>` idempotency)           | RFC-0012 + RFC-0011                                 |
 
 ### §6.2 Function contract: `append_audit_event`
 
 ```rust
 // RFC-0012 prerequisite: AuditEventKind extends with AgentTransition { agent_id, from, to, reason }
+// Substrate-faithful form per `crates/octo-audit/src/audit_event_v2.rs` `pub fn append_audit_event`.
 pub fn append_audit_event(
     sink: &mut dyn AppendOnlyAuditSink,
     event: AuditEvent,
 ) -> Result<ChainHash, octo_audit::AuditError> {
-    // 1. Acquire single-writer lock on sink (RFC-0012 contract; Rust borrow checker rejects concurrent &mut on same instance)
-    // 2. Canonicalize event via AppendOnlyAuditSink::canonical_bytes (canonical-bytes-on-write invariant per §6.10 acceptance criterion)
-    // 3. Compute BLAKE3-256 chain-hash using prev_chain_hash from sink head + canonical bytes
-    // 4. Verify canonical bytes match BLAKE3 chain link (RFC-0012 §Adversary Analysis "Threat: append-rollback via sink bypass")
-    // 5. Persist event + chain-hash (canonical bytes, not caller-supplied payload)
-    // 6. Release single-writer lock (block concurrent readers per §6.11 read-stalls-while-write invariant)
-    // 7. Return ChainHash (32-byte BLAKE3 chain-hash)
+    // 1. Re-canonicalize the supplied `event` via the Layer A free function `compute_chain_hash(&event)`
+    //    (canonical-bytes-on-write invariant per §6.10 acceptance criterion).
+    // 2. Compare canonical chain-hash against the caller-supplied `event.chain_hash`; on mismatch,
+    //    short-circuit with `Err(AuditError::ChainHashMismatch { event_id })` BEFORE the sink is called.
+    // 3. Call `sink.append(&event)?` — the sink trait owns monotonicity + persistence per RFC-0012 §S5 (substrate trait contract).
+    // 4. Return `Ok(ChainHash(canonical))` — the canonical chain-hash computed in step 1.
 }
 ```
 
@@ -106,12 +105,9 @@ impl ChainHash {
     }
 
     /// Substrate canonical accessor: returns the canonical 64-char lowercase hex form (no `0x` prefix).
+    /// Substrate form per `audit_event_v2.rs` delegates to `hex::encode(self.0)` (canonical hex crate).
     pub fn to_hex(&self) -> String {
-        let mut s = String::with_capacity(64);
-        for byte in &self.0 {
-            s.push_str(&format!("{byte:02x}"));
-        }
-        s
+        hex::encode(self.0)
     }
 }
 
@@ -210,7 +206,7 @@ Per RFC-0011 canonical `[ADD]` error envelope pattern, `From<AuditError>` conver
 | `SequenceGap { event_id, prev }` / `AlreadyExists(u64)` / `SinkSpecific(String)` / `ChainHashMismatch { event_id }` | `OctoCliError::Internal(reason)`         | 64       | parent reserved              |
 | (CLI-shape, RFC-0016) `ReceiptNotFound(decimal)`                                                                    | `OctoCliError::ReceiptNotFound(decimal)` | 17       | RFC-0011 §Error Handling     |
 | (CLI-shape, RFC-0016) `InvalidFilter(reason)`                                                                       | `OctoCliError::InvalidFilter(reason)`    | 16       | parent reserved              |
-| (CLI-shape, RFC-0016) `PermissionDenied(reason)`                                                                    | `OctoCliError::PermissionDenied`         | 13       | RFC-0011 §Exit Codes         |
+| (CLI-shape, RFC-0016) `PermissionDenied(reason)`                                                                    | `OctoCliError::PermissionDenied(reason)` | 13       | RFC-0011 §Exit Codes         |
 | (CLI-shape, RFC-0016) `AuditAppendFailed(reason)`                                                                   | `OctoCliError::AuditSubstrateNotReady`   | 52       | RFC-0011 §Exit Codes slot 52 |
 
 > **Substrate-faithful note:** R2.5 collapse rationale documented at §v1.1 amendment #3.
@@ -272,27 +268,31 @@ The substrate-side scrubber applies the canonical 18-pattern list before constru
 
 Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R21 L-2, do NOT double-scrub). The 18-pattern substrate canonical count = 17 `Lazy<Regex>` constants + 1 substring registry (Pattern 6) per `octo_audit::scrub` module docstring.
 
-### §6.10 Canonical-bytes-on-write invariant (acceptance criterion)
+### §6.10 Canonical-bytes-on-write invariant (acceptance criterion — Layer B façade)
 
-`AppendOnlyAuditSink::append` MUST:
+`octo_audit::append_audit_event` (Layer B façade) MUST:
 
-1. Re-canonicalize ALL fields (including `at_millis_unix`, `agent_id`, `from`, `to`, `reason`, plus outer `AuditEvent::prev_chain_hash`) via `canonical_bytes(event)`
-2. Compute BLAKE3 chain-hash over canonical bytes (NOT caller-supplied payload)
-3. Verify canonical bytes match chain-link hash (reject on mismatch per RFC-0012 §Adversary Analysis)
-4. Persist canonical bytes (NOT caller payload)
+1. Re-canonicalize ALL fields (including `at_millis_unix`, `agent_id`, `from`, `to`, `reason`, plus outer `AuditEvent::prev_chain_hash`) via the Layer A free function `compute_chain_hash(&event)` (BLAKE3 over canonical bytes).
+2. Compare `compute_chain_hash(&event)` against `event.chain_hash`; on mismatch, short-circuit with `Err(AuditError::ChainHashMismatch { event_id })` BEFORE the sink is called.
+3. Call `sink.append(&event)?` only after the canonical-bytes check passes (canonical encoding owned by Layer A; façade is read-only with respect to the encoding).
 
-**Acceptance criterion:** acceptance of RFC-0012 without canonical-bytes-on-write is a regression on the append-rollback attack surface.
+**Layer placement:** the invariant lives at the Layer B façade `append_audit_event`, NOT at the substrate trait `AppendOnlyAuditSink::append`. Substrate trait contract per RFC-0012 §S5 trusts the caller's chain_hash; the façade enforces the invariant at the write boundary as a defense-in-depth check (substrate `audit_event_v2.rs` §6.10 module-level docstring).
 
-### §6.11 Single-writer lock + read-stalls-while-write invariant (acceptance criterion)
+**Acceptance criterion:** acceptance of RFC-0012 without canonical-bytes-on-write at the Layer B façade is a regression on the append-rollback attack surface.
 
-`AppendOnlyAuditSink::append` MUST:
+### §6.11 Read-stalls-while-write invariant (acceptance criterion — DOMAIN adapter paired-acceptance gate)
 
-1. Acquire per-instance single-writer lock (Rust `&mut self` enforces this at type level)
-2. Hold lock for canonicalize + BLAKE3 chain-link + persist sequence
-3. Concurrent readers (`list_receipts` + `get_receipt` from RFC-0016) MUST stall (block) for the duration of the write
-4. Release lock on success OR failure (idempotent cleanup)
+**DEFERRED — paired-acceptance of RFC-0012 DOMAIN adapter required.**
 
-**Acceptance criterion:** acceptance of RFC-0012 without read-stall is a regression on the read-during-write race.
+The read-stall-while-write acceptance criterion is UNVERIFIABLE at this façade layer because `list_receipts` + `get_receipt` from RFC-0016 touch a separate `RECEIPT_REGISTRY` Mutex from the writer sink (`AUDIT_SINK` Mutex in DOMAIN impl `audit_write.rs`). Per substrate `audit_event_v2.rs` §6.11 module-level docstring, the §6.11 acceptance criterion is gated on the DOMAIN adapter paired-acceptance round (each DOMAIN impl owns the choice of R/W primitive — single shared mutex, `RwLock`, or sharded — and must demonstrate the read-stall property end-to-end at acceptance time).
+
+Substrate-faithful form of the invariant (substrate trait contract — RFC-0012 §S5):
+
+1. `AppendOnlyAuditSink::append(&mut self, event)` enforces single-writer per instance via Rust `&mut self` (type-level; the borrow checker rejects concurrent `&mut` on the same instance).
+2. Concurrent readers (`list_receipts` + `get_receipt` from RFC-0016) MUST stall (block) for the duration of the write — DOMAIN adapter paired-acceptance round validates this property end-to-end.
+3. Lock released on success OR failure (idempotent cleanup).
+
+**Acceptance criterion:** acceptance of RFC-0012 DOMAIN adapter without demonstrating read-stall at the paired-acceptance round is a regression on the read-during-write race. The façade `append_audit_event` cannot enforce this property in isolation; it is a paired-substrate-acceptance gate.
 
 ## Performance Targets
 
@@ -307,7 +307,7 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 3. **Multi-tenant trust boundary** — `AuditFilter.subject_did` ACL enforcement is per-process (caller-supplied `subject_did`); does NOT prevent in-process co-tenant reads (CLI-only `subject_did` injection)
 4. **BLAKE3 determinism** — RFC-0012 chain-link hash uses BLAKE3-256; canonical bytes MUST include all variant-tagged fields
 5. **Single-writer per sink instance** — `&mut dyn AppendOnlyAuditSink` enforces single-writer per Rust borrow checker; concurrent writers must serialize via external mutex (out of scope)
-6. **`#[non_exhaustive]` extension surface** — four enums carry `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration: `octo_audit_core::error::AuditError` + `octo_audit_core::error::AuditChainError` + `octo_audit_core::event::AuditEventKind` (Layer A frozen contract; additive variants land without central enum edit per RFC-0012 §S5.1 (per-façade scrubber contract)) + `octo_cli::error::OctoCliError` (Layer B façade additive-growth contract; symmetric with the Layer A trio). Per-variant `From<AuditError>` conversions in §6.7 MUST use a catch-all arm (`_ => Self::Internal(sanitize_substrate_error(&format!("audit substrate error: {e}")))` per current `octo-cli/src/error.rs`) to avoid breakage when substrate adds new variants at acceptance-time or at future paired-acceptance amendments.
+6. **`#[non_exhaustive]` extension surface** — five enums carry `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration: `octo_audit_core::error::AuditError` + `octo_audit_core::error::AuditChainError` + `octo_audit_core::event::AuditEventKind` (Layer A frozen trio; additive variants land without central enum edit per RFC-0012 §S5.1 (per-façade scrubber contract)) + `octo_cli::error::OctoCliError` + `octo_wallet::error::WalletError` (Layer B façade additive-growth pair; symmetric with the Layer A trio; `WalletError` covers RFC-0015 paired-write-path surface). Per-variant `From<AuditError>` conversions in §6.7 MUST use a catch-all arm (`_ => Self::Internal(sanitize_substrate_error(&format!("audit substrate error: {e}")))` per current `octo-cli/src/error.rs`) to avoid breakage when substrate adds new variants at acceptance-time or at future paired-acceptance amendments.
 
 ## Security Considerations
 
@@ -316,26 +316,6 @@ Plus 1 inline guard for `<REDACTED>` marker idempotency (preserve verbatim per R
 3. **`subject_did` ACL** — multi-tenant deployments MUST enforce `subject_did` filter at CLI; per-process trust boundary for in-process co-tenants
 4. **Scrubber defense-in-depth** — substrate-side scrubber patterns per §6.9 + CLI-side `OctoCliRedactor` per RFC-0011 §Redaction (two-pass)
 5. **CLI-shape error variant leakage** — `SinkSpecific` payload carries canonical decimal `u64` for `ReceiptNotFound`, scrubbed paths for `PermissionDenied`; no secret material in CLI-shape variants
-
-## Adversarial Review
-
-### Threat: append-rollback via sink bypass
-
-**Adversary:** Compromised CLI / wallet binary attempts to invoke `append_audit_event` with a forged `AuditEvent` row carrying a fabricated `at_millis_unix` timestamp.
-
-**Mitigation:** `AppendOnlyAuditSink::canonical_bytes(event)` re-canonicalizes ALL fields including `at_millis_unix`; BLAKE3 hash includes the canonical bytes. Substrate rejects events whose canonical bytes don't match the BLAKE3 chain link. No silent insertion.
-
-### Threat: read-during-write race
-
-**Adversary:** Concurrent reader observes partial write state (some fields updated, others stale).
-
-**Mitigation:** §6.11 single-writer lock holds during canonicalize + BLAKE3 + persist; concurrent readers stall until write completes.
-
-### Threat: cross-tenant receipt read
-
-**Adversary:** Co-tenant on shared receipt store attempts to read another tenant's receipts by omitting `subject_did` filter.
-
-**Mitigation:** `AuditFilter.subject_did: Option<String>` ACL field enforces per-tenant scoping at façade boundary; CLI missions MUST pass `subject_did` per tenant credentials.
 
 ## Adversary Analysis (5-Question Test)
 
@@ -363,39 +343,39 @@ DEFER — audit receipt write path has no direct token cost; cite RFC TBD (Role 
 
 Substrate-level test vectors (`crates/octo-audit/src/lib.rs` test module). All DEFERRED vectors from RFC-0016 §Test Vectors land here.
 
-| #                          | Substrate call                                                                                                           | Input                                                                                                            | Expected Output                                                                                              | Notes                                                                                                                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| TV-AUD-3                   | `list_receipts(&AuditFilter { status: Some(StatusRef::Ok), model: None, ... })`                                          | 1000-receipt store                                                                                               | `Ok(filtered_by_status_ok)`                                                                                  | Server-side filter (using `StatusRef` alias per §6.6; RFC-0014 prerequisite)                                                                                                         |
-| TV-AUD-3-status-multi      | `list_receipts(&AuditFilter { status: vec![StatusRef::Ok, StatusRef::Partial], ... })`                                   | 1000-receipt store                                                                                               | `Ok(filtered_by_status_ok_or_partial)` (UNION semantics)                                                     | Multi-valued status filter per §6.6                                                                                                                                                  |
-| TV-AUD-3-subject           | `list_receipts(&AuditFilter { subject_did: Some(<canonical-did>), ... })`                                                | 1000-receipt store                                                                                               | `Ok(filtered_by_subject_did)`                                                                                | Subject ACL per §6.6                                                                                                                                                                 |
-| TV-AUD-4                   | `list_receipts(&AuditFilter { limit: Some(0) })`                                                                         | any store                                                                                                        | `Err(OctoCliError::InvalidFilter("filter: limit out of range".into()))` (CLI exit 16)                        | limit=0 rejection rule per RFC-0016 §6.2.4                                                                                                                                           |
-| TV-AUD-4b                  | `list_receipts(&AuditFilter { since_unix: Some(100), until_unix: Some(50) })`                                            | any store                                                                                                        | `Err(OctoCliError::InvalidFilter("filter: since_unix > until_unix".into()))` (CLI exit 16)                   | Range-inversion validation per RFC-0016 §6.2.4                                                                                                                                       |
-| TV-AUD-4c                  | `list_receipts(&AuditFilter { limit: Some(20000) })`                                                                     | 20000-receipt store                                                                                              | `Err(OctoCliError::InvalidFilter("filter: limit must be 1..=10000".into()))` (CLI exit 16)                   | limit > 10000 rejection rule per RFC-0016 §6.2.4                                                                                                                                     |
-| TV-AUD-4d                  | `list_receipts(&AuditFilter { model: Some("ed25519_hex_64_chars_...") })`                                                | 1000-receipt store                                                                                               | `Err(OctoCliError::InvalidFilter("model: <REDACTED>".into()))` (CLI exit 16; substrate-side scrubbed)        | Substrate-side scrubber coverage for ed25519 hex per §6.9 pattern 1                                                                                                                  |
-| TV-AUD-4e                  | `list_receipts(&AuditFilter { model: Some("WIF: L1aW4aubDFB7yfras2S3mKxL7g2Kz8mN5pQ9rS3tU7vW2xY") })`                    | 1000-receipt store                                                                                               | `Err(OctoCliError::InvalidFilter("model: <REDACTED>".into()))` (CLI exit 16; substrate-side scrubbed)        | End-to-end coverage: substrate-side scrub catches WIF pattern per §6.9 pattern 17                                                                                                    |
-| TV-AUD-5                   | `get_receipt(&unknown_id)`                                                                                               | Unknown `Receipt::receipt_id: u64`                                                                               | `Err(OctoCliError::ReceiptNotFound("<decimal-u64>".into()))` (CLI exit 17)                                   | Canonical decimal `u64` form; CLI-shape variant per §6.7                                                                                                                             |
-| TV-AUD-5-receiptid         | `get_receipt(&ReceiptId(unknown))`                                                                                       | Unknown digest mapped via `receipt_id_for_digest`                                                                | `Err(OctoCliError::ReceiptNotFound("<decimal-u64>".into()))` (CLI exit 17)                                   | `ReceiptId` newtype + reverse-mapping per §6.4                                                                                                                                       |
-| TV-AUD-7                   | `append_audit_event(&mut sink, AgentTransition row)`                                                                     | Valid event                                                                                                      | `Ok(ChainHash(<32-bytes>))` + chain-row inserted                                                             | Happy path; signature takes `&mut dyn AppendOnlyAuditSink` (single-writer lock per §6.11)                                                                                            |
-| TV-AUD-7-canonical-bytes   | `append_audit_event(&mut sink, AgentTransition row)` with caller-supplied payload differing from canonical bytes         | Caller payload has `at_millis_unix: 12345`; canonical bytes would have `at_millis_unix: determined_by_sink_head` | `Err(octo_audit_core::AuditError::ChainHashMismatch { event_id })`                                           | Canonical-bytes-on-write invariant per §6.10 (R20.5 finding M-4 acceptance criterion); collapsed `ChainHashMismatch { event_id }` per R2.5 substrate review (no digest leak surface) |
-| TV-AUD-7-read-stall        | Concurrent: writer calls `append_audit_event(&mut sink, ...)`; reader calls `list_receipts(&filter)` from another thread | Writer holds single-writer lock; reader attempts walk                                                            | Reader stalls (blocks) until writer releases lock; then reads canonical post-write state                     | Single-writer lock + read-stall per §6.11 (R20.5 finding M-6 acceptance criterion)                                                                                                   |
-| TV-AUD-8                   | `append_audit_event(&mut sink, AgentTransition row)` with `at_millis_unix: 0` outside monotonic range                    | Non-monotonic timestamp                                                                                          | `Err(OctoCliError::AuditSubstrateNotReady("non-monotonic timestamp".into()))` (CLI exit 52)                  | Monotonic guard per RFC-0012 AuditEvent fields                                                                                                                                       |
-| TV-AUD-11                  | `list_receipts(&AuditFilter::default())` with upstream error containing 32-byte hex private-key-shape string             | Substrate error string contains 64-char hex matching `ed25519_private_key` shape                                 | `Err(octo_audit_core::AuditError::SinkSpecific("key: <REDACTED>".into()))` (substrate-side scrubbed)         | Redaction contract per §6.9 pattern 1                                                                                                                                                |
-| TV-AUD-11a                 | `Internal("BLS12-381 Fr scalar hex: 0x4f6c8b2a...")`                                                                     | BLS12-381 Fr scalar hex                                                                                          | `Err(octo_audit_core::AuditError::SinkSpecific("BLS12-381 Fr scalar hex: <REDACTED>".into()))`               | Substrate-side scrub per §6.9 pattern 1 (hex ≥32 catch)                                                                                                                              |
-| TV-AUD-11b                 | `Internal("secp256k1 privkey hex: 0xa1b2c3d4...")`                                                                       | secp256k1 privkey hex                                                                                            | `Err(octo_audit_core::AuditError::SinkSpecific("secp256k1 privkey hex: <REDACTED>".into()))`                 | Substrate-side scrub per §6.9 pattern 1 (hex ≥32 catch)                                                                                                                              |
-| TV-AUD-11c                 | `Internal("BIP39 mnemonic: abandon ...")`                                                                                | 12-word BIP39 mnemonic                                                                                           | `Err(octo_audit_core::AuditError::SinkSpecific("BIP39 mnemonic: <REDACTED>".into()))`                        | Substrate-side scrub per §6.9 pattern 15                                                                                                                                             |
-| TV-AUD-11d                 | `Internal("JWT: eyJ...")`                                                                                                | JWT three-segment form                                                                                           | `Err(octo_audit_core::AuditError::SinkSpecific("JWT: <REDACTED>".into()))`                                   | Substrate-side scrub per §6.9 pattern 16                                                                                                                                             |
-| TV-AUD-11e                 | `Internal("WIF: L1aW4...")`                                                                                              | WIF base58                                                                                                       | `Err(octo_audit_core::AuditError::SinkSpecific("WIF: <REDACTED>".into()))`                                   | Substrate-side scrub per §6.9 pattern 17                                                                                                                                             |
-| TV-AUD-11f                 | `Internal("capability-secret base64: ...")`                                                                              | Base64 secret                                                                                                    | `Err(octo_audit_core::AuditError::SinkSpecific("capability-secret base64: <REDACTED>".into()))`              | Substrate-side scrub per §6.9 pattern 14                                                                                                                                             |
-| TV-AUD-11h                 | `Internal("PGP private key block: -----BEGIN PGP PRIVATE KEY BLOCK-----\n...")`                                          | PGP private key block                                                                                            | `Err(octo_audit_core::AuditError::SinkSpecific("PGP private key block: <REDACTED>".into()))`                 | Substrate-side scrub per §6.9 pattern 11                                                                                                                                             |
-| TV-AUD-11i                 | `Internal("OpenSSH private key: -----BEGIN OPENSSH PRIVATE KEY-----...")`                                                | OpenSSH private key                                                                                              | `Err(octo_audit_core::AuditError::SinkSpecific("OpenSSH private key: <REDACTED>".into()))`                   | Substrate-side scrub per §6.9 pattern 12                                                                                                                                             |
-| TV-AUD-11j                 | `Internal("PEM block: -----BEGIN RSA PRIVATE KEY-----...")`                                                              | PEM private key block                                                                                            | `Err(octo_audit_core::AuditError::SinkSpecific("PEM block: <REDACTED>".into()))`                             | Substrate-side scrub per §6.9 pattern 13                                                                                                                                             |
-| TV-AUD-11k                 | `Internal("X.509 cert serial: 0x4f6c8b...")`                                                                             | X.509 cert serial `0x`-prefixed hex (16-64 hex chars per §6.9 Pattern 18)                                        | `Err(octo_audit_core::AuditError::SinkSpecific("X.509 cert serial: <REDACTED>".into()))`                     | Substrate-side scrub per §6.9 Pattern 18 (X.509 cert serial)                                                                                                                         |
-| TV-AUD-list-chain-1        | `list_receipts(&AuditFilter::default())` against a 5-row receipt store with row N=2 BLAKE3 chain link corrupted          | 5-row store, row N=2 chain_hash does NOT match `compute_chain_hash(row)`                                         | `Err(octo_audit_core::AuditError::SinkSpecific("chain verification failed".into()))`                         | Chain-integrity guard at read boundary                                                                                                                                               |
-| TV-AUD-get-receipt-chain-1 | `get_receipt(&known_id)` against a 5-row receipt store with row N=2 BLAKE3 chain link corrupted                          | 5-row store, row N=2 chain_hash does NOT match `compute_chain_hash(row)`; queried row IS corrupted               | `Err(octo_audit_core::AuditError::SinkSpecific("chain verification failed".into()))`                         | Chain-integrity guard for `get_receipt`                                                                                                                                              |
-| TV-AUD-redact-token-1      | `Internal("key: <REDACTED>")` (literal marker in error string)                                                           | substrate error string contains the literal `<REDACTED>` marker                                                  | `Err(octo_audit_core::AuditError::SinkSpecific("key: <REDACTED>".into()))` (marker preserved verbatim)       | Redaction marker idempotency per §6.9 inline guard (no double-scrub; preserves `<REDACTED>` verbatim)                                                                                |
-| TV-AUD-redact-token-2      | `Internal("user-supplied field: <REDACTED>")`                                                                            | No plaintext secret present; substrate emits `<REDACTED>` literal                                                | `Err(octo_audit_core::AuditError::SinkSpecific("user-supplied field: <REDACTED>".into()))` (no double-scrub) | Verifies no accidental double-redaction                                                                                                                                              |
-| TV-AUD-permission-check-1  | `list_receipts(&AuditFilter::default())` when `$OCTO_HOME/audit/receipts` parent dir is NOT mode `0700`                  | parent dir mode `0755`                                                                                           | `Err(OctoCliError::PermissionDenied("permission denied: <OCTO_HOME>/audit/receipts".into()))` (CLI exit 13)  | Substrate-enforced per-process trust boundary                                                                                                                                        |
-| TV-AUD-permission-check-2  | `get_receipt(&known_id)` when parent dir is owned by different UID than process UID                                      | parent dir owned by `uid=1000`, process runs as `uid=1001`                                                       | `Err(OctoCliError::PermissionDenied("permission denied: <OCTO_HOME>/audit/receipts".into()))` (CLI exit 13)  | Per-process trust boundary; rejects point lookups on multi-user hosts                                                                                                                |
+| #                          | Substrate call                                                                                                                                  | Input                                                                                                                              | Expected Output                                                                                                                     | Notes                                                                                                                                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TV-AUD-3                   | `list_receipts(&AuditFilter { status: Some(StatusRef::Ok), model: None, ... })`                                                                 | 1000-receipt store                                                                                                                 | `Ok(filtered_by_status_ok)`                                                                                                         | Server-side filter (using `StatusRef` alias per §6.6; RFC-0014 prerequisite)                                                                                                                                                                      |
+| TV-AUD-3-status-multi      | `list_receipts(&AuditFilter { status: vec![StatusRef::Ok, StatusRef::Partial], ... })`                                                          | 1000-receipt store                                                                                                                 | `Ok(filtered_by_status_ok_or_partial)` (UNION semantics)                                                                            | Multi-valued status filter per §6.6                                                                                                                                                                                                               |
+| TV-AUD-3-subject           | `list_receipts(&AuditFilter { subject_did: Some(<canonical-did>), ... })`                                                                       | 1000-receipt store                                                                                                                 | `Ok(filtered_by_subject_did)`                                                                                                       | Subject ACL per §6.6                                                                                                                                                                                                                              |
+| TV-AUD-4                   | `list_receipts(&AuditFilter { limit: Some(0) })`                                                                                                | any store                                                                                                                          | `Err(OctoCliError::InvalidFilter("filter: limit out of range".into()))` (CLI exit 16)                                               | limit=0 rejection rule per RFC-0016 §6.2.4                                                                                                                                                                                                        |
+| TV-AUD-4b                  | `list_receipts(&AuditFilter { since_unix: Some(100), until_unix: Some(50) })`                                                                   | any store                                                                                                                          | `Err(OctoCliError::InvalidFilter("filter: since_unix > until_unix".into()))` (CLI exit 16)                                          | Range-inversion validation per RFC-0016 §6.2.4                                                                                                                                                                                                    |
+| TV-AUD-4c                  | `list_receipts(&AuditFilter { limit: Some(20000) })`                                                                                            | 20000-receipt store                                                                                                                | `Err(OctoCliError::InvalidFilter("filter: limit must be 1..=10000".into()))` (CLI exit 16)                                          | limit > 10000 rejection rule per RFC-0016 §6.2.4                                                                                                                                                                                                  |
+| TV-AUD-4d                  | `list_receipts(&AuditFilter { model: Some("ed25519_hex_64_chars_...") })`                                                                       | 1000-receipt store                                                                                                                 | `Err(OctoCliError::InvalidFilter("model: <REDACTED>".into()))` (CLI exit 16; substrate-side scrubbed)                               | Substrate-side scrubber coverage for ed25519 hex per §6.9 pattern 1                                                                                                                                                                               |
+| TV-AUD-4e                  | `list_receipts(&AuditFilter { model: Some("WIF: L1aW4aubDFB7yfras2S3mKxL7g2Kz8mN5pQ9rS3tU7vW2xY") })`                                           | 1000-receipt store                                                                                                                 | `Err(OctoCliError::InvalidFilter("model: <REDACTED>".into()))` (CLI exit 16; substrate-side scrubbed)                               | End-to-end coverage: substrate-side scrub catches WIF pattern per §6.9 pattern 17                                                                                                                                                                 |
+| TV-AUD-5                   | `get_receipt(&unknown_id)`                                                                                                                      | Unknown `Receipt::receipt_id: u64`                                                                                                 | `Err(OctoCliError::ReceiptNotFound("<decimal-u64>".into()))` (CLI exit 17)                                                          | Canonical decimal `u64` form; CLI-shape variant per §6.7                                                                                                                                                                                          |
+| TV-AUD-5-receiptid         | `get_receipt(&ReceiptId(unknown))`                                                                                                              | Unknown digest mapped via `receipt_id_for_digest`                                                                                  | `Err(OctoCliError::ReceiptNotFound("<decimal-u64>".into()))` (CLI exit 17)                                                          | `ReceiptId` newtype + reverse-mapping per §6.4                                                                                                                                                                                                    |
+| TV-AUD-7                   | `append_audit_event(&mut sink, AgentTransition row)`                                                                                            | Valid event                                                                                                                        | `Ok(ChainHash(<32-bytes>))` + chain-row inserted                                                                                    | Happy path; signature takes `&mut dyn AppendOnlyAuditSink` (single-writer lock per §6.11)                                                                                                                                                         |
+| TV-AUD-7-canonical-bytes   | `append_audit_event(&mut sink, AgentTransition row)` with caller-supplied `event.chain_hash` differing from `compute_chain_hash(&event)`        | Caller-supplied `event.chain_hash` is wrong (caller bug or forgery attempt); canonical chain-hash via `compute_chain_hash(&event)` | `Err(octo_audit::AuditError::ChainHashMismatch { event_id })` (Layer B façade short-circuit BEFORE sink call per §6.10)             | Canonical-bytes-on-write invariant at Layer B façade per §6.10; `append_audit_event` body per `audit_event_v2.rs` L111-131: `compute_chain_hash(&event)` + compare + short-circuit + `sink.append(&event)?`                                       |
+| TV-AUD-7-read-stall        | Concurrent: writer calls `append_audit_event(&mut sink, ...)`; reader calls `list_receipts(&filter)` from another thread                        | Writer holds sink write-side; reader attempts walk on separate `RECEIPT_REGISTRY` Mutex                                            | Reader stalls (blocks) until DOMAIN-adapter paired-acceptance round validates end-to-end read-stall                                 | Read-stall invariant per §6.11 DOMAIN-adapter paired-acceptance gate (UNVERIFIABLE at façade layer; substrate `audit_event_v2.rs` §6.11 module-level docstring)                                                                                   |
+| TV-AUD-8                   | **DEFERRED — Phase 2 substrate-DESIRED.** `append_audit_event(&mut sink, AgentTransition row)` with `at_millis_unix: 0` outside monotonic range | Non-monotonic timestamp                                                                                                            | `Err(OctoCliError::AuditSubstrateNotReady("non-monotonic timestamp".into()))` (CLI exit 52) — DESIRED, not enforced                 | Substrate trait `AppendOnlyAuditSink::append` does NOT currently validate monotonic `at_millis_unix`; sink trusts caller's `prev_chain_hash` chain-link. Phase-2 substrate addition to validate monotonic timestamp at the substrate layer        |
+| TV-AUD-11                  | `list_receipts(&AuditFilter::default())` with upstream error containing 32-byte hex private-key-shape string                                    | Substrate error string contains 64-char hex matching `ed25519_private_key` shape                                                   | `Err(octo_audit_core::AuditError::SinkSpecific("key: <REDACTED>".into()))` (substrate-side scrubbed)                                | Redaction contract per §6.9 pattern 1                                                                                                                                                                                                             |
+| TV-AUD-11a                 | `Internal("BLS12-381 Fr scalar hex: 0x4f6c8b2a...")`                                                                                            | BLS12-381 Fr scalar hex                                                                                                            | `Err(octo_audit_core::AuditError::SinkSpecific("BLS12-381 Fr scalar hex: <REDACTED>".into()))`                                      | Substrate-side scrub per §6.9 pattern 1 (hex ≥32 catch)                                                                                                                                                                                           |
+| TV-AUD-11b                 | `Internal("secp256k1 privkey hex: 0xa1b2c3d4...")`                                                                                              | secp256k1 privkey hex                                                                                                              | `Err(octo_audit_core::AuditError::SinkSpecific("secp256k1 privkey hex: <REDACTED>".into()))`                                        | Substrate-side scrub per §6.9 pattern 1 (hex ≥32 catch)                                                                                                                                                                                           |
+| TV-AUD-11c                 | `Internal("BIP39 mnemonic: abandon ...")`                                                                                                       | 12-word BIP39 mnemonic                                                                                                             | `Err(octo_audit_core::AuditError::SinkSpecific("BIP39 mnemonic: <REDACTED>".into()))`                                               | Substrate-side scrub per §6.9 pattern 15                                                                                                                                                                                                          |
+| TV-AUD-11d                 | `Internal("JWT: eyJ...")`                                                                                                                       | JWT three-segment form                                                                                                             | `Err(octo_audit_core::AuditError::SinkSpecific("JWT: <REDACTED>".into()))`                                                          | Substrate-side scrub per §6.9 pattern 16                                                                                                                                                                                                          |
+| TV-AUD-11e                 | `Internal("WIF: L1aW4...")`                                                                                                                     | WIF base58                                                                                                                         | `Err(octo_audit_core::AuditError::SinkSpecific("WIF: <REDACTED>".into()))`                                                          | Substrate-side scrub per §6.9 pattern 17                                                                                                                                                                                                          |
+| TV-AUD-11f                 | `Internal("capability-secret base64: ...")`                                                                                                     | Base64 secret                                                                                                                      | `Err(octo_audit_core::AuditError::SinkSpecific("capability-secret base64: <REDACTED>".into()))`                                     | Substrate-side scrub per §6.9 pattern 14                                                                                                                                                                                                          |
+| TV-AUD-11h                 | `Internal("PGP private key block: -----BEGIN PGP PRIVATE KEY BLOCK-----\n...")`                                                                 | PGP private key block                                                                                                              | `Err(octo_audit_core::AuditError::SinkSpecific("PGP private key block: <REDACTED>".into()))`                                        | Substrate-side scrub per §6.9 pattern 11                                                                                                                                                                                                          |
+| TV-AUD-11i                 | `Internal("OpenSSH private key: -----BEGIN OPENSSH PRIVATE KEY-----...")`                                                                       | OpenSSH private key                                                                                                                | `Err(octo_audit_core::AuditError::SinkSpecific("OpenSSH private key: <REDACTED>".into()))`                                          | Substrate-side scrub per §6.9 pattern 12                                                                                                                                                                                                          |
+| TV-AUD-11j                 | `Internal("PEM block: -----BEGIN RSA PRIVATE KEY-----...")`                                                                                     | PEM private key block                                                                                                              | `Err(octo_audit_core::AuditError::SinkSpecific("PEM block: <REDACTED>".into()))`                                                    | Substrate-side scrub per §6.9 pattern 13                                                                                                                                                                                                          |
+| TV-AUD-11k                 | `Internal("X.509 cert serial: 0x4f6c8b...")`                                                                                                    | X.509 cert serial `0x`-prefixed hex (16-64 hex chars per §6.9 Pattern 18)                                                          | `Err(octo_audit_core::AuditError::SinkSpecific("X.509 cert serial: <REDACTED>".into()))`                                            | Substrate-side scrub per §6.9 Pattern 18 (X.509 cert serial)                                                                                                                                                                                      |
+| TV-AUD-list-chain-1        | `list_receipts(&AuditFilter::default())` against a 5-row receipt store with row N=2 BLAKE3 chain link corrupted                                 | 5-row store, row N=2 chain_hash does NOT match `compute_chain_hash(row)`                                                           | `Err(octo_audit_core::AuditError::SinkSpecific("chain verification failed".into()))`                                                | Chain-integrity guard at read boundary                                                                                                                                                                                                            |
+| TV-AUD-get-receipt-chain-1 | `get_receipt(&known_id)` against a 5-row receipt store with row N=2 BLAKE3 chain link corrupted                                                 | 5-row store, row N=2 chain_hash does NOT match `compute_chain_hash(row)`; queried row IS corrupted                                 | `Err(octo_audit_core::AuditError::SinkSpecific("chain verification failed".into()))`                                                | Chain-integrity guard for `get_receipt`                                                                                                                                                                                                           |
+| TV-AUD-redact-token-1      | `Internal("key: <REDACTED>")` (literal marker in error string)                                                                                  | substrate error string contains the literal `<REDACTED>` marker                                                                    | `Err(octo_audit_core::AuditError::SinkSpecific("key: <REDACTED>".into()))` (marker preserved verbatim)                              | Redaction marker idempotency per §6.9 inline guard (no double-scrub; preserves `<REDACTED>` verbatim)                                                                                                                                             |
+| TV-AUD-redact-token-2      | `Internal("user-supplied field: <REDACTED>")`                                                                                                   | No plaintext secret present; substrate emits `<REDACTED>` literal                                                                  | `Err(octo_audit_core::AuditError::SinkSpecific("user-supplied field: <REDACTED>".into()))` (no double-scrub)                        | Verifies no accidental double-redaction                                                                                                                                                                                                           |
+| TV-AUD-permission-check-1  | `list_receipts(&AuditFilter::default())` when `$OCTO_HOME/audit/receipts` parent dir is NOT mode `0700`                                         | parent dir mode `0755`                                                                                                             | `Err(OctoCliError::PermissionDenied("permission denied: <OCTO_HOME>/audit/receipts".into()))` (CLI exit 13)                         | Substrate-enforced per-process trust boundary                                                                                                                                                                                                     |
+| TV-AUD-permission-check-2  | **DEFERRED — Phase 2 substrate-DESIRED.** `get_receipt(&known_id)` when parent dir is owned by different UID than process UID                   | parent dir owned by `uid=1000`, process runs as `uid=1001`                                                                         | `Err(OctoCliError::PermissionDenied("permission denied: <OCTO_HOME>/audit/receipts".into()))` (CLI exit 13) — DESIRED, not enforced | Substrate DOMAIN adapter does NOT currently enforce UID-ownership check on `get_receipt`; per-process trust boundary only checks `mode 0700` parent-dir perm (TV-AUD-permission-check-1). Phase-2 substrate addition for UID-ownership validation |
 
 CLI-level test vectors live in RFC-0011 §Test Vectors (UNCHANGED at R2; expansion lands at RFC-0011 acceptance with paired RFC-0016).
 
@@ -409,7 +389,7 @@ CLI-level test vectors live in RFC-0011 §Test Vectors (UNCHANGED at R2; expansi
 ## Implementation Phases
 
 - **Phase 0 (RFC-0016 acceptance at R2 KEEP)** — read surface lands; this amendment DEFERRED
-- **Phase 1 (RFC-0012 acceptance)** — `AuditEventKind` extensions + canonical-bytes-on-write invariant + single-writer lock + read-stall
+- **Phase 1 (RFC-0012 acceptance)** — `AuditEventKind` extensions + single-writer lock on `AppendOnlyAuditSink::append` (substrate trait trusts caller's `chain_hash` per §S5; canonical-bytes-on-write invariant lands at Layer B façade per Phase 4)
 - **Phase 2 (RFC-0014 acceptance)** — `ReceiptStatus` enum + `Receipt` field extensions + `receipt_id_for_digest` reverse-mapping
 - **Phase 3 (RFC-0011 acceptance)** — CLI-shape `[ADD]` error envelope pattern + per-variant From conversions at `octo-cli/src/error.rs`
 - **Phase 4 (RFC-0016 acceptance — paired with Phase 1 + 2 + 3)** — `append_audit_event` + `ChainHash` + `ReceiptId` + `ReceiptSummary` + `AuditFilter.subject_did` + `AuditFilter.status` multi-valued + CLI-shape error variants + `redact_substrate_error` helper + substrate-side scrubber patterns land
@@ -417,25 +397,28 @@ CLI-level test vectors live in RFC-0011 §Test Vectors (UNCHANGED at R2; expansi
 
 ## Key Files to Modify
 
-- `crates/octo-audit/src/lib.rs` — add `append_audit_event` + `ChainHash` newtype + `redact_substrate_error` helper + `scrub` patterns module
+- `crates/octo-audit/src/lib.rs` — see §6.2 (façade write surface) + §6.8 (`redact_substrate_error` helper) + §6.9 (scrub patterns module)
 - `crates/octo-audit/src/scrub.rs` — canonical 18-pattern substrate-side scrubber (pre-existing RFC-0016 substrate)
 - `crates/octo-audit-core/src/event.rs` — RFC-0012: `AgentTransition { agent_id: String, from: String, to: String, reason: Option<String> }` (substrate-faithful per the `AuditEventKind` enum declaration; `prev_chain_hash` is on outer `AuditEvent` struct, NOT inside the variant; redaction uses typed-discriminator namespace, NOT a central `Redaction` variant per §Extension over enumeration)
+- `crates/octo-audit-core/src/chain.rs` — RFC-0012: `pub fn canonical_bytes(event: &AuditEvent) -> Vec<u8>` (canonical byte encoding; Layer A substrate) + `pub fn compute_chain_hash(event: &AuditEvent) -> [u8; 32]` (BLAKE3 over canonical bytes; Layer A substrate). These are FREE FUNCTIONS, NOT trait methods on `AppendOnlyAuditSink`.
 - `crates/octo-settlement-core/src/receipt.rs` — RFC-0014: `Receipt` extends with `model: String` + `cost_dqa: u64` + `capability_root: [u8; 32]` + `subject_did: String` + `status: ReceiptStatus` (enum defined in same file at `receipt.rs`; `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration)
 - `crates/octo-settlement-core/src/chain.rs` — RFC-0014: `receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId>` reverse-mapping function (substrate-faithful per the `receipt_id_for_digest` function declaration in the `chain.rs` file; the phantom `id.rs` reference is replaced with the actual file)
-- `crates/octo-audit-core/src/sink.rs` — RFC-0012: `AppendOnlyAuditSink::append` adds `canonical_bytes(event)` + single-writer lock + read-stall
-- `crates/octo-cli/src/error.rs` — RFC-0011: per-variant `#[error(transparent)] From<octo_audit_core::AuditError>` conversions + CLI-shape variant constructors
+- `crates/octo-audit-core/src/sink.rs` — RFC-0012: `AppendOnlyAuditSink::append(&mut self, event: &AuditEvent)` (single-writer type-level via `&mut self`; substrate trusts caller's chain_hash per §S5 contract; the canonical-bytes-on-write invariant is enforced at the Layer B façade per §6.10, NOT at this trait)
+- `crates/octo-cli/src/error.rs` — RFC-0011: per-variant `#[error(transparent)] From<octo_audit::AuditError>` conversions (Layer B façade form) + CLI-shape variant constructors
 
 **Layer placement table:**
 
-| Crate                  | Layer                     | Substrate anchor                                                                    | Role at RFC-0016 acceptance                                     |
-| ---------------------- | ------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `octo-audit-core`      | Layer A frozen (RFC-0012) | `AuditEventKind` (extended) + `AppendOnlyAuditSink` (lock + canonical-bytes)        | Canonical substrate write surface                               |
-| `octo-settlement-core` | Layer A frozen (RFC-0014) | `Receipt` (extended) + `ReceiptStatus` enum + `ReceiptId` + `receipt_id_for_digest` | Canonical substrate projection + ID substrate                   |
-| `octo-audit`           | Layer B façade (RFC-0016) | `append_audit_event` + `ChainHash` + `redact_substrate_error` + scrubber module     | Façade write surface + substrate-side scrubber defense-in-depth |
-| `octo-settlement`      | Layer B façade (RFC-0014) | `ReceiptStatus` + `ReceiptId` re-exports                                            | Re-exports Layer A frozen extensions                            |
-| `octo-cli`             | Layer C (RFC-0011)        | `OctoCliError` per-variant From conversions                                         | CLI-shape error envelope + exit-code mapping                    |
+| Crate                  | Layer                     | Substrate anchor                                                                                                                                               | Role at RFC-0016 acceptance                                                             |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `octo-audit-core`      | Layer A frozen (RFC-0012) | `AuditEventKind` (extended) + `AppendOnlyAuditSink` (single-writer lock; `&mut self` trust contract) + `canonical_bytes` + `compute_chain_hash` free functions | Canonical substrate write surface (encoding owned by Layer A)                           |
+| `octo-settlement-core` | Layer A frozen (RFC-0014) | `Receipt` (extended) + `ReceiptStatus` enum + `ReceiptId` + `receipt_id_for_digest`                                                                            | Canonical substrate projection + ID substrate                                           |
+| `octo-audit`           | Layer B façade (RFC-0016) | `append_audit_event` (canonical-bytes-on-write invariant per §6.10) + `ChainHash` + `redact_substrate_error` + scrubber module                                 | Façade write surface (canonical-bytes check + substrate-side scrubber defense-in-depth) |
+| `octo-settlement`      | Layer B façade (RFC-0014) | `ReceiptStatus` + `ReceiptId` re-exports                                                                                                                       | Re-exports Layer A frozen extensions                                                    |
+| `octo-cli`             | Layer C (RFC-0011)        | `OctoCliError` per-variant From conversions                                                                                                                    | CLI-shape error envelope + exit-code mapping                                            |
 
 Layer direction: `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen). `octo-cli` (Layer C) → `octo-audit` (Layer B) → `octo-audit-core` (Layer A). No reverse deps. No C→A direct Cargo edges (octo-cli → octo-audit → octo-audit-core transitive visibility via Layer B façade re-exports).
+
+**§6.10 invariant ownership:** canonical-bytes-on-write lives at the Layer B façade `append_audit_event` (per `crates/octo-audit/src/audit_event_v2.rs` module-level §6.10 docstring), NOT at the substrate trait `AppendOnlyAuditSink::append` (which trusts the caller's chain_hash per the §S5 contract). See §6.10 for the substrate-faithful split.
 
 ## Future Work
 
@@ -458,13 +441,13 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ### v1.1 — Substrate Sweep (2026-09-14)
 
-| #   | Amendment                                                                                                                                                       | Substrate ground truth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Acceptance criterion                                                                                                                                                                       |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | §6.9 scrubber count 13 → 18 (substrate canonical pattern numbering; restructure user-facing list to mirror substrate `1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6, 11-18`) | `octo_audit::scrub` module docstring: "Patterns 1-5e (10 regexes) + Pattern 6 (substring) + Patterns 11-18 (8 additive crypto/secret-form regexes for RFC-0016 §6.9) pre-compiled via `once_cell::sync::Lazy<regex::Regex>`". **Substrate docstring drift:** the parenthetical "(10 regexes)" claims 10 regexes for Patterns 1-5e but the actual count is 9 `Lazy<Regex>` constants (`RE_HEX`, `RE_PATH`, `RE_TABLE`, `RE_SQLSTATE`, `RE_IO`, `RE_URL_CREDS`, `RE_ANSI`, `RE_IPV4`, `RE_UUID`). Substrate-fix DEFERRED to paired-acceptance of RFC-0012; the 18-pattern count holds (9 + 1 substring + 8 = 18). | §6.9 enumerates all 18 substrate patterns with substrate pattern number as primary identifier + user-facing label as secondary; table form with regex literal + substrate line reference   |
-| 2   | §6.9 Pattern 18 char range: 64 → 16-64 hex                                                                                                                      | `octo_audit::scrub::RE_X509_SERIAL_HEX` regex `\b0x[A-Fa-f0-9]{16,64}\b` (word-boundary-anchored) per R6.5 reconciliation. Pattern 1 hex ≥32 catch is insufficient because `0x` prefix breaks word-boundary alignment                                                                                                                                                                                                                                                                                                                                                                                           | §6.9 Pattern 18 row documents 16-64 hex range with R6.5 rationale                                                                                                                          |
-| 3   | §6.7 mapping table: add `AuditError::ChainHashMismatch { event_id }` row                                                                                        | `octo_audit_core::error::AuditError::ChainHashMismatch { event_id: u64 }` collapsed variant per R2.5 review; pre-R2.5 carried two variants with raw digest leak surface (`ChainHashMismatch { expected: [u8; 32], got: [u8; 32] }` + `ChainLinkBroken { event_id: u64 }`)                                                                                                                                                                                                                                                                                                                                       | §6.7 table includes the row mapping substrate → CLI-shape `OctoCliError::Internal(reason)` (CLI exit 64); §6.7 R2.5 note documents the collapse rationale in 2 sentences                   |
-| 4   | §Implicit Assumptions: add `#[non_exhaustive]` extension-surface item                                                                                           | `octo_audit_core::error::AuditError enum` + `octo_audit_core::error::AuditChainError enum` + `octo_audit_core::event::AuditEventKind enum` carry `#[non_exhaustive]` per Layer A frozen contract (CLAUDE.md §Extension over enumeration). `octo_cli::error::OctoCliError` carries `#[non_exhaustive]` symmetrically (Layer B façade additive-growth contract)                                                                                                                                                                                                                                                   | §Implicit Assumptions item 6 documents the four-type `#[non_exhaustive]` set; §6.7 substrate column notes the catch-all arm requirement for the per-variant `From<AuditError>` conversions |
-| 5   | §Adversary Analysis + §Compatibility #5 + §Key Files + §Rationale: scrubber count 13 → 18 sweep                                                                 | Cross-reference consistency per amendment #1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | All four locations reflect 18-pattern substrate-canonical count                                                                                                                            |
+| #   | Amendment                                                                                                                                                       | Substrate ground truth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Acceptance criterion                                                                                                                                                                       |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | §6.9 scrubber count 13 → 18 (substrate canonical pattern numbering; restructure user-facing list to mirror substrate `1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6, 11-18`) | `octo_audit::scrub` module docstring: "Patterns 1-5e (9 regexes) + Pattern 6 (substring) + Patterns 11-18 (8 additive crypto/secret-form regexes for RFC-0016 §6.9) pre-compiled via `once_cell::sync::Lazy<regex::Regex>`" — corrected via R20.5 R-c HIGH L463 (substrate docstring drift: parenthetical "(10 regexes)" → "(9 regexes)" per `scrub.rs` L45-46 + `grep -c "Regex::new\|regex!"` = 17 total regex literals matching 9 + 8 patterns). The 18-pattern count holds (9 + 1 substring + 8 = 18). | §6.9 enumerates all 18 substrate patterns with substrate pattern number as primary identifier + user-facing label as secondary; table form with regex literal + substrate line reference   |
+| 2   | §6.9 Pattern 18 char range: 64 → 16-64 hex                                                                                                                      | `octo_audit::scrub::RE_X509_SERIAL_HEX` regex `\b0x[A-Fa-f0-9]{16,64}\b` (word-boundary-anchored) per R6.5 reconciliation. Pattern 1 hex ≥32 catch is insufficient because `0x` prefix breaks word-boundary alignment                                                                                                                                                                                                                                                                                      | §6.9 Pattern 18 row documents 16-64 hex range with R6.5 rationale                                                                                                                          |
+| 3   | §6.7 mapping table: add `AuditError::ChainHashMismatch { event_id }` row                                                                                        | `octo_audit_core::error::AuditError::ChainHashMismatch { event_id: u64 }` collapsed variant per R2.5 review; pre-R2.5 carried two variants with raw digest leak surface (`ChainHashMismatch { expected: [u8; 32], got: [u8; 32] }` + `ChainLinkBroken { event_id: u64 }`)                                                                                                                                                                                                                                  | §6.7 table includes the row mapping substrate → CLI-shape `OctoCliError::Internal(reason)` (CLI exit 64); §6.7 R2.5 note documents the collapse rationale in 2 sentences                   |
+| 4   | §Implicit Assumptions: add `#[non_exhaustive]` extension-surface item                                                                                           | `octo_audit_core::error::AuditError enum` + `octo_audit_core::error::AuditChainError enum` + `octo_audit_core::event::AuditEventKind enum` carry `#[non_exhaustive]` per Layer A frozen contract (CLAUDE.md §Extension over enumeration). `octo_cli::error::OctoCliError` carries `#[non_exhaustive]` symmetrically (Layer B façade additive-growth contract)                                                                                                                                              | §Implicit Assumptions item 6 documents the four-type `#[non_exhaustive]` set; §6.7 substrate column notes the catch-all arm requirement for the per-variant `From<AuditError>` conversions |
+| 5   | §Adversary Analysis + §Compatibility #5 + §Key Files + §Rationale: scrubber count 13 → 18 sweep                                                                 | Cross-reference consistency per amendment #1                                                                                                                                                                                                                                                                                                                                                                                                                                                               | All four locations reflect 18-pattern substrate-canonical count                                                                                                                            |
 
 ### v1.2 — R2.5 Substrate Sweep (2026-09-14)
 
@@ -532,26 +515,33 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 // RFC-0016 additions (requires RFC-0012 + RFC-0014 + RFC-0011 paired acceptance):
 
-// §6.2 append_audit_event — write path
+// §6.2 append_audit_event — write path (Layer B façade 4-step sequence per audit_event_v2.rs)
 pub fn append_audit_event(
     sink: &mut dyn AppendOnlyAuditSink,
     event: AuditEvent,
 ) -> Result<ChainHash, octo_audit::AuditError> {
-    // 1. Acquire single-writer lock on sink (Rust &mut enforces type-level)
-    // 2. Canonicalize event via sink.canonical_bytes(event)
-    // 3. Verify canonical bytes match BLAKE3 chain link (§6.10 invariant)
-    // 4. Persist canonical bytes
-    // 5. Release lock; concurrent readers unblock (§6.11 read-stall)
-    // 6. Return ChainHash
+    // 1. compute_chain_hash(&event) — Layer A free function, BLAKE3 over canonical bytes
+    // 2. Compare canonical chain-hash to event.chain_hash; on mismatch short-circuit with
+    //    AuditError::ChainHashMismatch { event_id } BEFORE the sink is called
+    // 3. sink.append(&event)? — substrate trait owns monotonicity + persistence (RFC-0012 §S5)
+    // 4. Return Ok(ChainHash(canonical))
 }
 
-// §6.3 ChainHash newtype
+// §6.3 ChainHash newtype (canonical accessors per audit_event_v2.rs L56-70)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChainHash(pub [u8; 32]);
 
+impl ChainHash {
+    /// Substrate canonical accessor (per audit_event_v2.rs L60-62).
+    pub fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+
+    /// Substrate canonical accessor (delegates to `hex::encode` per audit_event_v2.rs L65-66).
+    pub fn to_hex(&self) -> String { hex::encode(self.0) }
+}
+
 impl fmt::Display for ChainHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zero-allocation per-byte loop (canonical 64-char lowercase hex; no `0x` prefix).
+        // Per-byte loop (canonical 64-char lowercase hex; no `0x` prefix).
         for byte in &self.0 {
             write!(f, "{byte:02x}")?;
         }
@@ -579,34 +569,30 @@ pub struct ReceiptSummary {
     pub status: ReceiptStatus,
 }
 
-// §6.6 AuditFilter extension (RFC-0016 additions; KEEP surface from RFC-0016 preserved)
+// §6.6 AuditFilter extension (substrate-canonical 11-field form per receipt_read.rs L72-124)
 pub struct AuditFilter {
-    pub since_unix: Option<u64>,
-    pub until_unix: Option<u64>,
-    pub capability_root: Option<[u8; 32]>,
-    pub model: Option<String>,
-    pub limit: Option<usize>,
     pub router_id: Option<String>,
     pub timestamp_unix_gte: Option<u64>,
     pub timestamp_unix_lte: Option<u64>,
+    pub since_unix: Option<u64>,
+    pub until_unix: Option<u64>,
     pub subject_did: Option<String>,
     pub status: Vec<StatusRef>,
+    pub model: Option<String>,
+    pub capability_root: Option<[u8; 32]>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
 }
 
-// §6.6 StatusRef type alias
+// §6.6 StatusRef type alias (canonical Layer B façade alias; one declaration per §Layer placement)
 pub type StatusRef = octo_settlement::ReceiptStatus;
 
-// §6.8 Scrub helper (Layer B façade)
+// §6.8 Scrub helper (Layer B façade free function per scrub_newtypes.rs)
 //
-// `redact_substrate_error` is a free function — the §6.8 sweep replaced the
-// pre-v1.1 phantom `ScrubbedAuditError` / `ScrubbedString` newtypes with a
-// single helper at `crates/octo-audit/src/scrub_newtypes.rs`. The CLI
-// boundary at `octo-cli/src/error.rs` calls `redact_substrate_error` before
-// constructing `SinkSpecific(String)` payloads.
+// Substrate-faithful form: delegate to `scrub_adapter_error` and collapse to the
+// canonical `<REDACTED>` marker iff a pattern matched. `scrub_adapter_error`
+// itself preserves `<REDACTED>` verbatim (no double-scrub per R21 L-2 idempotency rule).
 pub fn redact_substrate_error(raw: &str) -> String {
-    // Canonical substrate form per §6.8: delegate to scrub_adapter_error and
-    // collapse to the canonical `<REDACTED>` marker iff a pattern matched.
-    // `scrub_adapter_error` itself preserves `<REDACTED>` verbatim (no double-scrub).
     let scrubbed = crate::scrub::scrub_adapter_error(raw);
     if scrubbed == raw {
         raw.to_string()
@@ -614,10 +600,6 @@ pub fn redact_substrate_error(raw: &str) -> String {
         REDACTED_MARKER.to_string()
     }
 }
-
-// Type alias for the canonical Layer A frozen ReceiptStatus enum re-exported
-// through the Layer B settlement façade (matches §6.6 + §Layer placement).
-pub type StatusRef = octo_settlement::ReceiptStatus;
 ```
 
 ### Appendix B. Mermaid diagram — write-path flow (RFC-0016)
@@ -631,26 +613,24 @@ sequenceDiagram
     participant Scrub as octo-audit/scrub.rs (Layer B)
 
     Wallet->>Aud: append_audit_event(&mut dyn sink, AgentTransition { agent_id, from, to, reason })
-    Aud->>Sink: &mut borrow acquires single-writer lock
-    Sink->>Core: canonical_bytes(event) re-canonicalizes ALL fields
-    Core-->>Sink: canonical_bytes_buf
-    Sink->>Sink: compute BLAKE3 chain-hash over canonical_bytes_buf
-    Sink->>Sink: verify canonical_bytes match BLAKE3 chain link (§6.10 invariant)
-    Sink->>Sink: persist event + chain-hash (canonical bytes, not caller payload)
-    Sink-->>Aud: Ok(ChainHash(<32-bytes>))
-    Aud->>Scrub: redact_substrate_error(ChainHash hex repr) at CLI boundary (defense-in-depth)
-    Scrub-->>Aud: <hex-or-REDACTED>
-    Aud-->>Wallet: Ok(ChainHash)
-    Note over Sink: Concurrent readers (list_receipts, get_receipt) stall until lock release (§6.11)
+    Aud->>Core: compute_chain_hash(&event) — Layer A free function (canonical-bytes-on-write invariant §6.10)
+    Core-->>Aud: canonical_chain_hash
+    Aud->>Aud: compare canonical vs event.chain_hash; mismatch → ChainHashMismatch short-circuit
+    Aud->>Sink: sink.append(&event) — substrate trait owns monotonicity + persistence (RFC-0012 §S5)
+    Sink-->>Aud: Ok(())
+    Aud-->>Wallet: Ok(ChainHash(canonical))
+    Note over Aud: Concurrent readers (list_receipts, get_receipt) stall until DOMAIN-adapter lock release (§6.11 paired-acceptance gate)
 ```
 
 ### Appendix C. Pairing acceptance checklist
 
-RFC-0016 acceptance REQUIRES all three substrate amendments to land in this order:
+// see §Pairing invariant for the canonical pairing rationale + crate-layer anchors.
 
-1. **RFC-0012 acceptance milestone** — `octo-audit-core::AuditEventKind` extends; `AppendOnlyAuditSink::append` adds canonical-bytes-on-write + single-writer lock + read-stall
+The five acceptance steps land in canonical order:
+
+1. **RFC-0012 acceptance milestone** — `octo-audit-core::AuditEventKind` extends; `AppendOnlyAuditSink::append` adds single-writer lock (canonical-bytes-on-write lives at Layer B façade per §6.10, NOT substrate trait per R20.5 R-sf C-3)
 2. **RFC-0014 acceptance milestone** — `octo_settlement_core::ReceiptStatus` enum added; `Receipt` field extensions added; `ReceiptId` newtype + `receipt_id_for_digest` reverse-mapping function added
-3. **RFC-0011 acceptance milestone** — canonical `[ADD]` error envelope pattern lands at `octo-cli/src/error.rs`; per-variant `#[error(transparent)] From<AuditError>` conversions added; CLI-shape variants `ReceiptNotFound(String)` + `InvalidFilter(String)` + `PermissionDenied` + `AuditSubstrateNotReady` added
+3. **RFC-0011 acceptance milestone** — canonical `[ADD]` error envelope pattern lands at `octo-cli/src/error.rs`; per-variant `#[error(transparent)] From<AuditError>` conversions added; CLI-shape variants `ReceiptNotFound(String)` + `InvalidFilter(String)` + `PermissionDenied(reason)` + `AuditSubstrateNotReady` added
 4. **RFC-0016 acceptance milestone** — this amendment; write surface + projection + ACL + scrubber patterns land
 5. **RFC-0015 acceptance milestone** (paired sibling) — `octo_wallet::transition_agent` calls `append_audit_event` to write `AuditEventKind::AgentTransition` rows
 

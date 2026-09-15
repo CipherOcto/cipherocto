@@ -17,10 +17,15 @@
 //! 2. Source-shape grep: every SQL statement routes through
 //!    `db.execute(...)` or `db.query(...)` (no raw SQL
 //!    string passed elsewhere).
-//! 3. Runtime conformance: barrier synchronisation confirms
-//!    the harness is wired to the production adapter via
-//!    the public API; runtime invariants are exercised by
-//!    the unit tests inside `stoolap.rs`.
+//! 3. Runtime conformance: the production
+//!    `StoolapAuditSink::open_in_memory()` adapter is
+//!    instantiated and exercised end-to-end (`append` +
+//!    `last_event_id` round trip). Pre/post-write atomic
+//!    observation is exercised by
+//!    `read_stalls_while_write_invariant.rs` using a
+//!    sink that implements the same
+//!    `AppendOnlyAuditSink` trait (R/W primitive agnostic
+//!    per RFC-0016-a §6.11).
 //!
 //! Run with:
 //!   cargo test -p octo-audit --test stoolap_domain_conformance
@@ -41,7 +46,7 @@ fn dom_adapter_declares_arc_mutex_database() {
     // impl owns the choice; this adapter chose shared Mutex).
     assert!(
         src.contains("Arc<Mutex<Database>>"),
-        "DOMAIN adapter MUST use Arc<Mutex<Database>> as its single shared primitive (RFC-0016-a §6.11 atomic observation invariant). Source:\n{src}"
+        "DOMAIN adapter MUST use Arc<Mutex<Database>> as its single shared primitive (RFC-0016-a §6.11 atomic observation invariant)"
     );
 }
 
@@ -103,10 +108,13 @@ fn dom_adapter_append_acquires_lock() {
     let src = include_str!("../src/storage/stoolap.rs");
     // The `fn append` body MUST call `self.db.lock()` (or
     // equivalent) before any read/write.
-    let append_block = src.split("fn append(").nth(1).expect("append fn present");
+    let append_block = src
+        .split("fn append(")
+        .nth(1)
+        .expect("append fn present");
     assert!(
         append_block.contains("self.db.lock()"),
-        "DOMAIN adapter `append` MUST acquire self.db.lock() (RFC-0016-a §6.11). Got:\n{append_block}"
+        "DOMAIN adapter `append` MUST acquire self.db.lock() (RFC-0016-a §6.11)"
     );
 }
 
@@ -123,7 +131,7 @@ fn dom_adapter_last_event_id_acquires_lock() {
         .expect("last_event_id fn present");
     assert!(
         read_block.contains("self.db.lock()"),
-        "DOMAIN adapter `last_event_id` MUST acquire self.db.lock() (RFC-0016-a §6.11 read-stalls-while-write invariant). Got:\n{read_block}"
+        "DOMAIN adapter `last_event_id` MUST acquire self.db.lock() (RFC-0016-a §6.11 read-stalls-while-write invariant)"
     );
 }
 
@@ -160,42 +168,52 @@ fn dom_adapter_struct_is_clone() {
     assert!(
         src.contains("#[derive(Clone)]")
             && src.contains("pub struct StoolapAuditSink"),
-        "DOMAIN adapter `StoolapAuditSink` MUST derive Clone (cheap-cloneable handle over Arc<Mutex<Database>>). Source:\n{src}"
+        "DOMAIN adapter `StoolapAuditSink` MUST derive Clone (cheap-cloneable handle over Arc<Mutex<Database>>)"
     );
 }
 
 /// DOMAIN adapter atomic pre/post-write observation runtime
-/// conformance smoke: barrier synchronisation confirms the
-/// harness is wired. The full runtime conformance (concurrent
-/// append + last_event_id) is exercised by the unit tests
-/// inside `stoolap.rs` `mod tests` block.
+/// conformance: instantiate the production
+/// `StoolapAuditSink::open_in_memory()` adapter, append an
+/// `AuditEventKind::Insert` event (canonical chain_hash
+/// computed via `compute_chain_hash`), then read
+/// `last_event_id` to confirm the round trip succeeds.
+///
+/// Pre/post-write atomic observation under contention is
+/// exercised by `read_stalls_while_write_invariant.rs`
+/// (N=8 readers + 1 writer over a sink implementing the
+/// same `AppendOnlyAuditSink` trait — R/W primitive
+/// agnostic per RFC-0016-a §6.11).
 #[test]
 fn dom_adapter_atomic_observation_runtime() {
-    let barrier = Arc::new(Barrier::new(4));
+    use octo_audit::storage::stoolap::StoolapAuditSink;
+    use octo_audit::{
+        compute_chain_hash, AppendOnlyAuditSink, AuditEvent, AuditEventKind,
+    };
 
-    // Writer arm.
-    let writer_barrier = Arc::clone(&barrier);
-    let writer = thread::spawn(move || {
-        writer_barrier.wait();
-        // Verify barrier synchronisation (proves all 4
-        // threads reached the barrier atomically).
-        writer_barrier.wait();
-    });
+    let mut sink = StoolapAuditSink::open_in_memory().expect("stoolap open_in_memory");
 
-    // Reader arms.
-    let mut reader_handles = Vec::new();
-    for _ in 0..3 {
-        let barrier_c = Arc::clone(&barrier);
-        reader_handles.push(thread::spawn(move || {
-            barrier_c.wait();
-            barrier_c.wait();
-        }));
-    }
+    // Build a canonical event: chain_hash is computed from the
+    // OTHER fields (RFC-0016-a §6.10 canonical-bytes-on-write).
+    let mut event = AuditEvent {
+        event_id: 0,
+        node_did: "did:oct:test".to_owned(),
+        event_kind: AuditEventKind::Insert,
+        cap_root_hash: [0u8; 32],
+        at_millis_unix: 1_000,
+        prev_chain_hash: [0u8; 32],
+        chain_hash: [0u8; 32],
+    };
+    let chain_hash = compute_chain_hash(&event);
+    event.chain_hash = chain_hash;
 
-    writer.join().expect("writer join");
-    for h in reader_handles {
-        h.join().expect("reader join");
-    }
+    AppendOnlyAuditSink::append(&mut sink, &event).expect("append succeeds");
+    let last = AppendOnlyAuditSink::last_event_id(&sink).expect("last_event_id query");
+    assert_eq!(
+        last,
+        Some(0),
+        "DOMAIN adapter round trip MUST persist event_id 0 and return it via last_event_id"
+    );
 }
 
 /// DOMAIN adapter conformance contract summary. Smoke test
@@ -207,6 +225,6 @@ fn dom_adapter_storage_module_wiring() {
     assert!(
         storage_mod.contains("stoolap")
             || storage_mod.contains("pub mod stoolap"),
-        "DOMAIN adapter module MUST re-export the Stoolap sink (storage/mod.rs). Got:\n{storage_mod}"
+        "DOMAIN adapter module MUST re-export the Stoolap sink (storage/mod.rs)"
     );
 }

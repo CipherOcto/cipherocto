@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod capability;
+pub mod governance;
 pub mod identity;
 pub mod mesh;
 pub mod peer;
@@ -12,6 +13,7 @@ pub mod stub;
 pub mod vault;
 
 pub use agent::AgentAction;
+pub use governance::GovernanceAction;
 pub use mesh::MeshAction;
 pub use peer::PeerAction;
 pub use reputation::ReputationAction;
@@ -44,5 +46,6 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
         Commands::Mesh { action } => mesh::dispatch(action, cli),
         Commands::Vault { action } => vault::dispatch(action, cli),
         Commands::Agent { action } => agent::dispatch(action, cli),
+        Commands::Governance { action } => governance::dispatch(action, cli),
     }
 }

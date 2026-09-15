@@ -10,6 +10,7 @@ pub mod output;
 pub mod redact;
 
 pub use commands::agent::AgentAction;
+pub use commands::governance::GovernanceAction;
 pub use commands::peer::PeerAction;
 pub use error::{sanitize_substrate_error, OctoCliError};
 pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
@@ -110,6 +111,18 @@ pub enum Commands {
         /// Agent subcommand.
         #[command(subcommand)]
         action: AgentAction,
+    },
+    /// Governance read/write subcommands (RFC-0011-g §Subcommand Taxonomy).
+    ///
+    /// Phase 1 lands `octo governance snapshot` (mission
+    /// `0011-g-governance-snapshot`); the `attest` + `vote`
+    /// surface waits for the RFC-0855p-d + RFC-0855p-e + RFC-0011-d
+    /// Phase 1 conjunction (mission
+    /// `0011-g-governance-attest-vote`).
+    Governance {
+        /// Governance subcommand.
+        #[command(subcommand)]
+        action: GovernanceAction,
     },
 }
 

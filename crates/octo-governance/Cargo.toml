@@ -12,6 +12,13 @@ crate-type = ["rlib"]
 [dependencies]
 # Layer B facade → Layer A substrate (RFC-0013 §Module Layout).
 octo-governance-core = { path = "../octo-governance-core" }
+# BLAKE3-256 for SnapshotRef content addressing (RFC-0011-g §Snapshot Ref).
+# Routed through the same crate as octo-cap-macaroon (RFC-0957 §Algorithms)
+# — no direct `blake3` re-dep in octo-cli to honor the parallel-abstraction
+# ban. The CLI consumes via the façade re-export.
+blake3 = { version = "1.5", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
 
 [lints.rust]
 unsafe_code = "forbid"

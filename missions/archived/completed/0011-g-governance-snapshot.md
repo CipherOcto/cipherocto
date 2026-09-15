@@ -15,11 +15,13 @@ metadata:
     - mission 0011-capability-commands
     - mission 0011-policy-commands
     - mission 0013-governance-substrate-extraction
-status: Claimed
+status: Closed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+closed_at: 2026-09-15
 amended_at: 2026-09-10
 amendment: "RFC-0011-g v1.4 layer-model note: canonical `ProposalState` + `GovernancePolicy` types consumed by `octo governance snapshot` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `SnapshotOutput.remaining_seconds` is a substrate-facing field with potential future TTL semantics evolution (per RFC-0011-g v1.2 audit-table annotation)."
+closeout_audit: docs/audits/2026-09-15-0011-g-governance-snapshot-dry-closure.md
 ---
 
 # 0011-g-governance-snapshot — `octo governance snapshot`
@@ -268,3 +270,47 @@ at RFC-0011-g filing time; no additional gating applies.
 ## Claimant
 
 @unassigned
+
+## Closeout (2026-09-15)
+
+Implementation landed per RFC-0011-g Phase 1. Substrate additions in
+`octo-governance` Layer B façade (NOT in `octo-governance-core`
+Layer A — frozen contract preserved):
+
+- `cache.rs` — `OctoGovernanceSnapshotCache` (LRU + 600s TTL,
+  `SNAPSHOT_CACHE_CAPACITY = 64`; cache key `(active_did,
+  chain_id)` only; state filter NOT in key per v1
+  simplification since substrate projection does not change
+  per filter)
+- `snapshot.rs` — `ProposalFilter`, `ProposalSummary`,
+  `SnapshotRef`, `SnapshotView`, `pub fn snapshot(...)` (v1
+  stub returns empty projection; substrate ledger plumbing
+  lands in RFC-0855p-d + RFC-0855p-e conjunction)
+- `error.rs` — `GovernanceSnapshotError` (non_exhaustive,
+  `InvalidProposalState | InvalidChainId | SnapshotStale |
+  CacheError`)
+
+CLI wiring in `octo-cli`:
+
+- `Commands::Governance { action: GovernanceAction }` variant
+- `GovernanceAction::Snapshot { chain_id, proposal_state,
+  force_refresh }` (RFC-0011-g → substrate label translation
+  at dispatch boundary)
+- 3 new `OctoCliError` variants: `SnapshotStale { ... }` exit
+  35; `InvalidProposalState { state }` exit 2;
+  `GovernanceSubstrateError { reason }` exit 51
+- 3 new rows in `tv_err4_exit_code_mapping` test
+- 5 unit tests in `commands/governance.rs` (rfc-label
+  translation table totality + unknown label surfaces
+  `InvalidProposalState`; schemars `SnapshotOutput` declares
+  string fields; 3 exit-code mappings)
+
+Verification: `cargo build -p octo-cli --all-features` clean;
+`cargo test -p octo-cli --lib` 253 passed (was 246 before
+this mission); `cargo clippy -p octo-cli --lib --all-features
+-- -D warnings` clean; `cargo fmt --all` clean.
+
+Phase 2 (`octo governance attest` + `octo governance vote`)
+remains release-gated on the RFC-0855p-d + RFC-0855p-e +
+RFC-0011-d Phase 1 conjunction per `0011-g-governance-attest-vote`
+mission.

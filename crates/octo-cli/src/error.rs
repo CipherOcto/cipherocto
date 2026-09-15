@@ -455,6 +455,43 @@ pub enum OctoCliError {
         reason: String,
     },
 
+    /// `octo governance snapshot` resolved to a snapshot whose
+    /// `expires_at_unix <= now_unix` (TTL boundary inclusive on
+    /// the stale side per RFC-0011-g §Performance Targets). Exit
+    /// 35 per RFC-0011-g §Error Handling.
+    #[error("snapshot stale: snapshot_id {snapshot_id_hex} expired {age_secs}s ago (TTL = 600s)")]
+    SnapshotStale {
+        /// Hex-encoded snapshot id (BLAKE3-256).
+        snapshot_id_hex: String,
+        /// Age in seconds since `expires_at_unix`.
+        age_secs: u64,
+    },
+
+    /// `octo governance snapshot --proposal-state <state>` carried a
+    /// label that did not match any canonical `ProposalState`. The
+    /// CLI accepts the RFC-0011-g §Subcommand Taxonomy labels;
+    /// the dispatch boundary translates to substrate-native
+    /// `ProposalState` discriminants and surfaces this error when
+    /// translation fails. Exit 2 per clap arg-parse convention.
+    #[error("invalid proposal-state label `{state}`; expected one of `Open`, `Quorum-Reached`, `Closed-Accepted`, `Closed-Rejected`, `Closed-Expired` per RFC-0011-g §Subcommand Taxonomy")]
+    InvalidProposalState {
+        /// The unrecognized label supplied on the CLI.
+        state: String,
+    },
+
+    /// `octo governance snapshot` reached the substrate boundary but
+    /// the `octo-governance` cache layer or projection surface
+    /// returned an internal failure. Maps from
+    /// `GovernanceSnapshotError::CacheError { reason }` /
+    /// `GovernanceSnapshotError::InvalidChainId { input, reason }`.
+    /// Exit 51 per the governance substrate boundary slot
+    /// (parallel to `RuntimeSubstrateNotReady` exit 51).
+    #[error("governance substrate error: {reason}")]
+    GovernanceSubstrateError {
+        /// Sanitized substrate failure reason.
+        reason: String,
+    },
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -543,6 +580,9 @@ impl OctoCliError {
             Self::AgentNotRunning(_) => 48,
             Self::RuntimeSubstrateNotReady => 51,
             Self::RuntimeAttachFailed { .. } => 49,
+            Self::SnapshotStale { .. } => 35,
+            Self::InvalidProposalState { .. } => 2,
+            Self::GovernanceSubstrateError { .. } => 51,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -690,6 +730,15 @@ impl OctoCliError {
             }
             Self::RuntimeAttachFailed { .. } => {
                 "the runtime attach call failed at the substrate boundary (handle revoked, channel closed, or invalid attach token); verify the agent is in `Running` state via `octo agent list` and the spawn has not been terminated".to_string()
+            }
+            Self::SnapshotStale { .. } => {
+                "the snapshot is stale (TTL = 600s per RFC-0011-g §Performance Targets); re-run with --force-refresh to bypass the cache".to_string()
+            }
+            Self::InvalidProposalState { .. } => {
+                "use one of the RFC-0011-g §Subcommand Taxonomy labels: `Open`, `Quorum-Reached`, `Closed-Accepted`, `Closed-Rejected`, `Closed-Expired`".to_string()
+            }
+            Self::GovernanceSubstrateError { .. } => {
+                "the governance substrate returned an internal failure (cache or projection surface); check the substrate logs and retry".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
@@ -1230,6 +1279,33 @@ mod tests {
             (OctoCliError::AgentNotRunning(uuid::Uuid::nil()), 48),
             (OctoCliError::RuntimeAttachFailed { reason: "x".into() }, 49),
             (OctoCliError::RuntimeSubstrateNotReady, 51),
+            // RFC-0011-g §Error Handling: governance snapshot slots
+            // (35 / 2 / 51) — paired with the substrate
+            // `octo_governance::GovernanceSnapshotError::exit_code`
+            // table so the CLI boundary and the substrate boundary
+            // agree on slot allocation. Exit 35 = stale snapshot
+            // (passes `--force-refresh`); exit 2 = unrecognized
+            // RFC-0011-g proposal-state label; exit 51 = substrate
+            // (cache / chain) error.
+            (
+                OctoCliError::SnapshotStale {
+                    snapshot_id_hex: "00".repeat(32),
+                    age_secs: 42,
+                },
+                35,
+            ),
+            (
+                OctoCliError::InvalidProposalState {
+                    state: "Bogus".to_string(),
+                },
+                2,
+            ),
+            (
+                OctoCliError::GovernanceSubstrateError {
+                    reason: "cache miss race".to_string(),
+                },
+                51,
+            ),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");

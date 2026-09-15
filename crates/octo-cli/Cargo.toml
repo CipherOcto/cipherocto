@@ -58,6 +58,12 @@ octo-vault = { path = "../octo-vault", version = "0.1.0" }                   # L
 # re-export is consumed by the canonical `[ADD]` error envelope
 # conversion in `error.rs` (RFC-0011-a per-variant mapping pattern).
 octo-audit = { path = "../octo-audit", version = "0.1.0" }                   # Layer B audit substrate — RFC-0011-a + RFC-0016-a
+# Layer B governance substrate — RFC-0011-g Phase 1. `octo governance snapshot`
+# consumes the `snapshot()` projection + `OctoGovernanceSnapshotCache`
+# (LRU + 600s TTL) per RFC-0011-g §Substrate `[ADD]`. Layer A frozen
+# canonical types (ProposalState, GovernancePolicy, etc.) reached via
+# façade re-exports — no direct `octo-governance-core` dep.
+octo-governance = { path = "../octo-governance", version = "0.1.0" }         # Layer B governance facade — RFC-0011-g + RFC-0013
 # Layer B runtime substrate — RFC-0011-c §9.10 [ADD] signatures.
 # `octo_runtime::attach` consumes a RuntimeHandle minted via
 # `spawn_agent` (RFC-0011-c §9.3.2); the `octo agent attach` CLI

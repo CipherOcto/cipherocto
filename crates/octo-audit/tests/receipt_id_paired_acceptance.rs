@@ -19,8 +19,6 @@
 //! Run with:
 //!   cargo test -p octo-audit --test receipt_id_paired_acceptance
 
-#![allow(unused_imports)]
-
 use octo_audit::CHAIN_HASH_SIZE;
 use octo_settlement::ReceiptId;
 

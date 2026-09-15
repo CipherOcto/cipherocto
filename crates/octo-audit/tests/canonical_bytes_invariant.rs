@@ -11,8 +11,6 @@
 //! Run with:
 //!   cargo test -p octo-audit --test canonical_bytes_invariant
 
-#![allow(unused_imports)]
-
 use octo_audit::{
     append_audit_event, compute_chain_hash, AppendOnlyAuditSink, AuditError, AuditEvent,
     AuditEventKind, CHAIN_HASH_SIZE,

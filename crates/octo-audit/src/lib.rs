@@ -27,9 +27,14 @@ pub use octo_audit_core::AuditError;
 pub use octo_audit_core::AuditEvent;
 pub use octo_audit_core::AuditEventKind;
 
-/// Canonical 32-byte hash-field length (Layer B presentation constant).
-/// Pairs the `[u8; 32]` shape of `ChainHash`, `cap_root_hash`,
-/// `prev_chain_hash`, and `ReceiptId` opaque blob across the substrate.
+/// Canonical 32-byte hash-field length for the audit-substrate
+/// facade. Layer B placement (NOT Layer A frozen per CLAUDE.md
+/// §Architectural Principles): the constant centralises the
+/// magic 32 already implicit across `[u8; 32]` field types in
+/// `octo_audit_core::AuditEvent` (`cap_root_hash`,
+/// `prev_chain_hash`, `chain_hash`) and the `ChainHash(pub [u8;
+/// 32])` newtype. Layer A substrate expansion requires an RFC
+/// amendment; this facade constant is the additive-only path.
 pub const CHAIN_HASH_SIZE: usize = 32;
 
 // Storage adapter module — concrete sinks (e.g. Stoolap) live here at

@@ -103,10 +103,7 @@ fn dom_adapter_append_acquires_lock() {
     let src = include_str!("../src/storage/stoolap.rs");
     // The `fn append` body MUST call `self.db.lock()` (or
     // equivalent) before any read/write.
-    let append_block = src
-        .split("fn append(")
-        .nth(1)
-        .expect("append fn present");
+    let append_block = src.split("fn append(").nth(1).expect("append fn present");
     assert!(
         append_block.contains("self.db.lock()"),
         "DOMAIN adapter `append` MUST acquire self.db.lock() (RFC-0016-a §6.11). Got:\n{append_block}"
@@ -213,4 +210,3 @@ fn dom_adapter_storage_module_wiring() {
         "DOMAIN adapter module MUST re-export the Stoolap sink (storage/mod.rs). Got:\n{storage_mod}"
     );
 }
-

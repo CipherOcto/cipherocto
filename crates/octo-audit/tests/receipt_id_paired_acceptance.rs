@@ -75,8 +75,7 @@ fn rid_accepts_u64_constructor() {
 /// re-export ReceiptId.
 #[test]
 fn rid_audit_core_does_not_reexport_receipt_id() {
-    let audit_core_lib =
-        include_str!("../../octo-audit-core/src/lib.rs");
+    let audit_core_lib = include_str!("../../octo-audit-core/src/lib.rs");
     // The substrate's public surface MUST NOT export
     // `ReceiptId` — it lives at `octo-settlement-core`
     // (Layer A frozen per RFC-0014 §Module Layout).

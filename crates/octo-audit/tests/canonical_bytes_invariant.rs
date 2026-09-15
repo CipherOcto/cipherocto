@@ -33,10 +33,7 @@ impl MockSink {
         }
     }
     fn stored(&self) -> Vec<AuditEvent> {
-        self.events
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.events.lock().map(|g| g.clone()).unwrap_or_default()
     }
 }
 
@@ -134,8 +131,7 @@ fn cb_compute_chain_hash_each_variant_agent_transition() {
     let expected = compute_chain_hash(&event);
 
     let mut sink = MockSink::new();
-    let chain_hash =
-        append_audit_event(&mut sink, event.clone()).expect("AgentTransition accept");
+    let chain_hash = append_audit_event(&mut sink, event.clone()).expect("AgentTransition accept");
     assert_eq!(chain_hash.0, expected);
 }
 
@@ -231,9 +227,14 @@ fn cb_chain_hash_display_lowercase_hex_64_chars() {
     let mut sink = MockSink::new();
     let r = append_audit_event(&mut sink, event).expect("ok");
     let s = format!("{r}");
-    assert_eq!(s.len(), 64, "ChainHash Display MUST emit 64 hex chars (32 bytes)");
+    assert_eq!(
+        s.len(),
+        64,
+        "ChainHash Display MUST emit 64 hex chars (32 bytes)"
+    );
     assert!(
-        s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        s.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "ChainHash Display MUST be lowercase hex, got {s}"
     );
 }

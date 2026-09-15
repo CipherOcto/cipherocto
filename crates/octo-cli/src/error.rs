@@ -1335,8 +1335,7 @@ mod tests {
         // 8th collapse-group variant; canonical-error mapping per
         // RFC-0016-a §6.7 + sanitize_substrate_error scrub at the
         // CLI boundary).
-        let r: OctoCliError =
-            octo_audit::AuditError::ChainHashMismatch { event_id: 7 }.into();
+        let r: OctoCliError = octo_audit::AuditError::ChainHashMismatch { event_id: 7 }.into();
         assert!(matches!(r, OctoCliError::Internal(_)));
         assert_eq!(r.exit_code(), 64);
     }

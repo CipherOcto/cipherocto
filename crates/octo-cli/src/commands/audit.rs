@@ -319,11 +319,31 @@ fn build_audit_filter(
     // signal that the filter was dropped — acceptable per the
     // security contract (the auditor always sees the full set) but
     // not yet operator-friendly.
-    let status = if mode == OperatorMode::Auditor {
+    let mut status = if mode == OperatorMode::Auditor {
         Vec::new()
     } else {
         args.status.clone()
     };
+
+    // --include-reject UNION-forward (RFC-0011-a §Filters
+    // `--include-reject` UNION semantics). When the operator passes
+    // `--include-reject` together with a non-reject-only `--status`
+    // filter, push `ReceiptStatus::Reject` into the substrate
+    // filter's `status` Vec so the substrate returns the UNION
+    // (`filter-result ∪ reject-rows`). Client-side mutation only —
+    // no parallel substrate field; the substrate `AuditFilter.status`
+    // is a UNION over its members per RFC-0016-a §6.6.
+    //
+    // Auditor mode is unaffected: `status` is already `Vec::new()`
+    // (the auditor MUST see every receipt regardless of which
+    // status filter was requested per RFC-0011-a §Security
+    // Considerations row 2).
+    if mode != OperatorMode::Auditor
+        && args.include_reject
+        && !status.contains(&ReceiptStatus::Reject)
+    {
+        status.push(ReceiptStatus::Reject);
+    }
 
     // Convert `--since` / `--until` duration-seconds-from-now to
     // absolute unix timestamps. The substrate `since_unix` /
@@ -1043,7 +1063,7 @@ mod tests {
         match r {
             Err(OctoCliError::InvalidFilter(msg)) => {
                 assert!(
-                    msg.contains("no-reject-hiding gate") || msg.contains("reject-hiding"),
+                    msg.contains("no-reject-hiding gate"),
                     "gate message should mention the no-reject-hiding gate; got `{msg}`"
                 );
             }
@@ -1087,6 +1107,66 @@ mod tests {
         if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
             panic!("gate must NOT fire when --include-reject is set, got InvalidFilter({msg})");
         }
+    }
+
+    #[test]
+    fn include_reject_unions_reject_into_substrate_status() {
+        // R3 substrate-faithfulness: the gate lets `--include-reject`
+        // through, but the flag's documented UNION semantics
+        // (`result_set = filter-result ∪ reject-rows` per
+        // RFC-0011-a §Filters `--include-reject`) require that
+        // `ReceiptStatus::Reject` actually reach the substrate
+        // `AuditFilter.status` Vec. Verify via direct `build_audit_filter`
+        // call — the substrate fixture is empty in tests so an
+        // end-to-end row assertion would not surface a defect.
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], true, false);
+        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        assert!(
+            filter.status.contains(&ReceiptStatus::Reject),
+            "UNION-forward contract: --include-reject must push Reject into AuditFilter.status; got {:?}",
+            filter.status
+        );
+        assert!(
+            filter.status.contains(&ReceiptStatus::Ok),
+            "UNION-forward must preserve the original --status filter; got {:?}",
+            filter.status
+        );
+    }
+
+    #[test]
+    fn include_reject_no_op_when_status_already_contains_reject() {
+        // Idempotent: if the operator already passed `--status reject`,
+        // `--include-reject` is a no-op (no duplicate push). The
+        // substrate `AuditFilter.status` is a UNION over its members,
+        // so duplicates would not change the result set but would
+        // waste a Vec slot and confuse substrate-faithful readers.
+        let args = make_args_with_status(vec![ReceiptStatus::Reject], true, false);
+        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        assert_eq!(
+            filter
+                .status
+                .iter()
+                .filter(|s| **s == ReceiptStatus::Reject)
+                .count(),
+            1,
+            "UNION-forward must not duplicate Reject; got {:?}",
+            filter.status
+        );
+    }
+
+    #[test]
+    fn include_reject_no_op_without_flag() {
+        // Without --include-reject the filter must NOT silently
+        // include Reject rows (that would defeat the no-reject-hiding
+        // gate's whole purpose — the operator would see reject rows
+        // even when they explicitly asked for non-reject only).
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], false, false);
+        let filter = build_audit_filter(&args, OperatorMode::Human, 1_000_000).unwrap();
+        assert!(
+            !filter.status.contains(&ReceiptStatus::Reject),
+            "without --include-reject, AuditFilter.status must NOT contain Reject; got {:?}",
+            filter.status
+        );
     }
 
     #[test]

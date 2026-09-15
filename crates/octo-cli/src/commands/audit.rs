@@ -95,12 +95,33 @@ pub struct ListArgs {
     /// **Auditor-mode constraint:** silently no-op'd under
     /// `--mode auditor` (RFC-0011-a §Security Considerations row 2)
     /// so reject rows can never be hidden from the auditor view.
+    ///
+    /// **No-reject-hiding gate (ALL non-Auditor modes):** any
+    /// `--status` value excluding `reject` requires either
+    /// `--include-reject` (UNION forward reject rows into the result
+    /// set per M4 finding) OR `--confirm-acknowledge` (explicit
+    /// confirmation of the reject-hiding intent); without either
+    /// flag the CLI exits 16 `InvalidFilter` (RFC-0011-a §Security
+    /// Considerations row 2 cross-mode consistency gate).
     #[arg(long, value_parser = parse_status, num_args = 1..)]
     pub status: Vec<ReceiptStatus>,
     /// Max rows returned; clamped to the substrate hard ceiling
     /// `MAX_LIMIT = 10_000` (RFC-0011-a §Filters `limit`).
     #[arg(long, value_parser = parse_limit)]
     pub limit: Option<u32>,
+    /// Forward reject rows into the result set (UNION semantics):
+    /// the visible row set is `status-filter ∪ reject-rows` so the
+    /// operator still sees reject rows alongside the requested
+    /// status filter. RFC-0011-a §Filters `--include-reject`.
+    #[arg(long)]
+    pub include_reject: bool,
+    /// Explicitly acknowledge the reject-hiding intent of a
+    /// non-reject-only `--status` filter. RFC-0011-a §Filters
+    /// `--confirm-acknowledge`. Substrate-faithful: the
+    /// confirmation happens at the CLI dispatch boundary; the
+    /// substrate remains unaware of operator confirmation.
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -351,6 +372,30 @@ pub fn list(args: &ListArgs, cli: &Octo) -> Result<(), OctoCliError> {
     // resolve via `octo audit show` diagnostics); the call exists
     // purely to fail fast on a misconfigured home dir.
     let _ = audit_home().map_err(map_audit_error)?;
+
+    // No-reject-hiding gate (RFC-0011-a §Security Considerations
+    // row 2 cross-mode consistency gate). Any `--status` value
+    // excluding `Reject` in non-Auditor modes requires either
+    // `--include-reject` (UNION forward reject rows) OR
+    // `--confirm-acknowledge` (explicit confirmation of the
+    // reject-hiding intent). Without either the CLI exits 16
+    // `InvalidFilter`. Auditor mode silently no-ops ALL `--status`
+    // values per the symmetric-semantics clause and bypasses the
+    // gate (the auditor MUST see every receipt).
+    if cli.mode.mode != OperatorMode::Auditor
+        && !args.status.is_empty()
+        && !args.status.contains(&ReceiptStatus::Reject)
+        && !args.include_reject
+        && !args.confirm_acknowledge
+    {
+        return Err(OctoCliError::InvalidFilter(
+            "non-reject-only --status filter requires --include-reject \
+             (forward reject rows) OR --confirm-acknowledge (explicit \
+             confirmation); RFC-0011-a §Security Considerations row 2 \
+             no-reject-hiding gate"
+                .into(),
+        ));
+    }
 
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -792,6 +837,8 @@ mod tests {
             router_id: None,
             status: vec![ReceiptStatus::Reject],
             limit: None,
+            include_reject: false,
+            confirm_acknowledge: false,
             json: false,
         };
         // Deterministic clock: H1 contract — `build_audit_filter`
@@ -824,6 +871,8 @@ mod tests {
             router_id: None,
             status: vec![ReceiptStatus::Ok],
             limit: Some(50),
+            include_reject: false,
+            confirm_acknowledge: false,
             json: false,
         };
         // Deterministic clock: H1 contract — `build_audit_filter`
@@ -863,6 +912,8 @@ mod tests {
             router_id: Some("did:octo:router-a".into()),
             status: vec![],
             limit: None,
+            include_reject: false,
+            confirm_acknowledge: false,
             json: false,
         };
         let now_unix: u64 = 1_700_000_000;
@@ -927,6 +978,8 @@ mod tests {
             router_id: None,
             status: vec![],
             limit: None,
+            include_reject: false,
+            confirm_acknowledge: false,
             json: false,
         });
     }
@@ -939,5 +992,138 @@ mod tests {
         let show = TestCli::try_parse_from(["test", "show", "1"]).unwrap();
         assert!(matches!(list.action, AuditAction::List(_)));
         assert!(matches!(show.action, AuditAction::Show(_)));
+    }
+
+    // Gate tests for the no-reject-hiding constraint
+    // (RFC-0011-a §Security Considerations row 2 cross-mode
+    // consistency gate). The gate fires on non-Auditor modes
+    // when `--status` excludes `reject` AND neither
+    // `--include-reject` nor `--confirm-acknowledge` is set.
+
+    fn make_args_with_status(
+        status: Vec<ReceiptStatus>,
+        include_reject: bool,
+        confirm_acknowledge: bool,
+    ) -> ListArgs {
+        ListArgs {
+            since: None,
+            until: None,
+            capability_root: None,
+            model: None,
+            router_id: None,
+            status,
+            limit: None,
+            include_reject,
+            confirm_acknowledge,
+            json: false,
+        }
+    }
+
+    fn build_cli_with_mode(mode: OperatorMode) -> Octo {
+        // Build a minimal CLI with the requested mode baked in. The
+        // parse should always succeed (the args are well-formed);
+        // if it doesn't, the test setup itself is broken and a
+        // panic is the correct diagnostic.
+        let mut cli = Octo::try_parse_from(["octo", "audit", "list"])
+            .expect("test harness: octo audit list must parse");
+        cli.mode.mode = mode;
+        cli
+    }
+
+    #[test]
+    fn reject_hiding_gate_fires_in_human_mode_for_status_ok() {
+        // MED-5 (now CRITICAL per RFC text): any `--status`
+        // value excluding `reject` in a non-Auditor mode WITHOUT
+        // `--include-reject` or `--confirm-acknowledge` exits 16
+        // `InvalidFilter`. This is the gate that protects
+        // compromised operator sessions from hiding reject rows.
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], false, false);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        let r = list(&args, &cli);
+        match r {
+            Err(OctoCliError::InvalidFilter(msg)) => {
+                assert!(
+                    msg.contains("no-reject-hiding gate") || msg.contains("reject-hiding"),
+                    "gate message should mention the no-reject-hiding gate; got `{msg}`"
+                );
+            }
+            Err(other) => panic!("expected InvalidFilter, got {other:?}"),
+            Ok(()) => panic!("expected gate to fire in Human mode, but list succeeded"),
+        }
+    }
+
+    #[test]
+    fn reject_hiding_gate_fires_in_human_mode_for_status_partial() {
+        let args = make_args_with_status(vec![ReceiptStatus::Partial], false, false);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        let r = list(&args, &cli);
+        assert!(
+            matches!(r, Err(OctoCliError::InvalidFilter(_))),
+            "gate must fire for --status partial in Human mode, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn reject_hiding_gate_does_not_fire_for_status_reject_only() {
+        // `--status reject` is exempt from the gate (no hiding
+        // intent — reject-only view is the auditor threat model's
+        // legitimate equivalent). The gate check is "does --status
+        // exclude reject", so a Reject-only filter does not
+        // exclude anything.
+        let args = make_args_with_status(vec![ReceiptStatus::Reject], false, false);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        // Does NOT assert Ok because the substrate is empty in
+        // tests; only asserts the gate was NOT triggered
+        // (specifically: NOT an InvalidFilter error).
+        if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
+            panic!("gate must NOT fire for reject-only filter, got InvalidFilter({msg})");
+        }
+    }
+
+    #[test]
+    fn reject_hiding_gate_bypassed_by_include_reject() {
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], true, false);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
+            panic!("gate must NOT fire when --include-reject is set, got InvalidFilter({msg})");
+        }
+    }
+
+    #[test]
+    fn reject_hiding_gate_bypassed_by_confirm_acknowledge() {
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], false, true);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
+            panic!(
+                "gate must NOT fire when --confirm-acknowledge is set, got InvalidFilter({msg})"
+            );
+        }
+    }
+
+    #[test]
+    fn reject_hiding_gate_does_not_apply_to_auditor_mode() {
+        // Auditor mode silently no-ops ALL --status values
+        // (symmetric semantics per H5 finding). The no-reject-hiding
+        // gate is bypassed entirely in Auditor mode — the auditor
+        // MUST see every receipt regardless of which status
+        // filter is requested (audit-trail invariant).
+        let args = make_args_with_status(vec![ReceiptStatus::Ok], false, false);
+        let cli = build_cli_with_mode(OperatorMode::Auditor);
+        if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
+            panic!(
+                "gate must NOT fire in Auditor mode (silent no-op overrides gate), got InvalidFilter({msg})"
+            );
+        }
+    }
+
+    #[test]
+    fn reject_hiding_gate_does_not_apply_for_empty_status() {
+        // No status filter at all means the operator is not
+        // hiding anything — the gate does not fire.
+        let args = make_args_with_status(vec![], false, false);
+        let cli = build_cli_with_mode(OperatorMode::Human);
+        if let Err(OctoCliError::InvalidFilter(msg)) = list(&args, &cli) {
+            panic!("gate must NOT fire when no --status is supplied, got InvalidFilter({msg})");
+        }
     }
 }

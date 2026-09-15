@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-11; v1.7 amendment in flight 2026-09-15)
+Accepted (2026-09-15; v1.7 amendment; promoted via R35 + R36 (4 demoted) + R37 zero-finding rounds = DRY CLOSED gate)
 
 > **Sibling amendment to RFC-0016.** This document carries the DEFERRED write-path surface whose acceptance is bound by the canonical pairing invariant (see §Pairing invariant).
 
@@ -502,15 +502,15 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ## Version History
 
-| Version | Date       | Changes                                                                                           |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| v1.7    | 2026-09-15 | R32.5 + R34.5 sweep (Layer classification + Trail row + 6-enum + version-pin trade-off document). |
-| v1.6    | 2026-09-15 | R30.5 sweep (phantom anchors + 8-variant + 7 items + 6-enum enumeration).                         |
-| v1.5    | 2026-09-14 | R22.5 sweep.                                                                                      |
-| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String.                                                  |
-| v1.2    | 2026-09-14 | R2.5 sweep.                                                                                       |
-| v1.1    | 2026-09-14 | Substrate Sweep.                                                                                  |
-| v1.0    | 2026-09-11 | Initial draft.                                                                                    |
+| Version | Date       | Changes                                                                                                                           |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| v1.7    | 2026-09-15 | R32.5 + R34.5 sweep (Layer classification + Trail row + 6-enum + version-pin trade-off document); R37 DRY CLOSED gate → Accepted. |
+| v1.6    | 2026-09-15 | R30.5 sweep (phantom anchors + 8-variant + 7 items + 6-enum enumeration).                                                         |
+| v1.5    | 2026-09-14 | R22.5 sweep.                                                                                                                      |
+| v1.3    | 2026-09-14 | AuditFilter + ReceiptSummary subject_did String.                                                                                  |
+| v1.2    | 2026-09-14 | R2.5 sweep.                                                                                                                       |
+| v1.1    | 2026-09-14 | Substrate Sweep.                                                                                                                  |
+| v1.0    | 2026-09-11 | Initial draft.                                                                                                                    |
 
 ## Related RFCs
 

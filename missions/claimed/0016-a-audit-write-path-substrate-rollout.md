@@ -8,16 +8,17 @@ metadata:
   created: 2026-09-15
   v: "1.1"
   pair: DOMAIN Adapter Paired-Acceptance
+  claimed: 2026-09-15
   depends_on:
     - RFC-0016-a
     - RFC-0014-v2
     - RFC-0012-v2
-status: Open
+status: Claimed
 ---
 
 # 0016-a-audit-write-path-substrate-rollout — RFC-0016-a acceptance rollout
 
-**Status:** Open — post-acceptance rollout
+**Status:** Claimed — post-acceptance rollout implementation
 **Substrate:** RFC-0016-a §6.10 (canonical-bytes-on-write invariant) + §6.11 (read-stalls-while-write invariant) + §6.4 (`ReceiptId(pub u64)` verification)
 **Parent:** RFC-0016-a + RFC-0016
 **Companion:** RFC-0014-v2 (paired-acceptance — `ReceiptId(pub u64)` newtype at `octo-settlement-core::receipt::ReceiptId`)

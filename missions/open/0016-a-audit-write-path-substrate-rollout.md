@@ -32,7 +32,7 @@ Per RFC-0016-a §6.1 Public surface additions + §6.10 Acceptance Criterion + §
 
 ### Out-of-scope (already landed in paired implementation mission)
 
-The following §6 surface landed in `missions/archived/completed/0015-b-substrate-defect-impl.md` + paired implementation work (substrate-side, pre-RFC-0016-a promotion):
+The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-impl.md` (paired implementation, Claimed status; not yet archived to `archived/completed/`) + paired implementation work (substrate-side, pre-RFC-0016-a promotion):
 
 - `ChainHash(pub [u8; 32])` newtype — `crates/octo-audit/src/audit_event_v2.rs` §ChainHash
 - `append_audit_event(sink, event) -> Result<ChainHash, AuditError>` — Layer B façade
@@ -111,6 +111,7 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 - **RFC-0012-v2** — substrate amendments for the audit chain; `compute_chain_hash` paired with §S5.
 - **parent RFC-0016** (`rfcs/accepted/process/0016-audit-receipt-api.md`) — needs §D Cross-references table appended (AC-13).
 - **parent RFC-0016-a** (`rfcs/accepted/process/0016-a-audit-receipt-write-path.md`) — needs §Related RFCs table appended (AC-12).
+- **paired impl mission** (`missions/claimed/0015-b-substrate-defect-impl.md`) — paired implementation that landed §6 substrate code (Claimed status; not yet archived).
 
 ## Risk
 
@@ -142,7 +143,7 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 ## Cross-references
 
 - `missions/archived/completed/0016-a-audit-write-path-promotion.md` — RFC-0016-a promotion mission
-- `missions/archived/completed/0015-b-substrate-defect-impl.md` — paired implementation (transition_agent + append_agent_transition_event + error variants)
+- `missions/claimed/0015-b-substrate-defect-impl.md` — paired implementation (transition_agent + append_agent_transition_event + error variants); Claimed status
 - RFC-0016 — read-path substrate contract
 - RFC-0015-a — write-path surface contract
 - RFC-0012-v2 — substrate amendment for audit chain

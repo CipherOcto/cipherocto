@@ -519,6 +519,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 - RFC-0015-a — Wallet Agent Write-Path Amendment (paired sibling write-path; `transition_agent` consumes `append_audit_event`)
 - RFC-0012 — Audit Substrate (provides `AuditEventKind::AgentTransition` + canonical-bytes-on-write invariant + single-writer lock)
 - RFC-0014 — Settlement Substrate (provides `ReceiptStatus` enum + `Receipt` field extensions + `ReceiptId` + `receipt_id_for_digest` reverse-mapping)
+- RFC-0014-v2 — §S3 ReceiptId newtype paired with §6.4 verification
 - RFC-0011 — `octo` CLI Substrate (parent RFC for the `[ADD]` error envelope pattern + CLI-shape error variants via per-variant From conversions)
 - RFC-0010 — Canonical DID Codec (DID parsing for `AuditFilter.subject_did`)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping for `append_audit_event` Class B write)

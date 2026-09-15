@@ -24,7 +24,7 @@ status: Open
 
 ## §6.11 DOMAIN Adapter Paired-Acceptance gate
 
-This mission is one of a pair of rollout missions for RFC-0016-a; see RFC-0016-a §6.11 Read-stalls-while-write invariant at `rfcs/accepted/process/0016-a-audit-receipt-write-path.md`. **RFC-0016-a + RFC-0014-v2 must both remain Accepted for §6.11 + §6.4 deliverables to remain claimable.** If either drops back to Draft, this mission MUST defer (user-initiated only per BLUEPRINT.md §Mission Lifecycle Deferral procedure).
+This mission is one of a pair of rollout missions for RFC-0016-a; see RFC-0016-a §6.11 Read-stalls-while-write invariant at `rfcs/accepted/process/0016-a-audit-receipt-write-path.md`. **RFC-0016-a must remain Accepted for §6.10 + §6.11 deliverables to remain claimable.** RFC-0014-v2 is Accepted (2026-09-12) so §6.4 `ReceiptId(pub [u8;32])` migration is no longer DEFERRED and is fully claimable alongside §6.10 + §6.11. If RFC-0016-a drops back to Draft, this mission MUST defer (user-initiated only per BLUEPRINT.md §Mission Lifecycle Deferral procedure).
 
 ## Scope
 
@@ -59,7 +59,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
    - Invariant test: under N concurrent reader threads + 1 writer thread, readers either see pre-write state OR post-write state atomically (never partial rows)
    - Stoolap DOMAIN adapter conformance: every DOMAIN adapter (`crates/octo-settlement/src/storage/*.rs`, `crates/octo-audit/src/storage/*.rs`) routes through the gated `RwLock` adapter rather than direct table access
 
-3. **`ReceiptId(pub [u8;32])` migration (paired with RFC-0014-v2 §6.3)** — DEFERRED until RFC-0014-v2 Accepted. When RFC-0014-v2 lands:
+3. **`ReceiptId(pub [u8;32])` migration (paired with RFC-0014-v2 §S6.3)** — RFC-0014-v2 Accepted 2026-09-12 so migration is claimable:
    - Add `ReceiptId(pub [u8; 32])` newtype to `crates/octo-audit-core/src/receipt_id.rs` (paired with `crates/octo-settlement-core/src/receipt.rs`)
    - Type alias `pub type ReceiptId = [u8; 32]` (or explicit newtype) used in `ReceiptSummary::receipt_id` field
    - `list_receipts` return type migrates from `Vec<u64>` to `Vec<ReceiptId>` (additive per RFC-0016-a §6.4 paired-acceptance contract)
@@ -75,7 +75,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 
 ### Out of scope (per RFC-0016-a §Future Work + §paired-acceptance DEFERRED)
 
-- §6.4 `ReceiptId(pub [u8;32])` migration code lands ONLY when RFC-0014-v2 §6.3 is Accepted (paired-acceptance gate). Until then, the rollout mission verifies the `Vec<u64>` path remains stable + the paired migration test surface is prepared but skipped.
+- §6.4 `ReceiptId(pub [u8;32])` migration code: RFC-0014-v2 Accepted 2026-09-12 so `Vec<u64>` → `Vec<ReceiptId>` return-type migration is claimable. Migration MUST land atomically with the `Vec<u64>` path deprecation (paired-acceptance contract).
 - §6.11 DOMAIN adapter code requires the Stoolap DOMAIN adapter (Layer B submodule, NOT Layer D adapter) to expose the `RwLock` reader/writer surface. If the Stoolap DOMAIN adapter does not yet expose that surface, this deliverable is DEFERRED to a follow-on amendment round.
 - Any new substrate amendments (v1.7+ after promotion) — out of scope.
 
@@ -90,7 +90,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - [ ] AC-7: NEW `crates/octo-audit/tests/canonical_bytes_invariant.rs` PASSES (≥10 tests covering each AuditEventKind variant + re-canonicalization idempotency)
 - [ ] AC-8: NEW `crates/octo-audit-core/tests/read_stalls_while_write_invariant.rs` PASSES (concurrent readers + 1 writer; readers see atomic pre/post-write states)
 - [ ] AC-9: NEW Stoolap DOMAIN adapter conformance assertion — every DOMAIN adapter site routes through the `RwLock` adapter (no direct table access bypass)
-- [ ] AC-10: `ReceiptId(pub [u8;32])` paired migration surface prepared (test-only — DEFERRED until RFC-0014-v2 Accepted)
+- [ ] AC-10: `ReceiptId(pub [u8;32])` paired migration implemented — `Vec<u64>` → `Vec<ReceiptId>` return-type migration landed atomically with paired RFC-0014-v2 §S6.3 surface
 - [ ] AC-11: NEW `crates/octo-cli/tests/error_envelope_audit_write_path.rs` PASSES (every §6.7 variant returns documented exit code)
 - [ ] AC-12: RFC-0016-a §Related RFCs table appended with RFC-0016 + RFC-0015-a + RFC-0014-v2 paired pointer
 - [ ] AC-13: RFC-0016 `D. Cross-references` table appended with v1 amendment pointer
@@ -103,7 +103,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - **RFC-0016-a** — Accepted (canonical `## Status` body header + front-matter `Status` row both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0016** — Accepted (read-path substrate contract; this mission extends + verifies the read/write pairing).
 - **RFC-0015-a** — Accepted (write-path surface contract for agent transitions; `transition_agent` calls `append_agent_transition_event`).
-- **RFC-0014-v2** — DEFERRED for §6.4 `ReceiptId(pub [u8;32])` migration (paired-acceptance gate). Until RFC-0014-v2 lands, AC-10 is test-only (skip).
+- **RFC-0014-v2** — Accepted (2026-09-12). §6.4 `ReceiptId(pub [u8;32])` migration is paired with RFC-0014-v2 §S6.3 settlement-receipt newtype surface. AC-10 is active (not DEFERRED).
 - **RFC-0012-v2** — Accepted (substrate amendments for the audit chain; `compute_chain_hash` paired with §S5).
 - **parent RFC-0016** (`rfcs/accepted/process/0016-audit-receipt-api.md`) — needs `D. Cross-references` table appended (AC-13).
 - **parent RFC-0016-a** (`rfcs/accepted/process/0016-a-audit-receipt-write-path.md`) — needs §Related RFCs table appended (AC-12).
@@ -111,7 +111,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 ## Risk
 
 - **MEDIUM** — §6.11 DOMAIN adapter gate requires Stoolap DOMAIN adapter (Layer B submodule) to expose `RwLock` reader/writer surface. If the adapter does not yet expose this, AC-9 + AC-16 defer. Risk acknowledged in §Future Work; deferral is user-initiated per BLUEPRINT.md.
-- **LOW** — §6.4 `ReceiptId(pub [u8;32])` migration is paired with RFC-0014-v2 (DEFERRED). AC-10 is test-only until RFC-0014-v2 lands.
+- **LOW** — §6.4 `ReceiptId(pub [u8;32])` migration is paired with RFC-0014-v2 Accepted 2026-09-12. AC-10 active; migration lands atomically with paired surface.
 - **LOW** — §6.10 canonical-bytes verification suite is purely additive (no regression to paired implementation tests).
 - **LOW** — RFC-0016-a + RFC-0016 cross-reference append is doc-only edit.
 
@@ -142,6 +142,6 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - RFC-0016 (Accepted 2026-09-14) — read-path substrate contract
 - RFC-0015-a (Accepted 2026-09-14) — write-path surface contract
 - RFC-0012-v2 (Accepted) — substrate amendment for audit chain
-- RFC-0014-v2 (DRAFT/DEFERRED) — paired settlement-receipt newtype (paired-acceptance gate for §6.4)
+- RFC-0014-v2 (Accepted 2026-09-12) — paired settlement-receipt newtype (paired-acceptance gate for §6.4, ACTIVE)
 - [[feedback_initiation_user_only]] + [[git-workflow]] — push + remote writes user-owned
 - [[memory-is-never-status-ground-truth]] — status language describes CURRENT state at write-time

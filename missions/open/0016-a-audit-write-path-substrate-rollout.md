@@ -61,20 +61,20 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
    - Stoolap DOMAIN adapter conformance: every DOMAIN adapter site (`crates/octo-audit/src/storage/*.rs`) routes through the gated adapter rather than direct table access
 
 3. **`ReceiptId(pub u64)` verification** — substrate `ReceiptId(pub u64)` newtype already landed at `crates/octo-settlement-core/src/receipt.rs` per RFC-0014-v2 §S3 + RFC-0016-a §6.4 (paired-acceptance). No code migration required. Verification scope:
-   - Re-export `ReceiptId` from `crates/octo-audit-core` (additive re-export; no new newtype declaration)
+   - `octo-audit-core` consumer-resolution grep: `ReceiptId` reachable via `octo_audit_core::receipt_summary::ReceiptId` OR `octo_audit::ReceiptId` re-export path (no new newtype declaration; the `octo-audit-core` crate does NOT carry a crate-root `ReceiptId` re-export — consumers resolve through the `octo_audit` façade wrapper)
    - `ReceiptSummary::receipt_id` field already uses `ReceiptId` (paired form)
-   - `list_receipts` substrate-faithful return type remains `Vec<u64>` (per `crates/octo-audit/src/receipt_read.rs:149` — `Result<Vec<u64>, AuditError>`); CLI presentation layer wraps as `ReceiptId` for operator display (presentation-only, no substrate change)
-   - Verification grep: no caller site uses raw `[u8; 32]` for `ReceiptId`; every consumer resolves through `octo_settlement_core::ReceiptId` re-export
+   - `list_receipts` substrate-faithful return type remains `Vec<u64>` (per §list_receipts in `crates/octo-audit/src/receipt_read.rs` — `Result<Vec<u64>, AuditError>`); CLI presentation layer wraps as `ReceiptId` for operator display (presentation-only, no substrate change)
+   - Verification grep: no caller site uses raw `[u8; 32]` for `ReceiptId`; every consumer resolves through `octo_settlement::ReceiptId` import path
 
 4. **CLI §6.7 error variant wiring verification** — `crates/octo-cli/tests/error_envelope_audit_write_path.rs` exercises every §6.7 RFC-0016-a additive substrate error variant mapping to `OctoCliError`:
-   - Collapse-group (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) → `OctoCliError::Internal(redacted_reason)` → exit 64 (per RFC-0016-a §6.7 + `crates/octo-cli/src/error.rs:771` mapping table)
+   - Collapse-group (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) → `OctoCliError::Internal(redacted_reason)` → exit 64 (per RFC-0016-a §6.7 + §OctoCliError mapping table in `crates/octo-cli/src/error.rs`)
    - `AuditError::AuditAppendFailed(reason)` → `OctoCliError::AuditSubstrateNotReady` → exit 52
    - `AuditError::ReceiptNotFound(decimal)` → `OctoCliError::NotFound(redacted_id)` → exit 17
-   - `AuditError::InvalidFilter(reason)` → `OctoCliError::BadRequest(redacted_reason)` → exit 16
-   - `AuditError::PermissionDenied(reason)` → `OctoCliError::PermissionDenied` → exit 13
+   - `AuditError::InvalidFilter(reason)` → `OctoCliError::InvalidFilter(redacted_reason)` → exit 16
+   - `AuditError::PermissionDenied(reason)` → `OctoCliError::PermissionDenied(redacted_reason)` → exit 13
    - `redact_substrate_error` applied to every reason payload per RFC-0016-a §6.8
 
-5. **Parent RFC cross-reference update** — append RFC-0016-a §Related RFCs note linking to RFC-0016 + RFC-0015-a + RFC-0014-v2 (paired-acceptance pointer). Append RFC-0016 §D Cross-references row pointing to RFC-0016-a v1 amendment.
+5. **Parent RFC cross-reference update** — append RFC-0016-a §Related RFCs note linking to RFC-0016 + RFC-0015-a + RFC-0014-v2 (paired-acceptance pointer; existing RFC-0014 unversioned row preserved). Verify RFC-0016 §Related RFCs row for RFC-0016-a is present (paired-amendment pointer; row already exists, verification only).
 
 ### Out of scope (per RFC-0016-a §Future Work + paired-acceptance DEFERRED)
 
@@ -93,11 +93,11 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 - [ ] AC-7: NEW `crates/octo-audit/tests/canonical_bytes_invariant.rs` PASSES (≥10 tests covering each AuditEventKind variant + re-canonicalization idempotency)
 - [ ] AC-8: NEW `crates/octo-audit-core/tests/read_stalls_while_write_invariant.rs` PASSES (N=8 concurrent readers + 1 writer; readers see atomic pre/post-write states)
 - [ ] AC-9: NEW Stoolap DOMAIN adapter conformance assertion — every DOMAIN adapter site (`crates/octo-audit/src/storage/*.rs`) routes through the gated adapter (no direct table access bypass); atomic pre/post-write invariant holds regardless of R/W primitive choice
-- [ ] AC-10: `ReceiptId(pub u64)` paired-acceptance verification — re-export from `octo-audit-core` + `ReceiptSummary::receipt_id` field shape + grep assertion that no caller site uses raw `[u8; 32]` for `ReceiptId`
+- [ ] AC-10: `ReceiptId(pub u64)` paired-acceptance verification — `octo-audit-core` consumer-resolution grep (no crate-root re-export; consumers resolve via `octo_audit` façade wrapper) + `ReceiptSummary::receipt_id` field shape + grep assertion that no caller site uses raw `[u8; 32]` for `ReceiptId`
 - [ ] AC-11a: NEW `crates/octo-cli/tests/error_envelope_collapse_group.rs` PASSES (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch all map to `OctoCliError::Internal(redacted_reason)` → exit 64)
 - [ ] AC-11b: NEW `crates/octo-cli/tests/error_envelope_additive_variants.rs` PASSES (4 additive substrate variants map to documented `OctoCliError` variants at exits 52/17/16/13 respectively)
-- [ ] AC-12: RFC-0016-a §Related RFCs table appended with row pointing to RFC-0014-v2 (paired-acceptance for §6.4) — row text: `RFC-0014-v2 — §S3 ReceiptId newtype paired with §6.4 verification`
-- [ ] AC-13: RFC-0016 §D Cross-references table appended with row pointing to RFC-0016-a (v1 amendment) — row text: `RFC-0016-a — §6 write-path surface paired with §6 read-path`
+- [ ] AC-12: RFC-0016-a §Related RFCs table appended with row pointing to RFC-0014-v2 (paired-acceptance for §6.4; existing RFC-0014 unversioned row is preserved) — row text: `RFC-0014-v2 — §S3 ReceiptId newtype paired with §6.4 verification`
+- [ ] AC-13: RFC-0016 §Related RFCs table verification — RFC-0016-a row already present (paired-amendment pointer); no append required; verification confirms row text reads `RFC-0016-a — Audit Receipt Write-Path Amendment (sibling; DEFERRED surface per §6.1 §Amendment Surface)`
 - [ ] AC-14: Cite sweep clean for any RFC parent updates (`timeout 30 scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE per [[feedback-validate-cites-timeout]])
 - [ ] AC-15: Prettier-clean on all new + edited `.md` files; `cargo fmt --all` clean on all new + edited `.rs` files
 - [ ] AC-16: §6.11 DOMAIN adapter paired-acceptance gate sanity — atomic pre/post-write invariant holds in `crates/octo-audit/src/storage/*.rs` DOMAIN impls (R/W primitive agnostic per RFC-0016-a §6.11); if any DOMAIN impl violates atomicity, AC defers to a follow-on amendment round (user-initiated deferral per BLUEPRINT.md)
@@ -128,16 +128,16 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 
 ## Test vectors (mission-level)
 
-| ID                                       | Scenario                                                                                                   | Expected                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `cb-compute_chain_hash-each-variant`     | `compute_chain_hash(&event)` for every `AuditEventKind` variant                                            | returns 32-byte BLAKE3 digest matching `append_audit_event` return value           |
-| `cb-no-bypass-compute_chain_hash`        | grep `audit_event_v2.rs` + `audit_write.rs` for direct `blake3::hash` invocations outside façade           | 0 matches                                                                          |
-| `rsw-concurrent-readers-no-partial-rows` | N=8 reader threads + 1 writer thread, writer appends mid-read                                              | every reader sees either pre-write or post-write state atomically; never partial   |
-| `rsw-single-writer-guarantee`            | 2 writer threads call `append_audit_event` concurrently                                                    | one succeeds, the other gets `AuditError::ChainHashMismatch` (or `WouldBlock`)     |
-| `rsw-stoolap-domain-adapter-conformance` | grep `crates/octo-audit/src/storage/*.rs` for direct table access                                          | every flagged site routes through gated adapter (R/W primitive agnostic)           |
-| `rid-paired-acceptance-verification`     | grep workspace for raw `[u8; 32]` use sites of `ReceiptId`                                                 | 0 matches; every consumer resolves via `octo_settlement_core::ReceiptId` re-export |
-| `cli-error-envelope-collapse-group`      | every collapse-group `AuditError` variant (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) | maps to `OctoCliError::Internal(redacted_reason)` → exit 64                        |
-| `cli-error-envelope-additive-variants`   | 4 §6.7 additive `AuditError` variants                                                                      | map to documented `OctoCliError` variants at exits 52/17/16/13 respectively        |
+| ID                                       | Scenario                                                                                                   | Expected                                                                         |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `cb-compute_chain_hash-each-variant`     | `compute_chain_hash(&event)` for every `AuditEventKind` variant                                            | returns 32-byte BLAKE3 digest matching `append_audit_event` return value         |
+| `cb-no-bypass-compute_chain_hash`        | grep `audit_event_v2.rs` + `audit_write.rs` for direct `blake3::hash` invocations outside façade           | 0 matches                                                                        |
+| `rsw-concurrent-readers-no-partial-rows` | N=8 reader threads + 1 writer thread, writer appends mid-read                                              | every reader sees either pre-write or post-write state atomically; never partial |
+| `rsw-single-writer-guarantee`            | 2 writer threads call `append_audit_event` concurrently                                                    | one succeeds, the other gets `AuditError::ChainHashMismatch` (or `WouldBlock`)   |
+| `rsw-stoolap-domain-adapter-conformance` | grep `crates/octo-audit/src/storage/*.rs` for direct table access                                          | every flagged site routes through gated adapter (R/W primitive agnostic)         |
+| `rid-paired-acceptance-verification`     | grep workspace for raw `[u8; 32]` use sites of `ReceiptId`                                                 | 0 matches; every consumer resolves via `octo_settlement::ReceiptId` import path  |
+| `cli-error-envelope-collapse-group`      | every collapse-group `AuditError` variant (SequenceGap + AlreadyExists + SinkSpecific + ChainHashMismatch) | maps to `OctoCliError::Internal(redacted_reason)` → exit 64                      |
+| `cli-error-envelope-additive-variants`   | 4 §6.7 additive `AuditError` variants                                                                      | map to documented `OctoCliError` variants at exits 52/17/16/13 respectively      |
 
 ## Cross-references
 

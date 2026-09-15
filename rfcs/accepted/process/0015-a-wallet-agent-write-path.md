@@ -363,8 +363,21 @@ No changes to Layer A crates from RFC-0015-a alone (the `AuditEventKind::AgentTr
 - **Substrate-owned invariants** — state-machine validation lives in the substrate; CLI cannot bypass. Per [[cipherocto-design-principles]] §Discipline at first call site pays off.
 - **Pairing discipline** — RFC-0015 + RFC-0015-a + RFC-0012 form an acceptance triplet per [[cipherocto-design-principles]] §Extension over enumeration; no central enum edit at Layer A is performed in RFC-0015-a alone.
 
+#### §Amendment Surface
+
+Per substrate-faithful single-source-of-truth principle, additive write-path substrate items land here post-RFC-0015-a acceptance.
+
+| Substrate item                                                                 | Layer | Source                     | Notes                                               |
+| ------------------------------------------------------------------------------ | ----- | -------------------------- | --------------------------------------------------- |
+| `AgentRecord.transitioning: bool` (additive; default `false`; serde-defaulted) | B     | RFC-0015-b §X.1 acceptance | In-flight flag for `AlreadyInTransition` activation |
+
+| Substrate item                                                                       | Layer | Source                                                 | Notes                   |
+| ------------------------------------------------------------------------------------ | ----- | ------------------------------------------------------ | ----------------------- |
+| Defect 5 phantom-event detection (`state_version` + `audit_chain.tip.state_version`) | A     | DEFERRED to RFC-0012-v4 paired Layer A amendment cycle | Out of RFC-0015-b scope |
+
 ## Version History
 
+- 2026-09-15 — Substrate-defect amendment landing (RFC-0015-b Acceptance) 2026-09-14: §Amendment Surface heading added; 1 additive row for `AgentRecord.transitioning: bool`; 1 forward-pointer row for defect 5 DEFERRED to RFC-0012-v4.
 - 2026-09-14 — v3.1 doubling cleanup: §Test Vectors numbering scheme cross-ref to canonical RFC-0016 (collapsed from 3× restatement); KEEP-vector enumeration dropped (compressed form superset on cross-ref line); Design Goals (6) C1 range gap explanation collapsed to cite §Adversary Analysis Reason-field XSS row.
 - 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied (§6.1 (1) lock-acquisition wording, §6.1 (5) audit append + rollback contract consolidation, §6.1 (6) reason-length bytes, §6.1 (7) AlreadyInTransition dead-variant contract, §6.2 TransitionReceipt Layer B designation, §6.4 self-loop rule uniform, TV-WLT-AGT-11b/11c append_audit_event canonicalization). 7 substrate-defect items documented in amendment backlog (RFC-0015-b paired amendment).
 - 2026-09-13 — R12.5 fix: §6.1 (5) Audit append + rollback contract consolidated, §6.1 (7) AlreadyInTransition dead-variant contract consolidated, TV-WLT-AGT-11b/11c append_audit_event → append_agent_transition_event per substrate, Key Files Cargo.toml narrative updated, Implicit Assumptions row 7 dedup with RFC-0015 row 5, Adversary Analysis UUID echo row reconciled to cite Security Considerations row 2, Test Vectors sub-letter scheme documented.

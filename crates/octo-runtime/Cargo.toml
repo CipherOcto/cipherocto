@@ -9,8 +9,12 @@ edition = "2021"
 # B; consumed by Layer C/D `octo-cli` (one-way; no reverse dep).
 
 [dependencies]
-# Async runtime (Layer D transport substrate).
-tokio = { version = "1.35", features = ["full"] }
+# Async runtime (Layer D transport substrate). Narrowed to
+# `rt + sync + macros` per Layer-model hygiene: substrate stays
+# filesystem-free + socket-IO-free. The `net`/`process`/`signal`
+# features are pulled in only by Layer D transport crates
+# (`octo-runtime-transport-unix`, …) at the layer boundary.
+tokio = { version = "1.35", features = ["rt", "sync", "macros"] }
 # Async trait dispatch — Layer D transport substrate (RFC-0011 §Dependencies).
 async-trait = "0.1"
 # Envelope codec (Layer B; RFC-0011 §Output Envelope).

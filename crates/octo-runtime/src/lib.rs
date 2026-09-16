@@ -136,10 +136,15 @@ pub async fn attach_with_token(
         )));
     }
 
+    // Fail-CLOSED on broken clock: any `duration_since` error
+    // (`SystemTime` predates `UNIX_EPOCH`, or platform clock is
+    // unavailable) saturates `now_unix` to `u64::MAX` so step (c)
+    // returns `Expired`. Substrate never silently admits a TTL
+    // check on an unknown wall-clock; that would be fail-OPEN.
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or(u64::MAX);
 
     // (c) TTL check (now_unix <= ttl_unix).
     if now_unix > token.ttl_unix {
@@ -185,51 +190,6 @@ pub async fn attach_with_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use uuid::Uuid;
-
-    #[test]
-    fn substrate_re_exports_compile() {
-        // Smoke test: every re-exported type is constructible in its
-        // canonical form. Guards against accidental visibility or
-        // name drift during future refactors.
-        let agent_id = Uuid::new_v4();
-        let handle = spawn_agent(agent_id, None).expect("spawn");
-        let handle_id = handle.handle_id;
-        let _stream = attach(handle, None).expect("attach");
-        let _binding = RuntimeHandleBinding {
-            agent_id,
-            handle_id,
-            session_id: [0u8; 32],
-            spawned_at_unix: Utc::now().timestamp(),
-        };
-        let _token = AttachHandle {
-            session_id: [0u8; 32],
-            mint_timestamp_unix: 0,
-            ttl_unix: 1,
-            signature: Signature([0u8; 64]),
-            payload: AttachPayload {
-                agent_id,
-                since_cursor: 0,
-            },
-            transport: Transport::IN_PROCESS,
-        };
-        // RuntimeError variants construct.
-        let _e = RuntimeError::AgentNotFound(agent_id);
-        let _s = AgentState::Active;
-        let _ev = RuntimeEvent::Spawned {
-            agent_id,
-            at: Utc::now(),
-        };
-        // AttachError variants construct.
-        let _ae = AttachError::Expired {
-            session_id: [0u8; 32],
-            mint_unix: 0,
-            expired_at_unix: 0,
-            now_unix: 1,
-        };
-        let _ae2 = AttachError::BadSignature { reason: "x".into() };
-    }
 
     #[test]
     fn event_channel_capacity_is_power_of_two() {

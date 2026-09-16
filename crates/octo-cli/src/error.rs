@@ -1769,4 +1769,108 @@ mod tests {
         assert!(matches!(r, OctoCliError::Internal(_)));
         assert_eq!(r.exit_code(), 64);
     }
+
+    /// `tv_rfc0011c_attach_error_envelope_mapping` — exercise every
+    /// `From<AttachError>` arm (RFC-0011-c §F.2 + §F.4) and assert
+    /// the canonical CLI exit code per §9.8 slot allocation.
+    ///
+    /// Pattern analog to `tv_rfc0016a_audit_error_envelope_mapping`
+    /// above; substrate-faithful mirror per [[memory-is-never-status-
+    /// ground-truth]] (the assertion is the contract, not the doc).
+    #[test]
+    fn tv_rfc0011c_attach_error_envelope_mapping() {
+        use octo_runtime::AttachError;
+
+        // Expired → AttachHandleExpired (exit 53, §9.8 slot 53)
+        let sid = [0xabu8; 32];
+        let r: OctoCliError = AttachError::Expired {
+            session_id: sid,
+            mint_unix: 100,
+            expired_at_unix: 200,
+            now_unix: 300,
+        }
+        .into();
+        assert!(
+            matches!(
+                r,
+                OctoCliError::AttachHandleExpired {
+                    mint_unix: 100,
+                    ttl_unix: 200,
+                    now_unix: 300
+                }
+            ),
+            "Expired MUST map to AttachHandleExpired, got {r:?}"
+        );
+        assert_eq!(r.exit_code(), 53);
+
+        // BadSignature → AttachHandleBadSignature (exit 54)
+        let r: OctoCliError = AttachError::BadSignature {
+            reason: "internal sig fail".into(),
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::AttachHandleBadSignature { .. }));
+        assert_eq!(r.exit_code(), 54);
+
+        // SessionMismatch → AttachSessionMismatch (exit 55)
+        let r: OctoCliError = AttachError::SessionMismatch {
+            declared: [0x01; 32],
+            actual: [0x02; 32],
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::AttachSessionMismatch { .. }));
+        assert_eq!(r.exit_code(), 55);
+
+        // UnknownSession → AttachSessionUnknown (exit 56)
+        let r: OctoCliError = AttachError::UnknownSession {
+            session_id: [0xee; 32],
+        }
+        .into();
+        assert!(
+            matches!(r, OctoCliError::AttachSessionUnknown(ref s) if s == &hex::encode([0xeeu8; 32]))
+        );
+        assert_eq!(r.exit_code(), 56);
+
+        // PersistenceError → PersistenceError (exit 57)
+        let r: OctoCliError = AttachError::PersistenceError("db write failed".into()).into();
+        assert!(matches!(r, OctoCliError::PersistenceError(ref s) if s == "db write failed"));
+        assert_eq!(r.exit_code(), 57);
+
+        // RevocationError → RevocationError (exit 58)
+        let r: OctoCliError = AttachError::RevocationError("session revoked".into()).into();
+        assert!(matches!(r, OctoCliError::RevocationError(ref s) if s == "session revoked"));
+        assert_eq!(r.exit_code(), 58);
+
+        // InvalidSinceCursor → InvalidSinceCursor (exit 53 shared with
+        // AttachHandleExpired per amendment-chain shared-slot pattern)
+        let r: OctoCliError = AttachError::InvalidSinceCursor {
+            mint_unix: 100,
+            requested: 50,
+        }
+        .into();
+        assert!(matches!(
+            r,
+            OctoCliError::InvalidSinceCursor {
+                mint_unix: 100,
+                requested: 50
+            }
+        ));
+        assert_eq!(r.exit_code(), 53);
+
+        // TransportHandlerNotRegistered → TransportHandlerNotRegistered
+        // (exit 59 per §F.2 step (e) extension-surface slot)
+        let r: OctoCliError = AttachError::TransportHandlerNotRegistered {
+            kind_label: "UnixSocket".into(),
+        }
+        .into();
+        assert!(
+            matches!(r, OctoCliError::TransportHandlerNotRegistered { ref kind_label } if kind_label == "UnixSocket")
+        );
+        assert_eq!(r.exit_code(), 59);
+
+        // Additive `#[non_exhaustive]` variant collapse path:
+        // exercise the wildcard arm via constructing an unknown
+        // `AttachError` is impossible (no private fields), so the
+        // wildcard is contract-tested by the substrate's `non_exhaustive`
+        // attribute alone — not asserted here.
+    }
 }

@@ -55,7 +55,7 @@ Layer attribution: see §Type Coverage table below for full layer designation pe
 
 ## Parent
 
-RFC-0011-c (agent lifecycle amendment; Phase 3 of RFC-0011 amendment chain). §Follow-on text refresh appends §F.1-§F.5 sections to RFC-0011-c body via RFC doc amendment commit (paired with this mission per [[no-phantom-mission-pointer]]).
+RFC-0011-c (agent lifecycle amendment; Phase 3 of RFC-0011 amendment chain). §Follow-on text refresh appends §F.1-§F.5 sections to RFC-0011-c body via RFC doc amendment commit (paired with this mission per [[no-phantom-mission-pointers]]).
 
 ## Depends on
 
@@ -72,10 +72,10 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 - [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet`)
 - [ ] **AC-3** `encode_token` + `decode_token` round-trip (Layer B) per RFC-0011-c §F.1 with signature verification
 - [ ] **AC-4** `attach_with_token()` step (e) dispatches via `token.transport.kind` against the process-singleton `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY` (NEW; built-in `InProcessHandler` registered at lazy init; extension transports land via follow-on Layer D crates per [[cipherocto-design-principles]] §per-extension crates + registry). Substrate ships filesystem-free + socket-IO-free per §Layer direction; existing `attach(handle, since)` UNCHANGED
-- [ ] **AC-12** `Handler` trait + `Registry` + `HANDLE_TRANSPORT_REGISTRY` + built-in `InProcessHandler` shipped from substrate per RFC-0011-c §F.2 step (e) (Layer B; re-exported at `octo_runtime` crate root via `pub use handle::transport::{Handler, Registry, HANDLE_TRANSPORT_REGISTRY, InProcessHandler}`); extension transports (UnixSocket, Raw scheme UUIDs) registered from follow-on Layer D crates (`octo-runtime-transport-unix`, …) at process startup — substrate stays filesystem-free + socket-IO-free per §Layer direction
+- [ ] **AC-12** (merged into **AC-4** per R14 substrate-faithfulness finding C-SF1; AC-4 now includes both dispatch behavior and substrate-types facet)
 - [ ] **AC-5** `agent run --detach --token-file <path>` mints + writes token to file (Layer C/D) per §Sub-step 3 + RFC-0011-c §F.2
 - [ ] **AC-6** `agent attach --token-file <path>` reads + binds (Layer C/D) per §Sub-step 4 + RFC-0011-c §F.2 (replaces attach dispatch stub)
-- [ ] **AC-7** 8 NEW `OctoCliError` variants wired at `octo_cli::error` per RFC-0011-c §F.4 mirror (see §Type Coverage); `InvalidSinceCursor` shares exit 53 slot with `AttachHandleExpired` per typed-discriminator preservation; `TransportHandlerNotRegistered` exits 59 (extension surface per [[cipherocto-design-principles]] §per-extension crates + registry)
+- [ ] **AC-7** 7 NEW `OctoCliError` variants wired at `octo_cli::error` per RFC-0011-c §F.4 mirror (`AttachHandleExpired`, `AttachHandleBadSignature`, `AttachSessionMismatch`, `AttachSessionUnknown`, `PersistenceError`, `RevocationError`, `TransportHandlerNotRegistered`); `InvalidSinceCursor` shares exit 53 slot with `AttachHandleExpired` per typed-discriminator preservation; `TransportHandlerNotRegistered` exits 59 (extension surface per [[cipherocto-design-principles]] §per-extension crates + registry)
 - [ ] **AC-8** `octo revoke-attach <token-hex>` primitive (Q-deferred 2) per RFC-0011-c §F.3 with in-memory revocation set
 - [ ] **AC-9** `persist_event_cursor` + `load_event_cursor` via Stoolap ledger extension (Q-deferred 3) per RFC-0011-c §F.3 gated on `cfg(feature = "octo-runtime-persistence")` (feature flag newly added to `octo-runtime/Cargo.toml` per this mission)
 - [ ] **AC-10** Cargo validation per §Validation (zero warnings, all lib+test green)
@@ -116,9 +116,9 @@ _(PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])_
 
 ## Notes
 
-This mission was scoped per hard audit 2026-09-15 + user direction Q1+Q2+Q3. The `0011-c-agent-attach-subcommand` mission's release gate cleared on this mission landing. Single-mission design per [[no-parallel-abstractions]] principle (one mission = one cohesion: the AttachHandle pathway). 3 deferred items (Q-deferred 1/2/3) brought in scope per user direction so the attach handler binds to in-process `RuntimeHandle` and survives protocol-layer revoke + cursor-persistence primitives.
+This mission was scoped per hard audit 2026-09-15 + user direction Q1+Q2+Q3. The `0011-c-agent-attach-subcommand` mission's release gate cleared on this mission landing. Single-mission design per [[cipherocto-design-principles]] §No parallel abstractions principle (one mission = one cohesion: the AttachHandle pathway). 3 deferred items (Q-deferred 1/2/3) brought in scope per user direction so the attach handler binds to in-process `RuntimeHandle` and survives protocol-layer revoke + cursor-persistence primitives.
 
-RFC-0011-c §Follow-on text refresh lands via paired commit with this mission YAML per [[no-phantom-mission-pointer]] rule. The §Follow-on text covers §F.1 (Encoding) through §F.5 (Signing Surface) sections verbatim mirrored from this YAML's §Substrate (RFC-0011-c §Follow-on) section.
+RFC-0011-c §Follow-on text refresh lands via paired commit with this mission YAML per [[no-phantom-mission-pointers]] rule. The §Follow-on text covers §F.1 (Encoding) through §F.5 (Signing Surface) sections verbatim mirrored from this YAML's §Substrate (RFC-0011-c §Follow-on) section.
 
 ## Risk
 
@@ -137,9 +137,9 @@ Land the AttachHandle token pathway end-to-end per RFC-0011-c §Follow-on. Three
 
 ## Sub-steps
 
-**Scope:** Sub-steps 1+2 land in this mission cycle (RFC text + substrate code). Sub-steps 3-5 are SPECIFIED here (signature, invocation shape, error envelope mapping) but EXECUTED in a follow-on amendment mission that wires the Layer C/D CLI dispatch against the substrate this mission ships. The current cycle's in-scope deliverables are: (a) RFC-0011-c §Follow-on §F.1-§F.5 text refresh, (b) substrate code (handle split + encoding + signing + persistence + 7 AttachError variants), (c) `OctoCliError` mirror envelope (7 NEW variants at `octo_cli::error`) so the follow-on CLI wiring has substrate-faithful error surfaces to bind against. Sub-steps 3-5 prose preserved verbatim below for the follow-on mission to bind against.
+**Scope:** Sub-steps 1+2 land in this mission cycle (RFC text + substrate code). Sub-steps 3-5 are SPECIFIED here (signature, invocation shape, error envelope mapping) but EXECUTED in a follow-on amendment mission that wires the Layer C/D CLI dispatch against the substrate this mission ships. The current cycle's in-scope deliverables are: (a) RFC-0011-c §Follow-on §F.1-§F.5 text refresh, (b) substrate code (handle split + encoding + signing + persistence + 8 AttachError variants), (c) `OctoCliError` mirror envelope (7 NEW variants at `octo_cli::error`) so the follow-on CLI wiring has substrate-faithful error surfaces to bind against. Sub-steps 3-5 prose preserved verbatim below for the follow-on mission to bind against.
 
-1. **RFC-0011-c §Follow-on text refresh** — `rfcs/accepted/process/0011-c-agent-lifecycle.md` Layer direction amendment. Append §F.1-§F.5 sections. Pair-commit with mission YAML per [[no-phantom-mission-pointer]].
+1. **RFC-0011-c §Follow-on text refresh** — `rfcs/accepted/process/0011-c-agent-lifecycle.md` Layer direction amendment. Append §F.1-§F.5 sections. Pair-commit with mission YAML per [[no-phantom-mission-pointers]].
 
 2. **Substrate code** — `octo_runtime::handle` module (new 6-field `AttachHandle` token + `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers in `handle::signing` submodule; existing 4-field `AttachHandle` RENAMED to `RuntimeHandleBinding`) + `octo_runtime::handle::encoding` submodule + `octo_runtime::handle::error` submodule + `octo_runtime::handle::transport` submodule (`Handler` trait + `Registry` + `HANDLE_TRANSPORT_REGISTRY` `OnceLock` + built-in `InProcessHandler` per RFC-0011-c §F.2 step (e)) + `octo_runtime::persistence` module. ~340 LoC + tests (substrate modules) + ~365 LoC + tests (transport module). Layer B. No `octo_wallet::crypto` module (does not exist; signing wrappers colocate in `octo_runtime::handle::signing` and compose `octo_wallet::IdentityKey::sign` per RFC-0015-a Appendix A). Substrate stays filesystem-free + socket-IO-free per §Layer direction; transport protocol I/O lives in follow-on Layer D crates (`octo-runtime-transport-unix`, …).
 
@@ -219,12 +219,10 @@ cargo test -p octo-cli --lib --tests                                   # green (
 - RFC-0015-a Appendix A (operative signing surface)
 - RFC-0016-a §6.10 (canonical-bytes-on-write invariant)
 - [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[no-phantom-mission-pointer]] — paired-acceptance sequencing
-- [[Initiative user-only]] — user owns commit/push/status transitions
+- [[no-phantom-mission-pointers]] — paired-acceptance sequencing
+- [[feedback_initiation_user_only]] — user owns commit/push/status transitions
 - [[memory-is-never-status-ground-truth]] — provenance rule
-- [[0011-c-agent-attach-dry-closure-2026-09-15]] — companion closure card
-- [[2026-09-16-0011-c-agent-attach-yaml-revert]] — companion revert audit
-- [[phase2-unblock-dry-closure-2026-09-13]] — substrate unblock prior cycle
+- [[0011-c-agent-attach-closure-2026-09-15]] — companion closure card
 
 ## Why gate
 

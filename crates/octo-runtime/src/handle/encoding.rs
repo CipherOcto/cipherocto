@@ -366,10 +366,22 @@ mod tests {
     use octo_wallet::ed25519_dalek::{Signer, SigningKey};
 
     fn mint_test_token(session_id: SessionId, agent_id: Uuid) -> AttachHandle {
-        // Use ed25519-dalek directly to sign the canonical bytes so we
-        // can verify decode_token accepts a real signature.
+        // Mint a real, well-formed `AttachHandle` token. Routes
+        // through the substrate-boundary `sign_attach_handle_payload`
+        // wrapper (RFC-0011-c §F.5) rather than signing canonical
+        // bytes directly via `ed25519-dalek`. Per
+        // [[cipherocto-design-principles]] §No parallel abstractions,
+        // test fixtures use the same single-substrate-signing surface
+        // the production mint path uses; if `sign_attach_handle_payload`
+        // ever drifts from `canonical_payload_bytes`, this test fails.
         let seed = [0x42u8; 32];
-        let sk = SigningKey::from_bytes(&seed);
+        let mut holder = octo_wallet::IdentityKey::from_seed(seed);
+        // `from_seed` returns a `Designated` identity; `sign` refuses
+        // non-active identities per Layer A frozen lifecycle contract.
+        // Activate with a fixed test-time so the mint is deterministic.
+        holder
+            .activate(1_700_000_000)
+            .expect("activate test identity");
 
         let payload = AttachPayload {
             agent_id,
@@ -377,16 +389,16 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
-        let sig = sk.sign(&msg);
-        let mut sig_bytes = [0u8; 64];
-        sig_bytes.copy_from_slice(&sig.to_bytes());
+        let signature = crate::handle::signing::sign_attach_handle_payload(
+            &holder, session_id, &payload, mint, ttl,
+        )
+        .expect("sign_attach_handle_payload must succeed on test seed");
 
         AttachHandle {
             session_id,
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
-            signature: Signature(sig_bytes),
+            signature,
             payload,
             transport: Transport::IN_PROCESS,
         }

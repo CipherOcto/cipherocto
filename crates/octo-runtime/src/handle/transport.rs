@@ -76,10 +76,10 @@ pub trait Handler: Send + Sync + std::fmt::Debug {
 /// Keyed by `TransportKind`; lookup is via
 /// [`Registry::lookup`]. Registration is via [`Registry::register`].
 ///
-/// `Default::default()` returns an empty registry (equivalent to
-/// [`Registry::new`]); the process-singleton
-/// [`HANDLE_TRANSPORT_REGISTRY`] initializes with the built-in
-/// `InProcessHandler` at first access.
+/// `Default::default()` returns an empty registry (no built-in handlers
+/// installed). The process-singleton [`HANDLE_TRANSPORT_REGISTRY`]
+/// initializes with the built-in `InProcessHandler` registered at
+/// first access.
 #[derive(Default, Debug)]
 pub struct Registry {
     /// Inner map. `RwLock` chosen over `Mutex` because reads
@@ -94,20 +94,6 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Build an empty registry (no built-in handlers installed).
-    /// Used by [`HANDLE_TRANSPORT_REGISTRY`] which manually
-    /// registers the built-in `InProcessHandler` after construction.
-    /// Not `const fn` because `HashMap::new()` requires the
-    /// `RandomState` default hasher which is not `const`-stable on
-    /// the current MSRV; `RwLock::new` is `const` but the wrapper
-    /// isn't.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            handlers: RwLock::new(HashMap::new()),
-        }
-    }
-
     /// Register a handler for the given `TransportKind`. Overwrites
     /// any prior handler for the same kind (e.g., for test isolation
     /// or follow-on transport-crate overrides).
@@ -153,8 +139,8 @@ pub static HANDLE_TRANSPORT_REGISTRY: std::sync::OnceLock<Registry> = std::sync:
 /// `InProcessHandler`. Returns the registry instance.
 #[must_use]
 pub fn build_in_process_registry() -> Registry {
-    let reg = Registry::new();
-    reg.register(TransportKind::InProcess, Arc::new(InProcessHandler::new()));
+    let reg = Registry::default();
+    reg.register(TransportKind::InProcess, Arc::new(InProcessHandler));
     reg
 }
 
@@ -171,17 +157,6 @@ pub fn build_in_process_registry() -> Registry {
 /// pathway during the substrate-first rollout.
 #[derive(Debug, Default)]
 pub struct InProcessHandler;
-
-impl InProcessHandler {
-    /// Build a new in-process handler. Trivial constructor; the
-    /// handler is stateless (the actual session lookup would query
-    /// a future process-singleton session-id registry, which the
-    /// follow-on amendment wires).
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
 
 impl Handler for InProcessHandler {
     fn bind(&self, token: &AttachHandle, _since_unix: u64) -> Result<AttachedSession, AttachError> {
@@ -210,8 +185,6 @@ impl Handler for InProcessHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
-    use crate::handle::RuntimeHandleId as _Reachable;
     use crate::handle::{AttachPayload, Signature, Transport};
     use uuid::Uuid;
 
@@ -230,10 +203,10 @@ mod tests {
         }
     }
 
-    /// `Registry::new()` returns an empty registry.
+    /// `Registry::default()` returns an empty registry.
     #[test]
-    fn registry_new_is_empty() {
-        let reg = Registry::new();
+    fn registry_default_is_empty() {
+        let reg = Registry::default();
         assert!(reg.lookup(&TransportKind::InProcess).is_none());
         assert!(reg.lookup(&TransportKind::UnixSocket).is_none());
     }
@@ -241,8 +214,8 @@ mod tests {
     /// `Registry::register` + `lookup` round-trip.
     #[test]
     fn registry_register_lookup_round_trip() {
-        let reg = Registry::new();
-        reg.register(TransportKind::InProcess, Arc::new(InProcessHandler::new()));
+        let reg = Registry::default();
+        reg.register(TransportKind::InProcess, Arc::new(InProcessHandler));
         let got = reg.lookup(&TransportKind::InProcess);
         assert!(got.is_some(), "registered handler must be lookup-able");
     }
@@ -250,16 +223,8 @@ mod tests {
     /// `Registry::lookup` returns `None` for an unregistered kind.
     #[test]
     fn registry_lookup_unregistered_returns_none() {
-        let reg = Registry::new();
+        let reg = Registry::default();
         assert!(reg.lookup(&TransportKind::UnixSocket).is_none());
-    }
-
-    /// `InProcessHandler` unit struct + `Default` + `new()` all
-    /// construct identical values.
-    #[test]
-    fn in_process_handler_unit_default_and_new_construct_identically() {
-        let _new: InProcessHandler = InProcessHandler::new();
-        let _unit: InProcessHandler = InProcessHandler;
     }
 
     /// `InProcessHandler::bind` produces a substrate-boundary stub
@@ -271,7 +236,7 @@ mod tests {
             // In debug builds, the bind panics; skip the assertion.
             return;
         }
-        let h = InProcessHandler::new();
+        let h = InProcessHandler;
         let token = dummy_token();
         let res = h.bind(&token, 0);
         assert!(matches!(res, Err(AttachError::UnknownSession { .. })));
@@ -368,7 +333,7 @@ mod tests {
             }
         }
 
-        let reg = Registry::new();
+        let reg = Registry::default();
         reg.register(TransportKind::InProcess, Arc::new(FirstHandler));
         let first = reg
             .lookup(&TransportKind::InProcess)

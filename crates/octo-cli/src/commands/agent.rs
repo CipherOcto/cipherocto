@@ -863,7 +863,35 @@ mod run {
                 //       keypair directly so the ed25519 signature
                 //       is verifiable against the holder's public
                 //       key by the future `decode_token` step.
-                let holder = common::resolve_active_identity_key()?;
+                let mut holder = common::resolve_active_identity_key()?;
+
+                // 6.5.1a Wall-clock now (declared before activate
+                //       below). The substrate `IdentityKey::sign()`
+                //       gates on `lifecycle.can_sign() == true`
+                //       (Active or Rotating only per RFC-0009
+                //       §Lifecycle rows 3+4). `activate()` is
+                //       idempotent from Active (no-op per
+                //       identity.rs:204); from Rotating it refuses
+                //       (must abort/complete first); from Revoked
+                //       it refuses. We map substrate's WalletError
+                //       into OctoCliError via the existing helper
+                //       so the operator sees a distinct activation
+                //       failure signal rather than the downstream
+                //       BadSignature exit 54 that `mint_attach_handle`
+                //       would otherwise surface. Substrate-faithful
+                //       mirror of the test pattern at mod tests
+                //       tv_cli_run_detach.
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                // 6.5.1b Defensively flip Designated → Active.
+                holder.activate(now_unix).map_err(|wallet_err| {
+                    OctoCliError::Internal(sanitize_substrate_error(&format!(
+                        "identity activation failed: {wallet_err}"
+                    )))
+                })?;
 
                 // 6.5.2 TTL = mint time + 3600s (RFC-0011-c
                 //       §F.6.1 documented default). The substrate
@@ -873,10 +901,6 @@ mod run {
                 //       validation chain); `u64::MAX - mint_unix`
                 //       would overflow on 32-bit platforms so we
                 //       use saturating arithmetic to clamp.
-                let now_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
                 let ttl_unix = now_unix.saturating_add(3600);
 
                 // 6.5.3 Mint the token. `since_cursor = 0` is the

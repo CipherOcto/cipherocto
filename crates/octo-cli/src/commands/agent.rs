@@ -578,13 +578,13 @@ mod list {
             cursor: cursor.map(|s| s.to_string()),
         };
 
-        // 4. Substrate call.
-        let summaries = wallet_list_owned_agents(&active_did, &filter).map_err(|e| match e {
-            octo_wallet::WalletError::ForbiddenHolderMismatch => {
-                OctoCliError::ForbiddenHolderMismatch
-            }
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
+        // 4. Substrate call (canonical WalletError → OctoCliError
+        //    mapping via the common helper; covers ForbiddenHolderMismatch,
+        //    Hsm, AuditUnavailable, etc. — strictly broader than the prior
+        //    hand-rolled match arm that only covered
+        //    ForbiddenHolderMismatch + Internal catch-all).
+        let summaries = wallet_list_owned_agents(&active_did, &filter)
+            .map_err(common::map_transition_wallet_error)?;
 
         // 5. Build output envelope. Each summary's `holder_did` will
         //    match `active_did` by construction (substrate enforced),
@@ -1463,11 +1463,11 @@ mod attach {
         //    (per RFC-0015-b defect 3 fix; substrate-faithful
         //    multi-DID enumeration prevention).
         // Canonical WalletError → OctoCliError mapping lives in
-        // `common::map_transition_wallet_error` (used by run /
-        // destroy / attach). R7.5 MED finding: prior this site
-        // duplicated the match arms — collapse to the helper so
-        // future WalletError variants only need one match arm
-        // update.
+        // common::map_transition_wallet_error (the shared CLI
+        // boundary helper, used by run / destroy / attach / list).
+        // R7.5 MED finding: prior this site duplicated the match
+        // arms — collapse to the helper so future WalletError
+        // variants only need one match arm update.
         let _manifest = octo_wallet::lookup_agent(&active_did, agent_id)
             .map_err(common::map_transition_wallet_error)?;
 

@@ -1,0 +1,43 @@
+fix(octo-cli): RFC-0011-c §F.6 R8.5 — list::handle WalletError mapping dedup
+
+DRY review R8 surfaced 4 findings across 5 lenses.
+R8.5 fix sweep applies 1 MED + 1 LOW (both from
+simplification lens). The other 2 findings are out of
+scope or non-actionable:
+
+- Substrate-faithfulness risk on Config→Internal collapse
+  is pre-existing — predates R7.5, affects both old and new
+  code identically. Out of scope for this fix sweep,
+  separate amendment needed to add an explicit Config arm.
+
+- Substrate-faithfulness question on historical
+  InvalidStateTransition arm breakage is a historical
+  question (was the old code ever compiling). Not a
+  defect.
+
+crates/octo-cli/src/commands/agent.rs:
+
+- list::handle WalletError mapping dedup (MED from
+  simplification lens): replace the hand-rolled match arm
+  at lines 582-587 (wallet_list_owned_agents) with the
+  canonical common::map_transition_wallet_error helper.
+  The helper covers ForbiddenHolderMismatch, Hsm,
+  AuditUnavailable, etc. — strictly broader than the
+  prior hand-rolled match that only covered
+  ForbiddenHolderMismatch + Internal catch-all.
+
+- attach::handle comment nit (LOW from simplification
+  lens): the parenthetical '(used by run / destroy /
+  attach)' was missing list. Update to '(the shared CLI
+  boundary helper, used by run / destroy / attach /
+  list)'. Four call sites now, matching the canonical
+  helper usage surface.
+
+Validation:
+
+- cargo fmt --all clean
+- cargo clippy -p octo-cli --all-targets -- -D warnings clean
+- cargo test -p octo-cli --lib 293 of 293 tests pass
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.
+User owns the remote-write step and the PR step.

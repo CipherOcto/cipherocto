@@ -33,7 +33,7 @@ dry_audit: docs/audits/2026-09-16-0011-c-attachhandle-mission-draft.md
 **Depends on:**
 
 - Mission `0011-c-agent-run-subcommand` — `Commands::Agent::Run` clap variant extended in §Sub-step 1 below
-- Mission `0011-c-agent-attach-subcommand` — `Commands::Agent::Attach` dispatch stub at `crates/octo-cli/src/commands/agent.rs:1180` replaced in §Sub-step 2 below
+- Mission `0011-c-agent-attach-subcommand` — `Commands::Agent::Attach` dispatch stub replaced in §Sub-step 2 below
 - RFC-0015-a — `transition_agent` (Layer B; signing surface reused by `sign_attach_handle`)
 - RFC-0016-a — audit substrate for `mint_attach_handle` event persistence
 
@@ -43,53 +43,15 @@ Open. RFC-0011-c §Follow-on text refresh + this mission YAML + CLI wiring + sub
 
 ## Substrate (RFC-0011-c §Follow-on)
 
-Per RFC-0011-c §Follow-on (NEW; added by this mission) the AttachHandle token pathway covers four layers of work:
+Per RFC-0011-c §Follow-on (NEW; added by this mission) the AttachHandle token pathway covers four layers of work. The substrate specification (function signatures, encoding format, validation chain, error variants) is the authoritative source per RFC-0011-c §Follow-on §F.1-§F.5 — this section summarizes and points to the RFC; only Path B-specific notes (existing 3-field `AttachHandle` → `RuntimeHandleBinding` rename, `sign_attach_handle_payload` colocation decision) are mission-local content.
 
-### §F.1 Encoding (NEW)
+- **§F.1 Encoding** — see RFC-0011-c §Follow-on §F.1. `crates/octo-runtime/src/handle/encoding.rs` (NEW). `encode_token` + `decode_token` round-trip with signature verify-on-decode; canonical version byte `0x00`; mirrors RFC-0016-a §6.10 canonical-bytes-on-write pattern.
+- **§F.2 Token Substrate** — see RFC-0011-c §Follow-on §F.2. `crates/octo-runtime/src/handle.rs`. 6-field `AttachHandle` token (Layer B); existing 3-field `AttachHandle` (in-process binding) RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod). Validation chain at `attach_with_token` invocation: (a) signature check, (b) revocation-set membership, (c) `ttl_unix` not expired, (d) `since_unix >= mint_timestamp_unix`, (e) `session_id` matches running session registry. Existing `attach(handle, since)` function UNCHANGED — still consumes `RuntimeHandleBinding`.
+- **§F.3 Persistence** — see RFC-0011-c §Follow-on §F.3. `crates/octo-runtime/src/persistence.rs` (NEW). `persist_event_cursor` + `load_event_cursor` (Q-deferred 3) gated on `cfg(feature = "octo-runtime-persistence")` (NEW feature flag in `crates/octo-runtime/Cargo.toml`). `revoke_attach_token` + `is_token_revoked` (Q-deferred 2; in-memory revocation set).
+- **§F.4 Errors** — see RFC-0011-c §Follow-on §F.4. `pub enum AttachError` in `crates/octo-runtime/src/handle/error.rs` with 6 variants (mirror → `OctoCliError` exits 53-58).
+- **§F.5 Signing Surface** — see RFC-0011-c §Follow-on §F.5. `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers colocated in `crates/octo-runtime/src/handle.rs` (Layer B); compose `octo_wallet::identity::IdentityKey::sign` and `IdentityKey::verify` from `crates/octo-wallet/src/identity.rs` per RFC-0015-a Appendix A. NO `crates/octo-wallet/src/crypto.rs` (file does not exist); no new Layer A types.
 
-`crates/octo-runtime/src/handle/encoding.rs` (NEW; ~60 LoC + tests):
-
-- `encode_token(token: &AttachHandle) -> Result<Vec<u8>, AttachError>` — length-prefixed canonical encoding, version byte `0x00`, BLAKE3-checked
-- `decode_token(bytes: &[u8]) -> Result<AttachHandle, AttachError>` — symmetric decoder with signature verification on decode
-- Canonical encoding pinned to version 0; future versions increment byte `0x01 0x02 …` per octo-runtime canonical-bytes invariant (mirrors RFC-0016-a §6.10)
-
-### §F.2 Token Substrate (NEW)
-
-`crates/octo-runtime/src/handle.rs` (NEW; ~140 LoC + tests):
-
-- `pub struct AttachHandle { session_id: SessionId, mint_timestamp_unix: u64, ttl_unix: u64, signature: Ed25519Signature, payload: AttachPayload, transport: Transport }`
-- `pub enum Transport { InProcess, UnixSocket(String) }` — discriminator (Q-deferred 1: multi-process bind)
-- `pub struct AttachPayload { agent_id: Uuid, since_cursor: u64 }`
-- `pub type SessionId = [u8; 32]` — random per `spawn_agent`
-- `pub fn mint_attach_handle(holder_did: &Did, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (Layer B; calls `octo_wallet::sign_attach_handle`)
-- `pub async fn attach(token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — validates signature + session_id match + `now_unix <= ttl_unix` + `since_unix >= mint_timestamp_unix`; binds to channel (InProcess: direct handle; UnixSocket: connect `XDG_RUNTIME_DIR/octo-attach-<session_id>.sock` with `os.write_to_temp()` fallback)
-- `AttachedSession { event_cursor: u64, broadcast_rx: tokio::sync::broadcast::Receiver<RuntimeEvent> }`
-
-### §F.3 Persistence (NEW — Q-deferred 3)
-
-`crates/octo-runtime/src/persistence.rs` (NEW; ~80 LoC + tests):
-
-- `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — Stoolap ledger extension; gated on `cfg(feature = "octo-runtime-persistence")` mirroring RFC-0016-a §6.4 paired-invariance
-- `pub fn load_event_cursor(agent_id: Uuid) -> Result<Option<u64>, PersistenceError>` — symmetric
-- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), RevocationError>` — in-memory revocation set; expired-by-revocation surfaces as `AttachHandleExpired` exit 53 (Q-deferred 2)
-- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check on `attach()` invocation
-
-### §F.4 Errors (NEW)
-
-`pub enum AttachError` in `crates/octo-runtime/src/handle/error.rs`:
-
-- `Expired { session_id: SessionId, expired_at_unix: u64, now_unix: u64 }` (mirror → OctoCliError exit 53)
-- `BadSignature { reason: String }` (mirror → OctoCliError exit 54)
-- `SessionMismatch { declared: SessionId, actual: SessionId }` (mirror → OctoCliError exit 55)
-- `UnknownSession { session_id: SessionId }` (mirror → OctoCliError exit 56)
-- `PersistenceError(String)` (mirror → OctoCliError exit 57)
-- `RevocationError(String)` (mirror → exit 58; closes the protocol-layer revocation gap)
-
-### §F.5 Signing Surface (REUSED)
-
-`crates/octo-wallet/src/crypto.rs` (EXISTING; additive):
-
-- `pub fn sign_attach_handle(did: &Did, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Ed25519Signature, CryptoError>` — reuses Ed25519 substrate; adds RFC-0015-a §6.4 paired-invariance guarantee
+Layer attribution: see §Type Coverage table below for full layer designation per RFC-0011-c type.
 
 ## Parent
 
@@ -106,42 +68,41 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 
 ## Acceptance Criteria
 
-- [ ] **AC-1** `AttachHandle` struct (Layer B) with 6 fields defined at `crates/octo-runtime/src/handle.rs` per RFC-0011-c §F.2
-- [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `octo_wallet::sign_attach_handle` per RFC-0011-c §F.5)
+- [ ] **AC-1** `AttachHandle` struct (Layer B) defined at `crates/octo-runtime/src/handle.rs` per RFC-0011-c §F.2; existing 3-field in-process binding RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod of existing callers)
+- [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet::identity`)
 - [ ] **AC-3** `encode_token` + `decode_token` round-trip (Layer B) per RFC-0011-c §F.1 with signature verification
-- [ ] **AC-4** `attach()` binds in-process or via UnixSocket based on `Transport` discriminator (Q-deferred 1) per RFC-0011-c §F.2
-- [ ] **AC-5** `agent run --detach --token-file <path>` mints + writes token to file (Layer C/D) per RFC-0011-c §Sub-step §F.2
-- [ ] **AC-6** `agent attach --token-file <path>` reads + binds (Layer C/D) per RFC-0011-c §Sub-step §F.3 (replaces stub at `crates/octo-cli/src/commands/agent.rs:1180`)
-- [ ] **AC-7** 4 `OctoCliError` variants (exits 53-56) wired at `crates/octo-cli/src/error.rs` per RFC-0011-c §F.4 mirror
+- [ ] **AC-4** `attach_with_token()` binds in-process or via UnixSocket based on `Transport` discriminator (Q-deferred 1) per RFC-0011-c §F.2; existing `attach(handle, since)` UNCHANGED
+- [ ] **AC-5** `agent run --detach --token-file <path>` mints + writes token to file (Layer C/D) per §Sub-step 3 + RFC-0011-c §F.2
+- [ ] **AC-6** `agent attach --token-file <path>` reads + binds (Layer C/D) per §Sub-step 4 + RFC-0011-c §F.2 (replaces attach dispatch stub)
+- [ ] **AC-7** 6 `OctoCliError` variants (exits 53-58) wired at `crates/octo-cli/src/error.rs` per RFC-0011-c §F.4 mirror (corrected per R1.5: 4 mirrors + 2 substrate-error passthroughs)
 - [ ] **AC-8** `octo revoke-attach <token-hex>` primitive (Q-deferred 2) per RFC-0011-c §F.3 with in-memory revocation set
-- [ ] **AC-9** `persist_event_cursor` + `load_event_cursor` via Stoolap ledger extension (Q-deferred 3) per RFC-0011-c §F.3 gated on `cfg(feature = "octo-runtime-persistence")`
-- [ ] **AC-10** Cargo clippy -p octo-runtime -p octo-wallet -p octo-cli --all-targets -- -D warnings clean
-- [ ] **AC-11** Cargo test -p octo-runtime --lib --tests green + -p octo-wallet --lib green + -p octo-cli --lib green
-- [ ] **AC-12** Layer direction verified (no reverse deps per [[cipherocto-design-principles]]) + DRY R1+R2 zero-finding gate achieved
+- [ ] **AC-9** `persist_event_cursor` + `load_event_cursor` via Stoolap ledger extension (Q-deferred 3) per RFC-0011-c §F.3 gated on `cfg(feature = "octo-runtime-persistence")` (feature flag newly added to `octo-runtime/Cargo.toml` per this mission)
+- [ ] **AC-10** Cargo validation: clippy -p octo-runtime -p octo-wallet -p octo-cli --all-targets -- -D warnings clean AND cargo test --lib --tests green across same crates
+- [ ] **AC-11** Layer direction verified (no reverse deps per [[cipherocto-design-principles]]) + DRY R1+R2 zero-finding gate achieved
 
 ### Type Coverage
 
-| RFC-0011-c type                                | Sub-step | Notes                                                                                                    |
-| ---------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `AttachHandle`                                 | F.2      | Layer B; struct with 6 fields + `Transport` discriminator (Q-deferred 1)                                 |
-| `Transport` (enum: `InProcess` / `UnixSocket`) | F.2      | Layer B; binding transport selector (Q-deferred 1)                                                       |
-| `mint_attach_handle`                           | F.2      | Layer B; calls `octo_wallet::sign_attach_handle` per F.5                                                 |
-| `attach()`                                     | F.2      | Layer B async; binds to in-process channel OR UnixSocket based on discriminator                          |
-| `encode_token` + `decode_token`                | F.1      | Layer B; canonical encoding v0 with signature verify-on-decode                                           |
-| `revoke_attach_token` + `is_token_revoked`     | F.3      | Layer B; in-memory revocation set (Q-deferred 2)                                                         |
-| `persist_event_cursor` + `load_event_cursor`   | F.3      | Layer B; Stoolap ledger extension, feature-gated (Q-deferred 3)                                          |
-| `sign_attach_handle`                           | F.5      | Layer B reused; calls Ed25519 substrate (Layer A frozen)                                                 |
-| `AttachError` (6 variants)                     | F.4      | Layer B; mirror → `OctoCliError` 4 variants (exits 53-56) + 2 substrate-error passthroughs (exits 57-58) |
-| `OctoCliError::AttachHandleExpired {…}`        | CLI      | Layer C/D; mirror exit 53 per RFC-0011-c §F.4 (slot allocation 39-58)                                    |
-| `OctoCliError::AttachHandleBadSignature`       | CLI      | Layer C/D; mirror exit 54                                                                                |
-| `OctoCliError::AttachSessionMismatch {…}`      | CLI      | Layer C/D; mirror exit 55                                                                                |
-| `OctoCliError::AttachSessionUnknown {…}`       | CLI      | Layer C/D; mirror exit 56                                                                                |
-| `OctoCliError::PersistenceError(String)`       | CLI      | Layer C/D; passthrough exit 57                                                                           |
-| `OctoCliError::RevocationError(String)`        | CLI      | Layer C/D; passthrough exit 58                                                                           |
+| RFC-0011-c type                                               | Sub-step | Notes                                                                                                                                                    |
+| ------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AttachHandle`                                                | F.2      | Layer B; struct with 6 fields + `Transport` discriminator (Q-deferred 1)                                                                                 |
+| `Transport` (enum: `InProcess` / `UnixSocket`)                | F.2      | Layer B; binding transport selector (Q-deferred 1)                                                                                                       |
+| `mint_attach_handle`                                          | F.2      | Layer B; calls `sign_attach_handle_payload` per F.5 (composes `IdentityKey::sign` from `octo-wallet::identity`)                                          |
+| `attach()`                                                    | F.2      | Layer B async; binds to in-process channel OR UnixSocket based on discriminator                                                                          |
+| `encode_token` + `decode_token`                               | F.1      | Layer B; canonical encoding v0 with signature verify-on-decode                                                                                           |
+| `revoke_attach_token` + `is_token_revoked`                    | F.3      | Layer B; in-memory revocation set (Q-deferred 2)                                                                                                         |
+| `persist_event_cursor` + `load_event_cursor`                  | F.3      | Layer B; Stoolap ledger extension, feature-gated (Q-deferred 3)                                                                                          |
+| `sign_attach_handle_payload` + `verify_attach_handle_payload` | F.5      | Layer B wrappers colocated in `octo_runtime::handle`; compose `IdentityKey::sign`/`verify` from `octo-wallet::identity` (Layer A frozen `ed25519-dalek`) |
+| `AttachError` (6 variants)                                    | F.4      | Layer B; mirror → `OctoCliError` 4 variants (exits 53-56) + 2 substrate-error passthroughs (exits 57-58)                                                 |
+| `OctoCliError::AttachHandleExpired {…}`                       | CLI      | Layer C/D; mirror exit 53 per RFC-0011-c §F.4 (slot allocation 39-58)                                                                                    |
+| `OctoCliError::AttachHandleBadSignature`                      | CLI      | Layer C/D; mirror exit 54                                                                                                                                |
+| `OctoCliError::AttachSessionMismatch {…}`                     | CLI      | Layer C/D; mirror exit 55                                                                                                                                |
+| `OctoCliError::AttachSessionUnknown {…}`                      | CLI      | Layer C/D; mirror exit 56                                                                                                                                |
+| `OctoCliError::PersistenceError(String)`                      | CLI      | Layer C/D; passthrough exit 57                                                                                                                           |
+| `OctoCliError::RevocationError(String)`                       | CLI      | Layer C/D; passthrough exit 58                                                                                                                           |
 
 ## Implementation Guide
 
-See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands for clap wiring patterns. Mirror the `agent attach` dispatch replace-stub pattern at `crates/octo-cli/src/commands/agent.rs:1180`.
+See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands for clap wiring patterns. Mirror the `agent attach` dispatch replace-stub pattern at `Commands::Agent::Attach` dispatch stub.
 
 ## Pull Request
 
@@ -155,32 +116,30 @@ RFC-0011-c §Follow-on text refresh lands via paired commit with this mission YA
 
 ## Risk
 
-- **MEDIUM** — UnixSocket path may fail on permission-restricted filesystems (`XDG_RUNTIME_DIR` absent, `$TMPDIR` read-only). Mitigation: `os.write_to_temp()` fallback to `$TMPDIR/octo-attach-<session>.sock` per RFC-0011-c §F.2; surface `AttachError::SocketPathUnavailable` exit 56 alternative
+- **MEDIUM** — UnixSocket path may fail on permission-restricted filesystems (`XDG_RUNTIME_DIR` absent, `$TMPDIR` read-only). Mitigation: `std::env::temp_dir()` fallback to `$TMPDIR/octo-attach-<session>.sock` per RFC-0011-c §F.2; surface `AttachError::SocketPathUnavailable` exit 56 alternative
 - **MEDIUM** — In-memory revocation set lost on process restart; cross-process revocation propagation out of scope (deferred to RFC-0011-c §Future Work §F.7)
 - **LOW** — Persistence feature gate (`octo-runtime-persistence`) may not be enabled in default builds; `persist_event_cursor` returns `PersistenceError("feature disabled")` exit 57 in default builds
-- **LOW** — Ed25519 signature substrate (Layer A frozen) reuses `sign_attach_handle`; no new crypto-layer assumptions
+- **LOW** — Ed25519 signature substrate (Layer A frozen) composed via `IdentityKey::sign` (Layer B, RFC-0015-a Appendix A); no new crypto-layer assumptions
 
 ## Scope
 
 Land the AttachHandle token pathway end-to-end per RFC-0011-c §Follow-on. Three sibling deferred extensions (Q-deferred 1 multi-process bind, Q-deferred 2 revocation, Q-deferred 3 cursor persistence) all in scope per user direction Q2. Out-of-scope (deferred to next cycle):
 
 - Cross-process revocation propagation (separate process → in-memory set sync; defers to RFC-0011-c §Future Work §F.7)
-- Key rotation for `sign_attach_handle` (deferred to RFC-0015-a §Future Work §6.5)
+- Key rotation for `sign_attach_handle_payload` (deferred to RFC-0015-a §Future Work §6.5)
 - `octo-runtime-persistence` feature gate activation in default builds (deferred to RFC-0011-c §Future Work §F.8)
 
 ## Sub-steps
 
 1. **RFC-0011-c §Follow-on text refresh** — `rfcs/accepted/process/0011-c-agent-lifecycle.md` Layer direction amendment. Append §F.1-§F.5 sections. Pair-commit with mission YAML per [[no-phantom-mission-pointer]].
 
-2. **Substrate code** — `crates/octo-runtime/src/handle.rs` + `crates/octo-runtime/src/handle/encoding.rs` + `crates/octo-runtime/src/handle/error.rs` + `crates/octo-runtime/src/persistence.rs` + `crates/octo-wallet/src/crypto.rs` additive `sign_attach_handle`. ~340 LoC + tests. Layer B.
+2. **Substrate code** — `crates/octo-runtime/src/handle.rs` (new 6-field `AttachHandle` token + `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers; existing 3-field `AttachHandle` RENAMED to `RuntimeHandleBinding`) + `crates/octo-runtime/src/handle/encoding.rs` + `crates/octo-runtime/src/handle/error.rs` + `crates/octo-runtime/src/persistence.rs`. ~340 LoC + tests. Layer B. No `crates/octo-wallet/src/crypto.rs` (does not exist; signing wrappers colocate in `octo_runtime::handle.rs` and compose `octo_wallet::identity::IdentityKey::sign` per RFC-0015-a Appendix A).
 
 3. **CLI extension to `agent run --detach --token-file <path>`** — `crates/octo-cli/src/commands/agent.rs` (Layer C/D; substrate reference RFC-0011-c §F.2). Add `--token-file <path>` clap arg to existing `AgentAction::Run` variant. On `--detach` dispatch, after `octo_runtime::spawn_agent(...)` returns, mint token via `octo_runtime::mint_attach_handle(holder_did, ...)` + serialize to file via `octo_runtime::encode_token`. Token NOT included in `AgentRunOutput` payload (side-channel credential, not audit data).
 
-4. **CLI dispatch replacement at `agent attach --token-file <path>`** — replaces stub at `crates/octo-cli/src/commands/agent.rs:1180`. Read token bytes from `--token-file` → `octo_runtime::decode_token(...)` → `octo_runtime::attach(&token, since_unix)` async. Populates `AgentAttachOutput { agent_id, runtime_handle, attached_at_unix, event_cursor }`.
+4. **CLI dispatch replacement at `agent attach --token-file <path>`** — replaces `Commands::Agent::Attach` dispatch stub. Read token bytes from `--token-file` → `octo_runtime::decode_token(...)` → `octo_runtime::attach_with_token(&token, since_unix)` async. Populates `AgentAttachOutput { agent_id, runtime_handle, attached_at_unix, event_cursor }`. Includes the 6 `OctoCliError` variants (exits 53-58) wired at `crates/octo-cli/src/error.rs` per RFC-0011-c §F.4 mirror (merged sub-step per R1 finding S-M4 — CLI dispatch and error envelope are one cohesive surface).
 
 5. **CLI primitive `octo revoke-attach <token-hex>`** — new top-level subcommand at `crates/octo-cli/src/commands/mod.rs`. Parses `<token-hex>` arg, decodes token (signature verified), calls `octo_runtime::revoke_attach_token(token.session_id)`. Returns `OctoCliError::RevocationError(String)` exit 58 on failure OR `exit 0` on success with `RevokeOutput { session_id, revoked_at_unix }`.
-
-6. **CLI error variants** — `crates/octo-cli/src/error.rs` adds 6 `OctoCliError` variants mapping to exits 53-58 per RFC-0011-c §F.4 mirror.
 
 ## Cargo deps
 
@@ -202,18 +161,18 @@ octo-runtime-persistence = ["dep:stoolap"]  # per RFC-0011-c §F.3 paired-invari
 
 ## Test Vectors (per RFC-0011-c §Test Vectors — `agent attach` group, extended)
 
-6 TV (TV-AGT11-AGT14 existing + TV-AGT15-AGT18 NEW) covering the AttachHandle pathway:
+8 TV (TV-AGT11-AGT12 EXISTING per RFC-0011-c §Test Vectors; TV-AGT19-AGT24 NEW for AttachHandle pathway; TV-AGT13 already defined in RFC as `agent create` ReplayDetected per RFC-0011-c §Test Vectors — RE-numbered to avoid collision per R1 finding C-H3):
 
-| #        | Subcommand                               | Input                                                        | Expected Output                                                         | Notes                                           |
-| -------- | ---------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------- |
-| TV-AGT11 | `agent attach`                           | Running agent (in-process)                                   | `AgentAttachOutput { runtime_handle: ..., event_cursor: ... }` (exit 0) | Read-only in-process attach                     |
-| TV-AGT12 | `agent attach`                           | Terminated agent                                             | `AgentNotRunning(uuid)` (exit 48)                                       | Already exists; per mission 0011-c-agent-attach |
-| TV-AGT13 | `agent attach`                           | Token expired (`now_unix > ttl_unix`)                        | `AttachHandleExpired { ... }` (exit 53)                                 | NEW; per §F.2                                   |
-| TV-AGT14 | `agent attach`                           | Token signature mismatched                                   | `AttachHandleBadSignature { reason }` (exit 54)                         | NEW; per §F.2 + §F.5                            |
-| TV-AGT15 | `agent run --detach --token-file <path>` | Fresh spawn                                                  | Token written to file; `AgentRunOutput` (exit 0) excludes token         | NEW; per §Sub-step 3                            |
-| TV-AGT16 | `octo revoke-attach <hex>`               | Revoked session                                              | `RevokeOutput { session_id, revoked_at_unix }` (exit 0)                 | NEW; per §Sub-step 5                            |
-| TV-AGT17 | `octo revoke-attach` → re-attach         | After revocation                                             | `AttachHandleExpired { ... }` (exit 53) (mirrors TV-AGT13)              | NEW; per §F.3 revocation                        |
-| TV-AGT18 | `agent attach`                           | Multi-process via UnixSocket (`Transport::UnixSocket(path)`) | `AgentAttachOutput` (exit 0)                                            | NEW; per §F.2 UnixSocket path                   |
+| #        | Subcommand                               | Input                                                        | Expected Output                                                         | Notes                           |
+| -------- | ---------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------- |
+| TV-AGT11 | `agent attach`                           | Running agent (in-process)                                   | `AgentAttachOutput { runtime_handle: ..., event_cursor: ... }` (exit 0) | EXISTING; per RFC §Test Vectors |
+| TV-AGT12 | `agent attach`                           | Terminated agent                                             | `AgentNotRunning(uuid)` (exit 48)                                       | EXISTING; per RFC §Test Vectors |
+| TV-AGT19 | `agent attach`                           | Token expired (`now_unix > ttl_unix`)                        | `AttachHandleExpired { ... }` (exit 53)                                 | NEW; per §F.2 chain step (c)    |
+| TV-AGT20 | `agent attach`                           | Token signature mismatched                                   | `AttachHandleBadSignature { reason }` (exit 54)                         | NEW; per §F.2 chain step (a)    |
+| TV-AGT21 | `agent run --detach --token-file <path>` | Fresh spawn                                                  | Token written to file; `AgentRunOutput` (exit 0) excludes token         | NEW; per §Sub-step 3            |
+| TV-AGT22 | `octo revoke-attach <hex>`               | Revoked session                                              | `RevokeOutput { session_id, revoked_at_unix }` (exit 0)                 | NEW; per §Sub-step 5            |
+| TV-AGT23 | `agent attach`                           | Multi-process via UnixSocket (`Transport::UnixSocket(path)`) | `AgentAttachOutput` (exit 0)                                            | NEW; per §F.2 UnixSocket path   |
+| TV-AGT24 | `agent attach`                           | Session id mismatched (declared vs actual)                   | `AttachSessionMismatch { declared, actual }` (exit 55)                  | NEW; per §F.2 chain step (e)    |
 
 ## Layer direction (RFC-0011-c §Follow-on + per [[cipherocto-design-principles]])
 
@@ -238,7 +197,7 @@ cargo test -p octo-cli --lib --tests                                   # green (
 - CLI exit codes match RFC-0011-c §F.4 mirror (6 new variants: exits 53-58; slot allocation extended from 39-52 to 39-58).
 - `OutputEnvelope<T>::schema_version = 4` preserved per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 - New `RevokeOutput` payload type with `schema_version = 4` (NEW); agent attach/run output payload schemas unchanged.
-- `cfg(feature = "octo-runtime-persistence")` gating preserves Layer A frozen contract per RFC-0016-a §6.4 paired-invariance.
+- `cfg(feature = "octo-runtime-persistence")` gating is a NEW feature flag being added to `crates/octo-runtime/Cargo.toml` per this mission (no RFC-0016-a §6.4 paired-invariance claim per R1 finding SF-H4; canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract).
 
 ## Cross-references
 
@@ -258,20 +217,20 @@ cargo test -p octo-cli --lib --tests                                   # green (
 
 ## Why gate
 
-Release-gated on companion substrate mission RFC-0011-c §Follow-on paired acceptance per [[no-phantom-mission-pointer]] rule. The §Follow-on text refresh + this mission YAML + substrate code + CLI wiring all land in the same commit cycle. Until this mission lands, `0011-c-agent-attach-subcommand`'s dispatch handler returns `RuntimeSubstrateNotReady` exit 51 unconditionally at `crates/octo-cli/src/commands/agent.rs:1180`.
+Release-gated on companion substrate mission RFC-0011-c §Follow-on paired acceptance per [[no-phantom-mission-pointer]] rule. The §Follow-on text refresh + this mission YAML + substrate code + CLI wiring all land in the same commit cycle. Until this mission lands, `0011-c-agent-attach-subcommand`'s dispatch handler returns `RuntimeSubstrateNotReady` exit 51 unconditionally at `Commands::Agent::Attach` dispatch stub.
 
 Per [[Initiative user-only]] + [[git-workflow]] user owns the remote-write workflow + status transitions. NO PUSH.
 
-## Substrate Gap Closure (2026-09-16)
+## Substrate Gap Closure (2026-09-16, R1.5 Path B update)
 
-Substrate state verified as of 2026-09-16:
+Substrate state verified as of 2026-09-16 (R1.5 hard audit substrate-faithfulness):
 
-- `octo_runtime::handle.rs` does NOT yet exist (NEW; this mission)
+- `octo_runtime::handle.rs` EXISTS with 3-field `AttachHandle { agent_id, handle_id, issued_at_unix }` at `crates/octo-runtime/src/handle.rs` — RENAMED to `RuntimeHandleBinding` per Path B; new 6-field `AttachHandle` token lives in same file (or sibling module per RFC-0011-c §F.2)
 - `octo_runtime::handle/encoding.rs` does NOT yet exist (NEW; this mission)
 - `octo_runtime::persistence.rs` does NOT yet exist (NEW; this mission)
-- `octo_runtime::attach` module EXISTS at `crates/octo-runtime/src/attach.rs` (Layer B; baseline)
-- `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs` (Layer B; baseline)
-- `octo_wallet::sign_attach_handle` does NOT yet exist (NEW; this mission)
+- `octo_runtime::attach` module EXISTS at `crates/octo-runtime/src/attach.rs` (Layer B; baseline; UNCHANGED — still consumes `RuntimeHandleBinding` post-rename)
+- `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs` (Layer B; baseline; takes `Option<AttachHandle>` parameter which becomes `Option<RuntimeHandleBinding>` post-rename; mechanical codemod)
+- `octo_wallet::crypto` does NOT exist (NEW path B: `sign_attach_handle_payload` + `verify_attach_handle_payload` colocated at `octo_runtime::handle.rs`; composes `octo_wallet::identity::IdentityKey::sign` from `crates/octo-wallet/src/identity.rs` per RFC-0015-a Appendix A)
 - `OctoCliError` has slots 39-52 reserved per RFC-0011-c §9.8 (extended to 39-58 by this mission)
 
 Per [[Initiative user-only]] user owns `status: Claimed` → `status: In Progress` transition + DRY cycle kickoff. Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].

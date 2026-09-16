@@ -729,18 +729,21 @@ Canonical byte encoding for `AttachHandle` tokens at `crates/octo-runtime/src/ha
 - `pub enum Transport { InProcess, UnixSocket(String) }` — discriminator selecting bind transport
 - `pub struct AttachPayload { agent_id: Uuid, since_cursor: u64 }`
 - `pub type SessionId = [u8; 32]` — random per `spawn_agent` call
-- `pub fn mint_attach_handle(holder_did: &Did, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (calls `octo_wallet::sign_attach_handle` per §F.5)
-- `pub async fn attach(token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — validation chain: (a) signature verify via `octo-wallet`, (b) revocation-set check, (c) `now_unix <= token.ttl_unix`, (d) `since_unix >= token.mint_timestamp_unix`, (e) session_id match against running session registry; binds via `token.transport` (InProcess: direct handle; UnixSocket: connect `XDG_RUNTIME_DIR/octo-attach-<session_id>.sock` with `os.write_to_temp()` fallback)
+- `pub fn mint_attach_handle(holder_did: &Did, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet::identity`)
+- `pub async fn attach_with_token(token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — validation chain: (a) signature verify via `verify_attach_handle_payload` (per §F.5), (b) revocation-set check via `is_token_revoked`, (c) `now_unix <= token.ttl_unix`, (d) `since_unix >= token.mint_timestamp_unix`, (e) session_id match against running session registry; binds via `token.transport` (InProcess: direct handle; UnixSocket: connect `XDG_RUNTIME_DIR/octo-attach-<session_id>.sock` with `std::env::temp_dir()` fallback)
+
+The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>) -> Result<EventStream, RuntimeError>` at `crates/octo-runtime/src/attach.rs` is UNCHANGED — it consumes the renamed 3-field in-process binding (`RuntimeHandleBinding` per Path B rename). The 6-field `AttachHandle` token lives alongside the renamed struct at `crates/octo-runtime/src/handle.rs` per [[no-parallel-abstractions]].
+
 - `pub struct AttachedSession { pub event_cursor: u64, pub broadcast_rx: tokio::sync::broadcast::Receiver<RuntimeEvent> }`
 
 ### §F.3 Persistence + Revocation
 
 Stoolap ledger extension + in-memory revocation set at `crates/octo-runtime/src/persistence.rs` (Layer B):
 
-- `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` mirroring RFC-0016-a §6.4 paired-invariance
+- `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` (the feature flag is being newly added to `crates/octo-runtime/Cargo.toml` per the paired mission); canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract
 - `pub fn load_event_cursor(agent_id: Uuid) -> Result<Option<u64>, PersistenceError>` — symmetric
 - `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), RevocationError>` — adds entry to in-memory `RwLock<HashSet<SessionId>>` revocation set; expired-by-revocation surfaces as `AttachError::Expired` (per §F.4 mirror)
-- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at the start of `attach()` validation chain per §F.2
+- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at step (b) of `attach_with_token()` validation chain per §F.2
 
 ### §F.4 Errors
 
@@ -757,12 +760,12 @@ CLI error surface mirrors via `OctoCliError` variants appended at `crates/octo-c
 
 ### §F.5 Signing Surface
 
-Additive signing surface on `octo-wallet::crypto` at `crates/octo-wallet/src/crypto.rs` (Layer B; reuses Ed25519 Layer A frozen substrate):
+Signing wrappers colocated with the `AttachHandle` token type at `crates/octo-runtime/src/handle.rs` (Layer B). The wrappers compose `octo_wallet::identity::IdentityKey::sign` and `IdentityKey::verify` from `crates/octo-wallet/src/identity.rs` (the existing operative signing surface per RFC-0015-a Appendix A); no new Layer A types introduced:
 
-- `pub fn sign_attach_handle(did: &Did, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Ed25519Signature, CryptoError>` — Ed25519 sign over `payload || mint_timestamp_unix || ttl_unix || session_id` using the holder DID's secret key resolved via `octo-wallet::resolve_signing_key`
-- Inverse verify: `pub fn verify_attach_handle(did: &Did, token: &AttachHandle) -> Result<(), CryptoError>` — symmetric
+- `pub fn sign_attach_handle_payload(holder_did: &Did, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Ed25519Signature, AttachError>` — encodes `payload || mint_timestamp_unix || ttl_unix || session_id` and delegates to `IdentityKey::sign(msg)` (existing substrate at `crates/octo-wallet/src/identity.rs`)
+- `pub fn verify_attach_handle_payload(holder_did: &Did, token: &AttachHandle, payload_bytes: &[u8]) -> Result<(), AttachError>` — symmetric verify; consumed by `attach_with_token` per §F.2 validation chain step (a); `decode_token` per §F.1 also verifies on decode
 
-No new Layer A types introduced. Ed25519 substrate is RFC-frozen per [[stable-abstractions-principle]] + Layer A contract.
+`octo-wallet::identity` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen) is the underlying cryptographic primitive. No `crates/octo-wallet/src/crypto.rs` is created (file does not exist). Composition pattern follows [[stable-abstractions-principle]] — primitives in stable substrate, business semantics in composed layer.
 
 ## Rationale
 

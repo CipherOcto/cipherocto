@@ -101,9 +101,7 @@ pub async fn attach_with_token(
     token: &AttachHandle,
     since_unix: u64,
 ) -> Result<AttachedSession, AttachError> {
-    // (a) Signature verify — canonical helper enforces the same
-    // canonical-bytes form used at mint time. Bad signature →
-    // substrate-faithful `BadSignature` envelope.
+    // (a) Signature verify.
     verify_attach_handle_payload(
         holder_pubkey,
         &token.session_id,
@@ -121,19 +119,17 @@ pub async fn attach_with_token(
         )));
     }
 
-    // Fail-CLOSED on broken clock: any `duration_since` error
-    // saturates `now_unix` to `u64::MAX`. The same value is the
-    // reserved TTL sentinel (§F.2) — a malformed token that opts
-    // out of expiry rejects with the same uniform upstream signal.
+    // Fail-CLOSED discipline on broken clock: any `duration_since`
+    // error saturates `now_unix` to `u64::MAX`. The same value is
+    // the reserved TTL sentinel — a malformed token that opts out
+    // of expiry (substrate-authoritative hardening, NOT in RFC
+    // §F.2 prose) rejects with the same uniform `Expired` envelope.
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(u64::MAX);
 
-    // (c) TTL check (now_unix <= ttl_unix). Reserved sentinel
-    // `ttl_unix == u64::MAX` rejects any token that opts out of
-    // the TTL contract — substrate fails-CLOSED so a malformed
-    // token can never bypass expiry.
+    // (c) TTL check (now_unix <= ttl_unix).
     if token.ttl_unix == u64::MAX || now_unix > token.ttl_unix {
         return Err(AttachError::Expired {
             session_id: token.session_id,

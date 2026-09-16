@@ -50,11 +50,13 @@ use crate::error::RuntimeError;
 // Re-export error envelope types for crate-internal use.
 pub use error::{AttachError, PersistenceError};
 
-/// Random 32-byte session identifier (RFC-0011-c §F.2).
+/// 32-byte session identifier (RFC-0011-c §F.2).
 ///
-/// Minted per `spawn_agent` call; threaded through the
-/// `RuntimeHandleBinding` + `AttachHandle` token so a follow-on
-/// `attach --since` can resolve back to the same session.
+/// Phase 1 derives the value via BLAKE3 of `agent_id || spawned_at`
+/// (see `derive_session_id`); the substrate surface is opaque bytes,
+/// not the derivation. Threaded through the `RuntimeHandleBinding` +
+/// `AttachHandle` token so a follow-on `attach --since` can resolve
+/// back to the same session.
 pub type SessionId = [u8; 32];
 
 /// Ed25519 signature newtype (RFC-0011-c §F.5).
@@ -378,36 +380,35 @@ impl RuntimeHandleBinding {
 /// remaining `Arc::strong_count` directly — when it reaches 1
 /// (only the current handle), the channel is about to close.
 ///
-/// The `_keepalive_rx` field holds an internal broadcast receiver
-/// for the handle's lifetime. Per the tokio `broadcast::Sender`
-/// contract, `Sender::send` returns `Err(SendError(_))` only when
-/// no active receivers exist — by holding one receiver internally,
-/// the publish path ALWAYS succeeds even when no external
-/// subscriber has attached yet.
-///
-/// The ONLY invariant this guarantees is `Sender::send` cannot
-/// return `Err(SendError(_))` for the lifetime of any handle clone
-/// (because the keep-alive receiver holds an active subscription on
-/// the broadcast channel). It does NOT guarantee that any event
-/// reaches any external consumer: the `_keepalive_rx` is never
-/// `recv()`d, so new external `subscribe()` calls still join at
-/// the current tail position and miss events that were sent before
-/// they subscribed (standard tokio `broadcast` semantics). The
-/// initial `Spawned` event from `spawn_agent` is therefore NOT
-/// guaranteed to reach the next `attach` — an `attach` issued
-/// after `spawn_agent` returns will start from the channel tail.
+/// See [`HandleInner::_keepalive_rx`] for the keep-alive mechanism
+/// that prevents `Sender::send` from returning `Err(SendError)`
+/// during the handle's lifetime.
 struct HandleInner {
     /// Pub-sub broadcast sender (Layer D transport substrate).
     event_tx: broadcast::Sender<RuntimeEvent>,
     /// Keep-alive receiver held for the handle's lifetime.
     /// Guarantees `Sender::send` cannot return `Err(SendError)`
     /// during the handle's lifetime even when no external
-    /// subscriber has attached yet. The receiver is intentionally
-    /// never `recv()`d from — its sole purpose is to register as a
-    /// live receiver with the broadcast channel. Leading underscore
-    /// suppresses the false-positive dead-code warning (the
-    /// field's value matters as a side effect of being held, not
-    /// via any access).
+    /// subscriber has attached yet.
+    ///
+    /// The ONLY invariant this guarantees is `Sender::send` cannot
+    /// return `Err(SendError(_))` for the lifetime of any handle
+    /// clone (because the keep-alive receiver holds an active
+    /// subscription on the broadcast channel). It does NOT
+    /// guarantee that any event reaches any external consumer: the
+    /// `_keepalive_rx` is never `recv()`d, so new external
+    /// `subscribe()` calls still join at the current tail position
+    /// and miss events that were sent before they subscribed
+    /// (standard tokio `broadcast` semantics). The initial `Spawned`
+    /// event from `spawn_agent` is therefore NOT guaranteed to
+    /// reach the next `attach` — an `attach` issued after
+    /// `spawn_agent` returns will start from the channel tail.
+    ///
+    /// The receiver is intentionally never `recv()`d from — its
+    /// sole purpose is to register as a live receiver with the
+    /// broadcast channel. Leading underscore suppresses the
+    /// false-positive dead-code warning (the field's value matters
+    /// as a side effect of being held, not via any access).
     _keepalive_rx: broadcast::Receiver<RuntimeEvent>,
 }
 
@@ -468,13 +469,9 @@ impl RuntimeHandle {
     ///
     /// Used by substrate internals (`spawn_agent` initial event,
     /// state-machine dispatch); also exposed for adapter-layer code
-    /// that wishes to feed the pub-sub bus (per Layer D transport
-    /// contract).
-    ///
-    /// The handle retains an internal keep-alive receiver
-    /// ([`HandleInner::_keepalive_rx`]) so `Sender::send` cannot
-    /// return `Err(SendError)` for the lifetime of any handle
-    /// clone — the channel always has at least one receiver.
+    /// that wishes to feed the pub-sub bus. The handle retains an
+    /// internal keep-alive receiver so `Sender::send` cannot fail —
+    /// see [`HandleInner::_keepalive_rx`] for the invariant.
     pub fn publish(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
         let _ = self.inner.event_tx.send(event);
         Ok(())

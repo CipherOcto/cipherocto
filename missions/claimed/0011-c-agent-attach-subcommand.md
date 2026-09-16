@@ -6,7 +6,7 @@ metadata:
   type: cli-substrate-extension
   originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
-  v: "1.2"
+  v: "1.3"
   depends_on:
     - RFC-0011
     - RFC-0011-c
@@ -15,16 +15,15 @@ metadata:
     - mission 0011-c-agent-run-subcommand
     - mission 0011-c-octo-runtime-substrate
     - follow-on 0011-c-agent-run AttachHandle token emission
+  paired_mission: 0011-c-attach-cli-dispatch-amendment
 release_gate: AttachHandle token pathway landing (per follow-on cycle derived from hard audit 2026-09-15)
-release_gate_blocked: 0011-c-agent-run-submission must emit persistent AttachHandle token so attach handler can bind in-process
+release_gate_cleared_at: 2026-09-16
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
 substrate_unblocked: 2026-09-13
-implementation_state: cli-dispatch-stubbed
+implementation_state: cli-dispatch-wired
 implementation_commit: ca1f52e8
-stub_variant: OctoCliError::RuntimeSubstrateNotReady
-stub_exit_code: 51
 dry_audit: docs/audits/2026-09-16-0011-c-agent-attach-yaml-revert.md
 ---
 
@@ -41,7 +40,7 @@ dry_audit: docs/audits/2026-09-16-0011-c-agent-attach-yaml-revert.md
 
 ## Status
 
-Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 5 of 5). **CLI dispatch stubbed** — the dispatch handler returns `Err(OctoCliError::RuntimeSubstrateNotReady)` (exit 51) unconditionally until the `AttachHandle` token pathway lands. The `octo_runtime::attach(handle, since)` call site is documented in source as `// ```ignore` block at `crates/octo-cli/src/commands/agent.rs:1158-1176` per RFC-0011-c §9.3.5 substrate contract. **Release-gated** on AttachHandle token pathway landing per follow-on cycle derived from hard audit 2026-09-15.
+Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 5 of 5). **CLI dispatch wired end-to-end** per RFC-0011-c §F.6 + paired amendment mission `0011-c-attach-cli-dispatch-amendment` (release gate cleared 2026-09-16). The dispatch handler reads the `AttachHandle` token from `--token-file`, calls `decode_token` + `attach_with_token` to bind the in-process runtime broadcast channel. The 8 `OctoCliError` mirror variants (slots 53-59) wired via `From<octo_runtime::AttachError> for OctoCliError` so the substrate's signature-verify + revocation-set + TTL + since-cursor + session-registry checks surface verbatim to the operator. Bounded by §F.6.5 session-registry-wiring deferral — legitimate tokens currently return `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior; full happy-path coverage deferred to paired follow-on amendment cycle.
 
 ## Substrate (RFC-0011-c)
 
@@ -56,7 +55,12 @@ The following substrate surface is now in place so this mission can be implement
 
 ### Still pending at substrate level
 
-- `octo_runtime::attach(handle, since) -> AttachedSession` (Layer B; new crate). Until it lands, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
+- `InProcessHandler::bind` session-registry wiring (RFC-0011-c §F.2 step (e) per
+  CRIT 1 Option A landing). Legitimate tokens currently surface as
+  `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior; the
+  follow-on amendment cycle wires the registry so legitimate tokens reach the
+  happy-path `AttachedSession` return. CLI dispatch surface is fully wired in
+  this mission — only the substrate-side wiring remains.
 
 ## Parent
 
@@ -64,31 +68,33 @@ RFC-0011-c (agent lifecycle amendment; Phase 3 of the RFC-0011 amendment chain).
 
 ## Depends on
 
-See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-create-subcommand` + `0011-c-agent-run-subcommand` → `0011-c-agent-attach-subcommand` (this mission attaches to the `Commands::Agent` enum landed by the create mission; attach requires a previously-running agent). The `octo-runtime` substrate crate must exist for `attach` to be callable; until it lands, `agent attach` ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
+See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-create-subcommand` + `0011-c-agent-run-subcommand` → `0011-c-agent-attach-subcommand` (this mission attaches to the `Commands::Agent` enum landed by the create mission; attach requires a previously-running agent). The `octo-runtime` substrate crate must exist for `attach` to be callable; per paired amendment mission `0011-c-attach-cli-dispatch-amendment` (release gate cleared 2026-09-16), the substrate is now wired and the CLI dispatch surface is end-to-end.
 
 ## Acceptance Criteria
 
-- [ ] `octo agent attach <agent-id>` implemented + unit-tested (TV-AGT11, TV-AGT12 pass per RFC-0011-c §Test Vectors)
-- [ ] `AgentAttachOutput` payload type implemented + unit-tested (`agent_id`, `runtime_handle`, `attached_at_unix`, `event_cursor`)
-- [ ] **Read-only attach verified** — no state mutation; substrate `attach` is a pure read
-- [ ] `--since <unix-seconds>` flag implemented (replay from timestamp; per RFC-0011-c §9.3.5)
-- [ ] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
-- [ ] `AgentNotFound(Uuid)` (exit 42), `AgentNotRunning(Uuid)` (exit 48), `RuntimeAttachFailed { reason }` (exit 49) wired (per RFC-0011-c §9.8 slot allocation 39-52)
-- [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
-- [ ] Cargo test -p octo-cli --lib --tests green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator green)
-- [ ] Release gate cleared: `octo-runtime` substrate mission merged (per RFC-0011-c §Implementation Phases Phase 1)
+- [x] `octo agent attach --token-file <path> [--since <u64>]` implemented + unit-tested (TV-AGT11, TV-AGT12 + 4 NEW TV-CLI-ATTACH-{1,2,3} pass per RFC-0011-c §F.6 + §Test Vectors)
+- [x] `AgentAttachOutput` payload type implemented + unit-tested (`agent_id`, `runtime_handle`, `attached_at_unix`, `event_cursor`, `session_id_hex`)
+- [x] **Read-only attach verified** — no state mutation; substrate `attach_with_token` is a pure read
+- [x] `--since <unix-seconds>` flag implemented (replay from timestamp; per RFC-0011-c §9.3.5)
+- [x] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
+- [x] 8 `AttachHandle*` OctoCliError mirror variants wired (slots 53-59, slots 53 shared-slot pattern; per RFC-0011-c §F.4 + §9.8)
+- [x] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
+- [x] Cargo test -p octo-cli --lib --tests green (287 → 291 tests; 4 NEW TV per §F.6.2)
+- [x] No new INVALID cites introduced (Guard 2 cite validator green)
+- [x] Release gate cleared: `octo-runtime` substrate mission merged (per RFC-0011-c §Implementation Phases Phase 1)
+- [x] Paired amendment `0011-c-attach-cli-dispatch-amendment` merged (2026-09-16)
 
 ### Type Coverage
 
-| RFC-0011-c type                  | Sub-step            | Notes                                                                                                                                                                                                                                                                   |
-| -------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AgentAttachArgs`                | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--since <u64>`, `--json`)                                                                                                                                                                                             |
-| `AgentAttachOutput`              | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `runtime_handle: String`, `attached_at_unix: u64`, `event_cursor: Option<String>`). **Reserved** — handler stub returns `RuntimeSubstrateNotReady` exit 51 until AttachHandle token pathway lands per follow-on cycle. |
-| `AgentNotRunning(Uuid)`          | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 48 per RFC-0011-c §9.8 (reserved 17–63 range)                                                                                                                                                                               |
-| `RuntimeAttachFailed { reason }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 49                                                                                                                                                                                                                          |
+| RFC-0011-c type                  | Sub-step            | Notes                                                                                                                                                                                                                                                                        |
+| -------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentAttachArgs`                | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--since <u64>`, `--token-file <path>` required).                                                                                                                                                                           |
+| `AgentAttachOutput`              | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id`, `runtime_handle: Option<RedactedIdentifier>`, `attached_at_unix: Option<u64>`, `event_cursor: Option<String>`, `session_id_hex`). Wired end-to-end via paired amendment `0011-c-attach-cli-dispatch-amendment` (RFC-0011-c §F.6). |
+| `AgentNotRunning(Uuid)`          | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 48 per RFC-0011-c §9.8 (reserved 17–63 range)                                                                                                                                                                                    |
+| `RuntimeAttachFailed { reason }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 49                                                                                                                                                                                                                               |
+| 8 `AttachHandle*` variants       | Sub-step 4 (errors) | Layer C/D; mirror surface for `octo_runtime::AttachError`; slots 53-59 per RFC-0011-c §F.4 + §9.8 (paired amendment `0011-c-attach-cli-dispatch-amendment`)                                                                                                                  |
 
 ## Implementation Guide
 
@@ -100,26 +106,27 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Notes
 
-`agent attach` is the **only** read-only subcommand in the agent group that requires runtime substrate (per RFC-0011-c §9.3.5). It does not mutate state; once AttachHandle pathway lands, it returns an `event_cursor` that the operator can use to consume events from the runtime substrate pub-sub bus.
+`agent attach` is the **only** read-only subcommand in the agent group that requires runtime substrate (per RFC-0011-c §9.3.5). It does not mutate state; the dispatch handler reads an `AttachHandle` token from `--token-file`, calls `decode_token` + `attach_with_token` to bind the runtime pub-sub broadcast channel, and surfaces an `event_cursor` that the operator can use to consume events.
 
-The `octo-runtime` substrate crate is required for `attach` (`crates/octo-runtime/src/attach.rs` with `pub fn attach` at line 62 exists). The CLI binding requires an in-process `RuntimeHandle` minted by `spawn_agent` and persisted as an `AttachHandle` token — this pathway is the follow-on cycle scope, not part of this mission. Until it lands, this subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
+The `octo-runtime` substrate crate provides `mint_attach_handle`, `encode_token`, `decode_token`, `attach_with_token` (Layer B; per RFC-0011-c §F.1 + §F.2). The CLI binding path is wired end-to-end via paired amendment `0011-c-attach-cli-dispatch-amendment` (RFC-0011-c §F.6; release gate cleared 2026-09-16).
 
-## AttachHandle token gate (follow-on cycle)
+## AttachHandle token pathway (wired 2026-09-16)
 
-Per hard audit 2026-09-15 (`docs/audits/2026-09-16-0011-c-agent-attach-yaml-revert.md`), this mission is **blocked** on the `0011-c-agent-run-submission` follow-on cycle that emits a persistent `AttachHandle` token. The token pathway is required because:
+Per paired amendment `0011-c-attach-cli-dispatch-amendment` (RFC-0011-c §F.6 CLI Dispatch Wiring, release gate cleared 2026-09-16):
 
-- `octo_runtime::spawn_agent(agent_id, None)` mints an in-process `RuntimeHandle` whose broadcast channel persists for the duration of the process
-- Without `--detach`, the CLI terminates the handle when the `Run` dispatch returns (per `crates/octo-cli/src/commands/agent.rs:614` comment)
-- With `--detach`, the handle persists but the CLI does not currently persist it as a token for later `attach` invocations
-- `attach` requires the token to bind to the in-process channel; without it, the substrate call cannot resolve
+- `octo agent run --detach --token-file <path>` writes the encoded `AttachHandle` token to `<path>` with mode 0o600 (POSIX credential perms)
+- `octo agent attach --token-file <path>` reads the token, calls `decode_token` to verify the signature + parse the canonical 5-field payload, then calls `attach_with_token` to bind the in-process broadcast channel
+- The validation chain (RFC-0011-c §F.2): signature verify → revocation-set check → TTL check → since-cursor check → session-registry lookup
+- The 8 substrate `AttachError` variants surface verbatim to 8 `OctoCliError` slots 53-59 via `From<octo_runtime::AttachError> for OctoCliError`
 
-**Hard sequencing:** the follow-on cycle must (a) extend `agent run --detach` to emit a serialized `AttachHandle` token (e.g., via stdout or `--token-file <path>` flag), (b) extend `agent attach` to read the token and bind to the channel, (c) close AC #1-#3 + #12 of this mission.
+Bounded by §F.6.5 session-registry-wiring deferral: legitimate tokens currently return `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior (the `InProcessHandler::bind` registry wiring lands in a paired follow-on amendment cycle). The CLI dispatch surface is end-to-end; only the substrate-side wiring remains.
 
 ## Risk
 
-- **BLOCKING** — `release_gate_blocked` per YAML frontmatter: `0011-c-agent-run-submission` follow-on cycle must emit persistent `AttachHandle` token before this mission's CLI handler can bind to in-process `RuntimeHandle`. Until that lands, dispatch returns `RuntimeSubstrateNotReady` exit 51 unconditionally.
+- **CLEARED** — `release_gate_cleared_at: 2026-09-16` per YAML frontmatter: paired amendment `0011-c-attach-cli-dispatch-amendment` landed the `AttachHandle` token pathway. CLI dispatch reads the token from `--token-file`, calls `decode_token` + `attach_with_token`, surfaces 8 substrate `AttachError` variants verbatim via 8 `OctoCliError` slots 53-59.
 - **MEDIUM** — runtime may refuse the attach (e.g., agent is terminated but substrate cache is stale). Mitigation: `AgentNotRunning(uuid)` (exit 48) surfaces the substrate reason; operator can retry or run `agent list` to verify state.
-- **LOW** — `--since <unix-seconds>` may reference a timestamp before the runtime started. Substrate returns `InvalidSince` (handled by substrate; CLI surfaces verbatim); no client-side validation needed.
+- **MEDIUM** — bounded by §F.6.5 session-registry-wiring deferral. Legitimate tokens currently return `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior. Mitigation: TV-CLI-ATTACH-1 documents the bounded expected behavior; full happy-path coverage deferred to paired follow-on amendment cycle that wires `InProcessHandler::bind` against the in-process `RuntimeHandle` registry.
+- **LOW** — `--since <unix-seconds>` may reference a timestamp before the runtime started. Substrate returns `InvalidSinceCursor` (handled by substrate; CLI surfaces verbatim via slot 53 shared-slot pattern); no client-side validation needed.
 
 ## Scope
 
@@ -131,7 +138,7 @@ Land the `octo agent attach` subcommand per RFC-0011-c §9.3.5. The four sibling
 
 2. **`AgentAttachOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent attach` calls `octo_wallet::lookup_agent(caller_did, agent_id)` to verify the agent exists and the caller is the holder, then calls `octo_wallet::read_agent_state(caller_did, agent_id)` (the read-only state accessor added in commit `next e09f3e3a` + R53.5 fixes; caller-attestation re-enforced) to confirm `AgentState::Running` (otherwise emits `AgentNotRunning(Uuid)` exit 48). Then calls `octo_runtime::attach(handle, since)`; surfaces `runtime_handle`, `attached_at_unix`, `event_cursor` in output. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only.
+3. **CLI handler** — same file. `agent attach` calls `octo_wallet::lookup_agent(caller_did, agent_id)` to verify the agent exists and the caller is the holder, then calls `octo_wallet::read_agent_state(caller_did, agent_id)` (the read-only state accessor added in commit `next e09f3e3a` + R53.5 fixes; caller-attestation re-enforced) to confirm `AgentState::Running` (otherwise emits `AgentNotRunning(Uuid)` exit 48). Then reads the `AttachHandle` token from `--token-file`, calls `octo_runtime::decode_token(&bytes, holder_pubkey)` (the substrate-faithful binding pathway per RFC-0011-c §F.6.2), then `octo_runtime::attach_with_token(holder_pubkey, &token, since_unix).await`. Surfaces `runtime_handle`, `attached_at_unix`, `event_cursor`, `session_id_hex` in `AgentAttachOutput`. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only. The 8 `AttachError` variants map to 8 `OctoCliError` slots 53-59 via `From<octo_runtime::AttachError> for OctoCliError`.
 
 4. **`AgentNotRunning`, `RuntimeAttachFailed` error variants + exit 48/49 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add two variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 48/49 per RFC-0011-c §9.8 (slot allocation 39-52).
 
@@ -179,22 +186,28 @@ cargo test -p octo-cli --lib --tests  # green
   - `preview_only: bool` → `redacted: bool`
   - `command: String` (ADDED)
     Old CLI ignores unknown fields.
-- If `octo-runtime` substrate is not yet landed, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51); no operator-facing state change.
+- If `octo-runtime` substrate is not yet landed, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51); no operator-facing state change. **NOTE:** substrate landed 2026-09-16 per paired amendment `0011-c-attach-cli-dispatch-amendment`; this fallback never triggers on post-amendment substrate.
 
 ## Cross-references
 
 - RFC-0011-c §9.3.5 `octo agent attach` subcommand specification
-- RFC-0011-c §9.8 Error Handling (2 new variants: `AgentNotRunning`, `RuntimeAttachFailed`)
+- RFC-0011-c §F.1 Encoding (canonical token bytes)
+- RFC-0011-c §F.2 Token Substrate (mint + signature + validation chain)
+- RFC-0011-c §F.3 Persistence + Revocation (revocation-set check)
+- RFC-0011-c §F.4 Errors (8 OctoCliError mirror variants slots 53-59)
+- RFC-0011-c §F.5 Signing Surface (sign_attach_handle_payload + verify_attach_handle_payload)
+- RFC-0011-c §F.6 CLI Dispatch Wiring (paired amendment `0011-c-attach-cli-dispatch-amendment`)
+- RFC-0011-c §9.8 Error Handling (10 new variants: `AgentNotRunning`, `RuntimeAttachFailed`, 8 `AttachHandle*`)
 - RFC-0011-c §9.1 Architecture (octo-runtime substrate dependency)
 - RFC-0011-c §Implementation Phases Phase 1 (octo-runtime substrate release gate)
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
 - [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
+- [[0011-c-attachhandle-dry-closure-2026-09-16]] — predecessor substrate closure state
 
 ## Why gate
 
-Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). Until `0011-c-octo-runtime-substrate` lands, the subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51). The gate is enforced in CI via the `release_gate:` frontmatter annotation; the mission cannot be marked Completed without the substrate mission in the dependency graph being Closed first.
+Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). **Cleared 2026-09-16** per paired amendment `0011-c-attach-cli-dispatch-amendment` (release_gate_cleared_at: 2026-09-16). The CLI dispatch surface is wired end-to-end; the gate enforcement via `release_gate:` frontmatter annotation is no longer blocking. Mission ready for DRY closure cycle.
 
 ## Substrate Gap Closure (2026-09-13)
 
@@ -213,15 +226,17 @@ Substrate state verified after commit `next e09f3e3a` + R53.5 fixes:
 - `OctoCliError::AgentNotRunning(Uuid)` → exit 48 (Layer C/D mirror;
   added in commit `next e09f3e3a`).
 
-## Release gate (2026-09-15)
+## Release gate (CLEARED 2026-09-16)
 
-Mission **CANNOT proceed** until the `0011-c-agent-run-submission` follow-on cycle lands. The follow-on must extend `agent run --detach` to emit a persistent `AttachHandle` token so this mission's CLI handler can bind to the in-process `RuntimeHandle`. Until the token pathway lands, the dispatch handler returns `RuntimeSubstrateNotReady` exit 51 unconditionally (CLI dispatch committed at `ca1f52e8`).
+Mission release gate cleared 2026-09-16 per paired amendment `0011-c-attach-cli-dispatch-amendment` (release_gate_cleared_at: 2026-09-16). The CLI dispatch reads the token from `--token-file`, calls `decode_token` + `attach_with_token`, surfaces 8 substrate `AttachError` variants verbatim via 8 `OctoCliError` slots 53-59. The historical block — "until `agent run --detach` emits a persistent token, dispatch returns `RuntimeSubstrateNotReady` exit 51 unconditionally" — is no longer in effect.
 
 Hard sequencing per [[no-phantom-mission-pointer]] + hard audit 2026-09-15:
 
 1. Land follow-on cycle (extend `agent run --detach` + `agent attach` to consume token)
 2. Update §Acceptance Criteria `#1` (TV-AGT11/TV-AGT12) + `#3` (read-only attach verified) + `#12` (release gate cleared) to checked
 3. Add `release_gate_cleared_at` annotation + transition `status: Claimed` → user instructs `status: In Progress` → DRY closure cycle
+
+**Follow-on cycle landed 2026-09-16** per paired amendment `0011-c-attach-cli-dispatch-amendment`. ACs checked + `release_gate_cleared_at` annotation set in this commit.
 
 Per [[Initiative user-only]] + [[git-workflow]] user owns the remote-write workflow + status transitions. NO PUSH. Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 

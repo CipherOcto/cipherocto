@@ -6,13 +6,14 @@ metadata:
   type: cli-substrate-extension
   originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0011
     - RFC-0011-c
     - RFC-0002
     - mission 0011-c-agent-create-subcommand
     - mission 0011-c-octo-runtime-substrate
+  paired_mission: 0011-c-attach-cli-dispatch-amendment
 release_gate: 0011-c-octo-runtime-substrate mission landing (per RFC-0011-c §Implementation Phases Phase 1)
 status: Completed
 claimed_by: mmacedoeu
@@ -82,13 +83,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type                       | Sub-step            | Notes                                                                                                                   |
-| ------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `AgentRunArgs`                        | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--detach`, `--json`)                                                  |
+| RFC-0011-c type                       | Sub-step            | Notes                                                                                                                                       |
+| ------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentRunArgs`                        | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--detach`, `--json`)                                                                      |
 | `AgentRunOutput`                      | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `runtime_handle: Option<RedactedIdentifier>`, `spawned_at_unix: u64`) |
-| `AgentNotFound(Uuid)`                 | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 42 per RFC-0011-c §9.8 (reserved 17–63 range)                               |
-| `InvalidStateTransition { from, to }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 43                                                                          |
-| `RuntimeSpawnFailed { reason }`       | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 44                                                                          |
+| `AgentNotFound(Uuid)`                 | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 42 per RFC-0011-c §9.8 (reserved 17–63 range)                                                   |
+| `InvalidStateTransition { from, to }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 43                                                                                              |
+| `RuntimeSpawnFailed { reason }`       | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 44                                                                                              |
 
 ## Implementation Guide
 
@@ -122,6 +123,15 @@ The `octo-runtime` substrate crate provides `spawn_agent`.
 
 3. **CLI handler** — same file. `agent run` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Running, reason)` (Layer B; substrate enforces caller-attestation against holder_did per RFC-0011 §Lifecycle Requirements, then the state-machine guard) then `octo_runtime::spawn_agent(agent_id, handle)`; surfaces `runtime_handle` in output alongside `TransitionReceipt::audit_log_entry` (BLAKE3-256 chain-hash `[u8; 32]`; the CLI hex-encodes it via `OctoCliRedactor` for the wire form). Respects `--detach` (default: in-process; spawn does not block). Respects `--json` (TTY-override).
 
+   **`--detach --token-file <path>` block** (paired amendment `0011-c-attach-cli-dispatch-amendment`; substrate reference RFC-0011-c §F.6.1). After `spawn_agent` returns + when both `--detach` and `--token-file` are set:
+   - Resolve caller DID → `IdentityKey` via helper `common::resolve_active_identity_key()`
+   - Extract `session_id` from the returned `RuntimeHandle`
+   - Mint via `octo_runtime::mint_attach_handle(holder: &IdentityKey, agent_id, session_id, since_cursor: u64::default(), ttl_unix: now_unix + 3600, Transport::IN_PROCESS)`
+   - Encode via `octo_runtime::encode_token(&handle) -> Result<Vec<u8>, AttachError>`
+   - Write to `--token-file` via `std::fs::OpenOptions::create(true).write(true).truncate(true).mode(0o600)` on unix (POSIX credential perms per RFC-0011-c §F.6.1); explicit error on non-unix platforms
+   - Create parent dirs via `std::fs::create_dir_all(parent)` if absent; fsync the file
+   - Populate `AgentRunOutput::token_written: Option<TokenWrittenReceipt>`
+
 4. **`AgentNotFound`, `InvalidStateTransition`, `RuntimeSpawnFailed` error variants + exit 42/43/44 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add three variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 42/43/44 per RFC-0011-c §9.8 (slot allocation 39-52).
 
 ## Cargo deps
@@ -138,10 +148,11 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT4..TV-AGT5) covering `agent run`:
 
-| #       | Subcommand  | Input                        | Expected Output                                                      | Notes                                                                     |
-| ------- | ----------- | ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: running, ... }` (exit 0)                    | Spawns runtime container; warm path                                       |
-| TV-AGT5 | `agent run` | Terminated agent             | `InvalidStateTransition { from: terminated, to: running }` (exit 43) | State machine rejects (canonical lowercase `AgentState::as_str()` labels) |
+| #                   | Subcommand                              | Input                        | Expected Output                                                                                                                                              | Notes                                                                                               |
+| ------------------- | --------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| TV-AGT4             | `agent run`                             | Registered agent, no runtime | `AgentRunOutput { state: running, ... }` (exit 0)                                                                                                            | Spawns runtime container; warm path                                                                 |
+| TV-AGT5             | `agent run`                             | Terminated agent             | `InvalidStateTransition { from: terminated, to: running }` (exit 43)                                                                                         | State machine rejects (canonical lowercase `AgentState::as_str()` labels)                           |
+| TV-CLI-RUN-DETACH-1 | `agent run --detach --token-file <tmp>` | Registered agent             | `AgentRunOutput { token_written: Some(TokenWrittenReceipt { session_id_hex, bytes_written, path_redacted }), ... }` (exit 0); token file exists, 0o600 perms | Happy path emit side; paired amendment `0011-c-attach-cli-dispatch-amendment` per RFC-0011-c §F.6.1 |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -200,7 +211,7 @@ Substrate state verified after commit `next e09f3e3a`:
   guard accepts `Registered → Running` and `Running → Terminated` per
   RFC-0015-a Appendix A). `TransitionReceipt` projection
   (`agent_id, previous_state, current_state, transitioned_at_unix,
-  audit_log_entry: [u8; 32]`) is re-exported via
+audit_log_entry: [u8; 32]`) is re-exported via
   `crates/octo-wallet/src/lib.rs`.
 
 ## RFC-0015-b substrate-defect dependency
@@ -219,17 +230,17 @@ Remaining 5 defects (2 doc-comment drift, 3 lookup_agent existence-leak, 5 phant
 
 ## DRY CLOSURE chain
 
-| Round | Status | Notable |
-|---|---|---|
-| R1 | 30+ findings | 2 HIGH + 9 MED + 4 LOW per R4.5 commit description |
-| R1.5 | fix landed | `80fa0d66` — 13 substantive fixes (HIGH-1 `render_with_redaction` semantic inversion + HIGH-2 stale stub removal + 11 MED/LOW) |
-| R2 | findings | MED aggregation → R2.5 fix |
-| R2.5 | fix landed | MED fixes (task #975) |
-| R3 | zero | first zero round |
-| R4 | zero | second zero round |
-| R5 | 1 MED (layer-model facade reach-in in list handler) | sibling-mission scope from `0011-c-agent-list` which closed DRY CLEAN 2026-09-13 |
-| R5.5 | fix landed | `f1c1d44b` — 1-line façade import fix |
-| R5 (effective post-R5.5) | zero | DRY CLOSED gate |
+| Round                    | Status                                              | Notable                                                                                                                        |
+| ------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| R1                       | 30+ findings                                        | 2 HIGH + 9 MED + 4 LOW per R4.5 commit description                                                                             |
+| R1.5                     | fix landed                                          | `80fa0d66` — 13 substantive fixes (HIGH-1 `render_with_redaction` semantic inversion + HIGH-2 stale stub removal + 11 MED/LOW) |
+| R2                       | findings                                            | MED aggregation → R2.5 fix                                                                                                     |
+| R2.5                     | fix landed                                          | MED fixes (task #975)                                                                                                          |
+| R3                       | zero                                                | first zero round                                                                                                               |
+| R4                       | zero                                                | second zero round                                                                                                              |
+| R5                       | 1 MED (layer-model facade reach-in in list handler) | sibling-mission scope from `0011-c-agent-list` which closed DRY CLEAN 2026-09-13                                               |
+| R5.5                     | fix landed                                          | `f1c1d44b` — 1-line façade import fix                                                                                          |
+| R5 (effective post-R5.5) | zero                                                | DRY CLOSED gate                                                                                                                |
 
 ## Closure artifacts
 

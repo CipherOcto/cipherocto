@@ -1,0 +1,43 @@
+fix(octo-cli): RFC-0011-c §F.6 R18.5 — bare §F.6.x prefix sweep
+
+DRY review R18 hygiene lens surfaced 14 findings: bare
+RFC-0011-c §F.6.x references in doc comments and the
+R17.5 commit message body. R18 itself was zero on the
+other four lenses (correctness + simplification +
+layer-model + substrate-faithfulness), so this sweep
+is a pure normalization pass — no semantic changes to
+the CLI dispatch or substrate bridge.
+
+Eleven of the fourteen findings were inline comments
+or docblock prose in agent.rs covering the run and
+attach dispatch bodies, the deferral cites, and the
+substrate-faithful mapping assertions. Three findings
+were RFC prefix omissions in the R17.5 commit message
+body itself.
+
+crates/octo-cli/src/commands/agent.rs:
+
+- Eleven bare §F.6.1, §F.6.4, §F.6.5 references in
+  run::handle step comments, attach::handle docblock,
+  exit table, and substrate-faithful panic assertion
+  message all gain the RFC-0011-c prefix per the
+  CLAUDE.md §RFC Reference Conventions Reaffirmed
+  rule.
+
+- No code logic changes. No test vector changes. Pure
+  prose normalization.
+
+R17.5 commit message corrections:
+
+- Add RFC-0011-c prefix to the three §F.6.5 and
+  §F.6.2 bare references in the commit body bullets.
+
+Validation:
+
+- cargo fmt --all clean
+- cargo clippy -p octo-cli --all-targets -- -D warnings
+  clean
+- cargo test -p octo-cli --lib 293 of 293 tests pass
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.
+User owns the remote-write step and the PR step.

@@ -1,0 +1,77 @@
+fix(octo-cli): RFC-0011-c §F.6 R10.5+R11.5+R12.5+R13.5 — hygiene + comment dedup + Expired sentinel + attach exit table
+
+DRY review R10 surfaced 10 findings across 5 lenses.
+R10.5 fix sweep applies 4 MED hygiene + 1 MED simplification
++ 2 substrate-faithfulness risks. R11.5/R12.5/R13.5 fix
+sweeps tighten the prose, dedupe parallel annotations,
+correct the 8v/7s math, fix substrate-misattributed
+TV pin claims, and address a §9.3.2 cite drift.
+
+The 2 LOW + 1 MED simplification findings from R10 were
+dismissed after substrate ground-truth check (only 1
+decode_session call site in scope, cross-crate extraction
+is out of scope for this fix sweep).
+
+octo_cli::commands::agent:
+
+- RFC-0011-c §F.6.2 attach dispatch exit-code table
+  hygiene (MED from substrate-faithfulness lens). Drop
+  exit 49 line — attach::handle only emits AttachError
+  variants (slots 53-59). Variant retained for standalone
+  test pin.
+
+- RFC-0011-c §6.5 detach token pathway comment dedup
+  (MED from simplification lens). Collapse the two
+  consecutive paragraphs in the detach-token-file section
+  that both explained the clap 'requires=detach' interlock
+  with verbatim duplicate wording. Consolidate to one
+  paragraph. The interlock rationale belongs to a single
+  place per the no-redundancy principle.
+
+- Hygiene file-path-in-prose removals (4 MED from hygiene
+  lens). Drop bare file path references at the attach
+  dispatch docblock in favor of section-name / symbol-name
+  / module-name form per the [[no-line-refs-anywhere]] rule.
+  The four cite OperatorModeFlags, the redact module,
+  From<octo_runtime::AttachError> for OctoCliError, and
+  the runtime module's new_current_thread pattern. Replace
+  with the canonical form. No semantic change.
+
+- Dangling fragment fix in the attach dispatch docblock
+  (follow-up to prior hygiene edit). The previous edit
+  left the trailing phrase about the new_current_thread
+  pattern rationale hanging without context. Rewrite to
+  a self-contained sentence pointing at the runtime module
+  for the pattern provenance.
+
+octo_cli::error:
+
+- AttachHandleExpired doc tightening (MED from
+  substrate-faithfulness lens). Document the substrate-
+  reserved ttl_unix == u64::MAX fail-CLOSED sentinel as
+  an additional trigger for AttachError::Expired. The CLI
+  envelope surfaces a uniform mint/ttl/now triplet
+  regardless of which path fired (TTL elapsed vs reserved
+  sentinel), so the operator gets one envelope rather than
+  two distinctly-named variants. In the substrate's
+  octo_runtime::attach_with_token validation chain step (c).
+
+Dismissed findings (after substrate ground-truth check):
+
+- Simplification MED on hex_decode_session extraction
+  cross-crate. Only ONE decode_session call site exists
+  in the agent module scope (inside revoke_attach::handle).
+  Cross-crate extraction to share with the role + audit
+  modules would require restructuring the common module
+  scope (currently per-file) AND unifying the three
+  decoders error types (OctoCliError vs String). Out of
+  scope for this fix sweep, separate refactor mission.
+
+Validation:
+
+- cargo fmt --all clean
+- cargo clippy -p octo-cli --all-targets -- -D warnings clean
+- cargo test -p octo-cli --lib 293 of 293 tests pass
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.
+User owns the remote-write step and the PR step.

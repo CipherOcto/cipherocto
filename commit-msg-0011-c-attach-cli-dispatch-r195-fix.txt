@@ -1,0 +1,32 @@
+fix(octo-cli): RFC-0011-c §F.6 R19.5 — bare §F.x prefix sweep
+
+DRY review R19 hygiene lens surfaced 9 findings: bare
+RFC section anchors across the broader agent.rs prose
+surface. R18.5 closed only the R18 §F.6.x findings;
+this sweep finishes the citation normalization across
+§F.1, §F.2, §F.3, §F.4, and remaining §F.6.5 anchors.
+
+R19 itself was zero on the other four lenses
+(correctness + simplification + layer-model +
+substrate-faithfulness), so this sweep is again pure
+prose normalization. No code logic changes. No test
+vector changes.
+
+crates/octo-cli/src/commands/agent.rs:
+
+- Nine RFC-0011-c §F.x anchor citations in run and
+  attach dispatch bodies, RevokeAttach struct doc,
+  revoke_attach handler comment, and the substrate
+  channel-comment for session_id hex payload. All
+  gain the RFC-0011-c prefix per the CLAUDE.md
+  §RFC Reference Conventions Reaffirmed rule.
+
+Validation:
+
+- cargo fmt --all clean
+- cargo clippy -p octo-cli --all-targets -- -D warnings
+  clean
+- cargo test -p octo-cli --lib 293 of 293 tests pass
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.
+User owns the remote-write step and the PR step.

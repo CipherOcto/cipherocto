@@ -546,10 +546,11 @@ pub enum OctoCliError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// `AttachHandle` token's TTL has elapsed relative to operator-clock
-    /// (`mint_timestamp_unix + ttl_unix <= now_unix`) — RFC-0011-c §F.2
-    /// validation chain step (b). Mapped from
-    /// `octo_runtime::AttachError::Expired`. Exit 53.
+    /// `AttachHandle` token's TTL elapsed (`now_unix > token.ttl_unix`)
+    /// OR the substrate-reserved fail-CLOSED sentinel `ttl_unix == u64::MAX`
+    /// (per RFC-0011-c §F.2 step (c) of `attach_with_token`).
+    /// Both paths collapse to one envelope via substrate `AttachError::Expired`.
+    /// Exit 53.
     #[error("attach handle expired: mint={mint_unix}, ttl={ttl_unix}, now={now_unix}")]
     AttachHandleExpired {
         /// `mint_timestamp_unix` from the token (mirrors substrate

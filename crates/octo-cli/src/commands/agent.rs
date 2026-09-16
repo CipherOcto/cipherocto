@@ -164,7 +164,7 @@ pub enum AgentAction {
     },
     /// Revoke an outstanding `AttachHandle` token (RFC-0011-c §F.3
     /// follow-on). Wired by `0011-c-attach-handle-token-pathway`.
-    /// The revocation set is a process-singleton (per RFC-0011-c
+    /// The revocation set is a process-singleton (per
     /// RFC-0011-c §F.3); tokens minted in another process are
     /// unaffected.
     RevokeAttach {
@@ -901,8 +901,8 @@ mod run {
                     }
                 })?;
                 // 6.5.1 Resolve caller DID → `IdentityKey` (signing
-                //       keypair) per RFC-0011-c §F.5 + RFC-0011-c
-                //       RFC-0011-c §F.6.1. The substrate
+                //       keypair) per RFC-0011-c §F.5 + §F.6.1.
+                //       The substrate
                 //       `mint_attach_handle` requires the signing
                 //       keypair directly so the ed25519 signature
                 //       is verifiable against the holder's public
@@ -939,8 +939,7 @@ mod run {
                     })?;
 
                 // 6.5.2 TTL = mint time + 3600s (RFC-0011-c
-                //       RFC-0011-c §F.6.1 documented default).
-                //       saturating_add
+                //       §F.6.1 documented default). saturating_add
                 //       clamps at u64::MAX rather than wrapping, so
                 //       the substrate-reserved sentinel trigger
                 //       (documented on OctoCliError::AttachHandleExpired)
@@ -974,8 +973,7 @@ mod run {
                 // it automatically.
 
                 // 6.5.4 Encode to canonical wire bytes (RFC-0011-c
-                //       RFC-0011-c §F.1). On a well-formed
-                //       handle this
+                //       §F.1). On a well-formed handle this
                 //       returns Ok(Vec<u8>); the substrate
                 //       `PersistenceError(String)` arm is
                 //       unreachable in practice (no wire-form
@@ -1074,7 +1072,7 @@ mod run {
             // activated — e.g. idempotent self-transition).
             // `Some(...)` only when `--detach --token-file` was
             // specified AND a fresh `RuntimeHandle` was minted
-            // (the substrate-faithful binding pair per RFC-0011-c
+            // (the substrate-faithful binding pair per
             // RFC-0011-c §F.6.1).
             token_written,
         };
@@ -1510,7 +1508,7 @@ mod attach {
         //       &holder_pubkey)` — verifies the embedded
         //       ed25519 signature against the holder's public
         //       key (validation chain step (a) per RFC-0011-c
-        //       RFC-0011-c §F.2).
+        //       §F.2).
         //    4. Calls `octo_runtime::attach_with_token(
         //       &holder_pubkey, &token, since_unix)` — a
         //       4-step validation chain: signature verify
@@ -1749,7 +1747,7 @@ mod revoke_attach {
         let session_id = decode_session(session_id_hex)?;
 
         // Substrate folds revocation-set failures into
-        // `AttachError::RevocationError(String)` per RFC-0011-c
+        // `AttachError::RevocationError(String)` per
         // RFC-0011-c §F.4 (the standalone `RevocationError` enum
         // was folded
         // into the canonical envelope). The `From<AttachError>`
@@ -2185,9 +2183,9 @@ mod tests {
     // ----- RFC-0011-c §F.6 token pathway TV (4 NEW TV) -----
 
     /// TV-CLI-RUN-DETACH-1 — substrate-faithful mint + encode + decode
-    /// round-trip for the `AttachHandle` token pathway (RFC-0011-c
-    /// RFC-0011-c §F.6.1 + §F.1 + §F.2). The CLI dispatch body
-    /// builds the token
+    /// round-trip for the `AttachHandle` token pathway
+    /// (RFC-0011-c §F.6.1 + §F.1 + §F.2). The CLI dispatch
+    /// body builds the token
     /// via `mint_attach_handle` + `encode_token` and writes the bytes
     /// to `--token-file`.
     ///
@@ -2279,9 +2277,9 @@ mod tests {
         );
     }
 
-    /// TV-CLI-ATTACH-1 — bounded expected behavior per RFC-0011-c
-    /// RFC-0011-c §F.6.5
-    /// session-registry-wiring deferral. Legitimate tokens currently
+    /// TV-CLI-ATTACH-1 — bounded expected behavior per
+    /// RFC-0011-c §F.6.5 session-registry-wiring deferral.
+    /// Legitimate tokens currently
     /// surface as `AttachSessionUnknown` (exit 56) per
     /// substrate-faithful current behavior — the `InProcessHandler::bind`
     /// wiring lands in a paired follow-on amendment cycle. This test
@@ -2297,9 +2295,9 @@ mod tests {
             "AttachSessionUnknown MUST exit 56 (RFC-0011-c §F.4 substrate mirror slot 56), got {}",
             e.exit_code()
         );
-        // The variant payload is `String` (session_id hex) per RFC-0011-c
-        // RFC-0011-c §F.4 substrate-faithful mirror surface; pin
-        // the field shape
+        // The variant payload is `String` (session_id hex) per
+        // RFC-0011-c §F.4 substrate-faithful mirror surface;
+        // pin the field shape
         // so a future amendment that switches to typed UUID surfaces
         // as a broken contract.
         match &e {
@@ -2582,9 +2580,10 @@ mod tests {
         );
     }
 
-    /// TV-CLI-ATTACH-4 — full dispatch chain surface per RFC-0011-c
-    /// RFC-0011-c §F.6.5 out-of-scope deferral. The CLI dispatch body
-    /// (post-amendment) drives `octo_runtime::attach_with_token(
+    /// TV-CLI-ATTACH-4 — full dispatch chain surface per
+    /// RFC-0011-c §F.6.5 out-of-scope deferral. The CLI
+    /// dispatch body (post-amendment) drives
+    /// `octo_runtime::attach_with_token(
     /// &holder_pubkey, &token, since_unix)` through a current-thread
     /// tokio runtime (the same boundary pattern documented in
     /// `attach::handle`).

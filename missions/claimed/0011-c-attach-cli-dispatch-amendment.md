@@ -197,8 +197,8 @@ attached_at_unix, event_cursor: Some(cursor), session_id_hex }`
 
 ```toml
 # crates/octo-cli/Cargo.toml — no new deps required
-octo-runtime = { path = "../octo-runtime", version = "0.1.0" }  # pre-existing (line 81)
-octo-wallet = { path = "../octo-wallet", version = "0.1.0" }    # pre-existing
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }  # pre-existing (Layer B)
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }    # pre-existing (Layer B)
 ```
 
 All substrate types are defined in `octo-runtime` (mint/encode/decode/attach_with_token)

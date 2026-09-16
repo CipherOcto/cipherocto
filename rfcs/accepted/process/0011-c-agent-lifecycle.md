@@ -802,13 +802,13 @@ The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the o
 
 - clap args: `--detach` (existing) + `--token-file <path>` (NEW; `requires = "detach"` enforces that the token pathway is only activated on detached spawns, where the in-process `RuntimeHandle` survives beyond the CLI process lifetime via the persisted token)
 - dispatch flow (after `transition_agent` + `spawn_agent` succeed):
-  1. Resolve caller DID → `IdentityKey` via `mod common::resolve_active_did` + `octo_wallet::active_identity(&store)` (CLI boundary concern per §F.5)
+  1. Resolve caller DID → `IdentityKey` via `mod common::resolve_active_identity_key()` (helper added in this cycle per §F.5; CLI boundary concern)
   2. Extract `session_id: SessionId` (= `[u8; 32]`) from the `RuntimeHandle` returned by `spawn_agent` (the substrate carries the derived session id on the handle per §F.2)
   3. Call `octo_runtime::mint_attach_handle(holder: &IdentityKey, agent_id, session_id, since_cursor, ttl_unix, Transport::IN_PROCESS)` per §F.2
   4. Call `octo_runtime::encode_token(&handle) -> Vec<u8>` per §F.1
-  5. Write bytes to `--token-file` via `std::fs::OpenOptions::create + truncate + mode 0o600 + fsync` (secure perms mandatory; the token is a credential per RFC-0011-c §Layer direction)
+  5. Write bytes to `--token-file` via `std::fs::OpenOptions::create + truncate + mode 0o600 + set_permissions(0o600) + fsync` (POSIX mandatory; the token is a credential per RFC-0011-c §Layer direction — re-enforce 0o600 post-open in case the path pre-exists at world-readable perms)
   6. Create parent dirs via `std::fs::create_dir_all(parent)` if absent
-  7. Populate `AgentRunOutput::token_written: Option<TokenWrittenReceipt>` with `{ session_id_hex, bytes_written, path_redacted: true }`
+  7. Populate `AgentRunOutput::token_written: Option<TokenWrittenReceipt>` with `{ session_id_hex, bytes_written, path_redacted: RedactedIdentifier::new(redacted_path), written_at_unix }`
 
 **§F.6.2 — `octo agent attach --token-file <path> [--since <unix-seconds>]` (consume side)**
 
@@ -818,25 +818,26 @@ The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the o
   2. Resolve caller DID → `[u8; 32]` holder_pubkey via `IdentityKey::public_key_bytes()` (CLI boundary concern per §F.5)
   3. Call `octo_runtime::decode_token(&bytes, holder_pubkey) -> AttachHandle` (verifies signature + BLAKE3 integrity per §F.1)
   4. Call `octo_runtime::attach_with_token(holder_pubkey, &token, since_unix).await` (executes the §F.2 validation chain steps (a)-(e))
-  5. Populate `AgentAttachOutput { agent_id, runtime_handle, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (the `runtime_handle` field becomes `Some(...)` only when step (e) succeeds; otherwise the substrate error surfaces verbatim)
+  5. Populate `AgentAttachOutput { agent_id, runtime_handle: None, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (`runtime_handle` is `None` on the attach pathway because `octo_runtime::handle::AttachedSession` only carries `event_cursor` + `broadcast_rx`; `session_id_hex` is the canonical binding identifier per §F.6.4; the post-R5.5 schema-faithful reconciliation prevents older consumers from misinterpreting session_id_hex as a UUID via the `runtime_handle` field)
 
 **§F.6.3 — `OctoCliError` mirror surface**
 
-The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via `From<octo_runtime::AttachError> for OctoCliError` at `crates/octo-cli/src/error.rs`. The CLI adds zero new variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
+The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via `From<octo_runtime::AttachError> for OctoCliError` at `crates/octo-cli/src/error.rs`. The CLI adds zero new substrate-mirror variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
 
 - `AttachHandleExpired { mint_unix, ttl_unix, now_unix }` → exit 53
-- `TokenRevoked { session_id }` → exit 53 (shared-slot with `AttachHandleExpired`)
 - `AttachHandleBadSignature { reason }` → exit 54
 - `AttachSessionMismatch { declared, actual }` → exit 55
-- `AttachSessionUnknown { session_id }` → exit 56
+- `AttachSessionUnknown(String)` → exit 56
 - `PersistenceError(String)` → exit 57
 - `RevocationError(String)` → exit 58
 - `TransportHandlerNotRegistered { kind_label }` → exit 59
-- `InvalidSinceCursor { mint_unix, requested }` → exit 53 (shared with `AttachHandleExpired`)
+- `InvalidSinceCursor { mint_unix, requested }` → exit 53 (shared-slot with `AttachHandleExpired`)
+
+The CLI surface ALSO adds a dispatch-side variant outside the substrate mirror: `TokenMintSkipped { reason: String }` → exit 60 (CLI dispatch surface per §F.6.1 step 6.5.1d; reserved per the RFC-0011-c §9.8 slot allocation introduced in this amendment cycle). The substrate does not surface `TokenMintSkipped` because the substrate's `spawn_agent` is the silent-self-transition ancestor — only the CLI dispatch sees the idempotent self-transition signal.
 
 **§F.6.4 — Pairing invariant**
 
-Every successful `octo agent run --detach --token-file <path>` write produces token bytes that ONLY `octo agent attach --token-file <path>` (with the matching caller DID) can consume — the substrate enforces this via the §F.2 step (a) signature verify (holder_pubkey must equal the `IdentityKey` used at mint time) + step (b) revocation-set check (token revoked by `octo revoke-attach --session-id` → step (b) returns `RevocationError` exit 58) + step (c) TTL check (`now_unix > ttl_unix` → `Expired` exit 53; `ttl_unix == u64::MAX` always rejected per fail-CLOSED on broken-clock ambiguity rule) + step (d) since-cursor check (`since_unix < mint_timestamp_unix` → `InvalidSinceCursor` exit 53 shared-slot). Replay across `attach` invocations is bounded by step (e) session-registry-wiring (deferred to follow-on amendment per §F.2 step (e) — see §F.6.5).
+Every successful `octo agent run --detach --token-file <path>` write produces token bytes that ONLY `octo agent attach --token-file <path>` (with the matching caller DID) can consume — the substrate enforces this via the §F.2 step (a) signature verify (holder_pubkey must equal the `IdentityKey` used at mint time) + step (b) revocation-set check (token revoked by `octo revoke-attach --session-id` → step (b) returns `RevocationError` exit 58) + step (c) TTL check (`now_unix > ttl_unix` → `Expired` exit 53; `ttl_unix == u64::MAX` always rejected per fail-CLOSED on broken-clock ambiguity rule) + step (d) since-cursor check (`since_unix < mint_timestamp_unix` → `InvalidSinceCursor` exit 53 shared-slot). Replay across `attach` invocations is bounded by step (e) session-registry-wiring (deferred to follow-on amendment per §F.6.5).
 
 **§F.6.5 — Out of scope (deferred to follow-on amendment cycles)**
 

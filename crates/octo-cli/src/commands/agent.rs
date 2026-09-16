@@ -899,11 +899,25 @@ mod run {
                     .unwrap_or(0);
 
                 // 6.5.1b Defensively flip Designated → Active.
-                holder.activate(now_unix).map_err(|wallet_err| {
-                    OctoCliError::Internal(sanitize_substrate_error(&format!(
-                        "identity activation failed: {wallet_err}"
-                    )))
-                })?;
+                holder
+                    .activate(now_unix)
+                    .map_err(|wallet_err| match wallet_err {
+                        // R5.5 fix (substrate-faithful mapping): the
+                        // substrate `IdentityKey::activate` returns
+                        // `WalletError::AlreadyRevoked` when the key
+                        // is already in the `Revoked` lifecycle state;
+                        // we surface the existing `OctoCliError::AlreadyRevoked`
+                        // (exit 6) so the operator gets the
+                        // lifecycle-state-specific signal rather than
+                        // the downstream `Internal` catch-all. Other
+                        // variant reasons (HsmAdapter failure, store
+                        // open, key serialization) are substrate-internal
+                        // and collapse to `Internal` for sanitization.
+                        octo_wallet::WalletError::AlreadyRevoked => OctoCliError::AlreadyRevoked,
+                        other => OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "identity activation failed: {other}"
+                        ))),
+                    })?;
 
                 // 6.5.2 TTL = mint time + 3600s (RFC-0011-c
                 //       §F.6.1 documented default). The substrate
@@ -935,14 +949,15 @@ mod run {
                     ttl_unix,
                     Transport::IN_PROCESS,
                 )
-                .map_err(|e| match e {
-                    octo_runtime::AttachError::BadSignature { reason } => {
-                        OctoCliError::AttachHandleBadSignature {
-                            reason: sanitize_substrate_error(&reason),
-                        }
-                    }
-                    other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-                })?;
+                // R5.5 fix: substrate-faithful mapping via the
+                // existing `From<AttachError> for OctoCliError` impl
+                // (slots 53-59). The prior hand-rolled match only
+                // covered `BadSignature` and collapsed everything
+                // else to `Internal` exit 64 — a future substrate
+                // amendment adding a new mint-side variant (e.g.
+                // `IdentityKeyMismatch`) would surface as a catch-
+                // all instead of its canonical exit slot.
+                .map_err(OctoCliError::from)?;
 
                 // 6.5.4 Encode to canonical wire bytes (RFC-0011-c
                 //       §F.1). On a well-formed handle this
@@ -994,6 +1009,17 @@ mod run {
                             "token file fsync: {io}"
                         )))
                     })?;
+                    // R5.5 fix (POSIX mode regression): OpenOptionsExt::mode
+                    // only applies at create time. When the file
+                    // pre-exists, `truncate(true)` opens in place without
+                    // changing perms. Force 0o600 post-open so a re-run
+                    // against a left-behind 0o644 (or any world-readable
+                    // mode) cannot silently leave the token credential
+                    // world-readable. set_permissions failures are
+                    // non-fatal (the file landed; we'll surface the
+                    // ownership detail on the next read).
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
                 }
                 #[cfg(not(unix))]
                 {
@@ -1041,27 +1067,19 @@ mod run {
             runtime_handle: handle
                 .as_ref()
                 .map(|h| RedactedIdentifier::new(h.handle_id.0.to_string())),
-            // `DateTime::timestamp()` returns `i64` (not `Option<i64>`).
-            // The substrate guarantees a non-negative wall-clock
-            // (RFC-0015-a §6.2.5 monotonic substrate clock), so the
-            // `as u64` cast is safe — a pre-1970 timestamp would
-            // two's-complement-wrap via `as u64` rather than
-            // panic; `try_into().unwrap_or(0u64)` would silently
             // The substrate monotonic clock contract (RFC-0015-a
             // §6.2.5) guarantees `spawned_at` is non-negative — a
             // pre-1970 timestamp is not representable in normal
-            // operation. We use `i64::try_from(...).map(i64::cast_unsigned)`
-            // (i.e. `try_into::<u64>().unwrap_or(0)`) instead of
-            // `as u64` so a future substrate change that allows
-            // negative timestamps (e.g. clock skew below epoch)
-            // surfaces as a deterministic `0` rather than a silent
-            // wrap-around to `u64::MAX - |n|`. `spawned_at_unix`
-            // is sourced only from a freshly minted handle; on
-            // the idempotent self-transition path `handle` is
-            // `None` and the field falls back to `0` (the substrate
-            // contract makes the original spawn time inaccessible
-            // in Phase 1 — Phase 2 routes through a `get_or_create`
-            // pathway).
+            // operation. We use `u64::try_from(...).unwrap_or(0)`
+            // instead of `as u64` so a future substrate change that
+            // allows negative timestamps (e.g. clock skew below
+            // epoch) surfaces as a deterministic `0` rather than a
+            // silent wrap-around to `u64::MAX - |n|`. `spawned_at_unix`
+            // is sourced only from a freshly minted handle; on the
+            // idempotent self-transition path `handle` is `None`
+            // and the field falls back to `0` (the substrate contract
+            // makes the original spawn time inaccessible in Phase 1
+            // — Phase 2 routes through a `get_or_create` pathway).
             spawned_at_unix: handle
                 .as_ref()
                 .map(|h| u64::try_from(h.spawned_at.timestamp()).unwrap_or(0))
@@ -1560,47 +1578,47 @@ mod attach {
         // instead of an out-of-range signal).
         let since_unix: u64 = since_unix.unwrap_or(token.mint_timestamp_unix);
 
-        // Build (or borrow) a current-thread tokio runtime to
-        // drive the async `attach_with_token` call. The runtime
-        // is dropped at end of scope — the broadcast receiver
-        // returned by `AttachedSession` lives until the
-        // receiver itself is dropped; we discard the
-        // receiver here (the CLI does not subscribe to events
-        // in this mission; the event-stream replay surface
-        // is a follow-on substrate amendment per
-        // [[0011-c-attachhandle-dry-closure-2026-09-16]]).
+        // Build a fresh current-thread tokio runtime to drive the
+        // async `attach_with_token` call. The runtime is dropped
+        // at end of scope — the broadcast receiver returned by
+        // `AttachedSession` lives until the receiver itself is
+        // dropped; we discard the receiver here (the CLI does
+        // not subscribe to events in this mission; the event-
+        // stream replay surface is a follow-on substrate
+        // amendment per [[0011-c-attachhandle-dry-closure-2026-09-16]]).
         //
-        // Nested-runtime guard (R3 LOW fix): when `pub fn
-        // dispatch` is called from inside an existing tokio
-        // context (e.g. a library consumer wrapping the CLI),
-        // `Builder::new_current_thread().build()` would panic
-        // with "Cannot start a runtime from within a runtime".
-        // Borrow the current handle via `Handle::try_current()`
-        // and `block_on` there instead; only construct a fresh
-        // runtime when no current handle exists (the CLI
-        // binary `main` is sync so the primary path takes the
-        // fresh-runtime branch).
-        let attached = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(octo_runtime::attach_with_token(
+        // R5.5 fix (substrate-faithful sync/async boundary):
+        // the prior match-on-Handle::try_current branched into
+        // `handle.block_on(...)` which panics under tokio 1.x
+        // when the runtime flavor is `multi_thread` (only
+        // `current_thread` flavors expose `Handle::block_on` per
+        // tokio contract). Library consumers wrapping the CLI
+        // dispatch in `#[tokio::main(flavor = "multi_thread")]`
+        // would hit `Cannot drop a runtime in a context where
+        // blocking is not allowed` or equivalent. Drop the
+        // try_current branch entirely so the dispatch surface
+        // is substrate-faithful across runtime flavors; a future
+        // amendment can add a sync facade
+        // (`octo_runtime::attach_with_token_blocking`) for
+        // library consumers that don't want to construct a
+        // nested runtime, and that facade is the canonical
+        // substrate-side improvement direction (per the
+        // layer-model disposition in [[cipherocto-design-principles]]
+        // §No parallel abstractions).
+        let attached = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    OctoCliError::Internal(sanitize_substrate_error(&format!(
+                        "tokio runtime build: {e}"
+                    )))
+                })?;
+            rt.block_on(octo_runtime::attach_with_token(
                 &holder_pubkey,
                 &token,
                 since_unix,
-            ))?,
-            Err(_) => {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| {
-                        OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "tokio runtime build: {e}"
-                        )))
-                    })?;
-                rt.block_on(octo_runtime::attach_with_token(
-                    &holder_pubkey,
-                    &token,
-                    since_unix,
-                ))?
-            }
+            ))?
         };
 
         let attached_at_unix = std::time::SystemTime::now()
@@ -1613,14 +1631,20 @@ mod attach {
 
         let output = AgentAttachOutput {
             agent_id: RedactedIdentifier::new(agent_id.to_string()),
-            // The `runtime_handle` is the in-process `RuntimeHandleId`
-            // minted by `spawn_agent`; the `AttachHandle` token
-            // carries the session id (not the handle id), so we
-            // populate `runtime_handle` with the session id hex
-            // (the substrate's canonical handle-bound identifier at
-            // the token pathway). Operators cross-reference via
-            // `session_id_hex` (a more explicit label).
-            runtime_handle: Some(RedactedIdentifier::new(hex::encode(token.session_id))),
+            // R5.5 fix (substrate-faithful binding identifier):
+            // `AttachedSession` does NOT carry the in-process
+            // `RuntimeHandleId` (only `event_cursor` + `broadcast_rx`
+            // per `octo_runtime::handle::AttachedSession`). On the
+            // attach path the canonical binding identifier is the
+            // token's `session_id`, populated in `session_id_hex`
+            // below. `runtime_handle` stays `None` here so the
+            // schema faithfully reflects what the substrate
+            // supplies end-to-end — older consumers parsing
+            // `runtime_handle` as a UUID would otherwise interpret
+            // session_id_hex (32 bytes hex) as a 16-byte UUID and
+            // silently break. Operators cross-reference via
+            // `session_id_hex` for the canonical binding id.
+            runtime_handle: None,
             attached_at_unix: Some(attached_at_unix),
             event_cursor: Some(attached.event_cursor.to_string()),
             session_id_hex: hex::encode(token.session_id),
@@ -1646,8 +1670,17 @@ pub struct AgentAttachOutput {
     #[schemars(with = "String")]
     pub agent_id: RedactedIdentifier,
     /// Runtime handle id (UUID form) returned by `spawn_agent`
-    /// (RFC-0011-c §9.3.2). `None` until the in-process mint pathway
-    /// lands (per mission §Substrate gap).
+    /// (RFC-0011-c §9.3.2). `None` on the attach pathway because
+    /// `octo_runtime::handle::AttachedSession` does not surface
+    /// the in-process handle id (only `event_cursor` +
+    /// `broadcast_rx`); the canonical binding identifier on the
+    /// token pathway is `session_id_hex` below. Populated by the
+    /// emit side (`octo agent run --detach`) in `AgentRunOutput`
+    /// where the substrate does supply it; the attach contract is
+    /// explicitly `None` here per the post-R5.5 schema-faithful
+    /// reconciliation (older consumers parsing this field as a
+    /// UUID would otherwise interpret session_id_hex and silently
+    /// misbind).
     #[schemars(with = "Option<String>")]
     pub runtime_handle: Option<RedactedIdentifier>,
     /// Unix seconds at which the substrate bound the EventStream

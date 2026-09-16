@@ -657,8 +657,8 @@ pub enum OctoCliError {
     /// even when the spawn was a no-op; without a fresh handle there
     /// is no `session_id` to bind a token to. CLI-side dispatch
     /// surface — distinct from the 8 substrate `AttachError` mirror
-    /// variants (slots 53-59). Exit 60 per RFC-0011-c §9.8 reserved
-    /// range 39-63.
+    /// variants (slots 53-59). Exit 60 per RFC-0011-c §9.8 (reserved
+    /// per this amendment cycle).
     #[error("token mint skipped: {reason}")]
     TokenMintSkipped {
         /// Operator-actionable reason (idempotent self-transition

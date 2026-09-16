@@ -69,20 +69,22 @@ pub struct Signature(#[serde(with = "signature_bytes_serde")] pub [u8; 64]);
 /// Serde adapter for `[u8; 64]` — required because `serde`'s
 /// `derive` feature only ships array support up to length 32
 /// (`[T; 0]` .. `[T; 32]`); the substrate-visible 64-byte
-/// signature exceeds that bound. The adapter serializes as a
-/// length-prefixed `[u8]` sequence, the most widely-supported
-/// JSON form for fixed-width byte strings.
+/// signature exceeds that bound. The adapter composes the
+/// workspace-standard `serde_bytes::ByteArray` for the actual
+/// serialization call so the wire form matches the workspace
+/// convention (length-prefixed `[u8]` sequence, the most
+/// widely-supported JSON form for fixed-width byte strings).
 mod signature_bytes_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_bytes::ByteArray;
 
     pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
-        bytes.as_slice().serialize(ser)
+        ByteArray::new(*bytes).serialize(ser)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
-        let v: Vec<u8> = Vec::deserialize(de)?;
-        v.try_into()
-            .map_err(|_| serde::de::Error::custom("expected 64-byte signature array"))
+        let ba: ByteArray<64> = ByteArray::deserialize(de)?;
+        Ok(ba.into_array())
     }
 }
 

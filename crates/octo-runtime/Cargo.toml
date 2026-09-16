@@ -32,11 +32,19 @@ blake3 = { version = "1", features = ["std"] }
 hex = "0.4"
 
 # Layer B sibling edge per RFC-0011-c §F.5 sign_attach_handle_payload
-# composition (octo_runtime -> octo_wallet::identity::IdentityKey::sign).
+# composition (octo_runtime → octo_wallet::identity::IdentityKey::sign).
 # octo-core + octo-registry were previously declared here but unused in
 # this crate's source; removed to keep the dependency graph substrate-
 # faithful (Layer B substrate consumes only what it references).
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+# Workspace-standard byte-array serde adapter. Replaces a hand-rolled
+# `signature_bytes_serde` module at `octo_runtime::handle::mod` —
+# `serde_bytes::ByteArray` ships the canonical length-prefixed
+# serialization for fixed-width byte arrays above serde's built-in
+# length-32 ceiling. Per [[cipherocto-design-principles]]
+# §No parallel abstractions: use the workspace crate rather than
+# invent a parallel.
+serde_bytes = "0.11"
 
 [features]
 # NEW: Stoolap cursor persistence feature flag per RFC-0011-c §F.3

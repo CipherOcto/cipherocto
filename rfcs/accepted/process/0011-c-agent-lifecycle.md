@@ -393,12 +393,13 @@ needed if -h/i follow-on amendments claim earlier slots):
 | `ReplayDetected { digest }`                                     | 50        | RFC-0002 §Replay Protection triggered                                         |
 | `RuntimeSubstrateNotReady`                                      | 51        | `octo-runtime` substrate not yet landed                                       |
 | `AuditSubstrateNotReady`                                        | 52        | `octo-audit` (RFC-0011-a) substrate not yet landed                            |
-| `AttachHandleExpired { session_id, expired_at_unix, now_unix }` | 53        | §F.4 mirror — TTL elapsed at step (c) of `attach_with_token` validation chain |
+| `AttachHandleExpired { mint_unix, ttl_unix, now_unix }`         | 53        | §F.4 mirror — TTL elapsed at step (c) of `attach_with_token` validation chain |
 | `AttachHandleBadSignature { reason }`                           | 54        | §F.4 mirror — step (a) signature verify failure                               |
 | `AttachSessionMismatch { declared, actual }`                    | 55        | §F.4 mirror — step (e) session_id registry mismatch                           |
 | `AttachSessionUnknown { session_id }`                           | 56        | §F.4 mirror — step (e) session_id absent from running registry                |
 | `PersistenceError(String)`                                      | 57        | §F.4 passthrough — Stoolap ledger feature-disabled or fault                   |
 | `RevocationError(String)`                                       | 58        | §F.4 passthrough — step (b) revocation-set check failed                       |
+| `InvalidSinceCursor { mint_unix, requested }`                  | 53 (shared)| §F.4 mirror — step (d) `since_unix < mint_timestamp_unix`; shared slot with `AttachHandleExpired` per amendment-chain shared-slot pattern |
 
 The CLI reuses parent's `HsmUnavailable` (exit 5 per RFC-0011
 §Error Handling) instead of inventing `HsmUnreachable`. The CLI
@@ -761,18 +762,19 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 - `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` (the feature flag is being newly added to `octo_runtime`'s manifest per the paired mission); canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract
 - `pub fn load_event_cursor(agent_id: Uuid) -> Result<Option<u64>, PersistenceError>` — symmetric
 - `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError>` — adds entry to `octo_runtime::persistence::REVOCATION_SET` (process-singleton `RwLock<HashSet<SessionId>>` per [[cipherocto-design-principles]] §Push complexity to edges; module-private with `with_revocation_set<F,R>(f: F) -> R` test injection hook). Fork-fail-closed contract: revocation set is not propagated across `fork()`; child processes start with an empty revocation set. Cross-process revocation propagation is out of scope and deferred to RFC-0011-c §Future Work.
-- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at step (b) of `attach_with_token()` validation chain per §F.2
+- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at step (b) of `attach_with_token()` validation chain per §F.2. **Fail-CLOSED on poisoned `RwLock`**: a prior panic during a revocation operation poisons the underlying `RwLock`; in that state the function returns `true` so the token is treated as revoked (fail-CLOSED preserves the explicit-operator-revocation guarantee at the cost of denying attach operations until the operator restarts the process). The alternative (fail-OPEN) would silently bypass explicit operator revocations.
 
 ### §F.4 Errors
 
 `pub enum AttachError` at the `octo_runtime::handle::error` module (Layer B):
 
-- `Expired { session_id: SessionId, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-58)
+- `Expired { session_id: SessionId, mint_unix: u64, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired { mint_unix, ttl_unix, now_unix }` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-58; the CLI-boundary `ttl_unix` mirrors the substrate `expired_at_unix` with CLI-friendly shortening, and the CLI envelope intentionally drops `session_id` — typed-discriminator recovery is available via the substrate `Debug` impl on the typed `[u8; 32]`)
 - `BadSignature { reason: String }` (mirror → `OctoCliError::AttachHandleBadSignature` exit 54)
 - `SessionMismatch { declared: SessionId, actual: SessionId }` (mirror → `OctoCliError::AttachSessionMismatch` exit 55)
 - `UnknownSession { session_id: SessionId }` (mirror → `OctoCliError::AttachSessionUnknown` exit 56)
+- `InvalidSinceCursor { mint_unix: u64, requested: u64 }` (mirror → `OctoCliError::InvalidSinceCursor { mint_unix, requested }` exit 53 — **shared slot** with `AttachHandleExpired` per amendment-chain shared-slot pattern; operator-unambiguous within the `agent attach` command surface because the render layer distinguishes the two payloads by variant name)
 - `PersistenceError(String)` (mirror → `OctoCliError::PersistenceError(String)` exit 57)
-- `RevocationFailed(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted
+- `RevocationError(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted (the canonical variant name is `RevocationError`, not `RevocationFailed`)
 
 CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §9.8 slot allocation.
 

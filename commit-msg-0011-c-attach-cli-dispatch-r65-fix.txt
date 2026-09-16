@@ -1,0 +1,92 @@
+fix(octo-cli): RFC-0011-c §F.6 R6.5 — set_permissions propagate + field removal + symbol ref + lifecycle-state arm
+
+DRY review R6 surfaced 24 findings across 5 lenses. R6.5
+fix sweep applies 2 HIGH + 4 MED + selected LOW to align
+the CLI dispatch surface with security-gate discipline,
+layer-model substrate faithfulness, and hygiene rules.
+
+crates/octo-cli/src/commands/agent.rs:
+
+- POSIX 0o600 regression security-gate (HIGH): replace
+  let _ = f.set_permissions(...) with if let Err(io) =
+  f.set_permissions(...) then return OctoCliError::Internal
+  with sanitized IO error in the message body. chmod
+  failure on a credential file is a HIGH-severity security
+  finding (the very credential-leak window the fix was
+  supposed to close), not a soft warning. Update rationale
+  comment to remove the non-fatal claim. The surrounding
+  file-mutation block (create_dir_all, open, write, fsync)
+  all propagate IO errors already, so this aligns the
+  chmod call to the same discipline.
+
+- IdentityKey::activate doc-comment (HIGH): remove
+  file:line ref 'identity.rs:204' from the doc-block
+  (HARD per [[no-line-refs-anywhere]] — prose must use
+  section/symbol names, NEVER file:line anchors). Trim
+  16-line doc-comment to a compact 7-line rationale
+  covering only the substrate-faithful contract.
+
+- IdentityKey::activate lifecycle-state mapping (MED):
+  add explicit WalletError::RotationInProgress to
+  OctoCliError::AlreadyRotating arm (exit 3) above the
+  other wildcard. Substrate IdentityKey::activate returns
+  RotationInProgress for LifecycleState::Rotating, the
+  existing AlreadyRevoked to OctoCliError::AlreadyRevoked
+  mapping already covers the symmetric Revoked state, so
+  Rotating deserves the symmetric mapping per the R5.5
+  stated rationale of lifecycle-state-specific signals
+  rather than Internal catch-all.
+
+- AgentAttachOutput.runtime_handle field removal (MED):
+  remove the pub runtime_handle: Option<RedactedIdentifier>
+  field entirely (the substrate AttachedSession does NOT
+  carry a RuntimeHandleId, so the CLI can never populate
+  it). Schema-faithful — old consumers parsing the
+  missing field get a hard error instead of silently
+  binding to session_id_hex. Trim 13-line populate-site
+  rationale comment to a compact 4-line note.
+
+- AgentAttachOutput schemars test doc (MED follow-up):
+  drop the runtime_handle paragraph from the schemars
+  pin doc-block (line 2117), now that the field is gone.
+
+- mint_attach_handle mapping simplification (MED):
+  replace '.map_err(OctoCliError::from)?' with bare '?'.
+  the From<AttachError> for OctoCliError impl invokes
+  automatically. Drop the 8-line rationale comment in
+  favor of a 4-line note. The decode_token call at line
+  1566 already uses bare '?' — the inconsistency is now
+  removed.
+
+- resolve_active_did collapse (MED): collapse the
+  duplicate WalletError mapping arms by rewriting as
+  Ok(resolve_active_identity_key()?.did()). The canonical
+  error mapping lives in resolve_active_identity_key
+  only. Any future WalletError variant added to the
+  substrate only needs one match arm updated. Update
+  doc-comment to point at the canonical helper.
+
+- activate doc-comment tighten (LOW): 16-line rationale
+  trimmed to 7 lines. The block was over-explaining a
+  one-line operation.
+
+- InProcessHandler doc-comment hygiene (LOW): replace
+  bare file path 'crates/octo-runtime/src/handle/transport.rs'
+  with the module/symbol form
+  'octo_runtime::handle::transport::InProcessHandler module'.
+
+rfcs/accepted/process/0011-c-agent-lifecycle.md:
+
+- §F.6.3 bare file path (LOW): drop 'at
+  crates/octo-cli/src/error.rs' trailing reference and
+  cite the From impl symbol only. No file:line in prose
+  per project convention.
+
+Validation:
+
+- cargo fmt --all clean
+- cargo clippy -p octo-cli --all-targets -- -D warnings clean
+- cargo test -p octo-cli --lib 293 of 293 tests pass
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.
+User owns the remote-write step and the PR step.

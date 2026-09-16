@@ -234,23 +234,13 @@ mod common {
 
     /// Resolve the active identity DID via the wallet store.
     ///
-    /// Maps the substrate `WalletError` variants to their CLI-shape
-    /// counterparts:
-    /// - `NotActive` → `OctoCliError::NoActiveIdentity`
-    /// - `Hsm` → `OctoCliError::HsmUnavailable` (sanitized)
-    /// - other → `OctoCliError::Internal` (sanitized)
+    /// Thin projection over `resolve_active_identity_key()` — the
+    /// canonical substrate-error mapping lives there so any future
+    /// `WalletError` variant added to the substrate only needs one
+    /// match arm updated. The DID projection is the only
+    /// call-site-specific concern here.
     pub(crate) fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliError> {
-        let store = octo_wallet::WalletStore::open().map_err(|e| {
-            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
-        })?;
-        let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
-            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
-        Ok(active_key.did())
+        Ok(resolve_active_identity_key()?.did())
     }
 
     /// Parse an operator-supplied `--agent-id <UUID>` hex string into
@@ -877,43 +867,34 @@ mod run {
                 //       key by the future `decode_token` step.
                 let mut holder = common::resolve_active_identity_key()?;
 
-                // 6.5.1a Wall-clock now (declared before activate
-                //       below). The substrate `IdentityKey::sign()`
-                //       gates on `lifecycle.can_sign() == true`
-                //       (Active or Rotating only per RFC-0009
-                //       §Lifecycle rows 3+4). `activate()` is
-                //       idempotent from Active (no-op per
-                //       identity.rs:204); from Rotating it refuses
-                //       (must abort/complete first); from Revoked
-                //       it refuses. We map substrate's WalletError
-                //       into OctoCliError via the existing helper
-                //       so the operator sees a distinct activation
-                //       failure signal rather than the downstream
-                //       BadSignature exit 54 that `mint_attach_handle`
-                //       would otherwise surface. Substrate-faithful
-                //       mirror of the test pattern at mod tests
-                //       tv_cli_run_detach.
+                // 6.5.1a Wall-clock now (declared before activate below).
+                //       Substrate-faithful to RFC-0011-c §F.6.1 — TTL is
+                //       mint_unix + 3600s, and substrate rejects
+                //       `ttl_unix == u64::MAX` as reserved-sentinel Expired.
                 let now_unix = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
 
-                // 6.5.1b Defensively flip Designated → Active.
+                // 6.5.1b Defensively flip Designated → Active. Map
+                //       lifecycle-state-specific substrate WalletError
+                //       variants to their dedicated OctoCliError slots
+                //       (Revoked → AlreadyRevoked exit 6, Rotating →
+                //       AlreadyRotating exit 3) so the operator sees
+                //       a distinct activation failure signal rather
+                //       than the downstream Internal catch-all. All
+                //       other non-lifecycle-state substrate errors
+                //       (HSM adapter failures, key serialization,
+                //       store open, etc.) collapse to Internal for
+                //       sanitization per the [[no-parallel-abstractions]]
+                //       principle.
                 holder
                     .activate(now_unix)
                     .map_err(|wallet_err| match wallet_err {
-                        // R5.5 fix (substrate-faithful mapping): the
-                        // substrate `IdentityKey::activate` returns
-                        // `WalletError::AlreadyRevoked` when the key
-                        // is already in the `Revoked` lifecycle state;
-                        // we surface the existing `OctoCliError::AlreadyRevoked`
-                        // (exit 6) so the operator gets the
-                        // lifecycle-state-specific signal rather than
-                        // the downstream `Internal` catch-all. Other
-                        // variant reasons (HsmAdapter failure, store
-                        // open, key serialization) are substrate-internal
-                        // and collapse to `Internal` for sanitization.
                         octo_wallet::WalletError::AlreadyRevoked => OctoCliError::AlreadyRevoked,
+                        octo_wallet::WalletError::RotationInProgress => {
+                            OctoCliError::AlreadyRotating
+                        }
                         other => OctoCliError::Internal(sanitize_substrate_error(&format!(
                             "identity activation failed: {other}"
                         ))),
@@ -948,16 +929,11 @@ mod run {
                     0,
                     ttl_unix,
                     Transport::IN_PROCESS,
-                )
+                )?;
                 // R5.5 fix: substrate-faithful mapping via the
-                // existing `From<AttachError> for OctoCliError` impl
-                // (slots 53-59). The prior hand-rolled match only
-                // covered `BadSignature` and collapsed everything
-                // else to `Internal` exit 64 — a future substrate
-                // amendment adding a new mint-side variant (e.g.
-                // `IdentityKeyMismatch`) would surface as a catch-
-                // all instead of its canonical exit slot.
-                .map_err(OctoCliError::from)?;
+                // existing `From<AttachError> for OctoCliError`
+                // impl (slots 53-59) — the `?` operator invokes
+                // it automatically.
 
                 // 6.5.4 Encode to canonical wire bytes (RFC-0011-c
                 //       §F.1). On a well-formed handle this
@@ -1015,11 +991,15 @@ mod run {
                     // changing perms. Force 0o600 post-open so a re-run
                     // against a left-behind 0o644 (or any world-readable
                     // mode) cannot silently leave the token credential
-                    // world-readable. set_permissions failures are
-                    // non-fatal (the file landed; we'll surface the
-                    // ownership detail on the next read).
+                    // world-readable. Propagate chmod failure: a chmod
+                    // failure on a credential file is a HIGH-severity
+                    // security finding, not a soft warning.
                     use std::os::unix::fs::PermissionsExt;
-                    let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+                    if let Err(io) = f.set_permissions(std::fs::Permissions::from_mode(0o600)) {
+                        return Err(OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "token file set_permissions 0o600: {io}"
+                        ))));
+                    }
                 }
                 #[cfg(not(unix))]
                 {
@@ -1631,20 +1611,12 @@ mod attach {
 
         let output = AgentAttachOutput {
             agent_id: RedactedIdentifier::new(agent_id.to_string()),
-            // R5.5 fix (substrate-faithful binding identifier):
-            // `AttachedSession` does NOT carry the in-process
-            // `RuntimeHandleId` (only `event_cursor` + `broadcast_rx`
-            // per `octo_runtime::handle::AttachedSession`). On the
-            // attach path the canonical binding identifier is the
-            // token's `session_id`, populated in `session_id_hex`
-            // below. `runtime_handle` stays `None` here so the
-            // schema faithfully reflects what the substrate
-            // supplies end-to-end — older consumers parsing
-            // `runtime_handle` as a UUID would otherwise interpret
-            // session_id_hex (32 bytes hex) as a 16-byte UUID and
-            // silently break. Operators cross-reference via
-            // `session_id_hex` for the canonical binding id.
-            runtime_handle: None,
+            // Canonical binding identifier is the token's session_id
+            // (RFC-0011-c §F.6.2 schema-faithful). AttachedSession
+            // exposes only event_cursor + broadcast_rx; the
+            // in-process RuntimeHandleId is intentionally absent
+            // from this envelope (the emit side's AgentRunOutput
+            // carries it instead).
             attached_at_unix: Some(attached_at_unix),
             event_cursor: Some(attached.event_cursor.to_string()),
             session_id_hex: hex::encode(token.session_id),
@@ -1669,20 +1641,6 @@ pub struct AgentAttachOutput {
     /// symmetry with `agent create` / `agent destroy`.
     #[schemars(with = "String")]
     pub agent_id: RedactedIdentifier,
-    /// Runtime handle id (UUID form) returned by `spawn_agent`
-    /// (RFC-0011-c §9.3.2). `None` on the attach pathway because
-    /// `octo_runtime::handle::AttachedSession` does not surface
-    /// the in-process handle id (only `event_cursor` +
-    /// `broadcast_rx`); the canonical binding identifier on the
-    /// token pathway is `session_id_hex` below. Populated by the
-    /// emit side (`octo agent run --detach`) in `AgentRunOutput`
-    /// where the substrate does supply it; the attach contract is
-    /// explicitly `None` here per the post-R5.5 schema-faithful
-    /// reconciliation (older consumers parsing this field as a
-    /// UUID would otherwise interpret session_id_hex and silently
-    /// misbind).
-    #[schemars(with = "Option<String>")]
-    pub runtime_handle: Option<RedactedIdentifier>,
     /// Unix seconds at which the substrate bound the EventStream
     /// (RFC-0011-c §9.3.5). `None` until the runtime substrate path
     /// is wired end-to-end.
@@ -2148,9 +2106,6 @@ mod tests {
     /// is wrapped in `RedactedIdentifier` with `#[schemars(with = "String")]`
     /// so the JSON Schema declares `string`. Symmetric with the
     /// `agent create` / `agent destroy` / `agent list` schemars pins.
-    /// The `runtime_handle` field is `Option<RedactedIdentifier>`
-    /// with `#[schemars(with = "Option<String>")]` so the schema
-    /// declares `string` (or `null`).
     ///
     /// The `session_id_hex` field is a plain `String` carrying the
     /// hex-encoded session id from the decoded `AttachHandle` token
@@ -2656,7 +2611,8 @@ mod tests {
     /// `InProcessHandler::bind` session-registry wiring is deferred
     /// to a paired follow-on amendment cycle. The substrate boundary
     /// `InProcessHandler::bind` has a deliberate dual-mode surface
-    /// (`crates/octo-runtime/src/handle/transport.rs`):
+    /// (the `octo_runtime::handle::transport::InProcessHandler`
+    /// module):
     ///
     /// - **Debug build** (the default `cargo test` profile): `panic!`
     ///   with a `not implemented` message — explicitly designed to

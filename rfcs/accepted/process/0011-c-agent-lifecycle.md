@@ -822,7 +822,7 @@ The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the o
 
 **§F.6.3 — `OctoCliError` mirror surface**
 
-The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via `From<octo_runtime::AttachError> for OctoCliError` at `crates/octo-cli/src/error.rs`. The CLI adds zero new substrate-mirror variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
+The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via the `From<octo_runtime::AttachError> for OctoCliError` impl. The CLI adds zero new substrate-mirror variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
 
 - `AttachHandleExpired { mint_unix, ttl_unix, now_unix }` → exit 53
 - `AttachHandleBadSignature { reason }` → exit 54

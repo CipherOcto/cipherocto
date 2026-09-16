@@ -122,10 +122,9 @@ pub async fn attach_with_token(
     }
 
     // Fail-CLOSED on broken clock: any `duration_since` error
-    // (`SystemTime` predates `UNIX_EPOCH`, or platform clock is
-    // unavailable) saturates `now_unix` to `u64::MAX`. Substrate
-    // never silently admits a TTL check on an unknown wall-clock;
-    // that would be fail-OPEN.
+    // saturates `now_unix` to `u64::MAX`. The same value is the
+    // reserved TTL sentinel (§F.2) — a malformed token that opts
+    // out of expiry rejects with the same uniform upstream signal.
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -134,10 +133,7 @@ pub async fn attach_with_token(
     // (c) TTL check (now_unix <= ttl_unix). Reserved sentinel
     // `ttl_unix == u64::MAX` rejects any token that opts out of
     // the TTL contract — substrate fails-CLOSED so a malformed
-    // token can never bypass expiry. The sentinel is the same
-    // value `SystemTime::duration_since(UNIX_EPOCH).unwrap_or(u64::MAX)`
-    // returns on a broken wall-clock, giving the rejection path a
-    // single uniform upstream signal.
+    // token can never bypass expiry.
     if token.ttl_unix == u64::MAX || now_unix > token.ttl_unix {
         return Err(AttachError::Expired {
             session_id: token.session_id,

@@ -29,7 +29,8 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 # Tracing (Layer D transport substrate).
 tracing = "0.1"
 # BLAKE3 hash for canonical encoding integrity check (RFC-0011-c §F.1).
-# Layer A primitive re-exported to encoding module.
+# Layer A frozen hashing primitive; direct dep follows the octo-wallet
+# precedent (BLAKE3 hash for canonical encoding integrity check).
 blake3 = { version = "1", features = ["std"] }
 # Hex encoding (Debug impls on `RuntimeHandle` + `RuntimeHandleBinding`
 # session-id surface; mirrors the wallet substrate convention).
@@ -41,13 +42,12 @@ hex = "0.4"
 # this crate's source; removed to keep the dependency graph substrate-
 # faithful (Layer B substrate consumes only what it references).
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
-# Workspace-standard byte-array serde adapter. Replaces a hand-rolled
-# `signature_bytes_serde` module at `octo_runtime::handle::mod` —
-# `serde_bytes::ByteArray` ships the canonical length-prefixed
-# serialization for fixed-width byte arrays above serde's built-in
-# length-32 ceiling. Per [[cipherocto-design-principles]]
-# §No parallel abstractions: use the workspace crate rather than
-# invent a parallel.
+# Workspace-standard byte-array serde adapter composed inside the local
+# `signature_bytes_serde` const-generic wrapper (`#[serde(with = "...")]
+# requires a concrete module path; const-generic `serde_bytes::ByteArray<N>`
+# can't be referenced directly). Per [[cipherocto-design-principles]]
+# §No parallel abstractions: thin wrapper around
+# `serde_bytes::ByteArray<64>` rather than a hand-rolled length-prefix impl.
 serde_bytes = "0.11"
 
 [features]

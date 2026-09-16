@@ -47,9 +47,7 @@ use uuid::Uuid;
 
 use crate::error::RuntimeError;
 
-// Re-export the `SessionId` type used by the pkg submodules so the
-// rest of the crate can keep a single import path
-// (`crate::handle::SessionId`).
+// Re-export error envelope types for crate-internal use.
 pub use error::{AttachError, PersistenceError};
 
 /// Random 32-byte session identifier (RFC-0011-c §F.2).
@@ -453,10 +451,7 @@ impl RuntimeHandle {
         });
         Self {
             handle_id: RuntimeHandleId::new(),
-            // RFC-0011-c §F.2: a fresh session id is minted per
-            // `spawn_agent` call (currently using a deterministic
-            // placeholder; future amendments may swap in an HSM-
-            // routed random source per the RFC's substrate guidance).
+            // BLAKE3-derived per §F.2 (see derive_session_id doc).
             session_id: derive_session_id(&agent_id, spawned_at),
             agent_id,
             spawned_at,

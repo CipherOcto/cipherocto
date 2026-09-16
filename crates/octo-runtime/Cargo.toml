@@ -31,11 +31,11 @@ blake3 = { version = "1", features = ["std"] }
 # session-id surface; mirrors the wallet substrate convention).
 hex = "0.4"
 
-# Layer B sibling crates.
-octo-core = { path = "../octo-core" }
-octo-registry = { path = "../octo-registry" }
-# NEW: Layer B sibling edge per RFC-0011-c §F.5 sign_attach_handle_payload
-# composition (octo_runtime → octo_wallet::identity::IdentityKey::sign).
+# Layer B sibling edge per RFC-0011-c §F.5 sign_attach_handle_payload
+# composition (octo_runtime -> octo_wallet::identity::IdentityKey::sign).
+# octo-core + octo-registry were previously declared here but unused in
+# this crate's source; removed to keep the dependency graph substrate-
+# faithful (Layer B substrate consumes only what it references).
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
 
 [features]

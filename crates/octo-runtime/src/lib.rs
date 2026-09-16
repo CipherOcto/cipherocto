@@ -134,6 +134,7 @@ pub async fn attach_with_token(
     if now_unix > token.ttl_unix {
         return Err(AttachError::Expired {
             session_id: token.session_id,
+            mint_unix: token.mint_timestamp_unix,
             expired_at_unix: token.ttl_unix,
             now_unix,
         });
@@ -153,13 +154,24 @@ pub async fn attach_with_token(
     // broadcast binding lives in `RuntimeHandle`'s
     // `Arc<HandleInner>` and is not exposed across the
     // process boundary). The validation step is therefore
-    // a substrate boundary stub: the CLI is responsible for
-    // resolving the session to a live `RuntimeHandle` via
-    // `octo_wallet::read_agent_state` + the spawn registry.
+    // a substrate boundary stub that panics in debug builds and
+    // returns `UnknownSession` in release builds — the panic
+    // surface catches accidental callsite reliance on the
+    // half-wired pathway during the substrate-first rollout.
     //
-    // For now, the stub returns `UnknownSession` so the
-    // substrate-faithful contract is pinned; future amendments
-    // wire the registry through `persistence.rs`.
+    // The CLI is responsible for resolving the session to a live
+    // `RuntimeHandle` via `octo_wallet::read_agent_state` + the
+    // spawn registry; the substrate-side step (e) is gated on a
+    // future follow-on mission that wires the registry through
+    // `persistence.rs` (the canonical amendment path for this
+    // pathway per RFC-0011-c §F.2).
+    if cfg!(debug_assertions) {
+        unimplemented!(
+            "attach_with_token step (e) is a substrate boundary stub; \
+             wire the session registry through persistence.rs in the \
+             follow-on amendment per RFC-0011-c §F.2"
+        );
+    }
     Err(AttachError::UnknownSession {
         session_id: token.session_id,
     })
@@ -207,6 +219,7 @@ mod tests {
         // AttachError variants construct.
         let _ae = AttachError::Expired {
             session_id: [0u8; 32],
+            mint_unix: 0,
             expired_at_unix: 0,
             now_unix: 1,
         };

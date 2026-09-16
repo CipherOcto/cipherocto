@@ -129,12 +129,20 @@ pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError> {
 /// `true` iff the session id has been previously added to the
 /// revocation set via `revoke_attach_token` (and the process has
 /// not been restarted).
+///
+/// Fail-CLOSED on poisoned `RwLock`: if the revocation set is
+/// unreadable (a previous panic during a revocation operation
+/// poisoned the lock), the function returns `true` so the token is
+/// treated as revoked. The alternative (fail-open) would silently
+/// bypass explicit operator revocations; fail-CLOSED preserves the
+/// revocation guarantee at the cost of denying attach operations
+/// until the operator restarts the process.
 #[must_use]
 pub fn is_token_revoked(session_id: &SessionId) -> bool {
     revocation_set()
         .read()
         .map(|guard| guard.contains(session_id))
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 #[cfg(test)]

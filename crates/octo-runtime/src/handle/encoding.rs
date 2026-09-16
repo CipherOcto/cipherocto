@@ -24,9 +24,10 @@
 //! [transport_scheme_uuid: 16 bytes]                      (16 bytes; only when kind=Raw)
 //! ```
 //!
-//! Total fixed prefix (excluding signature and transport): 145 bytes.
-//! Total fixed prefix (including signature): 209 bytes.
-//! Variable trailer: `transport_addr_len + (kind==Raw ? 16 : 0)`.
+//! Total fixed prefix (excluding signature): version(1) + session_id(32) +
+//!     mint(8) + ttl(8) + blake3(32) = 81 bytes.
+//! Total fixed prefix (including signature): 81 + 64 = 145 bytes.
+//! Variable trailer: payload(24) + `transport_addr_len + (kind==Raw ? 16 : 0)`.
 //!
 //! ## Signing surface
 //!
@@ -186,10 +187,17 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
         )));
     }
 
-    // Verify BLAKE3 integrity hash.
-    let mut integrity_input = Vec::with_capacity(24 + transport_consumed);
+    // Verify BLAKE3 integrity hash. The integrity input spans the
+    // `[payload || transport]` mutable portion of the wire form
+    // (skipping the fixed prefix + embedded hash). Named constants
+    // replace the literal offset arithmetic to make the layout
+    // auditable (the canonical wire form is documented at the
+    // module head — see doc-comment above).
+    const PAYLOAD_FIXED_LEN: usize = 24;
+    const FIXED_PREFIX_LEN: usize = 1 + 32 + 8 + 8 + 64 + 32;
+    let mut integrity_input = Vec::with_capacity(PAYLOAD_FIXED_LEN + transport_consumed);
     integrity_input.extend_from_slice(
-        &bytes[1 + 32 + 8 + 8 + 64 + 32..1 + 32 + 8 + 8 + 64 + 32 + 24 + transport_consumed],
+        &bytes[FIXED_PREFIX_LEN..FIXED_PREFIX_LEN + PAYLOAD_FIXED_LEN + transport_consumed],
     );
     let actual_blake3 = blake3::hash(&integrity_input);
     if actual_blake3.as_bytes() != &expected_blake3[..] {

@@ -1250,10 +1250,14 @@ mod revoke_attach {
     /// Parse a 64-char lowercase hex session id into the substrate
     /// `[u8; 32]`. Mirrors `hex_decode_session` from the audit / role
     /// amendment-chain helpers; a local copy keeps this module's
-    /// substrate-faithful contract local.
+    /// substrate-faithful contract local. Parse failures emit the
+    /// CLI-boundary `InvalidSessionIdHex` (exit 47) variant — NOT
+    /// `AttachHandleBadSignature` (exit 54) which is the
+    /// substrate-side signature-verify failure per the
+    /// typed-error-envelope contract.
     fn decode_session(hex: &str) -> Result<[u8; 32], OctoCliError> {
         if hex.len() != 64 {
-            return Err(OctoCliError::AttachHandleBadSignature {
+            return Err(OctoCliError::InvalidSessionIdHex {
                 reason: format!(
                     "session id must be 64 lowercase hex chars, got length {}",
                     hex.len()
@@ -1263,14 +1267,13 @@ mod revoke_attach {
         let mut out = [0u8; 32];
         for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
             let pair =
-                std::str::from_utf8(chunk).map_err(|_| OctoCliError::AttachHandleBadSignature {
+                std::str::from_utf8(chunk).map_err(|_| OctoCliError::InvalidSessionIdHex {
                     reason: "session id contains non-UTF-8 bytes".to_string(),
                 })?;
-            out[i] = u8::from_str_radix(pair, 16).map_err(|_| {
-                OctoCliError::AttachHandleBadSignature {
+            out[i] =
+                u8::from_str_radix(pair, 16).map_err(|_| OctoCliError::InvalidSessionIdHex {
                     reason: format!("session id contains non-hex pair `{pair}`"),
-                }
-            })?;
+                })?;
         }
         Ok(out)
     }
@@ -1308,23 +1311,14 @@ mod revoke_attach {
 
         let session_id = decode_session(session_id_hex)?;
 
-        octo_runtime::revoke_attach_token(session_id).map_err(|e| match e {
-            // The substrate folds revocation-set failures into
-            // `AttachError::RevocationError(String)` per
-            // RFC-0011-c §F.4 (the standalone `RevocationError`
-            // enum was folded into the canonical envelope). The
-            // `String` payload is the canonical reason (e.g.
-            // "revocation set poisoned: ..."); surface verbatim
-            // via `OctoCliError::RevocationError(reason)`.
-            octo_runtime::AttachError::RevocationError(reason) => {
-                OctoCliError::RevocationError(reason)
-            }
-            // Any other substrate envelope variant landed — fold
-            // into the same operator-facing envelope. This is the
-            // additive-safety guarantee: `#[non_exhaustive]` on
-            // the substrate shape cannot break the CLI bridge.
-            other => OctoCliError::RevocationError(format!("{other}")),
-        })?;
+        // Substrate folds revocation-set failures into
+        // `AttachError::RevocationError(String)` per RFC-0011-c
+        // §F.4 (the standalone `RevocationError` enum was folded
+        // into the canonical envelope). The `From<AttachError>`
+        // bridge in `OctoCliError` handles the per-variant mapping
+        // so the substrate-faithful contract is the single source
+        // of truth — the CLI is a thin Layer C wrapper.
+        octo_runtime::revoke_attach_token(session_id)?;
 
         let envelope = RevokeAttachOutput {
             session_id_hex: session_id_hex.to_string(),

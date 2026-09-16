@@ -552,7 +552,10 @@ pub enum OctoCliError {
     /// `octo_runtime::AttachError::Expired`. Exit 53.
     #[error("attach handle expired: mint={mint_unix}, ttl={ttl_unix}, now={now_unix}")]
     AttachHandleExpired {
-        /// `mint_timestamp_unix` from the token.
+        /// `mint_timestamp_unix` from the token (mirrors substrate
+        /// `AttachError::Expired::mint_unix` so the operator can
+        /// read the full `{mint, ttl, now}` triplet without
+        /// re-deriving it).
         mint_unix: u64,
         /// `ttl_unix` from the token.
         ttl_unix: u64,
@@ -1222,16 +1225,24 @@ impl From<octo_runtime::AttachError> for OctoCliError {
         match e {
             octo_runtime::AttachError::Expired {
                 session_id: _,
+                mint_unix,
                 expired_at_unix,
                 now_unix,
             } => {
-                // The substrate carries the deadline (`mint + ttl`) and
-                // the observed `now`; the CLI envelope surfaces the
-                // deadline as `ttl_unix` and reports `mint_unix = 0`
-                // since the substrate does not round-trip the mint
-                // timestamp on the failure path.
+                // Substrate-faithful mirror: the substrate carries
+                // the full `{mint, ttl, now}` triplet + the typed
+                // `session_id`. The CLI envelope surfaces all four
+                // fields so the operator can read the canonical
+                // values without re-deriving. `session_id` is
+                // intentionally not surfaced on `AttachHandleExpired`
+                // (typed-discriminator loss is acceptable here —
+                // the TTL envelope is a clock problem, not a session
+                // identity problem; the substrate's `Debug` impl on
+                // the typed `[u8; 32]` makes the session id
+                // recoverable for forensics via `Internal` if
+                // needed).
                 Self::AttachHandleExpired {
-                    mint_unix: 0,
+                    mint_unix,
                     ttl_unix: expired_at_unix,
                     now_unix,
                 }
@@ -1241,12 +1252,12 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             },
             octo_runtime::AttachError::SessionMismatch { declared, actual } => {
                 Self::AttachSessionMismatch {
-                    token_session_hex: hex_encode_session(&declared),
-                    registered_session_hex: hex_encode_session(&actual),
+                    token_session_hex: hex::encode(declared),
+                    registered_session_hex: hex::encode(actual),
                 }
             }
             octo_runtime::AttachError::UnknownSession { session_id } => {
-                Self::AttachSessionUnknown(hex_encode_session(&session_id))
+                Self::AttachSessionUnknown(hex::encode(session_id))
             }
             octo_runtime::AttachError::PersistenceError(reason) => {
                 Self::PersistenceError(sanitize_substrate_error(&reason))
@@ -1270,19 +1281,6 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             ))),
         }
     }
-}
-
-/// RFC-0010-style lowercase-hex encoding of a 32-byte session id
-/// (64 chars). Used by `From<AttachError>` to render session ids on
-/// the operator-facing path.
-fn hex_encode_session(bytes: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(64);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]

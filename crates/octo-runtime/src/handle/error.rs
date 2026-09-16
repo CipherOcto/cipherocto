@@ -24,12 +24,18 @@ pub enum AttachError {
     /// Surfaces verbatim from `attach_with_token` step (c) per
     /// RFC-0011-c §F.2 validation chain. CLI exit 53.
     #[error(
-        "attach handle expired for session {session_id:?}: now {now_unix} > ttl {expired_at_unix}"
+        "attach handle expired for session {session_id:?}: now {now_unix} > ttl {expired_at_unix} (mint {mint_unix})"
     )]
     Expired {
         /// Session id from the token.
         session_id: SessionId,
-        /// TTL boundary from the token.
+        /// Token mint timestamp (the lower-bound replay horizon).
+        /// Surfaced to the CLI so the operator can read the full
+        /// `{mint, ttl, now}` triplet without re-deriving it from
+        /// the (typed-discriminator-bearing) substrate signature
+        /// envelope.
+        mint_unix: u64,
+        /// TTL boundary from the token (`mint_unix + ttl_duration`).
         expired_at_unix: u64,
         /// Observed wall-clock when the check fired.
         now_unix: u64,
@@ -118,6 +124,7 @@ mod tests {
     fn expired_display_includes_session_id_and_times() {
         let e = AttachError::Expired {
             session_id: [0xab; 32],
+            mint_unix: 1_000,
             expired_at_unix: 2_000,
             now_unix: 3_000,
         };
@@ -125,6 +132,7 @@ mod tests {
         assert!(s.contains("expired"), "{s}");
         assert!(s.contains("2000"), "{s}");
         assert!(s.contains("3000"), "{s}");
+        assert!(s.contains("1000"), "{s}");
     }
 
     #[test]

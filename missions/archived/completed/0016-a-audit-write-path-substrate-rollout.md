@@ -13,7 +13,8 @@ metadata:
     - RFC-0016-a
     - RFC-0014-v2
     - RFC-0012-v2
-status: Claimed
+status: Completed
+dry_closure_audit: docs/audits/0016-a-rollout-dry-closure-2026-09-15.md
 ---
 
 # 0016-a-audit-write-path-substrate-rollout — RFC-0016-a acceptance rollout

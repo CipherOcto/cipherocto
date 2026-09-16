@@ -229,7 +229,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// → `did()` boilerplate to source the caller-attested DID for the
 /// substrate. This helper extracts the boilerplate so the handlers
 /// focus on their distinct write/read semantics.
-mod common {
+pub(crate) mod common {
     use crate::error::{sanitize_substrate_error, OctoCliError};
     use crate::redact::RedactionContext;
 
@@ -350,6 +350,61 @@ mod common {
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })
     }
+
+    /// Best-effort wall-clock — same Phase-1 caveat as the substrate
+    /// `register_agent` helper (RFC-0008 Class B: Phase 2 routes through
+    /// the monotonic substrate clock for cross-replica determinism).
+    pub(crate) fn now_unix_secs() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    /// POSIX 0o600 token-file write primitive. Layer C dispatch
+    /// boundary per RFC-0011-c §F.6.1; shared between the run
+    /// dispatch production path and the test fixture that pins the
+    /// `OpenOptions::mode(0o600)` substrate-faithful contract.
+    /// Caller pre-creates any missing parent dirs.
+    #[cfg(unix)]
+    pub(crate) fn write_token_file(
+        token_path: &std::path::Path,
+        token_bytes: &[u8],
+    ) -> Result<(), OctoCliError> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(token_path)
+            .map_err(|io| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!("token file open: {io}")))
+            })?;
+        f.write_all(token_bytes).map_err(|io| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("token file write: {io}")))
+        })?;
+        f.sync_all().map_err(|io| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("token file fsync: {io}")))
+        })?;
+        // R5.5 fix (POSIX mode regression): OpenOptionsExt::mode
+        // only applies at create time. When the file pre-exists,
+        // `truncate(true)` opens in place without changing perms.
+        // Force 0o600 post-open so a re-run against a left-behind
+        // 0o644 (or any world-readable mode) cannot silently leave
+        // the token credential world-readable. Propagate chmod
+        // failure: a chmod failure on a credential file is a
+        // HIGH-severity security finding, not a soft warning.
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|io| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!(
+                    "token file set_permissions 0o600: {io}"
+                )))
+            })?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -439,24 +494,13 @@ mod create {
             state: "registered".to_string(),
             label: manifest.label.clone(),
             manifest_digest,
-            registered_at_unix: now_unix_secs(),
+            registered_at_unix: common::now_unix_secs(),
         };
         // Envelope-boundary redaction context. For `agent create`
         // `holder_did == active_did` by construction; sibling
         // subcommands reuse the same context shape.
         let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
         render_envelope("octo.agent.create.v1", output, cli, &redactor)
-    }
-
-    /// Best-effort wall-clock — same Phase-1 caveat as the substrate
-    /// `register_agent` helper (RFC-0008 Class B: Phase 2 routes through
-    /// the monotonic substrate clock for cross-replica determinism).
-    fn now_unix_secs() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
     }
 
     /// Parse the operator-supplied `--capability-root <hex64>` argument
@@ -964,40 +1008,7 @@ mod run {
                 }
                 #[cfg(unix)]
                 {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    let mut opts = std::fs::OpenOptions::new();
-                    opts.create(true).write(true).truncate(true).mode(0o600);
-                    let mut f = opts.open(token_path).map_err(|io| {
-                        OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "token file open: {io}"
-                        )))
-                    })?;
-                    use std::io::Write;
-                    f.write_all(&token_bytes).map_err(|io| {
-                        OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "token file write: {io}"
-                        )))
-                    })?;
-                    f.sync_all().map_err(|io| {
-                        OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "token file fsync: {io}"
-                        )))
-                    })?;
-                    // R5.5 fix (POSIX mode regression): OpenOptionsExt::mode
-                    // only applies at create time. When the file
-                    // pre-exists, `truncate(true)` opens in place without
-                    // changing perms. Force 0o600 post-open so a re-run
-                    // against a left-behind 0o644 (or any world-readable
-                    // mode) cannot silently leave the token credential
-                    // world-readable. Propagate chmod failure: a chmod
-                    // failure on a credential file is a HIGH-severity
-                    // security finding, not a soft warning.
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Err(io) = f.set_permissions(std::fs::Permissions::from_mode(0o600)) {
-                        return Err(OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "token file set_permissions 0o600: {io}"
-                        ))));
-                    }
+                    crate::commands::agent::common::write_token_file(token_path, &token_bytes)?;
                 }
                 #[cfg(not(unix))]
                 {
@@ -1015,10 +1026,7 @@ mod run {
                 //       operator can verify by piping through
                 //       `octo agent attach --token-file` (TV-CLI-
                 //       RUN-DETACH-1 happy-path round-trip).
-                let written_at_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let written_at_unix = crate::commands::agent::common::now_unix_secs();
                 Some(TokenWrittenReceipt {
                     session_id_hex: hex::encode(handle_ref.session_id),
                     bytes_written: token_bytes.len(),
@@ -1702,18 +1710,15 @@ mod revoke_attach {
                 ),
             });
         }
-        let mut out = [0u8; 32];
-        for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-            let pair =
-                std::str::from_utf8(chunk).map_err(|_| OctoCliError::InvalidSessionIdHex {
-                    reason: "session id contains non-UTF-8 bytes".to_string(),
-                })?;
-            out[i] =
-                u8::from_str_radix(pair, 16).map_err(|_| OctoCliError::InvalidSessionIdHex {
-                    reason: format!("session id contains non-hex pair `{pair}`"),
-                })?;
-        }
-        Ok(out)
+        let bytes = hex::decode(hex).map_err(|e| OctoCliError::InvalidSessionIdHex {
+            reason: format!("session id hex decode failed: {e}"),
+        })?;
+        bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| OctoCliError::InvalidSessionIdHex {
+                reason: format!("session id decoded to {} bytes, expected 32", bytes.len()),
+            })
     }
 
     /// `octo agent revoke-attach --session-id <HEX64>` handler.
@@ -2561,29 +2566,17 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn tv_cli_run_detach_token_file_written_with_0o600_mode() {
-        use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().expect("tempfile::tempdir must succeed");
         let token_path = tmp.path().join("attach-token.bin");
 
-        // Mirror the run dispatch write helper verbatim: the dispatch
-        // uses exactly this primitive chain (the substrate's only
-        // requirement is that the bytes on disk are the
-        // `encode_token(&handle)` output — file mode + parent-dir
-        // creation + fsync are CLI boundary concerns per RFC-0011-c
-        // RFC-0011-c §F.6.1).
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&token_path)
-            .expect("OpenOptions::mode(0o600).open must succeed on unix");
-        f.write_all(b"attach-token-payload-stub")
-            .expect("write_all must succeed");
-        f.sync_all().ok();
-        drop(f);
+        // Reuse the shared write_token_file primitive (same helper the
+        // production run::handle calls). The helper pins the substrate-
+        // faithful 0o600 contract + post-open set_permissions regression
+        // guard per RFC-0011-c §F.6.1.
+        crate::commands::agent::common::write_token_file(&token_path, b"attach-token-payload-stub")
+            .expect("write_token_file must succeed on unix");
 
         let metadata = std::fs::metadata(&token_path).expect("metadata must succeed");
         let mode = metadata.permissions().mode();

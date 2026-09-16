@@ -28,3 +28,19 @@ tracing = "0.1"
 # Layer B sibling crates.
 octo-core = { path = "../octo-core" }
 octo-registry = { path = "../octo-registry" }
+# NEW: Layer B sibling edge per RFC-0011-c §F.5 sign_attach_handle_payload
+# composition (octo_runtime → octo_wallet::identity::IdentityKey::sign).
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+
+[features]
+# NEW: Stoolap cursor persistence feature flag per RFC-0011-c §F.3
+# (gated on `dep:stoolap` to avoid pulling Stoolap into default builds).
+default = []
+octo-runtime-persistence = ["dep:stoolap"]
+
+[dependencies.stoolap]
+# CipherOcto fork per [[stoolap-fork-persistence]] (workspace pinned at rev 527e8eb).
+# Conditional: only compiled when `octo-runtime-persistence` feature enabled.
+optional = true
+git = "https://github.com/cipherocto/stoolap"
+rev = "527e8eb"

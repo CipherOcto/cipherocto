@@ -31,6 +31,11 @@
 pub mod encoding;
 pub mod error;
 pub mod signing;
+// Layer D transport-handler registry + built-in InProcessHandler per
+// RFC-0011-c §F.2 step (e). Follow-on crates
+// (`octo-runtime-transport-unix`, …) register additional handlers via
+// `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`.
+pub mod transport;
 
 use std::sync::Arc;
 

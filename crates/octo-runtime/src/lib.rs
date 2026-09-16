@@ -92,14 +92,22 @@ pub async fn execute_agent(name: &str) -> Result<String, String> {
 /// (b) revocation-set check via [`is_token_revoked`]
 /// (c) `now_unix <= token.ttl_unix`
 /// (d) `since_unix >= token.mint_timestamp_unix`
-/// (e) session_id match against the running session registry
+/// (e) transport-handler dispatch via
+///     `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`
+///     (built-in `InProcessHandler` registered at init; extension
+///     transports register via follow-on Layer D crates)
 ///
 /// # Errors
 /// - `AttachError::BadSignature` — step (a) fail
 /// - `AttachError::RevocationError` — step (b) fail (session revoked)
 /// - `AttachError::Expired` — step (c) fail (TTL elapsed)
 /// - `AttachError::InvalidSinceCursor` — step (d) fail (`since_unix` below mint)
-/// - `AttachError::SessionMismatch` / `UnknownSession` — step (e) fail
+/// - `AttachError::TransportHandlerNotRegistered` — step (e) fail
+///   (no handler registered for the token's `TransportKind`)
+/// - Per-handler errors from the registered handler
+///   (`AttachError::UnknownSession` from the built-in
+///   `InProcessHandler`; per-Layer-D errors from extension
+///   crates)
 pub async fn attach_with_token(
     holder_pubkey: &[u8; 32],
     token: &AttachHandle,
@@ -148,33 +156,30 @@ pub async fn attach_with_token(
         });
     }
 
-    // (e) Session registry check: a session-id match is required
-    // against the running session registry. Phase 1 does NOT
-    // ship a process-local session registry (the in-process
-    // broadcast binding lives in `RuntimeHandle`'s
-    // `Arc<HandleInner>` and is not exposed across the
-    // process boundary). The validation step is therefore
-    // a substrate boundary stub that panics in debug builds and
-    // returns `UnknownSession` in release builds — the panic
-    // surface catches accidental callsite reliance on the
-    // half-wired pathway during the substrate-first rollout.
+    // (e) Transport-handler dispatch (RFC-0011-c §F.2 step (e) +
+    // [[cipherocto-design-principles]] §per-extension crates +
+    // registry). Substrate ships the `Handler` trait + the
+    // built-in `InProcessHandler` (built-in broadcast binding);
+    // extension transports (`UnixSocket`, …) ship in follow-on
+    // Layer D transport crates that register at process startup.
     //
-    // The CLI is responsible for resolving the session to a live
-    // `RuntimeHandle` via `octo_wallet::read_agent_state` + the
-    // spawn registry; the substrate-side step (e) is gated on a
-    // future follow-on mission that wires the registry through
-    // `persistence.rs` (the canonical amendment path for this
-    // pathway per RFC-0011-c §F.2).
-    if cfg!(debug_assertions) {
-        unimplemented!(
-            "attach_with_token step (e) is a substrate boundary stub; \
-             wire the session registry through persistence.rs in the \
-             follow-on amendment per RFC-0011-c §F.2"
-        );
-    }
-    Err(AttachError::UnknownSession {
-        session_id: token.session_id,
-    })
+    // If no handler is registered for the token's `TransportKind`,
+    // surface `TransportHandlerNotRegistered` (CLI exit 59). The
+    // registered handler is responsible for any per-transport
+    // resolution (filesystem, I/O, …) — substrate stays
+    // filesystem-free.
+    let handler = crate::handle::transport::HANDLE_TRANSPORT_REGISTRY
+        .get_or_init(crate::handle::transport::build_in_process_registry)
+        .lookup(&token.transport.kind)
+        .ok_or_else(|| {
+            let kind_label = match token.transport.kind {
+                crate::handle::TransportKind::InProcess => "InProcess".to_string(),
+                crate::handle::TransportKind::UnixSocket => "UnixSocket".to_string(),
+                crate::handle::TransportKind::Raw(uuid) => format!("Raw({uuid})"),
+            };
+            AttachError::TransportHandlerNotRegistered { kind_label }
+        })?;
+    handler.bind(token, since_unix)
 }
 
 #[cfg(test)]

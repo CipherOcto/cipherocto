@@ -633,6 +633,25 @@ pub enum OctoCliError {
         /// `since_unix` supplied by the caller (below mint).
         requested: u64,
     },
+
+    /// `attach_with_token` step (e) found no registered handler for
+    /// the token's `TransportKind` (RFC-0011-c §F.2 step (e) +
+    /// [[cipherocto-design-principles]] §per-extension crates +
+    /// registry). Substrate ships the built-in `InProcessHandler`;
+    /// extension transports (e.g., `UnixSocket`) require a
+    /// follow-on Layer D transport crate
+    /// (`octo-runtime-transport-unix`, …) to register a handler
+    /// at process startup. Mapped from
+    /// `octo_runtime::AttachError::TransportHandlerNotRegistered`.
+    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-58 (this
+    /// mission extends the slot range to 39-59 per the
+    /// per-extension registry pattern).
+    #[error("transport handler not registered for kind `{kind_label}`")]
+    TransportHandlerNotRegistered {
+        /// Discriminator label from the substrate surface
+        /// (`InProcess`, `UnixSocket`, or `Raw(<uuid>)`).
+        kind_label: String,
+    },
 }
 
 impl OctoCliError {
@@ -748,6 +767,10 @@ impl OctoCliError {
             // amendment-chain shared-slot pattern; the render layer
             // distinguishes the two payloads.
             Self::InvalidSinceCursor { .. } => 53,
+            // RFC-0011-c §F.2 step (e) + per-extension crates +
+            // registry pattern: extension transport (UnixSocket, …)
+            // without a registered handler surfaces as exit 59.
+            Self::TransportHandlerNotRegistered { .. } => 59,
         }
     }
 
@@ -943,6 +966,11 @@ impl OctoCliError {
             }
             Self::InvalidSinceCursor { .. } => {
                 "the `--since` cursor is below the token's mint timestamp; the token cannot authorize events that pre-date it; mint a fresh token via `octo agent run --detach` and retry".to_string()
+            }
+            Self::TransportHandlerNotRegistered { kind_label } => {
+                format!(
+                    "no transport handler is registered for kind `{kind_label}` (RFC-0011-c §F.2 step (e) + per-extension crates registry pattern); extension transports (UnixSocket, …) ship in follow-on Layer D crates (`octo-runtime-transport-unix`, …) that register at process startup"
+                )
             }
         };
         Some(h)
@@ -1272,6 +1300,11 @@ impl From<octo_runtime::AttachError> for OctoCliError {
                 mint_unix,
                 requested,
             },
+            octo_runtime::AttachError::TransportHandlerNotRegistered { kind_label } => {
+                Self::TransportHandlerNotRegistered {
+                    kind_label: sanitize_substrate_error(&kind_label),
+                }
+            }
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to
             // `Internal(reason)` exit 64 — same pattern as the audit

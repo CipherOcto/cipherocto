@@ -92,6 +92,21 @@ pub enum AttachError {
     /// revocation set). CLI exit 58.
     #[error("revocation error: {0}")]
     RevocationError(String),
+
+    /// `attach_with_token` step (e) found no registered handler for
+    /// the token's `TransportKind` (RFC-0011-c §F.2 step (e) +
+    /// [[cipherocto-design-principles]] §per-extension crates +
+    /// registry). Substrate ships the built-in `InProcessHandler`;
+    /// extension transports (e.g., `UnixSocket`) require a
+    /// follow-on Layer D transport crate
+    /// (`octo-runtime-transport-unix`, …) to register a handler at
+    /// process startup. CLI exit 59.
+    #[error("transport handler not registered for kind `{kind_label}` (register a Handler via octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY in a follow-on Layer D crate)")]
+    TransportHandlerNotRegistered {
+        /// Transport-kind discriminator label for the operator
+        /// ("InProcess", "UnixSocket", or "Raw(<uuid>)").
+        kind_label: String,
+    },
 }
 
 /// Persistence-layer error envelope (Stoolap cursor store).
@@ -197,5 +212,15 @@ mod tests {
         assert!(s.contains("since cursor"), "{s}");
         assert!(s.contains("1000"), "{s}");
         assert!(s.contains("500"), "{s}");
+    }
+
+    #[test]
+    fn transport_handler_not_registered_display_includes_kind_label() {
+        let e = AttachError::TransportHandlerNotRegistered {
+            kind_label: "UnixSocket".to_string(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("UnixSocket"), "{s}");
+        assert!(s.contains("not registered"), "{s}");
     }
 }

@@ -123,9 +123,9 @@ pub async fn attach_with_token(
 
     // Fail-CLOSED on broken clock: any `duration_since` error
     // (`SystemTime` predates `UNIX_EPOCH`, or platform clock is
-    // unavailable) saturates `now_unix` to `u64::MAX` so step (c)
-    // returns `Expired`. Substrate never silently admits a TTL
-    // check on an unknown wall-clock; that would be fail-OPEN.
+    // unavailable) saturates `now_unix` to `u64::MAX`. Substrate
+    // never silently admits a TTL check on an unknown wall-clock;
+    // that would be fail-OPEN.
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

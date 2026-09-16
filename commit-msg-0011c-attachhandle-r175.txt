@@ -1,0 +1,55 @@
+fix(octo-runtime): RFC-0011-c AttachHandle R17.5 fix sweep
+
+Substrate + mission YAML hygiene fixes per R17 5-len reviewer
+aggregate on mission 0011-c-octo-runtime-attachhandle-substrate
+(DRY CLOSED gate verification round 3).
+
+HIGH (simplification):
+- Third _keepalive_rx rename site at
+  crates/octo-runtime/src/handle/mod.rs doc comment in the
+  Spawn::RuntimeHandle invariant block. R16.5 sweep updated two
+  sites only (line 383 plus 480); reviewer caught the third.
+  Constructor parameter at line 448 keeps bare name per
+  parameter-naming convention (the init shorthand maps it to
+  underscored field)
+
+MED (simplification):
+- crates/octo-runtime/src/lib.rs broken-clock comment block at
+  lines 124-127 trimmed. Block A and Block B both argued the
+  u64::MAX sentinel rationale; Block B (the new step c check
+  doc) carries the rationale, Block A trimmed to broken-clock
+  saturation only
+
+MED (substrate-faithfulness):
+- missions/claimed/0011-c-octo-runtime-attachhandle-substrate.md
+  line 210 Backward compat bullet. RevokeOutput replaced with
+  RevokeAttachOutput to match the wired substrate struct at
+  octo-cli/src/commands/agent.rs:1232 and the §9.3.6 row rewrite.
+  Sub-step 5 plus TV-AGT22 already used RevokeAttachOutput; this
+  brings Backward compat into alignment (parallel-abstraction
+  resolution complete)
+
+MED (substrate-faithfulness):
+- crates/octo-runtime/src/handle/mod.rs lines 8 plus 340 plus
+  342 doc-comment 3-field claim replaced with 4-field to match
+  actual RuntimeHandleBinding struct at mod.rs:350-360 (4 fields:
+  agent_id, handle_id, session_id, spawned_at_unix). Mission YAML
+  4-field claim was correct; substrate self-description was
+  internally inconsistent. Fixed
+
+Verification:
+- cargo build -p octo-runtime -p octo-cli: clean
+- cargo test -p octo-runtime --lib: 73/73 passed
+- cargo test -p octo-cli --lib: 287/287 passed
+- cargo clippy -p octo-runtime -p octo-cli --all-targets -D warnings:
+  clean
+- cargo fmt --all --check: clean
+
+R17 reviewers aggregate: 0 correctness + 0 hygiene + 0 layer-model
++ 1 HIGH + 2 MED + 2 LOW simplification + 1 MED + 1 LOW
+substrate-faithfulness = 1 HIGH + 3 MED + 2 LOW substantive.
+Skipped LOWs (F.1 BLAKE3 note + §9.3.6 boundary note + step c
+doc-comment under-spec) per fix-critical-and-high-only-until-dry
+pattern.
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.

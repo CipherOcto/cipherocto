@@ -207,7 +207,7 @@ cargo test -p octo-cli --lib --tests                                   # green (
 - Additive only: new submodule `octo_runtime::handle` + new persistence module + new error variants in Layer B; no breaking changes to existing `spawn_agent`/`attach`/`transition_agent` signatures.
 - CLI exit codes match RFC-0011-c §F.4 mirror (slot allocation extended from 39-52 to 39-59 per RFC-0011-c §9.8; new exit 59 = `TransportHandlerNotRegistered` per the Layer D extension surface).
 - `OutputEnvelope<T>::schema_version = 4` preserved per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
-- New `RevokeOutput` payload type with `schema_version = 4` (NEW); agent attach/run output payload schemas unchanged.
+- New `RevokeAttachOutput` payload type with `schema_version = 4` (NEW); agent attach/run output payload schemas unchanged.
 - `cfg(feature = "octo-runtime-persistence")` gating is a NEW feature flag being added to `octo_runtime` manifest per this mission (no RFC-0016-a §6.4 paired-invariance claim per R1 finding SF-H4; canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract).
 
 ## Cross-references

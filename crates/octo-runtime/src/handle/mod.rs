@@ -5,7 +5,7 @@
 //!
 //! - `RuntimeHandle` — live runtime handle returned by `spawn_agent`
 //! - `EventStream` — pub-sub event subscription returned by `attach`
-//! - `RuntimeHandleBinding` — renamed 3-field in-process binding
+//! - `RuntimeHandleBinding` — renamed 4-field in-process binding
 //!   (the legacy `AttachHandle` per RFC-0011-c §9.3.2 --detach +
 //!   --attach pattern, renamed per §F.2 Path B additive)
 //! - `AttachHandle` — 6-field token (session_id, mint_timestamp_unix,
@@ -337,9 +337,9 @@ pub struct AttachHandle {
     pub transport: Transport,
 }
 
-/// Renamed 3-field in-process binding (RFC-0011-c §F.2 Path B).
+/// Renamed 4-field in-process binding (RFC-0011-c §F.2 Path B).
 ///
-/// Per §F.2 the legacy 3-field `AttachHandle` struct (used by
+/// Per §F.2 the legacy 4-field `AttachHandle` struct (used by
 /// `RuntimeHandle::attach_handle()` and `spawn_agent(attach_handle)`)
 /// is renamed to `RuntimeHandleBinding`; the 6-field `AttachHandle`
 /// token lives alongside at the `octo_runtime::handle` module per
@@ -391,7 +391,7 @@ impl RuntimeHandleBinding {
 /// return `Err(SendError(_))` for the lifetime of any handle clone
 /// (because the keep-alive receiver holds an active subscription on
 /// the broadcast channel). It does NOT guarantee that any event
-/// reaches any external consumer: the `keepalive_rx` is never
+/// reaches any external consumer: the `_keepalive_rx` is never
 /// `recv()`d, so new external `subscribe()` calls still join at
 /// the current tail position and miss events that were sent before
 /// they subscribed (standard tokio `broadcast` semantics). The

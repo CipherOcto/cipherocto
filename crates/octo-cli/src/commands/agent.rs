@@ -344,9 +344,7 @@ pub(crate) mod common {
         })?;
         octo_wallet::active_identity(&store).map_err(|e| match e {
             octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
+            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })
     }

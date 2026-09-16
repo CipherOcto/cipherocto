@@ -1,0 +1,36 @@
+fix(octo-cli): R5.5 layer-model facade reach-in in list handler
+
+R5 5-len DRY verification round surfaced 1 MED layer-model
+finding in the list handler, a sibling-mission-scope
+artifact. The list_owned_agents import reached into the
+octo_wallet::agent submodule instead of using the
+octo_wallet facade re-export.
+
+Fix: agent.rs line 419 import switched from
+octo_wallet::agent::list_owned_agents to
+octo_wallet::list_owned_agents. Per the layer-model
+principle, the CLI consumes substrate types only through
+public facade re-exports. The list_owned_agents symbol
+is re-exported at octo-wallet/src/lib.rs as the canonical
+public surface.
+
+Sibling-mission scope note: the list handler is owned by
+mission 0011-c-agent-list which closed DRY CLEAN
+2026-09-13. The facade reach-in survived that mission's
+DRY loop because it was below the 5-len reviewer
+sensitivity threshold at the time. R5's layer-model
+reviewer (running on the post-R4.5 run mission state)
+caught it because reviewer attention spans the whole
+agent.rs file, not just the run handler.
+
+This one-line fix lands as part of the run mission
+closure because the change is mechanically trivial and
+keeping it would force a follow-on cycle. The fix
+touches a sibling-mission artifact but does not change
+list-handler behavior, output shape, or test coverage.
+The list handler continues to work as before.
+
+cargo build, test --lib, clippy --all-targets -D
+warnings, fmt --check all green. 286 lib tests pass.
+
+No push per Initiative user-only plus git-workflow.

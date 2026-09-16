@@ -416,7 +416,7 @@ mod list {
     //! exit 17 `ForbiddenHolderMismatch` on attempt).
 
     use super::*;
-    use octo_wallet::agent::list_owned_agents as wallet_list_owned_agents;
+    use octo_wallet::list_owned_agents as wallet_list_owned_agents;
     use octo_wallet::{AgentFilter, AgentState, AgentSummary};
 
     /// Substrate hard ceiling — RFC-0015 §6.2.1.

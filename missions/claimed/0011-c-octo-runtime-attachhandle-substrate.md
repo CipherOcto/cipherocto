@@ -49,7 +49,7 @@ Per RFC-0011-c §Follow-on (NEW; added by this mission) the AttachHandle token p
 - **§F.2 Token Substrate** — see RFC-0011-c §Follow-on §F.2. `crates/octo-runtime/src/handle.rs`. 6-field `AttachHandle` token (Layer B); existing 3-field `AttachHandle` (in-process binding) RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod). Validation chain at `attach_with_token` invocation: (a) signature check, (b) revocation-set membership, (c) `ttl_unix` not expired, (d) `since_unix >= mint_timestamp_unix`, (e) `session_id` matches running session registry. Existing `attach(handle, since)` function UNCHANGED — still consumes `RuntimeHandleBinding`.
 - **§F.3 Persistence** — see RFC-0011-c §Follow-on §F.3. `crates/octo-runtime/src/persistence.rs` (NEW). `persist_event_cursor` + `load_event_cursor` (Q-deferred 3) gated on `cfg(feature = "octo-runtime-persistence")` (NEW feature flag in `crates/octo-runtime/Cargo.toml`). `revoke_attach_token` + `is_token_revoked` (Q-deferred 2; in-memory revocation set).
 - **§F.4 Errors** — see RFC-0011-c §Follow-on §F.4. `pub enum AttachError` in `crates/octo-runtime/src/handle/error.rs` with 6 variants (mirror → `OctoCliError` exits 53-58).
-- **§F.5 Signing Surface** — see RFC-0011-c §Follow-on §F.5. `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers colocated in `crates/octo-runtime/src/handle.rs` (Layer B). Substrate composition follows the static-helper pattern at `crates/octo-wallet/src/identity.rs:392,423` (`verify_successor_proof` / `verify_revocation_proof`): `sign_attach_handle_payload` takes `holder: &IdentityKey` (caller resolves DID → key) and delegates to `IdentityKey::sign(msg_bytes)`; `verify_attach_handle_payload` takes `holder_pubkey: &[u8; 32]` (static, mirrors `verify_revocation_proof` shape). NO `crates/octo-wallet/src/crypto.rs` (file does not exist); no new Layer A types.
+- **§F.5 Signing Surface** — see RFC-0011-c §Follow-on §F.5. `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers colocated in `crates/octo-runtime/src/handle.rs` (Layer B). Substrate composition follows the static-helper pattern (`verify_successor_proof` / `verify_revocation_proof`): `sign_attach_handle_payload` takes `holder: &IdentityKey` (caller resolves DID → key) and delegates to `IdentityKey::sign(msg_bytes)`; `verify_attach_handle_payload` takes `holder_pubkey: &[u8; 32]` (static, mirrors `verify_revocation_proof` shape). NO `crates/octo-wallet/src/crypto.rs` (file does not exist); no new Layer A types.
 
 Layer attribution: see §Type Coverage table below for full layer designation per RFC-0011-c type.
 
@@ -74,10 +74,10 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 - [ ] **AC-4** `attach_with_token()` binds in-process or via UnixSocket based on `Transport` discriminator (Q-deferred 1) per RFC-0011-c §F.2; existing `attach(handle, since)` UNCHANGED
 - [ ] **AC-5** `agent run --detach --token-file <path>` mints + writes token to file (Layer C/D) per §Sub-step 3 + RFC-0011-c §F.2
 - [ ] **AC-6** `agent attach --token-file <path>` reads + binds (Layer C/D) per §Sub-step 4 + RFC-0011-c §F.2 (replaces attach dispatch stub)
-- [ ] **AC-7** 6 NEW `OctoCliError` variants (exits 53-58; 4 mirror `AttachError` variants + 2 substrate-error passthroughs `PersistenceError(String)` + `RevocationError(String)`) wired at `crates/octo-cli/src/error.rs` per RFC-0011-c §F.4 mirror
+- [ ] **AC-7** 6 NEW `OctoCliError` variants wired at `crates/octo-cli/src/error.rs` per RFC-0011-c §F.4 mirror (see §Type Coverage)
 - [ ] **AC-8** `octo revoke-attach <token-hex>` primitive (Q-deferred 2) per RFC-0011-c §F.3 with in-memory revocation set
 - [ ] **AC-9** `persist_event_cursor` + `load_event_cursor` via Stoolap ledger extension (Q-deferred 3) per RFC-0011-c §F.3 gated on `cfg(feature = "octo-runtime-persistence")` (feature flag newly added to `octo-runtime/Cargo.toml` per this mission)
-- [ ] **AC-10** Cargo validation: clippy -p octo-runtime -p octo-wallet -p octo-cli --all-targets -- -D warnings clean AND cargo test --lib --tests green across same crates
+- [ ] **AC-10** Cargo validation per §Validation (zero warnings, all lib+test green)
 - [ ] **AC-11** Layer direction verified (no reverse deps per [[cipherocto-design-principles]]) + DRY R1+R2 zero-finding gate achieved
 
 ### Type Coverage
@@ -192,7 +192,7 @@ cargo test -p octo-cli --lib --tests                                   # green (
 ## Backward compat
 
 - Additive only: new submodule `octo_runtime::handle` + new persistence module + new error variants in Layer B; no breaking changes to existing `spawn_agent`/`attach`/`transition_agent` signatures.
-- CLI exit codes match RFC-0011-c §F.4 mirror (6 new variants: exits 53-58; slot allocation extended from 39-52 to 39-58).
+- CLI exit codes match RFC-0011-c §F.4 mirror (slot allocation extended from 39-52 to 39-58 per RFC-0011-c §9.8).
 - `OutputEnvelope<T>::schema_version = 4` preserved per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 - New `RevokeOutput` payload type with `schema_version = 4` (NEW); agent attach/run output payload schemas unchanged.
 - `cfg(feature = "octo-runtime-persistence")` gating is a NEW feature flag being added to `crates/octo-runtime/Cargo.toml` per this mission (no RFC-0016-a §6.4 paired-invariance claim per R1 finding SF-H4; canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract).

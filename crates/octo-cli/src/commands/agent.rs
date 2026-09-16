@@ -912,10 +912,7 @@ mod run {
                 // 6.5.1a Wall-clock now (declared before activate below).
                 //       Substrate-faithful to RFC-0011-c §F.6.1 — TTL
                 //       is mint_unix + 3600s.
-                let now_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let now_unix = crate::commands::agent::common::now_unix_secs();
 
                 // 6.5.1b Defensively flip Designated → Active. Map
                 //       lifecycle-state-specific substrate WalletError
@@ -1598,10 +1595,7 @@ mod attach {
             ))?
         };
 
-        let attached_at_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let attached_at_unix = crate::commands::agent::common::now_unix_secs();
         // Discard the broadcast receiver (CLI does not consume
         // events in this cycle; drop closes the receiver slot).
         drop(attached.broadcast_rx);
@@ -2719,9 +2713,11 @@ mod tests {
                             "AttachSessionUnknown hex payload MUST be 64 lowercase chars (32-byte SessionId), got {} chars",
                             hex.len(),
                         );
-                        let decoded_bytes = hex::decode(hex).expect("hex decode must succeed");
-                        let mut decoded = [0u8; 32];
-                        decoded.copy_from_slice(&decoded_bytes);
+                        let decoded: [u8; 32] = hex::decode(hex)
+                            .expect("hex decode must succeed")
+                            .as_slice()
+                            .try_into()
+                            .expect("AttachSessionUnknown hex payload MUST round-trip to 32 bytes");
                         assert_eq!(
                             decoded, session_id,
                             "AttachSessionUnknown hex MUST round-trip byte-for-byte to mint-time session_id"

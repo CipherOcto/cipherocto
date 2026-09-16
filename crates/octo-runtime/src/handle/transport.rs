@@ -76,9 +76,10 @@ pub trait Handler: Send + Sync + std::fmt::Debug {
 /// Keyed by `TransportKind`; lookup is via
 /// [`Registry::lookup`]. Registration is via [`Registry::register`].
 ///
-/// `#[derive(Default)]` delivers a `new()` constructor returning an
-/// empty registry; the process-singleton [`HANDLE_TRANSPORT_REGISTRY`]
-/// initializes with the built-in `InProcessHandler` at first access.
+/// `Default::default()` returns an empty registry (equivalent to
+/// [`Registry::new`]); the process-singleton
+/// [`HANDLE_TRANSPORT_REGISTRY`] initializes with the built-in
+/// `InProcessHandler` at first access.
 #[derive(Default, Debug)]
 pub struct Registry {
     /// Inner map. `RwLock` chosen over `Mutex` because reads
@@ -96,9 +97,10 @@ impl Registry {
     /// Build an empty registry (no built-in handlers installed).
     /// Used by [`HANDLE_TRANSPORT_REGISTRY`] which manually
     /// registers the built-in `InProcessHandler` after construction.
-    ///
-    /// Not `const fn` because `HashMap::new()` is not const-stable
-    /// (HashMap has no const ctor; wrapping requires `Default`).
+    /// Not `const fn` because `HashMap::new()` requires the
+    /// `RandomState` default hasher which is not `const`-stable on
+    /// the current MSRV; `RwLock::new` is `const` but the wrapper
+    /// isn't.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -167,7 +169,7 @@ pub fn build_in_process_registry() -> Registry {
 /// in debug builds, `AttachError::UnknownSession` in release builds —
 /// to catch accidental callsite reliance on the half-wired
 /// pathway during the substrate-first rollout.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InProcessHandler;
 
 impl InProcessHandler {
@@ -178,12 +180,6 @@ impl InProcessHandler {
     #[must_use]
     pub const fn new() -> Self {
         Self
-    }
-}
-
-impl Default for InProcessHandler {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -214,7 +210,9 @@ impl Handler for InProcessHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handle::{AgentState, AttachPayload, RuntimeHandleId, Signature, Transport};
+    #[allow(unused_imports)]
+    use crate::handle::RuntimeHandleId as _Reachable;
+    use crate::handle::{AttachPayload, Signature, Transport};
     use uuid::Uuid;
 
     /// Build a minimal valid `AttachHandle` for tests.
@@ -232,24 +230,12 @@ mod tests {
         }
     }
 
-    /// The agent_id field on `AttachHandle.payload` is `Uuid`; the
-    /// top-level `agent_id` mirror would be `AgentState` for the
-    /// in-process dispatch path. This helper is unused for now but
-    /// kept for future test vectors that need both.
-    #[allow(dead_code)]
-    fn dummy_state() -> AgentState {
-        AgentState::Busy
-    }
-
     /// `Registry::new()` returns an empty registry.
     #[test]
     fn registry_new_is_empty() {
         let reg = Registry::new();
         assert!(reg.lookup(&TransportKind::InProcess).is_none());
-        assert!(
-            reg.lookup(&TransportKind::UnixSocket).is_none()
-                || reg.lookup(&TransportKind::UnixSocket).is_some()
-        );
+        assert!(reg.lookup(&TransportKind::UnixSocket).is_none());
     }
 
     /// `Registry::register` + `lookup` round-trip.
@@ -268,11 +254,12 @@ mod tests {
         assert!(reg.lookup(&TransportKind::UnixSocket).is_none());
     }
 
-    /// Built-in `InProcessHandler::new()` exists and is `Default`.
+    /// `InProcessHandler` unit struct + `Default` + `new()` all
+    /// construct identical values.
     #[test]
-    fn in_process_handler_constructs() {
-        let _h = InProcessHandler::new();
-        let _h = InProcessHandler;
+    fn in_process_handler_unit_default_and_new_construct_identically() {
+        let _new: InProcessHandler = InProcessHandler::new();
+        let _unit: InProcessHandler = InProcessHandler;
     }
 
     /// `InProcessHandler::bind` produces a substrate-boundary stub
@@ -395,13 +382,6 @@ mod tests {
             .expect("second registered");
         let res = second.bind(&dummy_token(), 0).expect("second bind");
         assert_eq!(res.event_cursor, 999, "second handler overrides first");
-    }
-
-    /// `RuntimeHandleId` is reachable from the test module (avoids
-    /// unused-import warnings).
-    #[test]
-    fn runtime_handle_id_reachable_from_transport_tests() {
-        let _ = RuntimeHandleId::new();
     }
 
     /// Helper that builds a dummy `tokio::sync::broadcast::Receiver`

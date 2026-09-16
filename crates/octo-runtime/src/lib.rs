@@ -60,6 +60,9 @@ pub use handle::{
     encoding::{canonical_payload_bytes, decode_token, encode_token},
     error::{AttachError, PersistenceError},
     signing::{mint_attach_handle, sign_attach_handle_payload, verify_attach_handle_payload},
+    transport::{
+        build_in_process_registry, Handler, InProcessHandler, Registry, HANDLE_TRANSPORT_REGISTRY,
+    },
     AgentState, AgentStateDispatcher, AttachHandle, AttachPayload, AttachedSession, EventStream,
     RuntimeEvent, RuntimeHandle, RuntimeHandleBinding, RuntimeHandleId, SessionId, Signature,
     Transport, TransportKind, EVENT_CHANNEL_CAPACITY,
@@ -159,9 +162,11 @@ pub async fn attach_with_token(
     // (e) Transport-handler dispatch (RFC-0011-c §F.2 step (e) +
     // [[cipherocto-design-principles]] §per-extension crates +
     // registry). Substrate ships the `Handler` trait + the
-    // built-in `InProcessHandler` (built-in broadcast binding);
-    // extension transports (`UnixSocket`, …) ship in follow-on
-    // Layer D transport crates that register at process startup.
+    // built-in `InProcessHandler` (broadcast-binding stub —
+    // session-registry-wiring is deferred to a follow-on amendment
+    // per RFC-0011-c §F.2; see `transport.rs` doc); extension
+    // transports (`UnixSocket`, …) ship in follow-on Layer D
+    // transport crates that register at process startup.
     //
     // If no handler is registered for the token's `TransportKind`,
     // surface `TransportHandlerNotRegistered` (CLI exit 59). The
@@ -171,13 +176,8 @@ pub async fn attach_with_token(
     let handler = crate::handle::transport::HANDLE_TRANSPORT_REGISTRY
         .get_or_init(crate::handle::transport::build_in_process_registry)
         .lookup(&token.transport.kind)
-        .ok_or_else(|| {
-            let kind_label = match token.transport.kind {
-                crate::handle::TransportKind::InProcess => "InProcess".to_string(),
-                crate::handle::TransportKind::UnixSocket => "UnixSocket".to_string(),
-                crate::handle::TransportKind::Raw(uuid) => format!("Raw({uuid})"),
-            };
-            AttachError::TransportHandlerNotRegistered { kind_label }
+        .ok_or_else(|| AttachError::TransportHandlerNotRegistered {
+            kind_label: token.transport.kind.to_string(),
         })?;
     handler.bind(token, since_unix)
 }

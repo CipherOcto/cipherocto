@@ -372,8 +372,8 @@ detects a replay, it returns `ReplayDetected { digest }` (exit 50).
 ### 9.8 Error Handling
 
 New `OctoCliError` variants are added (all `#[non_exhaustive]`
-inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-58**
-(post -g's 35-38; 14 base amendment + 6 follow-on amendment
+inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-59**
+(post -g's 35-38; 14 base amendment + 7 follow-on amendment
 AttachHandle/AttachSession variants per §F.4 mirror; renegotiation
 needed if -h/i follow-on amendments claim earlier slots):
 
@@ -712,7 +712,7 @@ decomposition is **flat** (no nested sub-missions) per
 
 - `octo-cli` Cargo manifest — add `octo-runtime = { path = "../octo-runtime" }` (Layer B substrate)
 - `octo_cli::commands::agent` module — NEW; `Commands::Agent` clap enum + `AgentAction::{Create, Run, List, Destroy, Attach}` dispatch + 5 payload types (per RFC-0011-c §9.3)
-- `octo_cli::error` module — add 14 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-58)
+- `octo_cli::error` module — add 15 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-59)
 - `octo_cli::redact` module — add agent-specific redaction patterns (`agent_id`, `holder_did`, `capability_root` per RFC-0011-c §Security)
 - `octo_runtime` crate root — NEW (per companion mission `0011-c-octo-runtime-substrate`); `spawn_agent` + `attach` + `RuntimeHandle` + `EventStream`
 - `octo_runtime::spawn` module — NEW; `spawn_agent` impl
@@ -750,10 +750,10 @@ Canonical byte encoding for `AttachHandle` tokens at the `octo_runtime::handle::
 - `pub struct AttachPayload { agent_id: Uuid, since_cursor: u64 }`
 - `pub type SessionId = [u8; 32]` — random per `spawn_agent` call
 - `pub fn mint_attach_handle(holder: &IdentityKey, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (calls `sign_attach_handle_payload` per §F.5; composes `octo_wallet::IdentityKey::sign`). DID → `IdentityKey` resolution is a CLI boundary concern (Layer C/D), not substrate.
-- `pub async fn attach_with_token(holder_pubkey: &[u8; 32], token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` (defined at the `octo_runtime` crate root in `crates/octo-runtime/src/lib.rs:103`) — validation chain: (a) signature verify via `verify_attach_handle_payload` (per §F.5), (b) revocation-set check via `is_token_revoked`, (c) `now_unix <= token.ttl_unix`, (d) `since_unix >= token.mint_timestamp_unix`, (e) **transport-handler dispatch** via `token.transport.kind` against the process-singleton `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY` (built-in `InProcessHandler` registered at lazy init; extension transports register from follow-on Layer D crates per [[cipherocto-design-principles]] §per-extension crates + registry). Unregistered `TransportKind` surfaces `AttachError::TransportHandlerNotRegistered { kind_label }` (CLI exit 59; per-handler errors surface per-Layer-D). The substrate stays filesystem-free + socket-IO-free per §Layer direction. The leading `holder_pubkey` parameter mirrors the static-helper signature shape of `verify_attach_handle_payload` (Layer B pure helper, no `&self` binding).
+- `pub async fn attach_with_token(holder_pubkey: &[u8; 32], token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` (defined at the `octo_runtime` crate root, re-exported alongside `attach` + `clamp_since` per §F.2) — validation chain: (a) signature verify via `verify_attach_handle_payload` (per §F.5), (b) revocation-set check via `is_token_revoked`, (c) `now_unix <= token.ttl_unix`, (d) `since_unix >= token.mint_timestamp_unix`, (e) **transport-handler dispatch** via `token.transport.kind` against the process-singleton `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY` (built-in `InProcessHandler` registered at lazy init; extension transports register from follow-on Layer D crates per [[cipherocto-design-principles]] §per-extension crates + registry). Unregistered `TransportKind` surfaces `AttachError::TransportHandlerNotRegistered { kind_label }` (CLI exit 59; per-handler errors surface per-Layer-D). The substrate stays filesystem-free + socket-IO-free per §Layer direction. The leading `holder_pubkey` parameter mirrors the static-helper signature shape of `verify_attach_handle_payload` (Layer B pure helper, no `&self` binding).
 - `pub trait octo_runtime::handle::transport::Handler: Send + Sync + std::fmt::Debug { fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError> }` — single-method, segregated per [[cipherocto-design-principles]] §Interface Segregation; new extension-bearing operations land as additive traits, not `Handler` mutations. Per-transport protocol I/O (filesystem resolution, socket connect, …) lives in `Arc<dyn Handler>` impls registered at process startup.
 - `pub struct octo_runtime::handle::transport::Registry { handlers: RwLock<HashMap<TransportKind, Arc<dyn Handler>>> }` — process-singleton (via `HANDLE_TRANSPORT_REGISTRY: std::sync::OnceLock<Registry>`), `RwLock` for read-heavy dispatch (handler lookup vastly outnumbers registration), **fail-CLOSED on poison** (mirroring `REVOCATION_SET` discipline per §F.3 — a poisoned lock indicates writer panic; substrate propagates the failure to the caller rather than silently serving stale dispatch). `Handler` debug-required supertrait enables `#[derive(Debug)]` on the registry.
-- `pub struct InProcessHandler` — built-in broadcast-channel binding handler (per-HTTP `tokio::sync::broadcast` from `RuntimeHandle`); registered at `HANDLE_TRANSPORT_REGISTRY` lazy init via `build_in_process_registry()`. Session-registry-wiring (mapping `session_id → Arc<HandleInner>` across the process boundary) is deferred to a follow-on amendment per §F.2 — the handler currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` in release) to catch accidental callsite reliance during the substrate-first rollout.
+- `pub struct InProcessHandler` — built-in broadcast-channel binding handler (per-handle `tokio::sync::broadcast` from `RuntimeHandle`); registered at `HANDLE_TRANSPORT_REGISTRY` lazy init via `build_in_process_registry()`. Session-registry-wiring (mapping `session_id → Arc<HandleInner>` across the process boundary) is deferred to a follow-on amendment per §F.2 — the handler currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` in release) to catch accidental callsite reliance during the substrate-first rollout.
 - `pub static HANDLE_TRANSPORT_REGISTRY: std::sync::OnceLock<Registry>` — lazy-init process singleton (Rust 1.70+, no `once_cell` dep); initial value via `build_in_process_registry()` factory fn. Extension Layer D transport crates (`octo-runtime-transport-unix`, user-extension `Raw(Uuid)` implementations, …) register additional handlers via `Registry::register` at process startup per [[cipherocto-design-principles]] §per-extension crates + registry pattern (extension surface stays open: new transports land via a registry call, no central `match` edit in `attach_with_token`).
 
 The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>) -> Result<EventStream, RuntimeError>` at the `octo_runtime::attach` module is UNCHANGED — it consumes the renamed 4-field in-process binding (`RuntimeHandleBinding` per Path B rename: `agent_id`, `handle_id`, `session_id`, `spawned_at_unix`). The 6-field `AttachHandle` token lives alongside the renamed struct at the `octo_runtime::handle` module per [[no-parallel-abstractions]].
@@ -773,13 +773,14 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 
 `pub enum AttachError` at the `octo_runtime::handle::error` module (Layer B):
 
-- `Expired { session_id: SessionId, mint_unix: u64, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired { mint_unix, ttl_unix, now_unix }` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-58; the CLI-boundary `ttl_unix` mirrors the substrate `expired_at_unix` with CLI-friendly shortening, and the CLI envelope intentionally drops `session_id` — typed-discriminator recovery is available via the substrate `Debug` impl on the typed `[u8; 32]`)
+- `Expired { session_id: SessionId, mint_unix: u64, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired { mint_unix, ttl_unix, now_unix }` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-59; the CLI-boundary `ttl_unix` mirrors the substrate `expired_at_unix` with CLI-friendly shortening, and the CLI envelope intentionally drops `session_id` — typed-discriminator recovery is available via the substrate `Debug` impl on the typed `[u8; 32]`)
 - `BadSignature { reason: String }` (mirror → `OctoCliError::AttachHandleBadSignature` exit 54)
 - `SessionMismatch { declared: SessionId, actual: SessionId }` (mirror → `OctoCliError::AttachSessionMismatch` exit 55)
 - `UnknownSession { session_id: SessionId }` (mirror → `OctoCliError::AttachSessionUnknown` exit 56)
 - `InvalidSinceCursor { mint_unix: u64, requested: u64 }` (mirror → `OctoCliError::InvalidSinceCursor { mint_unix, requested }` exit 53 — **shared slot** with `AttachHandleExpired` per amendment-chain shared-slot pattern; operator-unambiguous within the `agent attach` command surface because the render layer distinguishes the two payloads by variant name)
 - `PersistenceError(String)` (mirror → `OctoCliError::PersistenceError(String)` exit 57)
 - `RevocationError(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted (the canonical variant name is `RevocationError`, not `RevocationFailed`)
+- `TransportHandlerNotRegistered { kind_label: String }` (mirror → `OctoCliError::TransportHandlerNotRegistered { kind_label }` exit 59 per RFC-0011-c §9.8 §9.8 row added in this amendment; surfaces step (e) registry-miss of `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`)
 
 CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §9.8 slot allocation.
 
@@ -813,10 +814,10 @@ fragmenting the version space; field renames (`data`→`payload`,
 `generated_at`→`executed_at_unix`, `preview_only`→`redacted`)
 are additive to the v4 surface.
 
-### Why exit code slots 39-58
+### Why exit code slots 39-59
 
-Per the slot allocation table, RFC-0011-c consumes slots 39-58
-(post -g's 35-38; 20 new variants + 0 reuse — 14 base amendment + 6 follow-on amendment AttachHandle/AttachSession variants per §F.4 mirror). Sibling amendments
+Per the slot allocation table, RFC-0011-c consumes slots 39-59
+(post -g's 35-38; 21 new variants + 0 reuse — 14 base amendment + 7 follow-on amendment AttachHandle/AttachSession variants per §F.4 mirror). Sibling amendments
 that do not consume slots MUST NOT claim earlier slots; renegotiation
 is required if -h/i follow-on amendments need earlier slots.
 
@@ -875,9 +876,9 @@ script before the v1.1 release.
 - **Stub deprecation** — the legacy `octo agent` stub (RFC-0011
   §Compatibility) emits `StaleStub` (exit 65) starting at CLI v1.0.
   Operators relying on the stub must migrate before v1.1.
-- **New exit codes** — exit codes 39–58 added to the reserved
+- **New exit codes** — exit codes 39–59 added to the reserved
   17–63 range (RFC-0011 §Exit Codes; base amendment 39–52
-  plus follow-on amendment 53–58 per §9.8). Existing exit codes
+  plus follow-on amendment 53–59 per §9.8). Existing exit codes
   unchanged.
 
 ### Privacy Considerations

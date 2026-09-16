@@ -27,14 +27,14 @@
 //! `#[non_exhaustive]` clauses
 //! ([[cipherocto-design-principles]] §Extension over enumeration).
 
-// Submodules — added per RFC-0011-c §Follow-on §F.1-§F.5.
+//! Submodules — added per RFC-0011-c §Follow-on §F.1-§F.5.
+//! Layer D transport-handler registry + built-in `InProcessHandler`
+//! per RFC-0011-c §F.2 step (e). Follow-on crates
+//! (`octo-runtime-transport-unix`, …) register additional handlers
+//! via `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`.
 pub mod encoding;
 pub mod error;
 pub mod signing;
-// Layer D transport-handler registry + built-in InProcessHandler per
-// RFC-0011-c §F.2 step (e). Follow-on crates
-// (`octo-runtime-transport-unix`, …) register additional handlers via
-// `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`.
 pub mod transport;
 
 use std::sync::Arc;
@@ -278,6 +278,19 @@ pub enum TransportKind {
     /// over enumeration). Old code fails closed on unknown
     /// discriminators.
     Raw(Uuid),
+}
+
+impl std::fmt::Display for TransportKind {
+    /// Stable string label used by `AttachError::TransportHandlerNotRegistered`
+    /// operators and per-transport log lines. InProcess / UnixSocket map
+    /// to their variant name; `Raw(uuid)` renders as `Raw(<uuid>)`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InProcess => f.write_str("InProcess"),
+            Self::UnixSocket => f.write_str("UnixSocket"),
+            Self::Raw(uuid) => write!(f, "Raw({uuid})"),
+        }
+    }
 }
 
 impl Transport {

@@ -2,7 +2,7 @@
 //! token operations (RFC-0011-c §F.4).
 //!
 //! Each variant maps 1:1 to an `OctoCliError` slot per RFC-0011-c
-//! §9.8 (extension 39-58). The substrate owns the canonical error
+//! §9.8 (extension 39-59). The substrate owns the canonical error
 //! distinction; the CLI mirrors via per-variant `From<AttachError>`
 //! arms so an additive substrate variant lands a corresponding CLI
 //! slot without central-enum edits.
@@ -14,7 +14,7 @@ use crate::handle::SessionId;
 /// Substrate error envelope for `AttachHandle` operations
 /// (RFC-0011-c §F.4).
 ///
-/// Mirrors 1:1 to the `OctoCliError` variants 53-58 per RFC-0011-c
+/// Mirrors 1:1 to the `OctoCliError` variants 53-59 per RFC-0011-c
 /// §9.8 extension. The CLI boundary translates per-variant; the
 /// substrate owns the canonical distinction.
 #[derive(Error, Debug)]

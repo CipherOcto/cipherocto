@@ -610,7 +610,7 @@ pub enum OctoCliError {
     /// subcommands. Distinct from `AttachHandleBadSignature` (exit
     /// 54) which is the substrate-side signature-verify failure;
     /// this is a CLI-parse failure on operator input. Exit 47 per
-    /// RFC-0011-c §9.8 extension slots 39-58.
+    /// RFC-0011-c §9.8 extension slots 39-59.
     #[error("invalid session id hex: {reason}")]
     InvalidSessionIdHex {
         /// Diagnostic reason (length / encoding / non-hex).
@@ -643,9 +643,7 @@ pub enum OctoCliError {
     /// (`octo-runtime-transport-unix`, …) to register a handler
     /// at process startup. Mapped from
     /// `octo_runtime::AttachError::TransportHandlerNotRegistered`.
-    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-58 (this
-    /// mission extends the slot range to 39-59 per the
-    /// per-extension registry pattern).
+    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-59.
     #[error("transport handler not registered for kind `{kind_label}`")]
     TransportHandlerNotRegistered {
         /// Discriminator label from the substrate surface
@@ -1301,9 +1299,7 @@ impl From<octo_runtime::AttachError> for OctoCliError {
                 requested,
             },
             octo_runtime::AttachError::TransportHandlerNotRegistered { kind_label } => {
-                Self::TransportHandlerNotRegistered {
-                    kind_label: sanitize_substrate_error(&kind_label),
-                }
+                Self::TransportHandlerNotRegistered { kind_label }
             }
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to

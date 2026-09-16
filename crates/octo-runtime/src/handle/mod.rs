@@ -64,8 +64,8 @@ pub type SessionId = [u8; 32];
 /// Local wrapper around the raw 64 signature bytes — Layer A
 /// primitive `ed25519_dalek::Signature` is re-exported via the
 /// `octo-wallet` path dep and wrapped at this boundary so the Layer
-/// A/B seam stays clean per [[no-central-enums-for-extension-bearing-types]] +
-/// [[stable-abstractions-principle]] (Layer A primitives stable;
+/// A/B seam stays clean per [[cipherocto-design-principles]] §Extension over enumeration +
+/// [[cipherocto-design-principles]] §Stable Abstractions Principle (Layer A primitives stable;
 /// business semantics in composed Layer B).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -343,7 +343,7 @@ pub struct AttachHandle {
 /// `RuntimeHandle::attach_handle()` and `spawn_agent(attach_handle)`)
 /// is renamed to `RuntimeHandleBinding`; the 6-field `AttachHandle`
 /// token lives alongside at the `octo_runtime::handle` module per
-/// [[no-parallel-abstractions]]. The existing in-process `attach`
+/// [[cipherocto-design-principles]] §No parallel abstractions. The existing in-process `attach`
 /// substrate path (RFC-0011-c §9.3.5) is UNCHANGED — it still
 /// consumes this renamed struct.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

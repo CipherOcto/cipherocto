@@ -1,0 +1,70 @@
+fix(octo-runtime): RFC-0011-c AttachHandle R18.5 fix sweep
+
+Substrate + RFC + mission YAML hygiene + correctness fixes per
+R18 5-len reviewer aggregate on mission
+0011-c-octo-runtime-attachhandle-substrate
+(DRY CLOSED gate verification round 4).
+
+HIGH (correctness):
+- missions/claimed/0011-c-octo-runtime-attachhandle-substrate.md
+  Scope prose and Sub-step 3 plus Sub-step 4 headings. R16.5
+  dropped the (follow-on amendment) annotation from all three
+  Sub-step headings, but only Sub-step 5 actually wired in the
+  CLI (octo-cli/src/commands/agent.rs Run + Attach clap variants
+  do not expose --token-file). Re-applied (deferred to follow-on
+  amendment) annotation on Sub-steps 3 plus 4, rewrote Scope
+  prose to reflect that only Sub-step 5 ships this cycle.
+  Sub-steps 3 and 4 prose preserved verbatim below as
+  substrate-faithful shape for follow-on CLI dispatch
+
+HIGH (hygiene):
+- crates/octo-runtime/src/handle/mod.rs line 67 phantom wiki-link
+  [[no-central-enums-for-extension-bearing-types]] replaced with
+  [[cipherocto-design-principles]] §Extension over enumeration
+  (canonical form used at RFC §F + mission YAML + mod.rs L24,
+  L28, L110, L207, L246, L258, L271, L308, L587, L641). The
+  standalone memory filename does not exist
+
+HIGH (hygiene):
+- crates/octo-runtime/src/handle/mod.rs line 68 phantom wiki-link
+  [[stable-abstractions-principle]] replaced with
+  [[cipherocto-design-principles]] §Stable Abstractions Principle
+  to match canonical form R16.5 established at RFC:791 plus
+  RFC:794. Same substrate-side sweep-incompleteness defect
+
+HIGH (hygiene):
+- crates/octo-runtime/src/handle/mod.rs line 346 phantom wiki-link
+  [[no-parallel-abstractions]] replaced with
+  [[cipherocto-design-principles]] §No parallel abstractions to
+  match canonical form R16.5 established at RFC:759. Adjacent
+  to the 3-field 4-field doc-block touched by R17.5
+
+HIGH (simplification):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md line 791 §F.5
+  prose. Updated description of the wrap path used by
+  sign_attach_handle_payload to reference direct raw 64-byte
+  construction (the previous prose still named the deleted
+  From<octo_wallet::ed25519_dalek::Signature> conversion that
+  R16.5 removed)
+
+MED (substrate-faithfulness):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md line 791 §F.5
+  prose. Same stale From-impl reference as the HIGH simplification
+  finding above; described actual wrap path (raw 64-byte form
+  captured into Signature newtype)
+
+Verification:
+- cargo build -p octo-runtime -p octo-cli: clean
+- cargo test -p octo-runtime --lib: 73/73 passed
+- cargo test -p octo-cli --lib: 287/287 passed
+- cargo clippy -p octo-runtime -p octo-cli --all-targets -- -D
+  warnings: clean
+- cargo fmt --all --check: clean
+- npx prettier --check on RFC + mission YAML: clean
+
+R18 reviewers aggregate: 0 layer-model + 1 HIGH simplification +
+1 MED substrate-faithfulness + 3 HIGH hygiene + 1 HIGH
+correctness = 6 HIGH + 1 MED substantive. All landed in this
+sweep.
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.

@@ -34,7 +34,7 @@ use std::sync::{OnceLock, RwLock};
 
 use uuid::Uuid;
 
-use crate::handle::error::{PersistenceError, RevocationError};
+use crate::handle::error::{AttachError, PersistenceError};
 use crate::handle::SessionId;
 
 /// Per-agent cursor persistence (RFC-0011-c §F.3).
@@ -109,12 +109,15 @@ fn revocation_set() -> &'static RwLock<HashSet<SessionId>> {
 /// indefinitely (until process restart).
 ///
 /// # Errors
-/// Returns `RevocationError::Poisoned` when the underlying `RwLock`
-/// was poisoned by a previous panic during a revocation operation.
-pub fn revoke_attach_token(session_id: SessionId) -> Result<(), RevocationError> {
+/// Returns `AttachError::RevocationError(reason)` when the
+/// underlying `RwLock` was poisoned by a previous panic during a
+/// revocation operation. The canonical revocation-set envelope
+/// lives on `AttachError` per RFC-0011-c §F.4 (the standalone
+/// `RevocationError` enum was folded into `AttachError`).
+pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError> {
     let mut guard = revocation_set()
         .write()
-        .map_err(|e| RevocationError::Poisoned(e.to_string()))?;
+        .map_err(|e| AttachError::RevocationError(format!("revocation set poisoned: {e}")))?;
     guard.insert(session_id);
     Ok(())
 }

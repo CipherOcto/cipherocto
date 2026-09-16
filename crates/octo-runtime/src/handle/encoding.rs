@@ -199,7 +199,7 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
     }
 
     // Verify signature.
-    verify_with_pubkey(
+    crate::handle::signing::verify_attach_handle_payload(
         holder_pubkey,
         &session_id,
         &payload_canonical,
@@ -347,29 +347,9 @@ fn decode_transport(bytes: &[u8]) -> Result<(Transport, usize), AttachError> {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: signature verification helper.
+// Internal: signature verification helper lives in `signing.rs`.
+// `decode_token` calls through to the canonical helper there.
 // ---------------------------------------------------------------------------
-
-fn verify_with_pubkey(
-    holder_pubkey: &[u8; 32],
-    session_id: &SessionId,
-    payload: &AttachPayload,
-    mint_timestamp_unix: u64,
-    ttl_unix: u64,
-    sig: &Signature,
-) -> Result<(), AttachError> {
-    use octo_wallet::ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
-
-    let vk = VerifyingKey::from_bytes(holder_pubkey).map_err(|e| AttachError::BadSignature {
-        reason: format!("invalid public key: {e}"),
-    })?;
-    let dalek_sig = DalekSignature::from_bytes(&sig.0);
-    let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
-    vk.verify(&msg, &dalek_sig)
-        .map_err(|e| AttachError::BadSignature {
-            reason: format!("ed25519 verify: {e}"),
-        })
-}
 
 #[cfg(test)]
 mod tests {

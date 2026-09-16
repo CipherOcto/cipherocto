@@ -488,12 +488,16 @@ pub enum OctoCliError {
     },
 
     /// `octo_runtime::spawn_agent` returned a substrate-level failure
-    /// (handle mint failed, channel registration error, invalid
-    /// attach handle token reused). Mapped from
+    /// (handle mint failed, channel registration error, reused
+    /// handle). Mapped from
     /// `octo_runtime::RuntimeError::RuntimeSpawnFailed { reason }`
-    /// and `RuntimeError::InvalidAttachHandle` at the dispatch
-    /// boundary. Exit 44 per RFC-0011-c §9.8 slot allocation
-    /// (RFC-0011-c agent amendment chain slots 39-52 reserved).
+    /// at the dispatch boundary. Exit 44 per RFC-0011-c §9.8
+    /// slot allocation (RFC-0011-c agent amendment chain slots
+    /// 39-52 reserved). The legacy `RuntimeError::InvalidAttachHandle`
+    /// variant was folded into `RuntimeSpawnFailed` during the
+    /// Path B rename — substrate-visible 6-field `AttachHandle`
+    /// token errors surface via the `AttachError` envelope
+    /// (`From<AttachError> for OctoCliError` below).
     #[error("runtime spawn failed: {reason}")]
     RuntimeSpawnFailed {
         /// Substrate-internal failure reason (sanitized by CLI via
@@ -595,6 +599,37 @@ pub enum OctoCliError {
     /// `octo_runtime::AttachError::RevocationError`. Exit 58.
     #[error("revocation error: {0}")]
     RevocationError(String),
+
+    /// Operator-supplied session id hex string failed to parse
+    /// (wrong length, non-UTF-8 bytes, non-hex pair). Raised at the
+    /// CLI boundary when parsing `--session-id` for
+    /// `octo agent revoke-attach` and downstream attach
+    /// subcommands. Distinct from `AttachHandleBadSignature` (exit
+    /// 54) which is the substrate-side signature-verify failure;
+    /// this is a CLI-parse failure on operator input. Exit 47 per
+    /// RFC-0011-c §9.8 extension slots 39-58.
+    #[error("invalid session id hex: {reason}")]
+    InvalidSessionIdHex {
+        /// Diagnostic reason (length / encoding / non-hex).
+        reason: String,
+    },
+
+    /// `octo agent attach --since <UNIX>` carried a cursor that is
+    /// below the token's mint timestamp — the token cannot
+    /// authorize events that pre-date it. Mapped from
+    /// `octo_runtime::AttachError::InvalidSinceCursor` per
+    /// RFC-0011-c §F.2 validation chain step (d). Exit 53 (shared
+    /// slot with `AttachHandleExpired` per amendment-chain
+    /// shared-slot pattern; operator-unambiguous within the attach
+    /// command surface — the render layer distinguishes the two
+    /// payloads).
+    #[error("invalid since cursor: requested {requested} is below token mint {mint_unix}")]
+    InvalidSinceCursor {
+        /// Token mint timestamp (lower-bound replay horizon).
+        mint_unix: u64,
+        /// `since_unix` supplied by the caller (below mint).
+        requested: u64,
+    },
 }
 
 impl OctoCliError {
@@ -705,6 +740,11 @@ impl OctoCliError {
             Self::AttachSessionUnknown(_) => 56,
             Self::PersistenceError(_) => 57,
             Self::RevocationError(_) => 58,
+            Self::InvalidSessionIdHex { .. } => 47,
+            // Shared slot with `AttachHandleExpired` (exit 53) per
+            // amendment-chain shared-slot pattern; the render layer
+            // distinguishes the two payloads.
+            Self::InvalidSinceCursor { .. } => 53,
         }
     }
 
@@ -894,6 +934,12 @@ impl OctoCliError {
             }
             Self::RevocationError(_) => {
                 "the process-singleton revocation set mutation/lookup failed (RFC-0011-c §F.3); this is a substrate-internal failure distinct from a successful revocation (which is silent)".to_string()
+            }
+            Self::InvalidSessionIdHex { .. } => {
+                "the session id supplied on the CLI is not a 64-char lowercase hex string; verify the input and retry".to_string()
+            }
+            Self::InvalidSinceCursor { .. } => {
+                "the `--since` cursor is below the token's mint timestamp; the token cannot authorize events that pre-date it; mint a fresh token via `octo agent run --detach` and retry".to_string()
             }
         };
         Some(h)
@@ -1208,6 +1254,13 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             octo_runtime::AttachError::RevocationError(reason) => {
                 Self::RevocationError(sanitize_substrate_error(&reason))
             }
+            octo_runtime::AttachError::InvalidSinceCursor {
+                mint_unix,
+                requested,
+            } => Self::InvalidSinceCursor {
+                mint_unix,
+                requested,
+            },
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to
             // `Internal(reason)` exit 64 — same pattern as the audit

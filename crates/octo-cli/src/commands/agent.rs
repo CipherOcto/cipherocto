@@ -1309,16 +1309,20 @@ mod revoke_attach {
         let session_id = decode_session(session_id_hex)?;
 
         octo_runtime::revoke_attach_token(session_id).map_err(|e| match e {
-            // The substrate returns `RevocationError` (not
-            // `AttachError`) for revoke-path failures — the
-            // process-singleton `RwLock` only fails closed via
-            // `RevocationError::Poisoned`. Surface it directly; the
-            // wildcard arm collapses future additive variants
-            // (`#[non_exhaustive]` on `RevocationError`) to the same
-            // operator-facing envelope.
-            octo_runtime::RevocationError::Poisoned(reason) => {
+            // The substrate folds revocation-set failures into
+            // `AttachError::RevocationError(String)` per
+            // RFC-0011-c §F.4 (the standalone `RevocationError`
+            // enum was folded into the canonical envelope). The
+            // `String` payload is the canonical reason (e.g.
+            // "revocation set poisoned: ..."); surface verbatim
+            // via `OctoCliError::RevocationError(reason)`.
+            octo_runtime::AttachError::RevocationError(reason) => {
                 OctoCliError::RevocationError(reason)
             }
+            // Any other substrate envelope variant landed — fold
+            // into the same operator-facing envelope. This is the
+            // additive-safety guarantee: `#[non_exhaustive]` on
+            // the substrate shape cannot break the CLI bridge.
             other => OctoCliError::RevocationError(format!("{other}")),
         })?;
 

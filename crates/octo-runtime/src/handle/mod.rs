@@ -45,7 +45,7 @@ use crate::error::RuntimeError;
 // Re-export the `SessionId` type used by the pkg submodules so the
 // rest of the crate can keep a single import path
 // (`crate::handle::SessionId`).
-pub use error::{AttachError, PersistenceError, RevocationError};
+pub use error::{AttachError, PersistenceError};
 
 /// Random 32-byte session identifier (RFC-0011-c §F.2).
 ///
@@ -64,28 +64,25 @@ pub type SessionId = [u8; 32];
 /// business semantics in composed Layer B).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Signature(#[serde(with = "serde_bytes_64")] pub [u8; 64]);
+pub struct Signature(#[serde(with = "signature_bytes_serde")] pub [u8; 64]);
 
-/// Adapter for serde to handle `[u8; 64]` via `[u8]` length-prefixed
-/// arrays. Stable across serde versions per `serde::Serializer` +
-/// `serde::Deserializer` contracts.
-mod serde_bytes_64 {
+/// Serde adapter for `[u8; 64]` — required because `serde`'s
+/// `derive` feature only ships array support up to length 32
+/// (`[T; 0]` .. `[T; 32]`); the substrate-visible 64-byte
+/// signature exceeds that bound. The adapter serializes as a
+/// length-prefixed `[u8]` sequence, the most widely-supported
+/// JSON form for fixed-width byte strings.
+mod signature_bytes_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
-        bytes.as_ref().serialize(ser)
+        bytes.as_slice().serialize(ser)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
         let v: Vec<u8> = Vec::deserialize(de)?;
         v.try_into()
-            .map_err(|_| serde::de::Error::custom("expected 64-byte array"))
-    }
-}
-
-impl AsRef<[u8]> for Signature {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
+            .map_err(|_| serde::de::Error::custom("expected 64-byte signature array"))
     }
 }
 
@@ -800,7 +797,6 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Signature = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
-        assert_eq!(s.as_ref(), &[0xa5; 64][..]);
     }
 
     #[test]

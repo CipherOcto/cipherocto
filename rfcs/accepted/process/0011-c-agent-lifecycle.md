@@ -372,26 +372,33 @@ detects a replay, it returns `ReplayDetected { digest }` (exit 50).
 ### 9.8 Error Handling
 
 New `OctoCliError` variants are added (all `#[non_exhaustive]`
-inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-52**
-(post -g's 35-38; renegotiation needed if -h/i follow-on amendments
-claim earlier slots):
+inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-58**
+(post -g's 35-38; 14 base amendment + 6 follow-on amendment
+AttachHandle/AttachSession variants per §F.4 mirror; renegotiation
+needed if -h/i follow-on amendments claim earlier slots):
 
-| Variant                               | Exit code | Notes                                                           |
-| ------------------------------------- | --------- | --------------------------------------------------------------- |
-| `ManifestParseError { path, reason }` | 39        | Manifest file unparseable; CLI never invents missing fields     |
-| `CapabilityValidationFailed(usize)`   | 40        | step number from RFC-0002 §Capability Validation                |
-| `AgentAlreadyExists(Uuid)`            | 41        | Substrate rejects duplicate `agent_id`                          |
-| `AgentNotFound(Uuid)`                 | 42        | Used by `agent run`/`agent list`/`agent destroy`/`agent attach` |
-| `InvalidStateTransition { from, to }` | 43        | State machine rejects transition                                |
-| `RuntimeSpawnFailed { reason }`       | 44        | `agent run` runtime container spawn failure                     |
-| `InvalidLimit`                        | 45        | `agent list --limit 0`                                          |
-| `InvalidCursor`                       | 46        | `agent list --cursor <bad>`                                     |
-| `ConfirmationRequired`                | 47        | `agent destroy` without `--confirm` (parent §Error Handling)    |
-| `AgentNotRunning(Uuid)`               | 48        | `agent attach` against TERMINATED                               |
-| `RuntimeAttachFailed { reason }`      | 49        | `agent attach` runtime refused                                  |
-| `ReplayDetected { digest }`           | 50        | RFC-0002 §Replay Protection triggered                           |
-| `RuntimeSubstrateNotReady`            | 51        | `octo-runtime` substrate not yet landed                         |
-| `AuditSubstrateNotReady`              | 52        | `octo-audit` (RFC-0011-a) substrate not yet landed              |
+| Variant                                                         | Exit code | Notes                                                                         |
+| --------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------- |
+| `ManifestParseError { path, reason }`                           | 39        | Manifest file unparseable; CLI never invents missing fields                   |
+| `CapabilityValidationFailed(usize)`                             | 40        | step number from RFC-0002 §Capability Validation                              |
+| `AgentAlreadyExists(Uuid)`                                      | 41        | Substrate rejects duplicate `agent_id`                                        |
+| `AgentNotFound(Uuid)`                                           | 42        | Used by `agent run`/`agent list`/`agent destroy`/`agent attach`               |
+| `InvalidStateTransition { from, to }`                           | 43        | State machine rejects transition                                              |
+| `RuntimeSpawnFailed { reason }`                                 | 44        | `agent run` runtime container spawn failure                                   |
+| `InvalidLimit`                                                  | 45        | `agent list --limit 0`                                                        |
+| `InvalidCursor`                                                 | 46        | `agent list --cursor <bad>`                                                   |
+| `ConfirmationRequired`                                          | 47        | `agent destroy` without `--confirm` (parent §Error Handling)                  |
+| `AgentNotRunning(Uuid)`                                         | 48        | `agent attach` against TERMINATED                                             |
+| `RuntimeAttachFailed { reason }`                                | 49        | `agent attach` runtime refused                                                |
+| `ReplayDetected { digest }`                                     | 50        | RFC-0002 §Replay Protection triggered                                         |
+| `RuntimeSubstrateNotReady`                                      | 51        | `octo-runtime` substrate not yet landed                                       |
+| `AuditSubstrateNotReady`                                        | 52        | `octo-audit` (RFC-0011-a) substrate not yet landed                            |
+| `AttachHandleExpired { session_id, expired_at_unix, now_unix }` | 53        | §F.4 mirror — TTL elapsed at step (c) of `attach_with_token` validation chain |
+| `AttachHandleBadSignature { reason }`                           | 54        | §F.4 mirror — step (a) signature verify failure                               |
+| `AttachSessionMismatch { declared, actual }`                    | 55        | §F.4 mirror — step (e) session_id registry mismatch                           |
+| `AttachSessionUnknown { session_id }`                           | 56        | §F.4 mirror — step (e) session_id absent from running registry                |
+| `PersistenceError(String)`                                      | 57        | §F.4 passthrough — Stoolap ledger feature-disabled or fault                   |
+| `RevocationError(String)`                                       | 58        | §F.4 passthrough — step (b) revocation-set check failed                       |
 
 The CLI reuses parent's `HsmUnavailable` (exit 5 per RFC-0011
 §Error Handling) instead of inventing `HsmUnreachable`. The CLI
@@ -399,7 +406,7 @@ reuses parent's `ConfirmationRequired` (exit 2 per RFC-0011
 §Error Handling) for the CLI-level re-check; the substrate-level
 exit 47 is additive per `#[non_exhaustive]`.
 
-Exit codes 39–52 sit in the reserved 17–63 range per RFC-0011
+Exit codes 39–58 sit in the reserved 17–63 range per RFC-0011
 §Exit Codes.
 
 ### 9.9 RFC-0008 Execution Class Mapping
@@ -701,14 +708,14 @@ decomposition is **flat** (no nested sub-missions) per
 
 ### SUBSTRATE (follow-on missions, NOT this RFC cycle)
 
-- `crates/octo-cli/Cargo.toml` — add `octo-runtime = { path = "../octo-runtime" }` (Layer B substrate)
-- `crates/octo-cli/src/commands/agent.rs` — NEW; `Commands::Agent` clap enum + `AgentAction::{Create, Run, List, Destroy, Attach}` dispatch + 5 payload types (per RFC-0011-c §9.3)
-- `crates/octo-cli/src/error.rs` — add 14 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-52)
-- `crates/octo-cli/src/redact.rs` — add agent-specific redaction patterns (`agent_id`, `holder_did`, `capability_root` per RFC-0011-c §Security)
-- `crates/octo-runtime/src/lib.rs` — NEW (per companion mission `0011-c-octo-runtime-substrate`); `spawn_agent` + `attach` + `RuntimeHandle` + `EventStream`
-- `crates/octo-runtime/src/spawn.rs` — NEW; `spawn_agent` impl
-- `crates/octo-runtime/src/attach.rs` — NEW; `attach` impl
-- `crates/octo-runtime/Cargo.toml` — NEW; deps per companion mission
+- `octo-cli` Cargo manifest — add `octo-runtime = { path = "../octo-runtime" }` (Layer B substrate)
+- `octo_cli::commands::agent` module — NEW; `Commands::Agent` clap enum + `AgentAction::{Create, Run, List, Destroy, Attach}` dispatch + 5 payload types (per RFC-0011-c §9.3)
+- `octo_cli::error` module — add 14 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-58)
+- `octo_cli::redact` module — add agent-specific redaction patterns (`agent_id`, `holder_did`, `capability_root` per RFC-0011-c §Security)
+- `octo_runtime` crate root — NEW (per companion mission `0011-c-octo-runtime-substrate`); `spawn_agent` + `attach` + `RuntimeHandle` + `EventStream`
+- `octo_runtime::spawn` module — NEW; `spawn_agent` impl
+- `octo_runtime::attach` module — NEW; `attach` impl
+- `octo-runtime` Cargo manifest — NEW; deps per companion mission
 
 ## Future Work
 
@@ -861,8 +868,9 @@ script before the v1.1 release.
 - **Stub deprecation** — the legacy `octo agent` stub (RFC-0011
   §Compatibility) emits `StaleStub` (exit 65) starting at CLI v1.0.
   Operators relying on the stub must migrate before v1.1.
-- **New exit codes** — exit codes 39–52 added to the reserved
-  17–63 range (RFC-0011 §Exit Codes). Existing exit codes
+- **New exit codes** — exit codes 39–58 added to the reserved
+  17–63 range (RFC-0011 §Exit Codes; base amendment 39–52
+  plus follow-on amendment 53–58 per §9.8). Existing exit codes
   unchanged.
 
 ### Privacy Considerations

@@ -68,7 +68,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 
 ## Acceptance Criteria
 
-- [ ] **AC-1** `AttachHandle` struct (Layer B) defined at `crates/octo-runtime/src/handle.rs` per RFC-0011-c §F.2; existing 3-field in-process binding RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod of existing callers)
+- [ ] **AC-1** `AttachHandle` struct (Layer B) defined at the `octo_runtime::handle` module per RFC-0011-c §F.2; existing 3-field in-process binding RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod of existing callers)
 - [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet::identity`)
 - [ ] **AC-3** `encode_token` + `decode_token` round-trip (Layer B) per RFC-0011-c §F.1 with signature verification
 - [ ] **AC-4** `attach_with_token()` binds in-process or via UnixSocket based on `Transport` discriminator (Q-deferred 1) per RFC-0011-c §F.2; existing `attach(handle, since)` UNCHANGED

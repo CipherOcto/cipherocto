@@ -58,7 +58,7 @@ pub use attach::{attach, clamp_since};
 pub use error::RuntimeError;
 pub use handle::{
     encoding::{canonical_payload_bytes, decode_token, encode_token},
-    error::{AttachError, PersistenceError, RevocationError},
+    error::{AttachError, PersistenceError},
     signing::{mint_attach_handle, sign_attach_handle_payload, verify_attach_handle_payload},
     AgentState, AgentStateDispatcher, AttachHandle, AttachPayload, AttachedSession, EventStream,
     RuntimeEvent, RuntimeHandle, RuntimeHandleBinding, RuntimeHandleId, SessionId, Signature,
@@ -96,38 +96,39 @@ pub async fn execute_agent(name: &str) -> Result<String, String> {
 ///
 /// # Errors
 /// - `AttachError::BadSignature` — step (a) fail
+/// - `AttachError::RevocationError` — step (b) fail (session revoked)
 /// - `AttachError::Expired` — step (c) fail (TTL elapsed)
+/// - `AttachError::InvalidSinceCursor` — step (d) fail (`since_unix` below mint)
 /// - `AttachError::SessionMismatch` / `UnknownSession` — step (e) fail
 pub async fn attach_with_token(
+    holder_pubkey: &[u8; 32],
     token: &AttachHandle,
     since_unix: u64,
 ) -> Result<AttachedSession, AttachError> {
-    // (a) Signature verify.
-    let holder_pubkey = token.signature.as_ref();
-    // The substrate-visible pubkey is not stored in the token (it
-    // is supplied by the verifier at decode time); for the
-    // validation chain we accept any pubkey — the CLI is the
-    // canonical holder-pubkey resolver. We use the local
-    // verification helper that takes arbitrary pubkey bytes.
-    //
-    // NOTE: this is a process-local helper. Production deployments
-    // route the holder pubkey through the active-identity resolver
-    // (`octo_wallet::active_identity`). Phase 1 keeps the substrate
-    // pure so the CLI owns the resolution path.
-    let _ = holder_pubkey; // holder pubkey resolved at the CLI boundary
+    // (a) Signature verify — canonical helper enforces the same
+    // canonical-bytes form used at mint time. Bad signature →
+    // substrate-faithful `BadSignature` envelope.
+    verify_attach_handle_payload(
+        holder_pubkey,
+        &token.session_id,
+        &token.payload,
+        token.mint_timestamp_unix,
+        token.ttl_unix,
+        &token.signature,
+    )?;
+
+    // (b) Revocation-set fast-path check.
+    if is_token_revoked(&token.session_id) {
+        return Err(AttachError::RevocationError(format!(
+            "session 0x{} revoked",
+            hex::encode(token.session_id)
+        )));
+    }
+
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-
-    // (b) Revocation-set fast-path check.
-    if is_token_revoked(&token.session_id) {
-        return Err(AttachError::Expired {
-            session_id: token.session_id,
-            expired_at_unix: token.ttl_unix,
-            now_unix,
-        });
-    }
 
     // (c) TTL check (now_unix <= ttl_unix).
     if now_unix > token.ttl_unix {
@@ -140,10 +141,9 @@ pub async fn attach_with_token(
 
     // (d) since_unix must be >= mint_timestamp_unix.
     if since_unix < token.mint_timestamp_unix {
-        return Err(AttachError::Expired {
-            session_id: token.session_id,
-            expired_at_unix: token.mint_timestamp_unix,
-            now_unix: since_unix,
+        return Err(AttachError::InvalidSinceCursor {
+            mint_unix: token.mint_timestamp_unix,
+            requested: since_unix,
         });
     }
 

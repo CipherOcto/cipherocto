@@ -61,6 +61,22 @@ pub enum AttachError {
         session_id: SessionId,
     },
 
+    /// `since_unix < token.mint_timestamp_unix` — the requested replay
+    /// cursor is below the token's mint timestamp (the token cannot
+    /// authorize events that pre-date it). Distinct from `Expired`
+    /// (TTL boundary) per RFC-0011-c §F.2 validation chain step (d).
+    /// CLI exit 53 (shared slot with `Expired` per amendment-chain
+    /// shared-slot pattern; operator-unambiguous within the attach
+    /// command surface — the render layer distinguishes the two
+    /// payloads).
+    #[error("since cursor {requested} is below token mint {mint_unix}")]
+    InvalidSinceCursor {
+        /// Token mint timestamp (the lower-bound replay horizon).
+        mint_unix: u64,
+        /// `since_unix` supplied by the caller (below mint).
+        requested: u64,
+    },
+
     /// Persistence layer failure (Stoolap cursor store; gated on the
     /// `octo-runtime-persistence` feature). CLI exit 57.
     #[error("persistence error: {0}")]
@@ -92,20 +108,6 @@ pub enum PersistenceError {
     /// Stoolap cursor read failed.
     #[error("stoolap cursor read failed: {0}")]
     StoolapReadFailed(String),
-}
-
-/// Revocation-set error envelope (in-memory
-/// `RwLock<HashSet<SessionId>>` revocation set).
-///
-/// The set is a process-singleton; only failure modes are mutex
-/// poisoning on a panic during a previous revocation operation.
-#[derive(Error, Debug)]
-#[non_exhaustive]
-pub enum RevocationError {
-    /// Underlying `RwLock` was poisoned (a previous panic during a
-    /// revocation operation).
-    #[error("revocation set poisoned: {0}")]
-    Poisoned(String),
 }
 
 #[cfg(test)]
@@ -178,9 +180,14 @@ mod tests {
     }
 
     #[test]
-    fn revocation_error_poisoned_display() {
-        let e = RevocationError::Poisoned("previous panic".into());
-        assert!(e.to_string().contains("poisoned"));
-        assert!(e.to_string().contains("previous panic"));
+    fn invalid_since_cursor_display_includes_mint_and_requested() {
+        let e = AttachError::InvalidSinceCursor {
+            mint_unix: 1_000,
+            requested: 500,
+        };
+        let s = e.to_string();
+        assert!(s.contains("since cursor"), "{s}");
+        assert!(s.contains("1000"), "{s}");
+        assert!(s.contains("500"), "{s}");
     }
 }

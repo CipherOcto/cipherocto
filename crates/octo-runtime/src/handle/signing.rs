@@ -60,7 +60,7 @@ pub fn sign_attach_handle_payload(
 /// malformed public key bytes.
 pub fn verify_attach_handle_payload(
     holder_pubkey: &[u8; 32],
-    session_id: SessionId,
+    session_id: &SessionId,
     payload: &AttachPayload,
     mint_timestamp_unix: u64,
     ttl_unix: u64,
@@ -72,7 +72,7 @@ pub fn verify_attach_handle_payload(
         reason: format!("invalid public key: {e}"),
     })?;
     let dalek_sig = DalekSignature::from_bytes(&sig.0);
-    let msg = canonical_payload_bytes(&session_id, payload, mint_timestamp_unix, ttl_unix);
+    let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
     vk.verify(&msg, &dalek_sig)
         .map_err(|e| AttachError::BadSignature {
             reason: format!("ed25519 verify: {e}"),
@@ -94,7 +94,6 @@ pub fn mint_attach_handle(
     agent_id: Uuid,
     session_id: SessionId,
     since_cursor: u64,
-    mint_timestamp_unix: u64,
     ttl_unix: u64,
     transport: Transport,
 ) -> Result<AttachHandle, AttachError> {
@@ -102,6 +101,14 @@ pub fn mint_attach_handle(
         agent_id,
         since_cursor,
     };
+    // The mint timestamp is the substrate-visible wall-clock at
+    // mint time; `SystemTime::now()` is the canonical substrate
+    // clock per RFC-0009 §Time Authority. CLI callers cannot
+    // back-date the token.
+    let mint_timestamp_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let signature =
         sign_attach_handle_payload(holder, session_id, &payload, mint_timestamp_unix, ttl_unix)?;
     Ok(AttachHandle {
@@ -136,7 +143,7 @@ mod tests {
         };
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
-        verify_attach_handle_payload(&pk, session_id, &payload, 1_000, 2_000, &sig)
+        verify_attach_handle_payload(&pk, &session_id, &payload, 1_000, 2_000, &sig)
             .expect("verify");
     }
 
@@ -152,7 +159,7 @@ mod tests {
         let mut sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         sig.0[0] ^= 0x01;
-        let result = verify_attach_handle_payload(&pk, session_id, &payload, 1_000, 2_000, &sig);
+        let result = verify_attach_handle_payload(&pk, &session_id, &payload, 1_000, 2_000, &sig);
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "tampered sig must reject, got {result:?}"
@@ -171,7 +178,7 @@ mod tests {
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         let wrong_pk = [0xee; 32];
         let result =
-            verify_attach_handle_payload(&wrong_pk, session_id, &payload, 1_000, 2_000, &sig);
+            verify_attach_handle_payload(&wrong_pk, &session_id, &payload, 1_000, 2_000, &sig);
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "wrong pubkey must reject, got {result:?}"
@@ -189,7 +196,7 @@ mod tests {
         };
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
-        let result = verify_attach_handle_payload(&pk, session_id, &payload, 9_999, 2_000, &sig);
+        let result = verify_attach_handle_payload(&pk, &session_id, &payload, 9_999, 2_000, &sig);
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "tampered mint must reject, got {result:?}"
@@ -207,7 +214,6 @@ mod tests {
             agent_id,
             session_id,
             5,
-            1_700_000_000,
             1_700_003_600,
             Transport::IN_PROCESS,
         )
@@ -215,7 +221,7 @@ mod tests {
         // Token is signed; verify using the static helper.
         verify_attach_handle_payload(
             &pk,
-            token.session_id,
+            &token.session_id,
             &token.payload,
             token.mint_timestamp_unix,
             token.ttl_unix,
@@ -237,7 +243,6 @@ mod tests {
             agent_id,
             session_id,
             0,
-            1_700_000_000,
             1_700_003_600,
             Transport::IN_PROCESS,
         );

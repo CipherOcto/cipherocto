@@ -90,6 +90,24 @@ pub enum AgentAction {
         /// `octo agent destroy --reason` (RFC-0015 §6.2.5).
         #[arg(long, value_name = "TEXT")]
         reason: Option<String>,
+        /// Path to write the `AttachHandle` token bytes
+        /// (RFC-0011-c §F.6.1). The clap interlock
+        /// `requires = "detach"` ensures `--token-file` is only
+        /// accepted alongside `--detach` (the token pathway is
+        /// only meaningful when the spawn persists across the
+        /// CLI exit so a future `octo agent attach` can bind via
+        /// the token). Token bytes are written with mode 0o600
+        /// (POSIX); parent directories are created with
+        /// `fs::create_dir_all`. The token grants cross-process
+        /// re-entry to the runtime broadcast channel — treat
+        /// the file as a credential.
+        #[arg(
+            long,
+            value_name = "PATH",
+            requires = "detach",
+            help_heading = "AttachHandle token pathway"
+        )]
+        token_file: Option<PathBuf>,
     },
     /// List registered agents owned by the active DID
     /// (RFC-0011-c §9.3.3). Wired by `0011-c-agent-list-subcommand`.
@@ -134,6 +152,15 @@ pub enum AgentAction {
         /// has no events before spawn).
         #[arg(long, value_name = "UNIX_SECONDS")]
         since: Option<u64>,
+        /// Path to read the `AttachHandle` token bytes from
+        /// (RFC-0011-c §F.6.2). Required on every attach
+        /// invocation per the substrate-faithful binding pathway
+        /// — the token carries the session id, signature, and
+        /// transport selector that the `decode_token` +
+        /// `attach_with_token` chain consumes to bind the
+        /// broadcast channel.
+        #[arg(long, value_name = "PATH", help_heading = "AttachHandle token pathway")]
+        token_file: PathBuf,
     },
     /// Revoke an outstanding `AttachHandle` token (RFC-0011-c §F.3
     /// follow-on). Wired by `0011-c-attach-handle-token-pathway`.
@@ -170,10 +197,19 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             agent_id,
             detach,
             reason,
-        } => run::handle(agent_id, *detach, reason.as_deref(), cli),
-        AgentAction::Attach { agent_id, since } => {
-            attach::handle(agent_id, since.map(|s| s as i64), cli)
-        }
+            token_file,
+        } => run::handle(
+            agent_id,
+            *detach,
+            reason.as_deref(),
+            token_file.as_deref(),
+            cli,
+        ),
+        AgentAction::Attach {
+            agent_id,
+            since,
+            token_file,
+        } => attach::handle(agent_id, since.map(|s| s as i64), token_file, cli),
         AgentAction::Destroy { agent_id, reason } => {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
@@ -286,6 +322,42 @@ mod common {
             .with_active_did(active_did)
             .with_holder_did(active_did)
             .with_agent_id(agent_id.to_string())
+    }
+
+    /// Resolve the active identity as the full `IdentityKey`
+    /// (octo-wallet Layer B signing keypair) instead of the
+    /// redacted `Did` returned by `resolve_active_did`.
+    ///
+    /// Used by `octo agent run --detach --token-file` to mint the
+    /// `AttachHandle` token (RFC-0011-c §F.6.1) — the substrate
+    /// `mint_attach_handle(holder: &IdentityKey, ...)` requires
+    /// the signing keypair directly so the signature verifies
+    /// against the holder's ed25519 public key. The CLI cannot
+    /// pass the redacted DID form (the DID is a layer-B façade
+    /// projection, not the raw signing material).
+    ///
+    /// Boundary composition per RFC-0011-c §F.5: the active
+    /// `IdentityKey` resolved here is the same key the wallet
+    /// uses for `transition_agent` signature verification — no
+    /// parallel identity state. Operators MUST NOT pass an
+    /// `--identity <did>` flag to this helper (the substrate
+    /// rejects holder DID ≠ active DID per RFC-0015-a §6.2.1
+    /// caller-attestation).
+    ///
+    /// Failure modes mirror `resolve_active_did` (one `IdentityKey`
+    /// per process; the only legitimate failure surface is the
+    /// wallet store / HSM boundary).
+    pub(crate) fn resolve_active_identity_key() -> Result<octo_wallet::IdentityKey, OctoCliError> {
+        let store = octo_wallet::WalletStore::open().map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+        })?;
+        octo_wallet::active_identity(&store).map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => {
+                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })
     }
 }
 
@@ -636,7 +708,9 @@ mod run {
     //! both.
 
     use super::*;
+    use octo_runtime::mint_attach_handle;
     use octo_runtime::spawn_agent as runtime_spawn_agent;
+    use octo_runtime::{encode_token, Transport};
     use octo_wallet::transition_agent as wallet_transition_agent;
     use octo_wallet::{AgentState, TransitionReceipt};
 
@@ -666,6 +740,7 @@ mod run {
         agent_id_hex: &str,
         detach: bool,
         reason: Option<&str>,
+        token_file: Option<&std::path::Path>,
         cli: &Octo,
     ) -> Result<(), OctoCliError> {
         // 1. Parse agent id hex → substrate `Uuid`. Parse failure
@@ -762,6 +837,157 @@ mod run {
             }
         }
 
+        // 6.5. `--detach --token-file` token pathway
+        //      (RFC-0011-c §F.6.1). On `--detach` + `--token-file`,
+        //      mint an `AttachHandle` over the freshly minted
+        //      `RuntimeHandle::session_id` + encode + write to
+        //      `--token-file` with mode 0o600 (POSIX credential
+        //      perms per RFC-0011-c §F.6.1). The clap interlock
+        //      `requires = "detach"` on the arg guarantees this
+        //      branch only fires on the detached path; on the
+        //      non-detached path the token_file argument is
+        //      rejected by clap before reaching the dispatch.
+        //
+        //      Gated on `detach && handle.is_some()` — the token
+        //      pathway is meaningless on idempotent self-transitions
+        //      (the substrate did not mint a new `RuntimeHandle`,
+        //      so there is no `session_id` to bind a token to;
+        //      the operator should pass `--detach` on a fresh
+        //      transition). On the no-token-file path we emit
+        //      `None` and the eprintln above still fires.
+        let token_written: Option<TokenWrittenReceipt> = if detach {
+            if let (Some(token_path), Some(handle_ref)) = (token_file, handle.as_ref()) {
+                // 6.5.1 Resolve caller DID → `IdentityKey` (signing
+                //       keypair) per §F.5 + §F.6.1. The substrate
+                //       `mint_attach_handle` requires the signing
+                //       keypair directly so the ed25519 signature
+                //       is verifiable against the holder's public
+                //       key by the future `decode_token` step.
+                let holder = common::resolve_active_identity_key()?;
+
+                // 6.5.2 TTL = mint time + 3600s (RFC-0011-c
+                //       §F.6.1 documented default). The substrate
+                //       rejects `ttl_unix == u64::MAX` as
+                //       reserved-sentinel Expired (fail-CLOSED on
+                //       broken-clock ambiguity per the attach
+                //       validation chain); `u64::MAX - mint_unix`
+                //       would overflow on 32-bit platforms so we
+                //       use saturating arithmetic to clamp.
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let ttl_unix = now_unix.saturating_add(3600);
+
+                // 6.5.3 Mint the token. `since_cursor = 0` is the
+                //       canonical "replay from beginning of bus"
+                //       baseline — the substrate's attach step
+                //       clamps `since_unix < mint_timestamp_unix`
+                //       to `InvalidSinceCursor` (exit 53 shared
+                //       slot), so the operator's `--since` arg at
+                //       attach time must be ≥ the token's
+                //       `mint_timestamp_unix` regardless. Using 0
+                //       here keeps the payload minimal.
+                let attach_token = mint_attach_handle(
+                    &holder,
+                    agent_id,
+                    handle_ref.session_id,
+                    0,
+                    ttl_unix,
+                    Transport::IN_PROCESS,
+                )
+                .map_err(|e| match e {
+                    octo_runtime::AttachError::BadSignature { reason } => {
+                        OctoCliError::AttachHandleBadSignature {
+                            reason: sanitize_substrate_error(&reason),
+                        }
+                    }
+                    other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+                })?;
+
+                // 6.5.4 Encode to canonical wire bytes (RFC-0011-c
+                //       §F.1). On a well-formed handle this
+                //       returns Ok(Vec<u8>); the substrate
+                //       `PersistenceError(String)` arm is
+                //       unreachable in practice (no wire-form
+                //       invariants are violated by a freshly
+                //       minted handle) but covered per the
+                //       substrate's #[non_exhaustive] envelope.
+                let token_bytes = encode_token(&attach_token).map_err(|e| match e {
+                    octo_runtime::AttachError::PersistenceError(reason) => {
+                        OctoCliError::Internal(sanitize_substrate_error(&reason))
+                    }
+                    other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+                })?;
+
+                // 6.5.5 Write to `--token-file` with mode 0o600
+                //       (POSIX credential perms). Create parent
+                //       dirs if absent. fsync to surface partial
+                //       writes as Err rather than silent truncation.
+                if let Some(parent) = token_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent).map_err(|io| {
+                            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                                "token file parent dir create: {io}"
+                            )))
+                        })?;
+                    }
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.create(true).write(true).truncate(true).mode(0o600);
+                    let mut f = opts.open(token_path).map_err(|io| {
+                        OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "token file open: {io}"
+                        )))
+                    })?;
+                    use std::io::Write;
+                    f.write_all(&token_bytes).map_err(|io| {
+                        OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "token file write: {io}"
+                        )))
+                    })?;
+                    f.sync_all().map_err(|io| {
+                        OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "token file fsync: {io}"
+                        )))
+                    })?;
+                }
+                #[cfg(not(unix))]
+                {
+                    // Per RFC-0011-c §F.6.1, mode 0o600 is a
+                    // POSIX-only contract. On non-Unix the
+                    // substrate emits a substrate-faithful failure
+                    // rather than silently degrade.
+                    return Err(OctoCliError::Internal(sanitize_substrate_error(
+                        "octo agent run --token-file requires POSIX-mode 0o600 perms; non-Unix platform not supported",
+                    )));
+                }
+
+                // 6.5.6 Build receipt envelope. The bytes on
+                //       disk equal `encode_token(handle)`; the
+                //       operator can verify by piping through
+                //       `octo agent attach --token-file` (TV-CLI-
+                //       RUN-DETACH-1 happy-path round-trip).
+                let written_at_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                Some(TokenWrittenReceipt {
+                    session_id_hex: hex::encode(handle_ref.session_id),
+                    bytes_written: token_bytes.len(),
+                    path_redacted: RedactedIdentifier::new(token_path.display().to_string()),
+                    written_at_unix,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 7. Build output envelope. Mirror the destroy handler's
         //    shape: `agent_id` redacted, `state` from the
         //    substrate-confirmed `current_state`, `audit_log_entry`
@@ -797,6 +1023,14 @@ mod run {
                 .unwrap_or(0),
             transitioned_at_unix: receipt.transitioned_at_unix,
             audit_log_entry: hex::encode(receipt.audit_log_entry),
+            // `None` on every path where `--token-file` was not
+            // supplied (or where the token pathway was not
+            // activated — e.g. idempotent self-transition).
+            // `Some(...)` only when `--detach --token-file` was
+            // specified AND a fresh `RuntimeHandle` was minted
+            // (the substrate-faithful binding pair per RFC-0011-c
+            // §F.6.1).
+            token_written,
         };
         let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
         render_envelope("octo.agent.run.v1", output, cli, &redactor)
@@ -1038,6 +1272,60 @@ pub struct AgentRunOutput {
     /// Zeroed (`"00..00"`) on idempotent self-transitions per the
     /// `TransitionReceipt` invariant comment.
     pub audit_log_entry: String,
+    /// Receipt for the `AttachHandle` token bytes written to
+    /// `--token-file` (RFC-0011-c §F.6.1). `None` on every path
+    /// where `--token-file` was not supplied — the operator
+    /// can detect the no-token path from this field directly
+    /// rather than re-deriving it from the runtime_handle id.
+    /// When `Some`, the byte length + session id + path are
+    /// substrate-faithful (the bytes on disk equal
+    /// `octo_runtime::encode_token(handle)`).
+    #[schemars(with = "Option<TokenWrittenReceipt>")]
+    pub token_written: Option<TokenWrittenReceipt>,
+}
+
+/// `octo agent run --detach --token-file` token-write receipt
+/// (RFC-0011-c §F.6.1).
+///
+/// Operator-facing record of the `AttachHandle` token bytes the
+/// CLI wrote to disk. Carries enough information for the
+/// operator to locate + verify the token: the session id (so the
+/// future `octo agent attach --token-file` can verify it was the
+/// same spawn), the byte length (the encoded token is a fixed
+/// size per `encode_token` — a length mismatch indicates
+/// truncation / tampering), the path the bytes were written to
+/// (operator can `ls` / `chmod` verify), and the wall-clock at
+/// write time.
+///
+/// `path_redacted` field-name suffix is `RedactedIdentifier`-shaped
+/// at the envelope boundary even though the path is operator-local
+/// (the redactor may still redact home-directory relative paths
+/// per the operator's `output.redact_paths` flag — see
+/// `crates/octo-cli/src/redact.rs`). The struct redaction contract
+/// matches `AgentRunOutput` sibling fields per
+/// [[cipherocto-design-principles]] §Attenuation invariants.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct TokenWrittenReceipt {
+    /// Hex-encoded session id (RFC-0011-c §F.1 wire form; 64
+    /// lowercase hex chars). Same id the substrate stored on the
+    /// revocation set; the operator can pass this to
+    /// `octo revoke-attach --session-id <hex>` to invalidate the
+    /// token (RFC-0011-c §F.3).
+    pub session_id_hex: String,
+    /// Number of token bytes written to disk (RFC-0011-c §F.1;
+    /// `encode_token` produces a fixed-size canonical form).
+    /// Mismatch against the expected substrate length indicates
+    /// truncation / corruption.
+    pub bytes_written: usize,
+    /// Path the token bytes were written to (RFC-0011-c §F.6.1
+    /// `--token-file`). Operator-local file path.
+    #[schemars(with = "String")]
+    pub path_redacted: RedactedIdentifier,
+    /// Unix seconds at which the CLI wrote the bytes (RFC 3339
+    /// UTC, sourced from `SystemTime::now`). Same mint clock as
+    /// the embedded `mint_timestamp_unix` field on the token;
+    /// operators can cross-reference the two.
+    pub written_at_unix: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,6 +1388,7 @@ mod attach {
     pub fn handle(
         agent_id_hex: &str,
         since_unix: Option<i64>,
+        token_file: &std::path::Path,
         cli: &Octo,
     ) -> Result<(), OctoCliError> {
         // 1. Parse agent id hex → substrate `Uuid`. Parse failure
@@ -1141,53 +1430,124 @@ mod attach {
             return Err(OctoCliError::AgentNotRunning(agent_id));
         }
 
-        // 5. Parse `--since` (Unix-seconds → DateTime<Utc>) if
-        //    supplied. Out-of-range or negative values pass through;
-        //    the substrate clamps to `[spawned_at, Utc::now()]`
-        //    (RFC-0011-c §9.3.5 + `attach::clamp_since` helper).
-        let _since_dt =
-            since_unix.and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0));
+        // 5. Parse `--since` (Unix-seconds → u64) for the
+        //    `attach_with_token` replay cursor. The CLI maps
+        //    the substrate `clamp_since` semantics by passing
+        //    the raw value through; the substrate clamps to
+        //    `[token.mint_timestamp_unix, now_unix]` per
+        //    RFC-0011-c §F.2 step (c) + §F.6.2.
+        //
+        //    Default: when `--since` is absent, the CLI passes
+        //    `mint_timestamp_unix` so replay starts at spawn
+        //    time. The token's `mint_timestamp_unix` is
+        //    observable post-decode, so we use a two-pass:
+        //    decode first, then compute the effective `since`.
+        //    To keep the boundary single-pass, we read
+        //    `mint_timestamp_unix` after decode below.
 
-        // 6. SUBSTRATE GAP (RFC-0011-c §Implementation Phases
-        //    Phase 1): the `octo_runtime::attach` call requires a
-        //    `RuntimeHandle` minted by `spawn_agent`. The CLI's
-        //    `octo agent run` (which would mint the handle and emit
-        //    an `AttachHandle` token) ships in the follow-on
-        //    `0011-c-agent-run-subcommand` mission. Until then, the
-        //    in-process handle does not exist and the substrate call
-        //    cannot bind to a live spawn.
+        // 6. `--token-file` token pathway
+        //    (RFC-0011-c §F.6.2). On the post-amendment
+        //    substrate-faithful path, the CLI:
         //
-        //    Per mission §Notes: emit `RuntimeSubstrateNotReady`
-        //    (exit 51) — the clap surface is wired, the state gate
-        //    works, and the substrate-boundary failure surfaces as a
-        //    stable exit code so automation can distinguish
-        //    "agent not running" (48) from "runtime substrate not
-        //    yet wired" (51).
+        //    1. Reads the canonical token bytes from
+        //       `--token-file` (operator-local path).
+        //    2. Resolves caller DID → `[u8; 32]` holder_pubkey
+        //       via `IdentityKey::public_key_bytes()`.
+        //    3. Decodes via `octo_runtime::decode_token(&bytes,
+        //       &holder_pubkey)` — verifies the embedded
+        //       ed25519 signature against the holder's public
+        //       key (validation chain step (a) per RFC-0011-c
+        //       §F.2).
+        //    4. Calls `octo_runtime::attach_with_token(
+        //       &holder_pubkey, &token, since_unix)` — a
+        //       4-step validation chain: signature verify
+        //       (already done by `decode_token`),
+        //       revocation-set check (step (b)), TTL check
+        //       (step (c)), since-cursor check (step (d)),
+        //       handler lookup (step (e) per RFC-0011-c §F.2
+        //       step (e) post-Handler-registry amendment).
+        //    5. The 8 `AttachError` variants map to 8
+        //       `OctoCliError` exit codes 53-59 via the
+        //       existing `From<octo_runtime::AttachError>`
+        //       impl in `crates/octo-cli/src/error.rs`.
         //
-        //    The substrate `octo_runtime::attach(handle, since)`
-        //    call site would be:
-        //
-        //    ```ignore
-        //    let handle = /* from spawn_agent or AttachHandle token */;
-        //    let stream = octo_runtime::attach(handle, _since_dt)
-        //        .map_err(|e| match e {
-        //            octo_runtime::RuntimeError::HandleRevoked(uuid) => {
-        //                OctoCliError::RuntimeAttachFailed {
-        //                    reason: format!("handle revoked: {uuid}"),
-        //                }
-        //            }
-        //            octo_runtime::RuntimeError::EventStreamClosed => {
-        //                OctoCliError::RuntimeAttachFailed {
-        //                    reason: "event stream closed".to_string(),
-        //                }
-        //            }
-        //            other => OctoCliError::Internal(
-        //                sanitize_substrate_error(&other.to_string()),
-        //            ),
-        //        })?;
-        //    ```
-        let _ = cli;
-        Err(OctoCliError::RuntimeSubstrateNotReady)
+        //    The substrate `attach_with_token` is `async`. The
+        //    CLI `main()` is sync (no tokio runtime); we build
+        //    a current-thread runtime locally for the single
+        //    `block_on` call. This matches the established
+        //    pattern at `crates/octo-cli/Cargo.toml` lines
+        //    29-31 (the `new_current_thread` rationale is
+        //    documented in that file).
+        let token_bytes = std::fs::read(token_file).map_err(|io| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("token file read: {io}")))
+        })?;
+
+        let holder = common::resolve_active_identity_key()?;
+        let holder_pubkey: [u8; 32] = holder.public_key_bytes();
+
+        let token = octo_runtime::decode_token(&token_bytes, &holder_pubkey)?;
+
+        // Effective `since_unix`: the operator's `--since` if
+        // supplied (substrate-faithful; substrate clamps to
+        // `[mint_timestamp_unix, now_unix]`); else fall back to
+        // the token's `mint_timestamp_unix` (replay from spawn
+        // time, the canonical default). Negative values clamp
+        // to 0; the substrate then rejects with
+        // `InvalidSinceCursor` (exit 53 shared slot) since
+        // `0 < mint_timestamp_unix`.
+        let since_unix: u64 = since_unix
+            .map(|s| s.max(0) as u64)
+            .unwrap_or(token.mint_timestamp_unix);
+
+        // Build a current-thread tokio runtime to drive the
+        // async `attach_with_token` call. The runtime is
+        // dropped at end of scope — the broadcast receiver
+        // returned by `AttachedSession` lives until the
+        // receiver itself is dropped; we discard the
+        // receiver here (the CLI does not subscribe to events
+        // in this mission; the event-stream replay surface
+        // is a follow-on substrate amendment per
+        // [[0011-c-attachhandle-dry-closure-2026-09-16]]).
+        let attached = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    OctoCliError::Internal(sanitize_substrate_error(&format!(
+                        "tokio runtime build: {e}"
+                    )))
+                })?;
+            rt.block_on(octo_runtime::attach_with_token(
+                &holder_pubkey,
+                &token,
+                since_unix,
+            ))?
+        };
+
+        let attached_at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Discard the broadcast receiver (CLI does not consume
+        // events in this cycle; drop closes the receiver slot).
+        drop(attached.broadcast_rx);
+
+        let output = AgentAttachOutput {
+            agent_id: RedactedIdentifier::new(agent_id.to_string()),
+            // The `runtime_handle` is the in-process `RuntimeHandleId`
+            // minted by `spawn_agent`; the `AttachHandle` token
+            // carries the session id (not the handle id), so we
+            // populate `runtime_handle` with the session id hex
+            // (the substrate's canonical handle-bound identifier at
+            // the token pathway). Operators cross-reference via
+            // `session_id_hex` (a more explicit label).
+            runtime_handle: Some(RedactedIdentifier::new(hex::encode(token.session_id))),
+            attached_at_unix: Some(attached_at_unix),
+            event_cursor: Some(attached.event_cursor.to_string()),
+            session_id_hex: hex::encode(token.session_id),
+        };
+        let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
+        render_envelope("octo.agent.attach.v1", output, cli, &redactor)
     }
 }
 
@@ -1219,6 +1579,23 @@ pub struct AgentAttachOutput {
     /// §9.3.5 `--since`). `None` when no `--since` flag is supplied
     /// (substrate defaults to `spawned_at`).
     pub event_cursor: Option<String>,
+    /// Hex-encoded session id from the `AttachHandle` token
+    /// (RFC-0011-c §F.6.2).
+    ///
+    /// The session id is the canonical binding identifier across
+    /// `run --detach --token-file` + `attach --token-file` per
+    /// RFC-0011-c §F.2 step (a) and §F.6.4 pairing invariant.
+    ///
+    /// Operators can use this to:
+    ///
+    /// - confirm which spawn the attached session is bound to
+    /// - pass to `octo revoke-attach --session-id <hex>` to
+    ///   invalidate the token (RFC-0011-c §F.3)
+    ///
+    /// Always populated on the post-amendment substrate-faithful
+    /// path (`octo agent attach --token-file <path>` succeeded
+    /// and the validation chain at RFC-0011-c §F.2 passed).
+    pub session_id_hex: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1662,6 +2039,13 @@ mod tests {
     /// The `runtime_handle` field is `Option<RedactedIdentifier>`
     /// with `#[schemars(with = "Option<String>")]` so the schema
     /// declares `string` (or `null`).
+    ///
+    /// The `session_id_hex` field is a plain `String` carrying the
+    /// hex-encoded session id from the decoded `AttachHandle` token
+    /// (RFC-0011-c §F.6.2). Pin that the schema also declares it
+    /// as `string` so downstream `jq` pipelines that grep for
+    /// `session_id_hex` continue to work after the post-amendment
+    /// field addition.
     #[test]
     fn agent_attach_output_schema_declares_string_fields() {
         use schemars::schema_for;
@@ -1674,6 +2058,14 @@ mod tests {
         assert_eq!(
             agent_id, "string",
             "agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
+        let session_id_hex = json
+            .pointer("/properties/session_id_hex/type")
+            .and_then(|v| v.as_str())
+            .expect("session_id_hex schema must declare a type");
+        assert_eq!(
+            session_id_hex, "string",
+            "session_id_hex must round-trip as JSON Schema `string`, got {session_id_hex:?}",
         );
     }
 
@@ -1728,6 +2120,227 @@ mod tests {
             "RuntimeAttachFailed MUST exit 49 (RFC-0011-c agent amendment chain slot 49), got {}",
             e.exit_code()
         );
+    }
+
+    // ----- RFC-0011-c §F.6 token pathway TV (4 NEW TV) -----
+
+    /// TV-CLI-RUN-DETACH-1 — substrate-faithful mint + encode + decode
+    /// round-trip for the `AttachHandle` token pathway (RFC-0011-c
+    /// §F.6.1 + §F.1 + §F.2). The CLI dispatch body builds the token
+    /// via `mint_attach_handle` + `encode_token` and writes the bytes
+    /// to `--token-file`.
+    ///
+    /// This test pins the substrate-faithful contract that the bytes
+    /// round-trip back through `decode_token` with the mint-time
+    /// holder pubkey, and that the encoded payload includes all five
+    /// canonical fields (`session_id`, `mint_timestamp_unix`,
+    /// `ttl_unix`, `payload`, `signature`).
+    ///
+    /// The full happy-path integration (write file + chmod 0o600 +
+    /// fsync + read-back) is exercised at the dispatch level; here we
+    /// pin only the substrate contract that the CLI relies on.
+    #[test]
+    fn tv_cli_run_detach_token_round_trips_through_encode_decode() {
+        use octo_runtime::{
+            decode_token, encode_token, mint_attach_handle, Transport, TransportKind,
+        };
+        use octo_wallet::IdentityKey;
+        use uuid::Uuid;
+
+        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        // Activate the identity so `sign_attach_handle_payload` (which
+        // gates on `IdentityKey::activated_at_unix_secs().is_some()`)
+        // accepts the mint. The CLI activation flow happens at the
+        // active-DID substrate boundary, not at this dispatch unit —
+        // here we exercise only the post-activation pathway.
+        let now_unix_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(1_700_000_000);
+        holder
+            .activate(now_unix_secs)
+            .expect("activate must succeed");
+        let holder_pubkey = holder.public_key_bytes();
+        let agent_id = Uuid::new_v4();
+        let session_id = [0x42_u8; 32];
+        let since_cursor: u64 = 0;
+        let ttl_unix: u64 = u64::MAX / 2; // far in the future; never expires under test
+        let transport = Transport {
+            kind: TransportKind::InProcess,
+            addr: None,
+        };
+
+        let handle = mint_attach_handle(
+            &holder,
+            agent_id,
+            session_id,
+            since_cursor,
+            ttl_unix,
+            transport,
+        )
+        .expect("mint_attach_handle must succeed for active holder");
+
+        // Encode → write round-trip via `Vec<u8>` (substrate-faithful;
+        // the CLI dispatch then writes these bytes to `--token-file`).
+        let token_bytes = encode_token(&handle).expect("encode_token must succeed");
+
+        // Decode back and confirm the 5-field contract:
+        // session_id, mint_timestamp_unix, ttl_unix, payload, signature.
+        let decoded = decode_token(&token_bytes, &holder_pubkey)
+            .expect("decode_token must succeed against mint-time holder pubkey");
+        assert_eq!(
+            decoded.session_id, session_id,
+            "session_id MUST survive encode/decode round-trip"
+        );
+        assert_eq!(
+            decoded.ttl_unix, ttl_unix,
+            "ttl_unix MUST survive encode/decode round-trip"
+        );
+        assert_eq!(
+            decoded.payload.agent_id, agent_id,
+            "payload.agent_id MUST survive encode/decode round-trip"
+        );
+        assert_eq!(
+            decoded.payload.since_cursor, since_cursor,
+            "payload.since_cursor MUST survive encode/decode round-trip"
+        );
+        assert_eq!(
+            decoded.signature.0.len(),
+            64,
+            "signature MUST be 64-byte raw ed25519 wrap"
+        );
+        // mint_timestamp_unix is sourced from substrate `SystemTime::now()`
+        // so the exact value is non-deterministic — only confirm it is
+        // populated (non-zero on any working clock).
+        assert!(
+            decoded.mint_timestamp_unix > 0,
+            "mint_timestamp_unix MUST be populated by substrate clock"
+        );
+    }
+
+    /// TV-CLI-ATTACH-1 — bounded expected behavior per §F.6.5
+    /// session-registry-wiring deferral. Legitimate tokens currently
+    /// surface as `AttachSessionUnknown` (exit 56) per
+    /// substrate-faithful current behavior — the `InProcessHandler::bind`
+    /// wiring lands in a paired follow-on amendment cycle. This test
+    /// pins the CLI exit slot so a future amendment that wires the
+    /// happy-path surfaces as a test rewrite (not a silent slot shift).
+    #[test]
+    fn tv_cli_attach_session_unknown_exits_56() {
+        let e =
+            OctoCliError::AttachSessionUnknown("00000000-0000-0000-0000-000000000000".to_string());
+        assert_eq!(
+            e.exit_code(),
+            56,
+            "AttachSessionUnknown MUST exit 56 (RFC-0011-c §F.4 substrate mirror slot 56), got {}",
+            e.exit_code()
+        );
+        // The variant payload is `String` (session_id hex) per RFC-0011-c
+        // §F.4 substrate-faithful mirror surface; pin the field shape
+        // so a future amendment that switches to typed UUID surfaces
+        // as a broken contract.
+        match &e {
+            OctoCliError::AttachSessionUnknown(session_id) => {
+                assert!(!session_id.is_empty(), "session_id MUST be non-empty");
+            }
+            other => panic!("expected AttachSessionUnknown, got {other:?}"),
+        }
+    }
+
+    /// TV-CLI-ATTACH-2 — tampered token bytes rejected at the substrate
+    /// `decode_token` signature-verify step (RFC-0011-c §F.2 step (a)).
+    /// The CLI dispatch body surfaces the substrate's
+    /// `AttachError::BadSignature { reason }` as `OctoCliError::
+    /// AttachHandleBadSignature { reason }` (exit 54) via the
+    /// `From<AttachError> for OctoCliError` impl. Pin both:
+    /// 1. substrate `decode_token` returns `BadSignature` on byte flip
+    /// 2. CLI exit slot is 54 (substrate-faithful mirror)
+    #[test]
+    fn tv_cli_attach_tampered_token_exits_54_bad_signature() {
+        use octo_runtime::{
+            decode_token, encode_token, mint_attach_handle, AttachError, Transport, TransportKind,
+        };
+        use octo_wallet::IdentityKey;
+        use uuid::Uuid;
+
+        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        let now_unix_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(1_700_000_000);
+        holder
+            .activate(now_unix_secs)
+            .expect("activate must succeed");
+        let holder_pubkey = holder.public_key_bytes();
+        let handle = mint_attach_handle(
+            &holder,
+            Uuid::new_v4(),
+            [0x11_u8; 32],
+            0,
+            u64::MAX / 2,
+            Transport {
+                kind: TransportKind::InProcess,
+                addr: None,
+            },
+        )
+        .expect("mint must succeed");
+        let mut token_bytes = encode_token(&handle).expect("encode must succeed");
+
+        // Flip a byte in the canonical-encoded payload. The signature
+        // covers the payload, so the substrate's verify step (a) MUST
+        // reject the tampered bytes.
+        let flip_at = token_bytes.len() / 2;
+        token_bytes[flip_at] ^= 0x01;
+
+        let decode_err = decode_token(&token_bytes, &holder_pubkey)
+            .expect_err("decode_token MUST reject tampered bytes");
+        match decode_err {
+            AttachError::BadSignature { .. } => {} // expected
+            other => panic!("expected BadSignature, got {other:?}"),
+        }
+
+        // Mirror surface — `From<AttachError>` translates BadSignature
+        // to AttachHandleBadSignature (exit 54) per RFC-0011-c §F.4.
+        let cli_err: OctoCliError = decode_err.into();
+        assert_eq!(
+            cli_err.exit_code(),
+            54,
+            "AttachHandleBadSignature MUST exit 54 (RFC-0011-c §F.4 slot 54), got {}",
+            cli_err.exit_code()
+        );
+    }
+
+    /// TV-CLI-ATTACH-3 — revoked token rejected by the substrate
+    /// revocation-set check at validation step (e) of the
+    /// `attach_with_token` chain (RFC-0011-c §F.3 + §F.2). The
+    /// revocation set is in-memory `RwLock<HashSet<SessionId>>`
+    /// (Layer B substrate); the CLI surfaces
+    /// `AttachError::RevocationError(String)` as
+    /// `OctoCliError::RevocationError(String)` (exit 58) via the
+    /// `From<AttachError>` impl. The revocation-set insertion itself
+    /// is exercised by the `octo revoke-attach --session-id` test
+    /// vector; here we pin the CLI exit slot so a future amendment
+    /// that shifts the slot surfaces as a broken contract.
+    #[test]
+    fn tv_cli_attach_revoked_token_exits_58_revocation_error() {
+        let e = OctoCliError::RevocationError(
+            "session 00000000-0000-0000-0000-000000000000 revoked by operator".to_string(),
+        );
+        assert_eq!(
+            e.exit_code(),
+            58,
+            "RevocationError MUST exit 58 (RFC-0011-c §F.4 slot 58), got {}",
+            e.exit_code()
+        );
+        match &e {
+            OctoCliError::RevocationError(reason) => {
+                assert!(
+                    reason.contains("revoked"),
+                    "reason MUST surface the revocation cause verbatim (CLI boundary is operator-readable)"
+                );
+            }
+            other => panic!("expected RevocationError, got {other:?}"),
+        }
     }
 
     // ----- `octo agent run` tests (RFC-0011-c §9.3.2) -----

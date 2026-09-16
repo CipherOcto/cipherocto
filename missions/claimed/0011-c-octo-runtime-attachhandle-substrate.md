@@ -43,7 +43,7 @@ Open. RFC-0011-c §Follow-on text refresh + this mission YAML + CLI wiring + sub
 
 ## Substrate (RFC-0011-c §Follow-on)
 
-Per RFC-0011-c §Follow-on (NEW; added by this mission) the AttachHandle token pathway covers four layers of work. The substrate specification (function signatures, encoding format, validation chain, error variants) is the authoritative source per RFC-0011-c §Follow-on §F.1-§F.5 — this section summarizes and points to the RFC; only Path B-specific notes (existing 3-field `AttachHandle` → `RuntimeHandleBinding` rename, `sign_attach_handle_payload` colocation decision) are mission-local content.
+Per RFC-0011-c §Follow-on (NEW; added by this mission) the AttachHandle token pathway covers four layers of work. The substrate specification (function signatures, encoding format, validation chain, error variants) is the authoritative source per RFC-0011-c §Follow-on §F.1-§F.5 — this section summarizes and points to the RFC; only Path B-specific notes (existing 4-field `AttachHandle` → `RuntimeHandleBinding` rename, `sign_attach_handle_payload` colocation decision) are mission-local content.
 
 - **§F.1 Encoding** — see RFC-0011-c §Follow-on §F.1. `octo_runtime::handle::encoding` (NEW). `encode_token` + `decode_token` round-trip with signature verify-on-decode; canonical version byte `0x00`; mirrors RFC-0016-a §6.10 canonical-bytes-on-write pattern.
 - **§F.2 Token Substrate** — see RFC-0011-c §Follow-on §F.2. `octo_runtime::handle`. 6-field `AttachHandle` token (Layer B); existing 4-field `AttachHandle` (in-process binding: `agent_id`, `handle_id`, `session_id`, `spawned_at_unix`) RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod). Validation chain at `attach_with_token` invocation: (a) signature check, (b) revocation-set membership, (c) `ttl_unix` not expired, (d) `since_unix >= mint_timestamp_unix`, (e) `session_id` matches running session registry. Existing `attach(handle, since)` function UNCHANGED — still consumes `RuntimeHandleBinding`. `attach_with_token(holder_pubkey, token, since_unix)` lives at the `octo_runtime` crate root (re-exported via `pub use handle::{...}`); the leading `holder_pubkey` parameter mirrors `verify_attach_handle_payload`'s static-helper signature shape.
@@ -68,8 +68,8 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 
 ## Acceptance Criteria
 
-- [ ] **AC-1** `AttachHandle` struct (Layer B) defined at the `octo_runtime::handle` module per RFC-0011-c §F.2; existing 3-field in-process binding RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod of existing callers)
-- [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet::identity`)
+- [ ] **AC-1** `AttachHandle` struct (Layer B) defined at the `octo_runtime::handle` module per RFC-0011-c §F.2; existing 4-field in-process binding (`agent_id`, `handle_id`, `session_id`, `spawned_at_unix`) RENAMED to `RuntimeHandleBinding` per Path B (additive, mechanical codemod of existing callers)
+- [ ] **AC-2** `mint_attach_handle` returns signed token (Layer B) per RFC-0011-c §F.2 (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet`)
 - [ ] **AC-3** `encode_token` + `decode_token` round-trip (Layer B) per RFC-0011-c §F.1 with signature verification
 - [ ] **AC-4** `attach_with_token()` binds in-process or via UnixSocket based on `Transport` discriminator (Q-deferred 1) per RFC-0011-c §F.2; existing `attach(handle, since)` UNCHANGED
 - [ ] **AC-5** `agent run --detach --token-file <path>` mints + writes token to file (Layer C/D) per §Sub-step 3 + RFC-0011-c §F.2
@@ -82,26 +82,26 @@ See YAML frontmatter `depends_on` block above. Hard sequencing:
 
 ### Type Coverage
 
-| RFC-0011-c type                                                      | Sub-step | Notes                                                                                                                                                    |
-| -------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AttachHandle`                                                       | F.2      | Layer B; struct with 6 fields + `Transport` discriminator (Q-deferred 1)                                                                                 |
-| `Transport` (struct: `kind: TransportKind` + `addr: Option<String>`) | F.2      | Layer B; binding transport selector (Q-deferred 1)                                                                                                       |
-| `TransportKind` (enum: `InProcess` / `UnixSocket` / `Raw(Uuid)`)     | F.2      | Layer B; `#[non_exhaustive]` typed-discriminator + `Raw` escape hatch per RFC-0855 §Typed UUID discriminators convention                                 |
-| `mint_attach_handle`                                                 | F.2      | Layer B; calls `sign_attach_handle_payload` per F.5 (composes `IdentityKey::sign` from `octo-wallet::identity`)                                          |
-| `attach()`                                                           | F.2      | Layer B async (legacy); binds via in-process channel using `RuntimeHandleBinding` (unchanged)                                                            |
-| `attach_with_token(holder_pubkey, token, since_unix)`                | F.2      | Layer B async (lives at `octo_runtime` crate root, re-exported via `pub use handle::{...}`); validates + binds via `Transport` discriminator             |
-| `encode_token` + `decode_token`                                      | F.1      | Layer B; canonical encoding v0 with signature verify-on-decode                                                                                           |
-| `revoke_attach_token` + `is_token_revoked`                           | F.3      | Layer B; in-memory revocation set (Q-deferred 2)                                                                                                         |
-| `persist_event_cursor` + `load_event_cursor`                         | F.3      | Layer B; Stoolap ledger extension, feature-gated (Q-deferred 3)                                                                                          |
-| `sign_attach_handle_payload` + `verify_attach_handle_payload`        | F.5      | Layer B wrappers colocated in `octo_runtime::handle`; compose `IdentityKey::sign`/`verify` from `octo-wallet::identity` (Layer A frozen `ed25519-dalek`) |
-| `AttachError` (7 variants)                                           | F.4      | Layer B; mirror → `OctoCliError` 5 variants (exits 53-56 + InvalidSinceCursor shared slot 53) + 2 substrate-error passthroughs (exits 57-58)             |
-| `OctoCliError::AttachHandleExpired {…}`                              | CLI      | Layer C/D; mirror exit 53 per RFC-0011-c §F.4 (slot allocation 39-58)                                                                                    |
-| `OctoCliError::AttachHandleBadSignature`                             | CLI      | Layer C/D; mirror exit 54                                                                                                                                |
-| `OctoCliError::InvalidSinceCursor`                                   | CLI      | Layer C/D; mirror exit 53 (shared slot with `AttachHandleExpired` per typed-discriminator preservation; discriminator carries the variant identity)      |
-| `OctoCliError::AttachSessionMismatch {…}`                            | CLI      | Layer C/D; mirror exit 55                                                                                                                                |
-| `OctoCliError::AttachSessionUnknown {…}`                             | CLI      | Layer C/D; mirror exit 56                                                                                                                                |
-| `OctoCliError::PersistenceError(String)`                             | CLI      | Layer C/D; passthrough exit 57                                                                                                                           |
-| `OctoCliError::RevocationError(String)`                              | CLI      | Layer C/D; passthrough exit 58                                                                                                                           |
+| RFC-0011-c type                                                      | Sub-step | Notes                                                                                                                                                                               |
+| -------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AttachHandle`                                                       | F.2      | Layer B; struct with 6 fields + `Transport` discriminator (Q-deferred 1)                                                                                                            |
+| `Transport` (struct: `kind: TransportKind` + `addr: Option<String>`) | F.2      | Layer B; binding transport selector (Q-deferred 1)                                                                                                                                  |
+| `TransportKind` (enum: `InProcess` / `UnixSocket` / `Raw(Uuid)`)     | F.2      | Layer B; `#[non_exhaustive]` typed-discriminator + `Raw` escape hatch per RFC-0855 §Typed UUID discriminators convention                                                            |
+| `mint_attach_handle`                                                 | F.2      | Layer B; calls `sign_attach_handle_payload` per F.5 (composes `IdentityKey::sign` from `octo-wallet`)                                                                               |
+| `attach()`                                                           | F.2      | Layer B sync (legacy); binds via in-process channel using `RuntimeHandleBinding` (unchanged)                                                                                        |
+| `attach_with_token(holder_pubkey, token, since_unix)`                | F.2      | Layer B async (defined at `octo_runtime` crate root in `lib.rs:103`); validates via 5-step chain (step (e) substrate-boundary stub pending follow-on)                               |
+| `encode_token` + `decode_token`                                      | F.1      | Layer B; canonical encoding v0 with signature verify-on-decode                                                                                                                      |
+| `revoke_attach_token` + `is_token_revoked`                           | F.3      | Layer B; in-memory revocation set (Q-deferred 2)                                                                                                                                    |
+| `persist_event_cursor` + `load_event_cursor`                         | F.3      | Layer B; Stoolap ledger extension, feature-gated (Q-deferred 3)                                                                                                                     |
+| `sign_attach_handle_payload` + `verify_attach_handle_payload`        | F.5      | Layer B wrappers colocated in `octo_runtime::handle::signing` (re-exported at crate root); compose `IdentityKey::sign`/`verify` from `octo-wallet` (Layer A frozen `ed25519-dalek`) |
+| `AttachError` (7 variants)                                           | F.4      | Layer B; mirror → `OctoCliError` 5 variants (exits 53-56 + InvalidSinceCursor shared slot 53) + 2 substrate-error passthroughs (exits 57-58)                                        |
+| `OctoCliError::AttachHandleExpired {…}`                              | CLI      | Layer C/D; mirror exit 53 per RFC-0011-c §F.4 (slot allocation 39-58)                                                                                                               |
+| `OctoCliError::AttachHandleBadSignature`                             | CLI      | Layer C/D; mirror exit 54                                                                                                                                                           |
+| `OctoCliError::InvalidSinceCursor`                                   | CLI      | Layer C/D; mirror exit 53 (shared slot with `AttachHandleExpired` per typed-discriminator preservation; discriminator carries the variant identity)                                 |
+| `OctoCliError::AttachSessionMismatch {…}`                            | CLI      | Layer C/D; mirror exit 55                                                                                                                                                           |
+| `OctoCliError::AttachSessionUnknown {…}`                             | CLI      | Layer C/D; mirror exit 56                                                                                                                                                           |
+| `OctoCliError::PersistenceError(String)`                             | CLI      | Layer C/D; passthrough exit 57                                                                                                                                                      |
+| `OctoCliError::RevocationError(String)`                              | CLI      | Layer C/D; passthrough exit 58                                                                                                                                                      |
 
 ## Implementation Guide
 
@@ -186,7 +186,7 @@ octo-runtime-persistence = ["dep:stoolap"]  # NEW feature flag per RFC-0011-c §
 
 ## Layer direction (RFC-0011-c §Follow-on + per [[cipherocto-design-principles]])
 
-- `octo-runtime` (Layer B) — additive `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers colocated in `octo_runtime::handle`; compose `octo_wallet::identity::IdentityKey::sign` (Layer B substrate) → `ed25519-dalek` (Layer A frozen). `octo-wallet` (Layer B) — unchanged signing surface per RFC-0015-a Appendix A.
+- `octo-runtime` (Layer B) — additive `sign_attach_handle_payload` + `verify_attach_handle_payload` wrappers colocated in `octo_runtime::handle::signing` (re-exported at crate root); compose `octo_wallet::IdentityKey::sign` (Layer B substrate) → `ed25519-dalek` (Layer A frozen). `octo-wallet` (Layer B) — unchanged signing surface per RFC-0015-a Appendix A.
 - **NO new Layer A types introduced.** See §Substrate §F.5 for full layer attribution + §Type Coverage table below for per-type designation.
 
 ## Validation
@@ -229,7 +229,7 @@ Release-gated on companion substrate mission RFC-0011-c §Follow-on paired accep
 
 ## Substrate Gap Closure (2026-09-16, R1.5 Path B update)
 
-Substrate additions pending as of 2026-09-16: AC-1 codemod (3-field `AttachHandle` → `RuntimeHandleBinding` rename), AC-2 `mint_attach_handle`, AC-3 `encode`/`decode_token`, AC-4 `attach_with_token`, AC-7 6 NEW `OctoCliError` variants, AC-8 `revoke_attach_token`, AC-9 `persist_event_cursor`. Substrate-first ordering per RFC-0015 R40 restructure: this mission lands substrate first, then CLI dispatch wires (Phase 3). Mission remains Claimed per [[memory-is-never-status-ground-truth]] + [[Initiative user-only]].
+Substrate additions pending as of 2026-09-16: AC-1 codemod (4-field `AttachHandle` → `RuntimeHandleBinding` rename), AC-2 `mint_attach_handle`, AC-3 `encode`/`decode_token`, AC-4 `attach_with_token`, AC-7 7 NEW `OctoCliError` variants, AC-8 `revoke_attach_token`, AC-9 `persist_event_cursor`. Substrate-first ordering per RFC-0015 R40 restructure: this mission lands substrate first, then CLI dispatch wires (Phase 3). Mission remains Claimed per [[memory-is-never-status-ground-truth]] + [[Initiative user-only]].
 
 ## Hard audit findings addressed
 

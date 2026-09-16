@@ -740,7 +740,7 @@ The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>)
 
 Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::persistence` module (Layer B):
 
-- `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` (the feature flag is being newly added to `crates/octo-runtime/Cargo.toml` per the paired mission); canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract
+- `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` (the feature flag is being newly added to `octo_runtime`'s manifest per the paired mission); canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract
 - `pub fn load_event_cursor(agent_id: Uuid) -> Result<Option<u64>, PersistenceError>` — symmetric
 - `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), RevocationError>` — adds entry to in-memory `RwLock<HashSet<SessionId>>` revocation set; expired-by-revocation surfaces as `AttachError::Expired` (per §F.4 mirror)
 - `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at step (b) of `attach_with_token()` validation chain per §F.2
@@ -765,7 +765,7 @@ Signing wrappers colocated with the `AttachHandle` token type at the `octo_runti
 - `pub fn sign_attach_handle_payload(holder: &IdentityKey, session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Signature, AttachError>` — encodes `session_id || payload || mint_timestamp_unix || ttl_unix` (canonical, length-prefixed per `AttachPayload` wire form) and delegates to `IdentityKey::sign(msg_bytes)` (existing substrate helper); caller resolves holder DID → `IdentityKey` via the substrate identity-registry (or constructs directly from `InMemorySigner` for tests)
 - `pub fn verify_attach_handle_payload(holder_pubkey: &[u8; 32], session_id: SessionId, payload_bytes: &[u8], mint_timestamp_unix: u64, ttl_unix: u64, sig: &Signature) -> Result<(), AttachError>` — static helper mirroring `verify_revocation_proof` shape; consumed by `attach_with_token` per §F.2 validation chain step (a); `decode_token` per §F.1 also invokes verify-on-decode. `IdentityKey::sign` returns `ed25519_dalek::Signature` — `Signature` is the substrate-visible type name (re-exported via `IdentityKey::sign` return type), not `Ed25519Signature`.
 
-`octo-wallet::identity` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen) is the underlying cryptographic primitive. No `crates/octo-wallet/src/crypto.rs` is created (file does not exist). Composition pattern follows [[stable-abstractions-principle]] — primitives in stable substrate, business semantics in composed layer.
+`octo-wallet::identity` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created (file does not exist). Composition pattern follows [[stable-abstractions-principle]] — primitives in stable substrate, business semantics in composed layer.
 
 ## Rationale
 

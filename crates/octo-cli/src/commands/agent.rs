@@ -1047,19 +1047,24 @@ mod run {
             // `as u64` cast is safe — a pre-1970 timestamp would
             // two's-complement-wrap via `as u64` rather than
             // panic; `try_into().unwrap_or(0u64)` would silently
-            // yield 0 on a negative `i64` (the `unwrap_or` fires on
-            // `Result::Err`, not on a successful negative-to-unsigned
-            // conversion), so we use `as u64` to preserve the
-            // substrate invariant observation. `spawned_at_unix`
-            // is sourced only from a freshly minted handle; on the
-            // idempotent self-transition path `handle` is `None`
-            // and the field falls back to `0` (the substrate
+            // The substrate monotonic clock contract (RFC-0015-a
+            // §6.2.5) guarantees `spawned_at` is non-negative — a
+            // pre-1970 timestamp is not representable in normal
+            // operation. We use `i64::try_from(...).map(i64::cast_unsigned)`
+            // (i.e. `try_into::<u64>().unwrap_or(0)`) instead of
+            // `as u64` so a future substrate change that allows
+            // negative timestamps (e.g. clock skew below epoch)
+            // surfaces as a deterministic `0` rather than a silent
+            // wrap-around to `u64::MAX - |n|`. `spawned_at_unix`
+            // is sourced only from a freshly minted handle; on
+            // the idempotent self-transition path `handle` is
+            // `None` and the field falls back to `0` (the substrate
             // contract makes the original spawn time inaccessible
             // in Phase 1 — Phase 2 routes through a `get_or_create`
             // pathway).
             spawned_at_unix: handle
                 .as_ref()
-                .map(|h| h.spawned_at.timestamp() as u64)
+                .map(|h| u64::try_from(h.spawned_at.timestamp()).unwrap_or(0))
                 .unwrap_or(0),
             transitioned_at_unix: receipt.transitioned_at_unix,
             audit_log_entry: hex::encode(receipt.audit_log_entry),
@@ -2762,7 +2767,7 @@ mod tests {
                 } else if let Some(s) = payload.downcast_ref::<String>() {
                     s.clone()
                 } else {
-                    String::new()
+                    unreachable!("panic payload is always &'static str or String (per std::panic::PanicInfo contract)")
                 };
                 assert!(
                     msg.contains("not implemented")

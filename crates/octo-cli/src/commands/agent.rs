@@ -135,6 +135,16 @@ pub enum AgentAction {
         #[arg(long, value_name = "UNIX_SECONDS")]
         since: Option<u64>,
     },
+    /// Revoke an outstanding `AttachHandle` token (RFC-0011-c §F.3
+    /// follow-on). Wired by `0011-c-attach-handle-token-pathway`.
+    /// The revocation set is a process-singleton (per RFC-0011-c
+    /// §F.3); tokens minted in another process are unaffected.
+    RevokeAttach {
+        /// Hex-encoded 64-char session id from the token to revoke
+        /// (RFC-0011-c §F.1 wire form).
+        #[arg(long, value_name = "HEX64")]
+        session_id: String,
+    },
 }
 
 /// Dispatch a parsed `octo agent <action>` invocation to its handler.
@@ -167,6 +177,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
         AgentAction::Destroy { agent_id, reason } => {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
+        AgentAction::RevokeAttach { session_id } => revoke_attach::handle(session_id, cli),
     }
 }
 
@@ -715,17 +726,17 @@ mod run {
         } else {
             Some(runtime_spawn_agent(agent_id, None).map_err(|e| match e {
                 octo_runtime::RuntimeError::RuntimeSpawnFailed { reason }
-                | octo_runtime::RuntimeError::InvalidAttachHandle(reason) => {
+                | octo_runtime::RuntimeError::InvalidRuntimeHandleBinding(reason) => {
                     // `RuntimeSpawnFailed` (exit 44) and
-                    // `InvalidAttachHandle` (substrate exit
+                    // `InvalidRuntimeHandleBinding` (substrate exit
                     // 49) both collapse to the CLI-shape
                     // `RuntimeSpawnFailed` here per
                     // RFC-0011-c §9.8 — the spawn step is
                     // atomic from the CLI perspective; the
                     // substrate already separated them at the
-                    // dispatch boundary so the attach-handle
-                    // class is unreachable in Phase 1
-                    // (attach_handle passed as `None`).
+                    // dispatch boundary so the binding class is
+                    // unreachable in Phase 1 (binding passed as
+                    // `None`).
                     OctoCliError::RuntimeSpawnFailed {
                         reason: sanitize_substrate_error(&reason),
                     }
@@ -1208,6 +1219,116 @@ pub struct AgentAttachOutput {
     /// §9.3.5 `--since`). `None` when no `--since` flag is supplied
     /// (substrate defaults to `spawned_at`).
     pub event_cursor: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// `octo agent revoke-attach` — RFC-0011-c §F.3 follow-on
+// ---------------------------------------------------------------------------
+
+/// Operator output envelope for `octo agent revoke-attach` (RFC-0011-c
+/// §F.3 follow-on). Records the revoked `session_id` (hex) so the
+/// operator can confirm which token was retracted.
+#[derive(Debug, Clone, Serialize)]
+pub struct RevokeAttachOutput {
+    /// Hex-encoded 64-char session id that was revoked (RFC-0011-c §F.1
+    /// wire form).
+    pub session_id_hex: String,
+    /// RFC-0011-c §F.3 — the revocation set is a process-singleton.
+    /// This field surfaces that fact on the operator envelope so
+    /// operators know that tokens minted in another process remain
+    /// valid.
+    pub process_scoped: bool,
+}
+
+mod revoke_attach {
+    use super::*;
+    use crate::flags::OperatorMode;
+
+    /// Canonical envelope schema label for the revoke-attach output.
+    const SCHEMA: &str = "octo.agent.revoke_attach.v1";
+
+    /// Parse a 64-char lowercase hex session id into the substrate
+    /// `[u8; 32]`. Mirrors `hex_decode_session` from the audit / role
+    /// amendment-chain helpers; a local copy keeps this module's
+    /// substrate-faithful contract local.
+    fn decode_session(hex: &str) -> Result<[u8; 32], OctoCliError> {
+        if hex.len() != 64 {
+            return Err(OctoCliError::AttachHandleBadSignature {
+                reason: format!(
+                    "session id must be 64 lowercase hex chars, got length {}",
+                    hex.len()
+                ),
+            });
+        }
+        let mut out = [0u8; 32];
+        for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+            let pair =
+                std::str::from_utf8(chunk).map_err(|_| OctoCliError::AttachHandleBadSignature {
+                    reason: "session id contains non-UTF-8 bytes".to_string(),
+                })?;
+            out[i] = u8::from_str_radix(pair, 16).map_err(|_| {
+                OctoCliError::AttachHandleBadSignature {
+                    reason: format!("session id contains non-hex pair `{pair}`"),
+                }
+            })?;
+        }
+        Ok(out)
+    }
+
+    /// `octo agent revoke-attach --session-id <HEX64>` handler.
+    ///
+    /// Thin Layer C wrapper over `octo_runtime::revoke_attach_token`
+    /// (Layer B substrate). The revocation set is a process-singleton
+    /// per RFC-0011-c §F.3; tokens minted in another process remain
+    /// unaffected (we surface that explicitly on the output envelope).
+    ///
+    /// Mutation contract: per RFC-0011 §Compatibility, mutating
+    /// commands require `--confirm` outside Dev mode. Auditor mode
+    /// is denied up front (Auditor is read-only).
+    pub fn handle(session_id_hex: &str, cli: &Octo) -> Result<(), OctoCliError> {
+        // Mode gate (RFC-0011 §Compatibility).
+        match cli.mode.mode {
+            OperatorMode::Auditor => {
+                return Err(OctoCliError::AuditorDenied {
+                    command: "agent revoke-attach".to_string(),
+                });
+            }
+            OperatorMode::Human | OperatorMode::Ci => {
+                if !cli.mode.confirm {
+                    return Err(OctoCliError::ConfirmationRequired {
+                        command: "agent revoke-attach".to_string(),
+                    });
+                }
+            }
+            OperatorMode::Dev => {
+                // Dev mode skips the confirmation gate per RFC-0011
+                // §Compatibility.
+            }
+        }
+
+        let session_id = decode_session(session_id_hex)?;
+
+        octo_runtime::revoke_attach_token(session_id).map_err(|e| match e {
+            // The substrate returns `RevocationError` (not
+            // `AttachError`) for revoke-path failures — the
+            // process-singleton `RwLock` only fails closed via
+            // `RevocationError::Poisoned`. Surface it directly; the
+            // wildcard arm collapses future additive variants
+            // (`#[non_exhaustive]` on `RevocationError`) to the same
+            // operator-facing envelope.
+            octo_runtime::RevocationError::Poisoned(reason) => {
+                OctoCliError::RevocationError(reason)
+            }
+            other => OctoCliError::RevocationError(format!("{other}")),
+        })?;
+
+        let envelope = RevokeAttachOutput {
+            session_id_hex: session_id_hex.to_string(),
+            process_scoped: true,
+        };
+        let redactor = RedactionContext::new();
+        render_envelope(SCHEMA, envelope, cli, &redactor)
+    }
 }
 
 // ---------------------------------------------------------------------------

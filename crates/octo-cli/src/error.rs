@@ -487,6 +487,20 @@ pub enum OctoCliError {
         reason: String,
     },
 
+    /// `octo_runtime::spawn_agent` returned a substrate-level failure
+    /// (handle mint failed, channel registration error, invalid
+    /// attach handle token reused). Mapped from
+    /// `octo_runtime::RuntimeError::RuntimeSpawnFailed { reason }`
+    /// and `RuntimeError::InvalidAttachHandle` at the dispatch
+    /// boundary. Exit 44 per RFC-0011-c §9.8 slot allocation
+    /// (RFC-0011-c agent amendment chain slots 39-52 reserved).
+    #[error("runtime spawn failed: {reason}")]
+    RuntimeSpawnFailed {
+        /// Substrate-internal failure reason (sanitized by CLI via
+        /// `sanitize_substrate_error`).
+        reason: String,
+    },
+
     /// `octo governance snapshot` resolved to a snapshot whose
     /// `expires_at_unix <= now_unix` (TTL boundary inclusive on
     /// the stale side per RFC-0011-g §Performance Targets). Exit
@@ -527,6 +541,60 @@ pub enum OctoCliError {
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// `AttachHandle` token's TTL has elapsed relative to operator-clock
+    /// (`mint_timestamp_unix + ttl_unix <= now_unix`) — RFC-0011-c §F.2
+    /// validation chain step (b). Mapped from
+    /// `octo_runtime::AttachError::Expired`. Exit 53.
+    #[error("attach handle expired: mint={mint_unix}, ttl={ttl_unix}, now={now_unix}")]
+    AttachHandleExpired {
+        /// `mint_timestamp_unix` from the token.
+        mint_unix: u64,
+        /// `ttl_unix` from the token.
+        ttl_unix: u64,
+        /// Operator-clock `now_unix` observed at validation.
+        now_unix: u64,
+    },
+
+    /// `AttachHandle` signature verification failed against the
+    /// expected holder public key — RFC-0011-c §F.2 step (a). Mapped
+    /// from `octo_runtime::AttachError::BadSignature`. Exit 54.
+    #[error("attach handle bad signature: {reason}")]
+    AttachHandleBadSignature {
+        /// Substrate-internal reason (sanitized via `sanitize_substrate_error`).
+        reason: String,
+    },
+
+    /// `AttachHandle` claims a `session_id` that does not match the
+    /// current spawn-time session id registered for the agent —
+    /// RFC-0011-c §F.2 step (d). Mapped from
+    /// `octo_runtime::AttachError::SessionMismatch`. Exit 55.
+    #[error("attach session mismatch: token claims session `{token_session_hex}`, agent registered `{registered_session_hex}`")]
+    AttachSessionMismatch {
+        /// Hex-encoded session id from the token (64 lowercase hex chars).
+        token_session_hex: String,
+        /// Hex-encoded registered session id (64 lowercase hex chars).
+        registered_session_hex: String,
+    },
+
+    /// `AttachHandle` references a `session_id` that is not present in
+    /// the spawn-time registry for any agent under the active DID —
+    /// RFC-0011-c §F.2 step (d) predecessor. Mapped from
+    /// `octo_runtime::AttachError::UnknownSession`. Exit 56.
+    #[error("attach session unknown: session `{0}` is not registered for any active agent")]
+    AttachSessionUnknown(String),
+
+    /// Stoolap-backed event-cursor persistence failure (Phase 2
+    /// RFC-0011-c §F.3 feature-gated surface). Mapped from
+    /// `octo_runtime::AttachError::PersistenceError`. Exit 57.
+    #[error("persistence error: {0}")]
+    PersistenceError(String),
+
+    /// Revocation-set mutation/lookup failure on the process-singleton
+    /// revocation set (RFC-0011-c §F.3). Mapped from
+    /// `octo_runtime::AttachError::RevocationError`. Exit 58.
+    #[error("revocation error: {0}")]
+    RevocationError(String),
 }
 
 impl OctoCliError {
@@ -620,11 +688,23 @@ impl OctoCliError {
             Self::AgentNotRunning(_) => 48,
             Self::RuntimeSubstrateNotReady => 51,
             Self::RuntimeAttachFailed { .. } => 49,
+            Self::RuntimeSpawnFailed { .. } => 44,
             Self::SnapshotStale { .. } => 35,
             Self::InvalidProposalState { .. } => 2,
             Self::GovernanceSubstrateError { .. } => 51,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
+            // RFC-0011-c §F + §9.8: AttachHandle token pathway slots
+            // 53-58 (paired with the substrate
+            // `octo_runtime::AttachError::exit_code` table so the CLI
+            // boundary and the substrate boundary agree on slot
+            // allocation).
+            Self::AttachHandleExpired { .. } => 53,
+            Self::AttachHandleBadSignature { .. } => 54,
+            Self::AttachSessionMismatch { .. } => 55,
+            Self::AttachSessionUnknown(_) => 56,
+            Self::PersistenceError(_) => 57,
+            Self::RevocationError(_) => 58,
         }
     }
 
@@ -792,6 +872,29 @@ impl OctoCliError {
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
+            Self::RuntimeSpawnFailed { .. } => {
+                "the runtime spawn call failed at the substrate boundary (handle mint error, channel registration failure, or invalid attach handle token); retry; if the failure persists, check that the agent is in a transition-eligible state (`octo agent list`)".to_string()
+            }
+            Self::AttachHandleExpired { mint_unix, ttl_unix, now_unix } => {
+                format!(
+                    "the AttachHandle token has expired (mint={mint_unix}, ttl={ttl_unix}, now={now_unix}); mint a fresh token via `octo agent run --detach` and retry the attach"
+                )
+            }
+            Self::AttachHandleBadSignature { .. } => {
+                "the AttachHandle signature did not verify against the active holder public key; ensure the token was minted by the active DID and the canonical payload bytes were not tampered with".to_string()
+            }
+            Self::AttachSessionMismatch { .. } => {
+                "the AttachHandle token's session_id does not match the current spawn-time session id for the target agent; mint a fresh token and retry".to_string()
+            }
+            Self::AttachSessionUnknown(_) => {
+                "the AttachHandle references a session_id that is not registered for any active agent; verify the token and the target agent_id".to_string()
+            }
+            Self::PersistenceError(_) => {
+                "the Stoolap-backed event-cursor persistence surface failed; check the substrate logs and verify the runtime persistence feature is enabled when required".to_string()
+            }
+            Self::RevocationError(_) => {
+                "the process-singleton revocation set mutation/lookup failed (RFC-0011-c §F.3); this is a substrate-internal failure distinct from a successful revocation (which is silent)".to_string()
+            }
         };
         Some(h)
     }
@@ -1060,6 +1163,73 @@ fn find_word_boundary_ci(s: &str, marker: &str) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+/// RFC-0011-c §F.4 + §9.8: `octo_runtime::AttachError` → `OctoCliError`
+/// per-variant mapping (slots 53-58). Substrate owns the canonical
+/// distinction; CLI mirrors via per-variant `From` arms so an additive
+/// substrate variant lands a corresponding CLI slot without
+/// central-enum edits. `#[non_exhaustive]` on both sides — wildcard
+/// arms collapse unknown future variants to `Internal(reason)`.
+impl From<octo_runtime::AttachError> for OctoCliError {
+    fn from(e: octo_runtime::AttachError) -> Self {
+        match e {
+            octo_runtime::AttachError::Expired {
+                session_id: _,
+                expired_at_unix,
+                now_unix,
+            } => {
+                // The substrate carries the deadline (`mint + ttl`) and
+                // the observed `now`; the CLI envelope surfaces the
+                // deadline as `ttl_unix` and reports `mint_unix = 0`
+                // since the substrate does not round-trip the mint
+                // timestamp on the failure path.
+                Self::AttachHandleExpired {
+                    mint_unix: 0,
+                    ttl_unix: expired_at_unix,
+                    now_unix,
+                }
+            }
+            octo_runtime::AttachError::BadSignature { reason } => Self::AttachHandleBadSignature {
+                reason: sanitize_substrate_error(&reason),
+            },
+            octo_runtime::AttachError::SessionMismatch { declared, actual } => {
+                Self::AttachSessionMismatch {
+                    token_session_hex: hex_encode_session(&declared),
+                    registered_session_hex: hex_encode_session(&actual),
+                }
+            }
+            octo_runtime::AttachError::UnknownSession { session_id } => {
+                Self::AttachSessionUnknown(hex_encode_session(&session_id))
+            }
+            octo_runtime::AttachError::PersistenceError(reason) => {
+                Self::PersistenceError(sanitize_substrate_error(&reason))
+            }
+            octo_runtime::AttachError::RevocationError(reason) => {
+                Self::RevocationError(sanitize_substrate_error(&reason))
+            }
+            // Additive-safe wildcard per `#[non_exhaustive]` on both
+            // enums. Future substrate variants collapse to
+            // `Internal(reason)` exit 64 — same pattern as the audit
+            // `From` impl above.
+            _ => Self::Internal(sanitize_substrate_error(&format!(
+                "attach substrate error: {e}"
+            ))),
+        }
+    }
+}
+
+/// RFC-0010-style lowercase-hex encoding of a 32-byte session id
+/// (64 chars). Used by `From<AttachError>` to render session ids on
+/// the operator-facing path.
+fn hex_encode_session(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 #[cfg(test)]

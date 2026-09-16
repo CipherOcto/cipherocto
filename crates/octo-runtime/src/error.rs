@@ -81,11 +81,16 @@ pub enum RuntimeError {
     #[error("runtime handle revoked for agent {0}")]
     HandleRevoked(uuid::Uuid),
 
-    /// `AttachHandle` does not match the requested `agent_id`.
+    /// `RuntimeHandleBinding` does not match the requested `agent_id`.
+    ///
+    /// Renamed from `InvalidAttachHandle` per RFC-0011-c §F.2 Path B
+    /// additive (the 3-field in-process binding is now called
+    /// `RuntimeHandleBinding` to disambiguate from the 6-field signed
+    /// `AttachHandle` token).
     ///
     /// CLI exit code 49 per RFC-0011-c §9.8.
-    #[error("invalid attach handle: {0}")]
-    InvalidAttachHandle(String),
+    #[error("invalid runtime handle binding: {0}")]
+    InvalidRuntimeHandleBinding(String),
 
     /// Underlying event-stream channel closed unexpectedly.
     ///
@@ -110,7 +115,7 @@ impl RuntimeError {
             Self::AgentNotRunning(_) => 48,
             Self::RuntimeAttachFailed { .. }
             | Self::HandleRevoked(_)
-            | Self::InvalidAttachHandle(_)
+            | Self::InvalidRuntimeHandleBinding(_)
             | Self::EventStreamClosed => 49,
         }
     }
@@ -137,7 +142,7 @@ mod tests {
             (RuntimeError::AgentNotRunning(uuid::Uuid::nil()), 48),
             (RuntimeError::RuntimeAttachFailed { reason: "x".into() }, 49),
             (RuntimeError::HandleRevoked(uuid::Uuid::nil()), 49),
-            (RuntimeError::InvalidAttachHandle("x".into()), 49),
+            (RuntimeError::InvalidRuntimeHandleBinding("x".into()), 49),
             (RuntimeError::EventStreamClosed, 49),
         ];
         for (err, code) in cases {

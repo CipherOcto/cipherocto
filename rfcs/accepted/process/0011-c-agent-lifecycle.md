@@ -255,6 +255,16 @@ the subsections below.
 | Errors      | `AgentNotFound(Uuid)` (exit 42), `AgentNotRunning(Uuid)` (exit 48), `RuntimeAttachFailed { reason }` (exit 49)      |
 | Test vector | TV-AGT11                                                                                                            |
 
+#### 9.3.6 `octo revoke-attach <token-hex>` — Layer C/D primitive per RFC-0011-c §Follow-on §F.3 (mirrors `octo_runtime::revoke_attach_token`)
+
+| Aspect      | Detail                                                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clap args   | `token-hex: String` (positional; hex-encoded `AttachHandle` from `--token-file`)                                                             |
+| Output      | `RevokeOutput { session_id: SessionId, revoked_at_unix: u64 }`                                                                               |
+| Substrate   | `octo_runtime::revoke_attach_token(session_id)`; decodes token (signature verified), adds to in-memory revocation set                        |
+| Errors      | `AttachHandleBadSignature { reason }` (exit 54), `AttachSessionMismatch { declared, actual }` (exit 55), `RevocationError(String)` (exit 58) |
+| Test vector | TV-AGT22                                                                                                                                     |
+
 ### 9.4 Output Envelope
 
 All five subcommands return values wrapped in the canonical
@@ -717,7 +727,7 @@ The AttachHandle token pathway (NEW; added per paired RFC amendment with mission
 Canonical byte encoding for `AttachHandle` tokens at the `octo_runtime::handle::encoding` module:
 
 - `encode_token(token: &AttachHandle) -> Result<Vec<u8>, AttachError>` — length-prefixed; version byte `0x00`; BLAKE3-checked
-- `decode_token(bytes: &[u8]) -> Result<AttachHandle, AttachError>` — symmetric decoder; verifies signature on decode
+- `decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHandle, AttachError>` — symmetric decoder; verifies signature on decode using `verify_attach_handle_payload` (signature is over `session_id || payload || mint_timestamp_unix || ttl_unix` which does NOT bind to holder_pubkey, hence explicit pass-through)
 - Encoding version pinned to `0x00`; future versions increment per octo-runtime canonical-bytes invariant (mirrors RFC-0016-a §6.10)
 - Encoding must be canonical (no equivalent-but-distinct bytes for same token); reject non-canonical input on decode
 
@@ -726,10 +736,11 @@ Canonical byte encoding for `AttachHandle` tokens at the `octo_runtime::handle::
 `AttachHandle` type and bind operations at the `octo_runtime::handle` module (Layer B):
 
 - `pub struct AttachHandle { session_id: SessionId, mint_timestamp_unix: u64, ttl_unix: u64, signature: Signature, payload: AttachPayload, transport: Transport }`
-- `pub enum Transport { InProcess, UnixSocket(String) }` — discriminator selecting bind transport
+- `pub struct Transport { pub kind: TransportKind, pub addr: Option<String> }` — typed-discriminator + Raw escape hatch per RFC-0855 §Typed UUID discriminators; new transports land via `TransportKind::Raw(Uuid)` without central enum edit
+- `#[non_exhaustive] pub enum TransportKind { InProcess, UnixSocket, Raw(Uuid) }` — discriminators; `Raw` is the extension surface per [[cipherocto-design-principles]] §Extension over enumeration
 - `pub struct AttachPayload { agent_id: Uuid, since_cursor: u64 }`
 - `pub type SessionId = [u8; 32]` — random per `spawn_agent` call
-- `pub fn mint_attach_handle(holder_did: &Did, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (calls `sign_attach_handle_payload` per §F.5; composes `IdentityKey::sign` from `octo-wallet::identity`)
+- `pub fn mint_attach_handle(holder: &IdentityKey, agent_id: Uuid, session_id: SessionId, since_cursor: u64, ttl_unix: u64, transport: Transport) -> Result<AttachHandle, AttachError>` (calls `sign_attach_handle_payload` per §F.5; composes `octo_wallet::identity::IdentityKey::sign`). DID → `IdentityKey` resolution is a CLI boundary concern (Layer C/D), not substrate.
 - `pub async fn attach_with_token(token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — validation chain: (a) signature verify via `verify_attach_handle_payload` (per §F.5), (b) revocation-set check via `is_token_revoked`, (c) `now_unix <= token.ttl_unix`, (d) `since_unix >= token.mint_timestamp_unix`, (e) session_id match against running session registry; binds via `token.transport` (InProcess: direct handle; UnixSocket: connect `XDG_RUNTIME_DIR/octo-attach-<session_id>.sock` with `std::env::temp_dir()` fallback)
 
 The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>) -> Result<EventStream, RuntimeError>` at the `octo_runtime::attach` module is UNCHANGED — it consumes the renamed 3-field in-process binding (`RuntimeHandleBinding` per Path B rename). The 6-field `AttachHandle` token lives alongside the renamed struct at the `octo_runtime::handle` module per [[no-parallel-abstractions]].
@@ -742,7 +753,7 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 
 - `pub fn persist_event_cursor(agent_id: Uuid, cursor: u64) -> Result<(), PersistenceError>` — gated on `cfg(feature = "octo-runtime-persistence")` (the feature flag is being newly added to `octo_runtime`'s manifest per the paired mission); canonical-bytes-on-write pattern is a coding reference per RFC-0016-a §6.10, not a paired-acceptance contract
 - `pub fn load_event_cursor(agent_id: Uuid) -> Result<Option<u64>, PersistenceError>` — symmetric
-- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), RevocationError>` — adds entry to in-memory `RwLock<HashSet<SessionId>>` revocation set; expired-by-revocation surfaces as `AttachError::Expired` (per §F.4 mirror)
+- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError>` — adds entry to `octo_runtime::persistence::REVOCATION_SET` (process-singleton `RwLock<HashSet<SessionId>>` per [[cipherocto-design-principles]] §Push complexity to edges; module-private with `with_revocation_set<F,R>(f: F) -> R` test injection hook). Fork-fail-closed contract: revocation set is not propagated across `fork()`; child processes start with an empty revocation set. Cross-process revocation propagation is out of scope and deferred to RFC-0011-c §Future Work.
 - `pub fn is_token_revoked(session_id: &SessionId) -> bool` — fast-path check invoked at step (b) of `attach_with_token()` validation chain per §F.2
 
 ### §F.4 Errors
@@ -754,7 +765,7 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 - `SessionMismatch { declared: SessionId, actual: SessionId }` (mirror → `OctoCliError::AttachSessionMismatch` exit 55)
 - `UnknownSession { session_id: SessionId }` (mirror → `OctoCliError::AttachSessionUnknown` exit 56)
 - `PersistenceError(String)` (mirror → `OctoCliError::PersistenceError(String)` exit 57)
-- `RevocationError(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58)
+- `RevocationFailed(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted
 
 CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §9.8 slot allocation.
 
@@ -762,8 +773,8 @@ CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §
 
 Signing wrappers colocated with the `AttachHandle` token type at the `octo_runtime::handle` module (Layer B). The wrappers compose substrate helpers on `octo_wallet::identity::IdentityKey` per RFC-0015-a Appendix A (the existing operative signing surface); no new Layer A types introduced. The substrate follows the `verify_successor_proof` / `verify_revocation_proof` static-helper pattern (pure helpers that verify against arbitrary `pubkey: &[u8; 32]` rather than binding to a `&self` receiver):
 
-- `pub fn sign_attach_handle_payload(holder: &IdentityKey, session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Signature, AttachError>` — encodes `session_id || payload || mint_timestamp_unix || ttl_unix` (canonical, length-prefixed per `AttachPayload` wire form) and delegates to `IdentityKey::sign(msg_bytes)` (existing substrate helper); caller resolves holder DID → `IdentityKey` via the substrate identity-registry (or constructs directly from `InMemorySigner` for tests)
-- `pub fn verify_attach_handle_payload(holder_pubkey: &[u8; 32], session_id: SessionId, payload_bytes: &[u8], mint_timestamp_unix: u64, ttl_unix: u64, sig: &Signature) -> Result<(), AttachError>` — static helper mirroring `verify_revocation_proof` shape; consumed by `attach_with_token` per §F.2 validation chain step (a); `decode_token` per §F.1 also invokes verify-on-decode. `IdentityKey::sign` returns `ed25519_dalek::Signature` — `Signature` is the substrate-visible type name (re-exported via `IdentityKey::sign` return type), not `Ed25519Signature`.
+- `pub fn sign_attach_handle_payload(holder: &IdentityKey, session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Signature, AttachError>` — encodes `session_id || payload || mint_timestamp_unix || ttl_unix` via the single canonical helper `canonical_payload_bytes` (per §F.1, colocated with encoding module) and delegates to `octo_wallet::identity::IdentityKey::sign(msg_bytes)`; the resulting `ed25519_dalek::Signature` is wrapped into the substrate-visible `Signature` newtype (`pub struct Signature(pub [u8;64])` in `octo_runtime::handle`, with `From<ed25519_dalek::Signature>` + `AsRef<[u8]>` conversions — avoids Layer A type leak per [[stable-abstractions-principle]]).
+- `pub fn verify_attach_handle_payload(holder_pubkey: &[u8; 32], session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64, sig: &Signature) -> Result<(), AttachError>` — static helper mirroring `verify_revocation_proof` shape; consumes the same `canonical_payload_bytes` helper as `sign_attach_handle_payload` so both produce / consume IDENTICAL canonical bytes per RFC-0016-a §6.10 canonical-bytes invariant.
 
 `octo-wallet::identity` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created (file does not exist). Composition pattern follows [[stable-abstractions-principle]] — primitives in stable substrate, business semantics in composed layer.
 
@@ -788,10 +799,10 @@ fragmenting the version space; field renames (`data`→`payload`,
 `generated_at`→`executed_at_unix`, `preview_only`→`redacted`)
 are additive to the v4 surface.
 
-### Why exit code slots 39-52
+### Why exit code slots 39-58
 
-Per the slot allocation table, RFC-0011-c consumes slots 39-52
-(post -g's 35-38; 14 new variants + 0 reuse). Sibling amendments
+Per the slot allocation table, RFC-0011-c consumes slots 39-58
+(post -g's 35-38; 20 new variants + 0 reuse — 14 base amendment + 6 follow-on amendment AttachHandle/AttachSession variants per §F.4 mirror). Sibling amendments
 that do not consume slots MUST NOT claim earlier slots; renegotiation
 is required if -h/i follow-on amendments need earlier slots.
 

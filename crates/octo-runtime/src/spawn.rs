@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use crate::error::RuntimeError;
 use crate::handle::{
-    AgentState, AttachHandle, RuntimeEvent, RuntimeHandle, EVENT_CHANNEL_CAPACITY,
+    AgentState, RuntimeEvent, RuntimeHandle, RuntimeHandleBinding, EVENT_CHANNEL_CAPACITY,
 };
 
 /// Spawn a runtime for `agent_id` and return a live `RuntimeHandle`
@@ -38,10 +38,12 @@ use crate::handle::{
 ///   verifying the agent exists and is in `Active` state via the
 ///   `AgentStateDispatcher` (RFC-0011-c §Implementation Phases
 ///   Phase 1).
-/// - `attach_handle` — optional pre-issued attach token. When `Some`,
-///   the substrate validates that the token's `agent_id` matches
-///   the requested `agent_id`; otherwise the call is rejected with
-///   `RuntimeError::InvalidAttachHandle` (CLI exit 49).
+/// - `binding` — optional pre-issued in-process binding
+///   (renamed from `AttachHandle` per RFC-0011-c §F.2 Path B).
+///   When `Some`, the substrate validates that the binding's
+///   `agent_id` matches the requested `agent_id`; otherwise the
+///   call is rejected with
+///   `RuntimeError::InvalidRuntimeHandleBinding` (CLI exit 49).
 ///
 /// # Returns
 ///
@@ -51,7 +53,7 @@ use crate::handle::{
 ///
 /// # Errors
 ///
-/// - `InvalidAttachHandle` — `attach_handle.agent_id != agent_id`
+/// - `InvalidRuntimeHandleBinding` — `binding.agent_id != agent_id`
 /// - (Future) `AgentNotFound` / `InvalidStateTransition` — when
 ///   substrate gains a state lookup hook (Phase 2).
 ///
@@ -65,15 +67,15 @@ use crate::handle::{
 /// authoritative; runtime substrate is the side-effect surface).
 pub fn spawn_agent(
     agent_id: Uuid,
-    attach_handle: Option<AttachHandle>,
+    binding: Option<RuntimeHandleBinding>,
 ) -> Result<RuntimeHandle, RuntimeError> {
-    // Validate the attach token if provided. The CLI may invoke
-    // `run` with a pre-issued token when resuming a previous spawn
+    // Validate the in-process binding if provided. The CLI may invoke
+    // `run` with a pre-issued binding when resuming a previous spawn
     // (RFC-0011-c §9.3.2 run --detach + attach --since pattern).
-    if let Some(handle) = attach_handle {
+    if let Some(handle) = binding {
         if handle.agent_id != agent_id {
-            return Err(RuntimeError::InvalidAttachHandle(format!(
-                "attach handle agent_id {} != requested {}",
+            return Err(RuntimeError::InvalidRuntimeHandleBinding(format!(
+                "runtime handle binding agent_id {} != requested {}",
                 handle.agent_id, agent_id
             )));
         }
@@ -175,28 +177,32 @@ mod tests {
     }
 
     #[test]
-    fn spawn_rejects_mismatched_attach_handle() {
-        // Attach handle for a different agent must be rejected.
+    fn spawn_rejects_mismatched_runtime_handle_binding() {
+        // Runtime handle binding for a different agent must be rejected.
         let real_agent = Uuid::new_v4();
         let other_agent = Uuid::new_v4();
-        let bogus = AttachHandle {
+        let bogus = RuntimeHandleBinding {
             agent_id: other_agent,
             handle_id: RuntimeHandleId::new(),
-            issued_at_unix: 0,
+            session_id: [0u8; 32],
+            spawned_at_unix: 0,
         };
         let res = spawn_agent(real_agent, Some(bogus));
-        assert!(matches!(res, Err(RuntimeError::InvalidAttachHandle(_))));
+        assert!(matches!(
+            res,
+            Err(RuntimeError::InvalidRuntimeHandleBinding(_))
+        ));
     }
 
     #[test]
-    fn spawn_accepts_matching_attach_handle() {
+    fn spawn_accepts_matching_runtime_handle_binding() {
         let agent_id = Uuid::new_v4();
         let h = spawn_agent(agent_id, None).expect("first spawn");
-        let token = h.attach_handle();
-        // A matching attach handle from a separate spawn is accepted
+        let binding = h.runtime_handle_binding();
+        // A matching binding from a separate spawn is accepted
         // (the substrate validates the agent_id match; the handle_id
         // is informational in v0.1.0).
-        let res = spawn_agent(agent_id, Some(token));
+        let res = spawn_agent(agent_id, Some(binding));
         assert!(res.is_ok());
     }
 

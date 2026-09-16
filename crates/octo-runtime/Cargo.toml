@@ -24,6 +24,12 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 # Tracing (Layer D transport substrate).
 tracing = "0.1"
+# BLAKE3 hash for canonical encoding integrity check (RFC-0011-c §F.1).
+# Layer A primitive re-exported to encoding module.
+blake3 = { version = "1", features = ["std"] }
+# Hex encoding (Debug impls on `RuntimeHandle` + `RuntimeHandleBinding`
+# session-id surface; mirrors the wallet substrate convention).
+hex = "0.4"
 
 # Layer B sibling crates.
 octo-core = { path = "../octo-core" }

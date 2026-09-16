@@ -10,14 +10,17 @@ metadata:
     - RFC-0015
     - RFC-0015-a
     - RFC-0016
-status: Claimed
+status: Completed
+completed: 2026-09-14
+completed_by: mmacedoeu
 claimed_by: mmacedoeu
 claimed_at: 2026-09-14
+dry_closure_audit: docs/audits/2026-09-14-rfc-0015-b-dry-closure.md
 ---
 
 # 0015-b-substrate-defect-amendment — RFC-0015-b substrate-defect paired amendment
 
-**Status:** Open
+**Status:** Closed (2026-09-14)
 **Substrate:** RFC-0015 §Pre-existing Substrate + RFC-0015-a §6.1 + §6.4 + RFC-0016 §Pre-existing Substrate
 **Parent:** RFC-0015 (read-path) + RFC-0015-a (write-path) + RFC-0016 (audit read-path) — all Accepted 2026-09-14 per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`
 **Depends on:** RFC-0015 Accepted; RFC-0015-a Accepted; RFC-0016 Accepted
@@ -188,14 +191,14 @@ defects from plateau declaration 2026-09-14)".
 
 ## Acceptance Criteria
 
-- [ ] RFC-0015-b drafted at `rfcs/draft/process/0015-b-substrate-defects.md`
-- [ ] Each of 7 defects restated as numbered §X.1-§X.7 requirements
-- [ ] Layer-model annotations on each §X.x (Layer B substrate mutation; CLI behavior unchanged for §X.1, §X.2, §X.4, §X.5, §X.6, §X.7; CLI security posture improvement for §X.3)
-- [ ] Cross-references to parent RFC-0015 + RFC-0015-a + RFC-0016 sections
-- [ ] Cross-reference to plateau declaration audit doc
-- [ ] Cross-reference to paired implementation mission `0015-b-substrate-defect-impl`
-- [ ] Multi-round DRY review loop on RFC-0015-b (per parent RFC pattern)
-- [ ] Promoted Draft → Accepted (paired with implementation mission landing per `[[no-phantom-mission-pointer]]` rule)
+- [x] RFC-0015-b drafted at `rfcs/draft/process/0015-b-substrate-defects.md`
+- [x] Each of 7 defects restated as numbered §X.1-§X.7 requirements
+- [x] Layer-model annotations on each §X.x (Layer B substrate mutation; CLI behavior unchanged for §X.1, §X.2, §X.4, §X.5, §X.6, §X.7; CLI security posture improvement for §X.3)
+- [x] Cross-references to parent RFC-0015 + RFC-0015-a + RFC-0016 sections
+- [x] Cross-reference to plateau declaration audit doc
+- [x] Cross-reference to paired implementation mission `0015-b-substrate-defect-impl`
+- [x] Multi-round DRY review loop on RFC-0015-b (per parent RFC pattern)
+- [x] Promoted Draft → Accepted (paired with implementation mission landing per `[[no-phantom-mission-pointer]]` rule)
 
 ## DRY review pattern (parent RFC mirror)
 

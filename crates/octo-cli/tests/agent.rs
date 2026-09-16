@@ -109,65 +109,6 @@ fn tv_agt4_auditor_mode_denies_write() {
         .stderr(contains("auditor mode is read-only"));
 }
 
-/// TV-AGT13: sibling subcommands (`run` / `list` / `destroy` /
-/// `attach`) that haven't been wired yet emit a clear "pending
-/// follow-on mission" error instead of a clap-level rejection. The
-/// operator sees the follow-on mission slug so they can track the
-/// amendment chain.
-#[test]
-fn tv_agt13_list_subcommand_is_pending() {
-    octo()
-        .args(["agent", "list"])
-        .assert()
-        .code(64)
-        .stderr(contains("follow-on mission"));
-}
-
-/// Pending subcommand — `agent run`.
-#[test]
-fn tv_agt13b_run_subcommand_is_pending() {
-    octo()
-        .args([
-            "agent",
-            "run",
-            "--agent-id",
-            "00000000-0000-4000-8000-000000000001",
-        ])
-        .assert()
-        .code(64)
-        .stderr(contains("follow-on mission"));
-}
-
-/// Pending subcommand — `agent destroy`.
-#[test]
-fn tv_agt13c_destroy_subcommand_is_pending() {
-    octo()
-        .args([
-            "agent",
-            "destroy",
-            "--agent-id",
-            "00000000-0000-4000-8000-000000000001",
-        ])
-        .assert()
-        .code(64)
-        .stderr(contains("follow-on mission"));
-}
-
-/// Pending subcommand — `agent attach`.
-#[test]
-fn tv_agt13d_attach_subcommand_is_pending() {
-    octo()
-        .args([
-            "agent",
-            "attach",
-            "--agent-id",
-            "00000000-0000-4000-8000-000000000001",
-        ])
-        .assert()
-        .code(64)
-        .stderr(contains("follow-on mission"));
-}
-
 /// Manifest parse error: a JSON document that deserializes to a
 /// different shape (missing required field `signature_hex`) returns
 /// exit 39 with a path-bearing message.

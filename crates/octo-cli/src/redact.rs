@@ -310,8 +310,20 @@ impl RedactionContext {
     }
 
     /// Walk a JSON value tree and apply the contextual redaction
-    /// rules. Mutates `value` in place.
-    pub fn apply(&self, value: &mut serde_json::Value) {
+    /// rules. Mutates `value` in place. Returns `true` when the
+    /// tree was altered by an un-redact (`holder_did`) or a
+    /// truncate (`agent_id`) rewrite — the renderer uses the
+    /// return value to flip the envelope's `redacted: bool` flag
+    /// per RFC-0011-c §9.4 ("true when any payload field has been
+    /// altered by the redactor"). A pure walk over a tree with no
+    /// matching keys returns `false`.
+    pub fn apply(&self, value: &mut serde_json::Value) -> bool {
+        let mut altered = false;
+        Self::apply_inner(self, value, &mut altered);
+        altered
+    }
+
+    fn apply_inner(&self, value: &mut serde_json::Value, altered: &mut bool) {
         match value {
             serde_json::Value::Object(map) => {
                 for (k, v) in map.iter_mut() {
@@ -346,6 +358,7 @@ impl RedactionContext {
                                                 event = "holder_did_un_redacted",
                                             );
                                             *v = serde_json::Value::String(raw.clone());
+                                            *altered = true;
                                         }
                                     }
                                 }
@@ -362,17 +375,18 @@ impl RedactionContext {
                                         // form per RFC-0011 §Hex32
                                         // newtype redaction.
                                         *v = serde_json::Value::String(truncate_id(raw));
+                                        *altered = true;
                                     }
                                 }
                             }
                         }
-                        _ => self.apply(v),
+                        _ => self.apply_inner(v, altered),
                     }
                 }
             }
             serde_json::Value::Array(items) => {
                 for item in items.iter_mut() {
-                    self.apply(item);
+                    self.apply_inner(item, altered);
                 }
             }
             _ => {}

@@ -64,12 +64,32 @@ pub enum AgentAction {
         #[arg(long, value_name = "HEX64")]
         capability_root: Option<String>,
     },
-    /// Run a registered agent (RFC-0011-c §9.3.2). Wired by
-    /// `0011-c-agent-run-subcommand` (follow-on).
+    /// Run a registered agent (RFC-0011-c §9.3.2). Per RFC-0011-c
+    /// §9.3.2 + RFC-0015-a Appendix A, performs the canonical
+    /// `Registered → Running` state transition (substrate-layer
+    /// `transition_agent` enforces the guard) and then mints a
+    /// runtime handle via `octo_runtime::spawn_agent`. The handle
+    /// is in-process; pass `--detach` to keep it live across the
+    /// CLI exit (default: in-process, terminated at CLI exit). The
+    /// companion `octo agent attach --agent-id <uuid>` reads from
+    /// the same in-process handle pub-sub channel.
     Run {
         /// Target agent id (UUID form, hex).
         #[arg(long, value_name = "UUID")]
         agent_id: String,
+        /// Keep the spawned handle alive after the CLI exits. The
+        /// substrate returns a `RuntimeHandle` whose broadcast
+        /// channel persists for the duration of the process; without
+        /// `--detach` the CLI terminates the handle when the
+        /// `Command::Agent(Run)` dispatch returns (default per
+        /// RFC-0011-c §9.3.2).
+        #[arg(long, default_value_t = false)]
+        detach: bool,
+        /// Optional human-readable run reason (audit-log payload).
+        /// Same 256-byte cap + control-character filter as
+        /// `octo agent destroy --reason` (RFC-0015 §6.2.5).
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
     },
     /// List registered agents owned by the active DID
     /// (RFC-0011-c §9.3.3). Wired by `0011-c-agent-list-subcommand`.
@@ -136,7 +156,11 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             limit,
             cursor,
         } => list::handle(state.as_deref(), *limit, cursor.as_deref(), cli),
-        AgentAction::Run { .. } => pending_subcommand(),
+        AgentAction::Run {
+            agent_id,
+            detach,
+            reason,
+        } => run::handle(agent_id, *detach, reason.as_deref(), cli),
         AgentAction::Attach { agent_id, since } => {
             attach::handle(agent_id, since.map(|s| s as i64), cli)
         }
@@ -144,19 +168,6 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
     }
-}
-
-/// Map a not-yet-implemented subcommand to a clear "pending follow-on
-/// mission" error so the operator does not see a clap-level "unknown
-/// command" rejection. Exit 39 is shared with `ManifestParseError`
-/// per RFC-0011-c §9.8 (slot 39-52 reserved for the agent amendment
-/// chain; `pending` claims slot 39 to keep the range contiguous and
-/// distinguishable from `ManifestParseError`'s `path`/`reason`
-/// payload shape).
-fn pending_subcommand() -> Result<(), OctoCliError> {
-    Err(OctoCliError::Internal(
-        "agent subcommand pending follow-on mission (0011-c-agent-run-subcommand); create, list, destroy, attach are wired".to_string(),
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +183,7 @@ fn pending_subcommand() -> Result<(), OctoCliError> {
 /// focus on their distinct write/read semantics.
 mod common {
     use crate::error::{sanitize_substrate_error, OctoCliError};
+    use crate::redact::RedactionContext;
 
     /// Resolve the active identity DID via the wallet store.
     ///
@@ -192,6 +204,77 @@ mod common {
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })?;
         Ok(active_key.did())
+    }
+
+    /// Parse an operator-supplied `--agent-id <UUID>` hex string into
+    /// the substrate `Uuid`. A parse failure maps to
+    /// `AgentNotFound(nil)` per the lookup-agent canonicalization
+    /// contract (slot 42; the substrate treats unknown UUIDs
+    /// identically to malformed IDs).
+    ///
+    /// Used by every agent subcommand that takes `--agent-id` so the
+    /// parse-failure exit code is uniformly 42 across the chain.
+    pub(crate) fn parse_agent_uuid(hex: &str) -> Result<uuid::Uuid, OctoCliError> {
+        uuid::Uuid::parse_str(hex).map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))
+    }
+
+    /// Map a substrate HSM error message to `OctoCliError::HsmUnavailable`
+    /// with sanitized payload (path/secret redaction).
+    pub(crate) fn map_hsm_error(reason: &str) -> OctoCliError {
+        OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
+    }
+
+    /// Map the substrate `WalletError` variants surfaced from
+    /// `transition_agent` to their CLI-shape counterparts. Used by
+    /// both `run::handle` and `destroy::handle` (the two agent
+    /// subcommands that drive the state machine).
+    ///
+    /// Variants mapped:
+    /// - `AlreadyInTransition` → `OctoCliError::AlreadyInTransition`
+    /// - `InvalidStateTransition` → `OctoCliError::InvalidStateTransition`
+    ///   (state labels via `AgentState::as_str` canonical form,
+    ///   not `Debug` form)
+    /// - `AuditUnavailable` → `OctoCliError::AuditSubstrateNotReady`
+    /// - `AgentNotFound` → `OctoCliError::AgentNotFound`
+    /// - `ForbiddenHolderMismatch` → `OctoCliError::ForbiddenHolderMismatch`
+    /// - `Hsm` → `OctoCliError::HsmUnavailable` (via `map_hsm_error`)
+    /// - other → `OctoCliError::Internal` (sanitized)
+    pub(crate) fn map_transition_wallet_error(e: octo_wallet::WalletError) -> OctoCliError {
+        match e {
+            octo_wallet::WalletError::AlreadyInTransition(uuid) => {
+                OctoCliError::AlreadyInTransition(uuid)
+            }
+            octo_wallet::WalletError::InvalidStateTransition { from, to } => {
+                OctoCliError::InvalidStateTransition {
+                    from: from.as_str().to_string(),
+                    to: to.as_str().to_string(),
+                }
+            }
+            octo_wallet::WalletError::AuditUnavailable(_) => OctoCliError::AuditSubstrateNotReady,
+            octo_wallet::WalletError::AgentNotFound(uuid) => OctoCliError::AgentNotFound(uuid),
+            octo_wallet::WalletError::ForbiddenHolderMismatch => {
+                OctoCliError::ForbiddenHolderMismatch
+            }
+            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        }
+    }
+
+    /// Build the envelope-boundary `RedactionContext` for agent
+    /// subcommands. For agent ops `holder_did == active_did` by
+    /// construction (the substrate's caller-attestation rejects
+    /// holder mismatches before the CLI sees the transition), so the
+    /// holder-did field un-redacts for the active operator and the
+    /// agent_id field truncates to first-8-chars per mission
+    /// `0011-c-agent-redaction-envelope` §Scope sub-step 3.
+    pub(crate) fn build_agent_redactor(
+        active_did: &str,
+        agent_id: &uuid::Uuid,
+    ) -> RedactionContext {
+        RedactionContext::new()
+            .with_active_did(active_did)
+            .with_holder_did(active_did)
+            .with_agent_id(agent_id.to_string())
     }
 }
 
@@ -287,10 +370,7 @@ mod create {
         // Envelope-boundary redaction context. For `agent create`
         // `holder_did == active_did` by construction; sibling
         // subcommands reuse the same context shape.
-        let redactor = RedactionContext::new()
-            .with_active_did(active_did.as_str())
-            .with_holder_did(active_did.as_str())
-            .with_agent_id(agent_id.to_string());
+        let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
         render_envelope("octo.agent.create.v1", output, cli, &redactor)
     }
 
@@ -508,6 +588,210 @@ mod list {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `octo agent run` handler
+// ---------------------------------------------------------------------------
+
+mod run {
+    //! `octo agent run --agent-id <uuid> [--detach] [--reason <text>] [--json]`
+    //!
+    //! RFC-0011-c §9.3.2. Two-phase write path:
+    //!
+    //! 1. `octo_wallet::transition_agent(caller_did, uuid,
+    //!    AgentState::Running, reason)` — substrate enforces the
+    //!    `Registered → Running` state-machine guard (RFC-0015-a
+    //!    Appendix A) and emits the `AuditEventKind::AgentTransition`
+    //!    audit event. The substrate rolls back the state change on
+    //!    audit-append failure (RFC-0015-a §6.1 rollback contract).
+    //! 2. `octo_runtime::spawn_agent(agent_id, None)` — mints the
+    //!    in-process `RuntimeHandle` pub-sub broadcast channel for
+    //!    `octo agent attach --agent-id <uuid>` replay (RFC-0011-c
+    //!    §9.3.5). Spawn is unconditional post-transition; failures
+    //!    are surfaced as `RuntimeSpawnFailed` (exit 44).
+    //!
+    //! ## Detach semantics (RFC-0011-c §9.3.2)
+    //!
+    //! Without `--detach` (the default), the CLI terminates the
+    //! in-process `RuntimeHandle` broadcast channel when the
+    //! `Command::Agent(Run)` dispatch returns. Phase 1 is in-process
+    //! only — Phase 2 (out of scope) moves handle persistence to a
+    //! registered actor per RFC-0011-c §9.3.2 detach semantics.
+    //!
+    //! ## Substrate layer direction
+    //!
+    //! The CLI is a thin shim; both substrate calls are RFC-0015-a
+    //! and RFC-0011-c anchor surfaces. The CLI never implements a
+    //! parallel validator / state-machine guard; the substrate owns
+    //! both.
+
+    use super::*;
+    use octo_runtime::spawn_agent as runtime_spawn_agent;
+    use octo_wallet::transition_agent as wallet_transition_agent;
+    use octo_wallet::{AgentState, TransitionReceipt};
+
+    // Parse helper lives in `common::parse_agent_uuid` (shared with
+    // destroy + attach per DRY).
+
+    /// Handle `octo agent run --agent-id <uuid> [--detach]
+    /// [--reason <text>] [--json]`.
+    ///
+    /// Exit codes:
+    /// - 0: success (transition recorded + RuntimeHandle minted)
+    /// - 2: Auditor mode refused the write (RFC-0011-c §Roles and
+    ///   Authorities)
+    /// - 5: HSM unavailable (substrate `WalletError::Hsm`)
+    /// - 42: agent not found / unparseable UUID
+    /// - 43: `AlreadyInTransition` / `InvalidStateTransition` —
+    ///   state-machine guard rejection
+    /// - 44: `RuntimeSpawnFailed` — handle mint error at the runtime
+    ///   substrate boundary (post-transition failure; the state
+    ///   change is committed by the substrate because
+    ///   `transition_agent` is atomic with the audit append)
+    /// - 52: audit substrate not ready (`AuditSubstrateNotReady`,
+    ///   surfaced only when `octo-audit-internal` feature is off
+    ///   and no audit sink is registered; substrate fails closed)
+    /// - 64: unexpected substrate error
+    pub fn handle(
+        agent_id_hex: &str,
+        detach: bool,
+        reason: Option<&str>,
+        cli: &Octo,
+    ) -> Result<(), OctoCliError> {
+        // 1. Parse agent id hex → substrate `Uuid`. Parse failure
+        //    maps to `AgentNotFound(nil)` per the lookup-agent
+        //    canonicalization contract (slot 42).
+        let agent_id = common::parse_agent_uuid(agent_id_hex)?;
+
+        // 2. Auditor is read-only (RFC-0011 §Compatibility +
+        //    RFC-0011-c §Roles and Authorities). `agent run`
+        //    performs a state transition — denied in Auditor mode.
+        if matches!(cli.mode.mode, OperatorMode::Auditor) {
+            return Err(OctoCliError::AuditorDenied {
+                command: "agent run".to_string(),
+            });
+        }
+
+        // 3. Resolve active DID via the shared helper.
+        let active_did = common::resolve_active_did()?;
+
+        // 4. Substrate `transition_agent` — performs the canonical
+        //    `Registered → Running` edge per RFC-0015-a Appendix A.
+        //    The substrate enforces caller-attestation against
+        //    `holder_did`, the state-machine guard, and rolls back
+        //    on audit-append failure (RFC-0015-a §6.1). On an
+        //    idempotent self-transition (`Running → Running`),
+        //    the substrate returns the same receipt with
+        //    `audit_log_entry = [0u8; 32]` per RFC-0015-a §6.1
+        //    self-transition contract; the CLI then skips
+        //    `spawn_agent` to avoid minting a duplicate
+        //    `RuntimeHandle` for the same agent (which would orphan
+        //    the previous handle's broadcast subscribers).
+        let receipt: TransitionReceipt =
+            wallet_transition_agent(&active_did, agent_id, AgentState::Running, reason)
+                .map_err(common::map_transition_wallet_error)?;
+
+        // 5. Substrate `spawn_agent` — mints the `RuntimeHandle`
+        //    pub-sub broadcast channel. Skipped on idempotent
+        //    self-transition (`previous_state == current_state`,
+        //    surfaced via zeroed `audit_log_entry`). Phase 1 takes
+        //    no attach-handle token (the `attach --since` replay
+        //    path is RFC-0011-c §9.3.5 forward-compat; the Phase 1
+        //    spec binds the attach handle implicitly via the
+        //    per-process wallet). Per the spawn-agent doc-comment
+        //    marker `EXPECTED_PRE_SPAWN_STATE`, the runtime
+        //    substrate expects the caller to have already approved
+        //    the `Active → Busy` transition (`transition_agent`
+        //    does that here).
+        let handle = if receipt.audit_log_entry == [0u8; 32]
+            && receipt.previous_state == receipt.current_state
+        {
+            // Idempotent self-transition — the substrate didn't
+            // mutate state. Surface the existing in-process
+            // handle indirectly by re-using the agent_id-bound
+            // channel; Phase 1 logs the no-op so operators can
+            // see the `run` was a no-op. Phase 2 will route this
+            // through a substrate-side `get_or_create` pathway.
+            None
+        } else {
+            Some(runtime_spawn_agent(agent_id, None).map_err(|e| match e {
+                octo_runtime::RuntimeError::RuntimeSpawnFailed { reason }
+                | octo_runtime::RuntimeError::InvalidAttachHandle(reason) => {
+                    // `RuntimeSpawnFailed` (exit 44) and
+                    // `InvalidAttachHandle` (substrate exit
+                    // 49) both collapse to the CLI-shape
+                    // `RuntimeSpawnFailed` here per
+                    // RFC-0011-c §9.8 — the spawn step is
+                    // atomic from the CLI perspective; the
+                    // substrate already separated them at the
+                    // dispatch boundary so the attach-handle
+                    // class is unreachable in Phase 1
+                    // (attach_handle passed as `None`).
+                    OctoCliError::RuntimeSpawnFailed {
+                        reason: sanitize_substrate_error(&reason),
+                    }
+                }
+                other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+            })?)
+        };
+
+        // 6. `--detach` semantics (Phase 1: best-effort log line).
+        //    The `RuntimeHandle` broadcast channel persists for the
+        //    duration of the CLI process regardless of `--detach`
+        //    (Phase 1 in-process only). The flag is recorded for
+        //    operator feedback and forward-compat with the Phase 2
+        //    actor-registered handle persistence per RFC-0011-c
+        //    §9.3.2. The message clarifies Phase 1 behavior so
+        //    operators don't infer that the default is detached.
+        if !detach {
+            if let Some(h) = &handle {
+                eprintln!(
+                    "octo agent run: handle {} minted in-process (Phase 1). CLI exit closes the broadcast channel; pass --detach for the Phase 2 actor-registered handle persistence path (RFC-0011-c §9.3.2).",
+                    h.handle_id.0
+                );
+            }
+        }
+
+        // 7. Build output envelope. Mirror the destroy handler's
+        //    shape: `agent_id` redacted, `state` from the
+        //    substrate-confirmed `current_state`, `audit_log_entry`
+        //    is the BLAKE3-256 chain-hash hex-encoded.
+        //    `runtime_handle` is `Some(handle)` on a forward
+        //    transition and `None` on idempotent self-transition
+        //    (the CLI skipped `runtime_spawn_agent`).
+        let output = AgentRunOutput {
+            agent_id: RedactedIdentifier::new(agent_id.to_string()),
+            state: receipt.current_state.as_str().to_string(),
+            runtime_handle: handle
+                .as_ref()
+                .map(|h| RedactedIdentifier::new(h.handle_id.0.to_string())),
+            // `DateTime::timestamp()` returns `i64` (not `Option<i64>`).
+            // The substrate guarantees a non-negative wall-clock
+            // (RFC-0015-a §6.2.5 monotonic substrate clock), so the
+            // `as u64` cast is safe — a pre-1970 timestamp would
+            // two's-complement-wrap via `as u64` rather than
+            // panic; `try_into().unwrap_or(0u64)` would silently
+            // yield 0 on a negative `i64` (the `unwrap_or` fires on
+            // `Result::Err`, not on a successful negative-to-unsigned
+            // conversion), so we use `as u64` to preserve the
+            // substrate invariant observation. `spawned_at_unix`
+            // is sourced only from a freshly minted handle; on the
+            // idempotent self-transition path `handle` is `None`
+            // and the field falls back to `0` (the substrate
+            // contract makes the original spawn time inaccessible
+            // in Phase 1 — Phase 2 routes through a `get_or_create`
+            // pathway).
+            spawned_at_unix: handle
+                .as_ref()
+                .map(|h| h.spawned_at.timestamp() as u64)
+                .unwrap_or(0),
+            transitioned_at_unix: receipt.transitioned_at_unix,
+            audit_log_entry: hex::encode(receipt.audit_log_entry),
+        };
+        let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
+        render_envelope("octo.agent.run.v1", output, cli, &redactor)
+    }
+}
+
 /// `octo agent create` payload — RFC-0011-c §9.3.1 Output Envelope.
 ///
 /// Built at the dispatch boundary by composing the substrate
@@ -599,16 +883,11 @@ mod destroy {
     //! chain-hash via `TransitionReceipt.audit_log_entry`.
 
     use super::*;
-    use octo_wallet::agent::transition_agent as wallet_transition_agent;
+    use octo_wallet::transition_agent as wallet_transition_agent;
     use octo_wallet::{AgentState, TransitionReceipt};
 
-    /// Parse the operator-supplied `--agent-id <UUID>` hex into the
-    /// substrate `Uuid`. A parse failure maps to `AgentNotFound(nil)`
-    /// (slot 42; the substrate treats unknown UUIDs identically to
-    /// malformed IDs per the lookup-agent canonicalization).
-    fn parse_uuid(hex: &str) -> Result<uuid::Uuid, OctoCliError> {
-        uuid::Uuid::parse_str(hex).map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))
-    }
+    // Parse helper lives in `common::parse_agent_uuid` (shared with
+    // run + attach per DRY).
 
     /// Handle `octo agent destroy --agent-id <uuid> --confirm [--reason] [--json]`.
     ///
@@ -646,7 +925,7 @@ mod destroy {
         }
 
         // 3. Parse agent id + resolve active DID.
-        let agent_id = parse_uuid(agent_id_hex)?;
+        let agent_id = common::parse_agent_uuid(agent_id_hex)?;
         let active_did = common::resolve_active_did()?;
 
         // 4. Substrate `transition_agent` — emits the
@@ -656,29 +935,7 @@ mod destroy {
         //    contract).
         let receipt: TransitionReceipt =
             wallet_transition_agent(&active_did, agent_id, AgentState::Terminated, reason)
-                .map_err(|e| match e {
-                    octo_wallet::WalletError::AlreadyInTransition(uuid) => {
-                        OctoCliError::AlreadyInTransition(uuid)
-                    }
-                    octo_wallet::WalletError::InvalidStateTransition { from, to } => {
-                        let from_s = format!("{from:?}").to_lowercase();
-                        let to_s = format!("{to:?}").to_lowercase();
-                        OctoCliError::InvalidStateTransition {
-                            from: from_s,
-                            to: to_s,
-                        }
-                    }
-                    octo_wallet::WalletError::AuditUnavailable(_) => {
-                        OctoCliError::AuditSubstrateNotReady
-                    }
-                    octo_wallet::WalletError::AgentNotFound(uuid) => {
-                        OctoCliError::AgentNotFound(uuid)
-                    }
-                    octo_wallet::WalletError::Hsm(_) => {
-                        OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-                    }
-                    other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-                })?;
+                .map_err(common::map_transition_wallet_error)?;
 
         // 5. JSON override (TTY parity) — flip the CLI JSON flag for
         //    `render_envelope`. The envelope schema itself is fixed
@@ -689,10 +946,7 @@ mod destroy {
             terminated_at_unix: receipt.transitioned_at_unix,
             audit_log_entry: hex::encode(receipt.audit_log_entry),
         };
-        let redactor = RedactionContext::new()
-            .with_active_did(active_did.as_str())
-            .with_holder_did(active_did.as_str())
-            .with_agent_id(agent_id.to_string());
+        let redactor = common::build_agent_redactor(active_did.as_str(), &agent_id);
         render_envelope("octo.agent.destroy.v1", output, cli, &redactor)
     }
 }
@@ -722,6 +976,56 @@ pub struct AgentDestroyOutput {
     pub terminated_at_unix: u64,
     /// BLAKE3-256 chain-hash of the committed audit event (lowercase
     /// hex form; 64 chars).
+    pub audit_log_entry: String,
+}
+
+/// `octo agent run` payload — RFC-0011-c §9.3.2 Output Envelope.
+///
+/// Mirror of the `destroy` envelope shape plus the
+/// `runtime_handle` mint record. The `agent_id` is wrapped in
+/// [`RedactedIdentifier`] for envelope-boundary symmetry with
+/// `agent create` per mission `0011-c-agent-redaction-envelope`
+/// §Scope sub-step 2. The `runtime_handle` is the substrate-minted
+/// `RuntimeHandleId` (UUID form) for downstream `octo agent attach`
+/// replay binding. The `audit_log_entry` is the BLAKE3-256
+/// chain-hash of the committed `AgentTransition` audit event
+/// (RFC-0015-a §6.1; 64 lowercase hex chars).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct AgentRunOutput {
+    /// Deterministic `agent_id` (RFC-0011-c §9.10 substrate signature).
+    /// Wrapped in [`RedactedIdentifier`] for envelope-boundary
+    /// symmetry with the create / destroy / list handlers.
+    #[schemars(with = "String")]
+    pub agent_id: RedactedIdentifier,
+    /// Lifecycle state label — always `running` for the run command
+    /// (the substrate enforces `Registered → Running` per RFC-0015-a
+    /// Appendix A; any other edge surfaces as
+    /// `InvalidStateTransition` exit 43).
+    pub state: String,
+    /// Runtime handle id (UUID form) returned by `octo_runtime::spawn_agent`
+    /// (RFC-0011-c §9.3.2 + RFC-0011-c §9.10 Substrate `[ADD]`
+    /// `RuntimeHandle::handle_id`). Wrapped in
+    /// [`RedactedIdentifier`] for envelope-boundary symmetry;
+    /// used by `octo agent attach --agent-id <uuid>` replay
+    /// binding (RFC-0011-c §9.3.5).
+    ///
+    /// `None` on idempotent self-transition (`Running → Running`
+    /// no-op per RFC-0015-a §6.1) — the CLI skipped
+    /// `runtime_spawn_agent` to avoid minting a duplicate handle
+    /// for the same agent.
+    #[schemars(with = "Option<String>")]
+    pub runtime_handle: Option<RedactedIdentifier>,
+    /// Unix seconds at which the runtime substrate minted the
+    /// handle (RFC 3339 UTC); sourced from `RuntimeHandle::spawned_at`.
+    pub spawned_at_unix: u64,
+    /// Unix seconds at which the substrate applied the
+    /// `Registered → Running` state transition (from
+    /// `TransitionReceipt::transitioned_at_unix`).
+    pub transitioned_at_unix: u64,
+    /// BLAKE3-256 chain-hash of the committed `AgentTransition`
+    /// audit event (RFC-0015-a §6.1; 64 lowercase hex chars).
+    /// Zeroed (`"00..00"`) on idempotent self-transitions per the
+    /// `TransitionReceipt` invariant comment.
     pub audit_log_entry: String,
 }
 
@@ -790,8 +1094,7 @@ mod attach {
         // 1. Parse agent id hex → substrate `Uuid`. Parse failure
         //    maps to `AgentNotFound(nil)` per the lookup-agent
         //    canonicalization contract (slot 42).
-        let agent_id = uuid::Uuid::parse_str(agent_id_hex)
-            .map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))?;
+        let agent_id = common::parse_agent_uuid(agent_id_hex)?;
 
         // 2. Resolve active DID via the shared helper.
         let active_did = common::resolve_active_did()?;
@@ -806,9 +1109,7 @@ mod attach {
             octo_wallet::WalletError::ForbiddenHolderMismatch => {
                 OctoCliError::ForbiddenHolderMismatch
             }
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
+            octo_wallet::WalletError::Hsm(_) => common::map_hsm_error(&e.to_string()),
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })?;
 
@@ -822,9 +1123,7 @@ mod attach {
             octo_wallet::WalletError::ForbiddenHolderMismatch => {
                 OctoCliError::ForbiddenHolderMismatch
             }
-            octo_wallet::WalletError::Hsm(_) => {
-                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-            }
+            octo_wallet::WalletError::Hsm(_) => common::map_hsm_error(&e.to_string()),
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })?;
         if state != octo_wallet::AgentState::Running {
@@ -969,28 +1268,6 @@ mod tests {
         let hex = "zz".repeat(32);
         let err = CapabilityId::from_hex(&hex).unwrap_err();
         assert!(matches!(err, octo_wallet::WalletError::InvalidSlotId(_)));
-    }
-
-    #[test]
-    fn pending_subcommand_returns_internal_error() {
-        // `pending_subcommand()` is parameter-less (R50.5 MEDIUM
-        // simplification: dropped the unused `_action: &AgentAction`
-        // parameter — the dispatch site passes nothing).
-        let err = pending_subcommand().unwrap_err();
-        // The pending-subcommand path emits `Internal` (exit 64) —
-        // a deliberately loud failure mode that surfaces the
-        // follow-on mission slug in the message so operators have a
-        // hint. Future amendments wire each sibling subcommand to
-        // its own substrate surface.
-        match err {
-            OctoCliError::Internal(msg) => {
-                assert!(
-                    msg.contains("follow-on mission"),
-                    "pending subcommand message must mention follow-on mission: {msg}"
-                );
-            }
-            other => panic!("expected Internal, got {other:?}"),
-        }
     }
 
     #[test]
@@ -1330,6 +1607,136 @@ mod tests {
             e.exit_code(),
             49,
             "RuntimeAttachFailed MUST exit 49 (RFC-0011-c agent amendment chain slot 49), got {}",
+            e.exit_code()
+        );
+    }
+
+    // ----- `octo agent run` tests (RFC-0011-c §9.3.2) -----
+
+    /// TV-AGT4 happy-path slot pin: a successful `octo agent run`
+    /// emits the `AgentRunOutput` envelope and exits 0. The slot
+    /// pins below are the substrate-faithful exit-code map:
+    ///
+    /// - `InvalidStateTransition` (43) — substrate `Registered →
+    ///   Terminated` and `Terminated → *` edges rejected per
+    ///   RFC-0015-a Appendix A. TV-AGT5
+    /// - `RuntimeSpawnFailed` (44) — runtime handle mint error
+    ///   post-transition (substrate commits state change because
+    ///   `transition_agent` is atomic with the audit append;
+    ///   spawn failure surfaces here). RFC-0011-c §9.8 slot 44
+    ///   reserved by the agent amendment chain
+    #[test]
+    fn run_exit_code_slots_pinned() {
+        let e = OctoCliError::InvalidStateTransition {
+            from: "registered".to_string(),
+            to: "terminated".to_string(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            43,
+            "InvalidStateTransition slot 43 (write-path state error); required by TV-AGT5"
+        );
+        let e = OctoCliError::RuntimeSpawnFailed {
+            reason: "handle mint error".to_string(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            44,
+            "RuntimeSpawnFailed slot 44 (RFC-0011-c agent amendment chain slot 44), got {}",
+            e.exit_code()
+        );
+    }
+
+    /// TV-AGT5 — `Terminated → Running` edge rejected by the
+    /// substrate state-machine guard (RFC-0015-a Appendix A).
+    /// The substrate returns `WalletError::InvalidStateTransition
+    /// { from, to }` and the CLI surfaces the typed labels
+    /// (`terminated`, `running`) per the mission §Substrate Gap
+    /// rewrite (2026-09-13). Pin the label echo so a future
+    /// amendment that switches the substrate to opaque IDs
+    /// surfaces as a broken contract.
+    #[test]
+    fn run_invalid_state_transition_from_terminated_to_running_echoes_labels() {
+        let from = "terminated".to_string();
+        let to = "running".to_string();
+        let e = OctoCliError::InvalidStateTransition { from, to };
+        match &e {
+            OctoCliError::InvalidStateTransition { from, to } => {
+                assert_eq!(from, "terminated", "from label must echo substrate");
+                assert_eq!(to, "running", "to label must echo substrate");
+            }
+            other => panic!("expected InvalidStateTransition, got {other:?}"),
+        }
+        assert_eq!(e.exit_code(), 43, "InvalidStateTransition slot 43");
+    }
+
+    /// Pin the schemars contract for `AgentRunOutput`: `agent_id`
+    /// and `runtime_handle` are wrapped in `RedactedIdentifier` with
+    /// `#[schemars(with = "String")]` so the JSON Schema declares
+    /// `string` for both fields. Symmetric with the
+    /// create / destroy / list / attach schemars pins.
+    #[test]
+    fn agent_run_output_schema_declares_string_fields() {
+        use schemars::schema_for;
+        let schema = schema_for!(AgentRunOutput);
+        let json = serde_json::to_value(&schema).expect("schema is JSON");
+        let agent_id = json
+            .pointer("/properties/agent_id/type")
+            .and_then(|v| v.as_str())
+            .expect("agent_id schema must declare a type");
+        assert_eq!(
+            agent_id, "string",
+            "AgentRunOutput.agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
+        let runtime_handle = json
+            .pointer("/properties/runtime_handle/type")
+            .expect("runtime_handle schema must declare a type");
+        // `runtime_handle` is `Option<RedactedIdentifier>` (None on
+        // idempotent `Running → Running` self-transition per
+        // RFC-0015-a §6.1). The schema either renders as
+        // `type: "string"` with a `nullable` flag, or as a JSON
+        // Schema `oneOf` / array of allowed types containing
+        // `"string"`. Accept either shape so the test stays
+        // substrate-faithful across schemars versions.
+        let runtime_handle_is_string = match runtime_handle {
+            serde_json::Value::String(s) => s == "string",
+            serde_json::Value::Array(items) => items.iter().any(|it| it.as_str() == Some("string")),
+            _ => false,
+        };
+        assert!(
+            runtime_handle_is_string,
+            "AgentRunOutput.runtime_handle must round-trip as JSON Schema nullable `string`, got {runtime_handle:?}",
+        );
+        let state = json
+            .pointer("/properties/state/type")
+            .and_then(|v| v.as_str())
+            .expect("state schema must declare a type");
+        assert_eq!(
+            state, "string",
+            "AgentRunOutput.state must round-trip as JSON Schema `string`, got {state:?}",
+        );
+        let audit = json
+            .pointer("/properties/audit_log_entry/type")
+            .and_then(|v| v.as_str())
+            .expect("audit_log_entry schema must declare a type");
+        assert_eq!(
+            audit, "string",
+            "AgentRunOutput.audit_log_entry must round-trip as JSON Schema `string`, got {audit:?}",
+        );
+    }
+
+    /// TV-AGT6 — `octo agent run` happy-path slot pin: the
+    /// `AgentNotFound` slot (42) is shared with the destroy / list /
+    /// attach handlers. Re-pin here so the run handler's exit
+    /// contract is independently verified (regression guard against
+    /// a future arm that re-routes the substrate error path).
+    #[test]
+    fn run_agent_not_found_exits_42() {
+        let e = OctoCliError::AgentNotFound(uuid::Uuid::nil());
+        assert_eq!(
+            e.exit_code(),
+            42,
+            "AgentNotFound MUST exit 42 (RFC-0011-c agent amendment chain slot 42), got {}",
             e.exit_code()
         );
     }

@@ -230,6 +230,14 @@ impl<T: Serialize> OutputEnvelope<T> {
     /// serialisation and write. For the pretty path, the walker runs
     /// on the same `Value` before colourisation.
     ///
+    /// The output `redacted` flag is set per RFC-0011-c §9.4 —
+    /// `true` when any payload field has been altered by the redactor
+    /// (un-redact of `holder_did` for the active operator, or
+    /// truncation of `agent_id` to its first-8-chars form). The
+    /// renderer derives the flag from `redactor.apply()`'s return
+    /// value so the JSON output reflects ground truth rather than
+    /// the pre-render builder flag.
+    ///
     /// An empty [`RedactionContext`] is the no-op identity — the
     /// renderer behaves exactly like [`OutputEnvelope::render`].
     pub fn render_with_redaction(
@@ -247,9 +255,17 @@ impl<T: Serialize> OutputEnvelope<T> {
         // skip redaction for dry-run (`redacted: true`) envelopes.
         // The preview shape is operator-owned per RFC-0011-c §9.4;
         // redaction would alter a surface the operator is reviewing,
-        // not the live substrate view.
+        // not the live substrate view. When the apply runs, the
+        // returned `altered` flag propagates to the output `redacted`
+        // field (replaces the pre-render `self.redacted` value so the
+        // JSON reflects post-redaction ground truth).
         if !self.redacted {
-            redactor.apply(&mut value);
+            let altered = redactor.apply(&mut value);
+            if altered {
+                if let serde_json::Value::Object(map) = &mut value {
+                    map.insert("redacted".to_string(), serde_json::Value::Bool(true));
+                }
+            }
         }
         if force_json || !tty {
             let json = serde_json::to_string(&value)

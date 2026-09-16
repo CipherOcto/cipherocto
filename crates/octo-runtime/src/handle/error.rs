@@ -14,8 +14,10 @@ use crate::handle::SessionId;
 /// Substrate error envelope for `AttachHandle` operations
 /// (RFC-0011-c §F.4).
 ///
-/// Mirrors 1:1 to the `OctoCliError` variants 53-59 per RFC-0011-c
-/// §9.8 extension. The CLI boundary translates per-variant; the
+/// Mirrors 1:1 to the `OctoCliError` slots 53-59 per RFC-0011-c
+/// §9.8 extension (8 variants, 7 slots; `InvalidSinceCursor`
+/// shares slot 53 with `Expired` per amendment-chain shared-slot
+/// pattern). The CLI boundary translates per-variant; the
 /// substrate owns the canonical distinction.
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -67,14 +69,9 @@ pub enum AttachError {
         session_id: SessionId,
     },
 
-    /// `since_unix < token.mint_timestamp_unix` — the requested replay
-    /// cursor is below the token's mint timestamp (the token cannot
-    /// authorize events that pre-date it). Distinct from `Expired`
-    /// (TTL boundary) per RFC-0011-c §F.2 validation chain step (d).
-    /// CLI exit 53 (shared slot with `Expired` per amendment-chain
-    /// shared-slot pattern; operator-unambiguous within the attach
-    /// command surface — the render layer distinguishes the two
-    /// payloads).
+    /// `since_unix < token.mint_timestamp_unix` — replay cursor
+    /// below token mint. CLI exit 53 (shared slot with `Expired`;
+    /// see enum-level rustdoc for shared-slot rationale).
     #[error("since cursor {requested} is below token mint {mint_unix}")]
     InvalidSinceCursor {
         /// Token mint timestamp (the lower-bound replay horizon).
@@ -93,14 +90,10 @@ pub enum AttachError {
     #[error("revocation error: {0}")]
     RevocationError(String),
 
-    /// `attach_with_token` step (e) found no registered handler for
-    /// the token's `TransportKind` (RFC-0011-c §F.2 step (e) +
-    /// [[cipherocto-design-principles]] §per-extension crates +
-    /// registry). Substrate ships the built-in `InProcessHandler`;
-    /// extension transports (e.g., `UnixSocket`) require a
-    /// follow-on Layer D transport crate
-    /// (`octo-runtime-transport-unix`, …) to register a handler at
-    /// process startup. CLI exit 59.
+    /// Step (e) — no `Handler` registered for the token's
+    /// `TransportKind`. Extension transports (UnixSocket, Raw
+    /// scheme UUIDs) register via follow-on Layer D crates (see
+    /// enum-level rustdoc). CLI exit 59.
     #[error("transport handler not registered for kind `{kind_label}` (register a Handler via octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY in a follow-on Layer D crate)")]
     TransportHandlerNotRegistered {
         /// Transport-kind discriminator label for the operator

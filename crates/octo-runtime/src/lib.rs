@@ -101,7 +101,6 @@ pub async fn attach_with_token(
     token: &AttachHandle,
     since_unix: u64,
 ) -> Result<AttachedSession, AttachError> {
-    // Validation chain per §F.2 (rustdoc enumeration above).
     verify_attach_handle_payload(
         holder_pubkey,
         &token.session_id,
@@ -120,10 +119,10 @@ pub async fn attach_with_token(
 
     // Fail-CLOSED discipline on broken clock: any `duration_since`
     // error saturates `now_unix` to `u64::MAX`. The same value is
-    // the reserved TTL sentinel — a token whose ttl_unix equals the
-    // reserved sentinel opts out of expiry (substrate discipline;
-    // the substrate code is the authoritative source) and rejects
-    // with the same uniform `Expired` envelope.
+    // the reserved TTL sentinel — a token whose `ttl_unix == u64::MAX`
+    // is always rejected as `Expired` (fail-CLOSED on broken-clock
+    // ambiguity: the substrate cannot distinguish a sentinel TTL
+    // from a saturated clock and rejects uniformly).
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

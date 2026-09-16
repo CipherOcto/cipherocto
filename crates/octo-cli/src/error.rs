@@ -609,8 +609,7 @@ pub enum OctoCliError {
     /// the supplied string is not a 64-char lowercase hex
     /// `SessionId`. Distinct from `AttachHandleBadSignature` (exit
     /// 54, substrate signature-verify failure). Exit 47 per
-    /// substrate-local allocation; the parent RFC §9.8 slot table
-    /// predates this CLI-boundary parse failure mode.
+    /// RFC-0011-c §9.8 row.
     #[error("invalid session id hex: {reason}")]
     InvalidSessionIdHex {
         /// Diagnostic reason (length / encoding / non-hex).

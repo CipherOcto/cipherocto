@@ -64,8 +64,9 @@ pub type SessionId = [u8; 32];
 /// Local wrapper around the raw 64 signature bytes — Layer A
 /// primitive `ed25519_dalek::Signature` is re-exported via the
 /// `octo-wallet` path dep and wrapped at this boundary so the Layer
-/// A/B seam stays clean per [[cipherocto-design-principles]] §Extension over enumeration +
-/// [[cipherocto-design-principles]] §Stable Abstractions Principle (Layer A primitives stable;
+/// A/B seam stays clean per [[cipherocto-design-principles]]
+/// §Extension over enumeration + §Stable Abstractions Principle
+/// (Layer A primitives stable;
 /// business semantics in composed Layer B).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -379,9 +380,6 @@ impl RuntimeHandleBinding {
 /// channel closes (no more senders). `is_last_clone()` observes the
 /// remaining `Arc::strong_count` directly — when it reaches 1
 /// (only the current handle), the channel is about to close.
-///
-/// Keep-alive invariant on the broadcast sender lives at
-/// [`HandleInner::_keepalive_rx`] (canonical).
 struct HandleInner {
     /// Pub-sub broadcast sender (Layer D transport substrate).
     event_tx: broadcast::Sender<RuntimeEvent>,
@@ -392,22 +390,12 @@ struct HandleInner {
     ///
     /// The ONLY invariant this guarantees is `Sender::send` cannot
     /// return `Err(SendError(_))` for the lifetime of any handle
-    /// clone (because the keep-alive receiver holds an active
-    /// subscription on the broadcast channel). It does NOT
-    /// guarantee that any event reaches any external consumer: the
-    /// `_keepalive_rx` is never `recv()`d, so new external
-    /// `subscribe()` calls still join at the current tail position
-    /// and miss events that were sent before they subscribed
-    /// (standard tokio `broadcast` semantics). The initial `Spawned`
-    /// event from `spawn_agent` is therefore NOT guaranteed to
-    /// reach the next `attach` — an `attach` issued after
-    /// `spawn_agent` returns will start from the channel tail.
-    ///
-    /// The receiver is intentionally never `recv()`d from — its
-    /// sole purpose is to register as a live receiver with the
-    /// broadcast channel. Leading underscore suppresses the
-    /// false-positive dead-code warning (the field's value matters
-    /// as a side effect of being held, not via any access).
+    /// clone. It does NOT guarantee that any event reaches any
+    /// external consumer: the `_keepalive_rx` is never `recv()`d,
+    /// so new external `subscribe()` calls join at the current
+    /// tail position (standard tokio `broadcast` semantics). The
+    /// initial `Spawned` event from `spawn_agent` is therefore NOT
+    /// guaranteed to reach the next `attach`.
     _keepalive_rx: broadcast::Receiver<RuntimeEvent>,
 }
 
@@ -515,7 +503,7 @@ impl std::fmt::Debug for RuntimeHandle {
             .field("session_id", &hex::encode(self.session_id))
             .field("agent_id", &self.agent_id)
             .field("spawned_at", &self.spawned_at)
-            .field("revoked", &self.is_last_clone())
+            .field("is_last_clone", &self.is_last_clone())
             .finish_non_exhaustive()
     }
 }

@@ -304,7 +304,7 @@ subcommand group:
 | RFC-0011-g     | 6..7             | Governance: TBD at promotion                                                                                                                           |
 | (future)       | 8+               | New amendments start at 8; consecutive slots reserve room for multi-version evolution                                                                  |
 
-| Parent field (v2)        | RFC-0011-c (v4)         | Divergence                                                                            |
+| Parent field (v2)        | RFC-0011-c              | Divergence                                                                            |
 | ------------------------ | ----------------------- | ------------------------------------------------------------------------------------- |
 | `data: T`                | `payload: T`            | **Renamed.** Breaking for consumers that read `data`                                  |
 | `generated_at: DateTime` | `executed_at_unix: u64` | **Renamed + retyped** RFC 3339 string → `u64` unix seconds (single-clock determinism) |

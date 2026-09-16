@@ -404,25 +404,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-    fn getrandom_bytes(out: &mut [u8]) {
-        // Lightweight helper so the test file doesn't pull in the
-        // full `getrandom` crate.
-        let mut state: u64 = 0x9E3779B97F4A7C15;
-        for chunk in out.chunks_mut(8) {
-            // splitmix64
-            state = state.wrapping_add(0x9E3779B97F4A7C15);
-            let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-            z ^= z >> 31;
-            let bytes = z.to_le_bytes();
-            for (i, b) in chunk.iter_mut().enumerate() {
-                *b = bytes[i];
-            }
-        }
-    }
-
     #[test]
     fn canonical_payload_bytes_round_trip() {
         let session_id = [0xab; 32];

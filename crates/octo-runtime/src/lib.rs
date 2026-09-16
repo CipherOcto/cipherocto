@@ -72,22 +72,6 @@ pub use persistence::{
 };
 pub use spawn::{spawn_agent, EXPECTED_PRE_SPAWN_STATE};
 
-/// Legacy `execute_agent` shim — kept for callers predating
-/// mission `0011-c-octo-runtime-substrate` (the `octo-cli` v0.1.0
-/// registry stub still calls it). New code MUST use [`spawn_agent`]
-/// + [`attach`] per RFC-0011-c §9.10.
-#[deprecated(
-    since = "0.2.0",
-    note = "use spawn_agent + attach per RFC-0011-c §9.10; execute_agent is a pre-substrate MVP shim"
-)]
-pub async fn execute_agent(name: &str) -> Result<String, String> {
-    println!("🚀 Executing agent: {}", name);
-    // MVP behavior preserved verbatim from the 0.1.0 skeleton.
-    println!("✓ Agent completed execution");
-    println!("✓ Results persisted to registry");
-    Ok(format!("Agent {name} executed successfully"))
-}
-
 /// Bind to a previously-minted `AttachHandle` token (RFC-0011-c §F.2).
 ///
 /// Validation chain per §F.2:

@@ -19,10 +19,11 @@ tokio = { version = "1.35", features = ["rt", "sync", "macros"] }
 async-trait = "0.1"
 # Envelope codec (Layer B; RFC-0011 §Output Envelope).
 serde = { version = "1.0", features = ["derive"] }
-# JSON wire format for the substrate envelope codec (Layer B;
-# RFC-0011 §Output Envelope; canonical JSON serialization for
-# `AgentState`, `RuntimeEvent`, `AttachHandle`, `OutputEnvelope<T>`).
-# Pairs with the `serde` `derive` macros two lines above.
+# JSON round-trip property testing for Layer B types (`AgentState`,
+# `RuntimeEvent`, `AttachHandle`); pairs with the `serde` `derive`
+# macros two lines above. Test-only in this crate — production
+# codec path is custom binary per `encoding.rs`. The canonical
+# `OutputEnvelope<T>` envelope lives in octo-cli Layer C.
 serde_json = "1.0"
 # Error enum derivation (Layer C/D operator envelope; substrate surfaces).
 thiserror = "2.0"

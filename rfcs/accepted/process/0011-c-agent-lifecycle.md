@@ -594,21 +594,21 @@ to stderr; operator can re-run with `--no-cache`.
 Test vectors for the `octo agent` subcommand group. All vectors
 must pass before the amendment is promoted.
 
-| #        | Subcommand      | Input                                            | Expected Output                                                                  | Notes                                |
-| -------- | --------------- | ------------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------ |
-| TV-AGT1  | `agent create`  | Valid manifest, valid capability root, valid HSM | `AgentCreateOutput { state: REGISTERED, ... }` (exit 0)                          | Happy path                           |
-| TV-AGT2  | `agent create`  | Invalid manifest signature                       | `CapabilityValidationFailed(1)` (exit 40)                                        | Fails step 1 of 6-step pipeline      |
-| TV-AGT3  | `agent create`  | Duplicate `agent_id`                             | `AgentAlreadyExists(uuid)` (exit 41)                                             | Substrate rejects                    |
-| TV-AGT4  | `agent run`     | Registered agent, no runtime                     | `AgentRunOutput { state: BUSY, ... }` (exit 0)                                   | Spawns runtime container             |
-| TV-AGT5  | `agent run`     | Terminated agent                                 | `InvalidStateTransition { from: TERMINATED, to: ACTIVE }` (exit 43)              | State machine rejects                |
-| TV-AGT6  | `agent list`    | 50 owned agents, no filter                       | `AgentListOutput { agents: [...50], next_cursor: None }`                         | All 50 in single page                |
-| TV-AGT7  | `agent list`    | `--state ACTIVE --chain-id chain-a`              | Filtered list of ACTIVE agents on chain-a                                        | Client-side filter                   |
-| TV-AGT8  | `agent list`    | `--limit 0`                                      | `InvalidLimit` (exit 45)                                                         | Defensive validation                 |
-| TV-AGT9  | `agent destroy` | Active agent, `--confirm`                        | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0)   | Audit log appended                   |
-| TV-AGT10 | `agent destroy` | Active agent, no `--confirm`                     | `ConfirmationRequired` (exit 2)                                                  | Confirmation gate enforced           |
-| TV-AGT11 | `agent attach`  | Running agent                                    | `AgentAttachOutput { runtime_handle: ..., attached_at_unix: ..., ... }` (exit 0) | Read-only attach                     |
-| TV-AGT12 | `agent attach`  | Terminated agent                                 | `AgentNotRunning(uuid)` (exit 48)                                                | Attach to non-running agent rejected |
-| TV-AGT13 | `agent create`  | Replay of yesterday's manifest                   | `ReplayDetected { digest }` (exit 50)                                            | RFC-0002 §Replay Protection enforced |
+| #        | Subcommand      | Input                                            | Expected Output                                                                            | Notes                                |
+| -------- | --------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------ |
+| TV-AGT1  | `agent create`  | Valid manifest, valid capability root, valid HSM | `AgentCreateOutput { state: REGISTERED, ... }` (exit 0)                                    | Happy path                           |
+| TV-AGT2  | `agent create`  | Invalid manifest signature                       | `CapabilityValidationFailed(1)` (exit 40)                                                  | Fails step 1 of 6-step pipeline      |
+| TV-AGT3  | `agent create`  | Duplicate `agent_id`                             | `AgentAlreadyExists(uuid)` (exit 41)                                                       | Substrate rejects                    |
+| TV-AGT4  | `agent run`     | Registered agent, no runtime                     | `AgentRunOutput { state: BUSY, ... }` (exit 0)                                             | Spawns runtime container             |
+| TV-AGT5  | `agent run`     | Terminated agent                                 | `InvalidStateTransition { from: TERMINATED, to: ACTIVE }` (exit 43)                        | State machine rejects                |
+| TV-AGT6  | `agent list`    | 50 owned agents, no filter                       | `AgentListOutput { agents: [...50], next_cursor: None }`                                   | All 50 in single page                |
+| TV-AGT7  | `agent list`    | `--state ACTIVE --chain-id chain-a`              | Filtered list of ACTIVE agents on chain-a                                                  | Client-side filter                   |
+| TV-AGT8  | `agent list`    | `--limit 0`                                      | `InvalidLimit` (exit 45)                                                                   | Defensive validation                 |
+| TV-AGT9  | `agent destroy` | Active agent, `--confirm`                        | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0)             | Audit log appended                   |
+| TV-AGT10 | `agent destroy` | Active agent, no `--confirm`                     | `ConfirmationRequired` (exit 2)                                                            | Confirmation gate enforced           |
+| TV-AGT11 | `agent attach`  | Running agent                                    | `AgentAttachOutput { runtime_handle: ..., attached_at_unix: ..., ... }` (exit 0)           | Read-only attach                     |
+| TV-AGT12 | `agent attach`  | Terminated agent                                 | `AgentNotRunning(uuid)` (exit 48)                                                          | Attach to non-running agent rejected |
+| TV-AGT13 | `agent create`  | Replay of yesterday's manifest                   | `Internal(reason)` (exit 64) — typed-discriminator variant deferred to follow-on amendment | RFC-0002 §Replay Protection enforced |
 
 ## Alternatives Considered
 

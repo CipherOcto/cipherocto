@@ -794,6 +794,57 @@ Signing wrappers colocated with the `AttachHandle` token type at the `octo_runti
 
 `octo-wallet` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen, re-exported via `octo_wallet::ed25519_dalek`) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created — composition pattern follows [[cipherocto-design-principles]] §Stable Abstractions Principle, primitives in stable substrate, business semantics in composed layer.
 
+### §F.6 CLI Dispatch Wiring
+
+The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the operator workstation live in `crates/octo-cli/src/commands/agent.rs` (Layer C/D). The dispatch is split across two subcommands that compose via the persistent `AttachHandle` token file written by `run` and consumed by `attach`:
+
+**§F.6.1 — `octo agent run --detach --token-file <path>` (emit side)**
+
+- clap args: `--detach` (existing) + `--token-file <path>` (NEW; `requires = "detach"` enforces that the token pathway is only activated on detached spawns, where the in-process `RuntimeHandle` survives beyond the CLI process lifetime via the persisted token)
+- dispatch flow (after `transition_agent` + `spawn_agent` succeed):
+  1. Resolve caller DID → `IdentityKey` via `mod common::resolve_active_did` + `octo_wallet::active_identity(&store)` (CLI boundary concern per §F.5)
+  2. Extract `session_id: SessionId` (= `[u8; 32]`) from the `RuntimeHandle` returned by `spawn_agent` (the substrate carries the derived session id on the handle per §F.2)
+  3. Call `octo_runtime::mint_attach_handle(holder: &IdentityKey, agent_id, session_id, since_cursor, ttl_unix, Transport::IN_PROCESS)` per §F.2
+  4. Call `octo_runtime::encode_token(&handle) -> Vec<u8>` per §F.1
+  5. Write bytes to `--token-file` via `std::fs::OpenOptions::create + truncate + mode 0o600 + fsync` (secure perms mandatory; the token is a credential per RFC-0011-c §Layer direction)
+  6. Create parent dirs via `std::fs::create_dir_all(parent)` if absent
+  7. Populate `AgentRunOutput::token_written: Option<TokenWrittenReceipt>` with `{ session_id_hex, bytes_written, path_redacted: true }`
+
+**§F.6.2 — `octo agent attach --token-file <path> [--since <unix-seconds>]` (consume side)**
+
+- clap args: `--token-file <path>` (NEW; required when the runtime handle must bind via persistent token pathway) + `--since <unix-seconds>` (existing; default = `mint_timestamp_unix` if absent)
+- dispatch flow (after `lookup_agent` + `read_agent_state` confirm `Running` per the §9.3.5 state-gate):
+  1. Read token bytes from `--token-file` via `std::fs::read` (caller-scoped error if path missing / unreadable)
+  2. Resolve caller DID → `[u8; 32]` holder_pubkey via `IdentityKey::public_key_bytes()` (CLI boundary concern per §F.5)
+  3. Call `octo_runtime::decode_token(&bytes, holder_pubkey) -> AttachHandle` (verifies signature + BLAKE3 integrity per §F.1)
+  4. Call `octo_runtime::attach_with_token(holder_pubkey, &token, since_unix).await` (executes the §F.2 validation chain steps (a)-(e))
+  5. Populate `AgentAttachOutput { agent_id, runtime_handle, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (the `runtime_handle` field becomes `Some(...)` only when step (e) succeeds; otherwise the substrate error surfaces verbatim)
+
+**§F.6.3 — `OctoCliError` mirror surface**
+
+The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via `From<octo_runtime::AttachError> for OctoCliError` at `crates/octo-cli/src/error.rs`. The CLI adds zero new variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
+
+- `AttachHandleExpired { mint_unix, ttl_unix, now_unix }` → exit 53
+- `TokenRevoked { session_id }` → exit 53 (shared-slot with `AttachHandleExpired`)
+- `AttachHandleBadSignature { reason }` → exit 54
+- `AttachSessionMismatch { declared, actual }` → exit 55
+- `AttachSessionUnknown { session_id }` → exit 56
+- `PersistenceError(String)` → exit 57
+- `RevocationError(String)` → exit 58
+- `TransportHandlerNotRegistered { kind_label }` → exit 59
+- `InvalidSinceCursor { mint_unix, requested }` → exit 53 (shared with `AttachHandleExpired`)
+
+**§F.6.4 — Pairing invariant**
+
+Every successful `octo agent run --detach --token-file <path>` write produces token bytes that ONLY `octo agent attach --token-file <path>` (with the matching caller DID) can consume — the substrate enforces this via the §F.2 step (a) signature verify (holder_pubkey must equal the `IdentityKey` used at mint time) + step (b) revocation-set check (token revoked by `octo revoke-attach --session-id` → step (b) returns `RevocationError` exit 58) + step (c) TTL check (`now_unix > ttl_unix` → `Expired` exit 53; `ttl_unix == u64::MAX` always rejected per fail-CLOSED on broken-clock ambiguity rule) + step (d) since-cursor check (`since_unix < mint_timestamp_unix` → `InvalidSinceCursor` exit 53 shared-slot). Replay across `attach` invocations is bounded by step (e) session-registry-wiring (deferred to follow-on amendment per §F.2 step (e) — see §F.6.5).
+
+**§F.6.5 — Out of scope (deferred to follow-on amendment cycles)**
+
+- **Session-registry-wiring for `InProcessHandler::bind`** — the `InProcessHandler` currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` exit 56 in release) per §F.2 step (e) deferral. Successful cross-process `attach --token-file` requires the session-registry-wiring follow-on amendment (substrate-side: register `session_id → Arc<HandleInner>` in the process-singleton registry on `spawn_agent`; cli-side: unblocks the happy-path attach TV). The CLI dispatch surface wired in §F.6.1-§F.6.2 is substrate-faithful; the missing wiring is purely substrate-side. Follow-on amendment paired mission (companion to this one) lands the registry write in `spawn_agent` + the `InProcessHandler::bind` dispatch lookup.
+- **Replay typed-discriminator variant** — currently routed through `Internal(reason)` exit 64 per §9.7 deferral. The follow-on amendment refreshes §9.8 + adds the typed-discriminator variant per amendment-chain shared-slot pattern.
+- **Hybrid `node_type` placeholder** — populated by a future mission that consumes the substrate's `Transport::Raw(Uuid)` extension seam.
+- **UnixSocket + Raw extension Layer D crates** — register handlers into `HANDLE_TRANSPORT_REGISTRY` via the per-extension crate + registry pattern per [[cipherocto-design-principles]] §Extension over enumeration.
+
 ## Rationale
 
 ### Why five subcommands

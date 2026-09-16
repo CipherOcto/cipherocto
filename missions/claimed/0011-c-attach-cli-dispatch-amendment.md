@@ -14,25 +14,34 @@ metadata:
     - mission 0011-c-octo-runtime-attachhandle-substrate
     - mission 0011-c-agent-run-subcommand
     - mission 0011-c-agent-attach-subcommand
-  pairs_with:
-    - mission 0011-c-agent-run-subcommand (emit side)
-    - mission 0011-c-agent-attach-subcommand (consume side)
-  substrate_unblocked: 2026-09-16
+  paired_mission: 0011-c-agent-attach-subcommand
+substrate_unblocked: 2026-09-16
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-16
+release_gate: end-to-end CLI dispatch wired per amendment cycle §F.6.1-§F.6.4
 ---
 
 # 0011-c-attach-cli-dispatch-amendment — RFC-0011-c §F.6 CLI Dispatch Wiring
 
-**Status:** Open — substrate unblocked 2026-09-16 per AttachHandle substrate mission
+## Status
+
+Open — substrate unblocked 2026-09-16 per AttachHandle substrate mission
 DRY CLOSURE (`docs/audits/2026-09-16-0011-c-attachhandle-dry-closure.md`).
+CLI dispatch surface wired end-to-end on `next` (commit `37d7315d`); the
+paired sibling mission `0011-c-agent-run-subcommand` (emit side) +
+`0011-c-agent-attach-subcommand` (consume side) carry the paired_mission
+annotation + the cleared release-gate annotations per §Sub-step 7.
 
-**Substrate:** RFC-0011-c §F.6 (new appendix; mirrors substrate cycle §F.1-§F.5)
+## Substrate
 
-**Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
+RFC-0011-c §F.6 (new appendix; mirrors substrate cycle §F.1-§F.5).
 
-**Depends on:**
+## Parent
+
+RFC-0011-c (agent lifecycle amendment of RFC-0011).
+
+## Depends on
 
 - Mission `0011-c-octo-runtime-attachhandle-substrate` — provides
   `mint_attach_handle`, `encode_token`, `decode_token`, `attach_with_token`,
@@ -138,7 +147,7 @@ Out of scope (deferred to follow-on amendment cycles per §F.6.5):
 5. **CLI dispatch body: `attach::handle` decode + `attach_with_token`** —
    same file (Layer C/D; substrate reference RFC-0011-c §F.6.2 + §F.1 + §F.2).
    Replace `Err(OctoCliError::RuntimeSubstrateNotReady)` stub at the documented
-   seam (`agent.rs:1190` per the AttachHandle substrate closure audit) with:
+   seam (the AttachHandle substrate closure audit §Sub-step 4 dispatch seam) with:
    - Read token bytes from `--token-file` via `std::fs::read`
    - Resolve caller DID → `[u8; 32]` holder_pubkey via
      `common::resolve_active_identity_key().public_key_bytes()`

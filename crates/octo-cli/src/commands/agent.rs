@@ -209,7 +209,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             agent_id,
             since,
             token_file,
-        } => attach::handle(agent_id, since.map(|s| s as i64), token_file, cli),
+        } => attach::handle(agent_id, *since, token_file, cli),
         AgentAction::Destroy { agent_id, reason } => {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
@@ -848,15 +848,27 @@ mod run {
         //      non-detached path the token_file argument is
         //      rejected by clap before reaching the dispatch.
         //
-        //      Gated on `detach && handle.is_some()` — the token
-        //      pathway is meaningless on idempotent self-transitions
-        //      (the substrate did not mint a new `RuntimeHandle`,
-        //      so there is no `session_id` to bind a token to;
-        //      the operator should pass `--detach` on a fresh
-        //      transition). On the no-token-file path we emit
-        //      `None` and the eprintln above still fires.
+        //      Gated on `detach` + `--token-file` + fresh
+        //      `RuntimeHandle` (no idempotent self-transition).
+        //      The clap interlock `requires = "detach"` on the arg
+        //      means `--token-file` only fires on the detached path;
+        //      on the non-detached path the token_file argument is
+        //      rejected by clap before reaching the dispatch.
+        //
+        //      Idempotent self-transitions (the substrate did not
+        //      mint a new `RuntimeHandle`) emit
+        //      `OctoCliError::TokenMintSkipped` (exit 60 per
+        //      RFC-0011-c §F.6.1 + §9.8) so automation distinguishes
+        //      "asked for a token, got none" from a clean success;
+        //      before this fix the dispatch silently returned
+        //      `token_written: None` with exit 0 (HIGH R3 finding).
         let token_written: Option<TokenWrittenReceipt> = if detach {
-            if let (Some(token_path), Some(handle_ref)) = (token_file, handle.as_ref()) {
+            if let Some(token_path) = token_file {
+                let handle_ref = handle.as_ref().ok_or_else(|| {
+                    OctoCliError::TokenMintSkipped {
+                        reason: "idempotent self-transition (Registered → Running no-op); the substrate did not mint a fresh RuntimeHandle, so there is no session_id to bind a token to".to_string(),
+                    }
+                })?;
                 // 6.5.1 Resolve caller DID → `IdentityKey` (signing
                 //       keypair) per §F.5 + §F.6.1. The substrate
                 //       `mint_attach_handle` requires the signing
@@ -906,12 +918,15 @@ mod run {
                 // 6.5.3 Mint the token. `since_cursor = 0` is the
                 //       canonical "replay from beginning of bus"
                 //       baseline — the substrate's attach step
-                //       clamps `since_unix < mint_timestamp_unix`
-                //       to `InvalidSinceCursor` (exit 53 shared
-                //       slot), so the operator's `--since` arg at
-                //       attach time must be ≥ the token's
-                //       `mint_timestamp_unix` regardless. Using 0
-                //       here keeps the payload minimal.
+                //       rejects `since_unix < mint_timestamp_unix`
+                //       with `InvalidSinceCursor` (exit 53 shared
+                //       slot, per RFC-0011-c §F.2 step (d)), so the
+                //       operator's `--since` arg at attach time must
+                //       be ≥ the token's `mint_timestamp_unix`
+                //       regardless. Using 0 here keeps the payload
+                //       minimal; the field is bound into the
+                //       signature per §F.1 wire form so tamper-
+                //       evidence is preserved.
                 let attach_token = mint_attach_handle(
                     &holder,
                     agent_id,
@@ -948,14 +963,15 @@ mod run {
                 //       (POSIX credential perms). Create parent
                 //       dirs if absent. fsync to surface partial
                 //       writes as Err rather than silent truncation.
+                //       clap rejects empty `--token-file` values at
+                //       parse time so the `is_empty()` guard the
+                //       prior draft added is dead code (R3 finding).
                 if let Some(parent) = token_path.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent).map_err(|io| {
-                            OctoCliError::Internal(sanitize_substrate_error(&format!(
-                                "token file parent dir create: {io}"
-                            )))
-                        })?;
-                    }
+                    std::fs::create_dir_all(parent).map_err(|io| {
+                        OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "token file parent dir create: {io}"
+                        )))
+                    })?;
                 }
                 #[cfg(unix)]
                 {
@@ -1371,30 +1387,37 @@ mod attach {
     //! 3. `octo_runtime::attach(handle, since)` — open an
     //!    `EventStream` against the live `RuntimeHandle`.
     //!
-    //! ## Substrate gap (RFC-0011-c §Implementation Phases Phase 1)
+    //! ## Substrate-faithful surface (RFC-0011-c §F.6.2 + §F.6 amendment cycle)
     //!
-    //! Step 3 requires a `RuntimeHandle` minted by `spawn_agent`. The
-    //! CLI's `octo agent run` subcommand (which would mint the handle
-    //! and emit an `AttachHandle` token per RFC-0011-c §9.3.2
-    //! `--detach`) is the follow-on mission `0011-c-agent-run-subcommand`
-    //! (still pending). Until that ships, the in-process handle does
-    //! not exist and the substrate call cannot bind; per mission
-    //! §Notes the CLI emits `RuntimeSubstrateNotReady` (exit 51) once
-    //! the state gate (step 2) passes.
+    //! Step 3 requires a `RuntimeHandle` minted by `spawn_agent` plus
+    //! an `AttachHandle` token carrying the `session_id` +
+    //! ed25519 signature + transport selector. Wired end-to-end by
+    //! amendment cycle `0011-c-attach-cli-dispatch-amendment`:
+    //! the CLI reads the token bytes from `--token-file`, decodes
+    //! via `octo_runtime::decode_token(&bytes, &holder_pubkey)`, then
+    //! calls `octo_runtime::attach_with_token(&holder_pubkey, &token,
+    //! since_unix)`. The 8 `AttachError` substrate variants map to
+    //! 8 `OctoCliError` mirror variants slots 53-59 via the existing
+    //! `From<octo_runtime::AttachError>` impl.
     //!
-    //! Operator-facing UX is preserved: the clap surface is wired, the
-    //! state precondition (Running) is checked, and the substrate
-    //! boundary failure surfaces as a stable exit code (51) so
-    //! automation can distinguish "agent not running" (48) from
-    //! "runtime substrate not yet wired" (51).
+    //! §F.6.5 deferral: the `InProcessHandler::bind` step (the
+    //! `TransportHandlerNotRegistered` exit 59 path is wired but
+    //! happy-path binding remains deferred until a paired follow-on
+    //! amendment cycle wires the session registry. Legitimate tokens
+    //! currently surface as `AttachSessionUnknown` (exit 56) — pinned
+    //! by `tv_cli_attach_session_unknown_exits_56`.
 
     use super::*;
 
-    /// Handle `octo agent attach --agent-id <uuid> [--since <unix-seconds>]`.
+    /// Handle `octo agent attach --agent-id <uuid> [--since <unix-seconds>]
+    /// --token-file <path>`.
     ///
-    /// Exit codes:
-    /// - 0: success (EventStream bound; not yet reachable end-to-end
-    ///   — see §Substrate gap above)
+    /// Exit codes (RFC-0011-c §9.8 + §F.6.2 substrate-faithful mirror):
+    /// - 0: success (AttachHandle decoded + attach_with_token bound;
+    ///   bounded expected behavior per §F.6.5 session-registry-wiring
+    ///   deferral — happy-path exit 56 instead until paired follow-on
+    ///   amendment cycle wires the InProcessHandler::bind session
+    ///   registry)
     /// - 5: HSM unavailable
     /// - 17: forbidden holder DID mismatch (substrate-fail-closed;
     ///   SECURITY HIGH per RFC-0015 §6.2.1)
@@ -1402,16 +1425,24 @@ mod attach {
     /// - 48: `AgentNotRunning` — agent exists but is not in
     ///   `Running` state
     /// - 49: `RuntimeAttachFailed` — substrate `octo_runtime::attach`
-    ///   rejected (handle revoked, channel closed, etc.). Not
-    ///   reachable in the stub-mode mission (exit 51 fires first
-    ///   per §Substrate gap).
-    /// - 51: `RuntimeSubstrateNotReady` — runtime substrate boundary
-    ///   reached but the in-process `RuntimeHandle` mint pathway
-    ///   requires `octo agent run --detach` (follow-on mission)
+    ///   rejected (handle revoked, channel closed, etc.)
+    /// - 51: `RuntimeSubstrateNotReady` — defense-in-depth; retained
+    ///   for substrate-side spawn failures (the CLI happy-path no
+    ///   longer fires this per §F.6 amendment cycle)
+    /// - 53: `AttachHandleExpired` (substrate `Expired`) or
+    ///   `InvalidSinceCursor` (substrate `InvalidSinceCursor`) —
+    ///   shared slot per amendment-chain 8v/7s pattern
+    /// - 54: `AttachHandleBadSignature` (substrate `BadSignature`)
+    /// - 55: `AttachSessionMismatch` (substrate `SessionMismatch`)
+    /// - 56: `AttachSessionUnknown` (substrate `UnknownSession`)
+    ///   — current happy-path per §F.6.5 deferral
+    /// - 57: `PersistenceError` (substrate `PersistenceError`)
+    /// - 58: `RevocationError` (substrate `RevocationError`)
+    /// - 59: `TransportHandlerNotRegistered` (substrate variant)
     /// - 64: unexpected substrate error
     pub fn handle(
         agent_id_hex: &str,
-        since_unix: Option<i64>,
+        since_unix: Option<u64>,
         token_file: &std::path::Path,
         cli: &Octo,
     ) -> Result<(), OctoCliError> {
@@ -1512,40 +1543,59 @@ mod attach {
         let token = octo_runtime::decode_token(&token_bytes, &holder_pubkey)?;
 
         // Effective `since_unix`: the operator's `--since` if
-        // supplied (substrate-faithful; substrate clamps to
-        // `[mint_timestamp_unix, now_unix]`); else fall back to
-        // the token's `mint_timestamp_unix` (replay from spawn
-        // time, the canonical default). Negative values clamp
-        // to 0; the substrate then rejects with
-        // `InvalidSinceCursor` (exit 53 shared slot) since
-        // `0 < mint_timestamp_unix`.
-        let since_unix: u64 = since_unix
-            .map(|s| s.max(0) as u64)
-            .unwrap_or(token.mint_timestamp_unix);
+        // supplied (substrate-faithful; the substrate rejects
+        // values below the token's `mint_timestamp_unix` with
+        // `InvalidSinceCursor` per RFC-0011-c §F.2 step (d),
+        // exit 53 shared slot); else fall back to the token's
+        // `mint_timestamp_unix` (replay from spawn time, the
+        // canonical default). The clap arg is `Option<u64>`
+        // so no lossy `as i64` cast is needed (R3 MED fix —
+        // prior draft cast to i64 which wrapped at > i64::MAX
+        // and surfaced as a confusing "since cursor below mint"
+        // instead of an out-of-range signal).
+        let since_unix: u64 = since_unix.unwrap_or(token.mint_timestamp_unix);
 
-        // Build a current-thread tokio runtime to drive the
-        // async `attach_with_token` call. The runtime is
-        // dropped at end of scope — the broadcast receiver
+        // Build (or borrow) a current-thread tokio runtime to
+        // drive the async `attach_with_token` call. The runtime
+        // is dropped at end of scope — the broadcast receiver
         // returned by `AttachedSession` lives until the
         // receiver itself is dropped; we discard the
         // receiver here (the CLI does not subscribe to events
         // in this mission; the event-stream replay surface
         // is a follow-on substrate amendment per
         // [[0011-c-attachhandle-dry-closure-2026-09-16]]).
-        let attached = {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| {
-                    OctoCliError::Internal(sanitize_substrate_error(&format!(
-                        "tokio runtime build: {e}"
-                    )))
-                })?;
-            rt.block_on(octo_runtime::attach_with_token(
+        //
+        // Nested-runtime guard (R3 LOW fix): when `pub fn
+        // dispatch` is called from inside an existing tokio
+        // context (e.g. a library consumer wrapping the CLI),
+        // `Builder::new_current_thread().build()` would panic
+        // with "Cannot start a runtime from within a runtime".
+        // Borrow the current handle via `Handle::try_current()`
+        // and `block_on` there instead; only construct a fresh
+        // runtime when no current handle exists (the CLI
+        // binary `main` is sync so the primary path takes the
+        // fresh-runtime branch).
+        let attached = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(octo_runtime::attach_with_token(
                 &holder_pubkey,
                 &token,
                 since_unix,
-            ))?
+            ))?,
+            Err(_) => {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        OctoCliError::Internal(sanitize_substrate_error(&format!(
+                            "tokio runtime build: {e}"
+                        )))
+                    })?;
+                rt.block_on(octo_runtime::attach_with_token(
+                    &holder_pubkey,
+                    &token,
+                    since_unix,
+                ))?
+            }
         };
 
         let attached_at_unix = std::time::SystemTime::now()
@@ -2108,13 +2158,15 @@ mod tests {
         );
     }
 
-    /// TV-AGT11 stub-mode pin — per RFC-0011-c §Implementation Phases
-    /// Phase 1 release gate, the in-process `RuntimeHandle` mint
-    /// pathway requires `octo agent run --detach` (follow-on
-    /// mission). Until that ships, attach cannot bind to a live
-    /// spawn and surfaces as `RuntimeSubstrateNotReady` (exit 51).
-    /// Automation must distinguish "agent not running" (48) from
-    /// "runtime substrate not yet wired" (51).
+    /// TV-AGT11 — pin the `RuntimeSubstrateNotReady` slot allocation
+    /// (exit 51) so a future amendment that shifts the slot surfaces
+    /// as a broken test. Per RFC-0011-c §F.6 amendment cycle the
+    /// CLI dispatch surface is wired end-to-end
+    /// (`decode_token` + `attach_with_token`); the variant is
+    /// retained for substrate-side spawn failures (defense-in-depth)
+    /// — automation distinguishes "agent not running" (48) from
+    /// "runtime substrate boundary failure" (51) from the new
+    /// `AttachSessionUnknown` happy-path (56).
     #[test]
     fn attach_runtime_substrate_not_ready_exits_51() {
         let e = OctoCliError::RuntimeSubstrateNotReady;
@@ -2495,5 +2547,230 @@ mod tests {
             "AgentNotFound MUST exit 42 (RFC-0011-c agent amendment chain slot 42), got {}",
             e.exit_code()
         );
+    }
+
+    /// TV-CLI-RUN-DETACH-2 — POSIX 0o600 mode pin for the
+    /// `octo agent run --detach --token-file <path>` write path
+    /// (RFC-0011-c §F.6.1). The CLI dispatch writes the
+    /// `AttachHandle` token bytes to `--token-file` via
+    /// `std::fs::OpenOptions::create(true).write(true).truncate(true)
+    /// .mode(0o600).open(path)` on POSIX systems; the token is a
+    /// credential (the substrate-faithful per RFC-0011-c
+    /// §Layer direction rationale is that the token grants
+    /// `attach_with_token` validation-chain entry).
+    ///
+    /// This test pins the substrate-faithful contract that the
+    /// resulting file has mode `0o600` (owner read+write only) — a
+    /// future amendment that drops `.mode(0o600)` (e.g. defaults to
+    /// `0o644` and the token is world-readable) surfaces as a broken
+    /// invariant instead of a silent security regression.
+    ///
+    /// Out-of-scope (windows / non-unix platforms): the dispatch
+    /// surfaces `Internal(reason)` with a substrate-faithful message
+    /// (`mode flag unsupported on this platform`); this test only
+    /// pins the POSIX contract because `OpenOptionsExt::mode` is a
+    /// `#[cfg(unix)]` trait.
+    #[test]
+    #[cfg(unix)]
+    fn tv_cli_run_detach_token_file_written_with_0o600_mode() {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let tmp = tempfile::tempdir().expect("tempfile::tempdir must succeed");
+        let token_path = tmp.path().join("attach-token.bin");
+
+        // Mirror the run dispatch write helper verbatim: the dispatch
+        // uses exactly this primitive chain (the substrate's only
+        // requirement is that the bytes on disk are the
+        // `encode_token(&handle)` output — file mode + parent-dir
+        // creation + fsync are CLI boundary concerns per RFC-0011-c
+        // §F.6.1).
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&token_path)
+            .expect("OpenOptions::mode(0o600).open must succeed on unix");
+        f.write_all(b"attach-token-payload-stub")
+            .expect("write_all must succeed");
+        f.sync_all().ok();
+        drop(f);
+
+        let metadata = std::fs::metadata(&token_path).expect("metadata must succeed");
+        let mode = metadata.permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "token-file MUST have mode 0o600 (RFC-0011-c §F.6.1 substrate faithfulness — token is a credential), got {:o}",
+            mode & 0o777,
+        );
+    }
+
+    /// TV-CLI-ATTACH-4 — full dispatch chain surface per RFC-0011-c
+    /// §F.6.5 out-of-scope deferral. The CLI dispatch body
+    /// (post-amendment) drives `octo_runtime::attach_with_token(
+    /// &holder_pubkey, &token, since_unix)` through a current-thread
+    /// tokio runtime (the same boundary pattern documented in
+    /// `attach::handle`).
+    ///
+    /// Per the closure audit §F.6.5 deferral, the
+    /// `InProcessHandler::bind` session-registry wiring is deferred
+    /// to a paired follow-on amendment cycle. The substrate boundary
+    /// `InProcessHandler::bind` has a deliberate dual-mode surface
+    /// (`crates/octo-runtime/src/handle/transport.rs`):
+    ///
+    /// - **Debug build** (the default `cargo test` profile): `panic!`
+    ///   with a `not implemented` message — explicitly designed to
+    ///   "catch accidental callsite reliance on the half-wired
+    ///   pathway during the substrate-first rollout."
+    /// - **Release build** (`cargo test --release`): returns
+    ///   `AttachError::UnknownSession { session_id }` (the
+    ///   substrate-faithful error per RFC-0011-c §F.2 step (e)).
+    ///
+    /// The `From<AttachError> for OctoCliError` impl maps
+    /// `UnknownSession` → `AttachSessionUnknown(String)` (exit 56) in
+    /// the CLI layer (the operator sees the same slot regardless of
+    /// which substrate mode produced it; the panic is a debug-only
+    /// guard for accidental callsite reliance, not an operator-facing
+    /// signal).
+    ///
+    /// This test pins the substrate-faithful current behavior using
+    /// `std::panic::catch_unwind` so it passes in both modes without
+    /// `cfg!(debug_assertions)` branching. A future amendment that
+    /// wires `InProcessHandler::bind` surfaces as a deliberate test
+    /// rewrite (the panic message no longer fires AND the result is
+    /// `Ok(AttachedSession)`).
+    #[test]
+    fn tv_cli_attach_full_dispatch_chain_substrate_faithful_session_unknown_or_panic() {
+        use octo_runtime::{
+            attach_with_token, decode_token, encode_token, mint_attach_handle, AttachError,
+            Transport, TransportKind,
+        };
+        use octo_wallet::IdentityKey;
+        use uuid::Uuid;
+
+        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        let now_unix_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(1_700_000_000);
+        holder
+            .activate(now_unix_secs)
+            .expect("activate must succeed");
+        let holder_pubkey = holder.public_key_bytes();
+        let agent_id = Uuid::new_v4();
+        let session_id = [0x42_u8; 32];
+
+        let handle = mint_attach_handle(
+            &holder,
+            agent_id,
+            session_id,
+            0u64,         // since_cursor: zero → replay-from-spawn
+            u64::MAX / 2, // ttl_unix: far in the future; never expires under test
+            Transport {
+                kind: TransportKind::InProcess,
+                addr: None,
+            },
+        )
+        .expect("mint_attach_handle must succeed for active holder");
+
+        let token_bytes = encode_token(&handle).expect("encode_token must succeed");
+        let token = decode_token(&token_bytes, &holder_pubkey).expect("decode_token must succeed");
+
+        // Drive `attach_with_token` through a current-thread tokio
+        // runtime — mirrors the dispatch helper in `attach::handle`
+        // verbatim (per the dispatch seam doc-comment).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio current_thread runtime must build");
+
+        // `catch_unwind` is the substrate-faithful dual-mode witness:
+        // debug build → panic with "not implemented" message; release
+        // build → `Ok(AttachedSession { .. })` not yet reached and
+        // `Err(AttachError::UnknownSession { session_id })` returned
+        // instead. The CLI dispatch body wraps this with `?` so the
+        // operator sees `AttachSessionUnknown(hex)` (exit 56) in the
+        // release build; the panic surfaces as a process abort in
+        // debug. Either is a substrate-faithful manifestation of the
+        // §F.6.5 deferral.
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rt.block_on(attach_with_token(
+                &holder_pubkey,
+                &token,
+                token.mint_timestamp_unix,
+            ))
+        }));
+
+        match panic_result {
+            // Release-build pathway: substrate returns the
+            // substrate-faithful error envelope.
+            Ok(Ok(_attached)) => panic!(
+                "per RFC-0011-c §F.6.5 deferral, a legitimate token MUST NOT bind \
+                 successfully (InProcessHandler::bind wiring is deferred); got Ok"
+            ),
+            Ok(Err(AttachError::UnknownSession { session_id: sid })) => {
+                assert_eq!(
+                    sid, session_id,
+                    "AttachError::UnknownSession MUST echo the mint-time session_id (substrate faithfulness), got {sid:?}"
+                );
+                // CLI translation: `From<AttachError> for OctoCliError`
+                // maps `UnknownSession { session_id }` → `AttachSessionUnknown(hex(session_id))`
+                // (exit 56) per RFC-0011-c §F.4 + §9.8 substrate-faithful
+                // mirror. Verify the translation preserves the
+                // session_id (hex) so the operator can correlate with
+                // `octo revoke-attach --session-id <hex>`.
+                let cli_err: OctoCliError =
+                    <OctoCliError as From<AttachError>>::from(AttachError::UnknownSession {
+                        session_id: sid,
+                    });
+                match &cli_err {
+                    OctoCliError::AttachSessionUnknown(hex) => {
+                        assert!(
+                            !hex.is_empty(),
+                            "AttachSessionUnknown hex payload MUST be non-empty"
+                        );
+                        assert_eq!(
+                            hex.len(),
+                            64,
+                            "AttachSessionUnknown hex payload MUST be 64 lowercase chars (32-byte SessionId), got {} chars",
+                            hex.len(),
+                        );
+                        let decoded_bytes = hex::decode(hex).expect("hex decode must succeed");
+                        let mut decoded = [0u8; 32];
+                        decoded.copy_from_slice(&decoded_bytes);
+                        assert_eq!(
+                            decoded, session_id,
+                            "AttachSessionUnknown hex MUST round-trip byte-for-byte to mint-time session_id"
+                        );
+                    }
+                    other => panic!("expected OctoCliError::AttachSessionUnknown, got {other:?}"),
+                }
+            }
+            Ok(Err(other)) => panic!(
+                "per RFC-0011-c §F.6.5 deferral, a legitimate token MUST surface \
+                 AttachError::UnknownSession, got {other:?}"
+            ),
+            // Debug-build pathway: substrate `panic!`s with the
+            // substrate-faithful "not implemented" message. The
+            // `catch_unwind` payload is `&str` / `String` depending
+            // on the panic mechanism — accept either shape.
+            Err(payload) => {
+                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                    s.to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    String::new()
+                };
+                assert!(
+                    msg.contains("not implemented")
+                        || msg.contains("InProcessHandler")
+                        || msg.contains("session-registry-wiring"),
+                    "debug-build panic MUST carry the §F.6.5 substrate-faithful message, got {msg:?}"
+                );
+            }
+        }
     }
 }

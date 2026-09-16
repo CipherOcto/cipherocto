@@ -649,6 +649,22 @@ pub enum OctoCliError {
         /// (`InProcess`, `UnixSocket`, or `Raw(<uuid>)`).
         kind_label: String,
     },
+
+    /// Operator passed `--detach --token-file` against an idempotent
+    /// self-transition (`Registered → Running` no-op where the
+    /// substrate did not mint a fresh `RuntimeHandle`). The clap
+    /// interlock `requires = "detach"` lets the combo pass validation
+    /// even when the spawn was a no-op; without a fresh handle there
+    /// is no `session_id` to bind a token to. CLI-side dispatch
+    /// surface — distinct from the 8 substrate `AttachError` mirror
+    /// variants (slots 53-59). Exit 60 per RFC-0011-c §9.8 reserved
+    /// range 39-63.
+    #[error("token mint skipped: {reason}")]
+    TokenMintSkipped {
+        /// Operator-actionable reason (idempotent self-transition
+        /// vs agent not in transition-eligible state).
+        reason: String,
+    },
 }
 
 impl OctoCliError {
@@ -768,6 +784,12 @@ impl OctoCliError {
             // registry pattern: extension transport (UnixSocket, …)
             // without a registered handler surfaces as exit 59.
             Self::TransportHandlerNotRegistered { .. } => 59,
+            // RFC-0011-c §F.6.1: CLI-dispatch-side precondition
+            // failure (idempotent self-transition on `--detach`
+            // `--token-file`). Distinct from substrate AttachError
+            // mirror variants slots 53-59. Exit 60 reserved per
+            // §9.8 reserved range 39-63.
+            Self::TokenMintSkipped { .. } => 60,
         }
     }
 
@@ -968,6 +990,9 @@ impl OctoCliError {
                 format!(
                     "no transport handler is registered for kind `{kind_label}` (RFC-0011-c §F.2 step (e) + per-extension crates registry pattern); extension transports (UnixSocket, …) ship in follow-on Layer D crates (`octo-runtime-transport-unix`, …) that register at process startup"
                 )
+            }
+            Self::TokenMintSkipped { reason } => {
+                format!("{reason}; re-run `octo agent run --detach --token-file <path>` on a fresh `Registered → Running` transition, or destroy + recreate the agent first")
             }
         };
         Some(h)

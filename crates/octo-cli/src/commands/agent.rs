@@ -1462,28 +1462,22 @@ mod attach {
         //    collapses unknown + not-owned into `AgentNotFound`
         //    (per RFC-0015-b defect 3 fix; substrate-faithful
         //    multi-DID enumeration prevention).
-        let _manifest = octo_wallet::lookup_agent(&active_did, agent_id).map_err(|e| match e {
-            octo_wallet::WalletError::AgentNotFound(uuid) => OctoCliError::AgentNotFound(uuid),
-            octo_wallet::WalletError::ForbiddenHolderMismatch => {
-                OctoCliError::ForbiddenHolderMismatch
-            }
-            octo_wallet::WalletError::Hsm(_) => common::map_hsm_error(&e.to_string()),
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
+        // Canonical WalletError → OctoCliError mapping lives in
+        // `common::map_transition_wallet_error` (used by run /
+        // destroy / attach). R7.5 MED finding: prior this site
+        // duplicated the match arms — collapse to the helper so
+        // future WalletError variants only need one match arm
+        // update.
+        let _manifest = octo_wallet::lookup_agent(&active_did, agent_id)
+            .map_err(common::map_transition_wallet_error)?;
 
         // 4. State precondition: agent must be in `Running` state
         //    (per RFC-0015-a Appendix A state machine + RFC-0011-c
         //    §9.3.5 attach precondition). `Terminated` /
         //    `Registered` agents surface as `AgentNotRunning(uuid)`
         //    (slot 48). TV-AGT12.
-        let state = octo_wallet::read_agent_state(&active_did, agent_id).map_err(|e| match e {
-            octo_wallet::WalletError::AgentNotFound(uuid) => OctoCliError::AgentNotFound(uuid),
-            octo_wallet::WalletError::ForbiddenHolderMismatch => {
-                OctoCliError::ForbiddenHolderMismatch
-            }
-            octo_wallet::WalletError::Hsm(_) => common::map_hsm_error(&e.to_string()),
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?;
+        let state = octo_wallet::read_agent_state(&active_did, agent_id)
+            .map_err(common::map_transition_wallet_error)?;
         if state != octo_wallet::AgentState::Running {
             return Err(OctoCliError::AgentNotRunning(agent_id));
         }

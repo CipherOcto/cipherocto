@@ -27,12 +27,12 @@
 //!
 //! ## Layer discipline
 //!
-//! Layer B substrate (RFC-0011-c §9.1 Architecture). Types are
-//! years-stable per [[cipherocto-design-principles]] §Stable
-//! Abstractions Principle. The `octo-cli` (Layer C/D) consumes
-//! this crate; the dependency direction is one-way (`octo-cli` →
-//! `octo-runtime`). New variants on `AgentState` / `RuntimeEvent` /
-//! `TransportKind` land additively via `#[non_exhaustive]`
+//! Layer B substrate (RFC-0011-c §9.1 Architecture); see
+//! `octo_runtime::handle` for the canonical §Layer discipline
+//! prose. Types are years-stable per
+//! [[cipherocto-design-principles]] §Stable Abstractions Principle.
+//! New variants on `AgentState` / `RuntimeEvent` / `TransportKind`
+//! land additively via `#[non_exhaustive]`
 //! ([[cipherocto-design-principles]] §Extension over enumeration).
 //!
 //! ## State semantics
@@ -101,7 +101,7 @@ pub async fn attach_with_token(
     token: &AttachHandle,
     since_unix: u64,
 ) -> Result<AttachedSession, AttachError> {
-    // (a) Signature verify.
+    // Validation chain per §F.2 (rustdoc enumeration above).
     verify_attach_handle_payload(
         holder_pubkey,
         &token.session_id,
@@ -111,7 +111,6 @@ pub async fn attach_with_token(
         &token.signature,
     )?;
 
-    // (b) Revocation-set fast-path check.
     if is_token_revoked(&token.session_id) {
         return Err(AttachError::RevocationError(format!(
             "session 0x{} revoked",
@@ -121,15 +120,15 @@ pub async fn attach_with_token(
 
     // Fail-CLOSED discipline on broken clock: any `duration_since`
     // error saturates `now_unix` to `u64::MAX`. The same value is
-    // the reserved TTL sentinel — a malformed token that opts out
-    // of expiry (substrate-authoritative hardening, NOT in RFC
-    // §F.2 prose) rejects with the same uniform `Expired` envelope.
+    // the reserved TTL sentinel — a token whose ttl_unix equals the
+    // reserved sentinel opts out of expiry (substrate discipline;
+    // the substrate code is the authoritative source) and rejects
+    // with the same uniform `Expired` envelope.
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(u64::MAX);
 
-    // (c) TTL check (now_unix <= ttl_unix).
     if token.ttl_unix == u64::MAX || now_unix > token.ttl_unix {
         return Err(AttachError::Expired {
             session_id: token.session_id,
@@ -139,7 +138,6 @@ pub async fn attach_with_token(
         });
     }
 
-    // (d) since_unix must be >= mint_timestamp_unix.
     if since_unix < token.mint_timestamp_unix {
         return Err(AttachError::InvalidSinceCursor {
             mint_unix: token.mint_timestamp_unix,
@@ -147,20 +145,6 @@ pub async fn attach_with_token(
         });
     }
 
-    // (e) Transport-handler dispatch (RFC-0011-c §F.2 step (e) +
-    // [[cipherocto-design-principles]] §per-extension crates +
-    // registry). Substrate ships the `Handler` trait + the
-    // built-in `InProcessHandler` (broadcast-binding stub —
-    // session-registry-wiring is deferred to a follow-on amendment
-    // per RFC-0011-c §F.2; see `transport.rs` doc); extension
-    // transports (`UnixSocket`, …) ship in follow-on Layer D
-    // transport crates that register at process startup.
-    //
-    // If no handler is registered for the token's `TransportKind`,
-    // surface `TransportHandlerNotRegistered` (CLI exit 59). The
-    // registered handler is responsible for any per-transport
-    // resolution (filesystem, I/O, …) — substrate stays
-    // filesystem-free.
     let handler = crate::handle::transport::HANDLE_TRANSPORT_REGISTRY
         .get_or_init(crate::handle::transport::build_in_process_registry)
         .lookup(&token.transport.kind)

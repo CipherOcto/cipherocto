@@ -1,0 +1,180 @@
+fix(octo-runtime): RFC-0011-c AttachHandle R21.5 fix sweep
+
+Substrate doc-comment + RFC §9.8 slot table + RFC vestigial
+"exit 47 substrate" prose sites + RFC §F.2 step (c) self-
+referential parenthetical + RFC §9.8 slot count recount +
+mission YAML §Sub-steps §Scope variant count + mission YAML
+§Sub-step 5 paragraph split + is_revoked alias fold + Cargo.toml
+blake3 rationale §F.1 citation per R21 5-len reviewer aggregate
+on mission 0011-c-octo-runtime-attachhandle-substrate (DRY
+CLOSED gate verification round 7).
+
+HIGH (substrate-faithfulness):
+- crates/octo-cli/src/error.rs InvalidSessionIdHex doc at
+  previous lines 606-618 stitched two paragraphs that
+  fragment the sentence at the seam (the "Distinct from
+  AttachHandleBadSignature (exit 54)" clause appeared twice,
+  the closing clause was the OLD paragraph ending that
+  should have been replaced wholesale in R20.5). Rewrote as
+  a single paragraph; dropped the unverified "and downstream
+  attach subcommands" claim per R21 correctness #2 (only
+  revoke-attach currently exposes --session-id).
+
+HIGH (simplification):
+- crates/octo-runtime/src/handle/mod.rs HandleInner struct
+  doc + publish method doc restated the keep-alive invariant
+  in addition to the canonical _keepalive_rx field doc (5x
+  across 3 doc-blocks after R20.5 only trimmed 2 of 5 sites).
+  Trimmed HandleInner struct doc to backref (the canonical
+  keep-alive invariant lives at _keepalive_rx). Trimmed
+  publish method doc to backref. _keepalive_rx field doc
+  remains canonical (it owns the ONLY-invariant caveat per
+  the field's contract). HandleInner struct doc also
+  references is_last_clone() instead of the deleted
+  is_revoked() per MED alias fold below.
+
+HIGH (simplification):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md carried 5
+  vestigial prose sites still referencing the deleted
+  substrate-level exit 47 for ConfirmationRequired after the
+  R20.5 §9.8 amendment (substrate ConfirmationRequired
+  actually maps to exit 2 per RFC-0011 §Error Handling).
+  Trimmed: §9.3.4 Clap args + Errors row, §Security
+  Considerations Confirmation gate paragraph, §A3 Operator
+  Mistake Q3, TV-AGT10 row.
+
+HIGH (simplification):
+- crates/octo-runtime/src/lib.rs §Layer discipline block
+  duplicated verbatim against handle/mod.rs §Layer discipline
+  (same paragraph appeared in both files). Collapsed lib.rs
+  to a cross-ref pointing at handle/mod.rs as the canonical
+  location for the §Layer discipline prose. Layer A/B
+  direction claim + Extension over enumeration claim
+  preserved.
+
+HIGH (hygiene):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md §9.8 slot
+  table carried TWO exit-47 rows (the legacy ConfirmationRequired
+  row at previous L390 + the new InvalidSessionIdHex row at
+  previous L404). The slot-allocation table therefore
+  allocated exit 47 twice, contradicting the prose at L408-L413
+  that said the legacy row "was removed". Deleted the
+  ConfirmationRequired row entirely. Tightened the
+  InvalidSessionIdHex row note (dropped "replaces the
+  speculative ConfirmationRequired exit-47 row above" cross-
+  reference, now stale). Simplified the post-table prose at
+  previous L408-L413 from 6 lines to 2 lines.
+
+MED (layer-model):
+- crates/octo-runtime/Cargo.toml blake3 dep rationale cited
+  "octo-wallet precedent" instead of the RFC-0011-c §F.1
+  authority. Without the §F.1 citation a future reviewer
+  cannot distinguish "Layer A frozen per RFC" from "we
+  happened to pick BLAKE3". Updated rationale to cite
+  RFC-0011-c §F.1 explicit + the Stable Abstractions
+  Principle (Layer B consumes Layer A frozen primitives
+  without rewrapping).
+
+MED (simplification):
+- crates/octo-runtime/src/handle/mod.rs is_revoked public
+  method was a 1-line alias for is_last_clone (both public).
+  No external call site used is_revoked. Folded is_revoked
+  into is_last_clone as the single canonical name.
+  Updated the Debug formatter field to call is_last_clone.
+  The persistence.rs test revoke_then_is_revoked_round_trip
+  test name is unchanged (tests revocation-set semantics, not
+  the runtime-handle alias).
+
+MED (simplification):
+- crates/octo-runtime/src/lib.rs attach_with_token carried
+  three parallel descriptions of the validation chain:
+  rustdoc enumeration (L77-86) + # Errors block (L88-98)
+  + inline // (a)..(e) comments at each step. The inline
+  comments restated the rustdoc + Errors block with code is
+  about to enforce this tautology. Dropped all 5 inline step
+  comments; kept the rustdoc chain + Errors block as the
+  single canonical description. Also softened the
+  "malformed token" editorial framing to "a token whose
+  ttl_unix equals the reserved sentinel" per R21
+  substrate-faithfulness #4.
+
+MED (substrate-faithfulness):
+- missions/claimed/0011-c-octo-runtime-attachhandle-substrate.md
+  §Sub-steps §Scope prose item (c) said "8 NEW variants at
+  octo_cli::error" but frontmatter + AC-7 + §Type Coverage
+  all said 9 NEW variants (substrate has 9 + InvalidSessionIdHex
+  CLI-boundary). Updated item (c) to "9 NEW variants
+  (8 substrate-mirrored per §F.4 + InvalidSessionIdHex
+  CLI-boundary per §9.3.6 substrate-faithful amendment)".
+
+MED (simplification):
+- missions/claimed/0011-c-octo-runtime-attachhandle-substrate.md
+  §Sub-step 5 was a single 15-line paragraph covering clap
+  args + substrate call + error matrix + mode-gate envelope
+  + process_scoped rationale. Split into 3 sub-clauses (5a
+  Clap args + 5b Substrate call + 5c Error envelope + success
+  clause) per the Sub-step 1-4 **Substep title** sentence
+  discipline.
+
+MED (simplification):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md §9.8 slot
+  allocation prose said "14 base amendment + 7 follow-on
+  amendment = 21 new variants" but the post-amendment table
+  carries 23 rows (14 base + 9 follow-on including
+  InvalidSessionIdHex at exit 47). Recounted to "14 base
+  amendment + 9 follow-on amendment AttachHandle/AttachSession
+  variants per §F.4 mirror".
+
+MED (correctness):
+- crates/octo-runtime/src/lib.rs attach_with_token step (c)
+  fail-CLOSED comment said "NOT in RFC §F.2 prose" but the
+  RFC §F.2 step (c) prose at line 757 was amended in R20.5
+  to document the substrate discipline. Reworded comment to
+  "the substrate code is the authoritative source" instead
+  of "NOT in RFC §F.2 prose".
+
+LOW (simplification):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md §F.2 step
+  (c) parenthetical claimed the substrate discipline is "not
+  RFC §F.2 prose" but the parenthetical was inside §F.2 prose
+  itself. Reworded to "substrate discipline - substrate
+  code is the authoritative source".
+
+LOW (hygiene):
+- rfcs/accepted/process/0011-c-agent-lifecycle.md §9.8
+  InvalidSessionIdHex row note + ConfirmationRequired row
+  contradiction (now subsumed by HIGH hygiene #1 row delete).
+
+Skipped LOWs per fix-critical-and-high-only-until-dry
+pattern (is_revoked Debug formatter alignment, §Substrate Gap
+Closure / §Hard audit findings ledger masquerade as content
+§, Sub-step 5 mode-gate stutter).
+
+Out-of-scope (deferred to follow-on Layer D amendment per
+§Scope):
+- crates/octo-runtime/src/handle/error.rs AttachError +
+  PersistenceError already carry #[non_exhaustive]; verified
+  RuntimeError also carries #[non_exhaustive]. Layer D
+  extension transports land via TransportKind::Raw(Uuid)
+  discriminator + Handler registry per RFC-0011-c §F.2 step
+  (e) (no parallel enum needed; the typed-discriminator
+  pattern is the per-extension surface).
+
+Verification:
+- cargo build -p octo-runtime -p octo-cli: clean
+- cargo test -p octo-runtime --lib: 73/73 passed
+- cargo test -p octo-cli --lib: 287/287 passed
+- cargo clippy -p octo-runtime -p octo-cli --all-targets
+  -- -D warnings: clean
+- cargo fmt --all --check: clean
+- npx prettier --check on RFC + mission YAML: clean
+  (prettier --write auto-reflowed the post-table prose at
+  L408-L413 to fit table cell, no semantic content changed)
+
+R21 reviewers aggregate: 5 HIGH + 12 MED + 8 LOW = 25
+substantive (non-convergent at R19=8 -> R20=18 -> R21=25).
+R21.5 fix sweep landed 5 HIGH + 8 MED substantive (the
+remaining 4 MED deferred to follow-on amendment or merged
+into HIGH fixes). 5 LOWs skipped per pattern.
+
+NO PUSH per feedback_initiation_user_only plus git-workflow.

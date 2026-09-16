@@ -29,8 +29,9 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 # Tracing (Layer D transport substrate).
 tracing = "0.1"
 # BLAKE3 hash for canonical encoding integrity check (RFC-0011-c §F.1).
-# Layer A frozen hashing primitive; direct dep follows the octo-wallet
-# precedent (BLAKE3 hash for canonical encoding integrity check).
+# Layer A frozen hashing primitive; direct dep per
+# [[cipherocto-design-principles]] §Stable Abstractions Principle:
+# Layer B consumes Layer A frozen primitives without rewrapping.
 blake3 = { version = "1", features = ["std"] }
 # Hex encoding (Debug impls on `RuntimeHandle` + `RuntimeHandleBinding`
 # session-id surface; mirrors the wallet substrate convention).

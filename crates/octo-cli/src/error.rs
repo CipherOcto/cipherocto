@@ -604,14 +604,9 @@ pub enum OctoCliError {
     RevocationError(String),
 
     /// Operator-supplied session id hex string failed to parse
-    /// (wrong length, non-UTF-8 bytes, non-hex pair). Raised at the
-    /// CLI boundary when parsing `--session-id` for
-    /// `octo agent revoke-attach` and downstream attach
-    /// subcommands. Distinct from `AttachHandleBadSignature` (exit
-    /// 54) which is the substrate-side signature-verify failure;
-    /// this is a CLI-parse failure on operator input. Exit 47 per
-    /// CLI-parse failure on `octo agent revoke-attach --session-id`
-    /// input — the supplied string is not a 64-char lowercase hex
+    /// (wrong length, non-UTF-8 bytes, non-hex pair). CLI-parse
+    /// failure on `octo agent revoke-attach --session-id` input —
+    /// the supplied string is not a 64-char lowercase hex
     /// `SessionId`. Distinct from `AttachHandleBadSignature` (exit
     /// 54, substrate signature-verify failure). Exit 47 per
     /// substrate-local allocation; the parent RFC §9.8 slot table

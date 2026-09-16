@@ -376,13 +376,12 @@ impl RuntimeHandleBinding {
 ///
 /// `Arc<HandleInner>` is held by every clone. When the last
 /// `Arc<HandleInner>` drops, the inner drops, and the broadcast
-/// channel closes (no more senders). `is_revoked()` observes the
+/// channel closes (no more senders). `is_last_clone()` observes the
 /// remaining `Arc::strong_count` directly — when it reaches 1
 /// (only the current handle), the channel is about to close.
 ///
-/// See [`HandleInner::_keepalive_rx`] for the keep-alive mechanism
-/// that prevents `Sender::send` from returning `Err(SendError)`
-/// during the handle's lifetime.
+/// Keep-alive invariant on the broadcast sender lives at
+/// [`HandleInner::_keepalive_rx`] (canonical).
 struct HandleInner {
     /// Pub-sub broadcast sender (Layer D transport substrate).
     event_tx: broadcast::Sender<RuntimeEvent>,
@@ -469,18 +468,11 @@ impl RuntimeHandle {
     ///
     /// Used by substrate internals (`spawn_agent` initial event,
     /// state-machine dispatch); also exposed for adapter-layer code
-    /// that wishes to feed the pub-sub bus. The handle retains an
-    /// internal keep-alive receiver so `Sender::send` cannot fail —
-    /// see [`HandleInner::_keepalive_rx`] for the invariant.
+    /// that wishes to feed the pub-sub bus. Keep-alive invariant on
+    /// the broadcast sender is enforced at [`HandleInner::_keepalive_rx`].
     pub fn publish(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
         let _ = self.inner.event_tx.send(event);
         Ok(())
-    }
-
-    /// `true` iff all peer `RuntimeHandle` clones have been dropped.
-    #[must_use]
-    pub fn is_revoked(&self) -> bool {
-        self.is_last_clone()
     }
 
     /// `true` iff this is the only live `RuntimeHandle` for the
@@ -523,7 +515,7 @@ impl std::fmt::Debug for RuntimeHandle {
             .field("session_id", &hex::encode(self.session_id))
             .field("agent_id", &self.agent_id)
             .field("spawned_at", &self.spawned_at)
-            .field("revoked", &self.is_revoked())
+            .field("revoked", &self.is_last_clone())
             .finish_non_exhaustive()
     }
 }

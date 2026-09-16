@@ -145,17 +145,18 @@ Land the AttachHandle token pathway end-to-end per RFC-0011-c §Follow-on. Three
 
 ```toml
 # crates/octo-runtime/Cargo.toml — additive per RFC-0011-c §Follow-on
-# (no new deps; tokio + ed25519 + tokio::sync::broadcast already pulled by existing surface)
+[dependencies]
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }  # NEW: Layer B sibling edge per §F.5 sign_attach_handle_payload composition
 
 # crates/octo-runtime/Cargo.toml — conditional new dep
 [features]
 default = []
-octo-runtime-persistence = ["dep:stoolap"]  # per RFC-0011-c §F.3 paired-invariance
+octo-runtime-persistence = ["dep:stoolap"]  # NEW feature flag per RFC-0011-c §F.3
 
-# crates/octo-wallet/Cargo.toml — additive per RFC-0011-c §F.5
-# (no new deps; ed25519-dalek already pulled)
+# crates/octo-wallet/Cargo.toml — unchanged per RFC-0011-c §F.5
+# (no new deps; ed25519-dalek + IdentityKey already pulled)
 
-# crates/octo-cli/Cargo.toml — additive per RFC-0011-c §Sub-steps 3-6
+# crates/octo-cli/Cargo.toml — unchanged per RFC-0011-c §Sub-steps 3-6
 # (no new deps; octo-runtime + octo-wallet already listed per RFC-0011-c §Implementation Phases)
 ```
 

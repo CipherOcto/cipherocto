@@ -1,0 +1,41 @@
+chore(missions): close 0011-c-agent-run-submission
+
+DRY CLOSED gate per 5-len review chain (R1 → R1.5 → R2 → R2.5 →
+R3 zero → R4 zero → R5 + R5.5 fix). Mission moves from
+missions/claimed to missions/archived/completed per Pattern A
+closure (matches 0011-c-agent-list closure shape).
+
+Frontmatter upgrade:
+- status: Claimed → Completed
+- v: 1.0 → 1.1
+- completed_at + completed_by added
+- implementation_commit + substrate_commit + review_rounds added
+- dry_closure_audit reference added
+
+RFC-0011-c section 9.3.2 substrate path verified end-to-end:
+transition_agent (octo-wallet Layer B) + spawn_agent
+(octo-runtime Layer B) both green. Three OctoCliError variants
+wired (AgentNotFound 42, InvalidStateTransition 43,
+RuntimeSpawnFailed 44) per RFC-0011-c section 9.8 slot
+allocation 39-52.
+
+DRY CLOSURE chain documented in the YAML body per the
+[[memory-is-never-status-ground-truth]] provenance rule.
+
+Closure audit doc at
+docs/audits/2026-09-15-0011-c-agent-run-subcommand-closure.md
+is gitignored per [[docs-audits-scratchpad]] canonical rule.
+Memory card at
+~/.claude/projects/.../memory/0011c-agent-run-closure-2026-09-15.md
++ MEMORY.md index pointer added.
+
+Anchor commits:
+- 80fa0d66 — R4.5 fix (run wiring delta on next)
+- f1c1d44b — R5.5 fix (1-line facade reach-in in list handler)
+
+Original implementation on pruned worktree branch — visible
+delta on next is captured in 80fa0d66 per
+[[memory-is-never-status-ground-truth]] provenance rule.
+
+User owns the remote-write workflow per
+[[feedback_initiation_user_only]] + [[git-workflow]]. No push.

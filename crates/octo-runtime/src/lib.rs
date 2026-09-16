@@ -77,7 +77,8 @@ pub use spawn::{spawn_agent, EXPECTED_PRE_SPAWN_STATE};
 /// Validation chain per §F.2:
 /// (a) signature verify via [`verify_attach_handle_payload`]
 /// (b) revocation-set check via [`is_token_revoked`]
-/// (c) `now_unix <= token.ttl_unix`
+/// (c) `now_unix <= token.ttl_unix` (rejects reserved sentinel
+///     `ttl_unix == u64::MAX` as fail-CLOSED)
 /// (d) `since_unix >= token.mint_timestamp_unix`
 /// (e) transport-handler dispatch via
 ///     `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`
@@ -130,8 +131,14 @@ pub async fn attach_with_token(
         .map(|d| d.as_secs())
         .unwrap_or(u64::MAX);
 
-    // (c) TTL check (now_unix <= ttl_unix).
-    if now_unix > token.ttl_unix {
+    // (c) TTL check (now_unix <= ttl_unix). Reserved sentinel
+    // `ttl_unix == u64::MAX` rejects any token that opts out of
+    // the TTL contract — substrate fails-CLOSED so a malformed
+    // token can never bypass expiry. The sentinel is the same
+    // value `SystemTime::duration_since(UNIX_EPOCH).unwrap_or(u64::MAX)`
+    // returns on a broken wall-clock, giving the rejection path a
+    // single uniform upstream signal.
+    if token.ttl_unix == u64::MAX || now_unix > token.ttl_unix {
         return Err(AttachError::Expired {
             session_id: token.session_id,
             mint_unix: token.mint_timestamp_unix,

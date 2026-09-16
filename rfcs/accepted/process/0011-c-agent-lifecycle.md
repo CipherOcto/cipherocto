@@ -255,15 +255,15 @@ the subsections below.
 | Errors      | `AgentNotFound(Uuid)` (exit 42), `AgentNotRunning(Uuid)` (exit 48), `RuntimeAttachFailed { reason }` (exit 49)      |
 | Test vector | TV-AGT11                                                                                                            |
 
-#### 9.3.6 `octo revoke-attach <token-hex>` — Layer C/D primitive per RFC-0011-c §Follow-on §F.3 (mirrors `octo_runtime::revoke_attach_token`)
+#### 9.3.6 `octo agent revoke-attach --session-id <HEX64>` — Layer C/D primitive per RFC-0011-c §Follow-on §F.3 (mirrors `octo_runtime::revoke_attach_token`)
 
-| Aspect      | Detail                                                                                                                                       |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Clap args   | `token-hex: String` (positional; hex-encoded `AttachHandle` from `--token-file`)                                                             |
-| Output      | `RevokeOutput { session_id: SessionId, revoked_at_unix: u64 }`                                                                               |
-| Substrate   | `octo_runtime::revoke_attach_token(session_id)`; decodes token (signature verified), adds to in-memory revocation set                        |
-| Errors      | `AttachHandleBadSignature { reason }` (exit 54), `AttachSessionMismatch { declared, actual }` (exit 55), `RevocationError(String)` (exit 58) |
-| Test vector | TV-AGT22                                                                                                                                     |
+| Aspect      | Detail                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clap args   | `--session-id <HEX64>` (required; hex-encoded `SessionId` from a previously-issued `AttachHandle`)                                            |
+| Output      | `RevokeAttachOutput { session_id_hex: String, process_scoped: true }`                                                                         |
+| Substrate   | `octo_runtime::revoke_attach_token(session_id)`; adds to in-memory revocation set keyed by `SessionId` (no token decode, no signature verify) |
+| Errors      | `RevocationError(String)` (exit 58)                                                                                                           |
+| Test vector | TV-AGT22                                                                                                                                      |
 
 ### 9.4 Output Envelope
 
@@ -729,7 +729,7 @@ decomposition is **flat** (no nested sub-missions) per
 
 ## Follow-on
 
-The AttachHandle token pathway (NEW; added per paired RFC amendment with mission `0011-c-octo-runtime-attachhandle-substrate` per [[no-phantom-mission-pointer]] rule) defines how `octo agent attach` binds to a previously-detached `octo agent run --detach` invocation across process boundaries. The pathway covers substrate (`octo-runtime` Layer B), CLI extension (`octo-cli` Layer C/D), in-memory token revocation, and per-agent cursor persistence via Stoolap ledger extension. Five sections follow.
+The AttachHandle token pathway (NEW; added per paired RFC amendment with mission `0011-c-octo-runtime-attachhandle-substrate` per [[no-phantom-mission-pointers]] rule) defines how `octo agent attach` binds to a previously-detached `octo agent run --detach` invocation across process boundaries. The pathway covers substrate (`octo-runtime` Layer B), CLI extension (`octo-cli` Layer C/D), in-memory token revocation, and per-agent cursor persistence via Stoolap ledger extension. Five sections follow.
 
 ### §F.1 Encoding
 
@@ -756,7 +756,7 @@ Canonical byte encoding for `AttachHandle` tokens at the `octo_runtime::handle::
 - `pub struct InProcessHandler` — built-in broadcast-channel binding handler (per-handle `tokio::sync::broadcast` from `RuntimeHandle`); registered at `HANDLE_TRANSPORT_REGISTRY` lazy init via `build_in_process_registry()`. Session-registry-wiring (mapping `session_id → Arc<HandleInner>` across the process boundary) is deferred to a follow-on amendment per §F.2 — the handler currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` in release) to catch accidental callsite reliance during the substrate-first rollout.
 - `pub static HANDLE_TRANSPORT_REGISTRY: std::sync::OnceLock<Registry>` — lazy-init process singleton (Rust 1.70+, no `once_cell` dep); initial value via `build_in_process_registry()` factory fn. Extension Layer D transport crates (`octo-runtime-transport-unix`, user-extension `Raw(Uuid)` implementations, …) register additional handlers via `Registry::register` at process startup per [[cipherocto-design-principles]] §per-extension crates + registry pattern (extension surface stays open: new transports land via a registry call, no central `match` edit in `attach_with_token`).
 
-The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>) -> Result<EventStream, RuntimeError>` at the `octo_runtime::attach` module is UNCHANGED — it consumes the renamed 4-field in-process binding (`RuntimeHandleBinding` per Path B rename: `agent_id`, `handle_id`, `session_id`, `spawned_at_unix`). The 6-field `AttachHandle` token lives alongside the renamed struct at the `octo_runtime::handle` module per [[no-parallel-abstractions]].
+The existing `pub fn attach(handle: RuntimeHandle, since: Option<DateTime<Utc>>) -> Result<EventStream, RuntimeError>` at the `octo_runtime::attach` module is UNCHANGED — it consumes the renamed 4-field in-process binding (`RuntimeHandleBinding` per Path B rename: `agent_id`, `handle_id`, `session_id`, `spawned_at_unix`). The 6-field `AttachHandle` token lives alongside the renamed struct at the `octo_runtime::handle` module per [[cipherocto-design-principles]] §No parallel abstractions.
 
 - `pub struct AttachedSession { pub event_cursor: u64, pub broadcast_rx: tokio::sync::broadcast::Receiver<RuntimeEvent> }`
 
@@ -780,7 +780,7 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 - `InvalidSinceCursor { mint_unix: u64, requested: u64 }` (mirror → `OctoCliError::InvalidSinceCursor { mint_unix, requested }` exit 53 — **shared slot** with `AttachHandleExpired` per amendment-chain shared-slot pattern; operator-unambiguous within the `agent attach` command surface because the render layer distinguishes the two payloads by variant name)
 - `PersistenceError(String)` (mirror → `OctoCliError::PersistenceError(String)` exit 57)
 - `RevocationError(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted (the canonical variant name is `RevocationError`, not `RevocationFailed`)
-- `TransportHandlerNotRegistered { kind_label: String }` (mirror → `OctoCliError::TransportHandlerNotRegistered { kind_label }` exit 59 per RFC-0011-c §9.8 §9.8 row added in this amendment; surfaces step (e) registry-miss of `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`)
+- `TransportHandlerNotRegistered { kind_label: String }` (mirror → `OctoCliError::TransportHandlerNotRegistered { kind_label }` exit 59 per RFC-0011-c §9.8 row added in this amendment; surfaces step (e) registry-miss of `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`)
 
 CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §9.8 slot allocation.
 
@@ -788,10 +788,10 @@ CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §
 
 Signing wrappers colocated with the `AttachHandle` token type at the `octo_runtime::handle::signing` submodule (Layer B; re-exported at the `octo_runtime` crate root via `pub use handle::signing::{...}`). The wrappers compose substrate helpers on `octo_wallet::IdentityKey` per RFC-0015-a Appendix A (the existing operative signing surface); no new Layer A types introduced. The substrate follows the `verify_successor_proof` / `verify_revocation_proof` static-helper pattern (pure helpers that verify against arbitrary `pubkey: &[u8; 32]` rather than binding to a `&self` receiver):
 
-- `pub fn sign_attach_handle_payload(holder: &IdentityKey, session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Signature, AttachError>` — encodes `session_id || payload || mint_timestamp_unix || ttl_unix` via the single canonical helper `canonical_payload_bytes` (per §F.1, colocated with encoding module) and delegates to `octo_wallet::IdentityKey::sign(msg_bytes)`; the resulting `octo_wallet::ed25519_dalek::Signature` is wrapped into the substrate-visible `Signature` newtype (`pub struct Signature(pub [u8;64])` in `octo_runtime::handle`, with `From<octo_wallet::ed25519_dalek::Signature>` conversion — avoids Layer A type leak per [[stable-abstractions-principle]]).
+- `pub fn sign_attach_handle_payload(holder: &IdentityKey, session_id: SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64) -> Result<Signature, AttachError>` — encodes `session_id || payload || mint_timestamp_unix || ttl_unix` via the single canonical helper `canonical_payload_bytes` (per §F.1, colocated with encoding module) and delegates to `octo_wallet::IdentityKey::sign(msg_bytes)`; the resulting `octo_wallet::ed25519_dalek::Signature` is wrapped into the substrate-visible `Signature` newtype (`pub struct Signature(pub [u8;64])` in `octo_runtime::handle`, with `From<octo_wallet::ed25519_dalek::Signature>` conversion — avoids Layer A type leak per [[cipherocto-design-principles]] §Stable Abstractions Principle).
 - `pub fn verify_attach_handle_payload(holder_pubkey: &[u8; 32], session_id: &SessionId, payload: &AttachPayload, mint_timestamp_unix: u64, ttl_unix: u64, sig: &Signature) -> Result<(), AttachError>` — static helper mirroring `verify_revocation_proof` shape; consumes the same `canonical_payload_bytes` helper as `sign_attach_handle_payload` so both produce / consume IDENTICAL canonical bytes per RFC-0016-a §6.10 canonical-bytes invariant.
 
-`octo-wallet` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen, re-exported via `octo_wallet::ed25519_dalek`) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created (file does not exist). Composition pattern follows [[stable-abstractions-principle]] — primitives in stable substrate, business semantics in composed layer.
+`octo-wallet` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen, re-exported via `octo_wallet::ed25519_dalek`) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created (file does not exist). Composition pattern follows [[cipherocto-design-principles]] §Stable Abstractions Principle — primitives in stable substrate, business semantics in composed layer.
 
 ## Rationale
 
@@ -856,8 +856,8 @@ Per RFC-0011 (parent compatibility window per Status blockquote), the existing `
 | v1.1    | Stub hard errors with `StaleStub` (exit 65); subcommand group is the only surface        |
 | v2.0    | Stub binary path removed entirely                                                        |
 
-The CLI follows [[rfc-0011-compatibility-timeline]] — no version
-shorthand in prose, only RFC numbers + section refs.
+The CLI follows the parent stub-deprecation compatibility window — no
+version shorthand in prose, only RFC numbers + section refs.
 
 ### Stale-stub window env-var override (v1.1 hard-error opt-in)
 
@@ -939,7 +939,8 @@ is governed by the respective substrate RFC.
   or RFC numbers
 - [[deferred-vs-unspecified]] — Deferred ≠ Unspecified
 - [[rfc-0011-loop-dry-gate-closure]] — parent chain closure pattern
-- [[rfc-0011-compatibility-timeline]] — stub deprecation timeline
+- Parent stub-deprecation compatibility window — stub-deprecation
+  timeline for `octo agent` legacy stub group
 
 ---
 

@@ -93,12 +93,6 @@ mod signature_bytes_serde {
     }
 }
 
-impl From<octo_wallet::ed25519_dalek::Signature> for Signature {
-    fn from(s: octo_wallet::ed25519_dalek::Signature) -> Self {
-        Self(s.to_bytes())
-    }
-}
-
 /// Default broadcast-channel capacity for runtime events.
 ///
 /// Sized to absorb a burst of state-change + log events from a
@@ -386,7 +380,7 @@ impl RuntimeHandleBinding {
 /// remaining `Arc::strong_count` directly — when it reaches 1
 /// (only the current handle), the channel is about to close.
 ///
-/// The `keepalive_rx` field holds an internal broadcast receiver
+/// The `_keepalive_rx` field holds an internal broadcast receiver
 /// for the handle's lifetime. Per the tokio `broadcast::Sender`
 /// contract, `Sender::send` returns `Err(SendError(_))` only when
 /// no active receivers exist — by holding one receiver internally,
@@ -412,12 +406,11 @@ struct HandleInner {
     /// during the handle's lifetime even when no external
     /// subscriber has attached yet. The receiver is intentionally
     /// never `recv()`d from — its sole purpose is to register as a
-    /// live receiver with the broadcast channel. The
-    /// `#[allow(dead_code)]` suppresses the false-positive
-    /// dead-code warning (the field's value matters as a side
-    /// effect of being held, not via any access).
-    #[allow(dead_code)]
-    keepalive_rx: broadcast::Receiver<RuntimeEvent>,
+    /// live receiver with the broadcast channel. Leading underscore
+    /// suppresses the false-positive dead-code warning (the
+    /// field's value matters as a side effect of being held, not
+    /// via any access).
+    _keepalive_rx: broadcast::Receiver<RuntimeEvent>,
 }
 
 /// Live runtime handle for a spawned agent (RFC-0011-c §9.3.2 +
@@ -456,7 +449,7 @@ impl RuntimeHandle {
     ) -> Self {
         let inner = Arc::new(HandleInner {
             event_tx,
-            keepalive_rx,
+            _keepalive_rx: keepalive_rx,
         });
         Self {
             handle_id: RuntimeHandleId::new(),
@@ -484,7 +477,7 @@ impl RuntimeHandle {
     /// contract).
     ///
     /// The handle retains an internal keep-alive receiver
-    /// ([`HandleInner::keepalive_rx`]) so `Sender::send` cannot
+    /// ([`HandleInner::_keepalive_rx`]) so `Sender::send` cannot
     /// return `Err(SendError)` for the lifetime of any handle
     /// clone — the channel always has at least one receiver.
     pub fn publish(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
@@ -817,15 +810,6 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Signature = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
-    }
-
-    #[test]
-    fn signature_from_dalek_signature() {
-        use octo_wallet::ed25519_dalek::{Signer, SigningKey};
-        let sk = SigningKey::from_bytes(&[0x42u8; 32]);
-        let dalek_sig = sk.sign(b"hello");
-        let s: Signature = dalek_sig.into();
-        assert_eq!(s.0.len(), 64);
     }
 
     #[test]

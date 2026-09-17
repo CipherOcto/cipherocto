@@ -146,7 +146,8 @@ fn tv_agt27_cross_process_revocation_propagates() {
 }
 
 fn run_child_role() -> ! {
-    let ledger_path = env::var(LEDGER_ENV).expect("OCTO_REVOCATION_LEDGER_PATH");
+    let ledger_path_str = env::var(LEDGER_ENV).expect("OCTO_REVOCATION_LEDGER_PATH");
+    let ledger_path = std::path::PathBuf::from(&ledger_path_str);
     let session_id_hex = match env::var(SESSION_ID_ENV) {
         Ok(v) => v,
         Err(e) => {
@@ -182,11 +183,21 @@ fn run_child_role() -> ! {
     // directly. This is what the test proves: a separately-spawned CLI
     // process observing another process's revocation through the
     // substrate-level free functions.
-    install_revocation_store_default_with(|| {
-        let store = StoolapRevocationStore::open_at(&ledger_path).expect("open ledger");
-        Ok(Arc::new(store) as Arc<dyn RevocationStore>)
-    })
-    .expect("install revocation store");
+    //
+    // Keep a local `store_arc` so the operator-side child can
+    // explicitly drop it before exit. `std::process::exit` bypasses
+    // ALL Rust destructors, which would skip the
+    // `stoolap::Database` Drop (sqlite3_close) and leave the
+    // journal page cache unwritten. Dropping the local Arc
+    // triggers sqlite3_close → journal flush → fsync of the main
+    // db file (per SQLite-family default synchronous=FULL).
+    // The fsync_all() calls below are belt-and-suspenders for
+    // the journal-mode + WAL sibling files.
+    let store_arc: Arc<StoolapRevocationStore> =
+        Arc::new(StoolapRevocationStore::open_at(&ledger_path).expect("open ledger"));
+    let dyn_arc: Arc<dyn RevocationStore> = store_arc.clone();
+    install_revocation_store_default_with(move || Ok(dyn_arc.clone()))
+        .expect("install revocation store");
 
     match role.as_str() {
         "spawn_side" => {
@@ -199,6 +210,33 @@ fn run_child_role() -> ! {
         }
         "operator_side" => {
             revoke_attach_token(session_id).expect("revoke write");
+            // Explicit drop → sqlite3_close → journal flushed + main
+            // db file fsynced by the Stoolap fork rev 527e8eb Drop.
+            // std::process::exit below bypasses Rust destructors, so
+            // we MUST release the Arc first to let Drop run. The
+            // substrate's OnceLock still holds a clone, but the local
+            // handle is what triggers our concrete-type Drop.
+            drop(store_arc);
+            // Belt-and-suspenders: fsync the ledger file and any
+            // SQLite-family sibling files (journal in DELETE mode,
+            // WAL+SHM in WAL mode) that may exist. The fsync is
+            // best-effort: missing sibling files are normal if the
+            // journal was already merged + deleted.
+            if let Ok(f) = std::fs::File::open(&ledger_path) {
+                let _ = f.sync_all();
+            }
+            for suffix in ["-journal", "-wal", "-shm"] {
+                let sibling = format!("{}{}", ledger_path.display(), suffix);
+                let _ = std::fs::File::open(&sibling).map(|f| f.sync_all());
+            }
+            // fsync the parent directory so the file metadata
+            // (mtime/size) is durable. POSIX guarantees the
+            // directory entry survives a crash after this call.
+            if let Some(parent) = ledger_path.parent() {
+                if let Ok(f) = std::fs::File::open(parent) {
+                    let _ = f.sync_all();
+                }
+            }
             std::process::exit(0);
         }
         "attach_side" => {

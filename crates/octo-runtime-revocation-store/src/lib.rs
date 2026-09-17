@@ -153,8 +153,16 @@ impl RevocationStore for StoolapRevocationStore {
             // collapsing to Ok(()) preserves idempotency at the
             // process-boundary race window. All other errors map
             // to PersistenceError as before.
+            //
+            // Note: the pre-check SELECT above is a fast-path
+            // optimization (avoids the INSERT round-trip + error
+            // path for the common sequential-revoke case). It is
+            // NOT a race eliminator — concurrent writers can
+            // still observe a stale pre-check and collide here.
+            // The substring catch below is what makes the race
+            // window idempotent.
             let msg = e.to_string().to_lowercase();
-            if msg.contains("unique") || msg.contains("primary key") || msg.contains("duplicate") {
+            if msg.contains("unique") || msg.contains("primary") || msg.contains("duplicate") {
                 return Ok(());
             }
             return Err(AttachError::PersistenceError(format!(

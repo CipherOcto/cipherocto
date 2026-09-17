@@ -278,6 +278,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "octo-runtime-persistence"))]
     fn persist_event_cursor_returns_feature_not_enabled_without_feature() {
         // When the feature is OFF, `persist_event_cursor` returns
         // `FeatureNotEnabled` so the CLI can map the substrate
@@ -290,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "octo-runtime-persistence"))]
     fn load_event_cursor_returns_feature_not_enabled_without_feature() {
         let res = load_event_cursor(Uuid::new_v4());
         assert!(

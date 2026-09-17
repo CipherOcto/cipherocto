@@ -393,8 +393,9 @@ AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
 occupying 8 unique slots — `InvalidSinceCursor` shares slot 53 with
 `Expired` per amendment-chain shared-slot pattern — + 1 CLI
 dispatch `TokenMintSkipped` variant per §F.6.3; total **24 variants
-across 22 occupied slots** in the 23-slot range 39-61, with slot 50
-reserved and 3 shared-slot pairings (43, 51, 53); renegotiation
+across 22 occupied slots** in the 23-slot range 39-61 (slot 50
+unoccupied per the `exit_code()` switch in `crates/octo-cli/src/error.rs`),
+3 shared-slot pairings (43, 51, 53); renegotiation
 needed if -h/i follow-on amendments claim earlier slots):
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                              |
@@ -892,7 +893,8 @@ are additive to the v4 surface.
 
 Per the slot allocation table, RFC-0011-c consumes slots 39-61
 (post -g's 35-38; 24 variants across 22 occupied slots in the
-23-slot range, slot 50 reserved, 3 shared-slot pairings at 43,
+23-slot range (slot 50 unoccupied per the exit_code() switch in
+crates/octo-cli/src/error.rs), 3 shared-slot pairings at 43,
 51, 53 — 14 base amendment + 8 follow-on amendment
 AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
 (8 unique slots) + 1 CLI dispatch `TokenMintSkipped` variant per

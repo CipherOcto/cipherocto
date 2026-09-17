@@ -16,18 +16,20 @@ metadata:
     - mission 0011-c-agent-attach-subcommand
   paired_mission: 0011-c-agent-attach-subcommand
 substrate_unblocked: 2026-09-16
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-16
-release_gate: end-to-end CLI dispatch wired per amendment cycle §F.6.1-§F.6.4
+closed_at: 2026-09-16
+implementation_commit: 13780f33
+dry_audit: docs/audits/2026-09-16-0011-c-attach-cli-dispatch-dry-closure.md
 ---
 
 # 0011-c-attach-cli-dispatch-amendment — RFC-0011-c §F.6 CLI Dispatch Wiring
 
 ## Status
 
-Open — substrate unblocked 2026-09-16 per AttachHandle substrate mission
-DRY CLOSURE (`docs/audits/2026-09-16-0011-c-attachhandle-dry-closure.md`).
+Closed 2026-09-16 — substrate unblocked per AttachHandle substrate mission
+DRY CLOSURE (`docs/audits/2026-09-16-0011-c-attachhandle-dry-closure.md`); end-to-end CLI dispatch wired at commit `13780f33` per amendment cycle §F.6.1-§F.6.4. Paired sibling missions `0011-c-agent-run-subcommand` (emit side) + `0011-c-agent-attach-subcommand` (consume side) carry the paired_mission annotation + the cleared release-gate annotations per §Sub-step 7.
 CLI dispatch surface wired end-to-end on `next` (commit `37d7315d`); the
 paired sibling mission `0011-c-agent-run-subcommand` (emit side) +
 `0011-c-agent-attach-subcommand` (consume side) carry the paired_mission

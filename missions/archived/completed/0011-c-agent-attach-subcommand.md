@@ -16,15 +16,16 @@ metadata:
     - mission 0011-c-octo-runtime-substrate
     - follow-on 0011-c-agent-run AttachHandle token emission
   paired_mission: 0011-c-attach-cli-dispatch-amendment
-release_gate: AttachHandle token pathway landing (per follow-on cycle derived from hard audit 2026-09-15)
-release_gate_cleared_at: 2026-09-16
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+closed_at: 2026-09-16
 substrate_unblocked: 2026-09-13
 implementation_state: cli-dispatch-wired
 implementation_commit: ca1f52e8
-dry_audit: docs/audits/2026-09-16-0011-c-agent-attach-yaml-revert.md
+implementation_cycle_commit: 13780f33
+dry_audit: docs/audits/2026-09-16-0011-c-attach-cli-dispatch-dry-closure.md
+release_gate_cleared_at: 2026-09-16
 ---
 
 # 0011-c-agent-attach-subcommand — `octo agent attach` subcommand
@@ -40,7 +41,7 @@ dry_audit: docs/audits/2026-09-16-0011-c-agent-attach-yaml-revert.md
 
 ## Status
 
-Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 5 of 5). **CLI dispatch wired end-to-end** per RFC-0011-c §F.6 + paired amendment mission `0011-c-attach-cli-dispatch-amendment` (release gate cleared 2026-09-16). The dispatch handler reads the `AttachHandle` token from `--token-file`, calls `decode_token` + `attach_with_token` to bind the in-process runtime broadcast channel. The 8 `OctoCliError` mirror variants (slots 53-59) wired via `From<octo_runtime::AttachError> for OctoCliError` so the substrate's signature-verify + revocation-set + TTL + since-cursor + session-registry checks surface verbatim to the operator. Bounded by §F.6.5 session-registry-wiring deferral — legitimate tokens currently return `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior; full happy-path coverage deferred to paired follow-on amendment cycle.
+Closed (RFC-0011-c §Phase 2 CLI wiring, subcommand 5 of 5). End-to-end CLI dispatch wired per RFC-0011-c §F.6 + paired amendment mission `0011-c-attach-cli-dispatch-amendment` (release gate cleared 2026-09-16; closure anchored at commit `13780f33`). The dispatch handler reads the `AttachHandle` token from `--token-file`, calls `decode_token` + `attach_with_token` to bind the in-process runtime broadcast channel. The 8 `OctoCliError` mirror variants (slots 53-59) wired via `From<octo_runtime::AttachError> for OctoCliError` so the substrate's signature-verify + revocation-set + TTL + since-cursor + session-registry checks surface verbatim to the operator. Bounded by §F.6.5 session-registry-wiring deferral — legitimate tokens currently return `AttachSessionUnknown` (exit 56) per substrate-faithful current behavior; full happy-path coverage deferred to paired follow-on amendment cycle.
 
 ## Substrate (RFC-0011-c)
 

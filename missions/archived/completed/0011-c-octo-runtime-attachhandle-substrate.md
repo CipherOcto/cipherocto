@@ -16,18 +16,19 @@ metadata:
     - mission 0011-c-agent-run-subcommand
     - mission 0011-c-agent-attach-subcommand
 release_gate: RFC-0011-c §Follow-on §F.1-§F.5 text refresh + substrate mint/decode/revocation/persistence + 9 NEW OctoCliError variants + CLI primitive `octo agent revoke-attach --session-id` (Sub-step 5) land before attach dispatch stub binds to in-process RuntimeHandle
-release_gate_blocked: 0011-c-agent-attach-subcommand dispatch handler returns RuntimeSubstrateNotReady exit 51 unconditionally until this mission lands
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-16
+closed_at: 2026-09-17
 substrate_unblocked: 2026-09-16
-implementation_state: planning
-dry_audit: docs/audits/2026-09-16-0011-c-attachhandle-mission-draft.md
+implementation_state: closed
+implementation_commit: 350d8af1
+dry_audit: docs/audits/2026-09-16-0011-c-attachhandle-dry-closure.md
 ---
 
 # 0011-c-octo-runtime-attachhandle-substrate — AttachHandle token pathway
 
-**Status:** Open — designed 2026-09-16 per hard audit 2026-09-15 + user direction (Q1+Q2+Q3). Single mission covers substrate + CLI + revocation + persistence per user direction (Q2: single mission, Q3: deferred-now-in-scope).
+**Status:** Closed 2026-09-17 (anchor commit `350d8af1` — DRY CLOSURE artifacts + mission archive). Designed 2026-09-16 per hard audit 2026-09-15 + user direction (Q1+Q2+Q3). Single mission covers substrate + CLI + revocation + persistence per user direction (Q2: single mission, Q3: deferred-now-in-scope). Subsequent Phase A follow-on (cross-process revocation), Phase B (3 Layer D transport extension crates), Phase C (cross-process revocation propagation via octo-runtime-revocation-store), Phase D1 (AgentRegistry companion), Phase D2.1 (key rotation discriminator) all landed post-closure; this mission is the closure anchor for the AttachHandle substrate cycle.
 **Substrate:** RFC-0011-c §Follow-on (NEW; added per this cycle)
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:**
@@ -39,7 +40,7 @@ dry_audit: docs/audits/2026-09-16-0011-c-attachhandle-mission-draft.md
 
 ## Status
 
-Open. RFC-0011-c §Follow-on text refresh + this mission YAML + CLI wiring + substrate code land in this single cycle per paired-acceptance sequencing. DRY gate: R1 → R1.5 → R2 (zero-finding = DRY CLOSED gate) per user Q3 "shorter" directive.
+Closed 2026-09-17. RFC-0011-c §Follow-on text refresh + this mission YAML + CLI wiring + substrate code landed in this single cycle per paired-acceptance sequencing. DRY closure gate achieved (R21+R22+R23+R24+R25 = 5 rounds; R24 + R25 zero-finding = DRY CLOSED gate per user Q3 "shorter" directive). Closure anchor commit `350d8af1` (DRY CLOSURE artifacts + mission archive). Subsequent Phase A follow-on (cross-process revocation), Phase B (3 Layer D transport extension crates), Phase C (cross-process revocation propagation via octo-runtime-revocation-store), Phase D1 (AgentRegistry companion), Phase D2.1 (key rotation discriminator) all landed post-closure per the AttachHandle follow-on cycle.
 
 ## Substrate (RFC-0011-c §Follow-on)
 

@@ -17,9 +17,13 @@ metadata:
     - mission 0011-capability-commands
     - mission 0011-policy-commands
     - mission 0013-governance-substrate-extraction
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+closed_at: 2026-09-15
+implementation_commit: d998a8be
+dry_audit: docs/audits/2026-09-15-0011-g-governance-snapshot-dry-closure.md
+paired_child: 0011-g-governance-snapshot
 amended_at: 2026-09-10
 amendment: "RFC-0011-g v1.4 layer-model note: canonical `ProposalState` + `DecisionType` + `GovernanceModel` + `EmergencyAuthority` + `GovernancePolicy` + `GovernanceProposal` + pure tally helpers (`voting_weight`, `tally_quorum`) live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. IO functions (`snapshot`, `attest`, `vote`) stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`."
 ---
@@ -96,13 +100,13 @@ Phase 2 (`attest` + `vote`).
 
 ### Type Coverage
 
-| RFC-0011-g type               | Sub-step                  | Notes                                                                                                                                          |
-| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SnapshotRef`                 | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Snapshot Ref (`snapshot_id`, `chain_id`, `taken_at_unix`, `expires_at_unix`, `root_manifest_hash`)            |
-| `SnapshotOutput`              | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper (`snapshot`, `open_proposals`, `attestation_count`, `resolved_at_unix`, `remaining_seconds`) per RFC-0011-g §Output Envelope   |
+| RFC-0011-g type               | Sub-step                  | Notes                                                                                                                                                      |
+| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SnapshotRef`                 | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Snapshot Ref (`snapshot_id`, `chain_id`, `taken_at_unix`, `expires_at_unix`, `root_manifest_hash`)               |
+| `SnapshotOutput`              | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper (`snapshot`, `open_proposals`, `attestation_count`, `resolved_at_unix`, `remaining_seconds`) per RFC-0011-g §Output Envelope |
 | `ProposalSummary`             | Sub-step 1 (output types) | Layer B/C; substrate return type for `open_proposals` per RFC-0011-g §Output Envelope (`proposal_id`, `chain_id`, `state`, `deadline_unix`, quorum fields) |
-| `OctoCliError::SnapshotStale` | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 35`)                                                                         |
-| `OctoGovernanceSnapshotCache` | Sub-step 2 (cache)        | Layer C/D; NEW struct in `crates/octo-governance/src/cache.rs` (LRU + 600s TTL)                                                                |
+| `OctoCliError::SnapshotStale` | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 35`)                                                                          |
+| `OctoGovernanceSnapshotCache` | Sub-step 2 (cache)        | Layer C/D; NEW struct in `crates/octo-governance/src/cache.rs` (LRU + 600s TTL)                                                                            |
 
 ### Implementation Guide
 
@@ -118,16 +122,17 @@ patterns.
 
 Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
 
-| Canonical type | Layer A frozen home | Layer B façade |
-|----------------|---------------------|----------------|
-| `ProposalState` (6 variants) + `DecisionType` (7 variants) + `GovernanceModel` (5 variants) + `EmergencyAuthority` (3 variants) | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| `GovernancePolicy` + `GovernanceProposal` | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| Pure tally helpers: `voting_weight` + `tally_quorum` | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| IO functions: `snapshot` + `attest` + `vote` | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
+| Canonical type                                                                                                                  | Layer A frozen home                       | Layer B façade     |
+| ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------ |
+| `ProposalState` (6 variants) + `DecisionType` (7 variants) + `GovernanceModel` (5 variants) + `EmergencyAuthority` (3 variants) | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| `GovernancePolicy` + `GovernanceProposal`                                                                                       | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| Pure tally helpers: `voting_weight` + `tally_quorum`                                                                            | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| IO functions: `snapshot` + `attest` + `vote`                                                                                    | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
 
 CLI consumers (this mission + future RFC-0011-g amendments) MUST consume canonical types via the Layer B façade (`pub use octo_governance::*`). Direct Layer A import is permitted only when extending the substrate via a future RFC; mission close-out MUST verify all imports flow through the façade chain. IO functions (`snapshot`, `attest`, `vote`) stay in the domain crate — substrate is intentionally IO-free per RFC-0013 §Substrate `[ADD]`.
 
 The layer-model split:
+
 - **PQC migration blast radius** — confined to Layer A frozen core `octo-governance-core`. A future PQC migration touches this crate only; CLI + domain consumers are unaffected.
 - **Cross-replica tally equivalence** — `BTreeMap` for vote tallies (ordered iteration per RFC-0855 §11.3 + RFC-0013 §Cross-Replica Tally Equivalence) lives in substrate pure helpers.
 - **No central enum drift** — `ProposalState` + `DecisionType` + `GovernanceModel` + `EmergencyAuthority` are all `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration. Extension variants land via typed-discriminator namespaces, not central enum edits.

@@ -17,7 +17,12 @@ metadata:
     - mission 0013-governance-substrate-extraction
     - mission 0013-governance-network-migration
   release_gate:
-    require: "RFC-0855p-d AND RFC-0855p-e AND RFC-0011-d Phase 1 reach Accepted"
+    require: "user-gated per [[feedback_initiation_user_only]]; implementation kickoff awaits explicit user instruction"
+    gates_cleared_at: 2026-09-17
+    gates_cleared:
+      - "RFC-0855p-d (Accepted; rfcs/accepted/networking/0855p-d-subgroup-nesting.md + d1/d2/d3 amendments)"
+      - "RFC-0855p-e (Accepted; rfcs/accepted/networking/0855p-e-handover-request-envelope.md)"
+      - "RFC-0011-d Phase 1 (Completed; missions/archived/completed/0011-d-role-subcommands-phase1.md)"
     released_version: TBD
 status: Claimed
 claimed_by: mmacedoeu
@@ -118,17 +123,17 @@ clause. Hard sequencing per RFC-0011-g §Implementation Phases:
 
 ### Type Coverage
 
-| RFC-0011-g type                              | Sub-step                  | Notes                                                                                                                                                             |
-| -------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0011-g type                              | Sub-step                  | Notes                                                                                                                                                                         |
+| -------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AttestationReceipt`                         | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Output Envelope (`attestation_id`, `subject_did`, `kind_ref`, `signer_did`, `evidence_hash`, `expires_at_unix`, `appended_at_unix`) |
 | `AttestOutput`                               | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper (`receipt`, `attestation_id`, `content_hash`, `appended_at_unix`) per RFC-0011-g §Output Envelope                                               |
 | `VoteReceipt`                                | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Output Envelope (`vote_id`, `proposal_id`, `voter_did`, `choice`, `weight_applied`, `voter_cap_id`, `recorded_at_unix`)             |
 | `VoteOutput`                                 | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper (`receipt`, `vote_id`, `weight_applied`, `current_quorum_weight`, `quorum_threshold`, `recorded_at_unix`) per RFC-0011-g §Output Envelope       |
-| `OctoCliError::VoteRejected`                 | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 36`)                                                                                            |
-| `OctoCliError::UnknownAttestationKind`       | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 37`)                                                                                            |
-| `OctoCliError::PrereqNotAccepted`            | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 38`)                                                                                            |
-| Attestation ledger (`attestation_log`)       | Sub-step 2 (append path)  | Layer B; NEW substrate table in `crates/octo-governance/src/attest.rs` (append-only; PK `attestation_id = BLAKE3-256(canonical_ser(envelope))`)                   |
-| Vote ledger (per-`(proposal_id, voter_did)`) | Sub-step 4 (vote path)    | Layer B; NEW substrate table in `crates/octo-governance/src/vote.rs` (immutable per-vote)                                                                         |
+| `OctoCliError::VoteRejected`                 | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 36`)                                                                                             |
+| `OctoCliError::UnknownAttestationKind`       | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 37`)                                                                                             |
+| `OctoCliError::PrereqNotAccepted`            | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 38`)                                                                                             |
+| Attestation ledger (`attestation_log`)       | Sub-step 2 (append path)  | Layer B; NEW substrate table in `crates/octo-governance/src/attest.rs` (append-only; PK `attestation_id = BLAKE3-256(canonical_ser(envelope))`)                               |
+| Vote ledger (per-`(proposal_id, voter_did)`) | Sub-step 4 (vote path)    | Layer B; NEW substrate table in `crates/octo-governance/src/vote.rs` (immutable per-vote)                                                                                     |
 
 ### Implementation Guide
 
@@ -144,13 +149,13 @@ patterns.
 
 Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
 
-| Canonical type | Layer A frozen home | Layer B façade |
-|----------------|---------------------|----------------|
-| `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| `ProposalState` (6 variants) | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| `GovernancePolicy` + `GovernanceProposal` + `EmergencyAuthority` | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| Pure tally helpers: `voting_weight` + `tally_quorum` (BTreeMap-ordered) | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| IO functions: `attest` + `vote` (signature `attest(subject_did, kind, snapshot_id)`, `vote(proposal_id, voter_did, choice, weight)`) | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
+| Canonical type                                                                                                                                                  | Layer A frozen home                       | Layer B façade     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------ |
+| `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| `ProposalState` (6 variants)                                                                                                                                    | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| `GovernancePolicy` + `GovernanceProposal` + `EmergencyAuthority`                                                                                                | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| Pure tally helpers: `voting_weight` + `tally_quorum` (BTreeMap-ordered)                                                                                         | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
+| IO functions: `attest` + `vote` (signature `attest(subject_did, kind, snapshot_id)`, `vote(proposal_id, voter_did, choice, weight)`)                            | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
 
 The `octo governance {attest,vote}` subcommands consume canonical types via the Layer B façade (`pub use octo_governance::*`). IO functions stay in the domain crate per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21 stale-override parity.
 

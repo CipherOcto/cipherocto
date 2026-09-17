@@ -133,6 +133,24 @@ pub enum AttachError {
     /// arm (see `crates/octo-cli/src/error.rs`).
     #[error("internal handler error: {0}")]
     Internal(String),
+
+    /// `key_id` in the token is not present in the holder's `KeySet`
+    /// (neither in the active lookup table nor in the grace-period
+    /// window; see RFC-0011-c §F.5.1). CLI exit 62 if mapped (out
+    /// of scope for D2.1 — defaults to the `Internal(reason)`
+    /// wildcard via the existing `From<AttachError>` arm in
+    /// `crates/octo-cli/src/error.rs`).
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[error("unknown key_id {key_id} (known: {known_keys:?})")]
+    UnknownKeyId {
+        /// `key_id` discriminator from the token's canonical bytes.
+        key_id: crate::handle::KeyId,
+        /// Diagnostic union of active + grace key ids in the
+        /// verifier's `KeySet` (the operator can read the
+        /// populated set without re-deriving it from the
+        /// substrate envelope).
+        known_keys: Vec<crate::handle::KeyId>,
+    },
 }
 
 /// Persistence-layer error envelope (Stoolap cursor store).
@@ -267,5 +285,19 @@ mod tests {
         let e = AttachError::Internal("handshake failed: bad reply".to_string());
         let s = e.to_string();
         assert!(s.contains("handshake failed: bad reply"), "{s}");
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn unknown_key_id_display_includes_id_and_known() {
+        let e = AttachError::UnknownKeyId {
+            key_id: 99,
+            known_keys: vec![1, 2, 7],
+        };
+        let s = e.to_string();
+        assert!(s.contains("99"), "{s}");
+        assert!(s.contains("1"), "{s}");
+        assert!(s.contains("2"), "{s}");
+        assert!(s.contains("7"), "{s}");
     }
 }

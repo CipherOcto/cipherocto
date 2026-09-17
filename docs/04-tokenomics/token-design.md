@@ -320,6 +320,44 @@ visibility.
 
 Voting power proportional to locked OCTO—encouraging long-term participation.
 
+### Follow-on: Phase 2 governance substrate alignment (RFC-0011-g)
+
+The dual-stake + governance staking model described above is now backed
+by Phase 2 substrate land. Per RFC-0011-g §Implementation Phases, the
+governance substrate ships in two layers: the append-only attest + vote
+ledgers in `octo_governance` (Layer B façade per RFC-0013), and the
+pure tally + voting-weight primitives in `octo_governance_core` (Layer A
+frozen). The CLI surface `octo governance {attest, vote}` consumes via
+the Layer B façade.
+
+The dual-stake model from §11 maps onto the substrate as follows:
+
+- The OCTO (global alignment) stake governs weight computation through
+  `voting_weight(stake_bps, multiplier_bps)` which is a pure function in
+  `octo_governance_core::tally`. The result is bounded at 10_000 bps
+  (100%) — a single voter cannot exceed full quorum regardless of stake.
+- The role-token (local specialization) stake gates the capability
+  substrate (`vote_cap_id`) required by the CLI to invoke `vote`. Per
+  RFC-0011-d Phase 1, the operator invokes `octo role provision` to mint
+  the role-token-backed capability before invoking `octo governance vote`.
+- The capability carries a `weight_bps` (also bounded at 10_000) derived
+  from the role-token stake at proposal snapshot time. The substrate
+  rejects `weight_bps > 10_000` with `GovernanceError::InvalidArgument`.
+
+The append-only attest + vote ledgers carry `weight_applied` in basis
+points so the cross-replica tally invariant per RFC-0013
+§Cross-Replica Tally Equivalence holds: all replicas produce identical
+`(approval_bps, rejection_bps)` totals given identical ledger state.
+This is the substrate mechanism that prevents dual-stake gaming across
+replicas.
+
+Per RFC-0011-g §Compatibility Mixed-Version Compatibility, during the
+Draft→Accepted substrate transition window the CLI surfaces
+`OctoCliError::PrereqNotAccepted { rfc_ref }` exit 38 — operators
+continue to see the dual-stake model on the next CLI re-installation
+once the gate clears (no CLI change required; substrate behavior flips
+on RFC-0855p-d + RFC-0855p-e acceptance).
+
 ---
 
 ## 13. Treasury Flywheel

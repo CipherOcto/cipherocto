@@ -395,8 +395,8 @@ pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.1,
 plus 1 boundary-parse `InvalidSessionIdHex` per §9.3.6, plus 1
 typed-discriminator `ReplayDetected` per §9.7 — totaling
 **25 variants across 22 occupied slots** in the 23-slot range
-39-61, 3 shared-slot pairings (43, 51, 53); renegotiation
-is required if -h/i follow-on amendments claim earlier slots):
+39-61, 3 shared-slot pairings (43, 51, 53). Renegotiation
+is required if -h/i follow-on amendments claim earlier slots:
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                              |
 | ------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -840,7 +840,7 @@ The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the o
   2. Resolve caller DID → `[u8; 32]` holder_pubkey via `IdentityKey::public_key_bytes()` (CLI boundary concern per §F.5)
   3. Call `octo_runtime::decode_token(&bytes, holder_pubkey) -> AttachHandle` (verifies signature + BLAKE3 integrity per §F.1)
   4. Call `octo_runtime::attach_with_token(holder_pubkey, &token, since_unix).await` (executes the §F.2 validation chain steps (a)-(e))
-  5. Populate `AgentAttachOutput { agent_id, runtime_handle: None, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (`runtime_handle` is `None` on the attach pathway because `octo_runtime::handle::AttachedSession` only carries `event_cursor` + `broadcast_rx`; `session_id_hex` is the canonical binding identifier populated from the substrate session_id carried on the `RuntimeHandle` per §F.6.1 step 2; the post-R5.5 schema-faithful reconciliation prevents older consumers from misinterpreting session_id_hex as a UUID via the `runtime_handle` field)
+  5. Populate `AgentAttachOutput { agent_id, runtime_handle: None, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (`runtime_handle` is `None` on the attach pathway because `octo_runtime::handle::AttachedSession` only carries `event_cursor` + `broadcast_rx`; `session_id_hex` is the canonical binding identifier populated from `RuntimeHandle.session_id` per §F.6.1 step 2; the post-R5.5 schema-faithful reconciliation prevents older consumers from misinterpreting session_id_hex as a UUID via the `runtime_handle` field)
 
 **§F.6.3 — `OctoCliError` mirror surface**
 
@@ -901,7 +901,7 @@ per §Follow-on §F.4 mirror (8 unique slots), plus 1 CLI dispatch
 occupied slots** in the 23-slot range 39-61, 3 shared-slot
 pairings (43, 51, 53). Sibling amendments that do not consume
 slots MUST NOT claim earlier slots; renegotiation is required if
--h/i follow-on amendments claim earlier slots).
+-h/i follow-on amendments claim earlier slots.
 
 ### Why state machine aliasing ACTIVE↔BUSY
 

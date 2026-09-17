@@ -37,7 +37,8 @@ fn main() {
         ) {
             tracing::warn!(
                 reason = %e,
-                "revocation store install failed; falling back to InMemoryRevocationStore"
+                "revocation store install failed; falling back to InMemoryRevocationStore \
+                 (process-local revocation, no cross-process propagation)"
             );
         }
     }

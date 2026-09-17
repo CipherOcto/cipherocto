@@ -85,7 +85,7 @@ fn tv_agt27_cross_process_revocation_propagates() {
     let harness_args = [
         "--ignored",
         "--test",
-        "cross_process_revocation_propagates",
+        "tv_agt27_cross_process_revocation_propagates",
         "--exact",
         "--nocapture",
     ];

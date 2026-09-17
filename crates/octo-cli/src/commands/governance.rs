@@ -461,16 +461,21 @@ fn map_governance_error(err: GovernanceError) -> OctoCliError {
         }
         GovernanceError::InvalidTransition { .. }
         | GovernanceError::QuorumNotReached { .. }
-        | GovernanceError::InvalidWeight { .. } => OctoCliError::VoteRejected {
+        | GovernanceError::InvalidWeight { .. }
+        | GovernanceError::DuplicateAttestation { .. }
+        | GovernanceError::DuplicateVote { .. } => OctoCliError::VoteRejected {
             reason: sanitize_substrate_error(&err.to_string()),
         },
-        GovernanceError::DuplicateAttestation { .. }
-        | GovernanceError::DuplicateVote { .. }
-        | GovernanceError::UnknownCapability { .. }
+        GovernanceError::UnknownCapability { .. }
         | GovernanceError::InvalidArgument { .. }
         | GovernanceError::Internal { .. } => {
             OctoCliError::Internal(sanitize_substrate_error(&err.to_string()))
         }
+        // Layer A frozen-core additive contract — future variants
+        // route through the wildcard arm to preserve forward
+        // compatibility (per cipherocto-design-principles
+        // §Rust crate-level stability Layer A row).
+        _ => OctoCliError::Internal(sanitize_substrate_error(&err.to_string())),
     }
 }
 

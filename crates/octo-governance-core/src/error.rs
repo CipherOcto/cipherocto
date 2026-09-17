@@ -19,7 +19,18 @@ use thiserror::Error;
 ///   argument validation (RFC-0011-g §7.4 input invariants).
 /// - [`GovernanceError::Internal`] — wraps substrate IO /
 ///   signing failures (fail-closed envelope).
+///
+/// ## Layer discipline (per CLAUDE.md §Architectural Principles)
+///
+/// `#[non_exhaustive]` is the Layer A frozen-core
+/// "additive only" contract (per cipherocto-design-principles
+/// §Rust crate-level stability Layer A row). Adding a new
+/// variant is non-breaking (consumers must use a wildcard
+/// arm). Removing or renaming a variant is semver-major.
+/// This crate is RFC-frozen + semver-major only — variants
+/// may be ADDED but never removed or renamed.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum GovernanceError {
     /// Attempted invalid state transition on a `ProposalState`.
     #[error("invalid proposal transition from {from:?} to {to:?}")]

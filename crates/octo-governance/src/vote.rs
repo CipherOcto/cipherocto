@@ -44,33 +44,57 @@ use serde::{Deserialize, Serialize};
 
 use crate::attest::CapabilitySigner;
 
-/// Vote choice: approve or reject the proposal (RFC-0011-g §Vote
-/// Choice). The on-the-wire encoding is the lowercase string
-/// `"approve"` or `"reject"` — kept as a typed enum so callers
-/// cannot pass arbitrary strings to the substrate.
+/// Vote choice (RFC-0011-g §Vote Choice + §Command Taxonomy).
+///
+/// On-the-wire canonical encoding is the lowercase string
+/// `yes` | `no` | `abstain` per RFC §Command Taxonomy L391
+/// (substrate-recognized choice string, RFC-0855 amendment
+/// cadence). Two back-compat aliases `approve` | `reject` are
+/// accepted at `parse` for legacy callers (parse-only; the
+/// canonical `as_str` form is `yes` | `no` | `abstain`).
+///
+/// Kept as a typed enum so callers cannot pass arbitrary
+/// strings to the substrate — the substrate fails-closed on
+/// unknown choices via `GovernanceError::InvalidArgument`,
+/// which `map_governance_error` routes to
+/// `OctoCliError::VoteRejected` (exit 36) per RFC §Error
+/// Handling slot table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VoteChoice {
-    /// Approve the proposal.
-    Approve,
-    /// Reject the proposal.
-    Reject,
+    /// Vote in favor of the proposal.
+    Yes,
+    /// Vote against the proposal.
+    No,
+    /// Abstain from the proposal (recorded but does not count
+    /// toward quorum per RFC-0855 amendment cadence).
+    Abstain,
 }
 
 impl VoteChoice {
-    /// Lowercase string encoding (`approve` | `reject`).
+    /// Canonical lowercase wire form (`yes` | `no` | `abstain`).
+    /// Per RFC §Command Taxonomy L391 — substrate-recognized
+    /// choice vocabulary.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Approve => "approve",
-            Self::Reject => "reject",
+            Self::Yes => "yes",
+            Self::No => "no",
+            Self::Abstain => "abstain",
         }
     }
 
-    /// Parse from `&str`. Unknown values fail-closed.
+    /// Parse from `&str` (case-insensitive). Recognizes the
+    /// canonical vocabulary `yes` | `no` | `abstain` plus
+    /// the back-compat aliases `approve` | `reject` (which
+    /// map to `Yes` | `No` respectively). Unknown values
+    /// fail-closed with `GovernanceError::InvalidArgument`.
     pub fn parse(s: &str) -> Result<Self, GovernanceError> {
-        match s {
-            "approve" => Ok(Self::Approve),
-            "reject" => Ok(Self::Reject),
+        // case-insensitive match via lowercase comparison
+        let lower = s.trim().to_ascii_lowercase();
+        match lower.as_str() {
+            "yes" | "approve" => Ok(Self::Yes),
+            "no" | "reject" => Ok(Self::No),
+            "abstain" => Ok(Self::Abstain),
             other => Err(GovernanceError::InvalidArgument {
                 reason: format!("unknown vote choice: {other}"),
             }),
@@ -195,7 +219,7 @@ impl VoteLog {
                     .map(|(voter_did, receipt)| {
                         (
                             voter_did.clone(),
-                            (receipt.weight_applied, receipt.choice == "approve"),
+                            (receipt.weight_applied, receipt.choice == "yes"),
                         )
                     })
                     .collect()
@@ -239,9 +263,12 @@ pub struct QuorumProjection {
 
 /// Cast a vote per RFC-0011-g §7.4 substrate signature. The
 /// canonical envelope bytes are `voter_did || 0x00 || proposal_id
-/// || 0x00 || choice || 0x00 || weight_be || 0x00 ||
+/// || 0x00 || choice_str || 0x00 || weight_be || 0x00 ||
 /// voter_cap_id || 0x00 || snapshot_id || 0x00 ||
-/// allow_stale_bool`. The PK is `BLAKE3-256` of those bytes; the
+/// allow_stale_bool`. Every field is preceded by an explicit
+/// `0x00` delimiter — the parsing layer does NOT rely on
+/// implicit fixed-length separators (32-byte PK, 4-byte
+/// `u32_be`). The PK is `BLAKE3-256` of those bytes; the
 /// `VoteReceipt.vote_id` is set to the PK for downstream tooling
 /// convenience.
 ///
@@ -289,15 +316,20 @@ pub fn vote(
         });
     }
 
-    // Canonical envelope bytes (substrate-faithful).
+    // Canonical envelope bytes (substrate-faithful). Every field
+    // is preceded by an explicit `0x00` delimiter; the parsing
+    // layer does NOT rely on implicit fixed-length separators
+    // (32-byte `proposal_id`, 4-byte `weight_bps`).
     let choice_str = choice.as_str();
     let mut envelope: Vec<u8> = Vec::new();
     envelope.extend_from_slice(voter_did.as_bytes());
     envelope.push(0x00);
     envelope.extend_from_slice(&proposal_id);
+    envelope.push(0x00);
     envelope.extend_from_slice(choice_str.as_bytes());
     envelope.push(0x00);
     envelope.extend_from_slice(&weight_bps.to_be_bytes());
+    envelope.push(0x00);
     envelope.extend_from_slice(voter_cap_id.as_bytes());
     envelope.push(0x00);
     if let Some(snap) = snapshot_id {
@@ -426,7 +458,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             5000,
             "voter-cap-001",
             Some(&[0xAA; 32]),
@@ -436,7 +468,7 @@ mod tests {
         .expect("happy path should succeed");
         assert_eq!(receipt.voter_did, voter_did());
         assert_eq!(receipt.proposal_id, proposal_id());
-        assert_eq!(receipt.choice, "approve");
+        assert_eq!(receipt.choice, "yes");
         assert_eq!(receipt.weight_applied, 5000);
         assert_eq!(receipt.voter_cap_id, "voter-cap-001");
         assert_eq!(receipt.recorded_at_unix, 1_700_000_000);
@@ -463,7 +495,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             5000,
             "voter-cap-does-not-exist",
             None,
@@ -490,7 +522,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             5000,
             "voter-cap-001",
             None,
@@ -504,7 +536,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Reject, // different choice — still duplicate
+            VoteChoice::No, // different choice — still duplicate
             6000,
             "voter-cap-001",
             None,
@@ -536,7 +568,7 @@ mod tests {
             &registry,
             proposal_id(),
             "did:octo:subgroup:abc123",
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             5000,
             "voter-cap-001",
             None,
@@ -563,7 +595,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             10_001,
             "voter-cap-001",
             None,
@@ -585,16 +617,27 @@ mod tests {
 
     #[test]
     fn vote_v6_choice_parse_roundtrip() {
-        assert_eq!(VoteChoice::parse("approve").unwrap(), VoteChoice::Approve);
-        assert_eq!(VoteChoice::parse("reject").unwrap(), VoteChoice::Reject);
-        assert_eq!(VoteChoice::Approve.as_str(), "approve");
-        assert_eq!(VoteChoice::Reject.as_str(), "reject");
+        // Canonical vocabulary (RFC §Command Taxonomy L391).
+        assert_eq!(VoteChoice::parse("yes").unwrap(), VoteChoice::Yes);
+        assert_eq!(VoteChoice::parse("no").unwrap(), VoteChoice::No);
+        assert_eq!(VoteChoice::parse("abstain").unwrap(), VoteChoice::Abstain);
+        // Back-compat aliases (parse-only; canonical as_str is
+        // lowercase vocabulary).
+        assert_eq!(VoteChoice::parse("approve").unwrap(), VoteChoice::Yes);
+        assert_eq!(VoteChoice::parse("reject").unwrap(), VoteChoice::No);
+        // Case-insensitive parse.
+        assert_eq!(VoteChoice::parse("YES").unwrap(), VoteChoice::Yes);
+        assert_eq!(VoteChoice::parse("Approve").unwrap(), VoteChoice::Yes);
+        // Canonical as_str returns canonical wire form.
+        assert_eq!(VoteChoice::Yes.as_str(), "yes");
+        assert_eq!(VoteChoice::No.as_str(), "no");
+        assert_eq!(VoteChoice::Abstain.as_str(), "abstain");
         // Unknown choice fail-closed.
-        let err = VoteChoice::parse("abstain").expect_err("abstain must error");
+        let err = VoteChoice::parse("garbage").expect_err("unknown choice must error");
         match err {
             GovernanceError::InvalidArgument { reason } => {
                 assert!(
-                    reason.contains("abstain"),
+                    reason.contains("garbage"),
                     "reason should mention the unknown choice: {reason}"
                 );
             }
@@ -614,7 +657,7 @@ mod tests {
             &registry,
             proposal_id(),
             "did:octo:voter-a",
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             3000,
             "cap-a",
             None,
@@ -628,7 +671,7 @@ mod tests {
             &registry,
             proposal_id(),
             "did:octo:voter-b",
-            VoteChoice::Reject,
+            VoteChoice::No,
             2000,
             "cap-b",
             None,
@@ -654,7 +697,7 @@ mod tests {
             &registry,
             proposal_id(),
             voter_did(),
-            VoteChoice::Approve,
+            VoteChoice::Yes,
             5000,
             "voter-cap-001",
             None,

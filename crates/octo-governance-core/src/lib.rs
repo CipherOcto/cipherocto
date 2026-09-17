@@ -16,6 +16,8 @@
 //! - [`voting_weight`] + [`tally_quorum`] — pure tally helpers
 //!   (deterministic across replicas per RFC-0013 §Cross-Replica Tally
 //!   Equivalence).
+//! - [`CapabilityToken`] — substrate-faithful capability handle
+//!   (RFC-0011-g §7.4 vote substrate signature `voter_cap`).
 //! - [`GovernanceError`] — InvalidTransition / QuorumNotReached /
 //!   InvalidWeight cross-trait envelope.
 //!
@@ -33,16 +35,20 @@
 //! - [`proposal`] — `GovernanceProposal` + `ProposalState` + `DecisionType`
 //! - [`tally`] — `voting_weight` + `tally_quorum` pure helpers
 //! - [`error`] — `GovernanceError` cross-trait envelope
+//! - [`capability`] — `CapabilityToken` substrate-faithful newtype
+//!   (RFC-0011-g §7.4 vote signature parameter)
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod capability;
 pub mod error;
 pub mod policy;
 pub mod proposal;
 pub mod receipt;
 pub mod tally;
 
+pub use capability::CapabilityToken;
 pub use error::GovernanceError;
 pub use policy::{EmergencyAuthority, GovernanceModel, GovernancePolicy};
 pub use proposal::{DecisionType, GovernanceProposal, ProposalState};

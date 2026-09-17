@@ -921,37 +921,42 @@ Layer D extension crate at `crates/octo-runtime-transport-hybrid/`:
 
 #### §F.7.4 — Cross-process event bridging
 
-Cross-process event delivery from the spawn-side runtime to the attach-side `AttachedSession.broadcast_rx` is a Layer D concern, not a substrate concern. The substrate's process-singleton session registry (Layer B) is process-scoped; cross-process propagation lands via the Phase C paired follow-on amendment that introduces the `RevocationStore` substrate (§F.7.5) backed by the Stoolap fork ledger.
+Cross-process event delivery from the spawn-side runtime to the attach-side `AttachedSession.broadcast_rx` is a Layer D concern, not a substrate concern. The substrate's process-singleton session registry (per §F.2 step (e) `HANDLE_TRANSPORT_REGISTRY` discipline) is process-scoped; cross-process propagation lands via the Phase C paired follow-on amendment that introduces the `RevocationStore` substrate (§F.7.5) backed by the Stoolap fork ledger.
 
-Each Layer D extension crate returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is wired by the Layer D crate itself (e.g., unix handler subscribes to a Stoolap pubsub channel for `agent_id` and pipes events into a local broadcast). The substrate does not prescribe the wiring mechanism — that's a Layer D concern per §Layer direction. The Phase C amendment **promotes the in-memory revocation set behind a trait-dispatched `RevocationStore`** so Layer D crates can swap in a Stoolap-backed store that survives process boundaries:
+Each Layer D extension crate returns `AttachedSession` (per §F.7.1) where `broadcast_rx` is wired by the Layer D crate itself (the unix handler subscribes to a Stoolap pubsub channel for `agent_id` and pipes events into a local broadcast per §F.7.5 `StoolapRevocationStore` concern). The substrate does not prescribe the wiring mechanism — that's a Layer D concern per §Layer direction. The Phase C amendment **promotes the in-memory revocation set behind a trait-dispatched `RevocationStore`** so Layer D crates can swap in a Stoolap-backed store that survives process boundaries:
 
 - Substrate (`octo-runtime` Layer B) exposes `RevocationStore` trait + default impl `InMemoryRevocationStore` (the existing `revocation_set()` per §F.3 promoted behind the trait).
-- New crate `octo-runtime-revocation-store` (Layer D per-extension pattern; trait lives in `octo-runtime` Layer B) provides `StoolapRevocationStore` impl that writes through to the Stoolap fork ledger at `rev = "527e8eb"` (CipherOcto Stoolap fork per [[feedback_stoolap_persistence]]).
-- `octo-runtime` defaults to `InMemoryRevocationStore` (zero new deps); operators opt-in to `StoolapRevocationStore` by registering the alternative store via the substrate's `set_revocation_store` init fn.
+- New crate `octo-runtime-revocation-store` (Layer D per per-extension crate pattern; trait lives in `octo-runtime` Layer B) provides `StoolapRevocationStore` impl that writes through to the Stoolap fork ledger at `rev = "527e8eb"` (CipherOcto Stoolap fork per [[feedback_stoolap_persistence]]).
+- `octo-runtime` defaults to `InMemoryRevocationStore` (zero new deps); operators opt-in to `StoolapRevocationStore` by registering the alternative store via the substrate's `install_revocation_store_default_with` factory façade at startup.
 - Cross-process test **TV-AGT27** (distinct from TV-AGT23 §F.7.1 event-bridge happy path) inverts from RED (Phase B `AttachError::Internal`) to GREEN by spawning two processes (spawn-side + attach-side) over UnixSocket loopback, where the spawn-side `revoke_attach_token` writes through to the Stoolap ledger and the attach-side `is_token_revoked` reads from the same ledger directly (not via the unix handler — see §F.7.5 test spec).
 
 #### §F.7.5 — Cross-process revocation substrate
 
-**Architecture decision (paired amendment):** cross-process revocation propagation is implemented via a **trait-dispatched `RevocationStore` substrate** backed by the Stoolap fork ledger. The trait lives in `octo-runtime` Layer B; the Stoolap-backed impl lives in the new `octo-runtime-revocation-store` crate (Layer D per-extension pattern per [[cipherocto-design-principles]] §User extensibility).
+**Architecture decision (paired amendment):** cross-process revocation propagation is implemented via a **trait-dispatched `RevocationStore` substrate** backed by the Stoolap fork ledger. The trait lives in `octo-runtime` Layer B; the Stoolap-backed impl lives in the new `octo-runtime-revocation-store` crate (Layer D per per-extension crate pattern per [[cipherocto-design-principles]] §User extensibility — the "per-extension crate" category in §Layer model covers both transport adapters (the prior Phase B precedent) and persistence extensions sharing the trait-in-core / impl-in-extension / registry-in-core topology).
 
 Substrate additions (`crates/octo-runtime/src/persistence.rs`):
 
 - `pub trait RevocationStore: Send + Sync + std::fmt::Debug`:
   - `fn revoke_attach_token(&self, session_id: SessionId) -> Result<(), AttachError>`
-  - `fn is_token_revoked(&self, session_id: &SessionId) -> bool` — ledger-backed existence check; not fast-path for non-in-memory impls (the in-memory impl retains the §F.3 fast-path qualifier on its own docstring only).
-  - Diagnostic identity via the `Debug` supertrait + `std::any::type_name::<T>()` — no separate `kind()` method (the substrate trait mirrors the existing `Handler` trait shape per §F.2 step (e), which carries no per-impl identifier).
-- `pub fn set_revocation_store(store: Arc<dyn RevocationStore>) -> Result<(), AttachError>` — init fn for store registration; uses `OnceLock::set` semantics (single-shot; subsequent calls return `Err(AttachError::RevocationError("revocation store already installed"))` so the CLI can log a WARN + fall back to the default `InMemoryRevocationStore` rather than panic). This is a NEW substrate discipline distinct from `HANDLE_TRANSPORT_REGISTRY` per §F.2 step (e) (which is `OnceLock::get_or_init` lazy-init + `Registry::register` last-write-wins); the difference is intentional because revocation-store init is a one-shot operator decision, not an idempotent extension registration.
-- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError>` — REWRITTEN to dispatch via the installed `RevocationStore::revoke_attach_token`. If `set_revocation_store` was never called, falls back to the default `InMemoryRevocationStore` instance.
-- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — REWRITTEN to dispatch via the installed `RevocationStore::is_token_revoked`. Same fallback.
-- `pub struct InMemoryRevocationStore { inner: RwLock<HashSet<SessionId>> }` — additive substrate type; carries the existing §F.3 fork-fail-closed semantics (poisoned `RwLock` returns `true` for `is_token_revoked`); promoted behind the trait (no behavior change for default consumers). The `OnceLock` wrapping that §F.3 used for the `revocation_set()` function is now subsumed by the `Arc<dyn RevocationStore>` singleton (the trait object IS the new singleton carrier), so `InMemoryRevocationStore::inner` is the bare `RwLock`, not nested inside a fresh `OnceLock`.
-- `pub(crate) fn with_inner<F, R>(&self, f: F) -> R where F: FnOnce(&HashSet<SessionId>) -> R` — test injection hook on `InMemoryRevocationStore`, preserving the §F.3 `with_revocation_set<F,R>(f: F) -> R` test seam.
-- 8 new tests in `persistence.rs::tests` covering trait dispatch + default impl + idempotent revoke + poisoned-lock fail-CLOSED + `with_inner` test hook + `set_revocation_store` re-init rejection.
+  - `fn is_token_revoked(&self, session_id: &SessionId) -> bool` — ledger-backed existence check.
+  - `fn kind(&self) -> &'static str` — per-impl diagnostic identity (returns e.g. `"InMemoryRevocationStore"` or `"StoolapRevocationStore"`); used by the substrate's `tracing` logs on fail-CLOSED paths.
+- Two-slot singleton pattern (avoids the L944 reviewer deadlock):
+  - `pub static DEFAULT_REVOCATION_STORE: OnceLock<Arc<InMemoryRevocationStore>>` — lazily-initialized default; never written by `set_revocation_store`.
+  - `pub static ACTIVE_REVOCATION_STORE: OnceLock<Arc<dyn RevocationStore>>` — set by `set_revocation_store` / `install_revocation_store_default_with`; single-shot (subsequent calls return `Err(AttachError::Internal("revocation store already installed"))`).
+  - `fn current_revocation_store() -> Arc<dyn RevocationStore>` (module-private) — reads `ACTIVE_REVOCATION_STORE.get()` first; on miss, calls `DEFAULT_REVOCATION_STORE.get_or_init(...)` to lazily-initialize the default and returns it as `Arc<dyn RevocationStore>` WITHOUT writing to `ACTIVE_REVOCATION_STORE` (the default install does NOT block subsequent `set_revocation_store` overrides).
+- `pub fn set_revocation_store(store: Arc<dyn RevocationStore>) -> Result<(), AttachError>` — writes to `ACTIVE_REVOCATION_STORE.set(store)`. On double-install, returns `Err(AttachError::Internal("revocation store already installed"))` (uses `AttachError::Internal(String)` per §F.4 slot 62, NOT `AttachError::RevocationError(String)` per §F.4 slot 56 — `RevocationError` is reserved for runtime revocation failures, not init failures). This is a NEW substrate discipline distinct from `HANDLE_TRANSPORT_REGISTRY` per §F.2 step (e) (which is `OnceLock::get_or_init` lazy-init + `Registry::register` last-write-wins); the difference is intentional because revocation-store init is a one-shot operator decision, not an idempotent extension registration.
+- `pub fn install_revocation_store_default_with<F>(factory: F) -> Result<(), AttachError> where F: FnOnce() -> Result<Arc<dyn RevocationStore>, AttachError>` — factory-mediated init fn; routes through `set_revocation_store(store)`. The extension crate provides the factory; the substrate owns the registration. C → B → D wiring via factory closure (see Layer direction diagram below). Layer B has NO compile-time dependency on Layer D; the factory type-erases the D impl via `Arc<dyn RevocationStore>`.
+- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError>` — REWRITTEN to call `current_revocation_store().revoke_attach_token(session_id)`. Lazy-init of `DEFAULT_REVOCATION_STORE` on first call when `set_revocation_store` was never invoked.
+- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — REWRITTEN to call `current_revocation_store().is_token_revoked(session_id)`. Same lazy-init pattern.
+- `pub struct InMemoryRevocationStore { inner: RwLock<HashSet<SessionId>> }` — additive substrate type; carries the existing §F.3 fork-fail-closed semantics (poisoned `RwLock` returns `true` for `is_token_revoked`); promoted behind the trait (no behavior change for default consumers). Each `InMemoryRevocationStore` instance owns its own `RwLock`; the `Arc<dyn RevocationStore>` singleton (or the `Arc<InMemoryRevocationStore>` static default) carries the chosen instance for the lifetime of the process. `InMemoryRevocationStore::kind()` returns `"InMemoryRevocationStore"`.
+- `pub(crate) fn with_inner<F, R>(&self, f: F) -> R where F: FnOnce(&HashSet<SessionId>) -> R` — test injection hook on `InMemoryRevocationStore`, preserving the prior test injection intent (the `with_revocation_set<F, R>` test seam removed from earlier §F.3 drafts per R1.5 LOW fix); tests obtain a concrete `Arc<InMemoryRevocationStore>` reference via `DEFAULT_REVOCATION_STORE.get_or_init(|| Arc::new(InMemoryRevocationStore::default()))` and invoke `with_inner` on it.
+- 8 new tests in `persistence.rs::tests` covering trait dispatch + default impl + idempotent revoke + poisoned-lock fail-CLOSED + `with_inner` test hook + `set_revocation_store` re-init rejection + two-slot singleton isolation (default installs do NOT block override) + `install_revocation_store_default_with` factory closure path.
 
 New crate `crates/octo-runtime-revocation-store/` (Layer D per-extension pattern; trait lives in `octo-runtime` Layer B):
 
 - Cargo.toml: `stoolap = { git = "...", rev = "527e8eb" }` (CipherOcto fork per [[feedback_stoolap_persistence]]) — additive dep with rationale comment per [[cipherocto-design-principles]] §Crate dependency rationale. The Stoolap fork in this position is a **frozen external primitive** (fork-pinned, non-crypto); it does not host cipherocto business schema beyond the single revocation table (HARD RED LINE per [[stoolap-general-purpose-db]]).
 - `pub struct StoolapRevocationStore { db: RwLock<stoolap::Database> }` — opens / creates the ledger under `~/.local/share/octo/runtime/revocation.stoolap` (or `$CIPHEROCTO_DATA_DIR/revocation.stoolap`). Send + Sync + Debug bounds derive from `stoolap::Database: Send + Sync + Debug` at the pinned rev (verified at implementation time before merge; if the fork does not satisfy these bounds, the impl is blocked at compile time, not at runtime).
-- Ledger schema (single table, plain Stoolap convention — no table-level `STRICT` qualifier; Stoolap fork `STRICT` keyword support is unverified at rev 527e8eb and dropped per substrate-discipline no-unverified-features rule):
+- Ledger schema (single table, plain Stoolap convention — no table-level `STRICT` qualifier; Stoolap fork `STRICT` keyword support is unverified at rev 527e8eb and dropped per substrate-discipline no-unverified-features rule). The `revoked_at_unix` column is an audit timestamp (no current logic consumer — `is_token_revoked` uses the `session_id` PK existence check); reserved for future TTL / audit-read paths:
   ```sql
   CREATE TABLE IF NOT EXISTS revocation (
       session_id BLOB(32) NOT NULL PRIMARY KEY,
@@ -959,43 +964,72 @@ New crate `crates/octo-runtime-revocation-store/` (Layer D per-extension pattern
   );
   ```
 - `impl RevocationStore for StoolapRevocationStore`:
+  - `kind` returns `"StoolapRevocationStore"`.
   - `revoke_attach_token` — `INSERT OR IGNORE INTO revocation VALUES (?, ?)` (idempotent — re-revoke is a no-op so concurrent revokers don't conflict). Returns `AttachError::PersistenceError(reason)` per §F.4 slot 57 on ledger write failure.
-  - `is_token_revoked` — `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1` (ledger-backed existence check). Returns `true` on ledger read failure (fail-CLOSED preserves the explicit-operator-revocation guarantee); logs at ERROR level via `tracing` before the fail-CLOSED return so substrate observability is preserved per [[cipherocto-design-principles]] §Push complexity to edges.
-- `pub fn install_default() -> Result<(), AttachError>` — opens the ledger + registers it via `octo_runtime::set_revocation_store`; called once at CLI startup per RFC-0011-c §F.6. **Fallback semantics on failure:** if the ledger open OR `set_revocation_store` fails (e.g., `$CIPHEROCTO_DATA_DIR` unwritable, fork init fault, double-install race), `install_default` logs at WARN with the failure reason and returns `Ok(())` — the substrate's default `InMemoryRevocationStore` remains installed and the CLI continues with degraded-but-functional revocation semantics (process-local, no cross-process propagation, WARN-visible to the operator). This preserves the §F.3 fork-fail-closed contract and avoids bricking the CLI on Stoolap ledger unavailability.
-- 6 tests covering INSERT OR IGNORE idempotence + existence-check fast-path + ledger persistence across reopens + schema bootstrap + install failure WARN-fallback + Send/Sync compile-time bounds.
+  - `is_token_revoked` — `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1` (ledger-backed existence check). Returns `true` on ledger read failure (fail-CLOSED per §Failure semantics below); logs at ERROR level via `tracing::error!` (with `kind()` value) before the fail-CLOSED return so substrate observability is preserved per [[cipherocto-design-principles]] §Push complexity to edges.
+- `pub fn install_default() -> Result<Arc<dyn RevocationStore>, AttachError>` — opens the ledger + returns the constructed `StoolapRevocationStore` as `Arc<dyn RevocationStore>`. **Does NOT self-register** — the caller (Layer C via Layer B façade) decides how to register; see CLI wiring below. This shape enables the factory closure pattern (the extension crate exports the constructor; Layer B owns the registration; Layer C wires the dependency injection via the factory).
+- 6 tests covering `kind()` return value + INSERT OR IGNORE idempotence + existence-check fast-path + ledger persistence across reopens + schema bootstrap + Send/Sync compile-time bounds.
 
-**Layer direction (per [[cipherocto-design-principles]] §Layer model):**
+**CLI wiring (concrete — replaces the prior §F.6 cross-reference that did not name a wiring point):**
+
+```rust
+// crates/octo-cli/src/main.rs
+fn main() {
+    #[cfg(feature = "revocation-store-stoolap")]
+    {
+        if let Err(e) = octo_runtime::install_revocation_store_default_with(
+            octo_runtime_revocation_store::install_default,
+        ) {
+            tracing::warn!(
+                reason = %e,
+                "revocation store install failed; falling back to InMemoryRevocationStore (process-local revocation, no cross-process propagation)"
+            );
+        }
+    }
+    // ... rest of CLI bootstrap
+}
+```
+
+The Cargo.toml `revocation-store-stoolap` feature is opt-in per per-extension crate pattern; default CLI builds use the zero-dep `InMemoryRevocationStore` default. Cross-process revocation propagation is opt-in per operator decision.
+
+**Layer direction (per [[cipherocto-design-principles]] §Layer model + §User extensibility):**
 
 ```
-crates/octo-runtime-revocation-store/   (Layer D)
-  └─> octo-runtime (Layer B) — for `RevocationStore` trait + `set_revocation_store` init fn
+crates/octo-runtime-revocation-store/   (Layer D, per-extension crate)
+  └─> octo-runtime (Layer B) — for `RevocationStore` trait + `install_revocation_store_default_with` factory façade
   └─> stoolap (frozen external primitive — fork-pinned rev "527e8eb", non-crypto per [[stoolap-general-purpose-db]])
 crates/octo-runtime/                    (Layer B)
-  └─> no reverse deps
+  └─> no reverse deps (no compile-time dep on Layer D; the factory façade accepts `Arc<dyn RevocationStore>` from any caller)
 crates/octo-cli/                        (Layer C)
-  └─> calls `octo_runtime_revocation_store::install_default()` at startup
+  └─> depends on octo-runtime (Layer B) — always
+  └─> depends on octo-runtime-revocation-store (Layer D) — when feature `revocation-store-stoolap` is enabled
+  └─> runtime wiring: `octo_runtime::install_revocation_store_default_with(octo_runtime_revocation_store::install_default)`
+      Direction at wiring: C → B → D via the factory closure (B owns the registration, D owns the constructor, C wires the dependency injection). The compile-time C → D edge is feature-gated per per-extension crate pattern (the C → B → D runtime direction is the canonical "extension register at startup" topology in §User extensibility).
 ```
 
 **Cross-process test TV-AGT27 (Phase C paired follow-on):** spawns two `octo` CLI processes connected via UnixSocket loopback; both processes install `StoolapRevocationStore` against the shared ledger path:
 
 1. Spawn-side: `octo agent run --detach --token-file /tmp/tok.bin` (writes the token file; spawns the runtime; spawn-side calls `install_default` on startup → ledger open at `$CIPHEROCTO_DATA_DIR/revocation.stoolap`).
 2. Attach-side: `octo agent attach --token-file /tmp/tok.bin` (reads the token file; binds via `UnixSocketHandler::bind` to the spawn-side process; attach-side ALSO calls `install_default` on startup → opens the SAME ledger at the SAME path).
-3. Operator: `octo agent revoke-attach --session-id <HEX64>` (spawn-side process calls `revoke_attach_token` → `StoolapRevocationStore::revoke_attach_token` writes through `INSERT OR IGNORE`).
-4. Attach-side: directly calls `is_token_revoked(&session_id)` on its OWN `current_revocation_store` (NOT via `UnixSocketHandler::bind`); sees the revocation propagated across the process boundary via the shared Stoolap ledger. The unix handler is NOT exercised in this step — it owns the event-bridge path per §F.7.1 TV-AGT23, not the revocation path.
+3. Operator-side: `octo agent revoke-attach --session-id <HEX64>` (a SEPARATE CLI process — NOT the spawn-side `octo agent run --detach` from step 1 — invokes `revoke_attach_token` → `StoolapRevocationStore::revoke_attach_token` writes through `INSERT OR IGNORE`).
+4. Attach-side: calls the free function `octo_runtime::is_token_revoked(&session_id)` (which dispatches via the attach-side's OWN installed store, routing through `current_revocation_store()`); sees the revocation propagated across the process boundary via the shared Stoolap ledger. The unix handler owns the §F.7.1 event-bridge path (TV-AGT23); it is NOT exercised by this step.
 
 Test harness lives in `crates/octo-runtime-revocation-store/tests/cross_process.rs`; spawns two child processes (one per side) sharing a tempdir ledger path. Cross-process consistency: eventual (the Stoolap fork uses synchronous commits per `stoolap::Database::exec`); the attach-side observes the spawn-side's revoke within milliseconds (subprocess latency bound).
 
 **Substrate discipline preserved (per [[cipherocto-design-principles]] §Attenuation invariants cross boundaries):**
 
 - The substrate's `revoke_attach_token` + `is_token_revoked` semantics are UNCHANGED (same return types, same error variants, same fork-fail-closed contract for the default `InMemoryRevocationStore`).
-- The trait dispatch adds ONE vtable call; the vtable call cost is negligible (single-digit-ns) but the Stoolap impl's ledger query is microsecond-bound (the substrate hot path is unchanged for in-memory consumers; the Stoolap impl is opt-in for cross-process operators).
 - The Stoolap fork NEVER hosts cipherocto business schema beyond the single revocation table (HARD RED LINE per [[stoolap-general-purpose-db]]); the ledger is a single-table cross-process primitive, not a general-purpose DB.
+
+**Performance characteristics (non-discipline):**
+
+The trait dispatch adds one vtable call. The vtable call cost is single-digit-ns; the Stoolap impl's ledger query is microsecond-bound. Default `InMemoryRevocationStore` consumers see no hot-path cost change (the trait dispatch degenerates to a single vtable call plus the existing `RwLock` lookup). The `StoolapRevocationStore` is opt-in for cross-process operators; the substrate performance baseline per §F.3 is unchanged for in-memory consumers.
 
 **Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
 
-- `StoolapRevocationStore::is_token_revoked` returns `true` on ledger read failure (e.g., DB corruption, I/O error, schema drift) — fail-CLOSED preserves the explicit-operator-revocation guarantee; logs at ERROR before the fail-CLOSED return per §Push complexity to edges substrate observability.
+- `StoolapRevocationStore::is_token_revoked` returns `true` on ledger read failure (e.g., DB corruption, I/O error, schema drift) — fail-CLOSED preserves the explicit-operator-revocation guarantee; logs at ERROR via `tracing::error!` (with `kind()` value) before the fail-CLOSED return.
 - `StoolapRevocationStore::revoke_attach_token` returns `AttachError::PersistenceError(reason)` per §F.4 slot 57 on ledger write failure — the operator's `octo agent revoke-attach` propagates the failure visibly rather than silently succeeding.
-- `install_default` failure fallback: WARN log + retain default `InMemoryRevocationStore` + return `Ok(())` — see above.
+- `install_revocation_store_default_with` failure fallback: WARN log + retain default `InMemoryRevocationStore` + the dispatch continues with `ACTIVE_REVOCATION_STORE` empty (calls fall back to `DEFAULT_REVOCATION_STORE`). The CLI's main.rs wrapper applies the SAME WARN log + `tracing::warn!` fallback (canonical wording: "revocation store install failed; falling back to InMemoryRevocationStore (process-local revocation, no cross-process propagation)").
 
 ### §F.8 Per-Extension Crate Manifest Spec
 

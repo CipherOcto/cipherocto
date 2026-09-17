@@ -1,0 +1,45 @@
+[package]
+name = "octo-runtime-revocation-store"
+version = "0.1.0"
+edition = "2021"
+description = "Stoolap-backed cross-process revocation ledger for RFC-0011-c §F.7.5 (Layer D persistence adapter)"
+
+# Per RFC-0011-c §F.7.5 paired amendment + the per-extension-crates +
+# registry pattern in [[cipherocto-design-principles]] §User
+# extensibility. Trait lives in octo-runtime Layer B; this crate
+# provides the Stoolap-backed Layer D impl + `install_default`
+# constructor. Layer C (octo-cli) wires the dependency injection via
+# `install_revocation_store_default_with(octo_runtime_revocation_store::install_default)`.
+
+[dependencies]
+# Layer B sibling dep — `RevocationStore` trait + `AttachError` +
+# `SessionId` + `install_revocation_store_default_with` factory façade.
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
+# Layer D persistence core — wraps the Stoolap fork at fork-pinned
+# rev 527e8eb behind a `Database` type with `Deref<Target =
+# stoolap::Database>` (re-exported through `octo_storage_core::stoolap`
+# for downstream `Value` constructors). Per-extension crates
+# consume `Database` + `stoolap::Value`; raw `stoolap::Database`
+# access goes through the substrate's `Deref` impl. Mirrors the
+# pattern in `crates/octo-reputation/Cargo.toml`.
+octo-storage-core = { path = "../octo-storage-core", version = "2.0" }
+# Stoolap fork per RFC-0011-c §F.7.5 (CipherOcto fork at
+# `rev = "527e8eb"` per [[feedback_stoolap_persistence]]). Fork-pinned,
+# non-crypto (the revocation table is bearer-binary data + an audit
+# timestamp). Frozen external primitive sub-category of Layer D per
+# [[cipherocto-design-principles]] §Layer model amendment. Hard red
+# line per [[stoolap-general-purpose-db]]: Stoolap NEVER hosts
+# cipherocto business schema beyond this single revocation table.
+stoolap = { git = "https://github.com/cipherocto/stoolap", rev = "527e8eb" }
+# Tracing for the fail-CLOSED `is_token_revoked` observability sites
+# (RFC-0011-c §F.7.5 §Failure semantics: log ERROR with `kind()`
+# value before fail-CLOSED return).
+tracing = "0.1"
+
+[dev-dependencies]
+# Tempdir manager for the per-test ledger path isolation (TV-AGT27
+# cross-process test).
+tempfile = "3"
+# Hex encode/decode for the deterministic session_id propagation
+# via env vars in the TV-AGT27 cross-process test.
+hex = "0.4"

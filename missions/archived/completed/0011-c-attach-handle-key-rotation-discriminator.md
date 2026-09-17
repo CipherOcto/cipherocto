@@ -31,7 +31,7 @@ dry_closure_audit: docs/audits/2026-09-17-0011-c-phase-d2-1-key-rotation-discrim
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:**
 
-- Mission `0011-c-octo-runtime-attachhandle-substrate` — §F.5 v1 single-pubkey surface pre-existing
+- Mission `0011-c-octo-runtime-attachhandle-substrate` — RFC-0011-c §F.5 v1 single-pubkey surface pre-existing
 - Mission `0011-c-octowallet-agents-substrate` — Phase D1 predecessor; this mission unblocks the Phase D2 standing-direction blocker
 - RFC-0015-a §6.5 — paired-acceptance bridge cite for `octo-attach-key-rotation` cfg-gate
 
@@ -60,16 +60,16 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C/D1 A
 - [x] `pub fn canonical_payload_bytes_v2` lands in `signing.rs` (additive: v1 bytes + 4-byte big-endian `key_id` suffix)
 - [x] `pub fn sign_attach_handle_payload_v2` lands in `signing.rs` (additive: composes `canonical_payload_bytes_v2` then delegates to `IdentityKey::sign`)
 - [x] `pub fn verify_attach_handle_payload_v2` lands in `signing.rs` (3-step lookup: active → grace fallback → `UnknownKeyId`)
-- [x] Private `verify_with_msg` helper lands in `signing.rs` (precomputed-message re-use across grace iteration)
-- [x] 5 NEW sign/verify tests land (sign_v2_includes_key_id_in_canonical_bytes, sign_v2_happy_path, verify_v2_grace_period_accepts_rotated_key, verify_v2_unknown_key_id_returns_error, verify_v2_active_lookup_mismatch_returns_bad_signature) — all gated on `octo-attach-key-rotation` feature
+- [x] Private `verify_bytes` helper lands in `signing.rs` (precomputed-message re-use; factored from v1 verify path for DRY with v2)
+- [x] 6 NEW sign/verify tests land (sign_v2_includes_key_id_in_canonical_bytes, sign_v2_happy_path, verify_v2_grace_period_accepts_rotated_key, verify_v2_unknown_key_id_returns_error, verify_v2_active_lookup_mismatch_returns_bad_signature, verify_v2_grace_key_does_not_vouch_for_arbitrary_key_id — R1.5 grace-forgery regression test) — all gated on `octo-attach-key-rotation` feature
 - [x] `AttachError::UnknownKeyId { key_id, known_keys }` additive variant lands in `error.rs` (cfg-gated)
 - [x] 1 Display test (`unknown_key_id_display_includes_id_and_known`) lands (cfg-gated)
 - [x] `octo-attach-key-rotation = []` feature added to `crates/octo-runtime/Cargo.toml` (default OFF)
 - [x] RFC-0011-c §F.5.1 amendment lands (substrate specification mirrors code surface)
 - [x] `cargo fmt --all -- --check` clean
 - [x] `cargo clippy -p octo-runtime --lib --all-features -- -D warnings` clean
-- [x] `cargo test -p octo-runtime --lib` (feature OFF default): 91 of 91 pass (86 baseline + 5 KeySet tests; v2 tests + UnknownKeyId Display compile-out)
-- [x] `cargo test -p octo-runtime --lib` (feature ON): 97 of 97 pass (86 baseline + 5 KeySet + 1 UnknownKeyId Display + 5 v2 sign/verify)
+- [x] `cargo test -p octo-runtime --lib` (feature OFF default): 86 of 86 pass (v1 baseline; v2 tests + UnknownKeyId Display + KeySet tests all compile-out via cfg gate)
+- [x] `cargo test -p octo-runtime --lib --all-features` (feature ON): 98 of 98 pass (86 baseline + 5 KeySet + 1 UnknownKeyId Display + 6 v2 sign/verify (5 base + 1 grace-forgery regression test))
 
 ### Type Coverage
 
@@ -78,13 +78,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C/D1 A
 | `pub type KeyId`                           | Sub-step 1 (discriminator)            | Layer B; `u32` covers 4B key generations; `NonZeroU32` not used because `key_id == 0` is canonical-acceptance bootstrap slot per RFC-0015-a §6.5                                  |
 | `pub struct KeySet`                        | Sub-step 2 (registry)                 | Layer B; `keys: BTreeMap<KeyId, [u8; 32]>` + `grace_keys: BTreeMap<KeyId, [u8; 32]>`; pubkey retained in grace_keys so the v2 grace fallback can attempt a per-pubkey verify          |
 | `KeySet::new / insert / move_to_grace`     | Sub-step 3 (mutators)                 | Layer B; `move_to_grace` atomically moves pubkey from active to grace; `insert` clears grace on re-promotion                                                                       |
-| `KeySet::lookup / grace_key / grace_period`| Sub-step 4 (lookups)                  | Layer B; active lookup parallel to grace lookup; `grace_period` returns ascending-order Vec for stable verify iteration                                                          |
+| `KeySet::lookup / grace_key / grace_period`| Sub-step 4 (lookups)                  | Layer B; `lookup` = active get; `grace_key(claimed_id)` = single grace entry for the claimed key_id (NOT iteration — bound by the `key_id` discriminator per [[cipherocto-design-principles]] §Extension over enumeration); `grace_period` = diagnostic list |
 | `KeySet::known_key_ids / len / is_empty`   | Sub-step 5 (diagnostics)              | Layer B; `known_key_ids` = active + grace union; `len / is_empty` count active-only                                                                                                 |
 | `canonical_payload_bytes_v2`               | Sub-step 6 (canonical bytes)          | Layer B; additive: v1 canonical bytes ++ `key_id.to_be_bytes()` (4-byte big-endian suffix); single source of truth for sign_v2 + verify_v2                                          |
 | `sign_attach_handle_payload_v2`            | Sub-step 7 (sign)                     | Layer B; composes `canonical_payload_bytes_v2` + `IdentityKey::sign` per RFC-0015-a Appendix A; Signature captured via `to_bytes()` (avoids Layer A type leak per §F.5 stable-abstraction pattern) |
-| `verify_attach_handle_payload_v2`          | Sub-step 8 (verify)                   | Layer B; 3-step lookup: active → grace fallback → `UnknownKeyId`; v1 verify body shape factored into private `verify_with_msg` helper                                            |
+| `verify_attach_handle_payload_v2`          | Sub-step 8 (verify)                   | Layer B; 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration) → `UnknownKeyId`; v1 verify body shape factored into private `verify_bytes` helper (DRY across v1 + v2 paths)                                          |
 | `AttachError::UnknownKeyId`                | Sub-step 9 (error envelope)           | Layer B; additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration; CLI mapping is follow-on (defaults to `Internal(reason)` wildcard) |
-| 10 NEW tests                               | Sub-step 10 (TV)                      | Layer B; 5 KeySet + 5 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                        |
+| 11 NEW tests                               | Sub-step 10 (TV)                      | Layer B; 5 KeySet + 6 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                        |
 | `octo-attach-key-rotation` Cargo feature   | Sub-step 11 (cfg-gate)                | Build-system; RFC-0015-a §6.5 paired-acceptance bridge; default OFF preserves v1 byte-identical baseline                                                                          |
 
 ## Implementation Guide
@@ -99,7 +99,7 @@ See `docs/07-developers/octo-runtime-implementation-guide.md` §AttachHandle Tok
 
 **Algorithm-independent discriminator** — D2.1's wire form + canonical signed bytes + lookup logic are forward-compatible regardless of which signature algorithm(s) the `key_set` eventually holds (classic Ed25519 / hybrid Ed25519+PQC / PQC-only). PQC direction only affects the `key_set` population policy (D2.2).
 
-**Grace fallback is per-pubkey verify, not skip-verify** — the v2 verifier iterates the grace map and attempts `ed25519-dalek::verify` against each rotated pubkey. If any grace pubkey verifies the signature, the token is accepted. The grace window is therefore bounded by the rotation policy (D2.2 OUT OF SCOPE), not by the verify path itself.
+**Grace fallback is per-pubkey verify against the CLAIMED `key_id`, not skip-verify** — the v2 verifier consults `KeySet::lookup(key_id)` first; if miss, consults `KeySet::grace_key(key_id)` (the grace entry matching the CLAIMED `key_id` only, NOT every grace pubkey — the `key_id` discriminator binds the signature to a specific key, so a token claiming `key_id=X` must verify against the rotated-out pubkey registered under `X`). If the grace entry verifies the signature, the token is accepted. Iterating every grace pubkey against the msg would let any holder of a grace key's private material forge tokens claiming arbitrary `key_id` values — a forgery vulnerability caught at R1.5 review (regression test added).
 
 **Design deviation from plan**: `grace_ids: BTreeSet<KeyId>` → `grace_keys: BTreeMap<KeyId, [u8; 32]>`. Reason: the grace fallback needs the rotated pubkey to attempt per-pubkey verify; a `BTreeSet<KeyId>` would lose the pubkey on `move_to_grace`, making the grace iteration a no-op. The deviation surfaces a useful substrate invariant: **the grace map MUST carry the rotated pubkey**, NOT just the key id.
 
@@ -114,7 +114,7 @@ The 11 NEW tests assert:
 
 ## Risk
 
-- **NONE** to baseline — substrate-faithful additive variant. Default build (feature OFF) is byte-identical to pre-D2.1 baseline (91/91 lib tests pass byte-identical; D2.1 surface compiles-out).
+- **NONE** to baseline — substrate-faithful additive variant. Default build (feature OFF) is byte-identical to pre-D2.1 baseline (86/86 lib tests pass byte-identical; D2.1 surface compiles-out via cfg gate).
 - **DEFERRED Phase D2.2** — `key_set` population policy (which keys exist, when they rotate, grace-period bounds, PQC algorithm choice, wire-form extension if needed, CLI mapping for `UnknownKeyId`). Lands post-PQC direction.
 - **NO Layer A change** — D2.1 introduces zero new Layer A primitives. `KeyId = u32` is a Layer B typed discriminator (not a key). `KeySet` is Layer B state. The Ed25519 verify path is unchanged (still `ed25519_dalek::verify` via the `IdentityKey::sign` Layer A primitive).
 
@@ -134,7 +134,7 @@ Land the KeyId discriminator + KeySet registry + sign_v2 + verify_v2 + UnknownKe
 
 5. **`sign_attach_handle_payload_v2`** — same file (Layer B; cfg-gated). Composes `canonical_payload_bytes_v2` + `IdentityKey::sign` (Layer B substrate per RFC-0015-a Appendix A). Signature captured via `to_bytes()` (avoids Layer A type leak).
 
-6. **`verify_attach_handle_payload_v2`** — same file (Layer B; cfg-gated). 3-step lookup: active → grace fallback → `UnknownKeyId`. Private `verify_with_msg` helper factors the v1 verify body shape so the v2 verifier can re-use the canonical bytes across the grace iteration.
+6. **`verify_attach_handle_payload_v2`** — same file (Layer B; cfg-gated). 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration, per the `key_id` discriminator binding invariant) → `UnknownKeyId`. Private `verify_bytes` helper factors the v1 verify body shape so the v2 verifier can re-use the canonical bytes across the v1 + v2 code paths.
 
 7. **`AttachError::UnknownKeyId` variant** — `crates/octo-runtime/src/handle/error.rs` (Layer B; cfg-gated). Additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration. CLI mapping is follow-on (defaults to `Internal(reason)` wildcard via the existing `From<AttachError>` arm).
 
@@ -185,8 +185,8 @@ No new external crates required; D2.1 is pure substrate-extension on the existin
 ```bash
 cargo fmt --all -- --check                                                # clean
 cargo clippy -p octo-runtime --lib --all-features -- -D warnings           # clean
-cargo test -p octo-runtime --lib                                            # 91/91 PASS (feature OFF default)
-cargo test -p octo-runtime --lib --features octo-attach-key-rotation        # 97/97 PASS (feature ON)
+cargo test -p octo-runtime --lib                                            # 86/86 PASS (feature OFF default; v2 + KeySet compile-out)
+cargo test -p octo-runtime --lib --all-features                              # 98/98 PASS (feature ON; 86 baseline + 5 KeySet + 1 UnknownKeyId Display + 6 v2 sign/verify)
 cargo build --workspace --all-targets                                       # EXIT=0
 ```
 

@@ -51,7 +51,13 @@ use crate::error::RuntimeError;
 // Re-export error envelope types for crate-internal use.
 pub use error::{AttachError, PersistenceError};
 // Re-export key rotation discriminator types (RFC-0011-c §F.5.1).
-pub use key_id::{KeyId, KeySet};
+// `KeyId` is unconditional (Layer B typed discriminator; the `u32`
+// primitive is always available). `KeySet` is feature-gated because
+// its consumers (the v2 verify path + `AttachError::UnknownKeyId`)
+// live behind `octo-attach-key-rotation`.
+pub use key_id::KeyId;
+#[cfg(feature = "octo-attach-key-rotation")]
+pub use key_id::KeySet;
 
 /// 32-byte session identifier (RFC-0011-c §F.2).
 ///

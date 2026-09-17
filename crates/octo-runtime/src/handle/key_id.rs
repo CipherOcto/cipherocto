@@ -24,20 +24,32 @@
 //! faithful baseline (default build) keeps the v1 single-pubkey
 //! verify path byte-identical.
 
+#[cfg(feature = "octo-attach-key-rotation")]
 use std::collections::BTreeMap;
 
 /// Typed version discriminator for a holder signing key
-/// (RFC-0011-c §F.5.1).
+/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge).
 ///
 /// `u32` covers 4B key generations; the canonical-acceptance default
 /// (RFC-0015-a §6.5 paired-acceptance bridge) uses `key_id == 0` as
 /// the bootstrap slot, so a `NonZeroU32` newtype is intentionally
 /// not used — the substrate-faithful surface allows the bootstrap
 /// slot to be the explicit zero.
+///
+/// ALGORITHM-INDEPENDENCE NOTE: the `KeyId` type itself is
+/// algorithm-independent (the discriminator mechanism is the same
+/// regardless of which signature algorithm(s) the `key_set`
+/// eventually holds — classic Ed25519 / hybrid Ed25519+PQC /
+/// PQC-only). The `KeySet.keys` / `KeySet.grace_keys` storage
+/// hardcodes a 32-byte pubkey size — this is the D2.1
+/// substrate-faithful minimum tied to the current Layer A Ed25519
+/// primitive. Variable-size pubkey storage (PQC migration) lands
+/// as D2.2 per RFC-0015-a §6.5 paired-acceptance bridge.
 pub type KeyId = u32;
 
 /// Registry of `(key_id -> pubkey)` lookups plus a grace-period
-/// acceptance window (RFC-0011-c §F.5.1).
+/// acceptance window (RFC-0011-c §F.5.1 + RFC-0015-a §6.5
+/// paired-acceptance bridge).
 ///
 /// `keys` is the active lookup table; `grace_keys` holds the set of
 /// key ids (plus their pubkeys) that have been rotated OUT of the
@@ -45,10 +57,12 @@ pub type KeyId = u32;
 /// during the grace-period window. The pubkey is retained in the
 /// grace map so the grace fallback in
 /// `verify_attach_handle_payload_v2` can attempt a per-pubkey
-/// verify against each rotated key.
+/// verify against the rotated-out key matching the CLAIMED `key_id`
+/// (the standard rotation case: same key_id, pubkey changed).
 ///
 /// `key_set` population POLICY is OUT OF SCOPE for the D2.1
 /// substrate-faithful surface — see module rustdoc.
+#[cfg(feature = "octo-attach-key-rotation")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeySet {
     /// Active `(key_id, pubkey)` table.
@@ -59,6 +73,7 @@ pub struct KeySet {
     grace_keys: BTreeMap<KeyId, [u8; 32]>,
 }
 
+#[cfg(feature = "octo-attach-key-rotation")]
 impl KeySet {
     /// Empty registry.
     #[must_use]
@@ -98,15 +113,20 @@ impl KeySet {
         self.keys.get(&key_id)
     }
 
-    /// Grace-window lookup. Returns `None` if `key_id` is not in
-    /// the grace window. Parallel to [`Self::lookup`] for the
-    /// active set.
+    /// Grace-window lookup for the CLAIMED `key_id`. Returns
+    /// `None` if `key_id` is not in the grace window. The
+    /// `verify_attach_handle_payload_v2` grace fallback consults
+    /// ONLY the grace entry matching the claimed `key_id` (never
+    /// iterates every grace pubkey) — this binds the signature to
+    /// a specific key per the typed-discriminator principle.
     #[must_use]
     pub fn grace_key(&self, key_id: KeyId) -> Option<&[u8; 32]> {
         self.grace_keys.get(&key_id)
     }
 
-    /// Grace-period key ids in ascending order.
+    /// Grace-period key ids in ascending order (diagnostic; not
+    /// used by the verify path after the R1.5 grace-fix that
+    /// scopes fallback to the claimed `key_id`).
     #[must_use]
     pub fn grace_period(&self) -> Vec<KeyId> {
         self.grace_keys.keys().copied().collect()
@@ -136,7 +156,7 @@ impl KeySet {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "octo-attach-key-rotation"))]
 mod tests {
     use super::*;
 

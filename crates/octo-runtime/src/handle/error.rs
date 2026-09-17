@@ -9,6 +9,8 @@
 
 use thiserror::Error;
 
+#[cfg(feature = "octo-attach-key-rotation")]
+use crate::handle::KeyId;
 use crate::handle::SessionId;
 
 /// Substrate error envelope for `AttachHandle` operations
@@ -136,20 +138,21 @@ pub enum AttachError {
 
     /// `key_id` in the token is not present in the holder's `KeySet`
     /// (neither in the active lookup table nor in the grace-period
-    /// window; see RFC-0011-c §F.5.1). CLI exit 62 if mapped (out
-    /// of scope for D2.1 — defaults to the `Internal(reason)`
-    /// wildcard via the existing `From<AttachError>` arm in
-    /// `crates/octo-cli/src/error.rs`).
+    /// window for the claimed `key_id`; see RFC-0011-c §F.5.1 +
+    /// RFC-0015-a §6.5 paired-acceptance bridge). CLI exit 62 if
+    /// mapped (out of scope for D2.1 — defaults to the
+    /// `Internal(reason)` wildcard via the existing `From<AttachError>`
+    /// arm in `crates/octo-cli/src/error.rs`).
     #[cfg(feature = "octo-attach-key-rotation")]
     #[error("unknown key_id {key_id} (known: {known_keys:?})")]
     UnknownKeyId {
         /// `key_id` discriminator from the token's canonical bytes.
-        key_id: crate::handle::KeyId,
+        key_id: KeyId,
         /// Diagnostic union of active + grace key ids in the
         /// verifier's `KeySet` (the operator can read the
         /// populated set without re-deriving it from the
         /// substrate envelope).
-        known_keys: Vec<crate::handle::KeyId>,
+        known_keys: Vec<KeyId>,
     },
 }
 

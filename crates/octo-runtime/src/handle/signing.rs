@@ -70,21 +70,32 @@ pub fn verify_attach_handle_payload(
     ttl_unix: u64,
     sig: &Signature,
 ) -> Result<(), AttachError> {
+    let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
+    verify_bytes(holder_pubkey, &msg, sig)
+}
+
+/// Shared verify helper: verify `sig` over precomputed `msg` against
+/// the pubkey bytes `pk`. Used by both the v1 single-pubkey verifier
+/// (which computes `msg` inline via `canonical_payload_bytes`) and
+/// the v2 multi-pubkey verifier (which uses the v2 canonical bytes
+/// already augmented with the `key_id` suffix). Lives in the
+/// non-feature-gated module path so the v1 baseline stays a single
+/// canonical helper.
+fn verify_bytes(pk: &[u8; 32], msg: &[u8], sig: &Signature) -> Result<(), AttachError> {
     use octo_wallet::ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
 
-    let vk = VerifyingKey::from_bytes(holder_pubkey).map_err(|e| AttachError::BadSignature {
+    let vk = VerifyingKey::from_bytes(pk).map_err(|e| AttachError::BadSignature {
         reason: format!("invalid public key: {e}"),
     })?;
     let dalek_sig = DalekSignature::from_bytes(&sig.0);
-    let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
-    vk.verify(&msg, &dalek_sig)
+    vk.verify(msg, &dalek_sig)
         .map_err(|e| AttachError::BadSignature {
             reason: format!("ed25519 verify: {e}"),
         })
 }
 
 /// Additive v2 canonical payload bytes for an `AttachHandle` token
-/// (RFC-0011-c §F.5.1).
+/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge).
 ///
 /// `v1_bytes || key_id_be` — the `key_id` suffix is the
 /// discriminator that lets a verifier know which holder pubkey to
@@ -109,11 +120,11 @@ pub fn canonical_payload_bytes_v2(
 }
 
 /// Sign the canonical v2 payload bytes for an `AttachHandle` token
-/// (RFC-0011-c §F.5.1).
+/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge +
+/// RFC-0015-a Appendix A `IdentityKey` substrate).
 ///
-/// Composes `IdentityKey::sign` (Layer B substrate per RFC-0015-a
-/// Appendix A) over `canonical_payload_bytes_v2`. The
-/// `key_id` discriminator is bound into the signed bytes so a
+/// Composes `IdentityKey::sign` over `canonical_payload_bytes_v2`.
+/// The `key_id` discriminator is bound into the signed bytes so a
 /// verifier cannot silently swap the key_id claim.
 ///
 /// # Errors
@@ -138,20 +149,26 @@ pub fn sign_attach_handle_payload_v2(
 }
 
 /// Verify the canonical v2 payload bytes for an `AttachHandle` token
-/// against the holder's `KeySet` (RFC-0011-c §F.5.1).
+/// against the holder's `KeySet` (RFC-0011-c §F.5.1 + RFC-0015-a §6.5
+/// paired-acceptance bridge).
 ///
 /// Lookup order:
 /// 1. Active `KeySet::lookup(key_id)` — return Ok or BadSignature.
-/// 2. Otherwise iterate `KeySet::grace_period()` and try each grace
-///    key's pubkey. Return Ok on first successful verify.
+/// 2. Otherwise try `KeySet::grace_key(key_id)` (the grace fallback
+///    only consults the grace entry matching the CLAIMED `key_id`,
+///    not every grace key — the `key_id` discriminator binds the
+///    signature to a specific key, so a token claiming key_id X
+///    must verify against the rotated-out pubkey registered under
+///    key_id X, never against an arbitrary grace key).
 /// 3. Otherwise return `AttachError::UnknownKeyId { key_id,
 ///    known_keys }`.
 ///
-/// The grace fallback accepts ANY in-flight token minted under
-/// ANY recently-rotated key — the standard grace-period semantics
-/// for key rotation. This is intentional: rotated keys remain
-/// valid for the grace window so in-flight tokens survive the
-/// rotation event.
+/// The grace fallback accepts the standard rotation case: the
+/// holder rotates key_id X from pubkey P1 to P2 (so P1 moves into
+/// the grace window). A token signed under P1 with the key_id X
+/// suffix verifies via step 2 — the same key_id, the rotated-out
+/// pubkey. Active lookup returns the new P2 (verify fails), then
+/// grace_key(X) returns P1 (verify succeeds).
 ///
 /// # Errors
 /// Returns `AttachError::BadSignature` on signature mismatch
@@ -173,16 +190,18 @@ pub fn verify_attach_handle_payload_v2(
 
     // 1. Try the active lookup.
     if let Some(pk) = key_set.lookup(key_id) {
-        return verify_with_msg(pk, &msg, sig);
+        return verify_bytes(pk, &msg, sig);
     }
 
-    // 2. Try each grace-period key's pubkey (rotation window).
-    for grace_id in key_set.grace_period() {
-        if let Some(pk) = key_set.grace_key(grace_id) {
-            if verify_with_msg(pk, &msg, sig).is_ok() {
-                return Ok(());
-            }
-        }
+    // 2. Try the grace entry for the CLAIMED key_id only. Iterating
+    //    every grace pubkey against a msg keyed by `key_id` X would
+    //    let any holder of a grace key's private material forge
+    //    tokens claiming arbitrary key_ids — a forgery vulnerability.
+    //    Standard rotation keeps the same key_id across pubkey
+    //    changes, so the rotated-out pubkey is recovered by looking
+    //    up the claimed key_id in the grace map.
+    if let Some(pk) = key_set.grace_key(key_id) {
+        return verify_bytes(pk, &msg, sig);
     }
 
     // 3. Exhausted.
@@ -190,24 +209,6 @@ pub fn verify_attach_handle_payload_v2(
         key_id,
         known_keys: key_set.known_key_ids(),
     })
-}
-
-/// v2 verify helper: verify `sig` over precomputed `msg` against
-/// the pubkey bytes `pk`. Mirrors the v1 verify body shape but
-/// takes a precomputed message (so the v2 verifier can re-use it
-/// across the grace iteration without recomputing).
-#[cfg(feature = "octo-attach-key-rotation")]
-fn verify_with_msg(pk: &[u8; 32], msg: &[u8], sig: &Signature) -> Result<(), AttachError> {
-    use octo_wallet::ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
-
-    let vk = VerifyingKey::from_bytes(pk).map_err(|e| AttachError::BadSignature {
-        reason: format!("invalid public key: {e}"),
-    })?;
-    let dalek_sig = DalekSignature::from_bytes(&sig.0);
-    vk.verify(msg, &dalek_sig)
-        .map_err(|e| AttachError::BadSignature {
-            reason: format!("ed25519 verify: {e}"),
-        })
 }
 
 /// Mint a fully-signed `AttachHandle` token.
@@ -499,5 +500,48 @@ mod tests {
             matches!(result, Err(AttachError::BadSignature { .. })),
             "active lookup of key_id=2 must fail BadSignature, got {result:?}"
         );
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_grace_key_does_not_vouch_for_arbitrary_key_id() {
+        // Regression: a grace key must NOT vouch for a token that
+        // claims a DIFFERENT key_id. Holder rotates key_id=1 to
+        // grace (so key_set has active={2}, grace={1}). Attacker
+        // (with holder's old key_id=1 private material) signs a
+        // token claiming key_id=99; verifier must reject via
+        // UnknownKeyId, NOT accept via grace fallback.
+        //
+        // Pre-fix behavior (R1 CRIT): grace_period() iteration
+        // tried every grace pubkey against the msg, so any grace
+        // key holder could forge tokens claiming any key_id.
+        let holder = activated_holder();
+        let other_holder = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 0,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(2, other_holder.public_key_bytes());
+        key_set.insert(1, holder.public_key_bytes());
+        key_set.move_to_grace(1);
+        // Attacker signs msg with key_id=99 suffix using holder's
+        // (now grace) key_id=1 private key.
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 99)
+            .expect("sign v2");
+        let result = verify_attach_handle_payload_v2(
+            &key_set,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            99,
+            &sig,
+        );
+        match result {
+            Err(AttachError::UnknownKeyId { key_id, .. }) => assert_eq!(key_id, 99),
+            other => panic!("grace key must NOT vouch for claimed key_id=99, got {other:?}"),
+        }
     }
 }

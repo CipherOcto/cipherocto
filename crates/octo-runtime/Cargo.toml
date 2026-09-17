@@ -61,13 +61,13 @@ serde_bytes = "0.11"
 # `default-features = false` for a stoolap-free build.
 default = ["octo-runtime-persistence"]
 octo-runtime-persistence = ["dep:stoolap"]
-# Key rotation discriminator substrate (RFC-0011-c §F.5.1). When
-# enabled, exposes `sign_attach_handle_payload_v2` +
-# `verify_attach_handle_payload_v2` + `AttachError::UnknownKeyId`.
-# When disabled (default), the v1 single-pubkey verify path is
-# byte-identical to the pre-D2.1 baseline. Population POLICY for
-# the `key_set` registry is OUT OF SCOPE here — see
-# `handle::key_id` module rustdoc.
+# Key rotation discriminator substrate (RFC-0011-c §F.5.1 +
+# RFC-0015-a §6.5 paired-acceptance bridge). When enabled, exposes
+# `sign_attach_handle_payload_v2` + `verify_attach_handle_payload_v2`
+# + `AttachError::UnknownKeyId`. When disabled (default), the v1
+# single-pubkey verify path is byte-identical to the pre-D2.1
+# baseline. Population POLICY for the `key_set` registry is OUT OF
+# SCOPE here — see `handle::key_id` module rustdoc.
 octo-attach-key-rotation = []
 
 [dependencies.stoolap]

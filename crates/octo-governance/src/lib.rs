@@ -27,7 +27,11 @@ pub mod attest;
 pub mod cache;
 pub mod error;
 pub mod snapshot;
+pub mod vote;
 
+pub use attest::{
+    attest, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
+};
 pub use cache::{OctoGovernanceSnapshotCache, SnapshotCacheKey, SNAPSHOT_CACHE_CAPACITY};
 pub use error::GovernanceSnapshotError;
 // Explicit curated re-export (RFC-0013 §Module Layout).
@@ -44,4 +48,7 @@ pub use octo_governance_core::ProposalState;
 pub use octo_governance_core::VoteReceipt;
 pub use snapshot::{
     snapshot, ProposalFilter, ProposalSummary, SnapshotRef, SnapshotView, TTL_SNAPSHOT_SECONDS,
+};
+pub use vote::{
+    blake3_256 as blake3_256_vote, vote, CapabilityRegistry, QuorumProjection, VoteChoice, VoteLog,
 };

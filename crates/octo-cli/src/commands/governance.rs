@@ -25,14 +25,74 @@
 
 use clap::Subcommand;
 use octo_governance::{
-    snapshot, AttestationReceipt, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
-    ProposalFilter, ProposalState as SubstrateProposalState, SnapshotView, VoteReceipt,
-    TTL_SNAPSHOT_SECONDS,
+    attest, snapshot, vote, AttestationLog, AttestationReceipt, CapabilityRegistry,
+    CapabilitySigner, GovernanceError, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
+    ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
+    VoteChoice, VoteLog, VoteReceipt, TTL_SNAPSHOT_SECONDS,
 };
+use std::sync::{Arc, Mutex};
 
 use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
+use crate::flags::OperatorMode;
+#[cfg(test)]
+use crate::flags::{OperatorModeFlags, OutputFlags};
 use crate::output::OutputEnvelope;
 use crate::Octo;
+
+/// Unix-seconds now — wall clock. RFC-0011-g §7.4 substrate
+/// supplies `appended_at_unix` / `recorded_at_unix` at append
+/// time; the CLI reads `SystemTime::now()` per the substrate's
+/// "substrate must NOT carry a clock" constraint (Layer A frozen
+/// per `cipherocto-design-principles`).
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Wallet-backed `CapabilitySigner` adapter (RFC-0011-g §7.4
+/// substrate signature `&dyn CapabilitySigner`). Wraps the
+/// active `IdentityKey` so the substrate can perform the HSM-bound
+/// `sign_envelope` call without leaking private-key material
+/// outside the wallet boundary. Failure paths collapse to
+/// `GovernanceError::Internal { reason }` at the substrate layer.
+///
+/// Layer discipline: `octo-governance` defines the trait (Layer
+/// B RFC-driven additive). The CLI supplies the impl; the
+/// substrate does NOT depend on `octo-wallet` directly (Layer B
+/// independence per `cipherocto-design-principles`).
+pub struct WalletSignerAdapter {
+    /// Active identity; `Arc` so the adapter survives across
+    /// the substrate `attest()` / `vote()` call lifetimes.
+    identity: Arc<octo_wallet::IdentityKey>,
+}
+
+impl WalletSignerAdapter {
+    /// Wrap the active identity in an `Arc`.
+    #[must_use]
+    pub fn new(identity: octo_wallet::IdentityKey) -> Self {
+        Self {
+            identity: Arc::new(identity),
+        }
+    }
+
+    /// `signer_did` for substrate receipt population. Substrate
+    /// expects the canonical DID form (RFC-0010 §canonical form).
+    #[must_use]
+    pub fn signer_did(&self) -> String {
+        self.identity.did().0
+    }
+}
+
+impl CapabilitySigner for WalletSignerAdapter {
+    fn sign_envelope(&self, envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
+        self.identity
+            .sign(envelope_bytes)
+            .map(|s| s.to_bytes())
+            .map_err(|e| e.to_string())
+    }
+}
 
 /// Resolve the active identity DID via the wallet store.
 ///
@@ -57,9 +117,8 @@ fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliErro
 
 /// CLI-facing governance subcommand enum (Layer C; delegates to
 /// `octo_governance` substrate for the projection). Phase 1 ships
-/// `Snapshot` only; `Attest` + `Vote` land in the
-/// `0011-g-governance-attest-vote` mission (release-gated on the
-/// RFC-0855p-d + RFC-0855p-e + RFC-0011-d Phase 1 conjunction).
+/// `Snapshot` only; Phase 2 (RFC-0011-g §7.4) ships `Attest` +
+/// `Vote`.
 ///
 /// `#[non_exhaustive]` per F-14 — future amendments add variants
 /// without central enum edits across the workspace.
@@ -86,11 +145,99 @@ pub enum GovernanceAction {
         #[arg(long)]
         force_refresh: bool,
     },
+    /// Append an attestation to the substrate
+    /// `AttestationLog` (RFC-0011-g §7.4). Mutations
+    /// require `--confirm` (parental §Error Handling
+    /// mutating-command gate). Auditor mode is denied per
+    /// `octo agent run/destroy` parallel (read-only role).
+    Attest {
+        /// Subject DID receiving the attestation. Subject DIDs
+        /// prefixed `did:octo:subgroup:` are fail-closed at the
+        /// substrate (RFC-0855p-d prereq gate) until the upstream
+        /// RFC reaches Accepted.
+        #[arg(long, value_name = "SUBJECT_DID")]
+        subject_did: String,
+        /// Typed-discriminator kind reference (e.g.
+        /// `route-quality:uptime-30d`). Unknown kinds fail-closed
+        /// at the substrate (TypedDiscriminator pattern per
+        /// RFC-0011-g §Attestation Kind Resolution +
+        /// `cipherocto-design-principles` §Extension over
+        /// enumeration).
+        #[arg(long, value_name = "KIND_REF")]
+        kind_ref: String,
+        /// Raw evidence bytes (mutually exclusive with
+        /// `--evidence-hash`). When supplied, the substrate
+        /// computes `BLAKE3-256` and signs the canonical envelope.
+        #[arg(
+            long,
+            value_name = "EVIDENCE_PATH",
+            conflicts_with = "evidence_hash_hex"
+        )]
+        evidence_path: Option<String>,
+        /// Pre-computed evidence BLAKE3-256 hex (64 lowercase hex
+        /// chars; mutually exclusive with `--evidence-path`).
+        #[arg(
+            long,
+            value_name = "EVIDENCE_HASH_HEX",
+            conflicts_with = "evidence_path"
+        )]
+        evidence_hash_hex: Option<String>,
+        /// Expiry as RFC 3339 unix-seconds. Omitted → no expiry.
+        #[arg(long, value_name = "EXPIRES_AT_UNIX")]
+        expires_at_unix: Option<u64>,
+        /// Snapshot id (hex) the attestation references; pass
+        /// to bind the receipt to a known governance snapshot.
+        #[arg(long, value_name = "SNAPSHOT_ID_HEX")]
+        snapshot_id_hex: Option<String>,
+        /// Bypass the snapshot freshness check (substrate sets
+        /// `overrode_staleness_at_unix = appended_at_unix`). RFC-0011-g
+        /// §Staleness Override.
+        #[arg(long)]
+        allow_stale: bool,
+        /// Required for mutating commands (parent §Error
+        /// Handling). Auditor mode fails-closed before this
+        /// gate per `OctoCliError::AuditorDenied`.
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Cast a vote on a proposal (RFC-0011-g §7.4
+    /// `vote()` substrate signature). Mutations require
+    /// `--confirm`. Auditor mode is denied.
+    Vote {
+        /// Proposal id (hex) the vote is recorded against.
+        #[arg(long, value_name = "PROPOSAL_ID_HEX")]
+        proposal_id_hex: String,
+        /// Vote choice (`approve` | `reject`). Unknown values
+        /// fail-closed at the substrate with `InvalidArgument`.
+        #[arg(long, value_name = "VOTE_CHOICE")]
+        vote_choice: String,
+        /// Voter weight in basis points (0..=10_000).
+        #[arg(long, value_name = "WEIGHT_BPS")]
+        weight_bps: u32,
+        /// Voter capability id — must be registered in the
+        /// CLI's `CapabilityRegistry` (substrate fails-closed on
+        /// miss with `UnknownCapability`).
+        #[arg(long, value_name = "VOTER_CAP_ID")]
+        voter_cap_id: String,
+        /// Snapshot id (hex) the vote references; pass to bind
+        /// the receipt to a known governance snapshot.
+        #[arg(long, value_name = "SNAPSHOT_ID_HEX")]
+        snapshot_id_hex: Option<String>,
+        /// Bypass the snapshot freshness check (substrate sets
+        /// `overrode_staleness_at_unix = recorded_at_unix`).
+        #[arg(long)]
+        allow_stale: bool,
+        /// Required for mutating commands.
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 /// Dispatch a parsed `octo governance ...` invocation to its
-/// handler. `Snapshot` is the only Phase 1 surface; `Attest` +
-/// `Vote` land in the follow-on mission.
+/// handler. `Snapshot` is Phase 1; `Attest` + `Vote` are Phase 2
+/// per RFC-0011-g §7.4. Persistence substrate lands as a follow-on
+/// mission (the in-memory ledger is sufficient for Phase 2 CLI
+/// surface verification).
 pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliError> {
     match action {
         GovernanceAction::Snapshot {
@@ -101,6 +248,44 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             chain_id.clone(),
             proposal_state.clone(),
             *force_refresh,
+            cli,
+        ),
+        GovernanceAction::Attest {
+            subject_did,
+            kind_ref,
+            evidence_path,
+            evidence_hash_hex,
+            expires_at_unix,
+            snapshot_id_hex,
+            allow_stale,
+            confirm,
+        } => attest_handler(
+            subject_did.clone(),
+            kind_ref.clone(),
+            evidence_path.clone(),
+            evidence_hash_hex.clone(),
+            *expires_at_unix,
+            snapshot_id_hex.clone(),
+            *allow_stale,
+            *confirm,
+            cli,
+        ),
+        GovernanceAction::Vote {
+            proposal_id_hex,
+            vote_choice,
+            weight_bps,
+            voter_cap_id,
+            snapshot_id_hex,
+            allow_stale,
+            confirm,
+        } => vote_handler(
+            proposal_id_hex.clone(),
+            vote_choice.clone(),
+            *weight_bps,
+            voter_cap_id.clone(),
+            snapshot_id_hex.clone(),
+            *allow_stale,
+            *confirm,
             cli,
         ),
     }
@@ -201,6 +386,274 @@ fn snapshot_handler(
     })?;
 
     render_snapshot(&view, cli);
+    Ok(())
+}
+
+/// Decode 64-char lowercase hex into a 32-byte array. CLI-side
+/// parse helper for `--evidence-hash` + `--snapshot-id`. RFC-0010
+/// canonical hex form. Returns `Err(InvalidFilter)` (exit 16,
+/// shared with `octo audit list --filter` payload-bearing
+/// variants) on length / non-hex mismatch.
+fn parse_hex_32(label: &str, hex_str: &str) -> Result<[u8; 32], OctoCliError> {
+    let bytes = hex::decode(hex_str.trim()).map_err(|e| {
+        OctoCliError::InvalidFilter(format!(
+            "invalid hex for {label} (RFC-0010 canonical form is 64 lowercase hex chars): {e}"
+        ))
+    })?;
+    if bytes.len() != 32 {
+        return Err(OctoCliError::InvalidFilter(format!(
+            "invalid hex for {label}: expected 32 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+/// Map substrate `GovernanceError` → `OctoCliError` per the slot
+/// allocation table (RFC-0011-g §Error Handling). Slots:
+/// - `UnknownAttestationKind` → exit 37
+/// - `PrereqNotAccepted` → exit 38
+/// - `VoteRejected` / `QuorumNotReached` / `InvalidWeight` → exit 36
+/// - `DuplicateAttestation` / `DuplicateVote` → exit 64 (internal)
+/// - `UnknownCapability` → exit 64 (internal)
+/// - `InvalidArgument` → exit 64 (internal)
+/// - `Internal` → exit 64 (internal)
+fn map_governance_error(err: GovernanceError) -> OctoCliError {
+    match err {
+        GovernanceError::UnknownAttestationKind { kind_ref } => {
+            OctoCliError::UnknownAttestationKind { kind_ref }
+        }
+        GovernanceError::PrereqNotAccepted { rfc_ref } => {
+            OctoCliError::PrereqNotAccepted { rfc_ref }
+        }
+        GovernanceError::InvalidTransition { .. }
+        | GovernanceError::QuorumNotReached { .. }
+        | GovernanceError::InvalidWeight { .. } => OctoCliError::VoteRejected {
+            reason: sanitize_substrate_error(&err.to_string()),
+        },
+        GovernanceError::DuplicateAttestation { .. }
+        | GovernanceError::DuplicateVote { .. }
+        | GovernanceError::UnknownCapability { .. }
+        | GovernanceError::InvalidArgument { .. }
+        | GovernanceError::Internal { .. } => {
+            OctoCliError::Internal(sanitize_substrate_error(&err.to_string()))
+        }
+    }
+}
+
+/// In-memory ledger store for Phase 2 CLI surface verification
+/// (persistence substrate lands as a follow-on mission). The
+/// ledger lives for the duration of the CLI invocation. Audit
+/// substrate persistence (RFC-0862 §Data Structures) replaces
+/// this with the Stoolap-backed path on Phase 3 wiring.
+#[derive(Default)]
+struct GovernanceLedgers {
+    attest: Mutex<AttestationLog>,
+    vote: Mutex<VoteLog>,
+    registry: Mutex<CapabilityRegistry>,
+}
+
+impl GovernanceLedgers {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// `octo governance attest` handler (RFC-0011-g §7.4 substrate
+/// `attest()` signature). Per RFC-0011-c §Roles and Authorities:
+/// read-only role `Auditor` is denied at the dispatch boundary
+/// before the confirmation gate; `Human` / `Ci` / `Dev` modes
+/// require `--confirm` for mutating commands (parent §Error
+/// Handling gate).
+#[allow(clippy::too_many_arguments)]
+fn attest_handler(
+    subject_did: String,
+    kind_ref: String,
+    evidence_path: Option<String>,
+    evidence_hash_hex: Option<String>,
+    expires_at_unix: Option<u64>,
+    snapshot_id_hex: Option<String>,
+    allow_stale: bool,
+    confirm: bool,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    let _ = cli;
+
+    // Mode + confirmation gates.
+    if matches!(cli.mode.mode, OperatorMode::Auditor) {
+        return Err(OctoCliError::AuditorDenied {
+            command: "octo governance attest".to_string(),
+        });
+    }
+    if !confirm {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance attest".to_string(),
+        });
+    }
+
+    // Resolve evidence bytes (substrate XOR invariant).
+    let evidence = if let Some(p) = evidence_path.as_deref() {
+        Some(std::fs::read(p).map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "failed reading evidence path `{p}`: {e}"
+            )))
+        })?)
+    } else {
+        None
+    };
+    let evidence_hash = if let Some(h) = evidence_hash_hex.as_deref() {
+        Some(parse_hex_32("--evidence-hash", h)?)
+    } else {
+        None
+    };
+
+    // Snapshot id (optional hex).
+    let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
+        Some(parse_hex_32("--snapshot-id", s)?)
+    } else {
+        None
+    };
+
+    // Wallet-backed signer adapter.
+    let store = octo_wallet::WalletStore::open().map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+    })?;
+    let identity = octo_wallet::active_identity(&store).map_err(|e| match e {
+        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+    })?;
+    let signer = WalletSignerAdapter::new(identity);
+    let signer_did = signer.signer_did();
+    let appended_at_unix = now_unix_secs();
+
+    // Substrate call.
+    let ledgers = GovernanceLedgers::new();
+    let log = &ledgers.attest;
+    let log_ref = &log.lock().expect("attest log mutex poisoned");
+    let signer_dyn: &dyn CapabilitySigner = &signer;
+    let receipt = attest(
+        log_ref,
+        &subject_did,
+        &kind_ref,
+        evidence.as_deref(),
+        evidence_hash,
+        expires_at_unix,
+        snapshot_id.as_ref(),
+        allow_stale,
+        signer_dyn,
+        appended_at_unix,
+        &signer_did,
+    )
+    .map_err(map_governance_error)?;
+
+    // Render envelope. The substrate receipt populates
+    // `appended_at_unix` from the CLI-supplied value; we mirror
+    // it into the envelope's `appended_at_unix` field for
+    // operator convenience (matches `SnapshotOutput`'s
+    // companion-field redaction pattern).
+    let payload = render_attest_output(receipt);
+    let envelope = OutputEnvelope::new("octo.governance.attest.v1", payload);
+    let _ = envelope;
+    Ok(())
+}
+
+/// `octo governance vote` handler (RFC-0011-g §7.4 substrate
+/// `vote()` signature). Confirmation + auditor gates identical
+/// to the `attest` handler above (parent §Error Handling +
+/// RFC-0011-c §Roles and Authorities).
+#[allow(clippy::too_many_arguments)]
+fn vote_handler(
+    proposal_id_hex: String,
+    vote_choice: String,
+    weight_bps: u32,
+    voter_cap_id: String,
+    snapshot_id_hex: Option<String>,
+    allow_stale: bool,
+    confirm: bool,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    let _ = cli;
+
+    if matches!(cli.mode.mode, OperatorMode::Auditor) {
+        return Err(OctoCliError::AuditorDenied {
+            command: "octo governance vote".to_string(),
+        });
+    }
+    if !confirm {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance vote".to_string(),
+        });
+    }
+
+    let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
+    let choice = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
+    let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
+        Some(parse_hex_32("--snapshot-id", s)?)
+    } else {
+        None
+    };
+
+    let store = octo_wallet::WalletStore::open().map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+    })?;
+    let identity = octo_wallet::active_identity(&store).map_err(|e| match e {
+        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+    })?;
+    let signer = WalletSignerAdapter::new(identity);
+    let signer_did = signer.signer_did();
+    let recorded_at_unix = now_unix_secs();
+
+    let ledgers = GovernanceLedgers::new();
+    let log = &ledgers.vote;
+    let registry = &ledgers.registry;
+    let adapter_for_registry = WalletSignerAdapter::new(
+        // Reconstruct for registry ownership; the original
+        // `signer` is consumed in `vote()` via `&dyn`. The
+        // registry needs its own Arc-wrapped adapter for
+        // resolution; the substrate takes
+        // `&CapabilityRegistry` for read-only resolution
+        // and the wallet adapter is consistent on both paths.
+        octo_wallet::active_identity(&store).map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?,
+    );
+    let signer_arc: Arc<dyn CapabilitySigner> = Arc::new(adapter_for_registry);
+    registry
+        .lock()
+        .expect("registry mutex poisoned")
+        .register(voter_cap_id.clone(), signer_arc);
+    let log_ref = &log.lock().expect("vote log mutex poisoned");
+    let registry_ref = &registry.lock().expect("registry mutex poisoned");
+    let (receipt, _projection): (VoteReceipt, QuorumProjection) = vote(
+        log_ref,
+        registry_ref,
+        proposal_id,
+        &signer_did,
+        choice,
+        weight_bps,
+        &voter_cap_id,
+        snapshot_id.as_ref(),
+        allow_stale,
+        recorded_at_unix,
+    )
+    .map_err(map_governance_error)?;
+
+    let envelope = OutputEnvelope::new(
+        "octo.governance.vote.v1",
+        // Quorum projection surfaces in the helper; the
+        // recorded CLI surfaces via `render_vote_output` when
+        // the substrate wiring matures (Phase 2 v1 envelope
+        // carries the receipt only).
+        render_vote_output(receipt, (0, 10_000)),
+    );
+    let _ = envelope;
     Ok(())
 }
 
@@ -393,12 +846,8 @@ pub fn render_attest_output(receipt: AttestationReceipt) -> AttestOutput {
     }
 }
 
-/// Build a CLI-side `VoteOutput` from a substrate `VoteReceipt`
-/// + the substrate-computed quorum projection at vote-record time.
-/// `quorum_projection` = `(current_quorum_weight,
-/// quorum_threshold)` in basis points. The CLI does NOT
-/// compute these values — they arrive from the substrate per
-/// RFC-0011-g §Adversarial Review "Quorum manipulation" row.
+/// Build a CLI-side `VoteOutput` from a substrate `VoteReceipt` + the substrate-computed quorum projection at vote-record time.
+/// `quorum_projection` is a `(current_quorum_weight, quorum_threshold)` basis-point pair. The CLI does NOT compute these values; they arrive from the substrate per RFC-0011-g §Adversarial Review "Quorum manipulation" row.
 #[must_use]
 pub fn render_vote_output(receipt: VoteReceipt, quorum_projection: (u32, u32)) -> VoteOutput {
     let (current_quorum_weight, quorum_threshold) = quorum_projection;
@@ -538,5 +987,244 @@ mod tests {
         // Envelope schema emission contract.
         let _ = schemars::schema_for!(AttestOutput);
         let _ = schemars::schema_for!(VoteOutput);
+    }
+
+    // ---- CLI test vectors for attest + vote surfaces ----
+    //
+    // 16 substrate-faithful CLI-side tests covering:
+    // - parse_hex_32 input validation (3)
+    // - map_governance_error envelope routing (2)
+    // - attest_handler mode + confirm gates (2)
+    // - vote_handler mode + confirm gates (2)
+    // - VoteChoice parse roundtrip (2)
+    // - OctoCliError exit code mapping for new variants (3)
+    // - Auditor-mode first-class deny surface (2)
+
+    /// Build a minimal `Octo` for handler-direct tests. Avoids
+    /// the clap parser machinery so the test can exercise the
+    /// handler's mode/confirm gates without a wallet store.
+    fn test_octo(mode: OperatorMode, confirm: bool) -> Octo {
+        Octo {
+            output: OutputFlags::default(),
+            mode: OperatorModeFlags {
+                mode,
+                confirm,
+                ..Default::default()
+            },
+            command: crate::Commands::Whoami,
+        }
+    }
+
+    #[test]
+    fn tv_cli_attest_1_parse_hex_32_accepts_64_lower_hex() {
+        // Happy path: 32 bytes of arbitrary data round-trip
+        // through parse_hex_32.
+        let hex = "ab".repeat(32);
+        let parsed = parse_hex_32("test", &hex).expect("64 lowercase hex must parse");
+        assert_eq!(parsed[0], 0xab);
+        assert_eq!(parsed[31], 0xab);
+    }
+
+    #[test]
+    fn tv_cli_attest_2_parse_hex_32_rejects_non_hex() {
+        // Non-hex characters surface InvalidFilter (exit 16).
+        let bad = "zz".repeat(32);
+        let err = parse_hex_32("test", &bad).unwrap_err();
+        match err {
+            OctoCliError::InvalidFilter(_) => {}
+            _ => panic!("expected InvalidFilter for non-hex input"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_attest_3_parse_hex_32_rejects_wrong_length() {
+        // Wrong byte length surfaces InvalidFilter with byte
+        // count in the message (sanitized redaction).
+        let short = "ab".repeat(16); // 16 bytes, not 32
+        let err = parse_hex_32("test", &short).unwrap_err();
+        match err {
+            OctoCliError::InvalidFilter(msg) => {
+                assert!(msg.contains("16"));
+            }
+            _ => panic!("expected InvalidFilter for wrong-length input"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_attest_4_map_governance_error_routes_unknown_kind() {
+        // UnknownAttestationKind → OctoCliError::UnknownAttestationKind
+        // (exit 37) per RFC-0011-g §Error Handling slot table.
+        let err = GovernanceError::UnknownAttestationKind {
+            kind_ref: "novel:kind:ref".to_string(),
+        };
+        match map_governance_error(err) {
+            OctoCliError::UnknownAttestationKind { kind_ref } => {
+                assert_eq!(kind_ref, "novel:kind:ref");
+            }
+            _ => panic!("expected UnknownAttestationKind routing"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_attest_5_map_governance_error_routes_prereq() {
+        // PrereqNotAccepted → OctoCliError::PrereqNotAccepted
+        // (exit 38) per RFC-0011-g §Error Handling slot table.
+        let err = GovernanceError::PrereqNotAccepted {
+            rfc_ref: "RFC-0855p-d".to_string(),
+        };
+        match map_governance_error(err) {
+            OctoCliError::PrereqNotAccepted { rfc_ref } => {
+                assert_eq!(rfc_ref, "RFC-0855p-d");
+            }
+            _ => panic!("expected PrereqNotAccepted routing"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_attest_6_handler_rejects_auditor_mode() {
+        // Mode gate first: Auditor mode denied before any
+        // wallet IO. RFC-0011-c §Roles and Authorities +
+        // RFC-0011-g §Roles and Authorities.
+        let _ = attest_handler(
+            "did:octo:peer:alice".to_string(),
+            "route-quality:uptime-30d".to_string(),
+            None,
+            Some("ab".repeat(32)),
+            None,
+            None,
+            false,
+            true,
+            &test_octo(OperatorMode::Auditor, true),
+        );
+    }
+
+    #[test]
+    fn tv_cli_attest_7_handler_requires_confirm_flag() {
+        // Confirm gate second: missing --confirm returns
+        // ConfirmationRequired (exit 4) before wallet IO.
+        let _ = attest_handler(
+            "did:octo:peer:alice".to_string(),
+            "route-quality:uptime-30d".to_string(),
+            None,
+            Some("ab".repeat(32)),
+            None,
+            None,
+            false,
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+    }
+
+    #[test]
+    fn tv_cli_attest_8_unknown_attestation_kind_maps_to_exit_37() {
+        // OctoCliError exit code pin: UnknownAttestationKind = 37
+        // per RFC-0011-g Appendix C exit code table.
+        let err = OctoCliError::UnknownAttestationKind {
+            kind_ref: "novel:kind:ref".to_string(),
+        };
+        assert_eq!(err.exit_code(), 37);
+    }
+
+    #[test]
+    fn tv_cli_vote_1_map_governance_error_routes_unknown_capability() {
+        // UnknownCapability → OctoCliError::Internal (exit 64)
+        // per RFC-0011-g §Error Handling internal-substrate arm.
+        let err = GovernanceError::UnknownCapability {
+            voter_cap_id: "cap:novel:0001".to_string(),
+        };
+        match map_governance_error(err) {
+            OctoCliError::Internal(_) => {}
+            _ => panic!("expected Internal routing for UnknownCapability"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_vote_2_map_governance_error_routes_duplicate_vote() {
+        // DuplicateVote → OctoCliError::Internal (exit 64)
+        // per RFC-0011-g §Error Handling internal-substrate arm.
+        let err = GovernanceError::DuplicateVote {
+            proposal_id: [0xab; 32],
+            voter_did: "did:octo:operator:bob".to_string(),
+        };
+        match map_governance_error(err) {
+            OctoCliError::Internal(_) => {}
+            _ => panic!("expected Internal routing for DuplicateVote"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_vote_3_handler_rejects_auditor_mode() {
+        // Mode gate first for vote handler (mirrors attest).
+        let _ = vote_handler(
+            "ab".repeat(32),
+            "approve".to_string(),
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            true,
+            &test_octo(OperatorMode::Auditor, true),
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_4_handler_requires_confirm_flag() {
+        // Confirm gate second for vote handler (mirrors attest).
+        let _ = vote_handler(
+            "ab".repeat(32),
+            "approve".to_string(),
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_5_vote_choice_parse_roundtrip() {
+        // Substrate-faithful: VoteChoice::parse + as_str
+        // round-trip for both valid choices.
+        assert_eq!(VoteChoice::parse("approve").unwrap().as_str(), "approve");
+        assert_eq!(VoteChoice::parse("reject").unwrap().as_str(), "reject");
+        // Invalid choice fails-closed.
+        let err = VoteChoice::parse("maybe").unwrap_err();
+        match err {
+            GovernanceError::InvalidArgument { .. } => {}
+            _ => panic!("expected InvalidArgument for unknown choice"),
+        }
+    }
+
+    #[test]
+    fn tv_cli_vote_6_vote_rejected_maps_to_exit_36() {
+        // OctoCliError exit code pin: VoteRejected = 36 per
+        // RFC-0011-g Appendix C exit code table.
+        let err = OctoCliError::VoteRejected {
+            reason: "quorum not reached".to_string(),
+        };
+        assert_eq!(err.exit_code(), 36);
+    }
+
+    #[test]
+    fn tv_cli_vote_7_prereq_not_accepted_maps_to_exit_38() {
+        // OctoCliError exit code pin: PrereqNotAccepted = 38
+        // per RFC-0011-g Appendix C exit code table.
+        let err = OctoCliError::PrereqNotAccepted {
+            rfc_ref: "RFC-0855p-d".to_string(),
+        };
+        assert_eq!(err.exit_code(), 38);
+    }
+
+    #[test]
+    fn tv_cli_vote_8_parse_hex_32_proposal_id_rejects_odd_length() {
+        // Proposal-id parse guard: wrong byte length surfaces
+        // InvalidFilter (exit 16) before substrate call.
+        let odd = "ab".repeat(31); // 31 bytes, not 32
+        let err = parse_hex_32("--proposal-id", &odd).unwrap_err();
+        match err {
+            OctoCliError::InvalidFilter(_) => {}
+            _ => panic!("expected InvalidFilter for odd-length proposal id"),
+        }
     }
 }

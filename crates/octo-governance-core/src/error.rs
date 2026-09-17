@@ -107,4 +107,27 @@ pub enum GovernanceError {
         /// Sanitized internal failure reason.
         reason: String,
     },
+
+    /// Unknown `voter_cap_id` in the substrate
+    /// `CapabilityRegistry` (RFC-0011-g §7.4 vote substrate:
+    /// "capability verification"). The CLI fails-closed
+    /// before consulting the HSM-bound signer.
+    #[error("unknown voter capability: {voter_cap_id}")]
+    UnknownCapability {
+        /// Novel `voter_cap_id` string that did not resolve.
+        voter_cap_id: String,
+    },
+
+    /// Duplicate `(proposal_id, voter_did)` pair in the vote
+    /// ledger (RFC-0011-g §7.4 vote substrate voter-uniqueness
+    /// invariant). The append-only ledger rejects repeat voters
+    /// on the same proposal. Cold-path error; ledger state is
+    /// unchanged on error.
+    #[error("duplicate vote: proposal_id {proposal_id:?} already recorded by voter {voter_did}")]
+    DuplicateVote {
+        /// Colliding proposal PK.
+        proposal_id: [u8; 32],
+        /// Voter DID that already has a receipt for this proposal.
+        voter_did: String,
+    },
 }

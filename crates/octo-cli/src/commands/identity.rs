@@ -19,7 +19,7 @@ use serde::Serialize;
 use octo_cap_macaroon::signer::{CapabilitySigner, CapabilitySignerError};
 
 use crate::commands::role::SignerHandle;
-use crate::error::{sanitize_substrate_error, OctoCliError};
+use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
 use crate::redact::{redact_string, RedactedHex};
@@ -178,14 +178,7 @@ fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
             current_state: octo_wallet::LifecycleState::Rotating,
         } => OctoCliError::AlreadyRotating,
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => {
-            // R3 review HIGH: HSM transport failures during rotate / revoke
-            // MUST surface as `HsmUnavailable` (exit 5) per the RFC-0011
-            // exit-code table, not as `Internal` (exit 64). The substrate
-            // carries the original HsmError through `#[from] HsmError`; the
-            // sanitizer strips substrate paths before operator exposure.
-            OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-        }
+        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     }
 }

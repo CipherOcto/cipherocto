@@ -1268,6 +1268,25 @@ pub fn sanitize_substrate_error(s: &str) -> String {
     out
 }
 
+/// Map a substrate HSM error reason to `OctoCliError::HsmUnavailable`
+/// (exit 5) with the reason sanitized via `sanitize_substrate_error`.
+///
+/// Substrate-side `WalletError::Hsm(_)` carries the original HSM
+/// transport failure through `#[from] HsmError` — the substrate
+/// cannot sanitize paths/secrets at the error origin (those are
+/// layer-C boundary concerns) so the CLI sanitizes here before
+/// operator exposure.
+///
+/// Consolidates the prior inline `HsmUnavailable(...)` mapping
+/// that was duplicated across `commands/agent.rs`,
+/// `commands/identity.rs`, and `commands/governance.rs` — see
+/// the §F.6.5 cross-module `map_hsm_error` consolidation
+/// follow-on.
+#[must_use]
+pub fn map_hsm_error(reason: &str) -> OctoCliError {
+    OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
+}
+
 /// Case-insensitive variant of `find_word_boundary` (R17 Lens-2 F2).
 /// Matches ASCII case variants only (`a-z`/`A-Z`) — the markers we use
 /// (`SQL:`, `query:`, `sqlite3_open`) are all ASCII so this is sufficient.

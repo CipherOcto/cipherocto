@@ -29,7 +29,7 @@ use octo_governance::{
     ProposalState as SubstrateProposalState, SnapshotView, TTL_SNAPSHOT_SECONDS,
 };
 
-use crate::error::{sanitize_substrate_error, OctoCliError};
+use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
 use crate::output::OutputEnvelope;
 use crate::Octo;
 
@@ -48,9 +48,7 @@ fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliErro
     })?;
     let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => {
-            OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
-        }
+        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     })?;
     Ok(active_key.did())

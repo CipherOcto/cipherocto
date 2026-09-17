@@ -230,7 +230,7 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// substrate. This helper extracts the boilerplate so the handlers
 /// focus on their distinct write/read semantics.
 pub(crate) mod common {
-    use crate::error::{sanitize_substrate_error, OctoCliError};
+    use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
     use crate::redact::RedactionContext;
 
     /// Resolve the active identity DID via the wallet store.
@@ -254,12 +254,6 @@ pub(crate) mod common {
     /// parse-failure exit code is uniformly 42 across the chain.
     pub(crate) fn parse_agent_uuid(hex: &str) -> Result<uuid::Uuid, OctoCliError> {
         uuid::Uuid::parse_str(hex).map_err(|_| OctoCliError::AgentNotFound(uuid::Uuid::nil()))
-    }
-
-    /// Map a substrate HSM error message to `OctoCliError::HsmUnavailable`
-    /// with sanitized payload (path/secret redaction).
-    pub(crate) fn map_hsm_error(reason: &str) -> OctoCliError {
-        OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
     }
 
     /// Map the substrate `WalletError` variants surfaced from

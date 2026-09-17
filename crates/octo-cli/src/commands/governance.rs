@@ -1072,13 +1072,13 @@ pub struct VoteDryRunPreview {
     pub snapshot_id_hex: Option<String>,
     /// Operator intent flag for stale-override at confirm-time.
     pub allow_stale: bool,
-    /// Operator-supplied `--rationale <TEXT>` (verbatim, per
+    /// Operator-supplied `--rationale <text>` (verbatim, per
     /// RFC-0011-g §Subcommand Taxonomy row `--rationale <text>`).
     /// Surfaces in the dry-run preview so the operator sees
-    /// exactly the audit-log text they are about to record;
-    /// forwarded to the substrate `vote_v2` 5th argument slot
-    /// (load-bearing pin: see
-    /// `vote::tests::vote_v11_rationale_changes_envelope_pk`).
+    /// exactly the audit-log text they are about to record.
+    /// On the post-confirm path this becomes the 5th argument
+    /// slot of `vote_v2` (load-bearing pin: see
+    /// `vote::tests::vote_v11_rationale_changes_envelope_pk`);
     pub rationale: Option<String>,
     /// Per-call correlation UUID linking this preview to the
     /// eventual live `VoteOutput` in audit logs. CLI mints a
@@ -1111,6 +1111,11 @@ fn hex32(bytes: &[u8; 32]) -> String {
 /// performs no wallet IO and never touches the substrate
 /// `vote_v2` append path. The dry-run branch calls this helper
 /// + `OutputEnvelope::render_with_redaction` to serialize.
+///
+/// The rationale field mirrors the operator `--rationale <text>`
+/// input verbatim per RFC-0011-g §Subcommand Taxonomy; the
+/// post-confirm substrate plumbing is verified by the load-
+/// bearing pin `vote::tests::vote_v11_rationale_changes_envelope_pk`.
 #[must_use]
 fn build_vote_dry_run_preview(
     proposal_id: [u8; 32],

@@ -2275,14 +2275,113 @@ mod tests {
         );
     }
 
-    /// TV-CLI-ATTACH-1 — bounded expected behavior per
-    /// RFC-0011-c §F.6.5 session-registry-wiring deferral.
-    /// Legitimate tokens currently
-    /// surface as `AttachSessionUnknown` (exit 56) per
-    /// substrate-faithful current behavior — the `InProcessHandler::bind`
-    /// wiring lands in a paired follow-on amendment cycle. This test
-    /// pins the CLI exit slot so a future amendment that wires the
-    /// happy-path surfaces as a test rewrite (not a silent slot shift).
+    /// TV-CLI-ATTACH-1 — RFC-0011-c §F.2 follow-on amendment
+    /// substrate-faithful happy path: `spawn_agent` registers the
+    /// session in the process-singleton session registry, then a
+    /// freshly-minted `AttachHandle` token for that session
+    /// round-trips through `encode_token` → `decode_token` →
+    /// `attach_with_token` and returns an `AttachedSession` whose
+    /// `event_cursor` echoes the supplied `since_unix`.
+    ///
+    /// Closes the TV-CLI-ATTACH-1 red per RFC-0011-c §F.6.5
+    /// deferral (the prior stub-half-wired pathway surfaced
+    /// `UnknownSession` for legitimate tokens; the wired pathway
+    /// now returns `Ok`).
+    #[test]
+    fn tv_cli_attach_happy_path_succeeds_via_wired_session_registry() {
+        use octo_runtime::{
+            attach_with_token, decode_token, encode_token, mint_attach_handle, spawn_agent,
+            Transport, TransportKind,
+        };
+        use octo_wallet::IdentityKey;
+        use uuid::Uuid;
+
+        // (1) Spawn a runtime — registers the session in the
+        //     process-singleton session registry per RFC-0011-c
+        //     §F.2 step (e) follow-on amendment. The runtime
+        //     returns the deterministic session_id derived from
+        //     BLAKE3(agent_id, spawned_at) which the token below
+        //     MUST match.
+        let agent_id = Uuid::new_v4();
+        let handle = spawn_agent(agent_id, None).expect("spawn registers session");
+
+        // (2) Mint a token bound to the runtime's session_id.
+        //     The session_id MUST match the registry entry, else
+        //     `bind` returns `UnknownSession` (the substrate-
+        //     faithful failure surface for an unregistered session).
+        let mut holder = IdentityKey::generate().expect("IdentityKey::generate");
+        let now_unix_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(1_700_000_000);
+        holder.activate(now_unix_secs).expect("activate");
+        let holder_pubkey = holder.public_key_bytes();
+
+        let token = mint_attach_handle(
+            &holder,
+            agent_id,
+            handle.session_id,
+            0,
+            u64::MAX / 2,
+            Transport {
+                kind: TransportKind::InProcess,
+                addr: None,
+            },
+        )
+        .expect("mint_attach_handle for active holder");
+
+        // (3) Round-trip through the substrate-faithful CLI
+        //     dispatch shape: encode → decode → attach_with_token.
+        let token_bytes = encode_token(&token).expect("encode_token must succeed");
+        let decoded = decode_token(&token_bytes, &holder_pubkey)
+            .expect("decode_token must succeed against mint-time holder pubkey");
+        assert_eq!(
+            decoded.session_id, handle.session_id,
+            "decoded session_id MUST equal the runtime session_id"
+        );
+
+        // (4) Drive attach_with_token synchronously via a
+        //     current-thread tokio runtime (substrate is async;
+        //     the CLI dispatch does this inline per the §F.6
+        //     follow-on amendment sync/async boundary decision).
+        let attached = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio current_thread runtime");
+            rt.block_on(attach_with_token(
+                &holder_pubkey,
+                &decoded,
+                decoded.mint_timestamp_unix,
+            ))
+            .expect(
+                "wired attach_with_token MUST return Ok for legitimate token + registered session",
+            )
+        };
+
+        // (5) Pin the substrate-faithful success surface:
+        //     event_cursor echoes the since_unix we supplied, the
+        //     broadcast receiver is live (send-side kept alive by
+        //     HandleInner::_keepalive_rx per the substrate invariant).
+        assert_eq!(
+            attached.event_cursor, decoded.mint_timestamp_unix,
+            "event_cursor MUST equal the since_unix supplied to attach_with_token"
+        );
+        assert!(
+            !attached.broadcast_rx.is_closed(),
+            "broadcast_rx MUST be live for a legitimate attach"
+        );
+    }
+
+    /// TV-CLI-ATTACH-1 slot pin — the substrate-faithful failure
+    /// surface for an UNREGISTERED session is
+    /// `AttachError::UnknownSession`, mirrored by the CLI as
+    /// `OctoCliError::AttachSessionUnknown` (exit 56 per RFC-0011-c
+    /// §F.4 substrate-faithful slot allocation). The happy-path
+    /// coverage for the wired pathway lives in
+    /// `tv_cli_attach_happy_path_succeeds_via_wired_session_registry`
+    /// above; this slot-pin test ensures the failure surface stays
+    /// pinned across future amendments that might shift the slot.
     #[test]
     fn tv_cli_attach_session_unknown_exits_56() {
         let e =
@@ -2295,9 +2394,8 @@ mod tests {
         );
         // The variant payload is `String` (session_id hex) per
         // RFC-0011-c §F.4 substrate-faithful mirror surface;
-        // pin the field shape
-        // so a future amendment that switches to typed UUID surfaces
-        // as a broken contract.
+        // pin the field shape so a future amendment that switches
+        // to typed UUID surfaces as a broken contract.
         match &e {
             OctoCliError::AttachSessionUnknown(session_id) => {
                 assert!(!session_id.is_empty(), "session_id MUST be non-empty");

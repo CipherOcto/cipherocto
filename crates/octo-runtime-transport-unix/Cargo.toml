@@ -16,14 +16,6 @@ description = "Unix-domain socket transport Handler for RFC-0011-c §F.7.1 (Laye
 # Layer B sibling dep — Handler trait + AttachedSession + AttachError
 # + TransportKind + Registry live in octo_runtime::handle::transport.
 octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
-# Tokio for the test harness's `OnceLock` + (Phase C follow-on)
-# `UnixStream` connect. Production `bind()` is sync via
-# `std::os::unix::net::UnixStream` because the substrate's
-# `Handler::bind` is a sync trait method (no async surface).
-# Features: `sync` (OnceLock), `rt`+`macros` (test harness runtime
-# builder), `net` (test harness UnixListener; production path uses
-# std-only).
-tokio = { version = "1.35", features = ["net", "rt", "sync", "macros"] }
 
 [dev-dependencies]
 # Uuid for the test fixture (AttachPayload.agent_id).

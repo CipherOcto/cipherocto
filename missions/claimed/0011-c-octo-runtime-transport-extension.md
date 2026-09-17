@@ -24,14 +24,14 @@ dry_audit: pending
 
 # 0011-c-octo-runtime-transport-extension — 3 Layer D extension crates
 
-**Status:** Open
+**Status:** Claimed
 **Substrate:** RFC-0011-c §F.7 (`octo-runtime-transport-unix`, `octo-runtime-transport-raw`, `octo-runtime-transport-hybrid`)
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:** mission `0011-c-octo-runtime-attachhandle-substrate` — the `Handler` trait + `Registry` + `OnceLock<HANDLE_TRANSPORT_REGISTRY>` substrate landed in that mission (commit `next` HEAD, 2026-09-16).
 
 ## Status
 
-Open (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per [[cipherocto-design-principles]] §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
+Claimed (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per [[cipherocto-design-principles]] §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
 
 - `octo-runtime-transport-unix` — `UnixSocketHandler` (sync `std::os::unix::net::UnixStream` Layer D impl for `TransportKind::UnixSocket`)
 - `octo-runtime-transport-raw` — `RawHandler` (fail-CLOSED default for `TransportKind::Raw(Uuid)`; downstream crates override via `register_into(registry, scheme_id, custom_handler)`)
@@ -161,4 +161,4 @@ See each crate's `Cargo.toml` for the dependency rationale comments. No new exte
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-09-17, implementation landed 2026-09-17 per R1.5 commit).

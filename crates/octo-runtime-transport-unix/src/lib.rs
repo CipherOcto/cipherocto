@@ -11,7 +11,7 @@
 //!
 //! ## Protocol framing (Layer D concern)
 //!
-//! Server side:
+//! Server side (Phase C follow-on — NOT YET SHIPPED):
 //! 1. Accept Unix-domain connection on the configured path.
 //! 2. Read 8 bytes (little-endian `since_unix` cursor).
 //! 3. Write 8 bytes (little-endian `event_cursor` reply).
@@ -33,6 +33,9 @@
 //! broadcast the server pipes into (server-side wiring lives in the
 //! companion `octo-runtime-transport-unix-server` crate or a future
 //! follow-on amendment; Phase B ships the client-side surface only).
+//! Until the Phase C server-side lands, `UnixSocketHandler::bind`
+//! fails-CLOSED with `AttachError::Internal("...cross-process event
+//! bridge not implemented...")`.
 //!
 //! ## Layer discipline
 //!
@@ -80,8 +83,15 @@ fn shared_handler() -> &'static Arc<dyn Handler> {
 /// `register_into` yields the same `Arc<dyn Handler>` instance
 /// (allocated once via the `OnceLock`); the underlying
 /// `Registry::register` overwrites the prior registration slot.
+///
+/// # Panics
+///
+/// Panics if the inner registry `RwLock` is poisoned (writer
+/// panicked holding the lock). Per fail-CLOSED discipline, the
+/// caller cannot recover from a poisoned registry — the panic is
+/// the substrate's surface for this condition.
 pub fn register_into(registry: &Registry) {
-    registry.register(TransportKind::UnixSocket, shared_handler().clone());
+    registry.register(TransportKind::UnixSocket, Arc::clone(shared_handler()));
 }
 
 impl Handler for UnixSocketHandler {
@@ -89,8 +99,10 @@ impl Handler for UnixSocketHandler {
         // (1) Resolve the Unix-domain socket path from the
         // transport discriminator. `Transport::unix_socket(path)`
         // populates `addr`; the substrate's `AttachHandle::transport`
-        // round-trip preserves it across processes.
-        let _path = token.transport.addr.as_ref().ok_or_else(|| {
+        // round-trip preserves it across processes. The `?` surfaces
+        // `Internal("...requires an addr...")` when the caller did
+        // not construct the token via `Transport::unix_socket(path)`.
+        token.transport.addr.as_ref().ok_or_else(|| {
             AttachError::Internal(
                 "UnixSocket transport requires an addr (Transport::unix_socket(path) not used)"
                     .to_string(),
@@ -247,13 +259,17 @@ mod tests {
         }
     }
 
-    /// `register_into` is idempotent: re-calling overwrites the
-    /// prior registration for the same `TransportKind`. Per
-    /// `Registry::register` discipline (§F.2), the second
-    /// `register_into` call must yield the new handler, not the
-    /// old one.
+    /// `register_into` returns the same `Arc<dyn Handler>` across
+    /// re-calls — the process-global `OnceLock<Arc<dyn Handler>>`
+    /// ensures pointer-identity at the `Arc` fat-pointer level
+    /// (Arc::ptr_eq verifies the underlying allocation is the same
+    /// instance, not just the same logical type). Downstream
+    /// `Registry::register` calls overwrite the registration slot
+    /// in the supplied `Registry`, but the shared `Arc` is reused
+    /// each time so the registration does NOT allocate a fresh
+    /// heap slot on the second `register_into` call.
     #[test]
-    fn register_into_is_idempotent_overwrites_prior_handler() {
+    fn register_into_returns_idempotent_shared_arc_via_once_lock() {
         let reg: Registry = Registry::default();
         register_into(&reg);
         let first = reg
@@ -263,10 +279,9 @@ mod tests {
         let second = reg
             .lookup(&TransportKind::UnixSocket)
             .expect("second registered");
-        assert_eq!(
-            first.as_ref() as *const dyn Handler,
-            second.as_ref() as *const dyn Handler,
-            "register_into must be idempotent — second call yields same handler"
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "register_into must reuse the OnceLock-allocated Arc across calls"
         );
     }
 

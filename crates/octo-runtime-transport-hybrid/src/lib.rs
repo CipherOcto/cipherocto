@@ -115,6 +115,11 @@ impl HybridHandler {
 /// Panics if the inner registry `RwLock` is poisoned (writer
 /// panicked holding the lock). Per fail-CLOSED discipline, the
 /// caller cannot recover from a poisoned registry.
+///
+/// Panics if `primary_kind == fallback_kind` (degenerate hybrid:
+/// primary dispatch and fallback dispatch would target the same
+/// handler). The init-time panic surfaces misuse loud and early
+/// rather than papering over it at `bind()` time.
 pub fn register_into(
     registry: Arc<Registry>,
     dispatch_kind: TransportKind,
@@ -484,5 +489,22 @@ mod tests {
         );
         let got = reg.lookup(&TransportKind::Raw(scheme_id));
         assert!(got.is_some(), "hybrid handler must be lookup-able");
+    }
+
+    /// `register_into` panics when `primary_kind == fallback_kind`
+    /// (degenerate hybrid rejected at init time). The panic
+    /// surfaces misuse loud and early rather than papering over it
+    /// at `bind()` time — see the `# Panics` block on
+    /// `register_into`.
+    #[test]
+    #[should_panic(expected = "degenerate hybrid")]
+    fn register_into_panics_on_degenerate_hybrid() {
+        let reg = Arc::new(Registry::default());
+        register_into(
+            reg,
+            TransportKind::Raw(uuid::Uuid::from_bytes([0x77; 16])),
+            TransportKind::InProcess,
+            TransportKind::InProcess,
+        );
     }
 }

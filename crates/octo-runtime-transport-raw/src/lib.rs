@@ -105,6 +105,24 @@ mod tests {
     use octo_runtime::handle::{AttachPayload, RuntimeEvent, Signature, Transport};
     use uuid::Uuid;
 
+    /// Build a dummy `AttachHandle` for tests targeting a given
+    /// Raw scheme UUID. Hoists the 8-field literal so test bodies
+    /// stay focused on the contract assertion (per-extension crate
+    /// discipline — intra-crate fixture helpers allowed).
+    fn dummy_token(scheme_id: Uuid) -> AttachHandle {
+        AttachHandle {
+            session_id: [0; 32],
+            mint_timestamp_unix: 0,
+            ttl_unix: 0,
+            signature: Signature([0; 64]),
+            payload: AttachPayload {
+                agent_id: Uuid::nil(),
+                since_cursor: 0,
+            },
+            transport: Transport::raw(scheme_id, None),
+        }
+    }
+
     /// `RawHandler::bind` returns the substrate-side fail-CLOSED
     /// `AttachError::Internal("...not configured...")` for an
     /// unconfigured scheme UUID. Closes TV-AGT25 substrate-side
@@ -113,17 +131,7 @@ mod tests {
     fn bind_unconfigured_scheme_returns_internal_error() {
         let scheme_id = Uuid::from_bytes([0x42; 16]);
         let h = RawHandler::new(scheme_id);
-        let token = AttachHandle {
-            session_id: [0xab; 32],
-            mint_timestamp_unix: 0,
-            ttl_unix: 0,
-            signature: Signature([0x42; 64]),
-            payload: AttachPayload {
-                agent_id: Uuid::nil(),
-                since_cursor: 0,
-            },
-            transport: Transport::raw(scheme_id, None),
-        };
+        let token = dummy_token(scheme_id);
         let res = h.bind(&token, 0);
         match res {
             Err(AttachError::Internal(reason)) => {
@@ -174,7 +182,9 @@ mod tests {
     /// same `scheme_id` (last-write wins per `Registry::register`
     /// discipline). After overwrite, the substrate's lookup
     /// yields the custom handler, not the fail-CLOSED
-    /// `RawHandler`.
+    /// `RawHandler`. Mirrors the substrate's
+    /// `registry_register_overwrites_prior_handler` test pattern
+    /// (two distinct handler structs).
     #[test]
     fn register_into_overwrites_fail_closed_default() {
         let scheme_id = Uuid::from_bytes([0xcd; 16]);
@@ -189,26 +199,15 @@ mod tests {
         let pre = reg
             .lookup(&TransportKind::Raw(scheme_id))
             .expect("pre-registered");
-        let res = pre.bind(
-            &AttachHandle {
-                session_id: [0; 32],
-                mint_timestamp_unix: 0,
-                ttl_unix: 0,
-                signature: Signature([0; 64]),
-                payload: AttachPayload {
-                    agent_id: Uuid::nil(),
-                    since_cursor: 0,
-                },
-                transport: Transport::raw(scheme_id, None),
-            },
-            0,
-        );
+        let res = pre.bind(&dummy_token(scheme_id), 0);
         assert!(
             matches!(res, Err(AttachError::Internal(_))),
             "pre-registered handler must be fail-CLOSED, got {res:?}"
         );
 
-        // Overwrite with a custom handler.
+        // Overwrite with a custom handler (distinct from RawHandler
+        // so the post-registration call exercises the overwrite
+        // contract, not the OnceLock identity guarantee).
         #[derive(Debug)]
         struct CustomHandler;
         impl Handler for CustomHandler {
@@ -227,20 +226,7 @@ mod tests {
         let post = reg
             .lookup(&TransportKind::Raw(scheme_id))
             .expect("post-registered");
-        let res = post.bind(
-            &AttachHandle {
-                session_id: [0; 32],
-                mint_timestamp_unix: 0,
-                ttl_unix: 0,
-                signature: Signature([0; 64]),
-                payload: AttachPayload {
-                    agent_id: Uuid::nil(),
-                    since_cursor: 0,
-                },
-                transport: Transport::raw(scheme_id, None),
-            },
-            0,
-        );
+        let res = post.bind(&dummy_token(scheme_id), 0);
         match res {
             Ok(attached) => {
                 assert_eq!(
@@ -265,12 +251,15 @@ mod tests {
         );
     }
 
-    /// Sanity-check the substrate-visible `RuntimeEvent` type is
-    /// reachable from this Layer D crate (catches substrate
-    /// re-export drift).
+    /// Compile-time check that the substrate-visible `RuntimeEvent`
+    /// type remains reachable from this Layer D crate (catches
+    /// substrate re-export drift across the Layer D dep edge).
     #[test]
     fn runtime_event_is_reachable_from_layer_d_crate() {
-        let _ = std::mem::size_of::<RuntimeEvent>();
+        // `const ASSERT` evaluates at compile time; if
+        // `RuntimeEvent` becomes unreachable from this crate the
+        // build breaks before the test runs.
+        const _: usize = std::mem::size_of::<RuntimeEvent>();
     }
 
     /// Helper: builds a dummy `tokio::sync::broadcast::Receiver`

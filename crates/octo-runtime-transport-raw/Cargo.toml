@@ -12,12 +12,6 @@ description = "Raw scheme UUID transport Handler for RFC-0011-c §F.7.2 (Layer D
 # invents a default behavior — this crate ships a fail-CLOSED default
 # that downstream `register_into(registry, scheme_id, custom_handler)`
 # calls override.
-#
-# Layer D extension crate per RFC-0011-c §F.7.2. Depends only on the
-# Layer B substrate (`octo-runtime`) — no `octo-cli` / `octo-wallet`
-# reverse-deps (the per-extension crate pattern enforces one-way
-# dependency direction per [[cipherocto-design-principles]] §Layer
-# direction).
 
 [dependencies]
 octo-runtime = { path = "../octo-runtime", version = "0.1.0" }

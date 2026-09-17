@@ -11,12 +11,6 @@ description = "Hybrid multiplexer transport Handler for RFC-0011-c §F.7.3 (Laye
 # `self.fallback_kind` on primary failure. Pure dispatch — no I/O
 # deps; the multiplexer delegates to handlers already registered in
 # the supplied `Registry`.
-#
-# Layer D extension crate per RFC-0011-c §F.7.3. Depends only on the
-# Layer B substrate (`octo-runtime`) — no `octo-cli` / `octo-wallet`
-# reverse-deps (the per-extension crate pattern enforces one-way
-# dependency direction per [[cipherocto-design-principles]] §Layer
-# direction).
 
 [dependencies]
 octo-runtime = { path = "../octo-runtime", version = "0.1.0" }

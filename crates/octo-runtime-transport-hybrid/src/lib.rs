@@ -134,7 +134,7 @@ pub fn register_into(
     // papering over the misuse at `bind()` time.
     if primary_kind == fallback_kind {
         panic!(
-            "hybrid register_into: primary_kind ({primary_kind}) equals fallback_kind — degenerate hybrid rejected at init time"
+            "hybrid register_into: primary_kind ({primary_kind}) equals fallback_kind, degenerate hybrid rejected at init time"
         );
     }
     // Clone the Arc for the HybridHandler storage first; the
@@ -499,7 +499,7 @@ mod tests {
     /// at `bind()` time — see the `# Panics` block on
     /// `register_into`.
     #[test]
-    #[should_panic(expected = "primary_kind")]
+    #[should_panic(expected = "hybrid register_into: primary_kind")]
     fn register_into_panics_on_degenerate_hybrid() {
         let reg = Arc::new(Registry::default());
         register_into(

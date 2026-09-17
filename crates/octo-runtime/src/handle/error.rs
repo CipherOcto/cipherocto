@@ -129,8 +129,8 @@ pub enum AttachError {
     /// failures that don't fit the typed-discriminator pattern
     /// (handshake failures, multiplex aggregation, connection
     /// failures, configuration errors). CLI exit 64 (additive
-    /// variant routed via the existing `From<AttachError>`
-    /// wildcard arm in `crates/octo-cli/src/error.rs`).
+    /// variant routed via the existing `From<AttachError>` wildcard
+    /// arm (see `crates/octo-cli/src/error.rs`).
     #[error("internal handler error: {0}")]
     Internal(String),
 }

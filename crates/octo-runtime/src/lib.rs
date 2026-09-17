@@ -68,7 +68,8 @@ pub use handle::{
     Transport, TransportKind, EVENT_CHANNEL_CAPACITY,
 };
 pub use persistence::{
-    is_token_revoked, load_event_cursor, persist_event_cursor, revoke_attach_token,
+    install_revocation_store_default_with, is_token_revoked, load_event_cursor,
+    persist_event_cursor, revoke_attach_token,
 };
 pub use spawn::{spawn_agent, EXPECTED_PRE_SPAWN_STATE};
 

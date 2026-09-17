@@ -116,15 +116,11 @@ fn tv_agt27_cross_process_revocation_propagates() {
 }
 
 fn run_child_role() -> ! {
-    // Exit codes below (11/12/13/20/21/30/40) are test-harness
-    // INTERNAL codes for child-process assertion failures. They
-    // numerically overlap with OctoCliError::exit_code slots but
-    // the overlap is benign: orchestrator only checks `.success()`.
-    // A future reader of a failing child's status field should NOT
-    // mis-attribute the cause to the CLI dispatch slot.
-    // Fail-CLOSED per RFC-0011-c §F.7.5 §Failure semantics: any
-    // malformed env input exits non-zero via `fail` before reaching
-    // the role-specific match arm below.
+    // Exit codes (11/12/13/20/21/30/40) are test-harness INTERNAL;
+    // they numerically overlap with OctoCliError slots but the
+    // overlap is benign (orchestrator checks `.success()` only).
+    // Fail-CLOSED per RFC-0011-c §F.7.5: malformed env exits
+    // non-zero via `fail` before reaching the role-specific match arm.
     let ledger_path: std::path::PathBuf = env::var(LEDGER_ENV)
         .map(std::path::PathBuf::from)
         .expect("OCTO_REVOCATION_LEDGER_PATH");

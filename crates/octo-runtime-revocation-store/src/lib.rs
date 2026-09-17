@@ -111,16 +111,13 @@ impl RevocationStore for StoolapRevocationStore {
                 "StoolapRevocationStore poisoned write lock: {e}"
             ))
         })?;
-        // Pre-check `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1`
-        // because the Stoolap fork at rev 527e8eb lacks
-        // `INSERT OR IGNORE` / `INSERT OR REPLACE` syntax per the
-        // substrate-discipline no-unverified-features rule
-        // (RFC-0011-c §F.7.5 substrate additions).
-        let pre_check_sql = "SELECT 1 FROM revocation WHERE session_id = $1 LIMIT 1";
-        let pre_check_params = vec![octo_storage_core::stoolap::Value::blob(session_id.to_vec())];
-        let mut rows = db.query(pre_check_sql, pre_check_params).map_err(|e| {
-            AttachError::PersistenceError(format!("Stoolap pre-check query failed: {e}"))
-        })?;
+        // Pre-check + INSERT + PK-catch idiom — Stoolap fork rev
+        // 527e8eb lacks INSERT OR IGNORE (RFC-0011-c §F.7.5).
+        let mut rows = db
+            .query(SELECT_BY_SESSION_SQL, vec![session_blob(&session_id)])
+            .map_err(|e| {
+                AttachError::PersistenceError(format!("Stoolap pre-check query failed: {e}"))
+            })?;
         if rows.next().is_some() {
             return Ok(());
         }
@@ -128,12 +125,14 @@ impl RevocationStore for StoolapRevocationStore {
         // Insert the revocation row with the current unix-ms
         // timestamp as the audit column.
         let revoked_at_unix = current_unix_secs();
-        let insert_sql = "INSERT INTO revocation (session_id, revoked_at_unix) VALUES ($1, $2)";
         let insert_params = vec![
-            octo_storage_core::stoolap::Value::blob(session_id.to_vec()),
+            session_blob(&session_id),
             octo_storage_core::stoolap::Value::integer(revoked_at_unix),
         ];
-        if let Err(e) = db.execute(insert_sql, insert_params) {
+        if let Err(e) = db.execute(
+            "INSERT INTO revocation (session_id, revoked_at_unix) VALUES ($1, $2)",
+            insert_params,
+        ) {
             // PK violation closes the peer-process race (concurrent revoke between
             // pre-check SELECT and this INSERT); collapsing to Ok(()) preserves
             // idempotency per the trait contract. The pre-check SELECT is a
@@ -163,8 +162,8 @@ impl RevocationStore for StoolapRevocationStore {
                 return true;
             }
         };
-        let sql = "SELECT 1 FROM revocation WHERE session_id = $1 LIMIT 1";
-        let params = vec![octo_storage_core::stoolap::Value::blob(session_id.to_vec())];
+        let sql = SELECT_BY_SESSION_SQL;
+        let params = vec![session_blob(session_id)];
         match db.query(sql, params) {
             Ok(mut rows) => rows.next().is_some(),
             Err(e) => {
@@ -181,6 +180,18 @@ impl RevocationStore for StoolapRevocationStore {
     fn kind(&self) -> &'static str {
         "StoolapRevocationStore"
     }
+}
+
+/// `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1` — the
+/// canonical existence check used by both `revoke_attach_token`
+/// (pre-check fast path) and `is_token_revoked`.
+const SELECT_BY_SESSION_SQL: &str = "SELECT 1 FROM revocation WHERE session_id = $1 LIMIT 1";
+
+/// Wrap a `SessionId` (32 bytes) as a Stoolap `Value::blob` for use
+/// as a `$1` parameter. Centralized so the call sites don't repeat
+/// the `Value::blob(...to_vec())` incantation.
+fn session_blob(session_id: &SessionId) -> octo_storage_core::stoolap::Value {
+    octo_storage_core::stoolap::Value::blob(session_id.to_vec())
 }
 
 /// Path computation: `$CIPHEROCTO_DATA_DIR/revocation.stoolap`, or

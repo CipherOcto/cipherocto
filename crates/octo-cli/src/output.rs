@@ -30,7 +30,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::redact::RedactionContext;
+pub use crate::redact::RedactionContext;
 
 /// 32-byte hex value (RFC-0011 §Hex32 newtype).
 ///

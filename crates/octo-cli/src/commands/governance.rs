@@ -25,19 +25,18 @@
 
 use clap::Subcommand;
 use octo_governance::{
-    attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationLog, AttestationReceipt,
-    CapabilityToken, GovernanceError, GovernanceSession, GovernanceSnapshotError,
-    OctoGovernanceSnapshotCache, ProposalFilter, ProposalState as SubstrateProposalState,
-    QuorumProjection, SnapshotView, SystemClock, VoteChoice, VoteLog, VoteReceipt,
-    TTL_SNAPSHOT_SECONDS,
+    attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
+    GovernanceError, GovernanceSession, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
+    ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
+    SystemClock, VoteChoice, VoteReceipt, TTL_SNAPSHOT_SECONDS,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 #[cfg(test)]
 use crate::flags::{OperatorModeFlags, OutputFlags};
-use crate::output::OutputEnvelope;
+use crate::output::{OutputEnvelope, RedactionContext};
 use crate::Octo;
 
 /// Wallet-backed `CapabilitySigner` adapter (RFC-0011-g §7.4
@@ -468,31 +467,6 @@ fn map_governance_error(err: GovernanceError) -> OctoCliError {
     }
 }
 
-/// In-memory ledger store for Phase 2 CLI surface verification
-/// (persistence substrate lands as a follow-on mission). The
-/// ledger lives for the duration of the CLI invocation. Audit
-/// substrate persistence (RFC-0862 §Data Structures) replaces
-/// this with the Stoolap-backed path on Phase 3 wiring.
-///
-/// Note (R2.5.3): The substrate v2 surface (`attest_v2` /
-/// `vote_v2`) carries its own state via the caller-owned
-/// `GovernanceSession`, so the CLI no longer needs to
-/// construct per-handler ledgers + capability registries.
-/// This struct is kept as a no-op placeholder for now; the
-/// follow-on persistence substrate will replace it.
-#[derive(Default)]
-struct GovernanceLedgers {
-    _attest: Mutex<AttestationLog>,
-    _vote: Mutex<VoteLog>,
-}
-
-impl GovernanceLedgers {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// `octo governance attest` handler (RFC-0011-g §7.4 substrate
 /// `attest_v2` signature). Per RFC-0011-c §Roles and Authorities:
 /// read-only role `Auditor` is denied at the dispatch boundary
@@ -513,8 +487,6 @@ fn attest_handler(
     confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    let _ = cli;
-
     // Mode + confirmation gates.
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
         return Err(OctoCliError::AuditorDenied {
@@ -614,7 +586,15 @@ fn attest_handler(
     // companion-field redaction pattern).
     let payload = render_attest_output(receipt);
     let envelope = OutputEnvelope::new("octo.governance.attest.v1", payload);
-    let _ = envelope;
+    envelope
+        .render_with_redaction(
+            cli.output.json,
+            cli.output.no_color,
+            &RedactionContext::new(),
+        )
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
+        })?;
     Ok(())
 }
 
@@ -635,8 +615,6 @@ fn vote_handler(
     confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    let _ = cli;
-
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
         return Err(OctoCliError::AuditorDenied {
             command: "octo governance vote".to_string(),
@@ -669,6 +647,18 @@ fn vote_handler(
     }
 
     let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
+    // weight_bps must be bounded at 10_000 (100%): a single voter
+    // cannot exceed full quorum regardless of stake per
+    // RFC-0011-g §Weight Bounding + token-design §12.5 dual-stake
+    // invariant. Substrate rejects silently via InvalidWeight;
+    // we fail-fast at the CLI boundary for operator clarity.
+    if weight_bps > 10_000 {
+        return Err(OctoCliError::VoteRejected {
+            reason: sanitize_substrate_error(&format!(
+                "weight_bps {weight_bps} exceeds 10_000 bps cap"
+            )),
+        });
+    }
     let choice = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
     let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
         Some(parse_hex_32("--snapshot-id", s)?)
@@ -716,7 +706,15 @@ fn vote_handler(
         // current tally state at append time.
         render_vote_output(receipt, (projection.approval_bps, projection.rejection_bps)),
     );
-    let _ = envelope;
+    envelope
+        .render_with_redaction(
+            cli.output.json,
+            cli.output.no_color,
+            &RedactionContext::new(),
+        )
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
+        })?;
     Ok(())
 }
 

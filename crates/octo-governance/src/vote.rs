@@ -130,14 +130,20 @@ impl CapabilityRegistry {
 
     /// Resolve a `voter_cap_id` to its `CapabilitySigner`. Returns
     /// `GovernanceError::UnknownCapability` on miss.
+    ///
+    /// Fail-closed on mutex poisoning: a prior panicking holder
+    /// surfaces as `GovernanceError::Internal { reason }` rather
+    /// than aborting the substrate ledger reader (RFC-0011-g
+    /// §Error Handling fail-closed invariant — substrate must
+    /// never panic on the caller).
     pub fn resolve(
         &self,
         voter_cap_id: &str,
     ) -> Result<Arc<dyn CapabilitySigner>, GovernanceError> {
-        self.caps
-            .lock()
-            .expect("capability registry mutex poisoned")
-            .get(voter_cap_id)
+        let caps = self.caps.lock().map_err(|e| GovernanceError::Internal {
+            reason: format!("capability registry mutex poisoned: {e}"),
+        })?;
+        caps.get(voter_cap_id)
             .cloned()
             .ok_or_else(|| GovernanceError::UnknownCapability {
                 voter_cap_id: voter_cap_id.to_string(),

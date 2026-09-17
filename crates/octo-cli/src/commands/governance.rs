@@ -24,12 +24,12 @@
 //! RFC-0011-g §Error Handling.
 
 use clap::Subcommand;
-#[allow(deprecated)]
 use octo_governance::{
-    attest, snapshot, vote, AttestationLog, AttestationReceipt, CapabilityRegistry,
-    CapabilitySigner, GovernanceError, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
-    ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
-    VoteChoice, VoteLog, VoteReceipt, TTL_SNAPSHOT_SECONDS,
+    attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationLog, AttestationReceipt,
+    CapabilityToken, GovernanceError, GovernanceSession, GovernanceSnapshotError,
+    OctoGovernanceSnapshotCache, ProposalFilter, ProposalState as SubstrateProposalState,
+    QuorumProjection, SnapshotView, SystemClock, VoteChoice, VoteLog, VoteReceipt,
+    TTL_SNAPSHOT_SECONDS,
 };
 use std::sync::{Arc, Mutex};
 
@@ -39,18 +39,6 @@ use crate::flags::OperatorMode;
 use crate::flags::{OperatorModeFlags, OutputFlags};
 use crate::output::OutputEnvelope;
 use crate::Octo;
-
-/// Unix-seconds now — wall clock. RFC-0011-g §7.4 substrate
-/// supplies `appended_at_unix` / `recorded_at_unix` at append
-/// time; the CLI reads `SystemTime::now()` per the substrate's
-/// "substrate must NOT carry a clock" constraint (Layer A frozen
-/// per `cipherocto-design-principles`).
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
 
 /// Wallet-backed `CapabilitySigner` adapter (RFC-0011-g §7.4
 /// substrate signature `&dyn CapabilitySigner`). Wraps the
@@ -485,26 +473,33 @@ fn map_governance_error(err: GovernanceError) -> OctoCliError {
 /// ledger lives for the duration of the CLI invocation. Audit
 /// substrate persistence (RFC-0862 §Data Structures) replaces
 /// this with the Stoolap-backed path on Phase 3 wiring.
+///
+/// Note (R2.5.3): The substrate v2 surface (`attest_v2` /
+/// `vote_v2`) carries its own state via the caller-owned
+/// `GovernanceSession`, so the CLI no longer needs to
+/// construct per-handler ledgers + capability registries.
+/// This struct is kept as a no-op placeholder for now; the
+/// follow-on persistence substrate will replace it.
 #[derive(Default)]
 struct GovernanceLedgers {
-    attest: Mutex<AttestationLog>,
-    vote: Mutex<VoteLog>,
-    registry: Mutex<CapabilityRegistry>,
+    _attest: Mutex<AttestationLog>,
+    _vote: Mutex<VoteLog>,
 }
 
 impl GovernanceLedgers {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self::default()
     }
 }
 
 /// `octo governance attest` handler (RFC-0011-g §7.4 substrate
-/// `attest()` signature). Per RFC-0011-c §Roles and Authorities:
+/// `attest_v2` signature). Per RFC-0011-c §Roles and Authorities:
 /// read-only role `Auditor` is denied at the dispatch boundary
 /// before the confirmation gate; `Human` / `Ci` / `Dev` modes
 /// require `--confirm` for mutating commands (parent §Error
 /// Handling gate).
-#[allow(clippy::too_many_arguments, deprecated)]
+#[allow(clippy::too_many_arguments)]
 fn attest_handler(
     subject_did: String,
     kind_ref: String,
@@ -592,15 +587,14 @@ fn attest_handler(
     })?;
     let signer = WalletSignerAdapter::new(identity);
     let signer_did = signer.signer_did();
-    let appended_at_unix = now_unix_secs();
 
-    // Substrate call.
-    let ledgers = GovernanceLedgers::new();
-    let log = &ledgers.attest;
-    let log_ref = &log.lock().expect("attest log mutex poisoned");
-    let signer_dyn: &dyn CapabilitySigner = &signer;
-    let receipt = attest(
-        log_ref,
+    // Substrate v2 call: build a GovernanceSession with the
+    // production SystemClock and pass the session + signer by
+    // reference. The substrate reads the clock via the session
+    // rather than receiving an appended_at_unix argument.
+    let session = GovernanceSession::new(&signer_did, Arc::new(SystemClock));
+    let receipt = attest_v2(
+        &session,
         &subject_did,
         &kind_ref,
         evidence.as_deref(),
@@ -608,8 +602,7 @@ fn attest_handler(
         expires_at_unix,
         snapshot_id.as_ref(),
         allow_stale,
-        signer_dyn,
-        appended_at_unix,
+        &signer,
         &signer_did,
     )
     .map_err(map_governance_error)?;
@@ -626,10 +619,10 @@ fn attest_handler(
 }
 
 /// `octo governance vote` handler (RFC-0011-g §7.4 substrate
-/// `vote()` signature). Confirmation + auditor gates identical
+/// `vote_v2` signature). Confirmation + auditor gates identical
 /// to the `attest` handler above (parent §Error Handling +
 /// RFC-0011-c §Roles and Authorities).
-#[allow(clippy::too_many_arguments, deprecated)]
+#[allow(clippy::too_many_arguments)]
 fn vote_handler(
     proposal_id_hex: String,
     vote_choice: String,
@@ -693,52 +686,35 @@ fn vote_handler(
     })?;
     let signer = WalletSignerAdapter::new(identity);
     let signer_did = signer.signer_did();
-    let recorded_at_unix = now_unix_secs();
 
-    let ledgers = GovernanceLedgers::new();
-    let log = &ledgers.vote;
-    let registry = &ledgers.registry;
-    let adapter_for_registry = WalletSignerAdapter::new(
-        // Reconstruct for registry ownership; the original
-        // `signer` is consumed in `vote()` via `&dyn`. The
-        // registry needs its own Arc-wrapped adapter for
-        // resolution; the substrate takes
-        // `&CapabilityRegistry` for read-only resolution
-        // and the wallet adapter is consistent on both paths.
-        octo_wallet::active_identity(&store).map_err(|e| match e {
-            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-        })?,
-    );
-    let signer_arc: Arc<dyn CapabilitySigner> = Arc::new(adapter_for_registry);
-    registry
-        .lock()
-        .expect("registry mutex poisoned")
-        .register(voter_cap_id.clone(), signer_arc);
-    let log_ref = &log.lock().expect("vote log mutex poisoned");
-    let registry_ref = &registry.lock().expect("registry mutex poisoned");
-    let (receipt, _projection): (VoteReceipt, QuorumProjection) = vote(
-        log_ref,
-        registry_ref,
+    // Substrate v2 call: build a GovernanceSession with the
+    // production SystemClock, register the wallet-backed
+    // CapabilitySigner under the supplied voter_cap_id, build
+    // a CapabilityToken from (voter_cap_id, signer_did,
+    // weight_bps), and call vote_v2 which reads the clock via
+    // the session.
+    let session = GovernanceSession::new(&signer_did, Arc::new(SystemClock));
+    let signer_arc: Arc<dyn octo_governance::attest::CapabilitySigner> = Arc::new(signer);
+    session.register_capability(&voter_cap_id, signer_arc);
+    let token = CapabilityToken::new(&voter_cap_id, &signer_did, weight_bps);
+    let (receipt, projection): (VoteReceipt, QuorumProjection) = vote_v2(
+        &session,
         proposal_id,
-        &signer_did,
         choice,
-        weight_bps,
-        &voter_cap_id,
+        &token,
+        None,
         snapshot_id.as_ref(),
         allow_stale,
-        recorded_at_unix,
     )
     .map_err(map_governance_error)?;
 
     let envelope = OutputEnvelope::new(
         "octo.governance.vote.v1",
-        // Quorum projection surfaces in the helper; the
-        // recorded CLI surfaces via `render_vote_output` when
-        // the substrate wiring matures (Phase 2 v1 envelope
-        // carries the receipt only).
-        render_vote_output(receipt, (0, 10_000)),
+        // Substrate v2 surfaces the QuorumProjection from the
+        // substrate itself; the CLI envelope carries both
+        // receipt + projection so downstream consumers see the
+        // current tally state at append time.
+        render_vote_output(receipt, (projection.approval_bps, projection.rejection_bps)),
     );
     let _ = envelope;
     Ok(())

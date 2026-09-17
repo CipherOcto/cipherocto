@@ -118,18 +118,11 @@ impl RevocationStore for StoolapRevocationStore {
         // (RFC-0011-c §F.7.5 substrate additions).
         let pre_check_sql = "SELECT 1 FROM revocation WHERE session_id = $1 LIMIT 1";
         let pre_check_params = vec![octo_storage_core::stoolap::Value::blob(session_id.to_vec())];
-        match db.query(pre_check_sql, pre_check_params) {
-            Ok(mut rows) => {
-                // If a row exists, idempotent no-op.
-                if rows.next().is_some() {
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                return Err(AttachError::PersistenceError(format!(
-                    "Stoolap pre-check query failed: {e}"
-                )));
-            }
+        let mut rows = db.query(pre_check_sql, pre_check_params).map_err(|e| {
+            AttachError::PersistenceError(format!("Stoolap pre-check query failed: {e}"))
+        })?;
+        if rows.next().is_some() {
+            return Ok(());
         }
 
         // Insert the revocation row with the current unix-ms

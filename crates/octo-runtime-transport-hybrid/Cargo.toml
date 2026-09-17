@@ -1,0 +1,32 @@
+[package]
+name = "octo-runtime-transport-hybrid"
+version = "0.1.0"
+edition = "2021"
+description = "Hybrid multiplexer transport Handler for RFC-0011-c §F.7.3 (Layer D extension crate)"
+
+# Layer D extension crate per [[cipherocto-design-principles]] §Extension
+# over enumeration + §per-extension crates + registry. Implements a
+# `Handler` that multiplexes across two registered handlers: primary
+# dispatch via `self.primary_kind`, fallback dispatch via
+# `self.fallback_kind` on primary failure. Pure dispatch — no I/O
+# deps; the multiplexer delegates to handlers already registered in
+# the supplied `Registry`.
+#
+# Layer D extension crate per RFC-0011-c §F.7.3. Depends only on the
+# Layer B substrate (`octo-runtime`) — no `octo-cli` / `octo-wallet`
+# reverse-deps (the per-extension crate pattern enforces one-way
+# dependency direction per [[cipherocto-design-principles]] §Layer
+# direction).
+
+[dependencies]
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
+
+[dev-dependencies]
+# Tokio for the test harness's `dummy_broadcast_rx` helper (builds
+# a `tokio::sync::broadcast::channel` to satisfy
+# `AttachedSession::broadcast_rx` without depending on a live
+# `RuntimeHandle`).
+tokio = { version = "1.35", features = ["sync", "rt", "macros"] }
+# Uuid for the test fixture (AttachPayload.agent_id + Raw scheme
+# UUIDs).
+uuid = { version = "1", features = ["v4"] }

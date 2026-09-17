@@ -121,6 +121,20 @@ pub enum AttachError {
         /// reference).
         recorded_cursor: u64,
     },
+
+    /// Substrate-internal failure surfaced as a substrate-visible
+    /// `AttachError` rather than a typed-discriminator. Used by
+    /// Layer D extension `Handler` impls (`octo-runtime-transport-unix`,
+    /// `octo-runtime-transport-hybrid`, …) for protocol-level
+    /// failures that don't fit the typed-discriminator pattern
+    /// (handshake failures, multiplex aggregation, connection
+    /// failures, configuration errors). CLI exit 64 (additive
+    /// typed-discriminator variant per the §F.7 follow-on amendment
+    /// paired with this crate's `AttachError::Internal(String)`
+    /// addition; routed via the existing `From<AttachError>`
+    /// wildcard arm in `crates/octo-cli/src/error.rs`).
+    #[error("internal handler error: {0}")]
+    Internal(String),
 }
 
 /// Persistence-layer error envelope (Stoolap cursor store).
@@ -248,5 +262,12 @@ mod tests {
         assert!(s.contains("replay"), "{s}");
         assert!(s.contains("1000"), "{s}");
         assert!(s.contains("2000"), "{s}");
+    }
+
+    #[test]
+    fn internal_display_carries_reason() {
+        let e = AttachError::Internal("handshake failed: bad reply".to_string());
+        let s = e.to_string();
+        assert!(s.contains("handshake failed: bad reply"), "{s}");
     }
 }

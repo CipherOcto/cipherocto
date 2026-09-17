@@ -1,0 +1,30 @@
+[package]
+name = "octo-runtime-transport-raw"
+version = "0.1.0"
+edition = "2021"
+description = "Raw scheme UUID transport Handler for RFC-0011-c §F.7.2 (Layer D extension crate)"
+
+# Layer D extension crate per [[cipherocto-design-principles]] §Extension
+# over enumeration + §per-extension crates + registry. The
+# `TransportKind::Raw(Uuid)` variant is a typed UUID escape hatch per
+# the design principle: downstream crates wire their own protocol
+# implementations via the discriminator UUID. The substrate never
+# invents a default behavior — this crate ships a fail-CLOSED default
+# that downstream `register_into(registry, scheme_id, custom_handler)`
+# calls override.
+#
+# Layer D extension crate per RFC-0011-c §F.7.2. Depends only on the
+# Layer B substrate (`octo-runtime`) — no `octo-cli` / `octo-wallet`
+# reverse-deps (the per-extension crate pattern enforces one-way
+# dependency direction per [[cipherocto-design-principles]] §Layer
+# direction).
+
+[dependencies]
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
+# Typed UUID discriminator for `RawHandler::scheme_id` (RFC-0011-c
+# §F.2 typed UUID escape hatch for `TransportKind::Raw(Uuid)`).
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# Tokio for the test harness's `dummy_broadcast_rx` helper.
+tokio = { version = "1.35", features = ["sync", "rt", "macros"] }

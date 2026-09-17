@@ -866,8 +866,96 @@ Every successful `octo agent run --detach --token-file <path>` write produces to
 
 - **Session-registry-wiring for `InProcessHandler::bind`** — the `InProcessHandler` currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` exit 56 in release) per §F.2 step (e) deferral. Successful cross-process `attach --token-file` requires the session-registry-wiring follow-on amendment (substrate-side: register `session_id → Arc<HandleInner>` in the process-singleton registry on `spawn_agent`; cli-side: unblocks the happy-path attach TV). The CLI dispatch surface wired in §F.6.1-§F.6.2 is substrate-faithful; the missing wiring is purely substrate-side. Follow-on amendment paired mission (companion to this one) lands the registry write in `spawn_agent` + the `InProcessHandler::bind` dispatch lookup.
 - **Replay typed-discriminator variant** — added in the §9.7 follow-on amendment (exit 61; typed-discriminator `ReplayDetected { since_unix, recorded_cursor }`). Removed from this out-of-scope list per §9.7 amendment + §9.8 row extension (39-61).
-- **Hybrid `node_type` placeholder** — populated by a future mission that consumes the substrate's `Transport::Raw(Uuid)` extension seam.
-- **UnixSocket + Raw extension Layer D crates** — register handlers into `HANDLE_TRANSPORT_REGISTRY` via the per-extension crate + registry pattern per [[cipherocto-design-principles]] §Extension over enumeration.
+- **Hybrid `node_type` placeholder** — populated by a future mission that consumes the substrate's `Transport::Raw(Uuid)` extension seam. Landed via the `octo-runtime-transport-hybrid` extension crate per §F.7.3 (Phase B follow-on cycle).
+- **UnixSocket + Raw extension Layer D crates** — register handlers into `HANDLE_TRANSPORT_REGISTRY` via the per-extension crate + registry pattern per [[cipherocto-design-principles]] §Extension over enumeration. Landed via §F.7.1 (`octo-runtime-transport-unix`) + §F.7.2 (`octo-runtime-transport-raw`) extension crates (Phase B follow-on cycle).
+
+### §F.7 Layer D Extension Crates
+
+The Layer D extension crates implement the `Handler` trait per [[cipherocto-design-principles]] §per-extension crates + registry pattern. Three crates ship as the Phase B follow-on cycle:
+
+- `octo-runtime-transport-unix` — Unix-domain socket transport
+- `octo-runtime-transport-raw` — Raw scheme UUID transport (extension seam)
+- `octo-runtime-transport-hybrid` — Hybrid multiplexer wrapping two sub-Handlers
+
+Each crate owns its transport-protocol I/O (filesystem resolution, socket connect, scheme resolution). The core `octo-runtime` stays filesystem-free + socket-IO-free per §Layer direction (substrate stays unaware of how a `Handler` impl resolves a `Transport` payload).
+
+Per-extension crate pattern:
+
+1. **Trait in core** — `octo_runtime::handle::transport::Handler` (existing, single-method `bind` per §F.2)
+2. **Each extension = own crate** — Layer D crates implement the trait independently
+3. **Registry in core** — `HANDLE_TRANSPORT_REGISTRY: OnceLock<Registry>` (existing, §F.2)
+4. **Extensions register at startup** — `pub fn register_into(registry: &Registry)` init fn exposed by each crate + consumed by `octo-cli` (or downstream consumer crate) at startup
+5. **Core code dispatches via registry lookup** — `attach_with_token` step (e) per §F.2
+6. **Core unchanged when new extensions land** — new transports register via a registry call, no central `match` edit in `attach_with_token`
+
+#### §F.7.1 — `octo-runtime-transport-unix`
+
+Layer D extension crate at `crates/octo-runtime-transport-unix/`:
+
+- `Cargo.toml`: `octo-runtime = { path = "../octo-runtime", version = "0.1.0" }` (Layer B sibling dep) + `tokio = { version = "1.35", features = ["net", "rt", "sync", "macros"] }` (Layer D owned I/O deps). Layer model = D. No `octo-cli` or `octo-wallet` deps (Layer D does not reach into Layer C).
+- `pub struct UnixSocketHandler` (unit struct) — implements `Handler` trait
+- `fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — **Phase B scope (current):** resolves `token.transport.addr` (Unix-domain socket path string) for the missing-addr check, then fails-CLOSED with `AttachError::Internal("cross-process event bridge not implemented...")` until the Phase C follow-on amendment wires the server-side event piping. **Phase C scope (paired follow-on):** performs protocol handshake (sends token canonical bytes + `since_unix`; receives `event_cursor` reply); returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is subscribed from a local `tokio::sync::broadcast::Sender<RuntimeEvent>` the server-side process pipes events into. The cross-process event bridging mechanism is a Layer D concern per §F.7.4.
+- Failure modes map to the new `AttachError::Internal(String)` substrate variant (additive, paired with this amendment — see §F.7.5 below for the substrate-error contract amendment): `Internal("...requires an addr...")` when `token.transport.addr` is `None`; `Internal("...cross-process event bridge not implemented...")` until Phase C lands. No other typed-discriminator variants for protocol-level errors are introduced — typed-discriminator additions remain a future-work follow-on if/when operator observability requires it.
+- `pub fn register_into(registry: &Registry)` — convenience init fn that registers `TransportKind::UnixSocket → Arc::new(UnixSocketHandler::default())` into the supplied registry. The shared `Arc<dyn Handler>` is allocated once and cached in a `static OnceLock<Arc<dyn Handler>>` so identity-idempotent re-calls yield pointer-equal `Arc` (per fail-CLOSED + identity discipline for `Registry::register` last-write-wins).
+- TV-AGT23 — `agent attach` multi-process via UnixSocket loopback (inverts from RED exit 59 to GREEN happy path). **Phase B (current):** `UnixSocketHandler::bind` returns `AttachError::Internal("...cross-process event bridge not implemented...")` (the substrate-side fail-CLOSED deferral). **Phase C (paired follow-on):** happy path returns `AttachedSession { event_cursor: 0, broadcast_rx: local-subscribe }`. Operator-facing cross-process test lands in the Phase C follow-on amendment paired with cross-process revocation propagation.
+
+#### §F.7.5 — `AttachError::Internal(String)` additive variant
+
+The Phase B substrate addition (paired with this §F.7 amendment) is the additive `AttachError::Internal(String)` variant in `octo_runtime::handle::error`. Per [[cipherocto-design-principles]] §Extension over enumeration, this is the typed-discriminator escape hatch for Layer D-specific failure reasons that don't fit any existing typed variant (handshake failures, multiplex aggregation, configuration errors). The variant maps via the existing CLI `From<AttachError>` wildcard arm to `OctoCliError::Internal(reason)` (exit 64) — no CLI edits required for the Phase B Layer D additions. The variant is documented at `crates/octo-runtime/src/handle/error.rs` and is added at the end of the `AttachError` enum (after the §9.7 `ReplayDetected` variant).
+
+#### §F.7.2 — `octo-runtime-transport-raw`
+
+Layer D extension crate at `crates/octo-runtime-transport-raw/`:
+
+- `Cargo.toml`: `octo-runtime = { path = "../octo-runtime", version = "0.1.0" }` (no Layer D I/O deps — scheme resolution is opaque to the substrate; downstream crates wire their own protocol). Layer model = D.
+- `pub struct RawHandler { scheme_id: Uuid }` — implements `Handler` trait
+- `fn bind(&self, _token: &AttachHandle, _since_unix: u64) -> Result<AttachedSession, AttachError>` — returns `Err(AttachError::Internal(format!("raw scheme `{scheme_id}` dispatch not configured — downstream crate must register a Handler via octo_runtime_transport_raw::register_into before attach", scheme_id = self.scheme_id)))` per the substrate's fail-CLOSED on unconfigured extension. The Raw escape hatch exists for downstream crates to wire their own protocol — the substrate never invents a default behavior (typed-discriminator + Raw pattern per [[cipherocto-design-principles]] §Extension over enumeration).
+- `pub fn register_into(registry: &Registry, scheme_id: Uuid, handler: Arc<dyn Handler>)` — variant registration helper that lets a downstream crate populate the `scheme_id`-specific dispatch under `TransportKind::Raw(scheme_id)`.
+- TV-AGT25 — `agent attach` via Raw scheme UUID (substrate-side fail-CLOSED test asserts `AttachError::Internal` returned when no downstream crate registered).
+
+#### §F.7.3 — `octo-runtime-transport-hybrid`
+
+Layer D extension crate at `crates/octo-runtime-transport-hybrid/`:
+
+- `Cargo.toml`: `octo-runtime = { path = "../octo-runtime", version = "0.1.0" }` (no Layer D I/O deps — multiplexer is pure dispatch). Layer model = D.
+- `pub struct HybridHandler { primary_kind: TransportKind, fallback_kind: TransportKind, registry: Arc<Registry> }` — implements `Handler` trait. The Hybrid handler owns a reference to the supplied registry (not new handlers) so it can look up the primary + fallback handlers at `bind()` time.
+- `fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — primary lookup via `registry.lookup(self.primary_kind.clone())`; on `Some(primary)`, attempt `primary.bind(token, since_unix)`; on primary failure (substrate error), fallback lookup + `fallback.bind(token, since_unix)`; aggregate error wraps both error variants per §F.4 substrate error contract (the wrapping preserves operator observability of both attempts).
+- `pub fn register_into(registry: Arc<Registry>, dispatch_kind: TransportKind, primary_kind: TransportKind, fallback_kind: TransportKind)` — convenience init fn that registers `HybridHandler::new(primary_kind, fallback_kind, Arc::clone(&registry))` under the caller-chosen `dispatch_kind` discriminator. The `registry` parameter is `Arc<Registry>` (not `&Registry`) because `Registry` does not implement `Clone` (the inner `RwLock` prevents that) — the hybrid needs an owned `Arc<Registry>` to look up primary + fallback handlers at `bind()` time. The hybrid dispatches against the registry it was constructed with — operators register the primary + fallback handlers FIRST, then the hybrid multiplexer under the `dispatch_kind` of their choice.
+- TV-AGT26 — `agent attach` via Hybrid (primary InProcess + fallback UnixSocket) loopback test inverts the multiplexer dispatch from RED to GREEN
+
+#### §F.7.4 — Cross-process event bridging
+
+Cross-process event delivery from the spawn-side runtime to the attach-side `AttachedSession.broadcast_rx` is a Layer D concern, not a substrate concern. The substrate's `session_registry()` (Layer B, module-private `OnceLock<RwLock<HashMap<SessionId, Arc<HandleInner>>>>`) is process-scoped — cross-process propagation lands in RFC-0011-c §Future Work follow-on (Phase C: Stoolap-backed cross-process revocation + cursor store; Phase D: octo-wallet agent operations substrate). Each Layer D extension crate returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is wired by the Layer D crate itself (e.g., unix handler subscribes to a Stoolap pubsub channel for `agent_id` and pipes events into a local broadcast). The substrate does not prescribe the wiring mechanism — that's a Layer D concern per §Layer direction.
+
+### §F.8 Per-Extension Crate Manifest Spec
+
+Per-extension crates follow a uniform manifest template:
+
+```toml
+[package]
+name = "octo-runtime-transport-{unix,raw,hybrid}"
+version = "0.1.0"
+edition = "2021"
+layer = "D"
+
+[dependencies]
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
+# Layer D owned I/O deps as needed (tokio::net for unix, none for raw, none for hybrid)
+```
+
+Module structure per crate:
+
+- `src/lib.rs` — `Handler` impl + `register_into(registry: &Registry)` init fn + tests
+- `tests/` — integration tests (loopback for unix, fail-CLOSED for raw, multiplexer for hybrid)
+
+Workspace integration: each crate added to workspace `Cargo.toml` `[members]` array (the `["crates/*"]` glob covers new `crates/octo-runtime-transport-*` dirs without explicit manifest edit).
+
+Per-extension crate tests verify:
+
+- `Handler` trait wiring (impl signature matches core trait)
+- Registry registration round-trip (`register_into` + `Registry::lookup`)
+- Per-handler error mapping to `AttachError` variants
+- Init fn is idempotent (re-calling `register_into` overwrites prior registration per `Registry::register` discipline per §F.2)
 
 ## Rationale
 

@@ -127,6 +127,7 @@ impl KeySet {
     /// Grace-period key ids in ascending order (diagnostic; not
     /// used by the verify path after the R1.5 grace-fix that
     /// scopes fallback to the claimed `key_id`).
+    #[allow(dead_code)] // diagnostic; tests + future KeySet population policy per RFC-0015-a §6.5
     #[must_use]
     pub fn grace_period(&self) -> Vec<KeyId> {
         self.grace_keys.keys().copied().collect()

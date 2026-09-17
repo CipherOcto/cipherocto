@@ -146,8 +146,9 @@ fn tv_agt27_cross_process_revocation_propagates() {
 }
 
 fn run_child_role() -> ! {
-    let ledger_path_str = env::var(LEDGER_ENV).expect("OCTO_REVOCATION_LEDGER_PATH");
-    let ledger_path = std::path::PathBuf::from(&ledger_path_str);
+    let ledger_path: std::path::PathBuf = env::var(LEDGER_ENV)
+        .map(std::path::PathBuf::from)
+        .expect("OCTO_REVOCATION_LEDGER_PATH");
     let session_id_hex = match env::var(SESSION_ID_ENV) {
         Ok(v) => v,
         Err(e) => {
@@ -209,7 +210,10 @@ fn run_child_role() -> ! {
             std::process::exit(0);
         }
         "operator_side" => {
-            revoke_attach_token(session_id).expect("revoke write");
+            if let Err(e) = revoke_attach_token(session_id) {
+                eprintln!("operator_side FAIL: revoke failed: {e}");
+                std::process::exit(21);
+            }
             // Explicit drop → sqlite3_close → journal flushed + main
             // db file fsynced by the Stoolap fork rev 527e8eb Drop.
             // std::process::exit below bypasses Rust destructors, so
@@ -222,9 +226,7 @@ fn run_child_role() -> ! {
             // WAL+SHM in WAL mode) that may exist. The fsync is
             // best-effort: missing sibling files are normal if the
             // journal was already merged + deleted.
-            if let Ok(f) = std::fs::File::open(&ledger_path) {
-                let _ = f.sync_all();
-            }
+            let _ = std::fs::File::open(&ledger_path).map(|f| f.sync_all());
             for suffix in ["-journal", "-wal", "-shm"] {
                 let sibling = format!("{}{}", ledger_path.display(), suffix);
                 let _ = std::fs::File::open(&sibling).map(|f| f.sync_all());
@@ -233,9 +235,7 @@ fn run_child_role() -> ! {
             // (mtime/size) is durable. POSIX guarantees the
             // directory entry survives a crash after this call.
             if let Some(parent) = ledger_path.parent() {
-                if let Ok(f) = std::fs::File::open(parent) {
-                    let _ = f.sync_all();
-                }
+                let _ = std::fs::File::open(parent).map(|f| f.sync_all());
             }
             std::process::exit(0);
         }

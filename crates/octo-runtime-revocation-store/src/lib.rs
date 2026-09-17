@@ -46,7 +46,8 @@ use octo_runtime::persistence::{RevocationStore, SessionId};
 /// duration (read or write) — Stoolap serializes its own
 /// transactions internally and the `RwLock` here provides
 /// synchronization at the Rust-level trait-method boundary. This
-/// matches the pattern used by `crates/octo-reputation::store::stoolap`.
+/// matches the `octo_reputation::store::stoolap` pattern (per-extension
+/// Layer D adapter mirroring the substrate trait discipline).
 ///
 /// `Debug` is implemented manually because
 /// `octo_storage_core::Database` does not implement `Debug` at the
@@ -162,7 +163,14 @@ impl RevocationStore for StoolapRevocationStore {
             // The substring catch below is what makes the race
             // window idempotent.
             let msg = e.to_string().to_lowercase();
-            if msg.contains("unique") || msg.contains("primary") || msg.contains("duplicate") {
+            // Stoolap fork rev 527e8eb surfaces PK violations as
+            // "UNIQUE constraint failed" (SQLite-family canonical
+            // phrasing) and Stoolap fork-specific duplicate-key
+            // diagnostics use "duplicate". Both substrings land in
+            // this catch. The "primary" arm from prior revisions is
+            // not in the actual error vocabulary — keep this branch
+            // to just the two substrings that fire.
+            if msg.contains("unique") || msg.contains("duplicate") {
                 return Ok(());
             }
             return Err(AttachError::PersistenceError(format!(
@@ -229,7 +237,7 @@ pub fn open_default() -> Result<StoolapRevocationStore, AttachError> {
 }
 
 /// Factory closure entry point used by Layer C (`octo-cli`) to wire
-/// the dependency injection (RFC-0011-c §F.7.5 §CLI wiring block).
+/// the dependency injection (RFC-0011-c §F.7.5 CLI wiring block).
 ///
 /// Returns `Arc<dyn RevocationStore>` for the substrate trait
 /// façade. Does NOT self-register (the substrate's

@@ -247,7 +247,7 @@ pub enum GovernanceAction {
         /// verbatim in the proposal audit log per RFC-0011-g
         /// §Subcommand Taxonomy + §Substrate [ADD] `vote`
         /// signature.
-        #[arg(long, value_name = "TEXT")]
+        #[arg(long, value_name = "text")]
         rationale: Option<String>,
     },
 }
@@ -1072,13 +1072,16 @@ pub struct VoteDryRunPreview {
     pub snapshot_id_hex: Option<String>,
     /// Operator intent flag for stale-override at confirm-time.
     pub allow_stale: bool,
-    /// Operator-supplied `--rationale <text>` (verbatim, per
-    /// RFC-0011-g §Subcommand Taxonomy row `--rationale <text>`).
-    /// Surfaces in the dry-run preview so the operator sees
-    /// exactly the audit-log text they are about to record.
-    /// On the post-confirm path this becomes the 5th argument
-    /// slot of `vote_v2` (load-bearing pin: see
-    /// `vote::tests::vote_v11_rationale_changes_envelope_pk`);
+    /// Operator-supplied `--rationale <text>` mirrored verbatim
+    /// per RFC-0011-g §Subcommand Taxonomy row
+    /// `--rationale <text>`. Carries `None` when the operator
+    /// omits the flag; carries `Some(text)` when supplied. The
+    /// post-confirm substrate wiring is NOT a concern of this
+    /// envelope (the dry-run branch early-returns before any
+    /// `vote_v2` call); see the constructor
+    /// `build_vote_dry_run_preview` + the substrate pin
+    /// `vote::tests::vote_v11_rationale_changes_envelope_pk` for
+    /// the post-confirm wiring.
     pub rationale: Option<String>,
     /// Per-call correlation UUID linking this preview to the
     /// eventual live `VoteOutput` in audit logs. CLI mints a
@@ -1112,10 +1115,10 @@ fn hex32(bytes: &[u8; 32]) -> String {
 /// `vote_v2` append path. The dry-run branch calls this helper
 /// + `OutputEnvelope::render_with_redaction` to serialize.
 ///
-/// The rationale field mirrors the operator `--rationale <text>`
-/// input verbatim per RFC-0011-g §Subcommand Taxonomy; the
-/// post-confirm substrate plumbing is verified by the load-
-/// bearing pin `vote::tests::vote_v11_rationale_changes_envelope_pk`.
+/// The rationale field mirrors operator input verbatim (no
+/// transformation); the substrate-side mirror is verified by
+/// the load-bearing pin
+/// `vote::tests::vote_v11_rationale_changes_envelope_pk`.
 #[must_use]
 fn build_vote_dry_run_preview(
     proposal_id: [u8; 32],
@@ -1769,7 +1772,7 @@ mod tests {
     #[test]
     fn tv_cli_vote_13_dry_run_rationale_surfaces_in_preview_envelope() {
         // C1 (R5.5 fix-sweep) + R6.5 surface verification:
-        // `--rationale <TEXT>` is plumbed from the Vote clap
+        // `--rationale <text>` is plumbed from the Vote clap
         // variant through `vote_handler` into the dry-run preview
         // envelope via `build_vote_dry_run_preview`, and (on the
         // post-confirm path) into the live `vote_v2` substrate
@@ -1799,6 +1802,29 @@ mod tests {
             preview.rationale.as_deref(),
             Some(rationale_input.as_str()),
             "dry-run preview envelope MUST carry rationale verbatim"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_14_dry_run_rationale_absent_when_omitted() {
+        // Symmetric absent-path pin (R7.5 test-coverage MED):
+        // when the operator omits `--rationale <text>` the clap
+        // arg is `None` and the dry-run preview envelope MUST
+        // surface `preview.rationale = None`. AttestDryRunPreview
+        // has no rationale field so no M5 cross-walk parallel
+        // exists; the vote side must self-pin the absent path.
+        let preview = build_vote_dry_run_preview(
+            [0xab; 32],
+            "yes",
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            None,
+        );
+        assert!(
+            preview.rationale.is_none(),
+            "omitted --rationale MUST surface as None on preview envelope"
         );
     }
 

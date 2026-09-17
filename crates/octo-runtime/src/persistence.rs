@@ -239,10 +239,9 @@ fn current_revocation_store() -> Arc<dyn RevocationStore> {
     if let Some(active) = ACTIVE_REVOCATION_STORE.get() {
         return Arc::clone(active);
     }
-    let default = DEFAULT_REVOCATION_STORE
-        .get_or_init(|| Arc::new(InMemoryRevocationStore::default()))
-        .clone();
-    Arc::clone(&default) as Arc<dyn RevocationStore>
+    Arc::clone(
+        DEFAULT_REVOCATION_STORE.get_or_init(|| Arc::new(InMemoryRevocationStore::default())),
+    ) as Arc<dyn RevocationStore>
 }
 
 /// Install an operator-provided revocation store (RFC-0011-c §F.7.5
@@ -380,6 +379,10 @@ pub fn persist_event_cursor(_agent_id: Uuid, _cursor: u64) -> Result<(), Persist
 ///
 /// Returns `PersistenceError::FeatureNotEnabled` so the caller can
 /// surface a substrate-faithful error to the CLI boundary.
+///
+/// # Errors
+/// Always returns `PersistenceError::FeatureNotEnabled` when this
+/// stub is reached (the `octo-runtime-persistence` feature is OFF).
 #[cfg(not(feature = "octo-runtime-persistence"))]
 pub fn persist_event_cursor(_agent_id: Uuid, _cursor: u64) -> Result<(), PersistenceError> {
     Err(PersistenceError::FeatureNotEnabled)
@@ -400,6 +403,10 @@ pub fn load_event_cursor(_agent_id: Uuid) -> Result<Option<u64>, PersistenceErro
 }
 
 /// Load a per-agent cursor (stub when feature OFF).
+///
+/// # Errors
+/// Always returns `PersistenceError::FeatureNotEnabled` when this
+/// stub is reached (the `octo-runtime-persistence` feature is OFF).
 #[cfg(not(feature = "octo-runtime-persistence"))]
 pub fn load_event_cursor(_agent_id: Uuid) -> Result<Option<u64>, PersistenceError> {
     Err(PersistenceError::FeatureNotEnabled)

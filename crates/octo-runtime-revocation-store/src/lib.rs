@@ -141,35 +141,13 @@ impl RevocationStore for StoolapRevocationStore {
             octo_storage_core::stoolap::Value::integer(revoked_at_unix),
         ];
         if let Err(e) = db.execute(insert_sql, insert_params) {
-            // Concurrent-revoke race: a peer process inserted the
-            // same `session_id` between our pre-check SELECT and
-            // this INSERT. The Stoolap fork rev 527e8eb surfaces
-            // the PK violation as a string-formatted error rather
-            // than a typed enum (substrate-discipline
-            // no-unverified-features rule); match the canonical
-            // SQLite-family phrasing. Per the trait contract
-            // documented in `octo_runtime::persistence`, `revoke-2
-            // is a no-op once revoke-1 succeeds` — a concurrent
-            // peer's revocation has the same end state, so
-            // collapsing to Ok(()) preserves idempotency at the
-            // process-boundary race window. All other errors map
-            // to PersistenceError as before.
-            //
-            // Note: the pre-check SELECT above is a fast-path
-            // optimization (avoids the INSERT round-trip + error
-            // path for the common sequential-revoke case). It is
-            // NOT a race eliminator — concurrent writers can
-            // still observe a stale pre-check and collide here.
-            // The substring catch below is what makes the race
-            // window idempotent.
+            // PK violation closes the peer-process race (concurrent revoke between
+            // pre-check SELECT and this INSERT); collapsing to Ok(()) preserves
+            // idempotency per the trait contract. The pre-check SELECT is a
+            // fast-path, not a race eliminator — this catch IS the race fix.
             let msg = e.to_string().to_lowercase();
-            // Stoolap fork rev 527e8eb surfaces PK violations as
-            // "UNIQUE constraint failed" (SQLite-family canonical
-            // phrasing) and Stoolap fork-specific duplicate-key
-            // diagnostics use "duplicate". Both substrings land in
-            // this catch. The "primary" arm from prior revisions is
-            // not in the actual error vocabulary — keep this branch
-            // to just the two substrings that fire.
+            // Stoolap fork rev 527e8eb emits "UNIQUE constraint failed" +
+            // "duplicate"; earlier "primary" arm is dead.
             if msg.contains("unique") || msg.contains("duplicate") {
                 return Ok(());
             }
@@ -249,8 +227,7 @@ pub fn open_default() -> Result<StoolapRevocationStore, AttachError> {
 /// or Stoolap open failure. The substrate wraps this in a
 /// try-install / fall-back-to-default semantic at the API layer.
 pub fn install_default() -> Result<Arc<dyn RevocationStore>, AttachError> {
-    let store = open_default()?;
-    Ok(Arc::new(store))
+    Ok(Arc::new(open_default()?))
 }
 
 /// Bootstrap the `revocation` table on first ledger open (RFC-0011-c

@@ -42,6 +42,18 @@ const LEDGER_ENV: &str = "OCTO_REVOCATION_LEDGER_PATH";
 const SESSION_ID_ENV: &str = "OCTO_REVOCATION_SESSION_ID";
 const EXPECT_REVOKED_ENV: &str = "OCTO_REVOCATION_EXPECT_REVOKED";
 
+/// Harness arg list forwarded to every child process. `--ignored`
+/// is required so the test harness matches our test fn in the
+/// subprocess (without it the child harness would skip the fn
+/// entirely and the child-role branch below would never run).
+const HARNESS_ARGS: &[&str] = &[
+    "--ignored",
+    "--test",
+    "tv_agt27_cross_process_revocation_propagates",
+    "--exact",
+    "--nocapture",
+];
+
 // `#[ignore]` because:
 // (a) The test spawns 3 child processes and takes ~1s, slowing
 //     the default `cargo test` run on every dev iteration.
@@ -78,47 +90,15 @@ fn tv_agt27_cross_process_revocation_propagates() {
 
     let exe = env::current_exe().expect("current_exe");
 
-    // The shared harness arg list. We pass `--ignored` so the test
-    // harness matches the parent process invocation; without this
-    // the child would skip our test fn and the orchestrator branch
-    // would not be reached.
-    let harness_args = [
-        "--ignored",
-        "--test",
-        "tv_agt27_cross_process_revocation_propagates",
-        "--exact",
-        "--nocapture",
-    ];
-
     // 1. spawn_side: baseline observer. Asserts token is NOT revoked.
-    let spawn_side = Command::new(&exe)
-        .args(harness_args)
-        .env(ROLE_ENV, "spawn_side")
-        .env(LEDGER_ENV, &ledger_path)
-        .env(SESSION_ID_ENV, &session_id_hex)
-        .env(EXPECT_REVOKED_ENV, "false")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("spawn spawn_side");
+    let spawn_side = spawn_role(&exe, "spawn_side", &ledger_path, &session_id_hex, false);
     assert!(
         spawn_side.success(),
         "spawn_side child failed: status={spawn_side:?}"
     );
 
     // 2. operator_side: writer. Revokes the session_id in the ledger.
-    let operator_side = Command::new(&exe)
-        .args(harness_args)
-        .env(ROLE_ENV, "operator_side")
-        .env(LEDGER_ENV, &ledger_path)
-        .env(SESSION_ID_ENV, &session_id_hex)
-        .env(EXPECT_REVOKED_ENV, "true")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("spawn operator_side");
+    let operator_side = spawn_role(&exe, "operator_side", &ledger_path, &session_id_hex, true);
     assert!(
         operator_side.success(),
         "operator_side child failed: status={operator_side:?}"
@@ -128,17 +108,7 @@ fn tv_agt27_cross_process_revocation_propagates() {
     // returns true — this is the cross-process visibility check.
     // Without the Stoolap-backed ledger, attach_side would observe
     // false (process-local default) and exit non-zero.
-    let attach_side = Command::new(&exe)
-        .args(harness_args)
-        .env(ROLE_ENV, "attach_side")
-        .env(LEDGER_ENV, &ledger_path)
-        .env(SESSION_ID_ENV, &session_id_hex)
-        .env(EXPECT_REVOKED_ENV, "true")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("spawn attach_side");
+    let attach_side = spawn_role(&exe, "attach_side", &ledger_path, &session_id_hex, true);
     assert!(
         attach_side.success(),
         "attach_side child failed: status={attach_side:?}"
@@ -146,34 +116,37 @@ fn tv_agt27_cross_process_revocation_propagates() {
 }
 
 fn run_child_role() -> ! {
+    // Exit codes used below (11/12/13/20/21/30/40) are test-harness
+    // INTERNAL codes for child-process assertion failures. They
+    // numerically overlap with OctoCliError::exit_code slots in the
+    // CLI dispatch table (`crates/octo-cli/src/error.rs`) but the
+    // overlap is benign: the orchestrator only checks `.success()`
+    // on the child's `ExitStatus`, and child processes never
+    // propagate their exit code as a CLI error. A future reader of
+    // a failing child's status field should NOT mis-attribute the
+    // cause to the CLI dispatch slot.
     let ledger_path: std::path::PathBuf = env::var(LEDGER_ENV)
         .map(std::path::PathBuf::from)
         .expect("OCTO_REVOCATION_LEDGER_PATH");
     let session_id_hex = match env::var(SESSION_ID_ENV) {
         Ok(v) => v,
-        Err(e) => {
-            eprintln!("child FAIL: missing {SESSION_ID_ENV}: {e}");
-            std::process::exit(11);
-        }
+        Err(e) => fail(11, format!("child FAIL: missing {SESSION_ID_ENV}: {e}")),
     };
     let session_id_bytes = match hex::decode(&session_id_hex) {
         Ok(b) => b,
-        Err(e) => {
-            // Fail-CLOSED per RFC-0011-c §F.7.5 §Failure semantics:
-            // log the parse error and exit non-zero. Panic is the
-            // wrong failure mode for a child process orchestrated
-            // by the parent harness.
-            eprintln!("child FAIL: invalid hex in {SESSION_ID_ENV}: {e}");
-            std::process::exit(12);
-        }
+        Err(e) => fail(
+            12,
+            // Fail-CLOSED per RFC-0011-c §F.7.5 §Failure semantics.
+            format!("child FAIL: invalid hex in {SESSION_ID_ENV}: {e}"),
+        ),
     };
     let session_id_bytes_len = session_id_bytes.len();
     let session_id: [u8; 32] = match session_id_bytes.try_into() {
         Ok(b) => b,
-        Err(_) => {
-            eprintln!("child FAIL: session_id wrong length {session_id_bytes_len} (expected 32)");
-            std::process::exit(13);
-        }
+        Err(_) => fail(
+            13,
+            format!("child FAIL: session_id wrong length {session_id_bytes_len} (expected 32)"),
+        ),
     };
     let expect_revoked = env::var(EXPECT_REVOKED_ENV).as_deref() == Ok("true");
     let role = env::var(ROLE_ENV).expect("OCTO_REVOCATION_CROSS_PROCESS_ROLE");
@@ -185,15 +158,10 @@ fn run_child_role() -> ! {
     // process observing another process's revocation through the
     // substrate-level free functions.
     //
-    // Keep a local `store_arc` so the operator-side child can
-    // explicitly drop it before exit. `std::process::exit` bypasses
-    // ALL Rust destructors, which would skip the
-    // `stoolap::Database` Drop (sqlite3_close) and leave the
-    // journal page cache unwritten. Dropping the local Arc
-    // triggers sqlite3_close → journal flush → fsync of the main
-    // db file (per SQLite-family default synchronous=FULL).
-    // The fsync_all() calls below are belt-and-suspenders for
-    // the journal-mode + WAL sibling files.
+    // `store_arc` is kept local so the operator-side match arm can
+    // drop it before `std::process::exit`. Note that drop+exit is
+    // NOT what preserves durability — see the operator-side comment
+    // below.
     let store_arc: Arc<StoolapRevocationStore> =
         Arc::new(StoolapRevocationStore::open_at(&ledger_path).expect("open ledger"));
     let dyn_arc: Arc<dyn RevocationStore> = store_arc.clone();
@@ -204,55 +172,91 @@ fn run_child_role() -> ! {
         "spawn_side" => {
             let revoked = is_token_revoked(&session_id);
             if revoked != expect_revoked {
-                eprintln!("spawn_side FAIL: expected revoked={expect_revoked} got {revoked}");
-                std::process::exit(20);
+                fail(
+                    20,
+                    format!("spawn_side FAIL: expected revoked={expect_revoked} got {revoked}"),
+                );
             }
             std::process::exit(0);
         }
         "operator_side" => {
             if let Err(e) = revoke_attach_token(session_id) {
-                eprintln!("operator_side FAIL: revoke failed: {e}");
-                std::process::exit(21);
+                fail(21, format!("operator_side FAIL: revoke failed: {e}"));
             }
-            // Explicit drop → sqlite3_close → journal flushed + main
-            // db file fsynced by the Stoolap fork rev 527e8eb Drop.
-            // std::process::exit below bypasses Rust destructors, so
-            // we MUST release the Arc first to let Drop run. The
-            // substrate's OnceLock still holds a clone, but the local
-            // handle is what triggers our concrete-type Drop.
+            // drop(store_arc) is decorative: ACTIVE_REVOCATION_STORE still holds
+            // an Arc<dyn> clone, and std::process::exit bypasses all destructors.
+            // Durability comes from the fsync calls below.
             drop(store_arc);
-            // Belt-and-suspenders: fsync the ledger file and any
-            // SQLite-family sibling files (journal in DELETE mode,
-            // WAL+SHM in WAL mode) that may exist. The fsync is
-            // best-effort: missing sibling files are normal if the
-            // journal was already merged + deleted.
-            let _ = std::fs::File::open(&ledger_path).map(|f| f.sync_all());
+            // Belt-and-suspenders fsync of the ledger file, sibling
+            // SQLite-family files (DELETE-mode journal / WAL-mode -wal
+            // + -shm), and the parent directory (POSIX metadata
+            // durability). All best-effort: missing sibling files
+            // are normal if the journal was already merged.
+            best_effort_fsync(&ledger_path);
             for suffix in ["-journal", "-wal", "-shm"] {
-                let sibling = format!("{}{}", ledger_path.display(), suffix);
-                let _ = std::fs::File::open(&sibling).map(|f| f.sync_all());
+                best_effort_fsync(format!("{}{}", ledger_path.display(), suffix));
             }
-            // fsync the parent directory so the file metadata
-            // (mtime/size) is durable. POSIX guarantees the
-            // directory entry survives a crash after this call.
             if let Some(parent) = ledger_path.parent() {
-                let _ = std::fs::File::open(parent).map(|f| f.sync_all());
+                best_effort_fsync(parent);
             }
             std::process::exit(0);
         }
         "attach_side" => {
             let revoked = is_token_revoked(&session_id);
             if revoked != expect_revoked {
-                eprintln!(
-                    "attach_side FAIL: expected revoked={expect_revoked} got {revoked} \
-                     (cross-process write not visible — ledger is process-local)"
+                fail(
+                    30,
+                    format!(
+                        "attach_side FAIL: expected revoked={expect_revoked} got {revoked} \
+                         (cross-process write not visible — ledger is process-local)"
+                    ),
                 );
-                std::process::exit(30);
             }
             std::process::exit(0);
         }
-        other => {
-            eprintln!("unknown role: {other}");
-            std::process::exit(40);
-        }
+        other => fail(40, format!("unknown role: {other}")),
     }
+}
+
+/// Spawn a child process for one cross-process role and return its
+/// exit status. Used for spawn_side + operator_side + attach_side;
+/// only the role label + env vars differ between sites.
+fn spawn_role(
+    exe: &std::path::Path,
+    role: &str,
+    ledger_path: &std::path::Path,
+    session_id_hex: &str,
+    expect_revoked: bool,
+) -> std::process::ExitStatus {
+    Command::new(exe)
+        .args(HARNESS_ARGS)
+        .env(ROLE_ENV, role)
+        .env(LEDGER_ENV, ledger_path)
+        .env(SESSION_ID_ENV, session_id_hex)
+        .env(
+            EXPECT_REVOKED_ENV,
+            if expect_revoked { "true" } else { "false" },
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap_or_else(|e| panic!("spawn {role}: {e}"))
+}
+
+/// Print a child-process failure message to stderr and exit with
+/// the given code. Used for env-var parse failures (11/12/13) and
+/// role-assertion failures (20/21/30/40).
+fn fail(code: i32, msg: impl std::fmt::Display) -> ! {
+    eprintln!("{msg}");
+    std::process::exit(code);
+}
+
+/// Best-effort fsync of a file or directory path. Returns silently
+/// on `File::open` failure (missing sibling files are normal —
+/// the journal may have been merged + deleted). Used for the
+/// ledger file, `-journal` / `-wal` / `-shm` siblings, and the
+/// parent directory.
+fn best_effort_fsync(path: impl AsRef<std::path::Path>) {
+    let _ = std::fs::File::open(path.as_ref()).map(|f| f.sync_all());
 }

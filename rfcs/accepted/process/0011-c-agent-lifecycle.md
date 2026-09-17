@@ -391,7 +391,7 @@ inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-61**
 (post -g's 35-38; 14 base plus 8 follow-on AttachHandle/AttachSession
 per §Follow-on §F.4 mirror (8 unique slots, `InvalidSinceCursor`
 shares slot 53 with `Expired` per amendment-chain shared-slot
-pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.3,
+pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.1,
 plus 1 boundary-parse `InvalidSessionIdHex` per §F.6, plus 1
 typed-discriminator `ReplayDetected` per §9.7 — totaling
 **25 variants across 22 occupied slots** in the 23-slot range
@@ -894,7 +894,7 @@ are additive to the v4 surface.
 Per the slot allocation table, RFC-0011-c consumes slots 39-61
 (post -g's 35-38; 14 base plus 8 follow-on AttachHandle/AttachSession
 per §Follow-on §F.4 mirror (8 unique slots), plus 1 CLI dispatch
-`TokenMintSkipped` per §F.6.3, plus 1 boundary-parse
+`TokenMintSkipped` per §F.6.1, plus 1 boundary-parse
 `InvalidSessionIdHex` per §F.6, plus 1 typed-discriminator
 `ReplayDetected` per §9.7 — totaling **25 variants across 22
 occupied slots** in the 23-slot range 39-61, 3 shared-slot

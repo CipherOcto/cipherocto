@@ -23,7 +23,7 @@ octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
 # access goes through the substrate's `Deref` impl. Mirrors the
 # pattern in `crates/octo-reputation/Cargo.toml`.
 octo-storage-core = { path = "../octo-storage-core", version = "2.0" }
-# Stoolap fork per RFC-0011-c §F.7.5 (CipherOcto fork at
+# Stoolap fork per RFC-0011-c §F.7.5 (cipherocto fork at
 # `rev = "527e8eb"` per [[feedback_stoolap_persistence]]). Fork-pinned,
 # non-crypto (the revocation table is bearer-binary data + an audit
 # timestamp). Frozen external primitive sub-category of Layer D per

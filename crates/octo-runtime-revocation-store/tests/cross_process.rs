@@ -6,32 +6,36 @@
 //! revocation ledger at a shared tempdir path. Each child takes a
 //! distinct role via the `OCTO_REVOCATION_CROSS_PROCESS_ROLE` env var
 //! (parent process leaves the env var unset and orchestrates):
+//! `spawn_side` installs the factory-dispatched revocation store and
+//! asserts `octo_runtime::is_token_revoked` returns `false` (the
+//! pre-write baseline observer); `operator_side` installs the store
+//! and calls `octo_runtime::revoke_attach_token` to write the
+//! revocation (cross-process writer); `attach_side` installs the
+//! store and asserts `octo_runtime::is_token_revoked` returns `true`
+//! for the same `session_id` (cross-process reader).
 //!
-//! - `spawn_side`: opens the ledger + asserts the token is NOT revoked
-//!   (baseline — pre-revocation state). This is the pre-write baseline
-//!   observer.
-//! - `operator_side`: opens the ledger + writes a revocation for the
-//!   deterministic `session_id`. This is the cross-process writer.
-//! - `attach_side`: opens the ledger + asserts `is_token_revoked` returns
-//!   `true` for the same `session_id`. This is the cross-process reader.
-//!
-//! If the ledger were process-local (the §F.3 fork-fail-closed default),
-//! the attach-side would observe `false` and the test would fail. The
-//! Stoolap-backed Layer D adapter makes the ledger the single source of
-//! truth across CLI process boundaries, which is the substrate-level
-//! guarantee the test verifies.
+//! If the ledger were process-local (the §F.3 fork-fail-closed
+//! default), the attach-side would observe `false` and the test
+//! would fail. The Stoolap-backed Layer D adapter makes the ledger
+//! the single source of truth across CLI process boundaries.
+//! Exercising the factory dispatch (not a direct
+//! `StoolapRevocationStore` method call) is what proves the §F.7.5
+//! substrate-faithful wiring actually works end-to-end.
 //!
 //! Test isolation: each test run uses a fresh tempdir ledger path so
-//! parallel `cargo test` runs do not collide. The shared ledger path is
-//! propagated to each child via env vars (not CLI args — args are
+//! parallel `cargo test` runs do not collide. The shared ledger path
+//! is propagated to each child via env vars (not CLI args — args are
 //! forwarded by the cargo test harness for the test binary itself).
 //!
 //! NO PUSH per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 use std::env;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
-use octo_runtime::persistence::RevocationStore;
+use octo_runtime::persistence::{install_revocation_store_default_with, RevocationStore};
+use octo_runtime::{is_token_revoked, revoke_attach_token};
+use octo_runtime_revocation_store::StoolapRevocationStore;
 
 const ROLE_ENV: &str = "OCTO_REVOCATION_CROSS_PROCESS_ROLE";
 const LEDGER_ENV: &str = "OCTO_REVOCATION_LEDGER_PATH";
@@ -51,7 +55,7 @@ const EXPECT_REVOKED_ENV: &str = "OCTO_REVOCATION_EXPECT_REVOKED";
 // --test cross_process -- --ignored --nocapture`.
 #[test]
 #[ignore]
-fn cross_process_revocation_propagates() {
+fn tv_agt27_cross_process_revocation_propagates() {
     // Child-process branch: when the env var is set, this process
     // was spawned by the parent to perform a single role. Execute
     // that role + exit the process before the test harness reaches
@@ -159,12 +163,21 @@ fn run_child_role() -> ! {
         .unwrap_or(false);
     let role = env::var(ROLE_ENV).expect("OCTO_REVOCATION_CROSS_PROCESS_ROLE");
 
-    let store = octo_runtime_revocation_store::StoolapRevocationStore::open_at(&ledger_path)
-        .expect("open ledger");
+    // RFC-0011-c §F.7.5 step 4 — install via factory closure so the
+    // child dispatches through `octo_runtime::current_revocation_store()`
+    // (the production path) rather than calling the Layer D adapter
+    // directly. This is what the test proves: a separately-spawned CLI
+    // process observing another process's revocation through the
+    // substrate-level free functions.
+    install_revocation_store_default_with(|| {
+        let store = StoolapRevocationStore::open_at(&ledger_path).expect("open ledger");
+        Ok(Arc::new(store) as Arc<dyn RevocationStore>)
+    })
+    .expect("install revocation store");
 
     match role.as_str() {
         "spawn_side" => {
-            let revoked = store.is_token_revoked(&session_id);
+            let revoked = is_token_revoked(&session_id);
             if revoked != expect_revoked {
                 eprintln!("spawn_side FAIL: expected revoked={expect_revoked} got {revoked}");
                 std::process::exit(20);
@@ -172,11 +185,11 @@ fn run_child_role() -> ! {
             std::process::exit(0);
         }
         "operator_side" => {
-            store.revoke_attach_token(session_id).expect("revoke write");
+            revoke_attach_token(session_id).expect("revoke write");
             std::process::exit(0);
         }
         "attach_side" => {
-            let revoked = store.is_token_revoked(&session_id);
+            let revoked = is_token_revoked(&session_id);
             if revoked != expect_revoked {
                 eprintln!(
                     "attach_side FAIL: expected revoked={expect_revoked} got {revoked} \

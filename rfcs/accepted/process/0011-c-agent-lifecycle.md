@@ -892,11 +892,11 @@ are additive to the v4 surface.
 
 Per the slot allocation table, RFC-0011-c consumes slots 39-61
 (post -g's 35-38; 24 variants across 22 occupied slots in the
-23-slot range, 3 shared-slot pairings at 43,
-51, 53 — 14 base amendment + 8 follow-on amendment
-AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
-(8 unique slots) + 1 CLI dispatch `TokenMintSkipped` variant per
-§F.6.3). Sibling amendments that do not consume slots MUST NOT
+23-slot range, 3 shared-slot pairings at (43, 51, 53) — 14 base
+amendment + 8 follow-on amendment AttachHandle/AttachSession
+variants per §Follow-on §F.4 mirror (8 unique slots) + 1 CLI
+dispatch `TokenMintSkipped` variant per §F.6.3). Sibling
+amendments that do not consume slots MUST NOT
 claim earlier slots; renegotiation is required if -h/i follow-on
 amendments need earlier slots.
 

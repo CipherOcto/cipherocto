@@ -643,7 +643,7 @@ pub enum OctoCliError {
     /// (`octo-runtime-transport-unix`, …) to register a handler
     /// at process startup. Mapped from
     /// `octo_runtime::AttachError::TransportHandlerNotRegistered`.
-    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-59.
+    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-61.
     #[error("transport handler not registered for kind `{kind_label}`")]
     TransportHandlerNotRegistered {
         /// Discriminator label from the substrate surface
@@ -657,14 +657,29 @@ pub enum OctoCliError {
     /// interlock `requires = "detach"` lets the combo pass validation
     /// even when the spawn was a no-op; without a fresh handle there
     /// is no `session_id` to bind a token to. CLI-side dispatch
-    /// surface — distinct from the 8 substrate `AttachError` mirror
-    /// variants (slots 53-59). Exit 60 per RFC-0011-c §9.8 (reserved
+    /// surface — distinct from the 9 substrate `AttachError` mirror
+    /// variants (slots 53-61). Exit 60 per RFC-0011-c §9.8 (reserved
     /// per this amendment cycle).
     #[error("token mint skipped: {reason}")]
     TokenMintSkipped {
         /// Operator-actionable reason (idempotent self-transition
         /// vs agent not in transition-eligible state).
         reason: String,
+    },
+
+    /// Replay detected — `since_unix` cursor behind the recorded
+    /// cursor in the session-registry (the same token has been
+    /// consumed once and is being replayed). Mirrors the
+    /// substrate-faithful `octo_runtime::AttachError::ReplayDetected`
+    /// variant added in the RFC-0011-c §9.7 follow-on amendment.
+    /// Exit 61 (own slot — distinct from `Internal(reason)` exit 64).
+    #[error("replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}")]
+    ReplayDetected {
+        /// `since_unix` from the replayed attach invocation (behind
+        /// the recorded cursor).
+        since_unix: u64,
+        /// Wall-clock timestamp when the replay was observed.
+        replay_attempt_unix: u64,
     },
 }
 
@@ -791,6 +806,13 @@ impl OctoCliError {
             // mirror variants slots 53-59. Exit 60 reserved per
             // §9.8 reserved range 39-63.
             Self::TokenMintSkipped { .. } => 60,
+            // RFC-0011-c §9.7 follow-on amendment + §9.8 row: own
+            // slot 61 — distinct from `Internal(reason)` exit 64.
+            // Typed-discriminator additive variant; preserves the
+            // full `{since_unix, replay_attempt_unix}` pair on the
+            // CLI boundary so the operator can read the diagnostic
+            // without re-deriving from event-stream state.
+            Self::ReplayDetected { .. } => 61,
         }
     }
 
@@ -994,6 +1016,11 @@ impl OctoCliError {
             }
             Self::TokenMintSkipped { reason } => {
                 format!("{reason}; re-run `octo agent run --detach --token-file <path>` on a fresh `Registered → Running` transition, or destroy + recreate the agent first")
+            }
+            Self::ReplayDetected { since_unix, replay_attempt_unix } => {
+                format!(
+                    "the AttachHandle token has been consumed once already (since cursor {since_unix} is behind the recorded cursor at {replay_attempt_unix}); mint a fresh token via `octo agent run --detach` and retry the attach"
+                )
             }
         };
         Some(h)
@@ -1266,11 +1293,13 @@ fn find_word_boundary_ci(s: &str, marker: &str) -> Option<usize> {
 }
 
 /// RFC-0011-c §F.4 + §9.8: `octo_runtime::AttachError` → `OctoCliError`
-/// per-variant mapping (slots 53-58). Substrate owns the canonical
-/// distinction; CLI mirrors via per-variant `From` arms so an additive
-/// substrate variant lands a corresponding CLI slot without
-/// central-enum edits. `#[non_exhaustive]` on both sides — wildcard
-/// arms collapse unknown future variants to `Internal(reason)`.
+/// per-variant mapping (slots 53-59 + 61 — excluding the CLI
+/// dispatch-side `TokenMintSkipped` slot 60). Substrate owns the
+/// canonical distinction; CLI mirrors via per-variant `From` arms
+/// so an additive substrate variant lands a corresponding CLI slot
+/// without central-enum edits. `#[non_exhaustive]` on both sides —
+/// wildcard arms collapse unknown future variants to
+/// `Internal(reason)`.
 impl From<octo_runtime::AttachError> for OctoCliError {
     fn from(e: octo_runtime::AttachError) -> Self {
         match e {
@@ -1326,6 +1355,13 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             octo_runtime::AttachError::TransportHandlerNotRegistered { kind_label } => {
                 Self::TransportHandlerNotRegistered { kind_label }
             }
+            octo_runtime::AttachError::ReplayDetected {
+                since_unix,
+                replay_attempt_unix,
+            } => Self::ReplayDetected {
+                since_unix,
+                replay_attempt_unix,
+            },
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to
             // `Internal(reason)` exit 64 — same pattern as the audit
@@ -1891,6 +1927,23 @@ mod tests {
             matches!(r, OctoCliError::TransportHandlerNotRegistered { ref kind_label } if kind_label == "UnixSocket")
         );
         assert_eq!(r.exit_code(), 59);
+
+        // ReplayDetected → ReplayDetected (exit 61 per §9.7
+        // follow-on amendment; own slot — distinct from
+        // Internal(reason) exit 64)
+        let r: OctoCliError = AttachError::ReplayDetected {
+            since_unix: 1_000,
+            replay_attempt_unix: 2_000,
+        }
+        .into();
+        assert!(matches!(
+            r,
+            OctoCliError::ReplayDetected {
+                since_unix: 1_000,
+                replay_attempt_unix: 2_000
+            }
+        ));
+        assert_eq!(r.exit_code(), 61);
 
         // Additive `#[non_exhaustive]` variant collapse path:
         // exercise the wildcard arm via constructing an unknown

@@ -73,19 +73,19 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C/D1 A
 
 ### Type Coverage
 
-| RFC-0011-c type                            | Sub-step                              | Notes                                                                                                                                                                              |
-| ------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pub type KeyId`                           | Sub-step 1 (discriminator)            | Layer B; `u32` covers 4B key generations; `NonZeroU32` not used because `key_id == 0` is canonical-acceptance bootstrap slot per RFC-0015-a §6.5                                  |
-| `pub struct KeySet`                        | Sub-step 2 (registry)                 | Layer B; `keys: BTreeMap<KeyId, [u8; 32]>` + `grace_keys: BTreeMap<KeyId, [u8; 32]>`; pubkey retained in grace_keys so the v2 grace fallback can attempt a per-pubkey verify          |
-| `KeySet::new / insert / move_to_grace`     | Sub-step 3 (mutators)                 | Layer B; `move_to_grace` atomically moves pubkey from active to grace; `insert` clears grace on re-promotion                                                                       |
-| `KeySet::lookup / grace_key / grace_period`| Sub-step 4 (lookups)                  | Layer B; `lookup` = active get; `grace_key(claimed_id)` = single grace entry for the claimed key_id (NOT iteration — bound by the `key_id` discriminator per [[cipherocto-design-principles]] §Extension over enumeration); `grace_period()` returns ascending `Vec<KeyId>` of all grace entries (diagnostic, `#[allow(dead_code)]`; not used by the verify path post-R1.5) |
-| `KeySet::known_key_ids / len / is_empty`   | Sub-step 5 (diagnostics)              | Layer B; `known_key_ids` = active + grace union; `len / is_empty` count active-only                                                                                                 |
-| `canonical_payload_bytes_v2`               | Sub-step 6 (canonical bytes)          | Layer B; additive: v1 canonical bytes ++ `key_id.to_be_bytes()` (4-byte big-endian suffix); single source of truth for sign_v2 + verify_v2                                          |
-| `sign_attach_handle_payload_v2`            | Sub-step 7 (sign)                     | Layer B; composes `canonical_payload_bytes_v2` + `IdentityKey::sign` per RFC-0015-a Appendix A; Signature captured via `to_bytes()` (avoids Layer A type leak per §F.5 stable-abstraction pattern) |
-| `verify_attach_handle_payload_v2`          | Sub-step 8 (verify)                   | Layer B; 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration) → `UnknownKeyId`; v1 verify body shape factored into private `verify_bytes` helper (DRY across v1 + v2 paths)                                          |
-| `AttachError::UnknownKeyId`                | Sub-step 9 (error envelope)           | Layer B; additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration; CLI mapping is follow-on (defaults to `Internal(reason)` wildcard) |
-| 11 NEW tests                               | Sub-step 10 (TV)                      | Layer B; 5 KeySet + 6 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                        |
-| `octo-attach-key-rotation` Cargo feature   | Sub-step 11 (cfg-gate)                | Build-system; RFC-0015-a §6.5 paired-acceptance bridge; default OFF preserves v1 byte-identical baseline                                                                          |
+| RFC-0011-c type                             | Sub-step                     | Notes                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pub type KeyId`                            | Sub-step 1 (discriminator)   | Layer B; `u32` covers 4B key generations; `NonZeroU32` not used because `key_id == 0` is canonical-acceptance bootstrap slot per RFC-0015-a §6.5                                                                                                                                                                                                                            |
+| `pub struct KeySet`                         | Sub-step 2 (registry)        | Layer B; `keys: BTreeMap<KeyId, [u8; 32]>` + `grace_keys: BTreeMap<KeyId, [u8; 32]>`; pubkey retained in grace_keys so the v2 grace fallback can attempt a per-pubkey verify                                                                                                                                                                                                |
+| `KeySet::new / insert / move_to_grace`      | Sub-step 3 (mutators)        | Layer B; `move_to_grace` atomically moves pubkey from active to grace; `insert` clears grace on re-promotion                                                                                                                                                                                                                                                                |
+| `KeySet::lookup / grace_key / grace_period` | Sub-step 4 (lookups)         | Layer B; `lookup` = active get; `grace_key(claimed_id)` = single grace entry for the claimed key_id (NOT iteration — bound by the `key_id` discriminator per [[cipherocto-design-principles]] §Extension over enumeration); `grace_period()` returns ascending `Vec<KeyId>` of all grace entries (diagnostic, `#[allow(dead_code)]`; not used by the verify path post-R1.5) |
+| `KeySet::known_key_ids / len / is_empty`    | Sub-step 5 (diagnostics)     | Layer B; `known_key_ids` = active + grace union; `len / is_empty` count active-only                                                                                                                                                                                                                                                                                         |
+| `canonical_payload_bytes_v2`                | Sub-step 6 (canonical bytes) | Layer B; additive: v1 canonical bytes ++ `key_id.to_be_bytes()` (4-byte big-endian suffix); single source of truth for sign_v2 + verify_v2                                                                                                                                                                                                                                  |
+| `sign_attach_handle_payload_v2`             | Sub-step 7 (sign)            | Layer B; composes `canonical_payload_bytes_v2` + `IdentityKey::sign` per RFC-0015-a Appendix A; Signature captured via `to_bytes()` (avoids Layer A type leak per §F.5 stable-abstraction pattern)                                                                                                                                                                          |
+| `verify_attach_handle_payload_v2`           | Sub-step 8 (verify)          | Layer B; 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration) → `UnknownKeyId`; v1 verify body shape factored into private `verify_bytes` helper (DRY across v1 + v2 paths)                                                                                                                                                   |
+| `AttachError::UnknownKeyId`                 | Sub-step 9 (error envelope)  | Layer B; additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration; CLI mapping is follow-on (defaults to `Internal(reason)` wildcard)                                                                                                                                                                                          |
+| 11 NEW tests                                | Sub-step 10 (TV)             | Layer B; 5 KeySet + 6 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                                                                                                                                                                                                                 |
+| `octo-attach-key-rotation` Cargo feature    | Sub-step 11 (cfg-gate)       | Build-system; RFC-0015-a §6.5 paired-acceptance bridge; default OFF preserves v1 byte-identical baseline                                                                                                                                                                                                                                                                    |
 
 ## Implementation Guide
 
@@ -104,13 +104,7 @@ See `docs/07-developers/octo-runtime-implementation-guide.md` §AttachHandle Tok
 **Design deviation from plan**: `grace_ids: BTreeSet<KeyId>` → `grace_keys: BTreeMap<KeyId, [u8; 32]>`. Reason: the grace fallback needs the rotated pubkey to attempt per-pubkey verify; a `BTreeSet<KeyId>` would lose the pubkey on `move_to_grace`, making the grace iteration a no-op. The deviation surfaces a useful substrate invariant: **the grace map MUST carry the rotated pubkey**, NOT just the key id.
 
 The 11 NEW tests assert:
-1-5. KeySet mutators + lookups + diagnostics (insert, move_to_grace, re-promote, known_key_ids, empty)
-6. v2 canonical bytes include the key_id (4-byte big-endian suffix)
-7. v2 sign + verify against active lookup succeeds
-8. v2 grace fallback accepts a rotated key (proves grace carries the pubkey)
-9. v2 unknown key_id returns `UnknownKeyId` with the populated `known_keys` set
-10. v2 active lookup mismatch with a multi-key set rejects as `BadSignature` (NOT `UnknownKeyId` — proves lookup path is per-pubkey)
-11. `UnknownKeyId` Display includes key_id + known_keys (operator-readable diagnostic)
+1-5. KeySet mutators + lookups + diagnostics (insert, move_to_grace, re-promote, known_key_ids, empty) 6. v2 canonical bytes include the key_id (4-byte big-endian suffix) 7. v2 sign + verify against active lookup succeeds 8. v2 grace fallback accepts a rotated key (proves grace carries the pubkey) 9. v2 unknown key_id returns `UnknownKeyId` with the populated `known_keys` set 10. v2 active lookup mismatch with a multi-key set rejects as `BadSignature` (NOT `UnknownKeyId` — proves lookup path is per-pubkey) 11. `UnknownKeyId` Display includes key_id + known_keys (operator-readable diagnostic)
 
 ## Risk
 
@@ -159,19 +153,19 @@ No new external crates required; D2.1 is pure substrate-extension on the existin
 
 11 NEW tests covering the v2 surface:
 
-| #              | Substrate coverage                                                                                |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| TV-KR-D2-K1    | `key_set_insert_lookup_roundtrip` — insert + lookup returns same pubkey                            |
-| TV-KR-D2-K2    | `key_set_move_to_grace_removes_from_active` — after move_to_grace, lookup returns None             |
-| TV-KR-D2-K3    | `key_set_re_promote_clears_grace` — insert of grace'd id removes from grace                       |
-| TV-KR-D2-K4    | `key_set_known_key_ids_includes_both` — known_key_ids = active + grace union                     |
-| TV-KR-D2-K5    | `key_set_empty_lookup_miss` — new() lookup returns None                                           |
-| TV-KR-D2-S1    | `sign_v2_includes_key_id_in_canonical_bytes` — v2 bytes = v1 ++ key_id_be(7)                      |
-| TV-KR-D2-S2    | `sign_v2_happy_path` — sign_v2 + verify_v2 against key_set[key_id] succeeds                       |
-| TV-KR-D2-S3    | `verify_v2_grace_period_accepts_rotated_key` — sign with id=1; key_set moves id=1 to grace; verify_v2 succeeds via grace fallback |
-| TV-KR-D2-S4    | `verify_v2_unknown_key_id_returns_error` — sign with id=99; key_set contains 1, 2; verify returns UnknownKeyId |
-| TV-KR-D2-S5    | `verify_v2_active_lookup_mismatch_returns_bad_signature` — multi-key set, active lookup mismatch rejects as BadSignature (not UnknownKeyId) |
-| TV-KR-D2-E1    | `unknown_key_id_display_includes_id_and_known` — Display includes key_id + known_keys set          |
+| #           | Substrate coverage                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| TV-KR-D2-K1 | `key_set_insert_lookup_roundtrip` — insert + lookup returns same pubkey                                                                     |
+| TV-KR-D2-K2 | `key_set_move_to_grace_removes_from_active` — after move_to_grace, lookup returns None                                                      |
+| TV-KR-D2-K3 | `key_set_re_promote_clears_grace` — insert of grace'd id removes from grace                                                                 |
+| TV-KR-D2-K4 | `key_set_known_key_ids_includes_both` — known_key_ids = active + grace union                                                                |
+| TV-KR-D2-K5 | `key_set_empty_lookup_miss` — new() lookup returns None                                                                                     |
+| TV-KR-D2-S1 | `sign_v2_includes_key_id_in_canonical_bytes` — v2 bytes = v1 ++ key_id_be(7)                                                                |
+| TV-KR-D2-S2 | `sign_v2_happy_path` — sign_v2 + verify_v2 against key_set[key_id] succeeds                                                                 |
+| TV-KR-D2-S3 | `verify_v2_grace_period_accepts_rotated_key` — sign with id=1; key_set moves id=1 to grace; verify_v2 succeeds via grace fallback           |
+| TV-KR-D2-S4 | `verify_v2_unknown_key_id_returns_error` — sign with id=99; key_set contains 1, 2; verify returns UnknownKeyId                              |
+| TV-KR-D2-S5 | `verify_v2_active_lookup_mismatch_returns_bad_signature` — multi-key set, active lookup mismatch rejects as BadSignature (not UnknownKeyId) |
+| TV-KR-D2-E1 | `unknown_key_id_display_includes_id_and_known` — Display includes key_id + known_keys set                                                   |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 

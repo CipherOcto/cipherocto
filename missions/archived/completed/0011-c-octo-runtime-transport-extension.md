@@ -6,32 +6,35 @@ metadata:
   type: layer-d-extension
   originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-17
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0011-c
     - mission 0011-c-octo-runtime-attachhandle-substrate
   paired_rfc_section: "RFC-0011-c §F.7"
 release_gate: Handler trait + Registry substrate (per RFC-0011-c §F.2 step (e))
 release_gate_cleared_at: 2026-09-16
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-17
 substrate_unblocked: 2026-09-17
 implementation_state: layer-d-crates-landed
-implementation_commit: local
-dry_audit: pending
+implementation_commit: b6a8ca73
+dry_audit: docs/audits/2026-09-17-0011-c-transport-extension-phase-b-dry-closure.md
+closed_at: 2026-09-17
 ---
 
 # 0011-c-octo-runtime-transport-extension — 3 Layer D extension crates
 
-**Status:** Claimed
+**Status:** Completed
 **Substrate:** RFC-0011-c §F.7 (`octo-runtime-transport-unix`, `octo-runtime-transport-raw`, `octo-runtime-transport-hybrid`)
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:** mission `0011-c-octo-runtime-attachhandle-substrate` — the `Handler` trait + `Registry` + `OnceLock<HANDLE_TRANSPORT_REGISTRY>` substrate landed in that mission (commit `next` HEAD, 2026-09-16).
 
 ## Status
 
-Claimed (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per [[cipherocto-design-principles]] §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
+**Completed 2026-09-17** — DRY CLOSURE GATE GREEN (R5+R6 = 2-consecutive-zero-finding rounds on Phase B scope). 4-commit chain landed: `84511af3` → `45120fca` → `0a4a79f2` → `b6a8ca73`. Closure audit: `docs/audits/2026-09-17-0011-c-transport-extension-phase-b-dry-closure.md`.
+
+Originally Claimed (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per [[cipherocto-design-principles]] §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
 
 - `octo-runtime-transport-unix` — `UnixSocketHandler` (sync `std::os::unix::net::UnixStream` Layer D impl for `TransportKind::UnixSocket`)
 - `octo-runtime-transport-raw` — `RawHandler` (fail-CLOSED default for `TransportKind::Raw(Uuid)`; downstream crates override via `register_into(registry, scheme_id, custom_handler)`)
@@ -88,7 +91,7 @@ RFC-0011-c §F.7 (Layer D Extension Crates) + §F.8 (Per-Extension Crate Manifes
 - [x] Per-extension crates + registry pattern honored (per [[cipherocto-design-principles]])
 - [x] Fail-CLOSED on unconfigured `Raw` scheme UUIDs (substrate-visible error, never silent success)
 - [x] `register_into` identity-idempotent (shared `Arc` via `OnceLock`)
-- [x] DRY CLOSURE gate: 2 consecutive zero-finding rounds on all 3 crates
+- [x] DRY CLOSURE gate: 2 consecutive zero-finding rounds on all 3 crates (R5+R6 both 0/0/0; closure audit 2026-09-17)
 
 ### Type Coverage
 
@@ -161,4 +164,4 @@ See each crate's `Cargo.toml` for the dependency rationale comments. No new exte
 
 ## Claimant
 
-@mmacedoeu (claimed 2026-09-17, implementation landed 2026-09-17 per R1.5 commit).
+@mmacedoeu (claimed 2026-09-17, implementation landed 2026-09-17 per R1.5 commit, DRY CLOSED 2026-09-17 per closure audit).

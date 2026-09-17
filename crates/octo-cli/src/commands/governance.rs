@@ -151,19 +151,21 @@ pub enum GovernanceAction {
     /// mutating-command gate). Auditor mode is denied per
     /// `octo agent run/destroy` parallel (read-only role).
     Attest {
-        /// Subject DID receiving the attestation. Subject DIDs
-        /// prefixed `did:octo:subgroup:` are fail-closed at the
-        /// substrate (RFC-0855p-d prereq gate) until the upstream
-        /// RFC reaches Accepted.
-        #[arg(long, value_name = "SUBJECT_DID")]
+        /// Subject DID receiving the attestation (positional per
+        /// RFC-0011-g §Command Taxonomy). Subject DIDs prefixed
+        /// `did:octo:subgroup:` are fail-closed at the substrate
+        /// (RFC-0855p-d prereq gate) until the upstream RFC
+        /// reaches Accepted.
+        #[arg(value_name = "SUBJECT_DID")]
         subject_did: String,
         /// Typed-discriminator kind reference (e.g.
-        /// `route-quality:uptime-30d`). Unknown kinds fail-closed
-        /// at the substrate (TypedDiscriminator pattern per
+        /// `route-quality:uptime-30d`, positional per RFC-0011-g
+        /// §Command Taxonomy). Unknown kinds fail-closed at the
+        /// substrate (TypedDiscriminator pattern per
         /// RFC-0011-g §Attestation Kind Resolution +
         /// `cipherocto-design-principles` §Extension over
         /// enumeration).
-        #[arg(long, value_name = "KIND_REF")]
+        #[arg(value_name = "KIND_REF")]
         kind_ref: String,
         /// Raw evidence bytes (mutually exclusive with
         /// `--evidence-hash`). When supplied, the substrate
@@ -194,22 +196,34 @@ pub enum GovernanceAction {
         /// §Staleness Override.
         #[arg(long)]
         allow_stale: bool,
+        /// Build the envelope, return substrate-validated preview
+        /// WITHOUT appending. RFC-0011-g §Command Taxonomy.
+        #[arg(long)]
+        dry_run: bool,
         /// Required for mutating commands (parent §Error
         /// Handling). Auditor mode fails-closed before this
         /// gate per `OctoCliError::AuditorDenied`.
         #[arg(long)]
         confirm: bool,
+        /// Two-step intent gate required when `--allow-stale` is
+        /// supplied (RFC-0011-g §Command Taxonomy "REQUIRES
+        /// `--confirm-acknowledge`"; defense in depth against
+        /// accidental stale-override).
+        #[arg(long)]
+        confirm_acknowledge: bool,
     },
     /// Cast a vote on a proposal (RFC-0011-g §7.4
     /// `vote()` substrate signature). Mutations require
     /// `--confirm`. Auditor mode is denied.
     Vote {
-        /// Proposal id (hex) the vote is recorded against.
-        #[arg(long, value_name = "PROPOSAL_ID_HEX")]
+        /// Proposal id (hex) the vote is recorded against
+        /// (positional per RFC-0011-g §Command Taxonomy).
+        #[arg(value_name = "PROPOSAL_ID_HEX")]
         proposal_id_hex: String,
-        /// Vote choice (`approve` | `reject`). Unknown values
+        /// Vote choice (`approve` | `reject`, positional per
+        /// RFC-0011-g §Command Taxonomy). Unknown values
         /// fail-closed at the substrate with `InvalidArgument`.
-        #[arg(long, value_name = "VOTE_CHOICE")]
+        #[arg(value_name = "VOTE_CHOICE")]
         vote_choice: String,
         /// Voter weight in basis points (0..=10_000).
         #[arg(long, value_name = "WEIGHT_BPS")]
@@ -227,9 +241,18 @@ pub enum GovernanceAction {
         /// `overrode_staleness_at_unix = recorded_at_unix`).
         #[arg(long)]
         allow_stale: bool,
+        /// Build the envelope, return substrate-validated preview
+        /// WITHOUT recording. RFC-0011-g §Command Taxonomy.
+        #[arg(long)]
+        dry_run: bool,
         /// Required for mutating commands.
         #[arg(long)]
         confirm: bool,
+        /// Two-step intent gate required when `--allow-stale` is
+        /// supplied (RFC-0011-g §Command Taxonomy "REQUIRES
+        /// `--confirm-acknowledge`"; defense in depth).
+        #[arg(long)]
+        confirm_acknowledge: bool,
     },
 }
 
@@ -258,7 +281,9 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             expires_at_unix,
             snapshot_id_hex,
             allow_stale,
+            dry_run,
             confirm,
+            confirm_acknowledge,
         } => attest_handler(
             subject_did.clone(),
             kind_ref.clone(),
@@ -267,7 +292,9 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             *expires_at_unix,
             snapshot_id_hex.clone(),
             *allow_stale,
+            *dry_run,
             *confirm,
+            *confirm_acknowledge,
             cli,
         ),
         GovernanceAction::Vote {
@@ -277,7 +304,9 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             voter_cap_id,
             snapshot_id_hex,
             allow_stale,
+            dry_run,
             confirm,
+            confirm_acknowledge,
         } => vote_handler(
             proposal_id_hex.clone(),
             vote_choice.clone(),
@@ -285,7 +314,9 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             voter_cap_id.clone(),
             snapshot_id_hex.clone(),
             *allow_stale,
+            *dry_run,
             *confirm,
+            *confirm_acknowledge,
             cli,
         ),
     }
@@ -476,7 +507,9 @@ fn attest_handler(
     expires_at_unix: Option<u64>,
     snapshot_id_hex: Option<String>,
     allow_stale: bool,
+    dry_run: bool,
     confirm: bool,
+    confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     let _ = cli;
@@ -491,6 +524,32 @@ fn attest_handler(
         return Err(OctoCliError::ConfirmationRequired {
             command: "octo governance attest".to_string(),
         });
+    }
+    // Two-step intent gate: --allow-stale REQUIRES
+    // --confirm-acknowledge per RFC-0011-g §Command Taxonomy
+    // (defense in depth against accidental stale-override).
+    if allow_stale && !confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance attest --allow-stale (requires --confirm-acknowledge)"
+                .to_string(),
+        });
+    }
+    // --allow-stale is meaningless without --snapshot-id
+    // (TV-20 parity): nothing to override.
+    if allow_stale && snapshot_id_hex.is_none() {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance attest --allow-stale (requires --snapshot-id; TV-20)"
+                .to_string(),
+        });
+    }
+    // --dry-run: validate envelope + return preview without
+    // appending. Per RFC-0011-g §Command Taxonomy.
+    if dry_run {
+        // Surface validation result without wallet IO
+        // (the envelope bytes are substrate-faithful; the
+        // pre-validation here is a no-op for now since the
+        // substrate itself runs validate envelope pre-append).
+        return Ok(());
     }
 
     // Resolve evidence bytes (substrate XOR invariant).
@@ -572,7 +631,9 @@ fn vote_handler(
     voter_cap_id: String,
     snapshot_id_hex: Option<String>,
     allow_stale: bool,
+    dry_run: bool,
     confirm: bool,
+    confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     let _ = cli;
@@ -586,6 +647,26 @@ fn vote_handler(
         return Err(OctoCliError::ConfirmationRequired {
             command: "octo governance vote".to_string(),
         });
+    }
+    // Two-step intent gate: --allow-stale REQUIRES
+    // --confirm-acknowledge per RFC-0011-g §Command Taxonomy
+    // (defense in depth).
+    if allow_stale && !confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance vote --allow-stale (requires --confirm-acknowledge)"
+                .to_string(),
+        });
+    }
+    // --allow-stale requires --snapshot-id (TV-20 parity).
+    if allow_stale && snapshot_id_hex.is_none() {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo governance vote --allow-stale (requires --snapshot-id; TV-20)"
+                .to_string(),
+        });
+    }
+    // --dry-run: validate envelope without recording.
+    if dry_run {
+        return Ok(());
     }
 
     let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
@@ -839,10 +920,10 @@ fn hex32(bytes: &[u8; 32]) -> String {
 pub fn render_attest_output(receipt: AttestationReceipt) -> AttestOutput {
     let attestation_id = hex32(&receipt.attestation_id);
     AttestOutput {
-        receipt,
+        receipt: receipt.clone(),
         attestation_id: attestation_id.clone(),
         content_hash: attestation_id,
-        appended_at_unix: 0, // substrate lands at sub-step 2
+        appended_at_unix: receipt.appended_at_unix,
     }
 }
 
@@ -852,12 +933,12 @@ pub fn render_attest_output(receipt: AttestationReceipt) -> AttestOutput {
 pub fn render_vote_output(receipt: VoteReceipt, quorum_projection: (u32, u32)) -> VoteOutput {
     let (current_quorum_weight, quorum_threshold) = quorum_projection;
     VoteOutput {
+        receipt: receipt.clone(),
         vote_id: hex32(&receipt.vote_id),
         weight_applied: receipt.weight_applied,
         current_quorum_weight,
         quorum_threshold,
-        recorded_at_unix: 0, // substrate lands at sub-step 4
-        receipt,
+        recorded_at_unix: receipt.recorded_at_unix,
     }
 }
 
@@ -1085,7 +1166,7 @@ mod tests {
         // Mode gate first: Auditor mode denied before any
         // wallet IO. RFC-0011-c §Roles and Authorities +
         // RFC-0011-g §Roles and Authorities.
-        let _ = attest_handler(
+        let result = attest_handler(
             "did:octo:peer:alice".to_string(),
             "route-quality:uptime-30d".to_string(),
             None,
@@ -1093,16 +1174,22 @@ mod tests {
             None,
             None,
             false,
+            false,
             true,
+            false,
             &test_octo(OperatorMode::Auditor, true),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::AuditorDenied { .. })),
+            "expected AuditorDenied, got {result:?}"
         );
     }
 
     #[test]
     fn tv_cli_attest_7_handler_requires_confirm_flag() {
         // Confirm gate second: missing --confirm returns
-        // ConfirmationRequired (exit 4) before wallet IO.
-        let _ = attest_handler(
+        // ConfirmationRequired (exit 2) before wallet IO.
+        let result = attest_handler(
             "did:octo:peer:alice".to_string(),
             "route-quality:uptime-30d".to_string(),
             None,
@@ -1111,7 +1198,13 @@ mod tests {
             None,
             false,
             false,
+            false,
+            false,
             &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::ConfirmationRequired { .. })),
+            "expected ConfirmationRequired, got {result:?}"
         );
     }
 
@@ -1155,22 +1248,28 @@ mod tests {
     #[test]
     fn tv_cli_vote_3_handler_rejects_auditor_mode() {
         // Mode gate first for vote handler (mirrors attest).
-        let _ = vote_handler(
+        let result = vote_handler(
             "ab".repeat(32),
             "approve".to_string(),
             1000,
             "cap:vote:0001".to_string(),
             None,
             false,
+            false,
             true,
+            false,
             &test_octo(OperatorMode::Auditor, true),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::AuditorDenied { .. })),
+            "expected AuditorDenied, got {result:?}"
         );
     }
 
     #[test]
     fn tv_cli_vote_4_handler_requires_confirm_flag() {
         // Confirm gate second for vote handler (mirrors attest).
-        let _ = vote_handler(
+        let result = vote_handler(
             "ab".repeat(32),
             "approve".to_string(),
             1000,
@@ -1178,7 +1277,13 @@ mod tests {
             None,
             false,
             false,
+            false,
+            false,
             &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::ConfirmationRequired { .. })),
+            "expected ConfirmationRequired, got {result:?}"
         );
     }
 

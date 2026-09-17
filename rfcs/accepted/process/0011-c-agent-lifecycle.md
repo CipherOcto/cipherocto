@@ -817,6 +817,55 @@ Signing wrappers colocated with the `AttachHandle` token type at the `octo_runti
 
 `octo-wallet` is the substrate for `IdentityKey::sign` (Layer B per RFC-0015-a Appendix A); `ed25519-dalek` (Layer A frozen, re-exported via `octo_wallet::ed25519_dalek`) is the underlying cryptographic primitive. No `octo_wallet::crypto` module is created — composition pattern follows [[cipherocto-design-principles]] §Stable Abstractions Principle, primitives in stable substrate, business semantics in composed layer.
 
+### §F.5.1 Key Rotation Discriminator (D2.1)
+
+Additive surface for typed-version-discriminator-bearing holder pubkeys. The §F.5 single-pubkey surface remains the canonical-acceptance default (RFC-0015-a §6.5 paired-acceptance bridge bootstrap slot — `key_id == 0`). The v2 surface in this section lets a holder rotate signing keys without invalidating in-flight tokens minted before the rotation event.
+
+Substrate location: `crates/octo-runtime/src/handle/key_id.rs` + additions to `crates/octo-runtime/src/handle/signing.rs` + additions to `crates/octo-runtime/src/handle/error.rs`. All surface in this section is gated on the `octo-attach-key-rotation` Cargo feature (RFC-0015-a §6.5 canonical cfg-gate location); the default build keeps the §F.5 single-pubkey path byte-identical.
+
+**Discriminator + registry**
+
+- `pub type KeyId = u32` — typed version discriminator for a holder signing key (Layer B substrate; not a Layer A cryptographic type). `u32` covers 4B key generations; `NonZeroU32` is intentionally not used because `key_id == 0` is the canonical-acceptance bootstrap slot per RFC-0015-a §6.5. The type is algorithm-independent (RFC §F.5.1 surface is forward-compatible with classic Ed25519 / hybrid Ed25519+PQC / PQC-only without D2.2 surface changes).
+- `pub struct KeySet` — registry of `(key_id -> pubkey)` lookups plus a grace-period acceptance window for in-flight tokens minted during a rotation event. State: `keys: BTreeMap<KeyId, [u8; 32]>` (active lookup table) + `grace_keys: BTreeMap<KeyId, [u8; 32]>` (rotated-out pubkeys still accepted during the grace window). The pubkey is retained in the grace map so `verify_attach_handle_payload_v2` can attempt a per-pubkey verify against each rotated key (the D2.1 substrate-faithful grace semantics — grace = "try-each-pubkey verify", NOT "skip-verify").
+- `KeySet::new() -> Self` — empty registry.
+- `KeySet::insert(key_id, pubkey)` — insert (or overwrite) a `(key_id, pubkey)` pair into the active set. If `key_id` was previously in grace, it is removed from grace (re-promotion).
+- `KeySet::move_to_grace(key_id)` — rotation event. Atomically moves the pubkey from `keys` to `grace_keys`; subsequent `lookup(key_id)` returns `None` while `grace_key(key_id)` still returns the rotated pubkey. No-op if `key_id` unknown to the active set.
+- `KeySet::lookup(key_id) -> Option<&[u8; 32]>` — active lookup. Returns `None` if `key_id` is not in the active set; the caller decides whether to consult the grace window (the v2 verifier consults grace automatically).
+- `KeySet::grace_key(key_id) -> Option<&[u8; 32]>` — grace-window lookup. Parallel to `lookup` for the rotated-out pubkey set.
+- `KeySet::grace_period() -> Vec<KeyId>` — grace-period key ids in ascending order (used by the v2 verifier to drive the try-each-pubkey iteration).
+- `KeySet::known_key_ids() -> Vec<KeyId>` — diagnostic union of active + grace key ids (used by `AttachError::UnknownKeyId.known_keys` so the operator can read the populated set without re-deriving it from the substrate envelope).
+- `KeySet::len() -> usize` + `KeySet::is_empty() -> bool` — active-only counts (grace keys are not counted; the grace map is a rotation-window detail, not the active set).
+
+**v2 canonical-bytes + sign + verify**
+
+- `pub fn canonical_payload_bytes_v2(session_id, payload, mint_timestamp_unix, ttl_unix, key_id) -> Vec<u8>` — additive canonical bytes: `canonical_payload_bytes(...)` (§F.1) `++ key_id.to_be_bytes()` (4-byte big-endian suffix). Single source of truth for `sign_v2` + `verify_v2`. The `key_id` suffix is bound into the signed bytes so a verifier cannot silently swap the `key_id` claim after signing (canonical-bytes invariant per RFC-0016-a §6.10 carries through to the v2 surface).
+- `pub fn sign_attach_handle_payload_v2(holder: &IdentityKey, session_id, payload, mint_timestamp_unix, ttl_unix, key_id) -> Result<Signature, AttachError>` — additive sign. Composes `canonical_payload_bytes_v2` then delegates to `IdentityKey::sign` (Layer B substrate per RFC-0015-a Appendix A). Signature captured into `Signature` newtype via `to_bytes()` (the 64-byte raw form; avoids Layer A type leak per §F.5 stable-abstraction pattern).
+- `pub fn verify_attach_handle_payload_v2(key_set: &KeySet, session_id, payload, mint_timestamp_unix, ttl_unix, key_id, sig) -> Result<(), AttachError>` — additive verify. Three-step lookup:
+  1. Active lookup: if `key_set.lookup(key_id)` returns `Some(pubkey)`, verify against `pubkey`. On verify success, `Ok(())`. On verify failure, fall through to grace (NOT short-circuit `BadSignature` — the active key may have been rotated since the token was minted, in which case the grace fallback is the canonical path).
+  2. Grace fallback: for each `grace_id` in `key_set.grace_period()`, if `key_set.grace_key(grace_id)` returns `Some(pubkey)`, verify against `pubkey`. On verify success, `Ok(())`. On verify failure, continue iteration. Iteration is O(grace-period-size) per verify; the grace-period-size is bounded by the rotation policy (D2.2 — out of scope).
+  3. Exhausted: return `AttachError::UnknownKeyId { key_id, known_keys }` carrying the diagnostic union of active + grace key ids.
+- `verify_with_msg` — private v2 helper mirroring the v1 `verify_attach_handle_payload` body shape but accepting a precomputed message so the v2 verifier can re-use the canonical bytes across the grace iteration (avoid re-canonicalizing per grace_id).
+
+**Error envelope addition**
+
+- `AttachError::UnknownKeyId { key_id: KeyId, known_keys: Vec<KeyId> }` — additive typed-discriminator variant (per [[cipherocto-design-principles]] §Extension over enumeration — never an enum-on-steroids; `UnknownKeyId` is its own substrate-visible variant, NOT a `BadSignature { reason: "unknown key_id" }`). `key_id` is the token's discriminator; `known_keys` is the diagnostic union so the operator can read the populated set without re-deriving it. CLI mapping is a follow-on if reviewer flags slot collision — defaults to `Internal(reason)` via the existing wildcard `From<AttachError>` arm in `crates/octo-cli/src/error.rs`.
+
+**Wire-form + behavior contract**
+
+- The v1 single-pubkey wire form (`encode_token` / `decode_token` byte-identical to §F.5 baseline) is unchanged. v2 canonical bytes are used by `sign_v2` + `verify_v2` only; v1 path remains. When D2.2 lands the `key_set` population policy, a follow-on wire-form extension may be needed (e.g. ENCODING_VERSION bump from `0x00` to `0x01` for tokens carrying `key_id`) — OUT OF SCOPE for D2.1.
+- Substrate-faithfulness guarantee: when the `octo-attach-key-rotation` feature is OFF (default build), the entire v2 surface + `KeySet` + `UnknownKeyId` are hidden via `#[cfg(...)]`; the §F.5 v1 surface is byte-identical to the pre-D2.1 baseline (86/86 octo-runtime lib tests pass unchanged).
+
+**DEFERRED (D2.2 post-PQC direction, per RFC-0015-a §6.5 paired-acceptance bridge)**
+
+The following are explicitly OUT OF SCOPE for D2.1 and land as D2.2 once PQC direction is known:
+
+- `key_set` population POLICY (which keys are registered, when they rotate, grace-period bounds, PQC algorithm choice — classic Ed25519 / hybrid Ed25519+PQC / PQC-only). D2.1 ships the discriminated envelope + lookup mechanism; D2.2 ships the policy that decides what goes into the envelope.
+- `IdentityKey::current_key_id()` accessor in `crates/octo-wallet/src/identity_record.rs` (requires `key_id` tracking at the wallet substrate level).
+- Multi-signature hybrid verify (PQC-dependent).
+- Cross-process `key_set` replication via Stoolap fork (mirrors the `octo-runtime-revocation-store` Phase C pattern; future layer).
+- Wire-form extension (ENCODING_VERSION bump) if v2 tokens must carry `key_id` in the `encode_token` envelope.
+- Explicit CLI `OctoCliError` variant + exit slot for `UnknownKeyId` (defaults to `Internal(reason)` via the wildcard arm — additive substrate variant without slot allocation).
+
 ### §F.6 CLI Dispatch Wiring
 
 The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the operator workstation live in `crates/octo-cli/src/commands/agent.rs` (Layer C/D). The dispatch is split across two subcommands that compose via the persistent `AttachHandle` token file written by `run` and consumed by `attach`:

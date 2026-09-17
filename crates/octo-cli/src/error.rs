@@ -667,21 +667,20 @@ pub enum OctoCliError {
         reason: String,
     },
 
-    /// Replay detected — `since_unix` cursor behind the recorded
-    /// cursor in the session-registry (the same token has been
-    /// consumed once and is being replayed). Mirrors the
-    /// substrate-faithful `octo_runtime::AttachError::ReplayDetected`
-    /// variant added in the RFC-0011-c §9.7 follow-on amendment.
-    /// Exit 61 (own slot — distinct from `Internal(reason)` exit 64).
+    /// Replay detected — `since_unix` cursor at or behind the recorded
+    /// session cursor (the consumption guarantee is violated). Mirrors
+    /// `octo_runtime::AttachError::ReplayDetected` per the RFC-0011-c
+    /// §9.7 follow-on amendment. Exit 61 (own slot — distinct from
+    /// `Internal(reason)` exit 64).
     #[error(
-        "replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}"
+        "replay detected: since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}"
     )]
     ReplayDetected {
-        /// `since_unix` from the replayed attach invocation (behind
-        /// the recorded cursor).
+        /// `since_unix` from the rejected attach invocation (at or
+        /// behind the recorded session cursor).
         since_unix: u64,
-        /// Wall-clock timestamp when the replay was observed.
-        replay_attempt_unix: u64,
+        /// Highest `since_unix` previously accepted for this session.
+        recorded_cursor: u64,
     },
 }
 
@@ -811,8 +810,8 @@ impl OctoCliError {
             // RFC-0011-c §9.7 follow-on amendment + §9.8 row: own
             // slot 61 — distinct from `Internal(reason)` exit 64.
             // Typed-discriminator additive variant; preserves the
-            // full `{since_unix, replay_attempt_unix}` pair on the
-            // CLI boundary so the operator can read the diagnostic
+            // full `{since_unix, recorded_cursor}` pair on the CLI
+            // boundary so the operator can read the diagnostic
             // without re-deriving from event-stream state.
             Self::ReplayDetected { .. } => 61,
         }
@@ -1019,9 +1018,12 @@ impl OctoCliError {
             Self::TokenMintSkipped { reason } => {
                 format!("{reason}; re-run `octo agent run --detach --token-file <path>` on a fresh `Registered → Running` transition, or destroy + recreate the agent first")
             }
-            Self::ReplayDetected { since_unix, replay_attempt_unix } => {
+            Self::ReplayDetected {
+                since_unix,
+                recorded_cursor,
+            } => {
                 format!(
-                    "the AttachHandle token has been consumed once already (since cursor {since_unix} is behind the recorded cursor at {replay_attempt_unix}); mint a fresh token via `octo agent run --detach` and retry the attach"
+                    "the AttachHandle token has been consumed once already (since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}); mint a fresh token via `octo agent run --detach` and retry the attach"
                 )
             }
         };
@@ -1271,17 +1273,13 @@ pub fn sanitize_substrate_error(s: &str) -> String {
 /// Map a substrate HSM error reason to `OctoCliError::HsmUnavailable`
 /// (exit 5) with the reason sanitized via `sanitize_substrate_error`.
 ///
-/// Substrate-side `WalletError::Hsm(_)` carries the original HSM
-/// transport failure through `#[from] HsmError` — the substrate
-/// cannot sanitize paths/secrets at the error origin (those are
-/// layer-C boundary concerns) so the CLI sanitizes here before
-/// operator exposure.
-///
-/// Consolidates the prior inline `HsmUnavailable(...)` mapping
-/// that was duplicated across `commands/agent.rs`,
-/// `commands/identity.rs`, and `commands/governance.rs` — see
-/// the §F.6.5 cross-module `map_hsm_error` consolidation
-/// follow-on.
+/// Substrate `WalletError::Hsm(_)` carries the raw HSM transport
+/// failure through `#[from] HsmError`; the CLI sanitizes at the
+/// layer-C boundary before operator exposure. Consolidates the
+/// prior inline `HsmUnavailable(sanitize_substrate_error(reason))`
+/// mapping duplicated across `commands/agent.rs`,
+/// `commands/identity.rs`, and `commands/governance.rs` per
+/// §F.6.5 cross-module `map_hsm_error` consolidation follow-on.
 #[must_use]
 pub fn map_hsm_error(reason: &str) -> OctoCliError {
     OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
@@ -1378,10 +1376,10 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             }
             octo_runtime::AttachError::ReplayDetected {
                 since_unix,
-                replay_attempt_unix,
+                recorded_cursor,
             } => Self::ReplayDetected {
                 since_unix,
-                replay_attempt_unix,
+                recorded_cursor,
             },
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to
@@ -1954,14 +1952,14 @@ mod tests {
         // Internal(reason) exit 64)
         let r: OctoCliError = AttachError::ReplayDetected {
             since_unix: 1_000,
-            replay_attempt_unix: 2_000,
+            recorded_cursor: 2_000,
         }
         .into();
         assert!(matches!(
             r,
             OctoCliError::ReplayDetected {
                 since_unix: 1_000,
-                replay_attempt_unix: 2_000
+                recorded_cursor: 2_000
             }
         ));
         assert_eq!(r.exit_code(), 61);

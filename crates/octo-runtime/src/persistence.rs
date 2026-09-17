@@ -169,7 +169,7 @@ pub fn is_token_revoked(session_id: &SessionId) -> bool {
 /// (RFC-0011-c §F.2 step (e) follow-on amendment).
 ///
 /// Substrate-side cache of the broadcast sender + last-observed
-/// `since_unix`. The broadcast sender is a clone of
+/// `since_unix` cursor. The broadcast sender is a clone of
 /// `HandleInner::event_tx`; the channel itself stays open for the
 /// lifetime of `HandleInner::_keepalive_rx` (until the last
 /// `RuntimeHandle` clone drops per the `HandleInner` invariants).
@@ -177,21 +177,16 @@ pub fn is_token_revoked(session_id: &SessionId) -> bool {
 /// `last_since_unix` is the cursor used by
 /// `InProcessHandler::bind` for replay detection per RFC-0011-c
 /// §9.7 follow-on amendment: a second attach with `since_unix`
-/// behind this value is rejected with `AttachError::ReplayDetected`
-/// (exit 61).
+/// at or behind this value is rejected with
+/// `AttachError::ReplayDetected` (exit 61).
 #[derive(Debug)]
-pub struct SessionBinding {
-    /// Clone of the broadcast sender. `bind` calls `.subscribe()`
-    /// on this to mint a fresh `Receiver<RuntimeEvent>` for the
-    /// caller. Sender is a no-op to drop — the underlying channel
-    /// closes only when ALL senders + the keepalive receiver
-    /// drop, which the `HandleInner` invariant guarantees cannot
-    /// happen while any `RuntimeHandle` clone is alive.
-    pub event_tx: tokio::sync::broadcast::Sender<RuntimeEvent>,
-    /// Last-observed `since_unix` for a successful `bind` against
-    /// this session. Initialized to `0` on registration; bumped
-    /// to the caller's `since_unix` on every successful attach.
-    pub last_since_unix: AtomicU64,
+pub(crate) struct SessionBinding {
+    /// Clone of `HandleInner::event_tx`; channel-close semantics
+    /// are documented at `HandleInner`.
+    pub(crate) event_tx: tokio::sync::broadcast::Sender<RuntimeEvent>,
+    /// Highest `since_unix` accepted for a successful `bind`
+    /// against this session (monotone-bounded).
+    pub(crate) last_since_unix: AtomicU64,
 }
 
 /// Process-singleton session registry (RFC-0011-c §F.2 step (e)
@@ -200,13 +195,10 @@ pub struct SessionBinding {
 /// Same `OnceLock<RwLock<HashMap<SessionId, Arc<SessionBinding>>>>`
 /// pattern as `revocation_set` — process-local, fork-fail-closed
 /// per §F.3. Entries accumulate for the lifetime of the process;
-/// a restart clears the map (per the §F.3 fork-fail-closed
-/// semantics).
+/// a restart clears the map.
 ///
-/// Cleanup of individual entries when a session ends is OUT OF
-/// SCOPE for v0.1.0 — the substrate does not yet observe per-handle
-/// teardown; a follow-on amendment will hook the last
-/// `Arc<HandleInner>` drop and call `unregister_session`.
+/// Cleanup hooks (per-handle teardown) land in a follow-on
+/// amendment observing the last `Arc<HandleInner>` drop.
 fn session_registry() -> &'static RwLock<HashMap<SessionId, Arc<SessionBinding>>> {
     static REG: OnceLock<RwLock<HashMap<SessionId, Arc<SessionBinding>>>> = OnceLock::new();
     REG.get_or_init(|| RwLock::new(HashMap::new()))
@@ -215,25 +207,37 @@ fn session_registry() -> &'static RwLock<HashMap<SessionId, Arc<SessionBinding>>
 /// Register a session binding for `session_id`
 /// (RFC-0011-c §F.2 step (e) follow-on amendment).
 ///
-/// Idempotent: re-registering the same `session_id` overwrites the
-/// prior entry. The caller (typically `RuntimeHandle::new`) is
-/// responsible for using a unique `session_id` per spawn;
-/// collisions are a programmer error (the substrate cannot
-/// distinguish two concurrent spawns of the same
-/// `(agent_id, spawned_at)` pair — `derive_session_id` is
-/// deterministic over those inputs).
+/// Fail-CLOSED on three distinct failure classes — each surfaces
+/// via `AttachError::PersistenceError` with a disambiguating
+/// reason:
+/// - **collision** — `session_id` already registered; the lock
+///   guards the map against overwrites that would reset
+///   `last_since_unix` and open a replay window
+/// - **revoked** — `session_id` is in the revocation set; refuses
+///   to re-register (defense-in-depth against the reset-attack on
+///   an already-revoked session)
+/// - **poisoned** — registry lock poisoned by a previous panic
 ///
 /// # Errors
-/// Returns `AttachError::PersistenceError` when the registry lock
-/// is poisoned by a previous panic. Fail-CLOSED per the
-/// revocation-set discipline.
-pub fn register_session(
+/// `AttachError::PersistenceError` for any of the three classes
+/// above.
+pub(crate) fn register_session(
     session_id: SessionId,
     binding: Arc<SessionBinding>,
 ) -> Result<(), AttachError> {
+    if is_token_revoked(&session_id) {
+        return Err(AttachError::PersistenceError(format!(
+            "register_session: session {session_id:?} is revoked"
+        )));
+    }
     let mut guard = session_registry()
         .write()
         .map_err(|e| AttachError::PersistenceError(format!("session registry poisoned: {e}")))?;
+    if guard.contains_key(&session_id) {
+        return Err(AttachError::PersistenceError(format!(
+            "register_session: duplicate session_id {session_id:?}"
+        )));
+    }
     guard.insert(session_id, binding);
     Ok(())
 }
@@ -247,57 +251,42 @@ pub fn register_session(
 /// poisoned-lock case is indistinguishable from a missing entry
 /// and the substrate treats both as "session not found").
 #[must_use]
-pub fn lookup_session(session_id: &SessionId) -> Option<Arc<SessionBinding>> {
+pub(crate) fn lookup_session(session_id: &SessionId) -> Option<Arc<SessionBinding>> {
     session_registry()
         .read()
         .ok()
         .and_then(|guard| guard.get(session_id).cloned())
 }
 
-/// Remove a session binding (RFC-0011-c §F.2 step (e) follow-on).
-///
-/// Currently UNCALLED from the substrate — cleanup hooks land via
-/// a follow-on amendment that observes the last
-/// `Arc<HandleInner>` drop. Exposed here so follow-on tests +
-/// extension crates can exercise the registry surface without
-/// depending on the `RuntimeHandle` lifecycle.
-///
-/// # Errors
-/// Returns `AttachError::PersistenceError` when the registry lock
-/// is poisoned by a previous panic.
-pub fn unregister_session(session_id: &SessionId) -> Result<(), AttachError> {
-    let mut guard = session_registry()
-        .write()
-        .map_err(|e| AttachError::PersistenceError(format!("session registry poisoned: {e}")))?;
-    guard.remove(session_id);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
+    /// `feature = "octo-runtime-persistence"` OFF — exercises the
+    /// `FeatureNotEnabled` stub path. Gate at module level so the
+    /// opt-out build is the only one that fires these tests
+    /// (default build exercises the Stoolap-backed path instead).
     #[cfg(not(feature = "octo-runtime-persistence"))]
-    fn persist_event_cursor_returns_feature_not_enabled_without_feature() {
-        // When the feature is OFF, `persist_event_cursor` returns
-        // `FeatureNotEnabled` so the CLI can map the substrate
-        // error to `OctoCliError::PersistenceError` (exit 57).
-        let res = persist_event_cursor(Uuid::new_v4(), 0);
-        assert!(
-            matches!(res, Err(PersistenceError::FeatureNotEnabled)),
-            "got {res:?}"
-        );
-    }
+    mod without_feature {
+        use super::*;
 
-    #[test]
-    #[cfg(not(feature = "octo-runtime-persistence"))]
-    fn load_event_cursor_returns_feature_not_enabled_without_feature() {
-        let res = load_event_cursor(Uuid::new_v4());
-        assert!(
-            matches!(res, Err(PersistenceError::FeatureNotEnabled)),
-            "got {res:?}"
-        );
+        #[test]
+        fn persist_event_cursor_returns_feature_not_enabled_without_feature() {
+            let res = persist_event_cursor(Uuid::new_v4(), 0);
+            assert!(
+                matches!(res, Err(PersistenceError::FeatureNotEnabled)),
+                "got {res:?}"
+            );
+        }
+
+        #[test]
+        fn load_event_cursor_returns_feature_not_enabled_without_feature() {
+            let res = load_event_cursor(Uuid::new_v4());
+            assert!(
+                matches!(res, Err(PersistenceError::FeatureNotEnabled)),
+                "got {res:?}"
+            );
+        }
     }
 
     #[test]
@@ -325,10 +314,10 @@ mod tests {
         assert!(!is_token_revoked(&b));
     }
 
-    /// Build a minimal `SessionBinding` for tests. The broadcast
-    /// channel is created with capacity 1 (sufficient for
-    /// `subscribe()` round-trip assertions without depending on
-    /// tokio runtime).
+    /// Build a minimal `SessionBinding` for tests. Capacity 1 is
+    /// sufficient for the round-trip register/lookup assertions
+    /// (no `send()` happens, so the channel never fills); using a
+    /// larger constant would just add noise.
     fn make_binding() -> Arc<SessionBinding> {
         let (tx, _rx) = tokio::sync::broadcast::channel::<RuntimeEvent>(1);
         Arc::new(SessionBinding {
@@ -357,9 +346,28 @@ mod tests {
     }
 
     #[test]
-    fn session_registry_lookup_returns_none_when_not_registered() {
-        let session_id = [0x99; 32];
-        // No prior register_session call — lookup must yield None.
-        assert!(lookup_session(&session_id).is_none());
+    fn register_session_rejects_revoked_session() {
+        let session_id = [0xcc; 32];
+        revoke_attach_token(session_id).expect("revoke");
+        let res = register_session(session_id, make_binding());
+        match res {
+            Err(AttachError::PersistenceError(reason)) => {
+                assert!(reason.contains("revoked"), "got {reason}");
+            }
+            other => panic!("expected PersistenceError(revoked), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_session_rejects_collision() {
+        let session_id = [0xdd; 32];
+        register_session(session_id, make_binding()).expect("first register");
+        let res = register_session(session_id, make_binding());
+        match res {
+            Err(AttachError::PersistenceError(reason)) => {
+                assert!(reason.contains("duplicate"), "got {reason}");
+            }
+            other => panic!("expected PersistenceError(duplicate), got {other:?}"),
+        }
     }
 }

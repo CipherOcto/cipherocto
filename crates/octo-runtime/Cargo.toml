@@ -57,13 +57,8 @@ octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
 serde_bytes = "0.11"
 
 [features]
-# Stoolap cursor persistence feature flag per RFC-0011-c §F.3.
-# `octo-runtime-persistence` is enabled by default so callers
-# get the persistence layer without an opt-in; the flag is
-# still gated on `dep:stoolap` to keep the dependency
-# conditional (downstream consumers opt out via
-# `default-features = false` if they need a stoolap-free
-# build).
+# Stoolap cursor persistence per RFC-0011-c §F.3. Opt out with
+# `default-features = false` for a stoolap-free build.
 default = ["octo-runtime-persistence"]
 octo-runtime-persistence = ["dep:stoolap"]
 

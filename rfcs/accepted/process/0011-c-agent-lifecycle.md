@@ -368,29 +368,33 @@ that carries replay protection primitives (`nonce: [u8;16]` per
 `chain_store::verify_prev_hash`). The substrate enforces both;
 the CLI does not maintain a parallel window. Replay failures
 surface through a dedicated typed-discriminator variant
-`ReplayDetected { since_unix: u64, replay_attempt_unix: u64 }`
+`ReplayDetected { since_unix: u64, recorded_cursor: u64 }`
 (exit 61; new slot per the amendment-chain shared-slot pattern,
 distinct from `Internal(reason)` envelope exit 64) wired as the
 additive follow-on amendment per [[cipherocto-design-principles]]
 §Extension over enumeration. The substrate's `attach_with_token`
 validation chain surfaces the variant when step (e) session-registry
-detects a `since_unix` cursor that has already advanced past the
-first event-stream emission — i.e. the same token has been consumed
-once and is being replayed with a cursor behind the recorded cursor.
-The variant carries both timestamps so the CLI dispatch can render
-diagnostic context for operators without re-deriving from event-stream
-state; this is the canonical substrate-faithful mapping per
-[[substrate-faithfulness-verification]] discipline.
+detects a `since_unix` cursor at or behind the recorded session
+cursor — i.e. the consumption guarantee is violated: the same
+token has been bound once and is being replayed, or a different
+token on the same session is being bound with a stale cursor.
+The variant carries both the replayed `since_unix` cursor and the
+recorded cursor it fell behind so the CLI dispatch can render
+diagnostic context for operators without re-deriving from
+event-stream state; this is the canonical substrate-faithful
+mapping per [[substrate-faithfulness-verification]] discipline.
 
 ### 9.8 Error Handling
 
 New `OctoCliError` variants are added (all `#[non_exhaustive]`
 inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-61**
 (post -g's 35-38; 14 base amendment + 9 follow-on amendment
-AttachHandle/AttachSession variants per §Follow-on §F.4 mirror + 1
-additive follow-on ReplayDetected variant per §9.7 + 1 CLI dispatch
-`TokenMintSkipped` variant per §F.6.3; renegotiation needed if -h/i
-follow-on amendments claim earlier slots):
+AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
+occupying 8 unique slots — `InvalidSinceCursor` shares slot 53 with
+`Expired` per amendment-chain shared-slot pattern — + 1 CLI
+dispatch `TokenMintSkipped` variant per §F.6.3; total 24 variants
+in 23 slots 39-61; renegotiation needed if -h/i follow-on
+amendments claim earlier slots):
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                          |
 | ------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -415,7 +419,7 @@ follow-on amendments claim earlier slots):
 | `TransportHandlerNotRegistered { kind_label }`          | 59          | §Follow-on §F.4 mirror — step (e) no handler registered for `token.transport.kind`; extension surfaces (UnixSocket, Raw schemes) land via follow-on Layer D crates + registry per [[cipherocto-design-principles]] §Extension over enumeration |
 | `InvalidSinceCursor { mint_unix, requested }`           | 53 (shared) | §Follow-on §F.4 mirror — step (d) `since_unix < mint_timestamp_unix`; shared slot with `AttachHandleExpired` per amendment-chain shared-slot pattern                                                                                           |
 | `InvalidSessionIdHex { reason }`                        | 47          | CLI-parse failure on `octo agent revoke-attach --session-id` (not 64-char lowercase hex). CLI-boundary, distinct from `AttachHandleBadSignature` (exit 54, substrate signature-verify failure).                                                |
-| `ReplayDetected { since_unix, replay_attempt_unix }`    | 61          | §9.7 follow-on amendment — step (e) session-registry detects replayed `since_unix` cursor behind recorded cursor; typed-discriminator additive variant per amendment-chain shared-slot pattern (distinct from `Internal(reason)` exit 64)      |
+| `ReplayDetected { since_unix, recorded_cursor }`    | 61          | §9.7 follow-on amendment — step (e) session-registry detects `since_unix` cursor at or behind the recorded session cursor; typed-discriminator additive variant per amendment-chain shared-slot pattern (distinct from `Internal(reason)` exit 64)      |
 
 The CLI reuses parent's `HsmUnavailable` (exit 5 per RFC-0011
 §Error Handling) instead of inventing `HsmUnreachable`. The CLI
@@ -883,9 +887,14 @@ are additive to the v4 surface.
 ### Why exit code slots 39-61
 
 Per the slot allocation table, RFC-0011-c consumes slots 39-61
-(post -g's 35-38; 22 new variants + 0 reuse — 14 base amendment + 7 follow-on amendment AttachHandle/AttachSession variants per §Follow-on §F.4 mirror + 1 additive follow-on ReplayDetected variant per §9.7 amendment). Sibling amendments
-that do not consume slots MUST NOT claim earlier slots; renegotiation
-is required if -h/i follow-on amendments need earlier slots.
+(post -g's 35-38; 24 variants + 1 shared-slot reuse between
+`InvalidSinceCursor` and `Expired` per amendment-chain
+shared-slot pattern — 14 base amendment + 9 follow-on amendment
+AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
+(8 unique slots) + 1 CLI dispatch `TokenMintSkipped` variant per
+§F.6.3). Sibling amendments that do not consume slots MUST NOT
+claim earlier slots; renegotiation is required if -h/i follow-on
+amendments need earlier slots.
 
 ### Why state machine aliasing ACTIVE↔BUSY
 

@@ -144,56 +144,37 @@ pub fn build_in_process_registry() -> Registry {
     reg
 }
 
-/// Built-in in-process broadcast binding handler
-/// (RFC-0011-c §F.2 + §9.3.5).
-///
-/// Substrate-faithful wiring per the §F.2 step (e) follow-on
-/// amendment: looks up the session in the process-singleton
-/// session registry (registered by `RuntimeHandle::new` per
-/// `crate::persistence::register_session`), mints a fresh
-/// broadcast `Receiver` from the binding's cloned sender, and
-/// returns an `AttachedSession` with the current cursor.
-///
-/// Replay protection per RFC-0011-c §9.7 follow-on amendment: if
-/// the caller's `since_unix` is behind the recorded cursor, the
-/// substrate surfaces `AttachError::ReplayDetected` (the
-/// typed-discriminator additive variant at exit 61).
+/// Built-in in-process broadcast binding handler (RFC-0011-c §F.2 + §9.7).
 #[derive(Debug, Default)]
 pub struct InProcessHandler;
 
 impl Handler for InProcessHandler {
     fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError> {
-        // Look up the session binding in the process-singleton
-        // registry. The substrate-faithful failure surface for an
-        // unregistered session is `UnknownSession` (same as the
-        // legacy pre-Handler behavior — the substrate cannot
-        // distinguish "session never spawned" from "session was
-        // torn down out from under us" without a lifecycle hook,
-        // and both cases should fail the attach).
         let binding = crate::persistence::lookup_session(&token.session_id).ok_or(
             AttachError::UnknownSession {
                 session_id: token.session_id,
             },
         )?;
 
-        // Replay detection per RFC-0011-c §9.7. If the caller's
-        // `since_unix` is behind the last-observed cursor, the same
-        // token has been consumed once and is being replayed.
-        // Compare-and-swap the cursor in the success path so the
-        // next replay (with a different stale `since_unix`) still
-        // surfaces as a replay rather than being accepted.
+        // Replay detection per RFC-0011-c §9.7. The cursor is
+        // monotone-bounded (only this method writes it, and only with
+        // `since_unix >= prev` on the success path), so `fetch_max`
+        // with AcqRel ordering is exactly the right primitive —
+        // concurrent binds racing on the same session either both
+        // see `prev` and both store their `since_unix` (whichever is
+        // larger wins), or one observes the other's store via
+        // Acquire and updates accordingly. The Acquire load pairs
+        // with the Release store so `event_tx.subscribe()` below
+        // sees the post-store sender registration.
         let prev = binding
             .last_since_unix
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if since_unix < prev {
+            .fetch_max(since_unix, std::sync::atomic::Ordering::AcqRel);
+        if since_unix <= prev {
             return Err(AttachError::ReplayDetected {
                 since_unix,
-                replay_attempt_unix: prev,
+                recorded_cursor: prev,
             });
         }
-        binding
-            .last_since_unix
-            .store(since_unix, std::sync::atomic::Ordering::Relaxed);
 
         Ok(AttachedSession {
             event_cursor: since_unix,
@@ -218,6 +199,24 @@ mod tests {
             payload: AttachPayload {
                 agent_id: Uuid::from_bytes([0xcd; 16]),
                 since_cursor: 7,
+            },
+            transport: Transport::IN_PROCESS,
+        }
+    }
+
+    /// Build a valid `AttachHandle` keyed to a spawned session.
+    /// Pairs with `spawn_agent` so the session_id matches the
+    /// registry key (the BLAKE3 derivation is deterministic over
+    /// `(agent_id, spawned_at)`).
+    fn token_for(handle: &crate::RuntimeHandle, mint_unix: u64) -> AttachHandle {
+        AttachHandle {
+            session_id: handle.session_id,
+            mint_timestamp_unix: mint_unix,
+            ttl_unix: u64::MAX,
+            signature: Signature([0x42; 64]),
+            payload: AttachPayload {
+                agent_id: handle.agent_id,
+                since_cursor: 0,
             },
             transport: Transport::IN_PROCESS,
         }
@@ -272,18 +271,7 @@ mod tests {
         use crate::spawn_agent;
         let agent_id = uuid::Uuid::new_v4();
         let handle = spawn_agent(agent_id, None).expect("spawn registers session");
-
-        let token = AttachHandle {
-            session_id: handle.session_id,
-            mint_timestamp_unix: 1_700_000_000,
-            ttl_unix: u64::MAX,
-            signature: Signature([0x42; 64]),
-            payload: AttachPayload {
-                agent_id,
-                since_cursor: 0,
-            },
-            transport: Transport::IN_PROCESS,
-        };
+        let token = token_for(&handle, 1_700_000_000);
 
         let h = InProcessHandler;
         let since_unix = 1_700_000_001u64;
@@ -298,41 +286,40 @@ mod tests {
 
     /// `InProcessHandler::bind` detects replays per RFC-0011-c §9.7:
     /// a second `bind` against the same session with
-    /// `since_unix` behind the recorded cursor surfaces
+    /// `since_unix` at or behind the recorded cursor surfaces
     /// `AttachError::ReplayDetected` (exit 61, additive
-    /// typed-discriminator variant).
+    /// typed-discriminator variant). `since_unix == prev` is
+    /// rejected alongside `since_unix < prev` because the
+    /// consumption guarantee is "at most one successful bind per
+    /// cursor" — a same-cursor replay is the same token being
+    /// attached twice.
     #[test]
     fn in_process_handler_bind_detects_replay_when_since_unix_behind_recorded() {
         use crate::spawn_agent;
         let agent_id = uuid::Uuid::new_v4();
         let handle = spawn_agent(agent_id, None).expect("spawn registers session");
-        let token = AttachHandle {
-            session_id: handle.session_id,
-            mint_timestamp_unix: 1_700_000_000,
-            ttl_unix: u64::MAX,
-            signature: Signature([0x42; 64]),
-            payload: AttachPayload {
-                agent_id,
-                since_cursor: 0,
-            },
-            transport: Transport::IN_PROCESS,
-        };
+        let token = token_for(&handle, 1_700_000_000);
 
         let h = InProcessHandler;
-        // First attach — accepts `since_unix = 2_000`.
         h.bind(&token, 2_000).expect("first bind accepts");
-        // Second attach with a stale cursor (behind 2_000) — replay.
         let replay = h.bind(&token, 1_500);
         match replay {
             Err(AttachError::ReplayDetected {
                 since_unix,
-                replay_attempt_unix,
+                recorded_cursor,
             }) => {
                 assert_eq!(since_unix, 1_500);
-                assert_eq!(replay_attempt_unix, 2_000);
+                assert_eq!(recorded_cursor, 2_000);
             }
             other => panic!("expected ReplayDetected, got {other:?}"),
         }
+        // Same-cursor replay is also rejected (consumption
+        // guarantee).
+        let same_cursor = h.bind(&token, 2_000);
+        assert!(
+            matches!(same_cursor, Err(AttachError::ReplayDetected { .. })),
+            "same-cursor replay must also surface ReplayDetected, got {same_cursor:?}"
+        );
     }
 
     /// `Transport::IN_PROCESS` is registered by

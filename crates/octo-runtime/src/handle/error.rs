@@ -102,21 +102,24 @@ pub enum AttachError {
         kind_label: String,
     },
 
-    /// Replay detected — session-registry observed `since_unix`
-    /// cursor behind the recorded cursor (the same token has been
-    /// consumed once and is being replayed). Surfaces from
-    /// `attach_with_token` step (e) per RFC-0011-c §F.2 validation
-    /// chain. CLI exit 61 (own slot; additive typed-discriminator
-    /// variant per the §9.7 follow-on amendment).
+    /// Replay detected — `since_unix` cursor at or behind the recorded
+    /// session cursor. Surfaces from `attach_with_token` step (e)
+    /// when the consumption guarantee is violated: the same token
+    /// has been bound once and is being replayed, or a different
+    /// token on the same session is being bound with a stale cursor.
+    /// CLI exit 61 (additive typed-discriminator variant per the §9.7
+    /// follow-on amendment).
     #[error(
-        "replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}"
+        "replay detected: since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}"
     )]
     ReplayDetected {
-        /// `since_unix` from the replayed attach invocation
-        /// (behind the recorded cursor).
+        /// `since_unix` from the rejected attach invocation
+        /// (at or behind the recorded session cursor).
         since_unix: u64,
-        /// Wall-clock timestamp when the replay was observed.
-        replay_attempt_unix: u64,
+        /// Highest `since_unix` previously accepted for this
+        /// session (the substrate-faithful replay-detection
+        /// reference).
+        recorded_cursor: u64,
     },
 }
 
@@ -236,10 +239,10 @@ mod tests {
     }
 
     #[test]
-    fn replay_detected_display_includes_timestamps() {
+    fn replay_detected_display_includes_cursors() {
         let e = AttachError::ReplayDetected {
             since_unix: 1_000,
-            replay_attempt_unix: 2_000,
+            recorded_cursor: 2_000,
         };
         let s = e.to_string();
         assert!(s.contains("replay"), "{s}");

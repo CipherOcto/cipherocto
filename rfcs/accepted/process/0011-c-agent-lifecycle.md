@@ -929,7 +929,7 @@ Each Layer D extension crate returns `AttachedSession` (per §F.7.1) where `broa
 - Substrate (`octo-runtime` Layer B) exposes `RevocationStore` trait + default impl `InMemoryRevocationStore` (the existing `revocation_set()` per §F.3 promoted behind the trait).
 - New crate `octo-runtime-revocation-store` (Layer D, per the per-extension crate pattern; trait lives in `octo-runtime` Layer B) provides `StoolapRevocationStore` impl that writes through to the Stoolap fork ledger at `rev = "527e8eb"` (CipherOcto Stoolap fork per [[feedback_stoolap_persistence]]).
 - `octo-runtime` defaults to `InMemoryRevocationStore` (zero new deps); operators opt-in to `StoolapRevocationStore` by registering the alternative store via the substrate's `install_revocation_store_default_with` factory façade at startup.
-- Cross-process test **TV-AGT27** (distinct from TV-AGT23 §F.7.1 event-bridge happy path) inverts from RED (Phase B `AttachError::Internal`) to GREEN by spawning two processes (spawn-side + attach-side) over UnixSocket loopback, where the spawn-side `revoke_attach_token` writes through to the Stoolap ledger and the attach-side `is_token_revoked` reads from the same ledger directly (not via the unix handler — see §F.7.5 test spec).
+- Cross-process test **TV-AGT27** (distinct from TV-AGT23 §F.7.1 event-bridge happy path) inverts from RED (Phase B `AttachError::Internal`) to GREEN by spawning three `octo` CLI processes (spawn-side + attach-side + operator-side) over UnixSocket loopback, where the operator-side `revoke_attach_token` writes through to the Stoolap ledger and the attach-side `is_token_revoked` reads from the same ledger directly (not via the unix handler — see §F.7.5 test spec).
 
 #### §F.7.5 — Cross-process revocation substrate
 
@@ -971,7 +971,7 @@ New crate `crates/octo-runtime-revocation-store/` (Layer D per-extension pattern
 - `pub fn install_default() -> Result<Arc<dyn RevocationStore>, AttachError>` — opens the ledger + returns the constructed `StoolapRevocationStore` as `Arc<dyn RevocationStore>`. **Does NOT self-register** — the caller (Layer C via Layer B façade) decides how to register; see CLI wiring below. This shape enables the factory closure pattern (the extension crate exports the constructor; Layer B owns the registration; Layer C wires the dependency injection via the factory).
 - 6 tests covering `kind()` return value + INSERT OR IGNORE idempotence + existence-check fast-path + ledger persistence across reopens + schema bootstrap + Send/Sync compile-time bounds.
 
-**CLI wiring (concrete — replaces the prior §F.6 §CLI dispatch wiring cross-reference that did not name a wiring point):**
+**CLI wiring (concrete — replaces the prior §F.6 CLI dispatch wiring cross-reference that did not name a wiring point):**
 
 ```rust
 // crates/octo-cli/src/main.rs
@@ -1005,7 +1005,7 @@ crates/octo-cli/                        (Layer C)
   └─> depends on octo-runtime (Layer B) — always
   └─> depends on octo-runtime-revocation-store (Layer D) — when feature `revocation-store-stoolap` is enabled
   └─> runtime wiring: `octo_runtime::install_revocation_store_default_with(octo_runtime_revocation_store::install_default)`
-      Direction at wiring: C → B → D via the factory closure (B owns the registration, D owns the constructor, C wires the dependency injection). The compile-time C → D edge is feature-gated per per-extension crate pattern (the C → B → D runtime direction is the canonical "extension register at startup" topology in §User extensibility).
+      Direction at wiring: C → B → D via the factory closure (B owns the registration, D owns the constructor, C wires the dependency injection). The compile-time C → D edge is feature-gated per the per-extension crate pattern (the C → B → D runtime direction is the canonical "extension register at startup" topology in §User extensibility).
 ```
 
 **Cross-process test TV-AGT27 (Phase C paired follow-on):** spawns three `octo` CLI processes (spawn-side + attach-side + operator-side) connected via UnixSocket loopback; all three processes install `StoolapRevocationStore` against the shared ledger path:
@@ -1017,7 +1017,7 @@ crates/octo-cli/                        (Layer C)
 
 Test harness lives in `crates/octo-runtime-revocation-store/tests/cross_process.rs`; spawns three child processes (spawn-side + attach-side + operator-side) sharing a tempdir ledger path. Cross-process consistency: linearizable via synchronous commits per `stoolap::Database::exec`; the attach-side observes the operator-side's revoke within subprocess-latency-bound milliseconds.
 
-**Substrate discipline preserved (per [[cipherocto-design-principles]] §Attenuation invariants cross boundaries):** user-observable semantics preserved across the rewrite (same free-function signatures, same return types, same error variants, same fork-fail-closed contract for the default `InMemoryRevocationStore`); the Stoolap fork NEVER hosts cipherocto business schema beyond the single revocation table (HARD RED LINE per [[stoolap-general-purpose-db]]); the dispatch change is internal (direct static access → trait-mediated `current_revocation_store()` lookup with `Arc<dyn RevocationStore>` vtable). One-line inline note on performance: trait dispatch adds one vtable call (single-digit-ns); default `InMemoryRevocationStore` consumers see no hot-path cost change.
+**Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
 
 **Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
 

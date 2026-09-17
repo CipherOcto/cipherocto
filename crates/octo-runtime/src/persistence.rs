@@ -23,13 +23,12 @@
 //!
 //! ## In-memory session registry
 //!
-//! `register_session` + `lookup_session` + `unregister_session`
-//! maintain a process-singleton `RwLock<HashMap<SessionId,
-//! Arc<SessionBinding>>>` registry. `RuntimeHandle::new` registers
-//! a `SessionBinding` for the spawned session; `InProcessHandler::bind`
-//! looks it up to mint a fresh broadcast `Receiver` for the
-//! caller (the substrate-faithful step (e) surface per RFC-0011-c
-//! §F.2 follow-on amendment).
+//! `register_session` + `lookup_session` maintain a process-singleton
+//! `RwLock<HashMap<SessionId, Arc<SessionBinding>>>` registry.
+//! `RuntimeHandle::new` registers a `SessionBinding` for the spawned
+//! session; `InProcessHandler::bind` looks it up to mint a fresh
+//! broadcast `Receiver` for the caller (the substrate-faithful step
+//! (e) surface per RFC-0011-c §F.2 follow-on amendment).
 //!
 //! Entries accumulate for the process lifetime — there is no
 //! per-handle teardown hook in v0.1.0 (the cleanup path lands via
@@ -181,8 +180,8 @@ pub fn is_token_revoked(session_id: &SessionId) -> bool {
 /// `AttachError::ReplayDetected` (exit 61).
 #[derive(Debug)]
 pub(crate) struct SessionBinding {
-    /// Clone of `HandleInner::event_tx`; channel-close semantics
-    /// are documented at `HandleInner`.
+    /// Clone of `HandleInner::event_tx`; channel-close invariants
+    /// documented at `HandleInner`.
     pub(crate) event_tx: tokio::sync::broadcast::Sender<RuntimeEvent>,
     /// Highest `since_unix` accepted for a successful `bind`
     /// against this session (monotone-bounded).
@@ -218,6 +217,11 @@ fn session_registry() -> &'static RwLock<HashMap<SessionId, Arc<SessionBinding>>
 ///   an already-revoked session)
 /// - **poisoned** — registry lock poisoned by a previous panic
 ///
+/// The revocation check is re-issued under the registry write lock
+/// to close the TOCTOU window between the initial check and the
+/// `HashMap::insert` (otherwise a concurrent `revoke_attach_token`
+/// can race the insert and resurrect the session).
+///
 /// # Errors
 /// `AttachError::PersistenceError` for any of the three classes
 /// above.
@@ -225,14 +229,14 @@ pub(crate) fn register_session(
     session_id: SessionId,
     binding: Arc<SessionBinding>,
 ) -> Result<(), AttachError> {
+    let mut guard = session_registry()
+        .write()
+        .map_err(|e| AttachError::PersistenceError(format!("session registry poisoned: {e}")))?;
     if is_token_revoked(&session_id) {
         return Err(AttachError::PersistenceError(format!(
             "register_session: session {session_id:?} is revoked"
         )));
     }
-    let mut guard = session_registry()
-        .write()
-        .map_err(|e| AttachError::PersistenceError(format!("session registry poisoned: {e}")))?;
     if guard.contains_key(&session_id) {
         return Err(AttachError::PersistenceError(format!(
             "register_session: duplicate session_id {session_id:?}"

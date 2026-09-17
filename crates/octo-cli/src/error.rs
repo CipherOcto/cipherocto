@@ -1273,21 +1273,15 @@ pub fn sanitize_substrate_error(s: &str) -> String {
 /// Map a substrate HSM error reason to `OctoCliError::HsmUnavailable`
 /// (exit 5) with the reason sanitized via `sanitize_substrate_error`.
 ///
-/// Substrate `WalletError::Hsm(_)` carries the raw HSM transport
-/// failure through `#[from] HsmError`; the CLI sanitizes at the
-/// layer-C boundary before operator exposure. Consolidates the
-/// prior inline `HsmUnavailable(sanitize_substrate_error(reason))`
-/// mapping duplicated across `commands/agent.rs`,
-/// `commands/identity.rs`, and `commands/governance.rs` per
-/// §F.6.5 cross-module `map_hsm_error` consolidation follow-on.
+/// Sanitize substrate reason and wrap as `HsmUnavailable`. Centralizes
+/// the cross-module mapping per RFC-0011-c §F.6.5.
 #[must_use]
 pub fn map_hsm_error(reason: &str) -> OctoCliError {
     OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
 }
 
-/// Case-insensitive variant of `find_word_boundary` (R17 Lens-2 F2).
-/// Matches ASCII case variants only (`a-z`/`A-Z`) — the markers we use
-/// (`SQL:`, `query:`, `sqlite3_open`) are all ASCII so this is sufficient.
+/// Case-insensitive ASCII word-boundary scan; markers are all ASCII so
+/// byte-level ci match suffices (no locale-aware case folding needed).
 fn find_word_boundary_ci(s: &str, marker: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let marker_bytes = marker.as_bytes();

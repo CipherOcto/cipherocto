@@ -435,10 +435,7 @@ impl RuntimeHandle {
     ) -> Self {
         // BLAKE3-derived per §F.2 (see derive_session_id doc).
         let session_id = derive_session_id(&agent_id, spawned_at);
-        // Register session binding per §F.2 step (e) — registry miss
-        // surfaces as `UnknownSession` on attach (substrate-faithful
-        // signal of a registry failure: poisoned lock, revocation,
-        // or collision).
+        // Registry miss → UnknownSession on attach (substrate-faithful).
         let binding = Arc::new(crate::persistence::SessionBinding {
             event_tx: event_tx.clone(),
             last_since_unix: std::sync::atomic::AtomicU64::new(0),

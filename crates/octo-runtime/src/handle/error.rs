@@ -2,7 +2,7 @@
 //! token operations (RFC-0011-c §F.4).
 //!
 //! Each variant maps 1:1 to an `OctoCliError` slot per RFC-0011-c
-//! §9.8 (extension 39-59). The substrate owns the canonical error
+//! §9.8 (extension 39-61). The substrate owns the canonical error
 //! distinction; the CLI mirrors via per-variant `From<AttachError>`
 //! arms so an additive substrate variant lands a corresponding CLI
 //! slot without central-enum edits.
@@ -14,11 +14,12 @@ use crate::handle::SessionId;
 /// Substrate error envelope for `AttachHandle` operations
 /// (RFC-0011-c §F.4).
 ///
-/// Mirrors 1:1 to the `OctoCliError` slots 53-59 per RFC-0011-c
-/// §9.8 extension (8 variants, 7 slots; `InvalidSinceCursor`
+/// Mirrors 1:1 to the `OctoCliError` slots 53-61 per RFC-0011-c
+/// §9.8 extension (9 variants, 8 slots; `InvalidSinceCursor`
 /// shares slot 53 with `Expired` per amendment-chain shared-slot
-/// pattern). The CLI boundary translates per-variant; the
-/// substrate owns the canonical distinction.
+/// pattern; `ReplayDetected` occupies its own slot 61 per the §9.7
+/// follow-on amendment). The CLI boundary translates per-variant;
+/// the substrate owns the canonical distinction.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum AttachError {
@@ -99,6 +100,21 @@ pub enum AttachError {
         /// Transport-kind discriminator label for the operator
         /// ("InProcess", "UnixSocket", or "Raw(<uuid>)").
         kind_label: String,
+    },
+
+    /// Replay detected — session-registry observed `since_unix`
+    /// cursor behind the recorded cursor (the same token has been
+    /// consumed once and is being replayed). Surfaces from
+    /// `attach_with_token` step (e) per RFC-0011-c §F.2 validation
+    /// chain. CLI exit 61 (own slot; additive typed-discriminator
+    /// variant per the §9.7 follow-on amendment).
+    #[error("replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}")]
+    ReplayDetected {
+        /// `since_unix` from the replayed attach invocation
+        /// (behind the recorded cursor).
+        since_unix: u64,
+        /// Wall-clock timestamp when the replay was observed.
+        replay_attempt_unix: u64,
     },
 }
 
@@ -215,5 +231,17 @@ mod tests {
         let s = e.to_string();
         assert!(s.contains("UnixSocket"), "{s}");
         assert!(s.contains("not registered"), "{s}");
+    }
+
+    #[test]
+    fn replay_detected_display_includes_timestamps() {
+        let e = AttachError::ReplayDetected {
+            since_unix: 1_000,
+            replay_attempt_unix: 2_000,
+        };
+        let s = e.to_string();
+        assert!(s.contains("replay"), "{s}");
+        assert!(s.contains("1000"), "{s}");
+        assert!(s.contains("2000"), "{s}");
     }
 }

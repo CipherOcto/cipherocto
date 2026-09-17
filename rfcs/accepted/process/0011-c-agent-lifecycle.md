@@ -367,19 +367,30 @@ that carries replay protection primitives (`nonce: [u8;16]` per
 `AgentMessage` + `prev_message_hash: Option<[u8;32]>` chain via
 `chain_store::verify_prev_hash`). The substrate enforces both;
 the CLI does not maintain a parallel window. Replay failures
-surface through the substrate's `Internal(reason)` envelope
-(exit 64) — no dedicated `ReplayDetected` CLI variant in this
-amendment cycle (deferred to a follow-on amendment that wires
-the substrate-faithful mapping once `octo_wallet` exposes the
-typed-discriminator surface).
+surface through a dedicated typed-discriminator variant
+`ReplayDetected { since_unix: u64, replay_attempt_unix: u64 }`
+(exit 61; new slot per the amendment-chain shared-slot pattern,
+distinct from `Internal(reason)` envelope exit 64) wired as the
+additive follow-on amendment per [[cipherocto-design-principles]]
+§Extension over enumeration. The substrate's `attach_with_token`
+validation chain surfaces the variant when step (e) session-registry
+detects a `since_unix` cursor that has already advanced past the
+first event-stream emission — i.e. the same token has been consumed
+once and is being replayed with a cursor behind the recorded cursor.
+The variant carries both timestamps so the CLI dispatch can render
+diagnostic context for operators without re-deriving from event-stream
+state; this is the canonical substrate-faithful mapping per
+[[substrate-faithfulness-verification]] discipline.
 
 ### 9.8 Error Handling
 
 New `OctoCliError` variants are added (all `#[non_exhaustive]`
-inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-59**
+inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-61**
 (post -g's 35-38; 14 base amendment + 9 follow-on amendment
-AttachHandle/AttachSession variants per §Follow-on §F.4 mirror;
-renegotiation needed if -h/i follow-on amendments claim earlier slots):
+AttachHandle/AttachSession variants per §Follow-on §F.4 mirror + 1
+additive follow-on ReplayDetected variant per §9.7 + 1 CLI dispatch
+`TokenMintSkipped` variant per §F.6.3; renegotiation needed if -h/i
+follow-on amendments claim earlier slots):
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                          |
 | ------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -404,13 +415,14 @@ renegotiation needed if -h/i follow-on amendments claim earlier slots):
 | `TransportHandlerNotRegistered { kind_label }`          | 59          | §Follow-on §F.4 mirror — step (e) no handler registered for `token.transport.kind`; extension surfaces (UnixSocket, Raw schemes) land via follow-on Layer D crates + registry per [[cipherocto-design-principles]] §Extension over enumeration |
 | `InvalidSinceCursor { mint_unix, requested }`           | 53 (shared) | §Follow-on §F.4 mirror — step (d) `since_unix < mint_timestamp_unix`; shared slot with `AttachHandleExpired` per amendment-chain shared-slot pattern                                                                                           |
 | `InvalidSessionIdHex { reason }`                        | 47          | CLI-parse failure on `octo agent revoke-attach --session-id` (not 64-char lowercase hex). CLI-boundary, distinct from `AttachHandleBadSignature` (exit 54, substrate signature-verify failure).                                                |
+| `ReplayDetected { since_unix, replay_attempt_unix }`    | 61          | §9.7 follow-on amendment — step (e) session-registry detects replayed `since_unix` cursor behind recorded cursor; typed-discriminator additive variant per amendment-chain shared-slot pattern (distinct from `Internal(reason)` exit 64)      |
 
 The CLI reuses parent's `HsmUnavailable` (exit 5 per RFC-0011
 §Error Handling) instead of inventing `HsmUnreachable`. The CLI
 reuses parent's `ConfirmationRequired` (exit 2 per RFC-0011
 §Error Handling) for the CLI-level re-check.
 
-Exit codes 39–59 sit in the reserved 17–63 range per RFC-0011
+Exit codes 39–61 sit in the reserved 17–63 range per RFC-0011
 §Exit Codes.
 
 ### 9.9 RFC-0008 Execution Class Mapping
@@ -713,7 +725,7 @@ decomposition is **flat** (no nested sub-missions) per
 
 - `octo-cli` Cargo manifest — add `octo-runtime = { path = "../octo-runtime" }` (Layer B substrate)
 - `octo_cli::commands::agent` module — NEW; `Commands::Agent` clap enum + `AgentAction::{Create, Run, List, Destroy, Attach}` dispatch + 5 payload types (per RFC-0011-c §9.3)
-- `octo_cli::error` module — add 15 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-59)
+- `octo_cli::error` module — add 16 new variants to `#[non_exhaustive] OctoCliError` (per RFC-0011-c §9.8; slots 39-61)
 - `octo_cli::redact` module — add agent-specific redaction patterns (`agent_id`, `holder_did`, `capability_root` per RFC-0011-c §Security)
 - `octo_runtime` crate root — NEW (per companion mission `0011-c-octo-runtime-substrate`); `spawn_agent` + `attach` + `RuntimeHandle` + `EventStream`
 - `octo_runtime::spawn` module — NEW; `spawn_agent` impl
@@ -774,7 +786,7 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 
 `pub enum AttachError` at the `octo_runtime::handle::error` module (Layer B):
 
-- `Expired { session_id: SessionId, mint_unix: u64, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired { mint_unix, ttl_unix, now_unix }` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-59; the CLI-boundary `ttl_unix` mirrors the substrate `expired_at_unix` with CLI-friendly shortening, and the CLI envelope intentionally drops `session_id` — typed-discriminator recovery is available via the substrate `Debug` impl on the typed `[u8; 32]`)
+- `Expired { session_id: SessionId, mint_unix: u64, expired_at_unix: u64, now_unix: u64 }` (mirror → `OctoCliError::AttachHandleExpired { mint_unix, ttl_unix, now_unix }` exit 53 per RFC-0011-c §9.8 slot allocation extended 39-61; the CLI-boundary `ttl_unix` mirrors the substrate `expired_at_unix` with CLI-friendly shortening, and the CLI envelope intentionally drops `session_id` — typed-discriminator recovery is available via the substrate `Debug` impl on the typed `[u8; 32]`)
 - `BadSignature { reason: String }` (mirror → `OctoCliError::AttachHandleBadSignature` exit 54)
 - `SessionMismatch { declared: SessionId, actual: SessionId }` (mirror → `OctoCliError::AttachSessionMismatch` exit 55)
 - `UnknownSession { session_id: SessionId }` (mirror → `OctoCliError::AttachSessionUnknown` exit 56)
@@ -782,6 +794,7 @@ Stoolap cursor persistence + in-memory revocation set at the `octo_runtime::pers
 - `PersistenceError(String)` (mirror → `OctoCliError::PersistenceError(String)` exit 57)
 - `RevocationError(String)` (mirror → `OctoCliError::RevocationError(String)` exit 58) — folded into `AttachError` per R7 simplification; the standalone `RevocationError` substrate enum from earlier §F.3 is deleted (the canonical variant name is `RevocationError`, not `RevocationFailed`)
 - `TransportHandlerNotRegistered { kind_label: String }` (mirror → `OctoCliError::TransportHandlerNotRegistered { kind_label }` exit 59 per RFC-0011-c §9.8 row added in this amendment; surfaces step (e) registry-miss of `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`)
+- `ReplayDetected { since_unix: u64, replay_attempt_unix: u64 }` (mirror → `OctoCliError::ReplayDetected { since_unix, replay_attempt_unix }` exit 61 per RFC-0011-c §9.8 row added in the §9.7 follow-on amendment; surfaces step (e) session-registry detecting replayed `since_unix` cursor behind recorded cursor)
 
 CLI error surface mirrors via `OctoCliError` variants appended per RFC-0011-c §9.8 slot allocation.
 
@@ -842,7 +855,7 @@ Every successful `octo agent run --detach --token-file <path>` write produces to
 **§F.6.5 — Out of scope (deferred to follow-on amendment cycles)**
 
 - **Session-registry-wiring for `InProcessHandler::bind`** — the `InProcessHandler` currently mirrors pre-handler behavior (panic-in-debug + `AttachError::UnknownSession` exit 56 in release) per §F.2 step (e) deferral. Successful cross-process `attach --token-file` requires the session-registry-wiring follow-on amendment (substrate-side: register `session_id → Arc<HandleInner>` in the process-singleton registry on `spawn_agent`; cli-side: unblocks the happy-path attach TV). The CLI dispatch surface wired in §F.6.1-§F.6.2 is substrate-faithful; the missing wiring is purely substrate-side. Follow-on amendment paired mission (companion to this one) lands the registry write in `spawn_agent` + the `InProcessHandler::bind` dispatch lookup.
-- **Replay typed-discriminator variant** — currently routed through `Internal(reason)` exit 64 per §9.7 deferral. The follow-on amendment refreshes §9.8 + adds the typed-discriminator variant per amendment-chain shared-slot pattern.
+- **Replay typed-discriminator variant** — added in the §9.7 follow-on amendment (exit 61; typed-discriminator `ReplayDetected { since_unix, replay_attempt_unix }`). Removed from this out-of-scope list per §9.7 amendment + §9.8 row extension (39-61).
 - **Hybrid `node_type` placeholder** — populated by a future mission that consumes the substrate's `Transport::Raw(Uuid)` extension seam.
 - **UnixSocket + Raw extension Layer D crates** — register handlers into `HANDLE_TRANSPORT_REGISTRY` via the per-extension crate + registry pattern per [[cipherocto-design-principles]] §Extension over enumeration.
 
@@ -867,10 +880,10 @@ fragmenting the version space; field renames (`data`→`payload`,
 `generated_at`→`executed_at_unix`, `preview_only`→`redacted`)
 are additive to the v4 surface.
 
-### Why exit code slots 39-59
+### Why exit code slots 39-61
 
-Per the slot allocation table, RFC-0011-c consumes slots 39-59
-(post -g's 35-38; 21 new variants + 0 reuse — 14 base amendment + 7 follow-on amendment AttachHandle/AttachSession variants per §Follow-on §F.4 mirror). Sibling amendments
+Per the slot allocation table, RFC-0011-c consumes slots 39-61
+(post -g's 35-38; 22 new variants + 0 reuse — 14 base amendment + 7 follow-on amendment AttachHandle/AttachSession variants per §Follow-on §F.4 mirror + 1 additive follow-on ReplayDetected variant per §9.7 amendment). Sibling amendments
 that do not consume slots MUST NOT claim earlier slots; renegotiation
 is required if -h/i follow-on amendments need earlier slots.
 

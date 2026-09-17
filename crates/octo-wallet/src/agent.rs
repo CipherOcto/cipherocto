@@ -1304,7 +1304,7 @@ mod tests {
         // from the registry key — per RFC-0011-c §9.10 `AgentSummary`
         // field-level invariant).
         //
-        // `validate_reason` not re-tested here — see `validate_reason_accepts_printable` plus `validate_reason_rejects_esc_byte` free-fn tests.
+        // validate_reason tested in free-fn tests above (accepts_printable, rejects_esc_byte).
         let listed = registry
             .list_owned_agents(&holder_did, &AgentFilter::default())
             .expect("list via trait");

@@ -542,6 +542,52 @@ pub enum OctoCliError {
         reason: String,
     },
 
+    /// `octo governance vote --vote-cap <cap_id>` rejected the
+    /// capability token (RFC-0011-g §Error Handling + RFC-0957
+    /// §Capability Verification). The substrate
+    /// `GovernanceError::VoteRejected { reason }` envelope surfaces
+    /// this with operator-readable rationale (capability caveat set
+    /// failure per RFC-0957 §Attenuation Invariant: missing
+    /// `Audience(proposal_id)` OR missing `Before(deadline)` OR
+    /// missing `Provider(active_role)`). Exit 36 per RFC-0011-g
+    /// §Error Handling.
+    #[error("vote rejected: {reason}")]
+    VoteRejected {
+        /// RFC-0957 attenuation failure reason (caveat set mismatch).
+        reason: String,
+    },
+
+    /// `octo governance attest <subject_did> <attestation_kind>` carried
+    /// a kind reference that did not match any registered attestation
+    /// kind in the substrate registry (RFC-0011-g §Attestation Kind
+    /// Resolution — TypedDiscriminator pattern per
+    /// [[cipherocto-design-principles]] §Extension over enumeration).
+    /// The substrate carries the typed-discriminator namespace; this
+    /// error surfaces the unknown kind verbatim so the operator can
+    /// diff against the registered namespace. Exit 37 per RFC-0011-g
+    /// §Error Handling (slot reserved at `error.rs:373` comment).
+    #[error("unknown attestation kind: {kind_ref}")]
+    UnknownAttestationKind {
+        /// Typed-discriminator kind reference supplied on the CLI
+        /// (`<namespace>:<subkind>` form per RFC-0011-g §Attestation Kind
+        /// Resolution).
+        kind_ref: String,
+    },
+
+    /// `octo governance attest` or `octo governance vote` invoked
+    /// against a substrate that is not yet ready per the multi-prereq
+    /// gate (RFC-0011-g §Compatibility Mixed-Version Compatibility).
+    /// The substrate returns `GovernanceError::PrereqNotAccepted { rfc_ref }`
+    /// when the relevant upstream RFC is still in Draft; the CLI
+    /// surfaces this verbatim. Exit 38 per RFC-0011-g §Error Handling
+    /// (no operator cost; advisory).
+    #[error("prerequisite not accepted: {rfc_ref}")]
+    PrereqNotAccepted {
+        /// RFC reference of the gating prerequisite that has not
+        /// yet reached Accepted status.
+        rfc_ref: String,
+    },
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -779,6 +825,9 @@ impl OctoCliError {
             Self::SnapshotStale { .. } => 35,
             Self::InvalidProposalState { .. } => 2,
             Self::GovernanceSubstrateError { .. } => 51,
+            Self::VoteRejected { .. } => 36,
+            Self::UnknownAttestationKind { .. } => 37,
+            Self::PrereqNotAccepted { .. } => 38,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
             // RFC-0011-c §F + §9.8: AttachHandle token pathway slots
@@ -978,6 +1027,21 @@ impl OctoCliError {
             }
             Self::GovernanceSubstrateError { .. } => {
                 "the governance substrate returned an internal failure (cache or projection surface); check the substrate logs and retry".to_string()
+            }
+            Self::VoteRejected { reason } => {
+                format!(
+                    "vote rejected: {reason}; verify the capability token's RFC-0957 caveat set (Audience / Before / Provider) or run `octo governance inspect <cap_id>` for details"
+                )
+            }
+            Self::UnknownAttestationKind { kind_ref } => {
+                format!(
+                    "unknown attestation kind `{kind_ref}`; the discriminator is not registered. Use `octo governance attest --list-kinds` once Phase 2 substrate lands"
+                )
+            }
+            Self::PrereqNotAccepted { rfc_ref } => {
+                format!(
+                    "the {rfc_ref} substrate is not Accepted; the `attest` / `vote` primitives are reserved until the prerequisite RFC lands. Check `accepted/` for the current state"
+                )
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
@@ -1694,6 +1758,30 @@ mod tests {
                     reason: "cache miss race".to_string(),
                 },
                 51,
+            ),
+            // RFC-0011-g §Error Handling: Phase 2 attest + vote slots
+            // (36/37/38) — paired with the substrate
+            // `octo_governance::GovernanceError` variants once they
+            // land (RFC-0011-g §Substrate ADD). Slot arithmetic:
+            // 36 = VoteRejected, 37 = UnknownAttestationKind,
+            // 38 = PrereqNotAccepted.
+            (
+                OctoCliError::VoteRejected {
+                    reason: "audience caveat not satisfied".to_string(),
+                },
+                36,
+            ),
+            (
+                OctoCliError::UnknownAttestationKind {
+                    kind_ref: "did:octo:attest:novel-claim/v1".to_string(),
+                },
+                37,
+            ),
+            (
+                OctoCliError::PrereqNotAccepted {
+                    rfc_ref: "RFC-0855p-d".to_string(),
+                },
+                38,
             ),
         ];
         for (e, code) in cases {

@@ -245,8 +245,8 @@ mod tests {
         let session = GovernanceSession::new("did:octo:test", Arc::new(SystemClock));
         assert_eq!(session.active_did(), "did:octo:test");
         assert_eq!(session.vote_log().proposal_count().expect("unpoisoned"), 0);
-        assert_eq!(session.attestation_log().len(), 0);
-        assert_eq!(session.capability_registry().len(), 0);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 0);
+        assert_eq!(session.capability_registry().len().expect("unpoisoned"), 0);
         assert!(session.now_unix() > 0);
     }
 
@@ -262,11 +262,11 @@ mod tests {
         }
 
         let session = GovernanceSession::new("did:octo:test", Arc::new(FixedClock::new(0)));
-        assert_eq!(session.capability_registry().len(), 0);
+        assert_eq!(session.capability_registry().len().expect("unpoisoned"), 0);
         session
             .register_capability("cap-001", Arc::new(DummySigner))
             .expect("register unpoisoned");
-        assert_eq!(session.capability_registry().len(), 1);
+        assert_eq!(session.capability_registry().len().expect("unpoisoned"), 1);
     }
 
     #[test]

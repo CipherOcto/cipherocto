@@ -160,20 +160,23 @@ impl CapabilityRegistry {
             })
     }
 
-    /// Number of registered capabilities (diagnostic). Returns
-    /// `0` on a poisoned mutex (fail-soft for a pure counter; the
-    /// count is a diagnostic snapshot, not a security-critical
-    /// state — substrate callers re-check via `resolve` for any
-    /// fail-closed path).
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.caps.lock().map(|g| g.len()).unwrap_or(0)
+    /// Number of registered capabilities (diagnostic). Translates
+    /// mutex poison to `GovernanceError::Internal` for substrate
+    /// fail-closed invariant — substrate never panics through the
+    /// CLI chain (sibling invariant to `AttestationLog::len`).
+    pub fn len(&self) -> Result<usize, GovernanceError> {
+        self.caps
+            .lock()
+            .map_err(|e| GovernanceError::Internal {
+                reason: format!("capability registry mutex poisoned: {e}"),
+            })
+            .map(|g| g.len())
     }
 
-    /// `true` if no capabilities are registered.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// `true` if no capabilities are registered. Translates
+    /// mutex poison to `GovernanceError::Internal`.
+    pub fn is_empty(&self) -> Result<bool, GovernanceError> {
+        self.len().map(|n| n == 0)
     }
 }
 
@@ -1301,6 +1304,6 @@ mod tests {
         registry
             .register("cap-sanity".to_string(), signer)
             .expect("register on fresh registry succeeds");
-        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.len().expect("unpoisoned"), 1);
     }
 }

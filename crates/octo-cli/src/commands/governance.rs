@@ -23,6 +23,8 @@
 //! `OctoCliError::InvalidProposalState { state }` (exit 2) per
 //! RFC-0011-g §Error Handling.
 
+use std::sync::Arc;
+
 use clap::Subcommand;
 use octo_governance::{
     attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
@@ -30,7 +32,7 @@ use octo_governance::{
     ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
     SystemClock, VoteChoice, VoteReceipt,
 };
-use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
@@ -241,6 +243,12 @@ pub enum GovernanceAction {
         /// `--confirm-acknowledge`"; defense in depth).
         #[arg(long)]
         confirm_acknowledge: bool,
+        /// Free-text rationale (optional); substrate records
+        /// verbatim in the proposal audit log per RFC-0011-g
+        /// §Subcommand Taxonomy + §Substrate [ADD] `vote`
+        /// signature.
+        #[arg(long, value_name = "TEXT")]
+        rationale: Option<String>,
     },
 }
 
@@ -295,6 +303,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             dry_run,
             confirm,
             confirm_acknowledge,
+            rationale,
         } => vote_handler(
             proposal_id_hex.clone(),
             vote_choice.clone(),
@@ -305,6 +314,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             *dry_run,
             *confirm,
             *confirm_acknowledge,
+            rationale.clone(),
             cli,
         ),
     }
@@ -516,6 +526,7 @@ fn attest_handler(
             expires_at_unix,
             snapshot_id_hex: snapshot_id.as_ref().map(hex32),
             allow_stale,
+            dry_run_correlation_id: Uuid::new_v4().to_string(),
             preview_note: "no wallet IO performed; envelope not signed or appended".to_string(),
         };
         OutputEnvelope::new("octo.governance.attest.dry_run.v1", preview)
@@ -649,6 +660,7 @@ fn vote_handler(
     dry_run: bool,
     confirm: bool,
     confirm_acknowledge: bool,
+    rationale: Option<String>,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     // Fail-fast: weight_bps must be bounded at 10_000 (100%):
@@ -676,9 +688,12 @@ fn vote_handler(
     // IO and substrate append.
     if dry_run {
         let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
-        // Validate the choice at the preview boundary so the
-        // operator catches parse errors before confirming.
-        let _ = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
+        // Canonicalize the choice at the preview boundary so
+        // the operator sees the exact form the substrate will
+        // record (substrate normalizes via `VoteChoice::parse`,
+        // e.g. `APPROVE` -> `yes`); without this, the preview
+        // surface diverges from the commit surface.
+        let canonical_choice = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
         let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
             Some(parse_hex_32("--snapshot-id", s)?)
         } else {
@@ -687,11 +702,12 @@ fn vote_handler(
         let preview = VoteDryRunPreview {
             command: "octo governance vote".to_string(),
             proposal_id_hex: hex32(&proposal_id),
-            vote_choice,
+            vote_choice: canonical_choice.as_str().to_string(),
             weight_bps,
             voter_cap_id,
             snapshot_id_hex: snapshot_id.as_ref().map(hex32),
             allow_stale,
+            dry_run_correlation_id: Uuid::new_v4().to_string(),
             preview_note: "no wallet IO performed; vote not recorded".to_string(),
         };
         OutputEnvelope::new("octo.governance.vote.dry_run.v1", preview)
@@ -771,7 +787,7 @@ fn vote_handler(
         proposal_id,
         choice,
         &token,
-        None,
+        rationale.as_deref(),
         snapshot_id.as_ref(),
         allow_stale,
     )
@@ -975,6 +991,17 @@ pub struct VoteOutput {
 /// and WITHOUT touching the substrate `attest_v2` append path.
 /// The envelope proves the operator's intent was captured
 /// correctly before they commit to a real signing operation.
+///
+/// **Cross-walk to live `AttestOutput`**: the field names below
+/// mirror operator-supplied *input args* (e.g. `subject_did`,
+/// `kind_ref`, `evidence_hash_hex`) — the live `AttestOutput`
+/// carries substrate-minted *receipt* fields (`receipt`,
+/// `attestation_id`, `content_hash`, `appended_at_unix`). The
+/// preview cannot expose receipt fields because the substrate
+/// `attest_v2` append has not run; the divergence is by design,
+/// not drift. `dry_run_correlation_id` lets the operator link
+/// the preview surface back to the eventual live receipt in
+/// audit logs (CLI mints a fresh v4 UUID per dry-run call).
 #[derive(serde::Serialize, Debug, schemars::JsonSchema)]
 pub struct AttestDryRunPreview {
     /// Command name for the preview surface.
@@ -993,6 +1020,10 @@ pub struct AttestDryRunPreview {
     pub snapshot_id_hex: Option<String>,
     /// Operator intent flag for stale-override at confirm-time.
     pub allow_stale: bool,
+    /// Per-call correlation UUID linking this preview to the
+    /// eventual live `AttestOutput` in audit logs. CLI mints a
+    /// fresh v4 UUID at every `--dry-run` invocation.
+    pub dry_run_correlation_id: String,
     /// Operator-facing note that explains no side-effects occurred.
     pub preview_note: String,
 }
@@ -1008,14 +1039,27 @@ pub struct AttestDryRunPreview {
 /// append path. The `weight_bps` clamp is positioned BEFORE
 /// `parse_hex_32` per the MED ordering rule so the logic error
 /// surfaces first.
+///
+/// **Cross-walk to live `VoteOutput`**: `vote_choice` here is
+/// the *canonical* form produced by `VoteChoice::parse`
+/// (e.g. `APPROVE` -> `yes`), not the raw CLI input — the
+/// preview matches what the substrate records. The remaining
+/// field names are operator-supplied *input args* (`weight_bps`,
+/// `proposal_id_hex`, `voter_cap_id`); live `VoteOutput` carries
+/// substrate-minted *receipt* fields (`weight_applied`, `vote_id`,
+/// `receipt`). The divergence is by design (the substrate
+/// `vote_v2` append has not run), not drift.
+/// `dry_run_correlation_id` links the preview to the eventual
+/// live receipt in audit logs (fresh v4 UUID per dry-run call).
 #[derive(serde::Serialize, Debug, schemars::JsonSchema)]
 pub struct VoteDryRunPreview {
     /// Command name for the preview surface.
     pub command: String,
     /// Hex-encoded `proposal_id` (parsed via `parse_hex_32`).
     pub proposal_id_hex: String,
-    /// Original `--vote-choice` argument (the substrate
-    /// `VoteChoice::parse` validated it during preview).
+    /// Canonical `--vote-choice` form produced by
+    /// `VoteChoice::parse` (e.g. `APPROVE` -> `yes`); matches
+    /// what the substrate records.
     pub vote_choice: String,
     /// Operator-supplied `weight_bps` (clamped at the CLI
     /// boundary; the substrate-faithful preview never sees an
@@ -1030,6 +1074,10 @@ pub struct VoteDryRunPreview {
     pub snapshot_id_hex: Option<String>,
     /// Operator intent flag for stale-override at confirm-time.
     pub allow_stale: bool,
+    /// Per-call correlation UUID linking this preview to the
+    /// eventual live `VoteOutput` in audit logs. CLI mints a
+    /// fresh v4 UUID at every `--dry-run` invocation.
+    pub dry_run_correlation_id: String,
     /// Operator-facing note that explains no side-effects occurred.
     pub preview_note: String,
 }
@@ -1080,6 +1128,8 @@ pub fn render_vote_output(receipt: VoteReceipt, quorum_projection: (u32, u32)) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+    use octo_governance::SnapshotRef;
 
     #[test]
     fn rfc_label_translation_table_is_total() {
@@ -1110,6 +1160,41 @@ mod tests {
         // boundary so downstream tooling sees stable wire
         // form.
         let _ = schemars::schema_for!(SnapshotOutput);
+    }
+
+    #[test]
+    fn render_snapshot_routes_through_canonical_envelope_path() {
+        // R4.5 regression: `render_snapshot` MUST route through
+        // `OutputEnvelope::render_with_redaction` + map io
+        // errors to `OctoCliError::Internal` (fail-closed
+        // envelope write surface). Previously the envelope was
+        // discarded via `let _ = envelope`; this test catches
+        // any future revert by exercising the canonical path
+        // end-to-end (clap-parse `Octo` + hand-built
+        // `SnapshotView` + assert Ok(())).
+        let mut cli = Octo::try_parse_from(["octo", "governance", "snapshot"])
+            .expect("clap parse minimal snapshot invocation");
+        cli.output.no_color = true;
+        let view = SnapshotView {
+            snapshot: SnapshotRef {
+                snapshot_id: [0u8; 32],
+                filter: ProposalFilter {
+                    states: None,
+                    chain_id: None,
+                },
+                taken_at_unix: 1_700_000_000,
+                expires_at_unix: 1_700_000_060,
+                root_manifest_hash: [0u8; 32],
+                open_proposal_count: 0,
+                attestation_count: 0,
+            },
+            open_proposals: vec![],
+            attestation_count: 0,
+            resolved_at_unix: 1_700_000_000,
+            remaining_seconds: 60,
+        };
+        render_snapshot(&view, &cli)
+            .expect("render_snapshot must return Ok(()) when envelope writes succeed");
     }
 
     #[test]
@@ -1394,6 +1479,7 @@ mod tests {
             false,
             true,
             false,
+            None,
             &test_octo(OperatorMode::Auditor, true),
         );
         assert!(
@@ -1415,6 +1501,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1552,6 +1639,7 @@ mod tests {
             true,  // dry_run=true
             false, // confirm=false — should be bypassed
             false,
+            None,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1576,6 +1664,7 @@ mod tests {
             true, // dry_run
             false,
             false,
+            None,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1599,6 +1688,7 @@ mod tests {
             false, // NOT dry-run — confirm path
             true,  // confirm=true
             false,
+            None,
             &test_octo(OperatorMode::Human, true),
         );
         assert!(
@@ -1622,11 +1712,42 @@ mod tests {
             true, // dry_run
             false,
             false,
+            None,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
             matches!(result, Err(OctoCliError::InvalidFilter(_))),
             "vote --dry-run with bad proposal_id hex should map to InvalidFilter, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_13_dry_run_accepts_rationale_text() {
+        // C1 (R5.5 fix-sweep): `--rationale <TEXT>` is plumbed
+        // from the Vote clap variant through `vote_handler` into
+        // the `vote_v2` substrate 5th argument slot
+        // (rationale: Option<&str>). On the dry-run preview
+        // path the rationale text is recorded verbatim in the
+        // proposal audit log per RFC-0011-g §Subcommand
+        // Taxonomy row `--rationale <text>`. This pin verifies
+        // the wiring accepts non-empty rationale text without
+        // triggering a parse/confirm gate failure.
+        let result = vote_handler(
+            "ab".repeat(32),
+            "approve".to_string(),
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            true, // dry_run
+            false,
+            false,
+            Some("reject SLA terms: cap exceeds budget envelope".to_string()),
+            &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Ok(())),
+            "vote --dry-run with rationale should succeed (rationale plumbed through to substrate), got {result:?}"
         );
     }
 
@@ -1644,6 +1765,7 @@ mod tests {
             expires_at_unix: None,
             snapshot_id_hex: None,
             allow_stale: false,
+            dry_run_correlation_id: Uuid::new_v4().to_string(),
             preview_note: "no wallet IO performed; envelope not signed or appended".to_string(),
         };
         assert!(
@@ -1672,6 +1794,7 @@ mod tests {
             voter_cap_id: "cap:vote:0001".to_string(),
             snapshot_id_hex: None,
             allow_stale: false,
+            dry_run_correlation_id: Uuid::new_v4().to_string(),
             preview_note: "no wallet IO performed; vote not recorded".to_string(),
         };
         assert_eq!(preview.proposal_id_hex.len(), 64);

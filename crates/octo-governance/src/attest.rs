@@ -131,36 +131,46 @@ impl AttestationLog {
         Self::default()
     }
 
-    /// Look up a receipt by its PK.
-    #[must_use]
-    pub fn get(&self, attestation_id: &[u8; 32]) -> Option<AttestationReceipt> {
+    /// Look up a receipt by its PK. Translates mutex poison to
+    /// `GovernanceError::Internal` for substrate fail-closed
+    /// invariant — substrate never panics through the CLI chain.
+    pub fn get(
+        &self,
+        attestation_id: &[u8; 32],
+    ) -> Result<Option<AttestationReceipt>, GovernanceError> {
         self.entries
             .lock()
-            .expect("attestation log mutex poisoned")
-            .get(attestation_id)
-            .cloned()
+            .map_err(|e| GovernanceError::Internal {
+                reason: format!("attestation log mutex poisoned: {e}"),
+            })
+            .map(|entries| entries.get(attestation_id).cloned())
     }
 
     /// Number of entries currently in the ledger (diagnostic).
-    #[must_use]
-    pub fn len(&self) -> usize {
+    /// Translates mutex poison to `GovernanceError::Internal`.
+    pub fn len(&self) -> Result<usize, GovernanceError> {
         self.entries
             .lock()
-            .expect("attestation log mutex poisoned")
-            .len()
+            .map_err(|e| GovernanceError::Internal {
+                reason: format!("attestation log mutex poisoned: {e}"),
+            })
+            .map(|entries| entries.len())
     }
 
-    /// `true` if the ledger holds zero entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// `true` if the ledger holds zero entries. Translates
+    /// mutex poison to `GovernanceError::Internal`.
+    pub fn is_empty(&self) -> Result<bool, GovernanceError> {
+        self.len().map(|n| n == 0)
     }
 
     /// Append a receipt to the ledger. Returns
     /// `Err(GovernanceError::DuplicateAttestation)` if the PK
     /// already exists; the ledger state is unchanged on error.
+    /// Translates mutex poison to `GovernanceError::Internal`.
     pub fn append(&self, receipt: AttestationReceipt) -> Result<(), GovernanceError> {
-        let mut entries = self.entries.lock().expect("attestation log mutex poisoned");
+        let mut entries = self.entries.lock().map_err(|e| GovernanceError::Internal {
+            reason: format!("attestation log mutex poisoned: {e}"),
+        })?;
         let pk = receipt.attestation_id;
         if entries.contains_key(&pk) {
             return Err(GovernanceError::DuplicateAttestation { attestation_id: pk });
@@ -484,8 +494,13 @@ mod tests {
         assert_eq!(receipt.appended_at_unix, 1_700_000_000);
         assert_eq!(receipt.overrode_staleness_at_unix, None);
         // PK = BLAKE3-256(canonical envelope); ledger contains it.
-        assert_eq!(log.len(), 1);
-        assert_eq!(log.get(&receipt.attestation_id).as_ref(), Some(&receipt));
+        assert_eq!(log.len().expect("unpoisoned"), 1);
+        assert_eq!(
+            log.get(&receipt.attestation_id)
+                .expect("unpoisoned")
+                .as_ref(),
+            Some(&receipt)
+        );
     }
 
     #[test]
@@ -528,7 +543,7 @@ mod tests {
             other => panic!("expected DuplicateAttestation, got {other:?}"),
         }
         // Ledger state unchanged after error (still exactly 1 entry).
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len().expect("unpoisoned"), 1);
     }
 
     #[test]
@@ -555,7 +570,7 @@ mod tests {
             }
             other => panic!("expected UnknownAttestationKind, got {other:?}"),
         }
-        assert_eq!(log.len(), 0);
+        assert_eq!(log.len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -582,7 +597,7 @@ mod tests {
             }
             other => panic!("expected PrereqNotAccepted, got {other:?}"),
         }
-        assert_eq!(log.len(), 0);
+        assert_eq!(log.len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -613,7 +628,7 @@ mod tests {
             }
             other => panic!("expected InvalidArgument, got {other:?}"),
         }
-        assert_eq!(log.len(), 0);
+        assert_eq!(log.len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -643,7 +658,7 @@ mod tests {
             }
             other => panic!("expected InvalidArgument, got {other:?}"),
         }
-        assert_eq!(log.len(), 0);
+        assert_eq!(log.len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -692,8 +707,11 @@ mod tests {
         .expect("evidence-only path should succeed");
         let expected_hash = blake3_256(evidence);
         assert_eq!(r1.evidence_hash, expected_hash);
-        assert_eq!(log.len(), 1);
-        assert_eq!(log.get(&r1.attestation_id).as_ref(), Some(&r1));
+        assert_eq!(log.len().expect("unpoisoned"), 1);
+        assert_eq!(
+            log.get(&r1.attestation_id).expect("unpoisoned").as_ref(),
+            Some(&r1)
+        );
     }
 
     // ---- attest_v2 tests (RFC §7.4 stateless caller-owned session) ----
@@ -730,11 +748,12 @@ mod tests {
         assert_eq!(receipt.appended_at_unix, 1_700_000_000);
         assert_eq!(receipt.expires_at_unix, Some(1_900_000_000));
         assert_eq!(receipt.overrode_staleness_at_unix, None);
-        assert_eq!(session.attestation_log().len(), 1);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 1);
         assert_eq!(
             session
                 .attestation_log()
                 .get(&receipt.attestation_id)
+                .expect("unpoisoned")
                 .as_ref(),
             Some(&receipt)
         );
@@ -762,7 +781,7 @@ mod tests {
             }
             other => panic!("expected UnknownAttestationKind, got {other:?}"),
         }
-        assert_eq!(session.attestation_log().len(), 0);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -792,7 +811,7 @@ mod tests {
             }
             other => panic!("expected InvalidArgument, got {other:?}"),
         }
-        assert_eq!(session.attestation_log().len(), 0);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 0);
     }
 
     #[test]
@@ -830,6 +849,6 @@ mod tests {
         .expect("second attest should succeed");
         assert_eq!(r1.appended_at_unix, 1_700_000_777);
         assert_eq!(r2.appended_at_unix, 1_700_000_777);
-        assert_eq!(session.attestation_log().len(), 2);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 2);
     }
 }

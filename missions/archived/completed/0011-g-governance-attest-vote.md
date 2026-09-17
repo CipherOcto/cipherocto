@@ -28,7 +28,7 @@ status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
 amended_at: 2026-09-17
-amendment: "RFC-0011-g v1.4 layer-model note: canonical `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) + `voting_weight` / `tally_quorum` pure helpers consumed by `octo governance {attest,vote}` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `attest` + `vote` IO functions stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21. Phase 2 substrate landed in 5 commits `b8cf1bbd` + `5b4c0b1c` + `d077ab5c` + `5547765e` + companion CLI bridge. RFC §7.4 stateless v2 surface (attest_v2 + vote_v2) with GovernanceSession + Arc dyn Clock + CapabilityToken + CapabilitySigner landed. Legacy vote + attest substrate preserved via `#[deprecated]` for transitional callers. R2.5.1-R2.5.4 closure complete; 4 new end-to-end CLI tests deferred pending wallet substrate mock scaffolding (RFC-0015 substrate)."
+amendment: "RFC-0011-g layer-model note: canonical `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) + `voting_weight` / `tally_quorum` pure helpers consumed by `octo governance {attest,vote}` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `attest` + `vote` IO functions stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g TV-21. Phase 2 substrate landed in 5 commits `b8cf1bbd` + `5b4c0b1c` + `d077ab5c` + `5547765e` + companion CLI bridge. RFC §7.4 stateless v2 surface (attest_v2 + vote_v2) with GovernanceSession + Arc dyn Clock + CapabilityToken + CapabilitySigner landed. Legacy vote + attest substrate preserved via `#[deprecated]` for transitional callers. R2.5.1-R2.5.4 closure complete; 4 new end-to-end CLI tests deferred pending wallet substrate mock scaffolding (RFC-0015 substrate)."
 ---
 
 # 0011-g-governance-attest-vote — `octo governance attest` + `octo governance vote`
@@ -84,7 +84,7 @@ after one more 5-len DRY round on the substrate (R3) per
 ## RFC
 
 RFC-0011-g §Subcommand Taxonomy — `octo governance attest` +
-`octo governance vote` (rfcs/draft/process/0011-g-governance-subcommands.md)
+`octo governance vote` (RFC-0011-g)
 
 ## Dependencies
 
@@ -160,9 +160,9 @@ patterns.
 
 # (PR opened after mission claim transitions to Claimed per BLUEPRINT.md §Mission Lifecycle)
 
-## Layer-model amendment (RFC-0011-g v1.4)
+## Layer-model amendment (RFC-0011-g)
 
-Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
+Per RFC-0011-g VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
 
 | Canonical type                                                                                                                                                  | Layer A frozen home                       | Layer B façade     |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------ |
@@ -172,7 +172,7 @@ Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note,
 | Pure tally helpers: `voting_weight` + `tally_quorum` (BTreeMap-ordered)                                                                                         | `octo-governance-core` (RFC-0013)         | `octo-governance`  |
 | IO functions: `attest` + `vote` (signature `attest(subject_did, kind, snapshot_id)`, `vote(proposal_id, voter_did, choice, weight)`)                            | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
 
-The `octo governance {attest,vote}` subcommands consume canonical types via the Layer B façade (`pub use octo_governance::*`). IO functions stay in the domain crate per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21 stale-override parity.
+The `octo governance {attest,vote}` subcommands consume canonical types via the Layer B façade (`pub use octo_governance::*`). IO functions stay in the domain crate per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g TV-21 stale-override parity.
 
 ## Risk
 
@@ -426,7 +426,7 @@ them.
 
 | Surface                                        | Mission AC             | Substrate landing commit       | Status                                                                                                                                                  |
 | ---------------------------------------------- | ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `octo_governance::attest` legacy substrate     | AC "attest implemented"| `b8cf1bbd` (Phase 2 substrate) | LANDED — `[ADD]` substrate with append-only ledger. Caller-thread-clock reads via deprecated path; legacy function bodies byte-identical to v1.2.      |
+| `octo_governance::attest` legacy substrate     | AC "attest implemented"| `b8cf1bbd` (Phase 2 substrate) | LANDED — `[ADD]` substrate with append-only ledger. Caller-thread-clock reads via deprecated path; legacy function bodies byte-identical to prior baseline.      |
 | `octo_governance::vote` legacy substrate       | AC "vote implemented"  | `b8cf1bbd` (Phase 2 substrate) | LANDED — same as attest; `[deprecated(since = "0.0.0")]` annotation added in R2.5.2.                                                                      |
 | `AttestationReceipt` + `AttestOutput`          | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
 | `VoteReceipt` + `VoteOutput`                   | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
@@ -451,9 +451,9 @@ were introduced by the Phase 1 snapshot substrate at `d998a8be` and
 remain in scope for a separate follow-on cycle. Neither failure is
 regressed by the R2.5.1-R2.5.4 substrate changes.
 
-### Pre-existing v1.2 vocabulary drift
+### Pre-existing vocabulary drift
 
-The Phase 1 substrate committed at `b8cf1bbd` referenced v1.2 RFC
+The Phase 1 substrate committed at `b8cf1bbd` referenced earlier RFC
 vocabulary that no longer matches the current RFC §Adversarial Review
 row. Two CLI tests (`tv_cli_vote_2`, `tv_cli_vote_5`) were updated in
 R2.5.3 to match the current vocabulary. The substrate itself does not

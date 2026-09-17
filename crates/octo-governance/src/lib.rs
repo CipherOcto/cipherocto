@@ -26,11 +26,13 @@
 pub mod attest;
 pub mod cache;
 pub mod error;
+pub mod session;
 pub mod snapshot;
 pub mod vote;
 
+#[allow(deprecated)]
 pub use attest::{
-    attest, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
+    attest, attest_v2, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
 };
 pub use cache::{OctoGovernanceSnapshotCache, SnapshotCacheKey, SNAPSHOT_CACHE_CAPACITY};
 pub use error::GovernanceSnapshotError;
@@ -38,6 +40,7 @@ pub use error::GovernanceSnapshotError;
 pub use octo_governance_core::tally_quorum;
 pub use octo_governance_core::voting_weight;
 pub use octo_governance_core::AttestationReceipt;
+pub use octo_governance_core::CapabilityToken;
 pub use octo_governance_core::DecisionType;
 pub use octo_governance_core::EmergencyAuthority;
 pub use octo_governance_core::GovernanceError;
@@ -46,9 +49,12 @@ pub use octo_governance_core::GovernancePolicy;
 pub use octo_governance_core::GovernanceProposal;
 pub use octo_governance_core::ProposalState;
 pub use octo_governance_core::VoteReceipt;
+pub use session::{Clock, FixedClock, GovernanceSession, SystemClock};
 pub use snapshot::{
     snapshot, ProposalFilter, ProposalSummary, SnapshotRef, SnapshotView, TTL_SNAPSHOT_SECONDS,
 };
+#[allow(deprecated)]
 pub use vote::{
-    blake3_256 as blake3_256_vote, vote, CapabilityRegistry, QuorumProjection, VoteChoice, VoteLog,
+    blake3_256 as blake3_256_vote, vote, vote_v2, CapabilityRegistry, QuorumProjection, VoteChoice,
+    VoteLog,
 };

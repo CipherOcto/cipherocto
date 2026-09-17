@@ -41,6 +41,8 @@ use blake3::Hasher;
 use octo_governance_core::{AttestationReceipt, GovernanceError};
 use serde::{Deserialize, Serialize};
 
+use crate::session::GovernanceSession;
+
 /// Trait abstraction over the HSM-bound signing primitive used
 /// by `attest`. The CLI implements this trait via
 /// `octo-wallet::sign_envelope` (Layer A frozen) so the substrate
@@ -181,6 +183,17 @@ impl AttestationLog {
 /// for sub-group subjects until `RFC-0855p-d` reaches Accepted
 /// (gate enforced via [`prereq_attest_subgroup_check`] before
 /// the envelope is built).
+///
+/// ## Deprecation
+///
+/// This 11-parameter surface predates the RFC-0011-g §7.4
+/// stateless caller-owned-session design. New callers should use
+/// [`attest_v2`] which accepts `&GovernanceSession` and reads
+/// the clock from the session.
+#[deprecated(
+    since = "0.0.0",
+    note = "use attest_v2 with a GovernanceSession (RFC-0011-g §7.4 stateless substrate signature)"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn attest(
     log: &AttestationLog,
@@ -288,7 +301,119 @@ fn prereq_attest_subgroup_check(subject_did: &str) -> Result<(), GovernanceError
     Ok(())
 }
 
+/// Append a new attestation to the ledger per RFC-0011-g §7.4
+/// stateless substrate signature.
+///
+/// ## Substrate surface (new)
+///
+/// - `session` — caller-owned `GovernanceSession` carrying the
+///   attestation ledger + clock + active DID. The signer is
+///   passed explicitly per RFC §7.4 because attest uses the
+///   `signer` for the *attesting* identity, which may differ
+///   from the session's `active_did` (the attesting operator
+///   and the subject are different roles per RFC §Roles and
+///   Authorities).
+/// - `subject_did` — DID being attested about.
+/// - `kind_ref` — TypedDiscriminator string (resolved via
+///   [`resolve_kind`]).
+/// - `evidence` / `evidence_hash` — XOR invariant: exactly one
+///   of the two must be supplied.
+/// - `expires_at_unix` — optional attestation expiry timestamp.
+/// - `snapshot_id` — optional governance-snapshot pin.
+/// - `allow_stale` — when `true`, records
+///   `overrode_staleness_at_unix` on the receipt.
+///
+/// The canonical envelope bytes are
+/// `subject_did || 0x00 || kind_ref || 0x00 || evidence_hash ||
+/// signer_did || 0x00 || expires_at_unix_be || 0x00 ||
+/// snapshot_id || 0x00 || allow_stale_bool`. The PK is
+/// `BLAKE3-256` of those bytes; `AttestationReceipt.attestation_id`
+/// is set to the PK.
+///
+/// Returns `GovernanceError::UnknownAttestationKind` for
+/// unrecognized `kind_ref`; `GovernanceError::PrereqNotAccepted`
+/// for sub-group subjects until `RFC-0855p-d` reaches Accepted;
+/// `GovernanceError::InvalidArgument` for evidence XOR
+/// violations; `GovernanceError::Internal` for signer failures.
+#[allow(clippy::too_many_arguments)]
+pub fn attest_v2(
+    session: &GovernanceSession,
+    subject_did: &str,
+    kind_ref: &str,
+    evidence: Option<&[u8]>,
+    evidence_hash: Option<[u8; 32]>,
+    expires_at_unix: Option<u64>,
+    snapshot_id: Option<&[u8; 32]>,
+    allow_stale: bool,
+    signer: &dyn CapabilitySigner,
+    signer_did: &str,
+) -> Result<AttestationReceipt, GovernanceError> {
+    let appended_at_unix = session.now_unix();
+
+    prereq_attest_subgroup_check(subject_did)?;
+
+    let _kind = resolve_kind(kind_ref)?;
+
+    let computed_evidence_hash = match (evidence, evidence_hash) {
+        (Some(bytes), None) => blake3_256(bytes),
+        (None, Some(hash)) => hash,
+        (Some(_), Some(_)) => {
+            return Err(GovernanceError::InvalidArgument {
+                reason: "exactly one of `evidence` and `evidence_hash` must be supplied"
+                    .to_string(),
+            });
+        }
+        (None, None) => {
+            return Err(GovernanceError::InvalidArgument {
+                reason: "one of `evidence` or `evidence_hash` must be supplied".to_string(),
+            });
+        }
+    };
+
+    let mut envelope: Vec<u8> = Vec::new();
+    envelope.extend_from_slice(subject_did.as_bytes());
+    envelope.push(0x00);
+    envelope.extend_from_slice(kind_ref.as_bytes());
+    envelope.push(0x00);
+    envelope.extend_from_slice(&computed_evidence_hash);
+    envelope.extend_from_slice(signer_did.as_bytes());
+    envelope.push(0x00);
+    if let Some(exp) = expires_at_unix {
+        envelope.extend_from_slice(&exp.to_be_bytes());
+    }
+    envelope.push(0x00);
+    if let Some(snap) = snapshot_id {
+        envelope.extend_from_slice(snap);
+    }
+    envelope.push(0x00);
+    envelope.push(u8::from(allow_stale));
+
+    let attestation_id = blake3_256(&envelope);
+
+    let _signature = signer
+        .sign_envelope(&envelope)
+        .map_err(|reason| GovernanceError::Internal { reason })?;
+
+    let receipt = AttestationReceipt {
+        attestation_id,
+        subject_did: subject_did.to_string(),
+        kind_ref: kind_ref.to_string(),
+        signer_did: signer_did.to_string(),
+        evidence_hash: computed_evidence_hash,
+        expires_at_unix,
+        appended_at_unix,
+        overrode_staleness_at_unix: if allow_stale {
+            Some(appended_at_unix)
+        } else {
+            None
+        },
+    };
+    session.attestation_log().append(receipt.clone())?;
+    Ok(receipt)
+}
+
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     //! Substrate-faithful tests for the attestation append path.
     //!
@@ -303,6 +428,7 @@ mod tests {
     //! - A8: ledger len/get roundtrip
 
     use super::*;
+    use std::sync::Arc;
 
     /// Test `CapabilitySigner` impl that records the envelope it
     /// was asked to sign and returns a fixed 64-byte signature.
@@ -568,5 +694,142 @@ mod tests {
         assert_eq!(r1.evidence_hash, expected_hash);
         assert_eq!(log.len(), 1);
         assert_eq!(log.get(&r1.attestation_id).as_ref(), Some(&r1));
+    }
+
+    // ---- attest_v2 tests (RFC §7.4 stateless caller-owned session) ----
+
+    fn attest_session_with_signer(
+        did: &str,
+        clock_unix: u64,
+    ) -> (GovernanceSession, Arc<FixedSigner>) {
+        let signer = Arc::new(FixedSigner::new());
+        let session =
+            GovernanceSession::new(did, Arc::new(crate::session::FixedClock::new(clock_unix)));
+        (session, signer)
+    }
+
+    #[test]
+    fn attest_a9_session_happy_path_records_receipt() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let receipt = attest_v2(
+            &session,
+            subject_did(),
+            "route-quality:uptime-30d",
+            Some(b"uptime measurements"),
+            None,
+            Some(1_900_000_000),
+            None,
+            false,
+            &*signer,
+            signer_did(),
+        )
+        .expect("happy path should succeed");
+        assert_eq!(receipt.subject_did, subject_did());
+        assert_eq!(receipt.signer_did, signer_did());
+        assert_eq!(receipt.kind_ref, "route-quality:uptime-30d");
+        assert_eq!(receipt.appended_at_unix, 1_700_000_000);
+        assert_eq!(receipt.expires_at_unix, Some(1_900_000_000));
+        assert_eq!(receipt.overrode_staleness_at_unix, None);
+        assert_eq!(session.attestation_log().len(), 1);
+        assert_eq!(
+            session
+                .attestation_log()
+                .get(&receipt.attestation_id)
+                .as_ref(),
+            Some(&receipt)
+        );
+    }
+
+    #[test]
+    fn attest_a10_session_unknown_kind_rejected() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let err = attest_v2(
+            &session,
+            subject_did(),
+            "not-a-registered-kind",
+            None,
+            Some([0x42; 32]),
+            None,
+            None,
+            false,
+            &*signer,
+            signer_did(),
+        )
+        .expect_err("unregistered kind_ref must error");
+        match err {
+            GovernanceError::UnknownAttestationKind { kind_ref } => {
+                assert_eq!(kind_ref, "not-a-registered-kind");
+            }
+            other => panic!("expected UnknownAttestationKind, got {other:?}"),
+        }
+        assert_eq!(session.attestation_log().len(), 0);
+    }
+
+    #[test]
+    fn attest_a11_evidence_xor_evidence_hash_invariant_via_session() {
+        // attest_v2 enforces evidence XOR evidence_hash: both
+        // supplied must error with InvalidAttestationEvidence.
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let err = attest_v2(
+            &session,
+            subject_did(),
+            "route-quality:uptime-30d",
+            Some(b"bytes"),
+            Some([0x99; 32]),
+            None,
+            None,
+            false,
+            &*signer,
+            signer_did(),
+        )
+        .expect_err("evidence + evidence_hash XOR must error");
+        match err {
+            GovernanceError::InvalidArgument { reason } => {
+                assert!(
+                    reason.contains("exactly one"),
+                    "reason must mention XOR invariant: {reason}"
+                );
+            }
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+        assert_eq!(session.attestation_log().len(), 0);
+    }
+
+    #[test]
+    fn attest_a12_fixed_clock_deterministic_recorded_at() {
+        // Two attest_v2 calls with identical args + same fixed
+        // clock must produce identical appended_at_unix + the
+        // session ledger holds both (determinism over the
+        // session-scoped clock, not SystemTime).
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_777);
+        let r1 = attest_v2(
+            &session,
+            "did:octo:subject-a",
+            "route-quality:uptime-30d",
+            None,
+            Some([0x11; 32]),
+            None,
+            None,
+            false,
+            &*signer,
+            signer_did(),
+        )
+        .expect("first attest should succeed");
+        let r2 = attest_v2(
+            &session,
+            "did:octo:subject-b",
+            "route-quality:uptime-30d",
+            None,
+            Some([0x22; 32]),
+            None,
+            None,
+            false,
+            &*signer,
+            signer_did(),
+        )
+        .expect("second attest should succeed");
+        assert_eq!(r1.appended_at_unix, 1_700_000_777);
+        assert_eq!(r2.appended_at_unix, 1_700_000_777);
+        assert_eq!(session.attestation_log().len(), 2);
     }
 }

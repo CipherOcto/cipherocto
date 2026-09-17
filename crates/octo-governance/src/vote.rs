@@ -39,10 +39,11 @@ use std::sync::{Arc, Mutex};
 
 use blake3::Hasher;
 use octo_governance_core::tally_quorum;
-use octo_governance_core::{GovernanceError, VoteReceipt};
+use octo_governance_core::{CapabilityToken, GovernanceError, VoteReceipt};
 use serde::{Deserialize, Serialize};
 
 use crate::attest::CapabilitySigner;
+use crate::session::GovernanceSession;
 
 /// Vote choice (RFC-0011-g §Vote Choice + §Command Taxonomy).
 ///
@@ -284,6 +285,18 @@ pub struct QuorumProjection {
 /// snapshot policy at the time of voting; the substrate does not
 /// enforce a threshold — the CLI does per RFC-0011-g §Quorum
 /// Threshold.
+///
+/// ## Deprecation
+///
+/// This 10-parameter surface predates the RFC-0011-g §7.4
+/// stateless caller-owned-session design (the substrate
+/// accepts state via explicit arguments). New callers should
+/// use [`vote_v2`] which accepts `&GovernanceSession` +
+/// `&CapabilityToken` and reads state from the session.
+#[deprecated(
+    since = "0.0.0",
+    note = "use vote_v2 with a GovernanceSession and CapabilityToken (RFC-0011-g §7.4 stateless substrate signature)"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn vote(
     log: &VoteLog,
@@ -390,6 +403,143 @@ pub fn blake3_256(bytes: &[u8]) -> [u8; 32] {
     pk
 }
 
+/// Cast a vote per RFC-0011-g §7.4 stateless substrate signature.
+///
+/// ## Substrate surface (new)
+///
+/// - `session` — caller-owned `GovernanceSession` carrying the
+///   vote ledger + capability registry + clock + active DID.
+/// - `proposal_id` — 32-byte content-addressed proposal ID.
+/// - `choice` — `VoteChoice` (RFC §Command Taxonomy canonical
+///   vocabulary `Yes` / `No` / `Abstain`).
+/// - `voter_cap` — `CapabilityToken` carrying `cap_id` +
+///   `issuer_did` + `weight_bps`. The substrate derives
+///   `voter_cap_id`, `voter_did`, and `weight_bps` from the
+///   token; the CLI does not inject them as separate args.
+/// - `rationale` — optional plaintext rationale string (CLI
+///   responsibility to redact per RFC-0011-g §Redaction;
+///   substrate accepts the bytes verbatim).
+/// - `snapshot_id` — optional governance-snapshot pin (when
+///   `Some`, the substrate records it on the receipt envelope
+///   for downstream quorum projection).
+/// - `allow_stale` — when `true`, records `overrode_staleness_at_unix`
+///   on the receipt.
+///
+/// The canonical envelope bytes are
+/// `voter_did || 0x00 || proposal_id || 0x00 || choice_str ||
+/// 0x00 || weight_be || 0x00 || voter_cap_id || 0x00 ||
+/// rationale_be || 0x00 || snapshot_id_be || 0x00 ||
+/// allow_stale_bool`. Every field is preceded by an explicit
+/// `0x00` delimiter; the parsing layer does NOT rely on
+/// implicit fixed-length separators (32-byte PK, 4-byte
+/// `u32_be`). The PK is `BLAKE3-256` of those bytes; the
+/// `VoteReceipt.vote_id` is set to the PK.
+///
+/// Returns:
+/// - `GovernanceError::UnknownCapability` for unregistered
+///   `voter_cap.cap_id` (looked up in `session.capability_registry()`).
+/// - `GovernanceError::PrereqNotAccepted` for sub-group-scoped
+///   proposals until `RFC-0855p-d` reaches Accepted (gate
+///   keyed on `voter_cap.issuer_did` prefix).
+/// - `GovernanceError::DuplicateVote` for repeat voters
+///   (`(proposal_id, voter_did)` already present in
+///   `session.vote_log()`).
+/// - `GovernanceError::InvalidArgument` for `weight_bps > 10_000`.
+#[allow(clippy::too_many_arguments)]
+pub fn vote_v2(
+    session: &GovernanceSession,
+    proposal_id: [u8; 32],
+    choice: VoteChoice,
+    voter_cap: &CapabilityToken,
+    rationale: Option<&str>,
+    snapshot_id: Option<&[u8; 32]>,
+    allow_stale: bool,
+) -> Result<(VoteReceipt, QuorumProjection), GovernanceError> {
+    let voter_did = voter_cap.issuer_did.as_str();
+    let voter_cap_id = voter_cap.cap_id.as_str();
+    let weight_bps = voter_cap.weight_bps;
+    let recorded_at_unix = session.now_unix();
+
+    // Sub-group prereq gate (RFC-0855p-d).
+    prereq_vote_subgroup_check(voter_did)?;
+
+    // Capability verification — unknown voter_cap.cap_id fails-closed.
+    let signer = session.capability_registry().resolve(voter_cap_id)?;
+
+    // weight_bps invariant — caller must clamp at the boundary.
+    if weight_bps > 10_000 {
+        return Err(GovernanceError::InvalidArgument {
+            reason: format!("weight_bps {weight_bps} exceeds 10_000 (100%)"),
+        });
+    }
+
+    // Canonical envelope bytes (substrate-faithful). Every field
+    // is preceded by an explicit `0x00` delimiter; the parsing
+    // layer does NOT rely on implicit fixed-length separators
+    // (32-byte `proposal_id`, 4-byte `weight_bps`).
+    let choice_str = choice.as_str();
+    let mut envelope: Vec<u8> = Vec::new();
+    envelope.extend_from_slice(voter_did.as_bytes());
+    envelope.push(0x00);
+    envelope.extend_from_slice(&proposal_id);
+    envelope.push(0x00);
+    envelope.extend_from_slice(choice_str.as_bytes());
+    envelope.push(0x00);
+    envelope.extend_from_slice(&weight_bps.to_be_bytes());
+    envelope.push(0x00);
+    envelope.extend_from_slice(voter_cap_id.as_bytes());
+    envelope.push(0x00);
+    if let Some(r) = rationale {
+        envelope.extend_from_slice(r.as_bytes());
+    }
+    envelope.push(0x00);
+    if let Some(snap) = snapshot_id {
+        envelope.extend_from_slice(snap);
+    }
+    envelope.push(0x00);
+    envelope.push(u8::from(allow_stale));
+
+    let vote_id = blake3_256(&envelope);
+
+    // Signer signs the canonical envelope (HSM-bound). Recorded
+    // for audit but not currently in the `VoteReceipt` (audit
+    // lives in the substrate's governance_envelopes table per
+    // RFC-0862 §Data Structures).
+    let _signature = signer
+        .sign_envelope(&envelope)
+        .map_err(|reason| GovernanceError::Internal { reason })?;
+
+    let receipt = VoteReceipt {
+        vote_id,
+        proposal_id,
+        voter_did: voter_did.to_string(),
+        choice: choice_str.to_string(),
+        weight_applied: weight_bps,
+        voter_cap_id: voter_cap_id.to_string(),
+        recorded_at_unix,
+        overrode_staleness_at_unix: if allow_stale {
+            Some(recorded_at_unix)
+        } else {
+            None
+        },
+    };
+
+    // Append first; the duplicate-vote check is the substrate
+    // invariant for voter uniqueness within a proposal.
+    session.vote_log().append(receipt.clone())?;
+
+    // Quorum projection (post-append snapshot).
+    let tally = session.vote_log().tally_snapshot(&proposal_id);
+    let (approval_bps, rejection_bps) = tally_quorum(&tally)?;
+    let projection = QuorumProjection {
+        approval_bps,
+        rejection_bps,
+        quorum_required_bps: 10_000,
+    };
+
+    Ok((receipt, projection))
+}
+
 /// Sub-group vote prereq gate (RFC-0855p-d). Until `RFC-0855p-d`
 /// reaches Accepted, any voter DID prefixed `did:octo:subgroup:`
 /// fails-closed with `GovernanceError::PrereqNotAccepted`.
@@ -403,6 +553,7 @@ fn prereq_vote_subgroup_check(voter_did: &str) -> Result<(), GovernanceError> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     //! Substrate-faithful tests for the vote append path.
     //!
@@ -415,9 +566,14 @@ mod tests {
     //! - V6: vote_choice parse roundtrip + invalid choice rejected
     //! - V7: ledger voter_count + proposal_count + tally_snapshot
     //! - V8: allow_stale=true records overrode_staleness_at_unix
+    //! - V9: vote_v2 stateless session-based happy path
+    //! - V10: vote_v2 unknown voter_cap_id rejected
+    //! - V11: vote_v2 rationale included in envelope PK
+    //! - V12: vote_v2 fixed-clock deterministic receipt timestamp
 
     use super::*;
     use crate::attest::CapabilitySigner;
+    use crate::session::FixedClock;
 
     /// Test `CapabilitySigner` impl that returns a fixed 64-byte
     /// signature. Distinct from the attest test signer to avoid
@@ -706,5 +862,148 @@ mod tests {
         )
         .expect("allow_stale=true should still succeed");
         assert_eq!(receipt.overrode_staleness_at_unix, Some(1_700_000_000));
+    }
+
+    // ---- vote_v2 tests (RFC §7.4 stateless caller-owned session) ----
+
+    fn session_with_cap(did: &str, cap_id: &str, clock_unix: u64) -> GovernanceSession {
+        let session = GovernanceSession::new(did, Arc::new(FixedClock::new(clock_unix)));
+        session.register_capability(cap_id, Arc::new(TestSigner::new()));
+        session
+    }
+
+    fn voter_token() -> CapabilityToken {
+        CapabilityToken::new("voter-cap-001", voter_did(), 5_000)
+    }
+
+    #[test]
+    fn vote_v9_session_happy_path_records_receipt() {
+        let session = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_000);
+        let (receipt, projection) = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &voter_token(),
+            None,
+            Some(&[0xAA; 32]),
+            false,
+        )
+        .expect("happy path should succeed");
+        assert_eq!(receipt.voter_did, voter_did());
+        assert_eq!(receipt.proposal_id, proposal_id());
+        assert_eq!(receipt.choice, "yes");
+        assert_eq!(receipt.weight_applied, 5_000);
+        assert_eq!(receipt.voter_cap_id, "voter-cap-001");
+        // Deterministic clock reads through session.
+        assert_eq!(receipt.recorded_at_unix, 1_700_000_000);
+        assert_eq!(receipt.overrode_staleness_at_unix, None);
+        assert_eq!(projection.approval_bps, 5_000);
+        assert_eq!(projection.rejection_bps, 0);
+        assert_eq!(projection.quorum_required_bps, 10_000);
+        // Session ledger holds the receipt.
+        assert_eq!(session.vote_log().voter_count(&proposal_id()), 1);
+        assert_eq!(session.vote_log().proposal_count(), 1);
+        assert_eq!(
+            session.vote_log().get(&proposal_id(), voter_did()).as_ref(),
+            Some(&receipt)
+        );
+    }
+
+    #[test]
+    fn vote_v10_unknown_capability_rejected_via_session_registry() {
+        let session = session_with_cap(voter_did(), "registered-cap", 1_700_000_000);
+        let unknown = CapabilityToken::new("not-registered", voter_did(), 5_000);
+        let err = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &unknown,
+            None,
+            None,
+            false,
+        )
+        .expect_err("unknown voter_cap.cap_id must error");
+        match err {
+            GovernanceError::UnknownCapability { voter_cap_id } => {
+                assert_eq!(voter_cap_id, "not-registered");
+            }
+            other => panic!("expected UnknownCapability, got {other:?}"),
+        }
+        assert_eq!(session.vote_log().voter_count(&proposal_id()), 0);
+    }
+
+    #[test]
+    fn vote_v11_rationale_changes_envelope_pk() {
+        // vote_v2 envelope bytes include the rationale; two votes
+        // with the same args but different rationale must produce
+        // distinct vote_id PKs.
+        let session_a = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_000);
+        let token_a = voter_token();
+        let (r_a, _) = vote_v2(
+            &session_a,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token_a,
+            Some("approve: budget aligned"),
+            None,
+            false,
+        )
+        .expect("rationale-A path should succeed");
+
+        let session_b = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_001);
+        let token_b = voter_token();
+        let (r_b, _) = vote_v2(
+            &session_b,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token_b,
+            Some("reject: budget misaligned"),
+            None,
+            false,
+        )
+        .expect("rationale-B path should succeed");
+
+        assert_ne!(
+            r_a.vote_id, r_b.vote_id,
+            "different rationale must produce distinct PKs"
+        );
+        assert_eq!(r_a.choice, "yes");
+        assert_eq!(r_b.choice, "yes");
+    }
+
+    #[test]
+    fn vote_v12_fixed_clock_deterministic_receipt_timestamp() {
+        // Same args + same fixed clock + same session content
+        // must produce identical recorded_at_unix (proves the
+        // substrate consults session.clock() rather than
+        // SystemTime::now()).
+        let session = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_777);
+        let token = voter_token();
+        let (r1, _) = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token,
+            None,
+            None,
+            false,
+        )
+        .expect("first vote should succeed");
+        // Build a second session with a different clock but same args.
+        let session2 = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_777);
+        let token2 = voter_token();
+        // Different proposal_id to avoid duplicate-voter error.
+        let (r2, _) = vote_v2(
+            &session2,
+            [0x77; 32],
+            VoteChoice::Yes,
+            &token2,
+            None,
+            None,
+            false,
+        )
+        .expect("second vote should succeed");
+        assert_eq!(r1.recorded_at_unix, 1_700_000_777);
+        assert_eq!(r2.recorded_at_unix, 1_700_000_777);
     }
 }

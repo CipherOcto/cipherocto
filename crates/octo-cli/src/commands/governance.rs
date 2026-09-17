@@ -24,6 +24,7 @@
 //! RFC-0011-g §Error Handling.
 
 use clap::Subcommand;
+#[allow(deprecated)]
 use octo_governance::{
     attest, snapshot, vote, AttestationLog, AttestationReceipt, CapabilityRegistry,
     CapabilitySigner, GovernanceError, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
@@ -503,7 +504,7 @@ impl GovernanceLedgers {
 /// before the confirmation gate; `Human` / `Ci` / `Dev` modes
 /// require `--confirm` for mutating commands (parent §Error
 /// Handling gate).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, deprecated)]
 fn attest_handler(
     subject_did: String,
     kind_ref: String,
@@ -628,7 +629,7 @@ fn attest_handler(
 /// `vote()` signature). Confirmation + auditor gates identical
 /// to the `attest` handler above (parent §Error Handling +
 /// RFC-0011-c §Roles and Authorities).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, deprecated)]
 fn vote_handler(
     proposal_id_hex: String,
     vote_choice: String,
@@ -1238,15 +1239,16 @@ mod tests {
 
     #[test]
     fn tv_cli_vote_2_map_governance_error_routes_duplicate_vote() {
-        // DuplicateVote → OctoCliError::Internal (exit 64)
-        // per RFC-0011-g §Error Handling internal-substrate arm.
+        // DuplicateVote → OctoCliError::VoteRejected (exit 36)
+        // per RFC-0011-g §Adversarial Review row
+        // DuplicateVote→VoteRejected shared-slot variant.
         let err = GovernanceError::DuplicateVote {
             proposal_id: [0xab; 32],
             voter_did: "did:octo:operator:bob".to_string(),
         };
         match map_governance_error(err) {
-            OctoCliError::Internal(_) => {}
-            _ => panic!("expected Internal routing for DuplicateVote"),
+            OctoCliError::VoteRejected { .. } => {}
+            _ => panic!("expected VoteRejected routing for DuplicateVote"),
         }
     }
 
@@ -1295,9 +1297,18 @@ mod tests {
     #[test]
     fn tv_cli_vote_5_vote_choice_parse_roundtrip() {
         // Substrate-faithful: VoteChoice::parse + as_str
-        // round-trip for both valid choices.
-        assert_eq!(VoteChoice::parse("approve").unwrap().as_str(), "approve");
-        assert_eq!(VoteChoice::parse("reject").unwrap().as_str(), "reject");
+        // round-trip per RFC §Command Taxonomy primary vocabulary
+        // (yes / no / abstain) plus back-compat aliases
+        // (approve / reject).
+        // Primary round-trip.
+        assert_eq!(VoteChoice::parse("yes").unwrap().as_str(), "yes");
+        assert_eq!(VoteChoice::parse("no").unwrap().as_str(), "no");
+        assert_eq!(VoteChoice::parse("abstain").unwrap().as_str(), "abstain");
+        // Aliases map to primaries.
+        assert_eq!(VoteChoice::parse("approve").unwrap().as_str(), "yes");
+        assert_eq!(VoteChoice::parse("reject").unwrap().as_str(), "no");
+        // Case-insensitive.
+        assert_eq!(VoteChoice::parse("APPROVE").unwrap().as_str(), "yes");
         // Invalid choice fails-closed.
         let err = VoteChoice::parse("maybe").unwrap_err();
         match err {

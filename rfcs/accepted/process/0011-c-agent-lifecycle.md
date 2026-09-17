@@ -388,15 +388,14 @@ mapping per [[substrate-faithfulness-verification]] discipline.
 
 New `OctoCliError` variants are added (all `#[non_exhaustive]`
 inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-61**
-(post -g's 35-38; 14 base amendment + 8 follow-on amendment
-AttachHandle/AttachSession variants per §Follow-on §F.4 mirror
-occupying 8 unique slots — `InvalidSinceCursor` shares slot 53 with
-`Expired` per amendment-chain shared-slot pattern — + 1 CLI
-dispatch `TokenMintSkipped` variant per §F.6.3. Follow-on amendments
-add `InvalidSessionIdHex` per §F.6 CLI-boundary parse path and
-`ReplayDetected` per §9.7 — total **25 variants across
-22 occupied slots** in the 23-slot range 39-61,
-3 shared-slot pairings (43, 51, 53); renegotiation
+(post -g's 35-38; 14 base plus 8 follow-on AttachHandle/AttachSession
+per §Follow-on §F.4 mirror (8 unique slots, `InvalidSinceCursor`
+shares slot 53 with `Expired` per amendment-chain shared-slot
+pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.3,
+plus 1 boundary-parse `InvalidSessionIdHex` per §F.6, plus 1
+typed-discriminator `ReplayDetected` per §9.7 — totaling
+**25 variants across 22 occupied slots** in the 23-slot range
+39-61, 3 shared-slot pairings (43, 51, 53); renegotiation
 needed if -h/i follow-on amendments claim earlier slots):
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                              |
@@ -893,17 +892,15 @@ are additive to the v4 surface.
 ### Why exit code slots 39-61
 
 Per the slot allocation table, RFC-0011-c consumes slots 39-61
-(post -g's 35-38; 25 variants across 22 occupied slots in the
-23-slot range, 3 shared-slot pairings at (43, 51, 53) — 14 base
-amendment + 8 follow-on amendment AttachHandle/AttachSession
-variants per §Follow-on §F.4 mirror (8 unique slots) + 1 CLI
-dispatch `TokenMintSkipped` variant per §F.6.3. Follow-on amendments
-add `InvalidSessionIdHex` per §F.6 CLI-boundary parse path and
-`ReplayDetected` per §9.7, totalling **25 variants across
-22 occupied slots** in the 23-slot range per `exit_code()`
-switch. Sibling amendments that do not consume slots MUST NOT
-claim earlier slots; renegotiation is required if -h/i follow-on
-amendments need earlier slots.
+(post -g's 35-38; 14 base plus 8 follow-on AttachHandle/AttachSession
+per §Follow-on §F.4 mirror (8 unique slots), plus 1 CLI dispatch
+`TokenMintSkipped` per §F.6.3, plus 1 boundary-parse
+`InvalidSessionIdHex` per §F.6, plus 1 typed-discriminator
+`ReplayDetected` per §9.7 — totaling **25 variants across 22
+occupied slots** in the 23-slot range 39-61, 3 shared-slot
+pairings (43, 51, 53). Sibling amendments that do not consume
+slots MUST NOT claim earlier slots; renegotiation is required if
+-h/i follow-on amendments claim earlier slots).
 
 ### Why state machine aliasing ACTIVE↔BUSY
 

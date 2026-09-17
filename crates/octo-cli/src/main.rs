@@ -20,6 +20,28 @@ fn main() {
         .with(OctoCliRedactor)
         .try_init();
 
+    // RFC-0011-c §F.7.5 — opt-in cross-process revocation ledger
+    // wiring. When the `revocation-store-stoolap` feature is enabled,
+    // install the Stoolap-backed Layer D adapter via the factory
+    // closure façade in `octo-runtime`. Default builds (no feature)
+    // skip this block and rely on the Layer B
+    // `InMemoryRevocationStore` (per-extension-crates + registry
+    // pattern per [[cipherocto-design-principles]] §User
+    // extensibility). On install failure we WARN and fall back to
+    // the Layer B default — a corrupted / read-only ledger must
+    // NOT prevent the CLI from running.
+    #[cfg(feature = "revocation-store-stoolap")]
+    {
+        if let Err(e) = octo_runtime::install_revocation_store_default_with(
+            octo_runtime_revocation_store::install_default,
+        ) {
+            tracing::warn!(
+                reason = %e,
+                "revocation store install failed; falling back to InMemoryRevocationStore"
+            );
+        }
+    }
+
     // `--help` / `--version` are not failures: clap renders them itself and
     // the process exits 0.
     let mut cli = match Octo::try_parse() {

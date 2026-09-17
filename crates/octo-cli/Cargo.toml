@@ -11,6 +11,20 @@ path = "src/lib.rs"
 name = "octo"
 path = "src/main.rs"
 
+# RFC-0011-c §F.7.5 — opt-in cross-process revocation ledger.
+# Default builds use the zero-dep `InMemoryRevocationStore` (Layer B
+# default per §F.3 fork-fail-closed contract). Builds with this
+# feature enabled wire the Stoolap-backed Layer D adapter via
+# `install_revocation_store_default_with` so the `octo-runtime`
+# `revoke_attach_token` + `is_token_revoked` substrate writes
+# propagate across CLI processes that share the ledger path
+# (`$CIPHEROCTO_DATA_DIR/revocation.stoolap`).
+[features]
+default = []
+# Phase C paired amendment: enable cross-process revocation
+# propagation via the Stoolap-backed Layer D persistence adapter.
+revocation-store-stoolap = ["dep:octo-runtime-revocation-store"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -79,6 +93,16 @@ octo-governance = { path = "../octo-governance", version = "0.1.0" }         # L
 # call so a non-Running agent surfaces `AgentNotRunning(uuid)`
 # (exit 48) per RFC-0011-c §9.8.
 octo-runtime = { path = "../octo-runtime", version = "0.1.0" }                 # Layer B runtime substrate — RFC-0011-c §9.1 + §9.10
+# Layer D persistence adapter — opt-in via the `revocation-store-stoolap`
+# feature. Default builds use the Layer B `InMemoryRevocationStore`
+# (per-extension-crates + registry pattern per
+# [[cipherocto-design-principles]] §User extensibility). When
+# enabled, `main.rs` wires `install_default()` into the Layer B
+# trait via `install_revocation_store_default_with` so revocation
+# writes propagate across CLI processes via the Stoolap ledger
+# (RFC-0011-c §F.7.5 paired amendment; see HARD RED LINE on the
+# Stoolap fork in [[stoolap-general-purpose-db]]).
+octo-runtime-revocation-store = { path = "../octo-runtime-revocation-store", version = "0.1.0", optional = true }
 
 # === Mesh forward substrate (Layer 1 + Layer C) — RFC-0011-f §Subcommand Taxonomy ===
 # Layer 1 stable: NodeEnvelope + RecipientRef + Authorization + PayloadKindId

@@ -34,6 +34,7 @@
 //! via `octo_runtime::handle::transport::HANDLE_TRANSPORT_REGISTRY`.
 pub mod encoding;
 pub mod error;
+pub mod key_id;
 pub mod signing;
 pub mod transport;
 
@@ -49,6 +50,8 @@ use crate::error::RuntimeError;
 
 // Re-export error envelope types for crate-internal use.
 pub use error::{AttachError, PersistenceError};
+// Re-export key rotation discriminator types (RFC-0011-c §F.5.1).
+pub use key_id::{KeyId, KeySet};
 
 /// 32-byte session identifier (RFC-0011-c §F.2).
 ///

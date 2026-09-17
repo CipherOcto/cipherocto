@@ -147,20 +147,33 @@ fn tv_agt27_cross_process_revocation_propagates() {
 
 fn run_child_role() -> ! {
     let ledger_path = env::var(LEDGER_ENV).expect("OCTO_REVOCATION_LEDGER_PATH");
-    let session_id_hex = env::var(SESSION_ID_ENV).expect("OCTO_REVOCATION_SESSION_ID");
-    let session_id_bytes = hex::decode(&session_id_hex).expect("hex decode");
-    let mut session_id = [0u8; 32];
-    if session_id_bytes.len() != 32 {
-        eprintln!(
-            "child FAIL: session_id wrong length {} (expected 32)",
-            session_id_bytes.len()
-        );
-        std::process::exit(11);
-    }
-    session_id.copy_from_slice(&session_id_bytes);
-    let expect_revoked: bool = env::var(EXPECT_REVOKED_ENV)
-        .map(|v| v == "true")
-        .unwrap_or(false);
+    let session_id_hex = match env::var(SESSION_ID_ENV) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("child FAIL: missing {SESSION_ID_ENV}: {e}");
+            std::process::exit(11);
+        }
+    };
+    let session_id_bytes = match hex::decode(&session_id_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            // Fail-CLOSED per RFC-0011-c §F.7.5 §Failure semantics:
+            // log the parse error and exit non-zero. Panic is the
+            // wrong failure mode for a child process orchestrated
+            // by the parent harness.
+            eprintln!("child FAIL: invalid hex in {SESSION_ID_ENV}: {e}");
+            std::process::exit(12);
+        }
+    };
+    let session_id_bytes_len = session_id_bytes.len();
+    let session_id: [u8; 32] = match session_id_bytes.try_into() {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("child FAIL: session_id wrong length {session_id_bytes_len} (expected 32)");
+            std::process::exit(13);
+        }
+    };
+    let expect_revoked = env::var(EXPECT_REVOKED_ENV).as_deref() == Ok("true");
     let role = env::var(ROLE_ENV).expect("OCTO_REVOCATION_CROSS_PROCESS_ROLE");
 
     // RFC-0011-c §F.7.5 step 4 — install via factory closure so the

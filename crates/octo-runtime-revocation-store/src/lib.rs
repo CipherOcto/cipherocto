@@ -139,9 +139,28 @@ impl RevocationStore for StoolapRevocationStore {
             octo_storage_core::stoolap::Value::blob(session_id.to_vec()),
             octo_storage_core::stoolap::Value::integer(revoked_at_unix),
         ];
-        db.execute(insert_sql, insert_params).map_err(|e| {
-            AttachError::PersistenceError(format!("Stoolap revocation insert failed: {e}"))
-        })?;
+        if let Err(e) = db.execute(insert_sql, insert_params) {
+            // Concurrent-revoke race: a peer process inserted the
+            // same `session_id` between our pre-check SELECT and
+            // this INSERT. The Stoolap fork rev 527e8eb surfaces
+            // the PK violation as a string-formatted error rather
+            // than a typed enum (substrate-discipline
+            // no-unverified-features rule); match the canonical
+            // SQLite-family phrasing. Per the trait contract
+            // documented in `octo_runtime::persistence`, `revoke-2
+            // is a no-op once revoke-1 succeeds` — a concurrent
+            // peer's revocation has the same end state, so
+            // collapsing to Ok(()) preserves idempotency at the
+            // process-boundary race window. All other errors map
+            // to PersistenceError as before.
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("unique") || msg.contains("primary key") || msg.contains("duplicate") {
+                return Ok(());
+            }
+            return Err(AttachError::PersistenceError(format!(
+                "Stoolap revocation insert failed: {e}"
+            )));
+        }
         Ok(())
     }
 

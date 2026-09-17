@@ -570,6 +570,8 @@ mod tests {
     //! - V10: vote_v2 unknown voter_cap_id rejected
     //! - V11: vote_v2 rationale included in envelope PK
     //! - V12: vote_v2 fixed-clock deterministic receipt timestamp
+    //! - V13: vote_v2 quorum_not_reached when tally saturates beyond
+    //!   100_000 bps (11+ voters each capped at 10_000)
 
     use super::*;
     use crate::attest::CapabilitySigner;
@@ -1005,5 +1007,67 @@ mod tests {
         .expect("second vote should succeed");
         assert_eq!(r1.recorded_at_unix, 1_700_000_777);
         assert_eq!(r2.recorded_at_unix, 1_700_000_777);
+    }
+
+    #[test]
+    fn vote_v13_quorum_not_reached_via_session_when_tally_saturates() {
+        // The substrate tally guards against absurd totals by
+        // returning QuorumNotReached when approval+rejection
+        // exceeds 100_000 bps (10 full-cap voters). Stacking 11
+        // voters each at the 10_000 bps cap trips the guard at the
+        // quorum-projection step, after the 10th voter is appended
+        // to the ledger. The 11th vote succeeds at the append step
+        // but the projection step fails with QuorumNotReached.
+        let session = GovernanceSession::new(voter_did(), Arc::new(FixedClock::new(1_700_000_888)));
+        for i in 0..10 {
+            let cap_id = format!("voter-cap-{i:02}");
+            let did = format!("did:octo:z6MkVoter{i:02}XYZABCDEF1234567890abcdef1234567890ab");
+            let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+            session.register_capability(&cap_id, signer);
+            let token = CapabilityToken::new(&cap_id, &did, 10_000);
+            vote_v2(
+                &session,
+                proposal_id(),
+                VoteChoice::Yes,
+                &token,
+                None,
+                None,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("voter {i} should succeed: {e:?}"));
+        }
+        // 11th voter crosses the 100_000 bps tally guard.
+        let cap_id = "voter-cap-overflow".to_string();
+        let did = "did:octo:z6MkVoterXXXYZABCDEF1234567890abcdef1234567890ab".to_string();
+        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+        session.register_capability(&cap_id, signer);
+        let token = CapabilityToken::new(&cap_id, &did, 10_000);
+        let err = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token,
+            None,
+            None,
+            false,
+        )
+        .expect_err("11th voter must trip quorum guard");
+        match err {
+            GovernanceError::QuorumNotReached {
+                approval_bps,
+                rejection_bps,
+                quorum_bps,
+            } => {
+                assert!(approval_bps + rejection_bps > 100_000);
+                assert_eq!(quorum_bps, 100_000);
+            }
+            other => panic!("expected QuorumNotReached, got {other:?}"),
+        }
+        // Ledger state preserved: the 11th voter is appended before
+        // the projection step runs, so 11 receipts are present even
+        // though the projection failed. The substrate pattern is
+        // append-then-project; the projection error does not roll
+        // back the append (no saga / no rollback).
+        assert_eq!(session.vote_log().voter_count(&proposal_id()), 11);
     }
 }

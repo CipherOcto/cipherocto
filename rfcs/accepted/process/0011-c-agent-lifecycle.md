@@ -966,7 +966,7 @@ New crate `crates/octo-runtime-revocation-store/` (Layer D per-extension pattern
   ```
 - `impl RevocationStore for StoolapRevocationStore`:
   - `kind` returns `"StoolapRevocationStore"`.
-  - `revoke_attach_token` — pre-check `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1`; if not present, `INSERT INTO revocation (session_id, revoked_at_unix) VALUES (?, ?)` (idempotent — the pre-check guards against duplicate rows because the Stoolap fork at `rev = "527e8eb"` does NOT support `INSERT OR IGNORE` / `INSERT OR REPLACE` syntax per substrate `crates/octo-reputation/src/store/stoolap.rs:1490-1492` precedent). Returns `AttachError::PersistenceError(reason)` per §F.4 slot 57 on ledger write failure.
+  - `revoke_attach_token` — pre-check `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1`; if not present, `INSERT INTO revocation (session_id, revoked_at_unix) VALUES (?, ?)` (idempotent — the pre-check guards against duplicate rows because the Stoolap fork at `rev = "527e8eb"` does NOT support `INSERT OR IGNORE` / `INSERT OR REPLACE` syntax per the substrate Stoolap-fork `INSERT OR IGNORE` precedent verified at implementation time against the pinned fork). Returns `AttachError::PersistenceError(reason)` per §F.4 slot 57 on ledger write failure.
   - `is_token_revoked` — `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1` (ledger-backed existence check). Returns `true` on ledger read failure (fail-CLOSED per §F.7.5 §Failure semantics); logs at ERROR level via `tracing::error!` (with `kind()` value per §F.7.5 substrate additions above) before the fail-CLOSED return so substrate observability is preserved per [[cipherocto-design-principles]] §Push complexity to edges.
 - `pub fn install_default() -> Result<Arc<dyn RevocationStore>, AttachError>` — opens the ledger + returns the constructed `StoolapRevocationStore` as `Arc<dyn RevocationStore>`. **Does NOT self-register** — the caller (Layer C via Layer B façade) decides how to register; see CLI wiring below. This shape enables the factory closure pattern (the extension crate exports the constructor; Layer B owns the registration; Layer C wires the dependency injection via the factory).
 - 6 tests covering `kind()` return value + INSERT OR IGNORE idempotence + existence-check fast-path + ledger persistence across reopens + schema bootstrap + Send/Sync compile-time bounds.
@@ -1005,7 +1005,7 @@ crates/octo-cli/                        (Layer C)
   └─> depends on octo-runtime (Layer B) — always
   └─> depends on octo-runtime-revocation-store (Layer D) — when feature `revocation-store-stoolap` is enabled
   └─> runtime wiring: `octo_runtime::install_revocation_store_default_with(octo_runtime_revocation_store::install_default)`
-      Direction at wiring: C → B → D via the factory closure (B owns the registration, D owns the constructor, C wires the dependency injection). The compile-time C → D edge is feature-gated per the per-extension crate pattern (the C → B → D runtime direction is the canonical "extension register at startup" topology in §User extensibility).
+      Direction at wiring: C → B → D via the factory closure (B owns the registration, D owns the constructor, C wires the dependency injection). The compile-time C → D edge is feature-gated under the canonical "extension register at startup" topology in §User extensibility.
 ```
 
 **Cross-process test TV-AGT27 (Phase C paired follow-on):** spawns three `octo` CLI processes (spawn-side + attach-side + operator-side) connected via UnixSocket loopback; all three processes install `StoolapRevocationStore` against the shared ledger path:
@@ -1016,8 +1016,6 @@ crates/octo-cli/                        (Layer C)
 4. Attach-side: calls the free function `octo_runtime::is_token_revoked(&session_id)` (which dispatches via the attach-side's OWN installed store, routing through `current_revocation_store()`); sees the revocation propagated across the process boundary via the shared Stoolap ledger. The unix handler owns the §F.7.1 event-bridge path (TV-AGT23); it is NOT exercised by this step.
 
 Test harness lives in `crates/octo-runtime-revocation-store/tests/cross_process.rs`; spawns three child processes (spawn-side + attach-side + operator-side) sharing a tempdir ledger path. Cross-process consistency: linearizable via synchronous commits per `stoolap::Database::exec`; the attach-side observes the operator-side's revoke within subprocess-latency-bound milliseconds.
-
-**Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
 
 **Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
 

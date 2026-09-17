@@ -209,13 +209,22 @@ impl RevocationStore for InMemoryRevocationStore {
 /// Lazy init never blocks subsequent `set_revocation_store`
 /// overrides — the default install does NOT block override per the
 /// two-slot invariant in §F.7.5 paired amendment.
-pub static DEFAULT_REVOCATION_STORE: OnceLock<Arc<InMemoryRevocationStore>> = OnceLock::new();
+/// Default revocation store slot. Module-private — the only
+/// write path is via the factory-closure-mediated
+/// `install_revocation_store_default_with` API which routes through
+/// `set_revocation_store(Arc<dyn RevocationStore>)`. Exposing the
+/// `OnceLock` as `pub` would let downstream callers `.set()` it
+/// directly and bypass the documented try-install / fall-back-to-default
+/// semantic at the API layer (RFC-0011-c §F.7.5 CLI wiring block).
+static DEFAULT_REVOCATION_STORE: OnceLock<Arc<InMemoryRevocationStore>> = OnceLock::new();
 
 /// Operator-installed active revocation store (`OnceLock<Arc<dyn
 /// RevocationStore>>`). Single-shot: subsequent
 /// `set_revocation_store` calls return
 /// `AttachError::Internal(...)` per §F.7.5 paired amendment.
-pub static ACTIVE_REVOCATION_STORE: OnceLock<Arc<dyn RevocationStore>> = OnceLock::new();
+/// Module-private for the same factory-closure-mediation reason
+/// documented on `DEFAULT_REVOCATION_STORE`.
+static ACTIVE_REVOCATION_STORE: OnceLock<Arc<dyn RevocationStore>> = OnceLock::new();
 
 /// Module-private trait-dispatch lookup (RFC-0011-c §F.7.5 paired
 /// amendment).

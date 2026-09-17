@@ -117,9 +117,11 @@ impl HybridHandler {
 /// caller cannot recover from a poisoned registry.
 ///
 /// Panics if `primary_kind == fallback_kind` (degenerate hybrid:
-/// primary dispatch and fallback dispatch would target the same
-/// handler). The init-time panic surfaces misuse loud and early
-/// rather than papering over it at `bind()` time.
+/// `primary_kind` and `fallback_kind` are the same `TransportKind`
+/// discriminator, so the multiplexer would dispatch to one and
+/// fall back to the identical target). The init-time panic
+/// surfaces misuse loud and early rather than papering over it
+/// at `bind()` time.
 pub fn register_into(
     registry: Arc<Registry>,
     dispatch_kind: TransportKind,
@@ -497,7 +499,7 @@ mod tests {
     /// at `bind()` time — see the `# Panics` block on
     /// `register_into`.
     #[test]
-    #[should_panic(expected = "degenerate hybrid")]
+    #[should_panic(expected = "primary_kind")]
     fn register_into_panics_on_degenerate_hybrid() {
         let reg = Arc::new(Registry::default());
         register_into(

@@ -892,10 +892,10 @@ Per-extension crate pattern:
 
 Layer D extension crate at `crates/octo-runtime-transport-unix/`:
 
-- `Cargo.toml`: `octo-runtime = { path = "../octo-runtime", version = "0.1.0" }` (Layer B sibling dep) + `tokio = { version = "1.35", features = ["net", "rt", "sync", "macros"] }` (Layer D owned I/O deps). Layer model = D. No `octo-cli` or `octo-wallet` deps (Layer D does not reach into Layer C).
+- `Cargo.toml`: `octo-runtime = { path = "../octo-runtime", version = "0.1.0" }` (Layer B sibling dep). Layer model = D. No `octo-cli` or `octo-wallet` deps (Layer D does not reach into Layer C). **Phase B owns the client-side connect surface only** (no tokio dep — the protocol framing in this crate is hand-rolled 8-byte LE on `std::os::unix::net::UnixStream` to keep the substrate constraint of `Handler::bind` being a sync trait method; server-side event piping + cross-process broadcast → process-local subscribe is the Phase C paired follow-on per §F.7.4).
 - `pub struct UnixSocketHandler` (unit struct) — implements `Handler` trait
 - `fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError>` — **Phase B scope (current):** resolves `token.transport.addr` (Unix-domain socket path string) for the missing-addr check, then fails-CLOSED with `AttachError::Internal("cross-process event bridge not implemented...")` until the Phase C follow-on amendment wires the server-side event piping. **Phase C scope (paired follow-on):** performs protocol handshake (sends token canonical bytes + `since_unix`; receives `event_cursor` reply); returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is subscribed from a local `tokio::sync::broadcast::Sender<RuntimeEvent>` the server-side process pipes events into. The cross-process event bridging mechanism is a Layer D concern per §F.7.4.
-- Failure modes map to the new `AttachError::Internal(String)` substrate variant (additive, paired with the §F.7.5 amendment that documents this variant — see §F.7.5 below): `Internal("...requires an addr...")` when `token.transport.addr` is `None`; `Internal("...cross-process event bridge not implemented...")` until Phase C lands. No other typed-discriminator variants for protocol-level errors are introduced — typed-discriminator additions remain a future-work follow-on if/when operator observability requires it.
+- Failure modes map to the additive `AttachError::Internal(String)` substrate variant (routed via the existing `From<AttachError>` wildcard arm in `crates/octo-cli/src/error.rs`): `Internal("...requires an addr...")` when `token.transport.addr` is `None`; `Internal("...cross-process event bridge not implemented...")` until Phase C lands. No other typed-discriminator variants for protocol-level errors are introduced — typed-discriminator additions remain a future-work follow-on if/when operator observability requires it.
 - `pub fn register_into(registry: &Registry)` — convenience init fn that registers `TransportKind::UnixSocket → Arc::new(UnixSocketHandler::default())` into the supplied registry. The shared `Arc<dyn Handler>` is allocated once and cached in a `static OnceLock<Arc<dyn Handler>>` so identity-idempotent re-calls yield pointer-equal `Arc` (per fail-CLOSED + identity discipline for `Registry::register` last-write-wins).
 - TV-AGT23 — `agent attach` multi-process via UnixSocket loopback (inverts from RED exit 59 to GREEN happy path). **Phase B (current):** `UnixSocketHandler::bind` returns `AttachError::Internal("...cross-process event bridge not implemented...")` (the substrate-side fail-CLOSED deferral). **Phase C (paired follow-on):** happy path returns `AttachedSession { event_cursor: 0, broadcast_rx: local-subscribe }`. Operator-facing cross-process test lands in the Phase C follow-on amendment paired with cross-process revocation propagation.
 
@@ -936,7 +936,7 @@ layer = "D"
 
 [dependencies]
 octo-runtime = { path = "../octo-runtime", version = "0.1.0" }
-# Layer D owned I/O deps as needed (tokio::net for unix, none for raw, none for hybrid)
+# Layer D owned I/O deps as needed (none for raw, none for hybrid; unix uses std::os::unix::net in Phase B client-side only — server-side piping lives in the Phase C follow-on per §F.7.4)
 ```
 
 Module structure per crate:

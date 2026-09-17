@@ -392,11 +392,11 @@ inheriting from RFC-0011 §Error Handling). **Slot allocation: 39-61**
 per §Follow-on §F.4 mirror (8 unique slots, `InvalidSinceCursor`
 shares slot 53 with `Expired` per amendment-chain shared-slot
 pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.1,
-plus 1 boundary-parse `InvalidSessionIdHex` per §F.6, plus 1
+plus 1 boundary-parse `InvalidSessionIdHex` per §9.3.6, plus 1
 typed-discriminator `ReplayDetected` per §9.7 — totaling
 **25 variants across 22 occupied slots** in the 23-slot range
 39-61, 3 shared-slot pairings (43, 51, 53); renegotiation
-needed if -h/i follow-on amendments claim earlier slots):
+is required if -h/i follow-on amendments claim earlier slots):
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                              |
 | ------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -840,11 +840,11 @@ The CLI dispatch bodies that bind the substrate surface (§F.1-§F.5) into the o
   2. Resolve caller DID → `[u8; 32]` holder_pubkey via `IdentityKey::public_key_bytes()` (CLI boundary concern per §F.5)
   3. Call `octo_runtime::decode_token(&bytes, holder_pubkey) -> AttachHandle` (verifies signature + BLAKE3 integrity per §F.1)
   4. Call `octo_runtime::attach_with_token(holder_pubkey, &token, since_unix).await` (executes the §F.2 validation chain steps (a)-(e))
-  5. Populate `AgentAttachOutput { agent_id, runtime_handle: None, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (`runtime_handle` is `None` on the attach pathway because `octo_runtime::handle::AttachedSession` only carries `event_cursor` + `broadcast_rx`; `session_id_hex` is the canonical binding identifier per §F.6.4; the post-R5.5 schema-faithful reconciliation prevents older consumers from misinterpreting session_id_hex as a UUID via the `runtime_handle` field)
+  5. Populate `AgentAttachOutput { agent_id, runtime_handle: None, attached_at_unix, event_cursor, session_id_hex: hex::encode(token.session_id) }` (`runtime_handle` is `None` on the attach pathway because `octo_runtime::handle::AttachedSession` only carries `event_cursor` + `broadcast_rx`; `session_id_hex` is the canonical binding identifier populated from the substrate session_id carried on the `RuntimeHandle` per §F.6.1 step 2; the post-R5.5 schema-faithful reconciliation prevents older consumers from misinterpreting session_id_hex as a UUID via the `runtime_handle` field)
 
 **§F.6.3 — `OctoCliError` mirror surface**
 
-The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 53-59; 8 variants / 7 slots per the amendment-chain shared-slot pattern) via the `From<octo_runtime::AttachError> for OctoCliError` impl. The CLI adds zero new substrate-mirror variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
+The 9 substrate `AttachError` variants map to 9 `OctoCliError` variants (slots 53-61; 9 variants / 8 slots per the amendment-chain shared-slot pattern, including the §9.7 follow-on amendment `ReplayDetected` at slot 61) via the `From<octo_runtime::AttachError> for OctoCliError` impl. The CLI adds zero new substrate-mirror variants in this cycle — the mirror surface landed in the substrate cycle. The canonical exit codes per RFC-0011-c §9.8 row:
 
 - `AttachHandleExpired { mint_unix, ttl_unix, now_unix }` → exit 53
 - `AttachHandleBadSignature { reason }` → exit 54
@@ -854,8 +854,9 @@ The 8 substrate `AttachError` variants map to 8 `OctoCliError` variants (slots 5
 - `RevocationError(String)` → exit 58
 - `TransportHandlerNotRegistered { kind_label }` → exit 59
 - `InvalidSinceCursor { mint_unix, requested }` → exit 53 (shared-slot with `AttachHandleExpired`)
+- `ReplayDetected { since_unix, recorded_cursor }` → exit 61 (§9.7 follow-on amendment — typed-discriminator additive variant, not shared)
 
-The CLI surface ALSO adds a dispatch-side variant outside the substrate mirror: `TokenMintSkipped { reason: String }` → exit 60 (CLI dispatch surface per §F.6.1 step 6.5.1d; reserved per the RFC-0011-c §9.8 slot allocation introduced in this amendment cycle). The substrate does not surface `TokenMintSkipped` because the substrate's `spawn_agent` is the silent-self-transition ancestor — only the CLI dispatch sees the idempotent self-transition signal.
+The CLI surface ALSO adds a dispatch-side variant outside the substrate mirror: `TokenMintSkipped { reason: String }` → exit 60 (CLI dispatch surface per §F.6.1; reserved per the RFC-0011-c §9.8 slot allocation introduced in this amendment cycle). The substrate does not surface `TokenMintSkipped` because the substrate's `spawn_agent` is the silent-self-transition ancestor — only the CLI dispatch sees the idempotent self-transition signal.
 
 **§F.6.4 — Pairing invariant**
 
@@ -895,7 +896,7 @@ Per the slot allocation table, RFC-0011-c consumes slots 39-61
 (post -g's 35-38; 14 base plus 8 follow-on AttachHandle/AttachSession
 per §Follow-on §F.4 mirror (8 unique slots), plus 1 CLI dispatch
 `TokenMintSkipped` per §F.6.1, plus 1 boundary-parse
-`InvalidSessionIdHex` per §F.6, plus 1 typed-discriminator
+`InvalidSessionIdHex` per §9.3.6, plus 1 typed-discriminator
 `ReplayDetected` per §9.7 — totaling **25 variants across 22
 occupied slots** in the 23-slot range 39-61, 3 shared-slot
 pairings (43, 51, 53). Sibling amendments that do not consume

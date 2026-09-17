@@ -919,9 +919,84 @@ Layer D extension crate at `crates/octo-runtime-transport-hybrid/`:
 - `pub fn register_into(registry: Arc<Registry>, dispatch_kind: TransportKind, primary_kind: TransportKind, fallback_kind: TransportKind)` — convenience init fn that registers `HybridHandler::new(primary_kind, fallback_kind, Arc::clone(&registry))` under the caller-chosen `dispatch_kind` discriminator. The `registry` parameter is `Arc<Registry>` (not `&Registry`) because `Registry` does not implement `Clone` (the inner `RwLock` prevents that) — the hybrid needs an owned `Arc<Registry>` to look up primary + fallback handlers at `bind()` time. The hybrid dispatches against the registry it was constructed with — operators register the primary + fallback handlers FIRST, then the hybrid multiplexer under the `dispatch_kind` of their choice.
 - TV-AGT26 — `agent attach` via Hybrid (primary InProcess + fallback UnixSocket) loopback test inverts the multiplexer dispatch from RED to GREEN
 
-#### §F.7.4 — Cross-process event bridging
+#### §F.7.4 — Cross-process event bridging (Phase C paired follow-on)
 
-Cross-process event delivery from the spawn-side runtime to the attach-side `AttachedSession.broadcast_rx` is a Layer D concern, not a substrate concern. The substrate's `session_registry()` (Layer B, module-private `OnceLock<RwLock<HashMap<SessionId, Arc<HandleInner>>>>`) is process-scoped — cross-process propagation lands in RFC-0011-c §Future Work follow-on (Phase C: Stoolap-backed cross-process revocation + cursor store; Phase D: octo-wallet agent operations substrate). Each Layer D extension crate returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is wired by the Layer D crate itself (e.g., unix handler subscribes to a Stoolap pubsub channel for `agent_id` and pipes events into a local broadcast). The substrate does not prescribe the wiring mechanism — that's a Layer D concern per §Layer direction.
+Cross-process event delivery from the spawn-side runtime to the attach-side `AttachedSession.broadcast_rx` is a Layer D concern, not a substrate concern. The substrate's `session_registry()` (Layer B, module-private `OnceLock<RwLock<HashMap<SessionId, Arc<HandleInner>>>>`) is process-scoped; cross-process propagation lands via the **Phase C paired follow-on amendment** that introduces the `RevocationStore` substrate (§F.7.5) backed by the Stoolap fork ledger.
+
+Each Layer D extension crate returns `AttachedSession { event_cursor, broadcast_rx }` where `broadcast_rx` is wired by the Layer D crate itself (e.g., unix handler subscribes to a Stoolap pubsub channel for `agent_id` and pipes events into a local broadcast). The substrate does not prescribe the wiring mechanism — that's a Layer D concern per §Layer direction. The Phase C amendment **promotes the in-memory `REVOCATION_SET` to a trait-dispatched `RevocationStore`** so Layer D crates can swap in a Stoolap-backed store that survives process boundaries:
+
+- Substrate (`octo-runtime` Layer B) exposes `RevocationStore` trait + default impl `InMemoryRevocationStore` (the existing `RwLock<HashSet<SessionId>>` per §F.3, promoted behind the trait).
+- New crate `octo-runtime-revocation-store` (Layer B/D per-extension pattern) provides `StoolapRevocationStore` impl that writes through to the Stoolap fork ledger at `rev = "527e8eb"` (CipherOcto Stoolap fork per `feedback_stoolap_persistence`).
+- `octo-runtime` defaults to `InMemoryRevocationStore` (zero new deps); operators opt-in to `StoolapRevocationStore` by registering the alternative store via the substrate's `set_revocation_store` init fn.
+- Cross-process test **TV-AGT23** inverts from RED (Phase B `AttachError::Internal`) to GREEN by spawning two processes (spawn-side + attach-side) over UnixSocket loopback, where the spawn-side `revoke_attach_token` writes through to the Stoolap ledger and the attach-side `is_token_revoked` reads from the same ledger.
+
+#### §F.7.5 — Cross-process revocation substrate (Phase C)
+
+**Architecture decision (paired amendment):** cross-process revocation propagation is implemented via a **trait-dispatched `RevocationStore` substrate** backed by the Stoolap fork ledger. The trait lives in `octo-runtime` Layer B; the Stoolap-backed impl lives in the new `octo-runtime-revocation-store` crate (Layer D per-extension pattern per [[cipherocto-design-principles]] §User extensibility).
+
+Substrate additions (`crates/octo-runtime/src/persistence.rs`):
+
+- `pub trait RevocationStore: Send + Sync + std::fmt::Debug`:
+  - `fn revoke(&self, session_id: SessionId) -> Result<(), AttachError>`
+  - `fn is_revoked(&self, session_id: &SessionId) -> bool`
+  - `fn kind(&self) -> &'static str` — for diagnostics (e.g., `"in-memory"`, `"stoolap"`)
+- `pub fn current_revocation_store() -> &'static Arc<dyn RevocationStore>` — process-singleton accessor; defaults to `InMemoryRevocationStore` (the existing `REVOCATION_SET` per §F.3).
+- `pub fn set_revocation_store(store: Arc<dyn RevocationStore>)` — init fn for store registration; called ONCE at startup; subsequent calls REJECT (fail-CLOSED on re-init per `HANDLE_TRANSPORT_REGISTRY` discipline per §F.2 step (e)).
+- `pub fn revoke_attach_token(session_id: SessionId) -> Result<(), AttachError>` — REWRITTEN to dispatch via `current_revocation_store().revoke(session_id)`.
+- `pub fn is_token_revoked(session_id: &SessionId) -> bool` — REWRITTEN to dispatch via `current_revocation_store().is_revoked(session_id)`.
+- `pub struct InMemoryRevocationStore { inner: RwLock<HashSet<SessionId>> }` — additive substrate type; carries the existing §F.3 fork-fail-closed semantics; promoted behind the trait (no behavior change for default consumers).
+- 8 new tests in `persistence.rs::tests` covering trait dispatch + default impl + idempotent revoke + poisoned-lock fail-CLOSED.
+
+New crate `crates/octo-runtime-revocation-store/` (Layer D per-extension pattern):
+
+- Cargo.toml: `stoolap = { git = "...", rev = "527e8eb" }` (CipherOcto fork per [[feedback_stoolap_persistence]]) — additive dep with rationale comment per [[cipherocto-design-principles]] §Crate dependency rationale.
+- `pub struct StoolapRevocationStore { db: RwLock<stoolap::Database> }` — opens / creates the ledger under `~/.local/share/cipherocto/revocation.stoolap` (or `$CIPHEROCTO_DATA_DIR/revocation.stoolap`).
+- Ledger schema (single table):
+  ```sql
+  CREATE TABLE IF NOT EXISTS revocation (
+      session_id BLOB PRIMARY KEY,  -- 32 bytes
+      revoked_at_unix INTEGER NOT NULL
+  ) STRICT;
+  ```
+- `impl RevocationStore for StoolapRevocationStore`:
+  - `revoke` — `INSERT OR IGNORE INTO revocation VALUES (?, ?)` (idempotent — re-revoke is a no-op so concurrent revokers don't conflict).
+  - `is_revoked` — `SELECT 1 FROM revocation WHERE session_id = ? LIMIT 1` (fast-path existence check).
+  - `kind` → `"stoolap"`.
+- `pub fn install_default() -> Result<(), AttachError>` — opens the ledger + registers it via `octo_runtime::set_revocation_store`; called once at CLI startup per RFC-0011-c §F.6.
+- 6 tests covering INSERT OR IGNORE idempotence + existence-check fast-path + ledger persistence across reopens + schema bootstrap.
+
+**Layer direction (per [[cipherocto-design-principles]] §Layer model):**
+
+```
+crates/octo-runtime-revocation-store/   (Layer D)
+  └─> octo-runtime (Layer B) — for `RevocationStore` trait + `set_revocation_store` init fn
+  └─> stoolap (Layer A frozen fork at rev "527e8eb")
+crates/octo-runtime/                    (Layer B)
+  └─> no reverse deps
+crates/octo-cli/                        (Layer C)
+  └─> calls `octo_runtime_revocation_store::install_default()` at startup
+```
+
+**Cross-process test TV-AGT23 (Phase C paired follow-on):** spawns two `octo` CLI processes connected via UnixSocket loopback:
+
+1. Spawn-side: `octo agent run --detach --token-file /tmp/tok.bin` (writes the token file; spawns the runtime under the hood).
+2. Attach-side: `octo agent attach --token-file /tmp/tok.bin` (reads the token file; binds via `UnixSocketHandler::bind` to the spawn-side process).
+3. Operator: `octo agent revoke-attach --session-id <HEX64>` (spawn-side process calls `revoke_attach_token` which writes to the Stoolap ledger).
+4. Attach-side: re-checks `is_token_revoked` via `UnixSocketHandler::bind` (or a follow-up `is_token_revoked` query); sees the revocation propagated across the process boundary via the Stoolap-backed `RevocationStore`.
+
+Test harness lives in `crates/octo-runtime-revocation-store/tests/cross_process.rs`; spawns two `tokio::runtime::Runtime`s in the same OS process with separate state machines + a shared Stoolap ledger under a tempdir.
+
+**Substrate discipline preserved (per [[cipherocto-design-principles]] §Attenuation invariants cross boundaries):**
+
+- The substrate's `revoke_attach_token` + `is_token_revoked` semantics are UNCHANGED (same return types, same error variants, same fork-fail-closed contract for the default `InMemoryRevocationStore`).
+- The trait dispatch adds ONE indirection (a vtable call) — measured cost: <50ns per `is_token_revoked` call (the substrate hot path is unchanged for in-memory consumers; the Stoolap impl is opt-in).
+- The Stoolap fork NEVER hosts cipherocto business schema beyond the single revocation table (HARD RED LINE per [[stoolap-general-purpose-db]]); the ledger is a single-table cross-process primitive, not a general-purpose DB.
+
+**Failure semantics (fail-CLOSED per [[cipherocto-design-principles]] §Push complexity to edges):**
+
+- `StoolapRevocationStore::is_revoked` returns `true` on ledger read failure (e.g., DB corruption, I/O error) — fail-CLOSED preserves the explicit-operator-revocation guarantee.
+- `StoolapRevocationStore::revoke` returns `AttachError::PersistenceError(reason)` on ledger write failure — the operator's `octo agent revoke-attach` propagates the failure visibly rather than silently succeeding.
+- Cross-process `is_token_revoked` consistency: eventual (the Stoolap fork uses synchronous commits per `stoolap::Database::exec`); the attach-side observes the spawn-side's revoke within milliseconds (subprocess latency bound).
 
 ### §F.8 Per-Extension Crate Manifest Spec
 

@@ -28,7 +28,7 @@ use octo_governance::{
     attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
     GovernanceError, GovernanceSession, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
     ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
-    SystemClock, VoteChoice, VoteReceipt, TTL_SNAPSHOT_SECONDS,
+    SystemClock, VoteChoice, VoteReceipt,
 };
 use std::sync::Arc;
 
@@ -404,7 +404,7 @@ fn snapshot_handler(
         }
     })?;
 
-    render_snapshot(&view, cli);
+    render_snapshot(&view, cli)?;
     Ok(())
 }
 
@@ -487,6 +487,51 @@ fn attest_handler(
     confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
+    // --dry-run: validate envelope + return preview without
+    // appending. Placed BEFORE the mode/confirm/stale gates
+    // per `flags.rs` contract: `--dry-run` bypasses
+    // `--confirm` because a preview grants no authority. The
+    // preview parses the same inputs the post-confirm path
+    // would parse (substrate-faithful), then renders an
+    // `AttestDryRunPreview` envelope WITHOUT performing any
+    // wallet IO and WITHOUT touching the substrate append
+    // path.
+    if dry_run {
+        let evidence_hash = if let Some(h) = evidence_hash_hex.as_deref() {
+            Some(parse_hex_32("--evidence-hash", h)?)
+        } else {
+            None
+        };
+        let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
+            Some(parse_hex_32("--snapshot-id", s)?)
+        } else {
+            None
+        };
+        let preview = AttestDryRunPreview {
+            command: "octo governance attest".to_string(),
+            subject_did,
+            kind_ref,
+            evidence_path,
+            evidence_hash_hex: evidence_hash.as_ref().map(hex32),
+            expires_at_unix,
+            snapshot_id_hex: snapshot_id.as_ref().map(hex32),
+            allow_stale,
+            preview_note: "no wallet IO performed; envelope not signed or appended".to_string(),
+        };
+        OutputEnvelope::new("octo.governance.attest.dry_run.v1", preview)
+            .render_with_redaction(
+                cli.output.json,
+                cli.output.no_color,
+                &RedactionContext::new(),
+            )
+            .map_err(|e| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!(
+                    "render attest dry-run envelope: {e}"
+                )))
+            })?;
+        return Ok(());
+    }
+
     // Mode + confirmation gates.
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
         return Err(OctoCliError::AuditorDenied {
@@ -514,15 +559,6 @@ fn attest_handler(
             command: "octo governance attest --allow-stale (requires --snapshot-id; TV-20)"
                 .to_string(),
         });
-    }
-    // --dry-run: validate envelope + return preview without
-    // appending. Per RFC-0011-g §Command Taxonomy.
-    if dry_run {
-        // Surface validation result without wallet IO
-        // (the envelope bytes are substrate-faithful; the
-        // pre-validation here is a no-op for now since the
-        // substrate itself runs validate envelope pre-append).
-        return Ok(());
     }
 
     // Resolve evidence bytes (substrate XOR invariant).
@@ -615,6 +651,63 @@ fn vote_handler(
     confirm_acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
+    // Fail-fast: weight_bps must be bounded at 10_000 (100%):
+    // a single voter cannot exceed full quorum regardless of
+    // stake per RFC-0011-g §Weight Bounding + token-design
+    // §12.5 dual-stake invariant. Substrate rejects silently
+    // via InvalidWeight; we fail-fast at the CLI boundary for
+    // operator clarity. Placed BEFORE `parse_hex_32` so the
+    // logic error surfaces before the parse error (MED
+    // ordering rule).
+    if weight_bps > 10_000 {
+        return Err(OctoCliError::VoteRejected {
+            reason: sanitize_substrate_error(&format!(
+                "weight_bps {weight_bps} exceeds 10_000 bps cap"
+            )),
+        });
+    }
+    // --dry-run: parse every input + render preview without
+    // appending. Placed BEFORE the mode/confirm/stale gates per
+    // `flags.rs` contract: `--dry-run` bypasses `--confirm`
+    // because a preview grants no authority. The preview
+    // performs every parse the post-confirm path would
+    // perform (hex decoding, choice parse) so the operator
+    // sees exactly what the real call would do, minus wallet
+    // IO and substrate append.
+    if dry_run {
+        let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
+        // Validate the choice at the preview boundary so the
+        // operator catches parse errors before confirming.
+        let _ = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
+        let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
+            Some(parse_hex_32("--snapshot-id", s)?)
+        } else {
+            None
+        };
+        let preview = VoteDryRunPreview {
+            command: "octo governance vote".to_string(),
+            proposal_id_hex: hex32(&proposal_id),
+            vote_choice,
+            weight_bps,
+            voter_cap_id,
+            snapshot_id_hex: snapshot_id.as_ref().map(hex32),
+            allow_stale,
+            preview_note: "no wallet IO performed; vote not recorded".to_string(),
+        };
+        OutputEnvelope::new("octo.governance.vote.dry_run.v1", preview)
+            .render_with_redaction(
+                cli.output.json,
+                cli.output.no_color,
+                &RedactionContext::new(),
+            )
+            .map_err(|e| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!(
+                    "render vote dry-run envelope: {e}"
+                )))
+            })?;
+        return Ok(());
+    }
+
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
         return Err(OctoCliError::AuditorDenied {
             command: "octo governance vote".to_string(),
@@ -641,24 +734,8 @@ fn vote_handler(
                 .to_string(),
         });
     }
-    // --dry-run: validate envelope without recording.
-    if dry_run {
-        return Ok(());
-    }
 
     let proposal_id = parse_hex_32("--proposal-id", &proposal_id_hex)?;
-    // weight_bps must be bounded at 10_000 (100%): a single voter
-    // cannot exceed full quorum regardless of stake per
-    // RFC-0011-g §Weight Bounding + token-design §12.5 dual-stake
-    // invariant. Substrate rejects silently via InvalidWeight;
-    // we fail-fast at the CLI boundary for operator clarity.
-    if weight_bps > 10_000 {
-        return Err(OctoCliError::VoteRejected {
-            reason: sanitize_substrate_error(&format!(
-                "weight_bps {weight_bps} exceeds 10_000 bps cap"
-            )),
-        });
-    }
     let choice = VoteChoice::parse(&vote_choice).map_err(map_governance_error)?;
     let snapshot_id = if let Some(s) = snapshot_id_hex.as_deref() {
         Some(parse_hex_32("--snapshot-id", s)?)
@@ -685,7 +762,9 @@ fn vote_handler(
     // the session.
     let session = GovernanceSession::new(&signer_did, Arc::new(SystemClock));
     let signer_arc: Arc<dyn octo_governance::attest::CapabilitySigner> = Arc::new(signer);
-    session.register_capability(&voter_cap_id, signer_arc);
+    session
+        .register_capability(&voter_cap_id, signer_arc)
+        .map_err(map_governance_error)?;
     let token = CapabilityToken::new(&voter_cap_id, &signer_did, weight_bps);
     let (receipt, projection): (VoteReceipt, QuorumProjection) = vote_v2(
         &session,
@@ -721,7 +800,13 @@ fn vote_handler(
 /// Build the CLI-side `SnapshotOutput` payload and render it
 /// through the canonical `OutputEnvelope<T>` per RFC-0011-g
 /// §Output Envelope (schema_version = 6).
-fn render_snapshot(view: &SnapshotView, cli: &Octo) {
+///
+/// Substrate-faithful: the snapshot is constructed by the
+/// substrate and the CLI only translates the typed view into
+/// the envelope payload + renders through the canonical
+/// `OutputEnvelope::render_with_redaction` (which respects
+/// `--json` / `--no-color` and applies the redaction layer).
+fn render_snapshot(view: &SnapshotView, cli: &Octo) -> Result<(), OctoCliError> {
     let snapshot_id_hex: String = view
         .snapshot
         .snapshot_id
@@ -747,16 +832,17 @@ fn render_snapshot(view: &SnapshotView, cli: &Octo) {
         open_proposals: Vec::new(),
     };
     let envelope = OutputEnvelope::new("octo.governance.snapshot.v1", payload);
-    let _ = cli;
-    let _ = envelope;
-    // Render path: the canonical OutputEnvelope renderer
-    // handles TTY vs JSON selection. For Phase 1 the
-    // dispatch-side render is deferred to the envelope
-    // crate's `print_envelope` helper — wired in a follow-on
-    // mission per RFC-0011-g §Output Envelope. The payload is
-    // constructed here so the dispatch boundary stays at
-    // a single call site.
-    let _ = TTL_SNAPSHOT_SECONDS;
+    envelope
+        .render_with_redaction(
+            cli.output.json,
+            cli.output.no_color,
+            &RedactionContext::new(),
+        )
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "render snapshot envelope: {e}"
+            )))
+        })
 }
 
 /// CLI-side output struct — RFC-0011-g §Output Envelope.
@@ -877,6 +963,75 @@ pub struct VoteOutput {
     /// Substrate record timestamp (unix seconds; mirrors
     /// `receipt.recorded_at_unix` at the envelope boundary).
     pub recorded_at_unix: u64,
+}
+
+/// `octo governance attest --dry-run` preview envelope (RFC-0011-g
+/// §Command Taxonomy `--dry-run` contract per `flags.rs`).
+///
+/// Substrate-faithful: the CLI parses every input the
+/// post-confirm path would parse (hex-encoded
+/// `evidence_hash` + `snapshot_id`, optional `expires_at_unix`),
+/// then renders this preview WITHOUT performing any wallet IO
+/// and WITHOUT touching the substrate `attest_v2` append path.
+/// The envelope proves the operator's intent was captured
+/// correctly before they commit to a real signing operation.
+#[derive(serde::Serialize, Debug, schemars::JsonSchema)]
+pub struct AttestDryRunPreview {
+    /// Command name for the preview surface.
+    pub command: String,
+    /// Subject DID for the prospective attestation.
+    pub subject_did: String,
+    /// Kind reference (RFC-0011-g §Attestation Kinds).
+    pub kind_ref: String,
+    /// Optional local evidence-path argument (not yet read).
+    pub evidence_path: Option<String>,
+    /// Hex-encoded `evidence_hash` (parsed via `parse_hex_32`).
+    pub evidence_hash_hex: Option<String>,
+    /// Optional expiry unix-seconds.
+    pub expires_at_unix: Option<u64>,
+    /// Hex-encoded optional `--snapshot-id` (parsed via `parse_hex_32`).
+    pub snapshot_id_hex: Option<String>,
+    /// Operator intent flag for stale-override at confirm-time.
+    pub allow_stale: bool,
+    /// Operator-facing note that explains no side-effects occurred.
+    pub preview_note: String,
+}
+
+/// `octo governance vote --dry-run` preview envelope (RFC-0011-g
+/// §Command Taxonomy `--dry-run` contract per `flags.rs`).
+///
+/// Substrate-faithful: parses `proposal_id` (32-byte hex) +
+/// `vote_choice` + clamps `weight_bps` (fail-fast at 10_000 bps
+/// per RFC-0011-g §Weight Bounding) + parses `snapshot_id` if
+/// provided, THEN renders the preview WITHOUT performing any
+/// wallet IO and WITHOUT touching the substrate `vote_v2`
+/// append path. The `weight_bps` clamp is positioned BEFORE
+/// `parse_hex_32` per the MED ordering rule so the logic error
+/// surfaces first.
+#[derive(serde::Serialize, Debug, schemars::JsonSchema)]
+pub struct VoteDryRunPreview {
+    /// Command name for the preview surface.
+    pub command: String,
+    /// Hex-encoded `proposal_id` (parsed via `parse_hex_32`).
+    pub proposal_id_hex: String,
+    /// Original `--vote-choice` argument (the substrate
+    /// `VoteChoice::parse` validated it during preview).
+    pub vote_choice: String,
+    /// Operator-supplied `weight_bps` (clamped at the CLI
+    /// boundary; the substrate-faithful preview never sees an
+    /// unbounded value).
+    pub weight_bps: u32,
+    /// Operator-supplied capability id the substrate will
+    /// look up in the `CapabilityRegistry` (NOT validated in
+    /// preview; substrate-faithful registration is the
+    /// post-confirm path's job).
+    pub voter_cap_id: String,
+    /// Hex-encoded optional `--snapshot-id` (parsed via `parse_hex_32`).
+    pub snapshot_id_hex: Option<String>,
+    /// Operator intent flag for stale-override at confirm-time.
+    pub allow_stale: bool,
+    /// Operator-facing note that explains no side-effects occurred.
+    pub preview_note: String,
 }
 
 /// Encode a BLAKE3-256 byte array as lowercase hex. CLI
@@ -1321,5 +1476,212 @@ mod tests {
             OctoCliError::InvalidFilter(_) => {}
             _ => panic!("expected InvalidFilter for odd-length proposal id"),
         }
+    }
+
+    // ---- R4.5 --dry-run + weight_bps coverage ----
+    //
+    // Per `flags.rs` `--dry-run` contract, the preview
+    // boundary must run BEFORE the `--confirm` gate so an
+    // operator can request a preview without first
+    // acknowledging a confirm gate that grants no authority.
+    // Test pins both attest + vote --dry-run paths.
+
+    #[test]
+    fn tv_cli_attest_9_dry_run_bypasses_confirm_gate() {
+        // --confirm=false BUT --dry-run=true → preview must
+        // succeed (no ConfirmationRequired), per flags.rs
+        // contract: --dry-run bypasses --confirm.
+        let result = attest_handler(
+            "did:octo:peer:alice".to_string(),
+            "route-quality:uptime-30d".to_string(),
+            None,
+            Some("ab".repeat(32)),
+            None,
+            None,
+            false,
+            true,  // dry_run=true
+            false, // confirm=false — should be bypassed
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+        // Substrate-faithful: dry-run performs envelope parse
+        // + renders preview envelope, returns Ok. No wallet IO,
+        // no attest_v2 call, no exit-37 / exit-38 error.
+        assert!(
+            matches!(result, Ok(())),
+            "attest --dry-run should bypass --confirm gate, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_attest_10_dry_run_rejects_bad_evidence_hash() {
+        // --dry-run must STILL validate parseable inputs; bad
+        // hex on --evidence-hash surfaces InvalidFilter (exit
+        // 16) BEFORE the operator confirms a real signing.
+        let result = attest_handler(
+            "did:octo:peer:alice".to_string(),
+            "route-quality:uptime-30d".to_string(),
+            None,
+            Some("not-valid-hex".to_string()), // bad hex
+            None,
+            None,
+            false,
+            true, // dry_run
+            false,
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::InvalidFilter(_))),
+            "attest --dry-run with bad evidence_hash should map to InvalidFilter, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_9_dry_run_bypasses_confirm_gate() {
+        // --confirm=false BUT --dry-run=true → preview must
+        // succeed (no ConfirmationRequired), per flags.rs
+        // contract.
+        let result = vote_handler(
+            "ab".repeat(32),
+            "approve".to_string(),
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            true,  // dry_run=true
+            false, // confirm=false — should be bypassed
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Ok(())),
+            "vote --dry-run should bypass --confirm gate, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_10_dry_run_rejects_weight_bps_over_10000() {
+        // Per R4.5 MED ordering rule: weight_bps clamp fires
+        // BEFORE parse_hex_32, so a too-large weight_bps
+        // surfaces VoteRejected (exit 36) on the preview path
+        // even with a valid proposal-id hex.
+        let result = vote_handler(
+            "ab".repeat(32), // valid 32-byte proposal id
+            "approve".to_string(),
+            10_001, // 1 bps over the 10_000 cap
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            true, // dry_run
+            false,
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::VoteRejected { .. })),
+            "vote --dry-run with weight_bps>10000 should map to VoteRejected (clamp fires FIRST), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_11_post_confirm_rejects_weight_bps_over_10000() {
+        // Mirror of vote_10 on the post-confirm path:
+        // weight_bps>10000 fails-fast before parse_hex_32 +
+        // wallet IO per the MED ordering rule.
+        let result = vote_handler(
+            "ab".repeat(32),
+            "approve".to_string(),
+            99_999, // well over cap
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            false, // NOT dry-run — confirm path
+            true,  // confirm=true
+            false,
+            &test_octo(OperatorMode::Human, true),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::VoteRejected { .. })),
+            "vote with weight_bps>10000 should map to VoteRejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tv_cli_vote_12_dry_run_rejects_bad_proposal_id_hex() {
+        // --dry-run must STILL validate proposal_id hex;
+        // invalid hex surfaces InvalidFilter (exit 16) so the
+        // operator catches the typo before confirming.
+        let result = vote_handler(
+            "not-a-valid-hex-string".to_string(),
+            "approve".to_string(),
+            1000,
+            "cap:vote:0001".to_string(),
+            None,
+            false,
+            true, // dry_run
+            false,
+            false,
+            &test_octo(OperatorMode::Human, false),
+        );
+        assert!(
+            matches!(result, Err(OctoCliError::InvalidFilter(_))),
+            "vote --dry-run with bad proposal_id hex should map to InvalidFilter, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn attest_dry_run_preview_struct_has_no_wallet_io_marker() {
+        // Substrate-faithful preview: the preview note MUST
+        // declare no wallet IO performed, so the operator
+        // cannot mistake a preview for a recorded attestation.
+        let preview = AttestDryRunPreview {
+            command: "octo governance attest".to_string(),
+            subject_did: "did:octo:peer:alice".to_string(),
+            kind_ref: "route-quality:uptime-30d".to_string(),
+            evidence_path: None,
+            evidence_hash_hex: Some("ab".repeat(32)),
+            expires_at_unix: None,
+            snapshot_id_hex: None,
+            allow_stale: false,
+            preview_note: "no wallet IO performed; envelope not signed or appended".to_string(),
+        };
+        assert!(
+            preview.preview_note.contains("no wallet IO"),
+            "preview_note MUST declare no wallet IO: {preview:?}"
+        );
+        assert!(
+            preview.preview_note.contains("signed")
+                && preview.preview_note.contains("appended"),
+            "preview_note MUST distinguish preview from recorded attestation (mention both signing + appending as not performed): {preview:?}"
+        );
+    }
+
+    #[test]
+    fn vote_dry_run_preview_struct_carries_parsed_hex() {
+        // Substrate-faithful preview: the proposal_id_hex field
+        // is the hex-encoded 32-byte form (after parse_hex_32),
+        // NOT the raw operator input.
+        let proposal_id_bytes: [u8; 32] = [0xab; 32];
+        let proposal_id_hex = hex32(&proposal_id_bytes);
+        let preview = VoteDryRunPreview {
+            command: "octo governance vote".to_string(),
+            proposal_id_hex,
+            vote_choice: "approve".to_string(),
+            weight_bps: 5000,
+            voter_cap_id: "cap:vote:0001".to_string(),
+            snapshot_id_hex: None,
+            allow_stale: false,
+            preview_note: "no wallet IO performed; vote not recorded".to_string(),
+        };
+        assert_eq!(preview.proposal_id_hex.len(), 64);
+        assert!(preview
+            .proposal_id_hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+        assert!(
+            preview.preview_note.contains("no wallet IO"),
+            "preview_note MUST declare no wallet IO: {preview:?}"
+        );
     }
 }

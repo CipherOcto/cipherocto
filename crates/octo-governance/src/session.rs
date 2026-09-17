@@ -35,6 +35,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use octo_governance_core::GovernanceError;
+
 use crate::attest::AttestationLog;
 use crate::vote::{CapabilityRegistry, VoteLog};
 
@@ -165,13 +167,14 @@ impl GovernanceSession {
     /// Last-writer-wins on duplicate registrations. Mirrors the
     /// `CapabilityRegistry::register` surface so the CLI can
     /// populate the registry at session construction time.
+    /// Fail-closed on mutex poisoning via `GovernanceError::Internal`.
     pub fn register_capability(
         &self,
         voter_cap_id: impl Into<String>,
         signer: Arc<dyn crate::attest::CapabilitySigner>,
-    ) {
+    ) -> Result<(), GovernanceError> {
         self.capability_registry
-            .register(voter_cap_id.into(), signer);
+            .register(voter_cap_id.into(), signer)
     }
 
     /// Borrow the append-only vote ledger (read-only inspection).
@@ -241,7 +244,7 @@ mod tests {
     fn governance_session_new_carries_state() {
         let session = GovernanceSession::new("did:octo:test", Arc::new(SystemClock));
         assert_eq!(session.active_did(), "did:octo:test");
-        assert_eq!(session.vote_log().proposal_count(), 0);
+        assert_eq!(session.vote_log().proposal_count().expect("unpoisoned"), 0);
         assert_eq!(session.attestation_log().len(), 0);
         assert_eq!(session.capability_registry().len(), 0);
         assert!(session.now_unix() > 0);
@@ -260,7 +263,9 @@ mod tests {
 
         let session = GovernanceSession::new("did:octo:test", Arc::new(FixedClock::new(0)));
         assert_eq!(session.capability_registry().len(), 0);
-        session.register_capability("cap-001", Arc::new(DummySigner));
+        session
+            .register_capability("cap-001", Arc::new(DummySigner))
+            .expect("register unpoisoned");
         assert_eq!(session.capability_registry().len(), 1);
     }
 

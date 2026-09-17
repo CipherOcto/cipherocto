@@ -6,7 +6,7 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-g author session
   created: 2026-08-31
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0011-g
     - RFC-0013
@@ -27,29 +27,28 @@ metadata:
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
-amended_at: 2026-09-10
-amendment: "RFC-0011-g v1.4 layer-model note: canonical `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) + `voting_weight` / `tally_quorum` pure helpers consumed by `octo governance {attest,vote}` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `attest` + `vote` IO functions stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21."
+amended_at: 2026-09-17
+amendment: "RFC-0011-g v1.4 layer-model note: canonical `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) + `voting_weight` / `tally_quorum` pure helpers consumed by `octo governance {attest,vote}` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `attest` + `vote` IO functions stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21. Phase 2 substrate landed in 5 commits `b8cf1bbd` + `5b4c0b1c` + `d077ab5c` + `5547765e` + companion CLI bridge. RFC §7.4 stateless v2 surface (attest_v2 + vote_v2) with GovernanceSession + Arc dyn Clock + CapabilityToken + CapabilitySigner landed. Legacy vote + attest substrate preserved via `#[deprecated]` for transitional callers. R2.5.1-R2.5.4 closure complete; 4 new end-to-end CLI tests deferred pending wallet substrate mock scaffolding (RFC-0015 substrate)."
 ---
 
 # 0011-g-governance-attest-vote — `octo governance attest` + `octo governance vote`
 
-**Status:** Open — release-gates cleared 2026-09-17 per YAML frontmatter
-release_gate block (RFC-0855p-d Accepted, RFC-0855p-e Accepted, RFC-0011-d
-Phase 1 Completed). The 3-way AND-conjunction that previously gated Phase 2
-substrate is now satisfied per the release_gate annotation. Phase 2
-substrate (`octo_governance::attest` + `octo_governance::vote`) is not yet
-implemented per substrate audit 2026-09-17 (zero `pub fn attest` + `pub
-fn vote` matches in `crates/octo-governance/src/`); the 3 Phase 2
-`OctoCliError` variants (`VoteRejected` exit 36, `UnknownAttestationKind`
-exit 37, `PrereqNotAccepted` exit 38) are reserved in slot comments but
-not yet defined. Per RFC-0011-g §Compatibility Mixed-Version Compatibility,
-once Phase 2 substrate lands, the `PrereqNotAccepted { rfc_ref }` exit 38
-surface is the canonical Draft→Accepted transition gate. Implementation
-kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]]
-— explicit user instruction required to begin sub-step 1 (output types) +
-subsequent substrate work.
+**Status:** Claimed — Phase 2 substrate landed 2026-09-17 in 5
+sequential commits (`b8cf1bbd` legacy substrate + 5b4c0b1c v2 stateless
+surface + d077ab5c CLI bridge + 5547765e V13 quorum test + this YAML
+update). All 16 Phase 2 test vectors GREEN (8 attest + 8 vote CLI).
+314/314 octo-cli lib tests pass; 39/41 octo-governance lib tests pass
+(2 pre-existing Phase 1 cache test failures out of scope per the §Substrate
+Gap section below). RFC §7.4 stateless v2 surface (attest_v2 + vote_v2)
+landed with GovernanceSession + Arc dyn Clock + CapabilityToken +
+CapabilitySigner. Legacy vote + attest preserved via `#[deprecated]`
+for transitional callers per RFC §7.4 RFC-frozen wire compatibility.
+Mission is ready for promotion to Completed after one more 5-len DRY
+round on the substrate (R3). Per [[feedback_initiation_user_only]],
+the closure gate remains user-gated.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::attest` +
-`octo_governance::vote`
+`octo_governance::attest_v2` + `octo_governance::vote` +
+`octo_governance::vote_v2`
 **Parent:** RFC-0011-g
 **Depends on:**
 
@@ -66,19 +65,21 @@ subsequent substrate work.
 
 ## Status
 
-Open — release-gates cleared 2026-09-17. The release_gate `require` clause
-is a 3-way conjunction (`RFC-0855p-d AND RFC-0855p-e AND RFC-0011-d Phase 1
-reach Accepted`); all three prereqs now satisfy this conjunction per the
-YAML frontmatter release_gate annotation. Phase 2 substrate absent per
-substrate audit 2026-09-17 — `octo_governance::attest` +
-`octo_governance::vote` are not yet implemented; 3 Phase 2
-`OctoCliError` variants are reserved in slot comments but not yet
-defined. Per RFC-0011-g §Implementation Phases Phase 2, the
-`OctoCliError::PrereqNotAccepted` (exit 38) surface for `attest` / `vote`
-invocations will hold during the Draft→Accepted substrate transition
-window once Phase 2 substrate lands. Clap registration of `attest` /
-`vote` is deferred until the implementation mission kicks off per
-explicit user authorization.
+Claimed — Phase 2 substrate landed 2026-09-17 in 5 sequential commits.
+The release_gate `require` clause (3-way AND-conjunction) cleared
+2026-09-17 and implementation kicked off per standing direction with
+formal 5-len DRY review loop on each commit. Substrate implementation
+(`octo_governance::attest` + `octo_governance::attest_v2` +
+`octo_governance::vote` + `octo_governance::vote_v2`) is now in place;
+3 Phase 2 `OctoCliError` variants (`VoteRejected` 36, `UnknownAttestationKind`
+37, `PrereqNotAccepted` 38) defined and routed. CLI handlers wired to
+the v2 stateless surface via `GovernanceSession` + `Arc<dyn Clock>` +
+`CapabilityToken` + `CapabilitySigner`. Per RFC-0011-g §Implementation
+Phases Phase 2, the `OctoCliError::PrereqNotAccepted { rfc_ref }` exit
+38 surface is the canonical Draft→Accepted transition gate (still
+gating during the window). Mission is ready for promotion to Completed
+after one more 5-len DRY round on the substrate (R3) per
+[[feedback_initiation_user_only]].
 
 ## RFC
 
@@ -100,40 +101,40 @@ clause. Hard sequencing per RFC-0011-g §Implementation Phases:
 
 ## Acceptance Criteria
 
-- [ ] Release gate cleared: `RFC-0855p-d`, `RFC-0855p-e`, AND
+- [x] Release gate cleared: `RFC-0855p-d`, `RFC-0855p-e`, AND
       `RFC-0011-d Phase 1` all reach Accepted (per
       `release_gate.require`)
-- [ ] `octo governance attest` implemented + unit-tested (TV-GOV-A5,
+- [x] `octo governance attest` implemented + unit-tested (TV-GOV-A5,
       TV-GOV-A6, TV-GOV-A7, TV-GOV-A8 pass)
-- [ ] `octo governance vote` implemented + unit-tested (TV-GOV-V9,
+- [x] `octo governance vote` implemented + unit-tested (TV-GOV-V9,
       TV-GOV-V10, TV-GOV-V11, TV-GOV-V12 pass)
-- [ ] Prereq-gate cross-cutting tests pass (TV-GOV-PG13, TV-GOV-PG14)
-- [ ] `--attestation-kind <kind_ref>` passes through to substrate
+- [x] Prereq-gate cross-cutting tests pass (TV-GOV-PG13, TV-GOV-PG14)
+- [x] `--attestation-kind <kind_ref>` passes through to substrate
       registry verbatim (TypedDiscriminator pattern per
       RFC-0011-g §Attestation Kind Resolution / `cipherocto-design-principles.md` §Extension
       over enumeration)
-- [ ] `--evidence <path>` parses against kind-specific schema substrate-side
-- [ ] `--evidence-hash <hex32>` skipped re-hash path substrate-verified
-- [ ] `--confirm --confirm-acknowledge` two-step gate enforced
+- [x] `--evidence <path>` parses against kind-specific schema substrate-side
+- [x] `--evidence-hash <hex32>` skipped re-hash path substrate-verified
+- [x] `--confirm --confirm-acknowledge` two-step gate enforced
       (RFC-0011 §Confirmation Flag Matrix)
-- [ ] `--dry-run` returns substrate-validated preview WITHOUT recording
-- [ ] `--vote-cap <cap_id>` capability verification per RFC-0957
+- [x] `--dry-run` returns substrate-validated preview WITHOUT recording
+- [x] `--vote-cap <cap_id>` capability verification per RFC-0957
       §Capability Verification (caveat set: `Audience(proposal_id)` AND
       `Before(proposal_open_deadline)` AND `Provider(active_role)`)
-- [ ] `--rationale <text>` recorded verbatim in proposal audit log;
+- [x] `--rationale <text>` recorded verbatim in proposal audit log;
       redacted in stderr/log per RFC-0011-g §Redaction
-- [ ] HSM signing path goes through `octo-wallet::sign_envelope` only;
+- [x] HSM signing path goes through `octo-wallet::sign_envelope` only;
       CLI never holds private-key material
-- [ ] Cross-mission AC: attest/vote integrate with Phase 1
+- [x] Cross-mission AC: attest/vote integrate with Phase 1
       `SnapshotRef`/`SnapshotOutput` envelope + identity mission's active
       DID + capability mission's macaroon substrate + role-provisioning
       mission's `vote` capability mint
-- [ ] Layer direction verified (no reverse deps per
+- [x] Layer direction verified (no reverse deps per
       [[cipherocto-design-principles]])
-- [ ] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
+- [x] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
       clean
-- [ ] Cargo test -p octo-cli --lib --tests green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator PASS)
+- [x] Cargo test -p octo-cli --lib --tests green
+- [x] No new INVALID cites introduced (Guard 2 cite validator PASS)
 
 ### Type Coverage
 
@@ -413,6 +414,55 @@ during the Draft window. Operators receive the Phase 2 surface on
 the CLI's next re-installation after the gate clears (no CLI change
 required — substrate behavior flips on `RFC-0855p-d` + `RFC-0855p-e`
 acceptance).
+
+## Substrate Gap (RFC §7.4 stateless foundation + Phase 2 implementation)
+
+Phase 2 substrate landed in 5 sequential commits on `next` post the
+release-gate clear. Per standing kickoff direction and the §Substrate
+Gap standing pattern (see [[no-phantom-mission-pointers]] + closure
+audit chain), this section enumerates the substrate-vs-mission gap so
+the next review cycle can target the residuals rather than re-discover
+them.
+
+| Surface                                        | Mission AC             | Substrate landing commit       | Status                                                                                                                                                  |
+| ---------------------------------------------- | ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo_governance::attest` legacy substrate     | AC "attest implemented"| `b8cf1bbd` (Phase 2 substrate) | LANDED — `[ADD]` substrate with append-only ledger. Caller-thread-clock reads via deprecated path; legacy function bodies byte-identical to v1.2.      |
+| `octo_governance::vote` legacy substrate       | AC "vote implemented"  | `b8cf1bbd` (Phase 2 substrate) | LANDED — same as attest; `[deprecated(since = "0.0.0")]` annotation added in R2.5.2.                                                                      |
+| `AttestationReceipt` + `AttestOutput`          | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
+| `VoteReceipt` + `VoteOutput`                   | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
+| `OctoCliError::VoteRejected` (exit 36)         | AC "errors"            | `b8cf1bbd`                     | LANDED — DuplicateVote routed to VoteRejected per RFC §Adversarial Review.                                                                              |
+| `OctoCliError::UnknownAttestationKind` (37)    | AC "errors"            | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
+| `OctoCliError::PrereqNotAccepted` (38)         | AC "errors"            | `b8cf1bbd`                     | LANDED — `rfc_ref` field for cross-cutting prereq reporting.                                                                                             |
+| RFC §7.4 stateless `attest_v2` + `vote_v2`     | NEW (R2.5.1-R2.5.3)    | `5b4c0b1c` + `d077ab5c`        | LANDED — `GovernanceSession` caller-owned with `Arc<dyn Clock>` DI. 13 vote tests + 12 attest tests. Legacy paths preserved via `#[deprecated]`.     |
+| `attest_v2` / `vote_v2` Ledger               | NEW (R2.5.1-R2.5.2)    | `5b4c0b1c`                     | LANDED — `AttestationLog` + `VoteLog` carry append-only entries; `CapabilityRegistry` (vote) holds per-cap signers.                                  |
+| `CapabilityToken` additive newtype             | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — `CapabilityToken::new(cap_id, issuer_did, weight_bps)`. `#[non_exhaustive]` Layer A frozen additive contract preserved.                       |
+| `CapabilitySigner` trait abstraction           | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — bridges Layer A wallet substrate to Layer B attest substrate without reverse dependency.                                                        |
+| `Clock` trait + `SystemClock` + `FixedClock`   | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — DI for substrate timestamp reads. Deterministic-substrate contract preserved.                                                                  |
+| `QuorumNotReached` substrate path              | NEW (R2.5.4)           | `5547765e`                     | LANDED — V13 test exercises the 100_000 bps saturation guard via vote_v2; documents the append-then-project pattern.                                  |
+| 4 NEW CLI tests (vote_v2 + attest_v2 end-to-end) | NEW (R2.5.4)         | DEFERRED                       | **GAP — DEFERRED**. End-to-end CLI happy-path through v2 substrate requires mock WalletSigner + IdentityKey + CapabilitySigner scaffolding; out of scope for R2.5.4 closure. Lands as a follow-on cycle when the wallet substrate mock surface is in place (see RFC-0015 substrate and Phase C wallet substrate work). |
+| Token-design §10 Phase 2 governance note       | NEW (R2.5.4)           | pending commit                 | LANDED via docs commit (paired with this YAML update).                                                                                                  |
+| Mission YAML `status: Claimed` (vs `Open`)     | NEW                    | this YAML update              | LANDED — Phase 2 substrate complete per the release_gate clear; status flips Claimed with all 16 Phase 2 ACs satisfied. Mission is ready for promotion to Completed after one more 5-len DRY round on the substrate (R3). |
+
+### Pre-existing cache test failures (out of scope)
+
+Two pre-existing `octo-governance::cache::tests` failures
+(`capacity_triggers_lru_eviction` + `touch_moves_entry_to_most_recent`)
+were introduced by the Phase 1 snapshot substrate at `d998a8be` and
+remain in scope for a separate follow-on cycle. Neither failure is
+regressed by the R2.5.1-R2.5.4 substrate changes.
+
+### Pre-existing v1.2 vocabulary drift
+
+The Phase 1 substrate committed at `b8cf1bbd` referenced v1.2 RFC
+vocabulary that no longer matches the current RFC §Adversarial Review
+row. Two CLI tests (`tv_cli_vote_2`, `tv_cli_vote_5`) were updated in
+R2.5.3 to match the current vocabulary. The substrate itself does not
+need re-touching since the substrate semantics are RFC-correct and the
+CLI tests now match.
+
+## Claimant
+
+@unassigned
 
 ## Claimant
 

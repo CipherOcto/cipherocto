@@ -33,14 +33,21 @@ amendment: "RFC-0011-g v1.4 layer-model note: canonical `DecisionType` (7 varian
 
 # 0011-g-governance-attest-vote — `octo governance attest` + `octo governance vote`
 
-**Status:** Open — release-gated on the conjunction of three prerequisite
-landings: `RFC-0855p-d`, `RFC-0855p-e`, and the Phase 1
-landing of `RFC-0011-d` (role provisioning). Per RFC-0011-g §Compatibility
-Mixed-Version Compatibility (Partial Prereqs), the CLI surfaces
-`OctoCliError::PrereqNotAccepted { rfc_ref }` (exit 38) for any
-`attest` or `vote` invocation until the gate clears. Implementation kickoff
-user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once
-ALL three prereqs reach Accepted.
+**Status:** Open — release-gates cleared 2026-09-17 per YAML frontmatter
+release_gate block (RFC-0855p-d Accepted, RFC-0855p-e Accepted, RFC-0011-d
+Phase 1 Completed). The 3-way AND-conjunction that previously gated Phase 2
+substrate is now satisfied per the release_gate annotation. Phase 2
+substrate (`octo_governance::attest` + `octo_governance::vote`) is not yet
+implemented per substrate audit 2026-09-17 (zero `pub fn attest` + `pub
+fn vote` matches in `crates/octo-governance/src/`); the 3 Phase 2
+`OctoCliError` variants (`VoteRejected` exit 36, `UnknownAttestationKind`
+exit 37, `PrereqNotAccepted` exit 38) are reserved in slot comments but
+not yet defined. Per RFC-0011-g §Compatibility Mixed-Version Compatibility,
+once Phase 2 substrate lands, the `PrereqNotAccepted { rfc_ref }` exit 38
+surface is the canonical Draft→Accepted transition gate. Implementation
+kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]]
+— explicit user instruction required to begin sub-step 1 (output types) +
+subsequent substrate work.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::attest` +
 `octo_governance::vote`
 **Parent:** RFC-0011-g
@@ -59,12 +66,19 @@ ALL three prereqs reach Accepted.
 
 ## Status
 
-Open — release-gated. The release_gate `require` clause is a 3-way
-conjunction: `RFC-0855p-d AND RFC-0855p-e AND RFC-0011-d Phase 1 reach
-Accepted`. Until ALL three prereqs land, the CLI surfaces
-`OctoCliError::PrereqNotAccepted` (exit 38) for `attest` / `vote`
-invocations per RFC-0011-g §Implementation Phases Phase 2. The clap
-registration of `attest` / `vote` is deferred until the gate clears.
+Open — release-gates cleared 2026-09-17. The release_gate `require` clause
+is a 3-way conjunction (`RFC-0855p-d AND RFC-0855p-e AND RFC-0011-d Phase 1
+reach Accepted`); all three prereqs now satisfy this conjunction per the
+YAML frontmatter release_gate annotation. Phase 2 substrate absent per
+substrate audit 2026-09-17 — `octo_governance::attest` +
+`octo_governance::vote` are not yet implemented; 3 Phase 2
+`OctoCliError` variants are reserved in slot comments but not yet
+defined. Per RFC-0011-g §Implementation Phases Phase 2, the
+`OctoCliError::PrereqNotAccepted` (exit 38) surface for `attest` / `vote`
+invocations will hold during the Draft→Accepted substrate transition
+window once Phase 2 substrate lands. Clap registration of `attest` /
+`vote` is deferred until the implementation mission kicks off per
+explicit user authorization.
 
 ## RFC
 

@@ -240,10 +240,14 @@ mod tests {
 
     #[test]
     fn snapshot_id_changes_with_chain_id() {
-        let mut f1 = ProposalFilter::default();
-        f1.chain_id = Some("chain-a".to_string());
-        let mut f2 = ProposalFilter::default();
-        f2.chain_id = Some("chain-b".to_string());
+        let f1 = ProposalFilter {
+            chain_id: Some("chain-a".to_string()),
+            ..Default::default()
+        };
+        let f2 = ProposalFilter {
+            chain_id: Some("chain-b".to_string()),
+            ..Default::default()
+        };
         assert_ne!(
             derive_snapshot_id(&f1, 1_700_000_000),
             derive_snapshot_id(&f2, 1_700_000_000)

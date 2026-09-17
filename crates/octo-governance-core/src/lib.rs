@@ -40,9 +40,11 @@
 pub mod error;
 pub mod policy;
 pub mod proposal;
+pub mod receipt;
 pub mod tally;
 
 pub use error::GovernanceError;
 pub use policy::{EmergencyAuthority, GovernanceModel, GovernancePolicy};
 pub use proposal::{DecisionType, GovernanceProposal, ProposalState};
+pub use receipt::{AttestationReceipt, VoteReceipt};
 pub use tally::{tally_quorum, voting_weight};

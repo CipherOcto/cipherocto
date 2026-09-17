@@ -23,6 +23,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod attest;
 pub mod cache;
 pub mod error;
 pub mod snapshot;
@@ -32,6 +33,7 @@ pub use error::GovernanceSnapshotError;
 // Explicit curated re-export (RFC-0013 §Module Layout).
 pub use octo_governance_core::tally_quorum;
 pub use octo_governance_core::voting_weight;
+pub use octo_governance_core::AttestationReceipt;
 pub use octo_governance_core::DecisionType;
 pub use octo_governance_core::EmergencyAuthority;
 pub use octo_governance_core::GovernanceError;
@@ -39,6 +41,7 @@ pub use octo_governance_core::GovernanceModel;
 pub use octo_governance_core::GovernancePolicy;
 pub use octo_governance_core::GovernanceProposal;
 pub use octo_governance_core::ProposalState;
+pub use octo_governance_core::VoteReceipt;
 pub use snapshot::{
     snapshot, ProposalFilter, ProposalSummary, SnapshotRef, SnapshotView, TTL_SNAPSHOT_SECONDS,
 };

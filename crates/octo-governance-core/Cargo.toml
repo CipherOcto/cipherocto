@@ -15,6 +15,13 @@ crate-type = ["rlib"]
 serde = { version = "1", features = ["derive"] }
 # Layer A error type per cipherocto-design-principles Layer A row.
 thiserror = "2.0"
+# JSON schema derive for `AttestationReceipt` + `VoteReceipt`. The
+# CLI envelope (`AttestOutput` / `VoteOutput` per RFC-0011-g §7.3)
+# embeds the Receipt types directly; the `JsonSchema` derive is
+# generated at build/test time only with no hot-path runtime
+# cost. Used substrate-faithfully by `octo-cli` (Layer C/D) for
+# envelope schema emission.
+schemars = { version = "0.8", features = ["derive"] }
 
 [lints.rust]
 unsafe_code = "forbid"

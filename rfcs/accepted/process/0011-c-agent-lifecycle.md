@@ -395,7 +395,7 @@ pattern), plus 1 CLI dispatch `TokenMintSkipped` per §F.6.1,
 plus 1 boundary-parse `InvalidSessionIdHex` per §9.3.6, plus 1
 typed-discriminator `ReplayDetected` per §9.7 — totaling
 **25 variants across 22 occupied slots** in the 23-slot range
-39-61, 3 shared-slot pairings (43, 51, 53). Renegotiation
+39-61, 3 shared-slot pairings (43, 51, 53)). Renegotiation
 is required if -h/i follow-on amendments claim earlier slots:
 
 | Variant                                                 | Exit code   | Notes                                                                                                                                                                                                                                              |
@@ -899,8 +899,8 @@ per §Follow-on §F.4 mirror (8 unique slots), plus 1 CLI dispatch
 `InvalidSessionIdHex` per §9.3.6, plus 1 typed-discriminator
 `ReplayDetected` per §9.7 — totaling **25 variants across 22
 occupied slots** in the 23-slot range 39-61, 3 shared-slot
-pairings (43, 51, 53). Sibling amendments that do not consume
-slots MUST NOT claim earlier slots; renegotiation is required if
+pairings (43, 51, 53)). Sibling amendments that do not consume
+slots MUST NOT claim earlier slots. Renegotiation is required if
 -h/i follow-on amendments claim earlier slots.
 
 ### Why state machine aliasing ACTIVE↔BUSY

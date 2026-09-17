@@ -49,11 +49,14 @@ pub(crate) fn registry() -> &'static Mutex<BTreeMap<Uuid, AgentRecord>> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AgentRecord {
-    #[allow(dead_code)] // Phase 1: persisted for sibling mission wiring.
+    #[allow(dead_code)]
+    // Phase 1: persisted for sibling mission wiring. Deferred cleanup: separate mission scope.
     pub(crate) manifest: AgentManifest,
-    #[allow(dead_code)] // Phase 1: persisted for sibling mission wiring.
+    #[allow(dead_code)]
+    // Phase 1: persisted for sibling mission wiring. Deferred cleanup: separate mission scope.
     pub(crate) holder_did: Did,
-    #[allow(dead_code)] // Phase 1: persisted for sibling mission wiring.
+    #[allow(dead_code)]
+    // Phase 1: persisted for sibling mission wiring. Deferred cleanup: separate mission scope.
     pub(crate) registered_at_unix: u64,
     /// Current lifecycle state (RFC-0015-a §6.1). Defaults to
     /// `Registered` for records created by `register_agent`; mutated
@@ -662,6 +665,18 @@ pub trait AgentRegistry: Send + Sync + std::fmt::Debug {
     ///
     /// Caller-attested. Self-transition idempotent (no audit event).
     /// Audit append + rollback on audit failure.
+    ///
+    /// **Preconditions (impls MUST satisfy):**
+    /// - MUST invoke `validate_reason(reason)` on the `reason`
+    ///   parameter BEFORE any state mutation. Per RFC-0015 §6.2.5
+    ///   the free fn rejects ESC/control bytes; trait impls inherit
+    ///   the same guard by routing through the free fn or by
+    ///   replicating the control-char filter.
+    /// - MUST preserve the `octo-audit-internal` feature-gate
+    ///   pattern. The happy path requires a registered audit sink
+    ///   at startup; impls without audit-sink support fail-CLOSED
+    ///   (mirror the free fn behavior, do not silently swallow the
+    ///   audit append).
     fn transition_agent(
         &self,
         caller_did: &Did,
@@ -1214,10 +1229,12 @@ mod tests {
     fn agent_registry_kind_returns_canonical_string() {
         // Matches the `RevocationStore::kind` convention
         // (RFC-0011-c §F.7.5): per-impl diagnostic identity for
-        // `tracing::error!` observability sites.
-        let registry = InMemoryAgentRegistry;
-        assert_eq!(registry.kind(), "InMemoryAgentRegistry");
-        let arc: std::sync::Arc<dyn AgentRegistry> = std::sync::Arc::new(registry);
+        // `tracing::error!` observability sites. Dispatched through
+        // `Arc<dyn AgentRegistry>` to pin object-safety via the trait
+        // object (the literal string proves the impl returns the
+        // canonical identifier; the trait-object dispatch proves the
+        // method is callable through dyn dispatch).
+        let arc: std::sync::Arc<dyn AgentRegistry> = std::sync::Arc::new(InMemoryAgentRegistry);
         assert_eq!(arc.kind(), "InMemoryAgentRegistry");
     }
 
@@ -1292,21 +1309,20 @@ mod tests {
         // canonical manifest UUID, not the UUIDv5-derived agent_id
         // from the registry key — per RFC-0011-c §9.10 `AgentSummary`
         // field-level invariant).
+        //
+        // `validate_reason` is intentionally NOT exercised here: it
+        // is pure (no `&self`), excluded from the trait per the
+        // no-parallel-abstraction discipline, and already covered
+        // by the dedicated `validate_reason_accepts_printable` plus
+        // `validate_reason_rejects_esc_byte` free-fn tests earlier
+        // in this module. Re-exercising it here would only assert
+        // the free fn twice.
         let listed = registry
             .list_owned_agents(&holder_did, &AgentFilter::default())
             .expect("list via trait");
         assert!(
             listed.iter().any(|s| s.agent_id == manifest.manifest_id),
             "registered agent must appear in trait-dispatched list"
-        );
-
-        // validate_reason: pure free fn (not on the trait per the
-        // no-parallel-abstraction discipline).
-        validate_reason("ok").expect("validate_reason ok via free fn");
-        let bad = validate_reason("\x1b[31").expect_err("control char must reject via free fn");
-        assert!(
-            matches!(bad, WalletError::ReasonContainsControlChars(_)),
-            "expected ReasonContainsControlChars, got {bad:?}"
         );
     }
 }

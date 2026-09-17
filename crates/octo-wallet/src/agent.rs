@@ -615,6 +615,142 @@ impl CapabilityId {
     }
 }
 
+// ===========================================================================
+// §9.3.7 companion amendment — `AgentRegistry` trait façade
+// ===========================================================================
+
+/// Per-extension trait for agent registry backends (RFC-0011-c §9.3.7
+/// companion amendment; per-extension-crates pattern per
+/// [[cipherocto-design-principles]] §User extensibility).
+///
+/// Mirrors the `RevocationStore` trait shape (RFC-0011-c §F.7.5
+/// paired amendment) so future persistence adapters (Layer D
+/// crates — e.g., `octo-wallet-agents-sql`) can be dropped in
+/// without modifying the substrate. The default impl is
+/// `InMemoryAgentRegistry` — a thin façade over the existing
+/// process-global `AGENT_REGISTRY` static + free-fn surface.
+///
+/// # Substrate-faithful contract
+///
+/// Implementors MUST preserve:
+/// - **Determinism** (RFC-0008 Class B) — the same `(manifest,
+///   active_did)` produces the same `agent_id`.
+/// - **Caller-attestation** (RFC-0011 §Lifecycle Requirements) — the
+///   `caller_did` MUST equal the agent's holder DID on lookup +
+///   transition paths; mismatch → `ForbiddenHolderMismatch` on write
+///   paths or `AgentNotFound` on read paths (per RFC-0015-b §X.2
+///   existence-leak closure).
+/// - **State-machine guard** (RFC-0015-a §6.1) — `Registered →
+///   Running` and `Running → Terminated` only; all other
+///   transitions are `InvalidStateTransition`.
+/// - **Audit append + rollback** — `transition_agent` MUST append
+///   an `AgentTransition` audit event; on append failure, roll
+///   back the state mutation AND reset the in-flight flag.
+pub trait AgentRegistry: Send + Sync + std::fmt::Debug {
+    /// Register a new agent (RFC-0011-c §9.3.1).
+    ///
+    /// Deterministic in `(manifest, active_did)`. Idempotent on
+    /// duplicate `agent_id` — returns `AgentAlreadyExists`.
+    fn register_agent(
+        &self,
+        manifest: &AgentManifest,
+        capability_root: &CapabilityId,
+        active_did: &Did,
+    ) -> Result<Uuid, WalletError>;
+
+    /// State-machine transition (RFC-0015-a §6.1).
+    ///
+    /// Caller-attested. Self-transition idempotent (no audit event).
+    /// Audit append + rollback on audit failure.
+    fn transition_agent(
+        &self,
+        caller_did: &Did,
+        agent_id: Uuid,
+        target: AgentState,
+        reason: Option<&str>,
+    ) -> Result<TransitionReceipt, WalletError>;
+
+    /// Point lookup of the canonical manifest (RFC-0015 §6.2.6).
+    fn lookup_agent(&self, caller_did: &Did, agent_id: Uuid) -> Result<AgentManifest, WalletError>;
+
+    /// Point lookup of the current state (RFC-0015 §6.2.6 +
+    /// RFC-0011-c §9.3.5 attach precondition).
+    fn read_agent_state(&self, caller_did: &Did, agent_id: Uuid)
+        -> Result<AgentState, WalletError>;
+
+    /// Caller-attested list with server-side filter (RFC-0015
+    /// §6.2.1). Sorting: `registered_at_unix DESC` + `agent_id ASC`.
+    fn list_owned_agents(
+        &self,
+        caller_did: &Did,
+        filter: &AgentFilter,
+    ) -> Result<Vec<AgentSummary>, WalletError>;
+
+    /// Per-impl diagnostic identity (used by `tracing::error!` for
+    /// substrate observability sites; matches the
+    /// `RevocationStore::kind` convention from RFC-0011-c §F.7.5).
+    fn kind(&self) -> &'static str;
+}
+
+/// In-memory default implementation of `AgentRegistry` — thin
+/// façade over the existing free-fn surface (RFC-0011-c §9.3.7).
+///
+/// Every method delegates to the corresponding free function in
+/// this module or `crate::cli_fns::register_agent`. The free-fn
+/// surface remains the canonical entry point (CLI consumes it
+/// directly); the trait exists to provide a future swap-point for
+/// persistence adapters per [[cipherocto-design-principles]]
+/// §User extensibility. Zero behavioral change vs. the free-fn
+/// path (substrate-faithful by construction — `InMemoryAgentRegistry`
+/// IS the free-fn surface).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InMemoryAgentRegistry;
+
+impl AgentRegistry for InMemoryAgentRegistry {
+    fn register_agent(
+        &self,
+        manifest: &AgentManifest,
+        capability_root: &CapabilityId,
+        active_did: &Did,
+    ) -> Result<Uuid, WalletError> {
+        crate::cli_fns::register_agent(manifest, capability_root, active_did)
+    }
+
+    fn transition_agent(
+        &self,
+        caller_did: &Did,
+        agent_id: Uuid,
+        target: AgentState,
+        reason: Option<&str>,
+    ) -> Result<TransitionReceipt, WalletError> {
+        transition_agent(caller_did, agent_id, target, reason)
+    }
+
+    fn lookup_agent(&self, caller_did: &Did, agent_id: Uuid) -> Result<AgentManifest, WalletError> {
+        lookup_agent(caller_did, agent_id)
+    }
+
+    fn read_agent_state(
+        &self,
+        caller_did: &Did,
+        agent_id: Uuid,
+    ) -> Result<AgentState, WalletError> {
+        read_agent_state(caller_did, agent_id)
+    }
+
+    fn list_owned_agents(
+        &self,
+        caller_did: &Did,
+        filter: &AgentFilter,
+    ) -> Result<Vec<AgentSummary>, WalletError> {
+        list_owned_agents(caller_did, filter)
+    }
+
+    fn kind(&self) -> &'static str {
+        "InMemoryAgentRegistry"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,6 +1203,110 @@ mod tests {
             state_after,
             AgentState::Registered,
             "no state mutation on in-flight rejection"
+        );
+    }
+
+    // ===================================================================
+    // §9.3.7 AgentRegistry trait façade tests
+    // ===================================================================
+
+    #[test]
+    fn agent_registry_kind_returns_canonical_string() {
+        // Matches the `RevocationStore::kind` convention
+        // (RFC-0011-c §F.7.5): per-impl diagnostic identity for
+        // `tracing::error!` observability sites.
+        let registry = InMemoryAgentRegistry;
+        assert_eq!(registry.kind(), "InMemoryAgentRegistry");
+        let arc: std::sync::Arc<dyn AgentRegistry> = std::sync::Arc::new(registry);
+        assert_eq!(arc.kind(), "InMemoryAgentRegistry");
+    }
+
+    #[test]
+    fn agent_registry_send_sync_via_arc() {
+        // Compile-time check: `Arc<InMemoryAgentRegistry>` satisfies
+        // Send + Sync (per the `AgentRegistry: Send + Sync` super-trait).
+        const _: fn() = || {
+            fn assert_send_sync<T: Send + Sync>() {}
+            assert_send_sync::<InMemoryAgentRegistry>();
+            assert_send_sync::<std::sync::Arc<dyn AgentRegistry>>();
+        };
+    }
+
+    #[test]
+    fn agent_registry_dispatches_through_free_fn_surface() {
+        // Substrate-faithfulness: the trait façade MUST delegate to
+        // the existing free-fn surface with zero behavior change.
+        // This test pins the contract by exercising the audit-free
+        // paths (register, lookup, read_state, list) via the trait
+        // and asserting the same shapes the CLI observes. The
+        // `transition_agent` audit-dependent path is covered by the
+        // existing transition_agent tests in this module; the trait
+        // dispatch adds zero behavior change so a duplicate happy-path
+        // test would just exercise the free-fn path twice.
+        // `validate_reason` is pure (no `&self`) and intentionally
+        // absent from the trait per the no-parallel-abstraction
+        // discipline; the free fn is the canonical entry point.
+        let registry = InMemoryAgentRegistry;
+        let manifest = AgentManifest {
+            manifest_id: Uuid::new_v4(),
+            holder_did: format!("did:octo:registry-trait-{}", Uuid::new_v4()),
+            label: Some("trait-façade".to_string()),
+            created_at_unix: 1_700_000_000,
+            signature_hex: "00".repeat(64),
+        };
+        let holder_did = Did::from(manifest.holder_did.as_str());
+        let cap = CapabilityId([0x42u8; 32]);
+
+        let agent_id = registry
+            .register_agent(&manifest, &cap, &holder_did)
+            .expect("register via trait");
+        let dup = registry
+            .register_agent(&manifest, &cap, &holder_did)
+            .expect_err("duplicate must surface AgentAlreadyExists");
+        match dup {
+            // Pin the UUID-equals-first-registration contract on the
+            // trait dispatch path (mirrors the free-fn determinism
+            // contract per `register_agent_is_deterministic_for_same
+            // _inputs`).
+            WalletError::AgentAlreadyExists(returned_id) => {
+                assert_eq!(
+                    returned_id, agent_id,
+                    "duplicate register must surface the original UUID"
+                );
+            }
+            other => panic!("expected AgentAlreadyExists, got {other:?}"),
+        }
+
+        // Lookup + state read via trait dispatch.
+        let looked_up = registry
+            .lookup_agent(&holder_did, agent_id)
+            .expect("lookup via trait");
+        assert_eq!(looked_up.manifest_id, manifest.manifest_id);
+        let state = registry
+            .read_agent_state(&holder_did, agent_id)
+            .expect("read state via trait");
+        assert_eq!(state, AgentState::Registered);
+
+        // List via trait dispatch. Note `AgentSummary.agent_id`
+        // mirrors `manifest.manifest_id` (the substrate surfaces the
+        // canonical manifest UUID, not the UUIDv5-derived agent_id
+        // from the registry key — per RFC-0011-c §9.10 `AgentSummary`
+        // field-level invariant).
+        let listed = registry
+            .list_owned_agents(&holder_did, &AgentFilter::default())
+            .expect("list via trait");
+        assert!(
+            listed.iter().any(|s| s.agent_id == manifest.manifest_id),
+            "registered agent must appear in trait-dispatched list"
+        );
+
+        // validate_reason: pure free fn (not on the trait per the
+        // no-parallel-abstraction discipline).
+        validate_reason("ok").expect("validate_reason ok via free fn");
+        let bad = validate_reason("\x1b[31").expect_err("control char must reject via free fn");
+        assert!(
+            matches!(bad, WalletError::ReasonContainsControlChars(_)),
+            "expected ReasonContainsControlChars, got {bad:?}"
         );
     }
 }

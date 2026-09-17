@@ -30,7 +30,8 @@ pub mod vault_rotation;
 
 pub use agent::{
     list_owned_agents, lookup_agent, read_agent_state, transition_agent, validate_reason,
-    AgentFilter, AgentManifest, AgentState, AgentSummary, CapabilityId, TransitionReceipt,
+    AgentFilter, AgentManifest, AgentRegistry, AgentState, AgentSummary, CapabilityId,
+    InMemoryAgentRegistry, TransitionReceipt,
 };
 pub use cli_fns::{
     active_identity, begin_rotation, identity_record as identity_record_fn, register_agent, revoke,

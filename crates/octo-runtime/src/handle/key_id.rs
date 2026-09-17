@@ -24,7 +24,7 @@
 //! faithful baseline (default build) keeps the v1 single-pubkey
 //! verify path byte-identical.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Typed version discriminator for a holder signing key
 /// (RFC-0011-c §F.5.1).
@@ -39,11 +39,13 @@ pub type KeyId = u32;
 /// Registry of `(key_id -> pubkey)` lookups plus a grace-period
 /// acceptance window (RFC-0011-c §F.5.1).
 ///
-/// `keys` is the active lookup table; `grace_ids` holds the set of
-/// key ids that have been rotated OUT of the active set but whose
-/// in-flight tokens must still be accepted during the grace-period
-/// window. `verify_attach_handle_payload_v2` consults `keys` first,
-/// then `grace_ids` (try-each; each verify is O(1)).
+/// `keys` is the active lookup table; `grace_keys` holds the set of
+/// key ids (plus their pubkeys) that have been rotated OUT of the
+/// active set but whose in-flight tokens must still be accepted
+/// during the grace-period window. The pubkey is retained in the
+/// grace map so the grace fallback in
+/// `verify_attach_handle_payload_v2` can attempt a per-pubkey
+/// verify against each rotated key.
 ///
 /// `key_set` population POLICY is OUT OF SCOPE for the D2.1
 /// substrate-faithful surface — see module rustdoc.
@@ -51,9 +53,10 @@ pub type KeyId = u32;
 pub struct KeySet {
     /// Active `(key_id, pubkey)` table.
     keys: BTreeMap<KeyId, [u8; 32]>,
-    /// Set of rotated-out key ids whose in-flight tokens still
-    /// verify during the grace-period window.
-    grace_ids: BTreeSet<KeyId>,
+    /// Map of rotated-out `(key_id, pubkey)` pairs whose
+    /// in-flight tokens still verify during the grace-period
+    /// window.
+    grace_keys: BTreeMap<KeyId, [u8; 32]>,
 }
 
 impl KeySet {
@@ -69,20 +72,22 @@ impl KeySet {
     /// If `key_id` was previously in the grace window, it is removed
     /// from grace (re-promotion to the active set).
     pub fn insert(&mut self, key_id: KeyId, pubkey: [u8; 32]) {
-        self.grace_ids.remove(&key_id);
+        self.grace_keys.remove(&key_id);
         self.keys.insert(key_id, pubkey);
     }
 
     /// Move `key_id` from the active set into the grace window
     /// (rotation event).
     ///
-    /// No-op if `key_id` is unknown. After this call the active
-    /// `lookup(key_id)` returns `None`; the grace set retains the
-    /// id so `verify_attach_handle_payload_v2` can attempt a
+    /// No-op if `key_id` is unknown to the active set (the pubkey
+    /// must already be in `keys`). After this call the active
+    /// `lookup(key_id)` returns `None`; the grace map retains the
+    /// pubkey so `verify_attach_handle_payload_v2` can attempt a
     /// grace-period verify against the same pubkey.
     pub fn move_to_grace(&mut self, key_id: KeyId) {
-        self.keys.remove(&key_id);
-        self.grace_ids.insert(key_id);
+        if let Some(pk) = self.keys.remove(&key_id) {
+            self.grace_keys.insert(key_id, pk);
+        }
     }
 
     /// Active lookup. Returns `None` if `key_id` is not in the
@@ -93,10 +98,18 @@ impl KeySet {
         self.keys.get(&key_id)
     }
 
+    /// Grace-window lookup. Returns `None` if `key_id` is not in
+    /// the grace window. Parallel to [`Self::lookup`] for the
+    /// active set.
+    #[must_use]
+    pub fn grace_key(&self, key_id: KeyId) -> Option<&[u8; 32]> {
+        self.grace_keys.get(&key_id)
+    }
+
     /// Grace-period key ids in ascending order.
     #[must_use]
     pub fn grace_period(&self) -> Vec<KeyId> {
-        self.grace_ids.iter().copied().collect()
+        self.grace_keys.keys().copied().collect()
     }
 
     /// Diagnostic union of active + grace key ids (used by
@@ -105,7 +118,7 @@ impl KeySet {
     pub fn known_key_ids(&self) -> Vec<KeyId> {
         self.keys
             .keys()
-            .chain(self.grace_ids.iter())
+            .chain(self.grace_keys.keys())
             .copied()
             .collect()
     }

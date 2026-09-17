@@ -19,6 +19,10 @@ use octo_wallet::IdentityKey;
 
 use crate::handle::encoding::canonical_payload_bytes;
 use crate::handle::error::AttachError;
+#[cfg(feature = "octo-attach-key-rotation")]
+use crate::handle::key_id::KeyId;
+#[cfg(feature = "octo-attach-key-rotation")]
+use crate::handle::KeySet;
 use crate::handle::{AttachHandle, AttachPayload, SessionId, Signature, Transport};
 
 /// Sign the canonical payload bytes for an `AttachHandle` token.
@@ -74,6 +78,133 @@ pub fn verify_attach_handle_payload(
     let dalek_sig = DalekSignature::from_bytes(&sig.0);
     let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
     vk.verify(&msg, &dalek_sig)
+        .map_err(|e| AttachError::BadSignature {
+            reason: format!("ed25519 verify: {e}"),
+        })
+}
+
+/// Additive v2 canonical payload bytes for an `AttachHandle` token
+/// (RFC-0011-c §F.5.1).
+///
+/// `v1_bytes || key_id_be` — the `key_id` suffix is the
+/// discriminator that lets a verifier know which holder pubkey to
+/// consult from the holder's `KeySet`. Single source of truth for
+/// both `sign_attach_handle_payload_v2` +
+/// `verify_attach_handle_payload_v2`. When the
+/// `octo-attach-key-rotation` feature is OFF, this function is
+/// hidden and `canonical_payload_bytes` (v1) is the only canonical
+/// helper.
+#[cfg(feature = "octo-attach-key-rotation")]
+#[must_use]
+pub fn canonical_payload_bytes_v2(
+    session_id: &SessionId,
+    payload: &AttachPayload,
+    mint_timestamp_unix: u64,
+    ttl_unix: u64,
+    key_id: KeyId,
+) -> Vec<u8> {
+    let mut out = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
+    out.extend_from_slice(&key_id.to_be_bytes());
+    out
+}
+
+/// Sign the canonical v2 payload bytes for an `AttachHandle` token
+/// (RFC-0011-c §F.5.1).
+///
+/// Composes `IdentityKey::sign` (Layer B substrate per RFC-0015-a
+/// Appendix A) over `canonical_payload_bytes_v2`. The
+/// `key_id` discriminator is bound into the signed bytes so a
+/// verifier cannot silently swap the key_id claim.
+///
+/// # Errors
+/// Returns `AttachError::BadSignature` when the underlying HSM
+/// adapter surfaces a `WalletError` (lifecycle gate, HSM transport,
+/// or user rejection).
+#[cfg(feature = "octo-attach-key-rotation")]
+pub fn sign_attach_handle_payload_v2(
+    holder: &IdentityKey,
+    session_id: SessionId,
+    payload: &AttachPayload,
+    mint_timestamp_unix: u64,
+    ttl_unix: u64,
+    key_id: KeyId,
+) -> Result<Signature, AttachError> {
+    let msg =
+        canonical_payload_bytes_v2(&session_id, payload, mint_timestamp_unix, ttl_unix, key_id);
+    let dalek_sig = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
+        reason: format!("IdentityKey::sign v2: {e}"),
+    })?;
+    Ok(Signature(dalek_sig.to_bytes()))
+}
+
+/// Verify the canonical v2 payload bytes for an `AttachHandle` token
+/// against the holder's `KeySet` (RFC-0011-c §F.5.1).
+///
+/// Lookup order:
+/// 1. Active `KeySet::lookup(key_id)` — return Ok or BadSignature.
+/// 2. Otherwise iterate `KeySet::grace_period()` and try each grace
+///    key's pubkey. Return Ok on first successful verify.
+/// 3. Otherwise return `AttachError::UnknownKeyId { key_id,
+///    known_keys }`.
+///
+/// The grace fallback accepts ANY in-flight token minted under
+/// ANY recently-rotated key — the standard grace-period semantics
+/// for key rotation. This is intentional: rotated keys remain
+/// valid for the grace window so in-flight tokens survive the
+/// rotation event.
+///
+/// # Errors
+/// Returns `AttachError::BadSignature` on signature mismatch
+/// against the matched pubkey, or `AttachError::UnknownKeyId`
+/// when neither the active nor the grace set contains a key
+/// matching `key_id`.
+#[cfg(feature = "octo-attach-key-rotation")]
+pub fn verify_attach_handle_payload_v2(
+    key_set: &KeySet,
+    session_id: &SessionId,
+    payload: &AttachPayload,
+    mint_timestamp_unix: u64,
+    ttl_unix: u64,
+    key_id: KeyId,
+    sig: &Signature,
+) -> Result<(), AttachError> {
+    let msg =
+        canonical_payload_bytes_v2(session_id, payload, mint_timestamp_unix, ttl_unix, key_id);
+
+    // 1. Try the active lookup.
+    if let Some(pk) = key_set.lookup(key_id) {
+        return verify_with_msg(pk, &msg, sig);
+    }
+
+    // 2. Try each grace-period key's pubkey (rotation window).
+    for grace_id in key_set.grace_period() {
+        if let Some(pk) = key_set.grace_key(grace_id) {
+            if verify_with_msg(pk, &msg, sig).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+
+    // 3. Exhausted.
+    Err(AttachError::UnknownKeyId {
+        key_id,
+        known_keys: key_set.known_key_ids(),
+    })
+}
+
+/// v2 verify helper: verify `sig` over precomputed `msg` against
+/// the pubkey bytes `pk`. Mirrors the v1 verify body shape but
+/// takes a precomputed message (so the v2 verifier can re-use it
+/// across the grace iteration without recomputing).
+#[cfg(feature = "octo-attach-key-rotation")]
+fn verify_with_msg(pk: &[u8; 32], msg: &[u8], sig: &Signature) -> Result<(), AttachError> {
+    use octo_wallet::ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(pk).map_err(|e| AttachError::BadSignature {
+        reason: format!("invalid public key: {e}"),
+    })?;
+    let dalek_sig = DalekSignature::from_bytes(&sig.0);
+    vk.verify(msg, &dalek_sig)
         .map_err(|e| AttachError::BadSignature {
             reason: format!("ed25519 verify: {e}"),
         })
@@ -249,6 +380,124 @@ mod tests {
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "inactive holder must reject, got {result:?}"
+        );
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn sign_v2_includes_key_id_in_canonical_bytes() {
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 42,
+        };
+        let v1 = canonical_payload_bytes(&session_id, &payload, 1_000, 2_000);
+        let v2 = canonical_payload_bytes_v2(&session_id, &payload, 1_000, 2_000, 7);
+        // v2 = v1 ++ key_id_be(7) == 4 trailing zero bytes plus the high 3 zero bytes.
+        assert_eq!(v2.len(), v1.len() + 4, "v2 must append exactly 4 bytes");
+        assert_eq!(&v2[..v1.len()], &v1[..], "v2 prefix must equal v1 bytes");
+        assert_eq!(
+            &v2[v1.len()..],
+            &[0, 0, 0, 7],
+            "key_id=7 trailing bytes must be big-endian"
+        );
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn sign_v2_happy_path() {
+        let holder = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 42,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(7, holder.public_key_bytes());
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 7)
+            .expect("sign v2");
+        verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 7, &sig)
+            .expect("verify v2 active lookup");
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_grace_period_accepts_rotated_key() {
+        let holder = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 42,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(1, holder.public_key_bytes());
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 1)
+            .expect("sign v2");
+        // Rotate key_id=1 out of the active set into the grace window.
+        key_set.move_to_grace(1);
+        assert_eq!(key_set.lookup(1), None);
+        // Verify still succeeds via the grace fallback.
+        verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 1, &sig)
+            .expect("verify v2 grace fallback");
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_unknown_key_id_returns_error() {
+        let holder = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 0,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(1, holder.public_key_bytes());
+        key_set.insert(2, [0xee; 32]);
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 99)
+            .expect("sign v2");
+        let result = verify_attach_handle_payload_v2(
+            &key_set,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            99,
+            &sig,
+        );
+        match result {
+            Err(AttachError::UnknownKeyId { key_id, known_keys }) => {
+                assert_eq!(key_id, 99);
+                assert!(known_keys.contains(&1));
+                assert!(known_keys.contains(&2));
+            }
+            other => panic!("expected UnknownKeyId, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_active_lookup_mismatch_returns_bad_signature() {
+        // Two keys in active: key_a (id=1, sign here) and key_b (id=2, mismatch).
+        // Verify with key_id=2 must hit active lookup of key_b's pubkey
+        // and reject (sig was signed by key_a over key_id=1 bytes — msg
+        // differs from the key_id=2 bytes).
+        let holder_a = activated_holder();
+        let holder_b = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 0,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(1, holder_a.public_key_bytes());
+        key_set.insert(2, holder_b.public_key_bytes());
+        let sig = sign_attach_handle_payload_v2(&holder_a, session_id, &payload, 1_000, 2_000, 1)
+            .expect("sign v2 by holder_a with key_id=1");
+        let result =
+            verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 2, &sig);
+        assert!(
+            matches!(result, Err(AttachError::BadSignature { .. })),
+            "active lookup of key_id=2 must fail BadSignature, got {result:?}"
         );
     }
 }

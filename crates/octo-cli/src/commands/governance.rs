@@ -699,17 +699,15 @@ fn vote_handler(
         } else {
             None
         };
-        let preview = VoteDryRunPreview {
-            command: "octo governance vote".to_string(),
-            proposal_id_hex: hex32(&proposal_id),
-            vote_choice: canonical_choice.as_str().to_string(),
+        let preview = build_vote_dry_run_preview(
+            proposal_id,
+            canonical_choice.as_str(),
             weight_bps,
             voter_cap_id,
-            snapshot_id_hex: snapshot_id.as_ref().map(hex32),
+            snapshot_id,
             allow_stale,
-            dry_run_correlation_id: Uuid::new_v4().to_string(),
-            preview_note: "no wallet IO performed; vote not recorded".to_string(),
-        };
+            rationale,
+        );
         OutputEnvelope::new("octo.governance.vote.dry_run.v1", preview)
             .render_with_redaction(
                 cli.output.json,
@@ -1074,6 +1072,14 @@ pub struct VoteDryRunPreview {
     pub snapshot_id_hex: Option<String>,
     /// Operator intent flag for stale-override at confirm-time.
     pub allow_stale: bool,
+    /// Operator-supplied `--rationale <TEXT>` (verbatim, per
+    /// RFC-0011-g §Subcommand Taxonomy row `--rationale <text>`).
+    /// Surfaces in the dry-run preview so the operator sees
+    /// exactly the audit-log text they are about to record;
+    /// forwarded to the substrate `vote_v2` 5th argument slot
+    /// (load-bearing pin: see
+    /// `vote::tests::vote_v11_rationale_changes_envelope_pk`).
+    pub rationale: Option<String>,
     /// Per-call correlation UUID linking this preview to the
     /// eventual live `VoteOutput` in audit logs. CLI mints a
     /// fresh v4 UUID at every `--dry-run` invocation.
@@ -1093,6 +1099,40 @@ fn hex32(bytes: &[u8; 32]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// Construct a `VoteDryRunPreview` from operator-supplied inputs
+/// (post-parse: hex-decoded `proposal_id`, `VoteChoice::parse`d
+/// `canonical_choice`, optional hex-decoded `snapshot_id`).
+///
+/// Extracted from the dry-run branch in `vote_handler` so test
+/// vectors can assert rationale surfaces in the preview envelope
+/// without capturing stdout. Substrate-faithful: the helper
+/// performs no wallet IO and never touches the substrate
+/// `vote_v2` append path. The dry-run branch calls this helper
+/// + `OutputEnvelope::render_with_redaction` to serialize.
+#[must_use]
+fn build_vote_dry_run_preview(
+    proposal_id: [u8; 32],
+    canonical_choice: &str,
+    weight_bps: u32,
+    voter_cap_id: String,
+    snapshot_id: Option<[u8; 32]>,
+    allow_stale: bool,
+    rationale: Option<String>,
+) -> VoteDryRunPreview {
+    VoteDryRunPreview {
+        command: "octo governance vote".to_string(),
+        proposal_id_hex: hex32(&proposal_id),
+        vote_choice: canonical_choice.to_string(),
+        weight_bps,
+        voter_cap_id,
+        snapshot_id_hex: snapshot_id.as_ref().map(hex32),
+        allow_stale,
+        rationale,
+        dry_run_correlation_id: Uuid::new_v4().to_string(),
+        preview_note: "no wallet IO performed; vote not recorded".to_string(),
+    }
 }
 
 /// Build a CLI-side `AttestOutput` from a substrate
@@ -1722,32 +1762,38 @@ mod tests {
     }
 
     #[test]
-    fn tv_cli_vote_13_dry_run_accepts_rationale_text() {
-        // C1 (R5.5 fix-sweep): `--rationale <TEXT>` is plumbed
-        // from the Vote clap variant through `vote_handler` into
-        // the `vote_v2` substrate 5th argument slot
-        // (rationale: Option<&str>). On the dry-run preview
-        // path the rationale text is recorded verbatim in the
-        // proposal audit log per RFC-0011-g §Subcommand
-        // Taxonomy row `--rationale <text>`. This pin verifies
-        // the wiring accepts non-empty rationale text without
-        // triggering a parse/confirm gate failure.
-        let result = vote_handler(
-            "ab".repeat(32),
-            "approve".to_string(),
+    fn tv_cli_vote_13_dry_run_rationale_surfaces_in_preview_envelope() {
+        // C1 (R5.5 fix-sweep) + R6.5 surface verification:
+        // `--rationale <TEXT>` is plumbed from the Vote clap
+        // variant through `vote_handler` into the dry-run preview
+        // envelope via `build_vote_dry_run_preview`, and (on the
+        // post-confirm path) into the live `vote_v2` substrate
+        // 5th argument slot (load-bearing pin: see
+        // `vote::tests::vote_v11_rationale_changes_envelope_pk`).
+        //
+        // This pin verifies the dry-run envelope carries the
+        // rationale verbatim: the operator sees exactly the text
+        // they are about to record in the audit log BEFORE
+        // committing to a real signing operation. The dry-run
+        // branch early-returns before `vote_v2` (per `--dry-run`
+        // contract: no wallet IO, no substrate append), so the
+        // substrate-side load-bearing pin (vote_v11) is the
+        // authoritative coverage for live wiring; this pin is
+        // the dry-run-side mirror.
+        let rationale_input = "reject SLA terms: cap exceeds budget envelope".to_string();
+        let preview = build_vote_dry_run_preview(
+            [0xab; 32],
+            "yes",
             1000,
             "cap:vote:0001".to_string(),
             None,
             false,
-            true, // dry_run
-            false,
-            false,
-            Some("reject SLA terms: cap exceeds budget envelope".to_string()),
-            &test_octo(OperatorMode::Human, false),
+            Some(rationale_input.clone()),
         );
-        assert!(
-            matches!(result, Ok(())),
-            "vote --dry-run with rationale should succeed (rationale plumbed through to substrate), got {result:?}"
+        assert_eq!(
+            preview.rationale.as_deref(),
+            Some(rationale_input.as_str()),
+            "dry-run preview envelope MUST carry rationale verbatim"
         );
     }
 
@@ -1794,6 +1840,7 @@ mod tests {
             voter_cap_id: "cap:vote:0001".to_string(),
             snapshot_id_hex: None,
             allow_stale: false,
+            rationale: None,
             dry_run_correlation_id: Uuid::new_v4().to_string(),
             preview_note: "no wallet IO performed; vote not recorded".to_string(),
         };

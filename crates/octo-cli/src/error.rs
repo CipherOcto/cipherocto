@@ -673,7 +673,9 @@ pub enum OctoCliError {
     /// substrate-faithful `octo_runtime::AttachError::ReplayDetected`
     /// variant added in the RFC-0011-c §9.7 follow-on amendment.
     /// Exit 61 (own slot — distinct from `Internal(reason)` exit 64).
-    #[error("replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}")]
+    #[error(
+        "replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}"
+    )]
     ReplayDetected {
         /// `since_unix` from the replayed attach invocation (behind
         /// the recorded cursor).

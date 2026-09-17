@@ -147,37 +147,57 @@ pub fn build_in_process_registry() -> Registry {
 /// Built-in in-process broadcast binding handler
 /// (RFC-0011-c §F.2 + §9.3.5).
 ///
-/// Phase 1 stub: session-registry-wiring is deferred to a
-/// follow-on amendment per RFC-0011-c §F.2 (the in-process broadcast
-/// binding lives in `RuntimeHandle`'s `Arc<HandleInner>` and is not
-/// yet exposed across the process boundary via a session-id-keyed
-/// registry). The stub mirrors the pre-Handler behavior — `unimplemented!`
-/// in debug builds, `AttachError::UnknownSession` in release builds —
-/// to catch accidental callsite reliance on the half-wired
-/// pathway during the substrate-first rollout.
+/// Substrate-faithful wiring per the §F.2 step (e) follow-on
+/// amendment: looks up the session in the process-singleton
+/// session registry (registered by `RuntimeHandle::new` per
+/// `crate::persistence::register_session`), mints a fresh
+/// broadcast `Receiver` from the binding's cloned sender, and
+/// returns an `AttachedSession` with the current cursor.
+///
+/// Replay protection per RFC-0011-c §9.7 follow-on amendment: if
+/// the caller's `since_unix` is behind the recorded cursor, the
+/// substrate surfaces `AttachError::ReplayDetected` (the
+/// typed-discriminator additive variant at exit 61).
 #[derive(Debug, Default)]
 pub struct InProcessHandler;
 
 impl Handler for InProcessHandler {
-    fn bind(&self, token: &AttachHandle, _since_unix: u64) -> Result<AttachedSession, AttachError> {
-        // Phase 1 stub: the session-registry-wiring that maps
-        // `session_id → Arc<HandleInner>` is deferred to a
-        // follow-on amendment per RFC-0011-c §F.2. Until that
-        // amendment lands, the substrate boundary surface mirrors
-        // the pre-Handler behavior — panic in debug builds (so
-        // tests catch accidental callsite reliance), `UnknownSession`
-        // in release builds (so CLI operators see a substrate-
-        // faithful error rather than a misleading success).
-        if cfg!(debug_assertions) {
-            unimplemented!(
-                "InProcessHandler::bind session-registry-wiring pending \
-                 follow-on amendment per RFC-0011-c §F.2; \
-                 wire the session_id → Arc<HandleInner> mapping through \
-                 persistence.rs in the next cycle"
-            );
+    fn bind(&self, token: &AttachHandle, since_unix: u64) -> Result<AttachedSession, AttachError> {
+        // Look up the session binding in the process-singleton
+        // registry. The substrate-faithful failure surface for an
+        // unregistered session is `UnknownSession` (same as the
+        // legacy pre-Handler behavior — the substrate cannot
+        // distinguish "session never spawned" from "session was
+        // torn down out from under us" without a lifecycle hook,
+        // and both cases should fail the attach).
+        let binding = crate::persistence::lookup_session(&token.session_id).ok_or(
+            AttachError::UnknownSession {
+                session_id: token.session_id,
+            },
+        )?;
+
+        // Replay detection per RFC-0011-c §9.7. If the caller's
+        // `since_unix` is behind the last-observed cursor, the same
+        // token has been consumed once and is being replayed.
+        // Compare-and-swap the cursor in the success path so the
+        // next replay (with a different stale `since_unix`) still
+        // surfaces as a replay rather than being accepted.
+        let prev = binding
+            .last_since_unix
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if since_unix < prev {
+            return Err(AttachError::ReplayDetected {
+                since_unix,
+                replay_attempt_unix: prev,
+            });
         }
-        Err(AttachError::UnknownSession {
-            session_id: token.session_id,
+        binding
+            .last_since_unix
+            .store(since_unix, std::sync::atomic::Ordering::Relaxed);
+
+        Ok(AttachedSession {
+            event_cursor: since_unix,
+            broadcast_rx: binding.event_tx.subscribe(),
         })
     }
 }
@@ -227,19 +247,92 @@ mod tests {
         assert!(reg.lookup(&TransportKind::UnixSocket).is_none());
     }
 
-    /// `InProcessHandler::bind` produces a substrate-boundary stub
-    /// failure (UnknownSession in release; unimplemented! in debug).
-    /// Release build: returns `UnknownSession`.
+    /// `InProcessHandler::bind` returns `UnknownSession` when the
+    /// session is not in the registry. The substrate-faithful
+    /// failure surface is identical to the legacy stub behavior
+    /// for an unregistered session; the wiring layer adds the
+    /// happy-path lookup as an additive capability per RFC-0011-c
+    /// §F.2 step (e) follow-on amendment.
     #[test]
-    fn in_process_handler_bind_release_returns_unknown_session() {
-        if cfg!(debug_assertions) {
-            // In debug builds, the bind panics; skip the assertion.
-            return;
-        }
+    fn in_process_handler_bind_returns_unknown_session_when_not_registered() {
         let h = InProcessHandler;
         let token = dummy_token();
         let res = h.bind(&token, 0);
         assert!(matches!(res, Err(AttachError::UnknownSession { .. })));
+    }
+
+    /// `InProcessHandler::bind` happy path: `spawn_agent` registers
+    /// the session in the process-singleton registry, then `bind`
+    /// looks it up, mints a fresh broadcast `Receiver`, and returns
+    /// an `AttachedSession` whose `event_cursor` equals the
+    /// caller's `since_unix`. Closes the TV-CLI-ATTACH-1 happy-path
+    /// substrate side per RFC-0011-c §F.6.5 deferral.
+    #[test]
+    fn in_process_handler_bind_happy_path_returns_attached_session() {
+        use crate::spawn_agent;
+        let agent_id = uuid::Uuid::new_v4();
+        let handle = spawn_agent(agent_id, None).expect("spawn registers session");
+
+        let token = AttachHandle {
+            session_id: handle.session_id,
+            mint_timestamp_unix: 1_700_000_000,
+            ttl_unix: u64::MAX,
+            signature: Signature([0x42; 64]),
+            payload: AttachPayload {
+                agent_id,
+                since_cursor: 0,
+            },
+            transport: Transport::IN_PROCESS,
+        };
+
+        let h = InProcessHandler;
+        let since_unix = 1_700_000_001u64;
+        let attached = h
+            .bind(&token, since_unix)
+            .expect("happy-path bind returns AttachedSession");
+        assert_eq!(
+            attached.event_cursor, since_unix,
+            "event_cursor echoes the caller's since_unix"
+        );
+    }
+
+    /// `InProcessHandler::bind` detects replays per RFC-0011-c §9.7:
+    /// a second `bind` against the same session with
+    /// `since_unix` behind the recorded cursor surfaces
+    /// `AttachError::ReplayDetected` (exit 61, additive
+    /// typed-discriminator variant).
+    #[test]
+    fn in_process_handler_bind_detects_replay_when_since_unix_behind_recorded() {
+        use crate::spawn_agent;
+        let agent_id = uuid::Uuid::new_v4();
+        let handle = spawn_agent(agent_id, None).expect("spawn registers session");
+        let token = AttachHandle {
+            session_id: handle.session_id,
+            mint_timestamp_unix: 1_700_000_000,
+            ttl_unix: u64::MAX,
+            signature: Signature([0x42; 64]),
+            payload: AttachPayload {
+                agent_id,
+                since_cursor: 0,
+            },
+            transport: Transport::IN_PROCESS,
+        };
+
+        let h = InProcessHandler;
+        // First attach — accepts `since_unix = 2_000`.
+        h.bind(&token, 2_000).expect("first bind accepts");
+        // Second attach with a stale cursor (behind 2_000) — replay.
+        let replay = h.bind(&token, 1_500);
+        match replay {
+            Err(AttachError::ReplayDetected {
+                since_unix,
+                replay_attempt_unix,
+            }) => {
+                assert_eq!(since_unix, 1_500);
+                assert_eq!(replay_attempt_unix, 2_000);
+            }
+            other => panic!("expected ReplayDetected, got {other:?}"),
+        }
     }
 
     /// `Transport::IN_PROCESS` is registered by

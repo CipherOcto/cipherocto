@@ -108,7 +108,9 @@ pub enum AttachError {
     /// `attach_with_token` step (e) per RFC-0011-c §F.2 validation
     /// chain. CLI exit 61 (own slot; additive typed-discriminator
     /// variant per the §9.7 follow-on amendment).
-    #[error("replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}")]
+    #[error(
+        "replay detected: since cursor {since_unix} replay attempted at {replay_attempt_unix}"
+    )]
     ReplayDetected {
         /// `since_unix` from the replayed attach invocation
         /// (behind the recorded cursor).

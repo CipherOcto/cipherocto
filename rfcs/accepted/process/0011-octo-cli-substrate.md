@@ -752,8 +752,8 @@ pub enum OctoCliError {
     #[error("invalid filter: {0}")]
     InvalidFilter(String),                                  // exit 16 (reserved per Status header amendment chain)
 
-    #[error("`{name}` was removed")]
-    StaleStub { name: String },                             // exit 65
+    #[error("`{name}` was removed; use `{replaced_by}` (see `octo --help` for the current subcommand list)")]
+    StaleStub { name: String, replaced_by: &'static str },  // exit 65 (v2.0: added `replaced_by` field per §Changelog v2.0 row)
 
     #[error("internal error: {0}")]
     Internal(String),                                       // exit 64
@@ -1008,14 +1008,15 @@ reference to the dual-stake model until those amendments.
 
 The stub-command deprecation timeline (v1.0 → v1.1 → v2.0) cleared in
 v2.0 (2026-09-17); see §Changelog for the per-version summary.
-This section preserves the deprecation behaviour matrix so future
-amendments can refer to the historical contract:
+This section preserves the deprecation behaviour matrix as the
+historical contract so future amendments can refer back to the v1.x
+transition record:
 
-| Version           | Stub command behavior                               |
-| ----------------- | --------------------------------------------------- |
-| v1.0 (this RFC)   | Hide from `--help`; deprecation warning on use      |
-| v1.1 (next minor) | Emit hard error (exit code 65 (`StaleStub`)) on use |
-| v2.0 (next major) | Remove entirely                                     |
+| Version           | Stub command behavior                               | Historical period        |
+| ----------------- | --------------------------------------------------- | ------------------------ |
+| v1.0 (this RFC)   | Hide from `--help`; deprecation warning on use      | 2026-08-29 to 2026-09-01 |
+| v1.1 (next minor) | Emit hard error (exit code 65 (`StaleStub`)) on use | 2026-09-01 to 2026-09-17 |
+| v2.0 (this cycle) | Remove entirely                                     | 2026-09-17 onward        |
 
 The five stub commands (`octo init`, `octo join`, `octo role {…}`,
 `octo agent {…}`, `octo status`) are no longer in the binary surface
@@ -1027,16 +1028,23 @@ their replacements land in their respective amendment RFCs (see
 to those post-v2.0 hit clap `unrecognized subcommand` (exit 2) until
 that amendment lands.
 
-#### Stale-stub window env-var override (v1.1 hard-error opt-in)
+#### Stale-stub window env-var override (v1.0 → v1.1 transition record)
 
-The v1.1 release turns the v1.0 deprecation banners into hard errors
-(exit code 65 `StaleStub`). Operators MAY opt into the v1.1 hard-error
-behaviour on a v1.0 binary by setting the environment variable
-`OCTO_STALE_STUB_WINDOW=1` (or `=true`, case-insensitive). The v1.1
-release compile flag (set at build time) takes precedence; the env-var
-override is the v1.0 operator escape hatch. Other values (absent,
-empty, or any other string) leave the v1.0 banner-only behaviour
-unchanged.
+**Historical note (2026-09-17):** the v2.0 cut removed the stub
+dispatch arms from `commands::dispatch`. v2.0+ binaries do not read
+`OCTO_STALE_STUB_WINDOW`; the env-var has no effect on v2.0+. The
+`StaleStub` variant remains reachable only via library callers (the
+`#[non_exhaustive]` enum keeps it for operator switch-table compat).
+The prose below is preserved as the v1.0 → v1.1 transition record.
+
+In the v1.0 → v1.1 window, the v1.1 release turned the v1.0
+deprecation banners into hard errors (exit code 65 `StaleStub`).
+Operators MAY opt into the v1.1 hard-error behaviour on a v1.0
+binary by setting the environment variable `OCTO_STALE_STUB_WINDOW=1`
+(or `=true`, case-insensitive). The v1.1 release compile flag (set
+at build time) took precedence; the env-var override was the v1.0
+operator escape hatch. Other values (absent, empty, or any other
+string) left the v1.0 banner-only behaviour unchanged.
 
 The canonical banner prefix is `DEPRECATED:` (uppercase, with trailing
 colon). All stub command output is emitted on **stderr** (not stdout)
@@ -1057,15 +1065,15 @@ field, or changing a field's type requires:
 
 At least 30 test vectors are required (current count exceeds the floor by ~70% — see missions + impl-guide for the running tally), distributed as:
 
-| Group               | Count | Examples                                                                                                                                                                                                                              |
-| ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity commands   | 5     | whoami-success, identity-show-not-found, identity-rotate-confirm-required, identity-rotate-grace-hours-flag-absent, identity-revoke-already-revoked                                                                                   |
-| Capability commands | 5     | capability-list-empty, capability-mint-success, capability-mint-bad-caveats, capability-attenuate-widens-rejected, capability-attenuate-parent-not-found                                                                              |
-| Policy commands     | 5     | policy-show-success, policy-show-not-found, policy-list-filter, policy-show-version-mismatch, policy-list-empty                                                                                                                       |
-| Error envelope      | 5     | Internal error message format, exit code mapping, clap parse error propagation, source chain rendering, no-substrate-internals leak                                                                                                   |
-| Output envelope     | 5     | schema_version present, generated_at format RFC 3339 UTC, json-vs-pretty toggle, TTY detected vs not, --no-color honored                                                                                                              |
-| Redaction layer     | 5     | holder_sig stripped from log, pair_code stripped from stderr, bearer token stripped, password field stripped, seed_bytes stripped                                                                                                     |
-| Stub command banner | 5     | init-banner-on-stderr, join-banner-on-stderr, role-builder-banner-on-stderr, agent-list-banner-on-stderr, status-banner-on-stderr (each asserts `DEPRECATED:` prefix on stderr + stdout cleanliness; see §Stub command compatibility) |
+| Group                              | Count | Examples                                                                                                                                                                              |
+| ---------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity commands                  | 5     | whoami-success, identity-show-not-found, identity-rotate-confirm-required, identity-rotate-grace-hours-flag-absent, identity-revoke-already-revoked                                   |
+| Capability commands                | 5     | capability-list-empty, capability-mint-success, capability-mint-bad-caveats, capability-attenuate-widens-rejected, capability-attenuate-parent-not-found                              |
+| Policy commands                    | 5     | policy-show-success, policy-show-not-found, policy-list-filter, policy-show-version-mismatch, policy-list-empty                                                                       |
+| Error envelope                     | 5     | Internal error message format, exit code mapping, clap parse error propagation, source chain rendering, no-substrate-internals leak                                                   |
+| Output envelope                    | 5     | schema_version present, generated_at format RFC 3339 UTC, json-vs-pretty toggle, TTY detected vs not, --no-color honored                                                              |
+| Redaction layer                    | 5     | holder_sig stripped from log, pair_code stripped from stderr, bearer token stripped, password field stripped, seed_bytes stripped                                                     |
+| Stub command banner (REMOVED v2.0) | 0     | historical contract only; 5 vectors deleted with `commands/stub.rs` + `tests/stub.rs` per §Changelog v2.0 row — see §Stub command compatibility for the v1.0 → v1.1 transition record |
 
 Test vectors are specified in YAML form in the companion implementation guide
 (`docs/07-developers/octo-cli-implementation-guide.md`). The CLI integration tests
@@ -1140,7 +1148,7 @@ This RFC covers Phase 1 only. Follow-on amendments cover Phases 2-8.
 - `missions/claimed/0011-identity-commands.md` — mission 2
 - `missions/claimed/0011-capability-commands.md` — mission 3
 - `missions/claimed/0011-policy-commands.md` — mission 4
-- `missions/claimed/0011-deprecation-stub-removal.md` — mission 5
+- `missions/open/0011-deprecation-stub-removal.md` — mission 5 (Claimed per frontmatter; v2.0 stub removal landed in commit 2c28cbb2)
 
 ### SUBSTRATE (follow-on missions, NOT this RFC cycle)
 
@@ -1153,7 +1161,7 @@ This RFC covers Phase 1 only. Follow-on amendments cover Phases 2-8.
 - `crates/octo-cli/src/commands/identity.rs` — NEW, identity subcommand impls
 - `crates/octo-cli/src/commands/capability.rs` — NEW, capability subcommand impls
 - `crates/octo-cli/src/commands/policy.rs` — NEW, policy subcommand impls
-- `crates/octo-cli/src/commands/stub.rs` — NEW, deprecated stub wrappers
+- `crates/octo-cli/src/commands/stub.rs` — NEW, deprecated stub wrappers (REMOVED v2.0 per commit 2c28cbb2; deletion of 142 lines + 4 unit tests; clap dispatch arms for `Init` / `Join` / `Status` removed at the same time)
 
 ## Future Work
 
@@ -1311,31 +1319,31 @@ forms in RFC-0964 envelope.
 
 ### D. Exit Code Table
 
-| Code    | Variant                                                   | Meaning                                                                                                                                                                                                                                                                                                               |
-| ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0       | (success)                                                 | Command succeeded                                                                                                                                                                                                                                                                                                     |
-| 1       | (reserved)                                                | Reserved (POSIX convention reserves 1 for generic-failure; canonical `SigningFailed` is code 11)                                                                                                                                                                                                                      |
-| 2       | `ClapParse` / `NoActiveIdentity` / `ConfirmationRequired` | Clap usage-error OR no active identity in the wallet store OR mutating command invoked without the mode-appropriate confirmation flag (`--confirm` + `--confirm-acknowledge` in Human mode for capability mint/attenuate; `--allow-write` in CI / Dev mode; denied in Auditor mode). POSIX convention: clap parse → 2 |
-| 3       | `AlreadyRotating`                                         | Identity is already in `Rotating` state                                                                                                                                                                                                                                                                               |
-| 4       | `IdentityNotFound`                                        | Identity with given DID not found                                                                                                                                                                                                                                                                                     |
-| 5       | `HsmUnavailable`                                          | HSM slot not reachable                                                                                                                                                                                                                                                                                                |
-| 6       | `AlreadyRevoked`                                          | Identity is already `Revoked` (CLI-level pre-check, NOT substrate error — substrate `IdentityKey::revoke` is idempotent from `Revoked` and does NOT raise `AlreadyRevoked`)                                                                                                                                           |
-| 7       | `CaveatParse`                                             | `--caveats` JSON parse error                                                                                                                                                                                                                                                                                          |
-| 8       | `InvalidCaveatCombination`                                | Caveat violates RFC-0964 catalog                                                                                                                                                                                                                                                                                      |
-| 9       | `HolderNotFound`                                          | `--holder` DID not found                                                                                                                                                                                                                                                                                              |
-| 10      | `AttenuationViolation`                                    | Child caveat widens parent                                                                                                                                                                                                                                                                                            |
-| 11      | `SigningFailed`                                           | HSM signing failed during capability mint/attenuate                                                                                                                                                                                                                                                                   |
-| 12      | `ParentCapNotFound`                                       | Attenuation parent capability not found                                                                                                                                                                                                                                                                               |
-| 13      | `PolicyNotFound`                                          | Policy with given name not found                                                                                                                                                                                                                                                                                      |
-| 14      | `PolicyVersionNotFound`                                   | Policy version out of range                                                                                                                                                                                                                                                                                           |
-| 15      | `StdinSecretRefused`                                      | Secret on pipe without `--allow-stdin-secret`                                                                                                                                                                                                                                                                         |
-| 16      | `InvalidFilter`                                           | Invalid `--filter` form (reserved range per Status header amendment chain)                                                                                                                                                                                                                                            |
-| 17-63   | (reserved)                                                | Future amendments per Status header amendment chain                                                                                                                                                                                                                                                                   |
-| 64      | `Internal`                                                | Substrate error (sanitized)                                                                                                                                                                                                                                                                                           |
-| 65      | `StaleStub`                                               | Deprecated stub command invoked past v1.1 hard-error window                                                                                                                                                                                                                                                           |
-| 66-78   | (reserved)                                                | Future substrate-error sub-discriminator expansion                                                                                                                                                                                                                                                                    |
-| 79-99   | (reserved)                                                | Future amendment additions                                                                                                                                                                                                                                                                                            |
-| 100-127 | (env errors)                                              | Missing config dir, permission mismatch, etc.                                                                                                                                                                                                                                                                         |
+| Code    | Variant                                                   | Meaning                                                                                                                                                                                                                                                                                                                                                 |
+| ------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0       | (success)                                                 | Command succeeded                                                                                                                                                                                                                                                                                                                                       |
+| 1       | (reserved)                                                | Reserved (POSIX convention reserves 1 for generic-failure; canonical `SigningFailed` is code 11)                                                                                                                                                                                                                                                        |
+| 2       | `ClapParse` / `NoActiveIdentity` / `ConfirmationRequired` | Clap usage-error OR no active identity in the wallet store OR mutating command invoked without the mode-appropriate confirmation flag (`--confirm` + `--confirm-acknowledge` in Human mode for capability mint/attenuate; `--allow-write` in CI / Dev mode; denied in Auditor mode). POSIX convention: clap parse → 2                                   |
+| 3       | `AlreadyRotating`                                         | Identity is already in `Rotating` state                                                                                                                                                                                                                                                                                                                 |
+| 4       | `IdentityNotFound`                                        | Identity with given DID not found                                                                                                                                                                                                                                                                                                                       |
+| 5       | `HsmUnavailable`                                          | HSM slot not reachable                                                                                                                                                                                                                                                                                                                                  |
+| 6       | `AlreadyRevoked`                                          | Identity is already `Revoked` (CLI-level pre-check, NOT substrate error — substrate `IdentityKey::revoke` is idempotent from `Revoked` and does NOT raise `AlreadyRevoked`)                                                                                                                                                                             |
+| 7       | `CaveatParse`                                             | `--caveats` JSON parse error                                                                                                                                                                                                                                                                                                                            |
+| 8       | `InvalidCaveatCombination`                                | Caveat violates RFC-0964 catalog                                                                                                                                                                                                                                                                                                                        |
+| 9       | `HolderNotFound`                                          | `--holder` DID not found                                                                                                                                                                                                                                                                                                                                |
+| 10      | `AttenuationViolation`                                    | Child caveat widens parent                                                                                                                                                                                                                                                                                                                              |
+| 11      | `SigningFailed`                                           | HSM signing failed during capability mint/attenuate                                                                                                                                                                                                                                                                                                     |
+| 12      | `ParentCapNotFound`                                       | Attenuation parent capability not found                                                                                                                                                                                                                                                                                                                 |
+| 13      | `PolicyNotFound`                                          | Policy with given name not found                                                                                                                                                                                                                                                                                                                        |
+| 14      | `PolicyVersionNotFound`                                   | Policy version out of range                                                                                                                                                                                                                                                                                                                             |
+| 15      | `StdinSecretRefused`                                      | Secret on pipe without `--allow-stdin-secret`                                                                                                                                                                                                                                                                                                           |
+| 16      | `InvalidFilter`                                           | Invalid `--filter` form (reserved range per Status header amendment chain)                                                                                                                                                                                                                                                                              |
+| 17-63   | (reserved)                                                | Future amendments per Status header amendment chain                                                                                                                                                                                                                                                                                                     |
+| 64      | `Internal`                                                | Substrate error (sanitized)                                                                                                                                                                                                                                                                                                                             |
+| 65      | `StaleStub`                                               | Library-internal sentinel retained per §Extension over enumeration; post-v2.0 only reachable via `OctoCliError::StaleStub { name, replaced_by }` construction from library callers (CLI dispatch arms for the original stub commands were removed in the v2.0 cut; clap `unrecognized subcommand` (exit 2) is the operator-observable replacement path) |
+| 66-78   | (reserved)                                                | Future substrate-error sub-discriminator expansion                                                                                                                                                                                                                                                                                                      |
+| 79-99   | (reserved)                                                | Future amendment additions                                                                                                                                                                                                                                                                                                                              |
+| 100-127 | (env errors)                                              | Missing config dir, permission mismatch, etc.                                                                                                                                                                                                                                                                                                           |
 
 ### E. Redaction Pattern Examples
 

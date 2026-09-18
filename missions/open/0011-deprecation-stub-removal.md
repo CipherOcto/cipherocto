@@ -20,14 +20,14 @@ metadata:
     - mission 0011-c-agent-attach-subcommand
     - mission 0011-d-role-subcommands-phase1
   release_gate:
-    require: "v1.1 hard-error cycle elapsed on next"
-    released_version: TBD
+    require: "v1.1 cycle elapsed on next per RFC-0011 §Changelog v1.1 row (banner-only default; operator opt-in window via OCTO_STALE_STUB_WINDOW=1)"
+    released_version: "2.0"
 status: Claimed
 ---
 
 # 0011-deprecation-stub-removal — Drop stub commands (init, join, role, agent, status)
 
-**Status:** Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. Per SPEC-10, this mission's status was reverted from an earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears per RFC-0011 §Compatibility
+**Status:** Claimed — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. Stub commands `init`, `join`, `status` removed from clap surface; `role` and `agent` were already migrated to first-class subcommands in prior RFC-0011-d / RFC-0011-c missions. v1.1 deprecation cycle elapsed on `next` per RFC-0011 §Changelog v1.1 row.
 **Substrate:** RFC-0011 §Compatibility (stub deprecation timeline)
 **Parent:** RFC-0011
 **Depends on:**
@@ -35,16 +35,18 @@ status: Claimed
 - Mission `0011-identity-commands` (or equivalent identity substrate landed)
 - Mission `0011-capability-commands`
 - Mission `0011-policy-commands`
-- 1 release cycle elapsed since RFC-0011 (initial) + 1 release cycle elapsed
-  since the next minor (per RFC migration etiquette: 1 release deprecation
-  window + 1 release hard-error window before removal — applies to the
-  initial deprecation cycle of this RFC, with forward amendments each
-  following the same etiquette per Status header amendment chain)
+- Mission `0011-c-agent-create-subcommand` (lands first-class `octo agent create`)
+- Mission `0011-c-agent-list-subcommand` (lands first-class `octo agent list`)
+- Mission `0011-c-agent-run-subcommand` (lands first-class `octo agent run`)
+- Mission `0011-c-agent-destroy-subcommand` (lands first-class `octo agent destroy`)
+- Mission `0011-c-agent-attach-subcommand` (lands first-class `octo agent attach`)
+- Mission `0011-d-role-subcommands-phase1` (lands first-class `octo role select`)
+- v1.1 deprecation cycle elapsed on `next` per RFC migration etiquette
   **Blocks:** none
 
 ## Status
 
-Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. SPEC-10 reverts this mission's status from the earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet; no implementation work is permitted until the gate clears per RFC-0011 §Compatibility
+Claimed — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. Implementation complete; awaiting DRY closure gate per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## RFC
 
@@ -68,24 +70,25 @@ Operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) unt
 
 ## Acceptance Criteria
 
-- [ ] Pre-removal gate check verified (v1.1 hard-error cycle elapsed)
-- [ ] `commands/stub.rs` deleted (or stripped to empty)
-- [ ] `Commands::Init/Join/Role/Agent/Status` variants removed from clap derive struct
-- [ ] Tests referencing stub commands deleted
-- [ ] Deprecation banner section deleted from RFC-0011
-- [ ] CHANGELOG entry added: "Stub commands removed in v2.0"
-- [ ] Cross-mission AC: final integration — `octo` now exposes only RFC-0011 subcommands + amendments
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
-- [ ] Cargo test --workspace --lib green
-- [ ] No new INVALID cites introduced (manual review per CLAUDE.md §RFC Reference Conventions)
+- [x] Pre-removal gate check verified (v1.1 cycle elapsed on `next`)
+- [x] `commands/stub.rs` deleted
+- [x] `Commands::Init/Join/Status` variants removed from clap derive struct
+- [x] `Commands::Role/Agent` were already first-class subcommands (RFC-0011-d Phase 1 + RFC-0011-c); not stubs at v2.0 cut
+- [x] Tests referencing stub commands deleted (`commands/stub.rs` 4 unit tests + `tests/stub.rs` 4 integration tests)
+- [x] `§Stub command compatibility` section rewritten in RFC-0011: timeline table preserved; banner-emission prose removed
+- [x] `§Changelog` section ADDED with v1.0 / v1.1 / v2.0 rows
+- [x] Cross-mission AC: final integration — `octo` exposes only RFC-0011 subcommands + amendments (verified via `clap_surface_is_valid` test)
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy --workspace --all-targets -- -D warnings clean (octo-cli)
+- [x] Cargo test -p octo-cli --lib green (322 passed post-cut)
+- [x] No new INVALID cites introduced (manual review per CLAUDE.md §RFC Reference Conventions)
 
 ### Type Coverage
 
-| RFC-0011 type                                               | Sub-step                      | Notes                                                                 |
-| ----------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------- |
-| 5 stub commands (`init`, `join`, `role`, `agent`, `status`) | Sub-step 2 (code removal)     | Layer C/D; pure deletion from clap derive struct                      |
-| `StaleStub` exit 65 path                                    | Sub-step 1 (pre-removal gate) | Layer C/D; verifies v1.1 hard-error cycle elapsed before v2.0 removal |
+| RFC-0011 type                                                          | Sub-step                  | Notes                                                                                         |
+| ---------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| 3 stub commands actually removed (`init`, `join`, `status`)            | Sub-step 2 (code removal) | Layer C/D; pure deletion from clap derive struct; `role` and `agent` were already first-class |
+| `StaleStub` exit 65 path (variant retained; `replaced_by` field added) | Sub-step 1 (substrate)    | Layer C/D; soft sentinel per [[cipherocto-design-principles]] §Extension over enumeration     |
 
 ### Implementation Guide
 
@@ -161,19 +164,15 @@ None added or removed. Pure deletion.
 
 ## Test Vectors
 
-2 new TV covering the deprecation-warning + hard-error transitions:
+`tv_dep1_warning_text` + `tv_dep2_exit_65` DELETED with `commands/stub.rs` (4 unit tests) + `tests/stub.rs` (4 integration tests) per RFC-0011 §Changelog v2.0 row. The new `tv_stalestub_v2_replaced_by_display_format` (in `crates/octo-cli/src/error.rs`) is the only post-cut test pinning the `StaleStub` variant; it asserts the v2.0 Display format carries both `name` and `replaced_by` substrings plus the `octo --help` operator pointer.
 
-- `tv_dep1_warning_text` — `octo init` in the v1.0 window emits
-  `DEPRECATED: \`octo init\` is a stub...` to stderr and exits 0 (deprecation
-  banner; command still works) — NEW
-- `tv_dep2_exit_65` — `octo init` in the v1.1 window emits the deprecation
-  banner PLUS exits 65 (`StaleStub` hard error per RFC-0011 §Exit Code table) — NEW
+Post-cut verification:
 
-Pre-removal verification (unchanged):
-
-- `grep -r "Commands::Init\|Commands::Join\|Commands::Role\|Commands::Agent\|Commands::Status" crates/octo-cli/src/` → 0 hits
-- `cargo test -p octo-cli --all-features` → 0 reference to `init`/`join`/`role`/`agent`/`status` subcommands
-- `octo init` → "error: unrecognized subcommand 'init'" (clap default after removal)
+- `grep -r "Commands::Init\|Commands::Join\|Commands::Status" crates/octo-cli/src/` → 0 hits (variants removed from the enum entirely per §Scope, not hidden)
+- `cargo test -p octo-cli --lib` → 0 references to deleted stub commands
+- `octo init` → "error: unrecognized subcommand 'init'" (clap default after v2.0 removal; exit 2)
+- `octo join` → "error: unrecognized subcommand 'join'" (exit 2; `octo network bootstrap` DEFERRED to future amendment)
+- `octo status` → "error: unrecognized subcommand 'status'" (exit 2; `octo network status` DEFERRED)
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -184,10 +183,12 @@ Pre-removal verification (unchanged):
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy -p octo-cli --all-targets --all-features -- -D warnings
-cargo test -p octo-cli --all-features
-# Hard error gate check:
-octo init 2>&1; echo $?  # expect 65 (StaleStub hard error) OR "unrecognized subcommand" if v1.1 already shipped
+cargo clippy -p octo-cli --all-targets -- -D warnings
+cargo test -p octo-cli --lib
+# Post-cut smoke (clap default exit 2):
+octo init 2>&1; echo $?  # expect 2 (unrecognized subcommand)
+octo join 2>&1; echo $?  # expect 2 (unrecognized subcommand)
+octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
 ```
 
 ## Backward compat

@@ -1146,51 +1146,26 @@ Per RFC-0011 §Subcommand Taxonomy, `octo policy show <name>` delegates to
 to any nested secret fields. The CLI does NOT introspect policy body structure
 beyond the redactor pass.
 
-## Stub Command Deprecation
+## Stub Command Deprecation (REMOVED v2.0)
 
-```rust
-//! crates/octo-cli/src/commands/stub.rs
-//! Per RFC-0011 §Compatibility — deprecation banner for stub commands.
-//! v1.0: banner only (exit 0). v1.1+: hard error (StaleStub, exit 65).
+`crates/octo-cli/src/commands/stub.rs` and `crates/octo-cli/tests/stub.rs`
+were deleted in the v2.0 stub-removal cut (RFC-0011 §Changelog v2.0 row;
+commit 2c28cbb2 on `next`). The clap variants `Commands::Init`, `Commands::Join`,
+and `Commands::Status` were removed from `lib.rs`; `Commands::Role` and
+`Commands::Agent` were already first-class subcommands in the v2.0 binary
+(no stub surface to remove).
 
-use octo_cli::error::OctoCliError;
+The `OctoCliError::StaleStub` variant is retained as a soft sentinel — it
+gained a `replaced_by: &'static str` field so operator switch tables that
+map exit 65 to "stub removed; see X" continue to work via library callers.
+v2.0+ operators invoking `octo init` / `octo join` / `octo status` hit clap
+`unrecognized subcommand` (exit 2) instead of the v1.x deprecation banner.
 
-/// `STALE_STUB_WINDOW`: feature flag / const gate for v1.1 hard-error behavior.
-/// When `true`, stubs emit `StaleStub` (exit 65). When `false` (v1.0),
-/// stubs emit a deprecation banner (exit 0).
-///
-/// v1.0 banner-only: `false`. The hard-error gate is enabled in v1.1 via the
-/// `OCTO_STALE_STUB_WINDOW` env-var override (not a const bump — const changes
-/// require a recompile, env-var allows the operator to flip behavior without
-/// rebuilding). Mission `0011-deprecation-stub-removal` removes the stub code
-/// entirely in v2.0.
-const STALE_STUB_WINDOW: bool = false;
-
-pub fn print_deprecated(name: &str, hint: &str) -> Result<(), OctoCliError> {
-    eprintln!("DEPRECATED: `octo {}` is a stub. {}", name, hint);
-    // Env-var override: `OCTO_STALE_STUB_WINDOW=true` flips the const at
-    // runtime (v1.1+ behavior). Const stays `false` for v1.0 banner-only
-    // default; the override avoids a recompile when the v1.1 window opens.
-    let stale_window = STALE_STUB_WINDOW
-        || std::env::var("OCTO_STALE_STUB_WINDOW")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
-    if stale_window {
-        // v1.1+ behavior — hard error per RFC-0011 §Compatibility timeline.
-        return Err(OctoCliError::StaleStub { name: name.to_string() });
-    }
-    eprintln!("This stub will be removed in v2.0.");
-    Ok(())
-}
-
-pub fn print_role_deprecated(_action: &RoleActionStub) -> Result<(), OctoCliError> {
-    print_deprecated("role", "use octo role select (per Status header amendment chain)")
-}
-
-pub fn print_agent_deprecated(_action: &AgentActionStub) -> Result<(), OctoCliError> {
-    print_deprecated("agent", "use octo agent lifecycle (per Status header amendment chain)")
-}
-```
+The historical code blocks below are preserved as the v1.0 → v1.1 → v2.0
+transition record so contributors can understand the migration etiquette
+that drove the cut. The actual `commands/stub.rs` content lives in git
+history at commit `2c28cbb2~1` (the commit immediately before the v2.0
+removal).
 
 ## Test Pattern
 
@@ -1261,15 +1236,18 @@ vs WSL); the `std::io::IsTerminal` check uses Windows console APIs that work
 identically to Unix. CI asserts Windows + Linux + macOS all pass.
 
 **CI coverage requirements:** every test vector above MUST have a corresponding
-test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs` /
-`tests/stub.rs` (substrate-stub + deprecation-stub warnings). Error + envelope
-+ redact + env-errors tests live inline in their respective `src/` modules.
-The count is 17 + 22 + 8 + 5 = 52 named `fn tv_*` integration tests across
-the four test files in `crates/octo-cli/tests/`; identity.rs additionally
-carries 5 non-`tv_*` clap-parse smoke tests (`clap_*_help_parses`), bringing
-the integration-test `#[test]` total to 57. Inline lib `#[cfg(test)]` modules
-in `src/error.rs` (7) + `src/output.rs` (9) + `src/redact.rs` (20) = 36 lib
-tests cover error / envelope / redact / env-errors surfaces.
+test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs`
+(no `tests/stub.rs` since v2.0 — the stub file was deleted in commit
+2c28cbb2 per RFC-0011 §Changelog v2.0 row). Error + envelope
+
+- redact + env-errors tests live inline in their respective `src/` modules.
+  The count is 17 + 22 + 8 = 47 named `fn tv_*` integration tests across
+  the three remaining test files in `crates/octo-cli/tests/`; identity.rs additionally
+  carries 5 non-`tv_*` clap-parse smoke tests (`clap_*_help_parses`), bringing
+  the integration-test `#[test]` total to 54. Inline lib `#[cfg(test)]` modules
+  in `src/error.rs` (now ~10 with the v2.0 `tv_stalestub_v2_replaced_by_display_format`
+  add) + `src/output.rs` (9) + `src/redact.rs` (20) = ~39 lib
+  tests cover error / envelope / redact / env-errors surfaces.
 
 ## Test Vectors (YAML)
 
@@ -1297,7 +1275,7 @@ tv_id1_whoami_success:
     - '"pubkey_hex":'
     - '"lifecycle_state":'
   stderr_empty: true
-  adapted: tests/identity.rs::tv_id1_whoami_no_active_identity  # stub exit 2; canonical fixture tv_id1_canonical_whoami_success_exits_0 is #[ignore]d
+  adapted: tests/identity.rs::tv_id1_whoami_no_active_identity # stub exit 2; canonical fixture tv_id1_canonical_whoami_success_exits_0 is #[ignore]d
 
 tv_id2_identity_show_not_found:
   cmd: ["identity", "show", "did:octo:nonexistent"]
@@ -1316,29 +1294,17 @@ tv_id3_identity_rotate_confirm_required:
     - "--confirm required for mutating command identity rotate"
 
 tv_id4_identity_rotate_grace_hours_flag_absent:
-  cmd:
-    [
-      "identity",
-      "rotate",
-      "--confirm",
-    ]
+  cmd: ["identity", "rotate", "--confirm"]
   exit_code: 0 # substrate hard-codes 24h grace internally; --grace-hours not exposed
   stderr_contains: []
 
 tv_id5_identity_revoke_already_revoked:
-  cmd:
-    [
-      "identity",
-      "revoke",
-      "--confirm",
-      "--reason",
-      "test",
-    ]
+  cmd: ["identity", "revoke", "--confirm", "--reason", "test"]
   # Wallet in Revoked state; substrate returns AlreadyRevoked → CLI exit 6
   exit_code: 6
   stderr_contains:
     - "already revoked"
-  adapted: tests/identity.rs::tv_id5_identity_revoke_no_active_identity  # stub exit 2; companion tv_id5b asserts --reason required; canonical fixture tv_id5_canonical_revoke_already_revoked_exits_6 is #[ignore]d
+  adapted: tests/identity.rs::tv_id5_identity_revoke_no_active_identity # stub exit 2; companion tv_id5b asserts --reason required; canonical fixture tv_id5_canonical_revoke_already_revoked_exits_6 is #[ignore]d
 
 tv_id6_already_rotating:
   cmd: ["identity", "rotate", "--confirm"]
@@ -1346,7 +1312,7 @@ tv_id6_already_rotating:
   exit_code: 3
   stderr_contains:
     - "already rotating"
-  adapted: tests/identity.rs::tv_id6_identity_rotate_passes_confirmation_gate  # stub exit 2; canonical fixture tv_id6_canonical_rotate_already_rotating_exits_3 is #[ignore]d
+  adapted: tests/identity.rs::tv_id6_identity_rotate_passes_confirmation_gate # stub exit 2; canonical fixture tv_id6_canonical_rotate_already_rotating_exits_3 is #[ignore]d
 
 tv_id7_hsm_missing:
   cmd: ["identity", "rotate", "--confirm"]
@@ -1354,7 +1320,7 @@ tv_id7_hsm_missing:
   exit_code: 5
   stderr_contains:
     - "hsm"
-  adapted: tests/identity.rs::tv_id7_identity_rotate_no_active_identity  # stub exit 2; canonical fixture tv_id7_canonical_rotate_hsm_unavailable_exits_5 is #[ignore]d
+  adapted: tests/identity.rs::tv_id7_identity_rotate_no_active_identity # stub exit 2; canonical fixture tv_id7_canonical_rotate_hsm_unavailable_exits_5 is #[ignore]d
 
 tv_id8_rotate_dry_run:
   cmd: ["identity", "rotate", "--confirm", "--dry-run"]
@@ -1399,9 +1365,11 @@ tv_id8_rotate_dry_run:
 #   tv_env8_concurrent_lock — second CLI instance tries to acquire wallet lock
 #     while first instance holds it; without lock → exit 101; wallet mutex
 #     contention recorded in audit log. → deferred to wallet substrate amendment
-# deprecation.yaml — 2 TV → covered by tests/stub.rs (deprecation-stub warnings)
-#   tv_dep1_warning_text — NEW
-#   tv_dep2_exit_65 — NEW → covered by OctoCliError::StaleStub (exit 65) per error.rs::tv_err4_exit_code_mapping
+# deprecation.yaml — 2 TV → REMOVED v2.0 (commit 2c28cbb2)
+#   tv_dep1_warning_text — REMOVED with tests/stub.rs
+#   tv_dep2_exit_65 — REMOVED with tests/stub.rs
+#   (replaced by error.rs::tv_stalestub_v2_replaced_by_display_format + tv_err4_exit_code_mapping
+#   for the post-v2.0 StaleStub variant shape)
 ```
 
 ## Performance Validation

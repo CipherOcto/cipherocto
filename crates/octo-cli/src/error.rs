@@ -2076,9 +2076,9 @@ mod tests {
     /// RFC-0011 §Changelog v2.0 entry: `StaleStub` retains its
     /// `replaced_by: &'static str` field so operator switch tables
     /// can grep the outbound JSON envelope for a replacement hint.
-    /// Pins both the `Display` message (must surface `replaced_by`
-    /// verbatim) and the exit-code slot (must stay 65 per RFC-0011
-    /// §Exit Code table).
+    /// Pins the `Display` message (must surface `replaced_by`,
+    /// `name`, and the `octo --help` operator pointer) and the
+    /// exit-code slot (must stay 65 per RFC-0011 §Exit Code table).
     #[test]
     fn tv_stalestub_v2_replaced_by_display_format() {
         let err = OctoCliError::StaleStub {
@@ -2094,6 +2094,32 @@ mod tests {
             rendered.contains("`init`"),
             "Display MUST surface the original `name`, got: {rendered}"
         );
+        assert!(
+            rendered.contains("octo --help"),
+            "Display MUST point at `octo --help` for discoverability, got: {rendered}"
+        );
         assert_eq!(err.exit_code(), 65, "StaleStub MUST stay exit 65");
+    }
+
+    /// RFC-0011 §Changelog v2.0 entry: `StaleStub`'s `replaced_by`
+    /// field is documented as the operator-observable hint in the
+    /// outbound JSON envelope, which is rendered via `user_message()`
+    /// (not raw `Display`). Pin both surfaces so a future refactor
+    /// cannot silently regress the JSON-envelope contract.
+    #[test]
+    fn tv_stalestub_v2_replaced_by_user_message() {
+        let err = OctoCliError::StaleStub {
+            name: "init".into(),
+            replaced_by: "octo-wallet init",
+        };
+        let rendered = err.user_message();
+        assert!(
+            rendered.contains("`octo-wallet init`"),
+            "user_message MUST surface `replaced_by` hint, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("`init`"),
+            "user_message MUST surface the original `name`, got: {rendered}"
+        );
     }
 }

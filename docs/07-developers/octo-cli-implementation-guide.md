@@ -50,14 +50,12 @@ graph TD
     commands --> identity["identity.rs<br/>(NEW)"]
     commands --> capability["capability.rs<br/>(NEW)"]
     commands --> policy["policy.rs<br/>(NEW)"]
-    commands --> stub["stub.rs<br/>(NEW: deprecated wrappers)"]
 
     tests --> t_id["identity.rs (17 TV + 5 clap smoke)"]
     tests --> t_cap["capability.rs (22 TV)"]
     tests --> t_pol["policy.rs (8 TV)"]
-    tests --> t_dep["stub.rs (5 TV)"]
     %% inline #[cfg(test)] modules in src/:
-    tests -.-> t_err["src/error.rs (7 TV inline)"]
+    tests -.-> t_err["src/error.rs (10 TV inline)"]
     tests -.-> t_env["src/output.rs (9 TV inline)"]
     tests -.-> t_red["src/redact.rs (20 TV inline)"]
 ```
@@ -1161,11 +1159,11 @@ map exit 65 to "stub removed; see X" continue to work via library callers.
 v2.0+ operators invoking `octo init` / `octo join` / `octo status` hit clap
 `unrecognized subcommand` (exit 2) instead of the v1.x deprecation banner.
 
-The historical code blocks below are preserved as the v1.0 → v1.1 → v2.0
-transition record so contributors can understand the migration etiquette
-that drove the cut. The actual `commands/stub.rs` content lives in git
+The v1.0 → v1.1 → v2.0 transition record for the stub cut lives in git
 history at commit `2c28cbb2~1` (the commit immediately before the v2.0
-removal).
+removal); consult `git show 2c28cbb2~1 -- crates/octo-cli/src/commands/stub.rs`
+to retrieve the deprecated wrappers and banner-emission prose that drove
+the migration etiquette.
 
 ## Test Pattern
 

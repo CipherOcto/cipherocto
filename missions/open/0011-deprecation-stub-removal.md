@@ -190,7 +190,7 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
 - `octo` exposes the post-cut surface per the `Commands` enum in
   `crates/octo-cli/src/lib.rs`; live surface via `octo --help`.
 - `octo init` operators: replacement lives at the separate `octo-wallet init` binary — see `octo-wallet --help`.
-- `octo join` / `octo status` operators: replacement is deferred to a future amendment. Run `octo --help` for the current subcommand list.
+- `octo join` / `octo status` operators: replacement is deferred to a future amendment.
 - `OctoCliError::StaleStub` retained with the `replaced_by: &'static str`
   field — library-API soft sentinel for any downstream consumer of
   `OctoCliError` that matches on the variant. CLI operators never

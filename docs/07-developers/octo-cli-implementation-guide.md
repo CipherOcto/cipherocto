@@ -1092,7 +1092,9 @@ the migration etiquette. The replacement for `octo init` is the separate
 `octo-wallet init` binary (not an `octo` subcommand); operators migrating
 scripts that called `octo init` should consult `octo-wallet --help`.
 Operators with scripts still calling `octo join` or `octo status` should
-run `octo --help` for the current subcommand list.
+run `octo --help` for the current subcommand list; the replacement
+(`octo network bootstrap` / `octo network status`) is queued for a
+future amendment per RFC-0011 §Changelog.
 
 ## Test Pattern
 

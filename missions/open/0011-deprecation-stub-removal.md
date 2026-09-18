@@ -1,6 +1,6 @@
 ---
 name: 0011-deprecation-stub-removal
-description: Drop stub commands (init, join, role, agent, status) per RFC-0011 stub deprecation timeline
+description: Drop stub commands (init, join, status) per RFC-0011 stub deprecation timeline
 metadata:
   node_type: substrate-cli
   type: cli-substrate
@@ -25,9 +25,9 @@ metadata:
 status: Claimed
 ---
 
-# 0011-deprecation-stub-removal — Drop stub commands (init, join, role, agent, status)
+# 0011-deprecation-stub-removal — Drop stub commands (init, join, status)
 
-**Status:** Claimed — v2.0 stub removal cut landed on `next`. See §Scope for the post-cut surface.
+**Status:** Claimed — see §Status below.
 **Substrate:** RFC-0011 §Compatibility (stub deprecation timeline)
 **Parent:** RFC-0011
 **Depends on:**
@@ -62,17 +62,17 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 - `octo network bootstrap` (replacement for `octo join`) — DEFERRED to future amendment
 - `octo network status` (replacement for `octo status`) — DEFERRED to future amendment
 
-Operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) until that amendment lands. Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
+See RFC-0011 §Compatibility for the post-cut operator impact (operators calling these hit clap `unrecognized subcommand`, exit 2). Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
 
 ## Acceptance Criteria
 
 - [x] Pre-removal gate check verified (v1.1 cycle elapsed on `next`)
 - [x] `commands/stub.rs` deleted
 - [x] `Commands::Init/Join/Status` variants removed from clap derive struct
-- [x] `Commands::Role/Agent` were already first-class subcommands (RFC-0011-d Phase 1 + RFC-0011-c); not stubs at v2.0 cut
+- [x] `Commands::Role/Agent` were already first-class subcommands in the post-cut substrate (RFC-0011-d Phase 1 + RFC-0011-c); no stub surface to remove
 - [x] Tests referencing stub commands deleted (`commands/stub.rs` 4 unit tests + `tests/stub.rs` 4 integration tests)
 - [x] `§Stub command compatibility` section rewritten in RFC-0011: timeline table preserved; banner-emission prose removed
-- [x] `§Changelog` section ADDED with v1.0 / v1.1 / v2.0 rows
+- [x] `§Changelog` section ADDED with row entries covering the banner-only, hard-error, and removal phases
 - [x] Cross-mission AC: final integration — `octo` exposes only RFC-0011 subcommands + amendments (structural validity via `clap_surface_is_valid` `debug_assert`; explicit surface enumeration deferred to a follow-on per-crate list-extension test)
 - [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
 - [x] Cargo clippy --workspace --all-targets -- -D warnings clean (octo-cli)
@@ -174,7 +174,7 @@ Post-cut verification:
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
-- `octo-cli` (Layer C/D) — pure deletion; no new types
+- `octo-cli` (Layer C) — pure deletion; no new types
 - NO substrate crate changes
 
 ## Validation
@@ -198,15 +198,18 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
   `Commands` enum: `whoami`, `identity {show,rotate,revoke}`,
   `capability {list,mint,attenuate}`, `policy {show,list}`,
   `role {select,...}` (RFC-0011-d), `reputation {list,show}` (RFC-0011-b),
-  `mesh {...}` (RFC-0011-f), `vault {list,balance,...}` (RFC-0011-e),
+  `mesh {peers,connect,status,...}` (RFC-0011-f), `vault {list,balance,...}` (RFC-0011-e),
   `agent {create,run,list,destroy,attach}` (RFC-0011-c),
-  `governance {snapshot,...}` (RFC-0011-g), `audit {list,show,...}`
+  `governance {snapshot,attest,vote,...}` (RFC-0011-g), `audit {list,show,redact,...}`
   (RFC-0011-a).
 - `OctoCliError::StaleStub` retained with the `replaced_by: &'static str`
-  field — soft sentinel for any operator switch table that maps exit code
-  65 to "stub removed; see X". Substrate-faithful to
-  [[cipherocto-design-principles]] §Extension over enumeration:
-  `#[non_exhaustive]` library surface must not lose variants.
+  field — library-API soft sentinel for any downstream consumer of
+  `OctoCliError` that matches on the variant. CLI operators never
+  observe `StaleStub` post-cut because clap intercepts `octo init` /
+  `octo join` / `octo status` with `unrecognized subcommand` (exit 2)
+  before the variant can be constructed; the field is preserved for
+  library consumers under the `#[non_exhaustive]` additive contract
+  per [[cipherocto-design-principles]] §Extension over enumeration.
 
 ## Cross-references
 

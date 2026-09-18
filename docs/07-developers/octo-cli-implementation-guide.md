@@ -55,7 +55,7 @@ graph TD
     tests --> t_cap["capability.rs (22 TV)"]
     tests --> t_pol["policy.rs (8 TV)"]
     %% inline #[cfg(test)] modules in src/:
-    tests -.-> t_err["src/error.rs (10 TV inline)"]
+    tests -.-> t_err["src/error.rs (12 TV inline)"]
     tests -.-> t_env["src/output.rs (9 TV inline)"]
     tests -.-> t_red["src/redact.rs (20 TV inline)"]
 ```
@@ -795,172 +795,98 @@ pub enum OperatorMode {
 ```
 
 ```rust
-//! crates/octo-cli/src/main.rs (REPLACES stub)
+//! crates/octo-cli/src/lib.rs (post-v2.0 cut)
 
 use clap::{Parser, Subcommand};
-use octo_cli::{
-    commands,
-    error::OctoCliError,
-    flags::{OperatorMode, OperatorModeFlags, OutputFlags},
-    output::OutputEnvelope,
+use commands::{
+    capability::CapabilityAction, identity::IdentityAction, mesh::MeshAction, policy::PolicyAction,
+    ReputationAction, RoleAction, VaultAction,
 };
 
+/// The `octo` operator CLI root.
 #[derive(Parser, Debug)]
 #[command(name = "octo", version, about = "CipherOcto operator CLI")]
-struct Octo {
+pub struct Octo {
+    /// Output-shaping flags.
     #[command(flatten)]
-    output: OutputFlags,
-
+    pub output: OutputFlags,
+    /// Operator-mode + write-gating flags.
     #[command(flatten)]
-    mode: OperatorModeFlags,
-
+    pub mode: OperatorModeFlags,
+    /// Subcommand to execute.
     #[command(subcommand)]
-    command: Commands,
+    pub command: Commands,
 }
 
+/// Top-level subcommands.
+///
+/// `#[non_exhaustive]` per F-14: future amendments add subcommand
+/// variants (e.g., `octo reputation list` per RFC-0011-b §Future
+/// Work) without requiring central-enum edits across the workspace.
 #[derive(Subcommand, Debug)]
-enum Commands {
+#[non_exhaustive]
+pub enum Commands {
+    /// Show the active identity.
     Whoami,
+    /// Identity lifecycle commands.
     Identity {
         #[command(subcommand)]
         action: IdentityAction,
     },
+    /// Capability lifecycle commands.
     Capability {
         #[command(subcommand)]
         action: CapabilityAction,
     },
+    /// Policy inspection commands.
     Policy {
         #[command(subcommand)]
         action: PolicyAction,
     },
-
-    // --- Deprecated stubs (per RFC-0011 §Compatibility) ---
-    // Removed in v2.0 (gated on 1 release deprecation window + 1 release hard-error cycle
-    // per RFC migration etiquette). v1.1 = hard-error (`StaleStub`, exit 65).
-    #[command(hide = true)]
-    Init,
-    #[command(hide = true)]
-    Join,
-    #[command(hide = true)]
-    Role { #[command(subcommand)] action: RoleActionStub },
-    #[command(hide = true)]
-    Agent { #[command(subcommand)] action: AgentActionStub },
-    #[command(hide = true)]
-    Status,
-}
-
-#[derive(Subcommand, Debug)]
-enum IdentityAction {
-    /// Show the identity record for a given DID.
-    Show {
-        /// Target DID.
-        did: Option<String>,
+    /// Role provisioning subcommands (RFC-0011-d §7.4).
+    Role {
+        #[command(subcommand)]
+        action: RoleAction,
     },
-    /// Begin a key rotation.
-    Rotate {},
-    /// Revoke the active identity.
-    Revoke {
-        /// Revocation reason recorded in the identity log.
-        #[arg(long)] reason: String,
+    /// Reputation read surface (RFC-0011-b §Specification).
+    Reputation {
+        #[command(subcommand)]
+        action: ReputationAction,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum CapabilityAction {
-    /// List capabilities.
-    List {
-        /// Filter as `field=value` (repeatable, comma-separated). Accepted
-        /// fields: `cap_id`, `root_id`, `caveat`.
-        #[arg(long, value_delimiter = ',')]
-        filter: Vec<String>,
+    /// Mesh operations subcommands (RFC-0011-f §Subcommand Taxonomy).
+    Mesh {
+        #[command(subcommand)]
+        action: MeshAction,
     },
-    /// Mint a new capability.
-    Mint {
-        /// Caveat expression.
-        #[arg(long, value_parser = clap::value_parser!(String))]
-        caveats: String,
-        /// Holder DID.
-        #[arg(long)]
-        holder: String,
-        /// Root capability identifier.
-        #[arg(long)]
-        root: Option<String>,
-        // Note: `--confirm-acknowledge` is a GLOBAL flag on `OperatorModeFlags`
-        // (R20 Lens-2 F7 moved it from per-command to global). Capability mint +
-        // attenuate read `cli.mode.confirm_acknowledge` in the handler.
+    /// Vault read surface (RFC-0011-e §Subcommand Taxonomy).
+    Vault {
+        #[command(subcommand)]
+        action: VaultAction,
     },
-    /// Attenuate an existing capability.
-    Attenuate {
-        /// Parent capability identifier.
-        cap_id: String,
-        /// Additional caveats to apply.
-        #[arg(long)]
-        caveats: String,
-        // Note: same as Mint — `--confirm-acknowledge` is on OperatorModeFlags.
+    /// Agent lifecycle subcommands (RFC-0011-c §Subcommand Taxonomy).
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum PolicyAction {
-    Show {
-        name: String,
-        #[arg(long)]
-        version: Option<u32>,
-        #[arg(long)]
-        kind_uuid: Option<String>,
+    /// Governance read/write subcommands (RFC-0011-g §Subcommand Taxonomy).
+    Governance {
+        #[command(subcommand)]
+        action: GovernanceAction,
     },
-    List {
-        #[arg(long)]
-        filter: Option<String>,
+    /// Settlement-receipt read surface (RFC-0011-a §Subcommand Taxonomy).
+    Audit {
+        #[command(subcommand)]
+        action: AuditAction,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum RoleActionStub {
-    Builder,
-    Provider,
-    Storage,
-    Bandwidth,
-    Orchestrator,
-}
-
-#[derive(Subcommand, Debug)]
-enum AgentActionStub {
-    Create { name: String },
-    Run { name: String },
-    List,
-}
-
-fn main() {
-    if let Err(e) = run() {
-        // Two JSON-forcing mechanisms are orthogonal:
-        //  1. `--json` flag forces JSON output regardless of TTY detection (per RFC-0011 §Output Envelope).
-        //  2. `OCTO_FORCE_JSON` environment variable forces JSON output for scripted environments
-        //     that cannot pass `--json` (e.g., wrapper scripts, cron jobs).
-        // `force_json` here ORs both sources.
-        let cli_json = /* parsed from clap Octo top-level */ false;
-        let env_json = std::env::var("OCTO_FORCE_JSON").is_ok();
-        e.render(/* force_json = */ cli_json || env_json);
-    }
-}
-
-fn run() -> Result<(), OctoCliError> {
-    let cli = Octo::parse();
-    let result = match &cli.command {
-        Commands::Whoami => commands::identity::whoami(&cli),
-        Commands::Identity { action } => commands::identity::dispatch(action, &cli),
-        Commands::Capability { action } => commands::capability::dispatch(action, &cli),
-        Commands::Policy { action } => commands::policy::dispatch(action, &cli),
-
-        Commands::Init => commands::stub::print_deprecated("init", "use octo-wallet init (out of scope for this RFC)"),
-        Commands::Join => commands::stub::print_deprecated("join", "use octo network bootstrap (out of scope for this RFC)"),
-        Commands::Role { action } => commands::stub::print_role_deprecated(action),
-        Commands::Agent { action } => commands::stub::print_agent_deprecated(action),
-        Commands::Status => commands::stub::print_deprecated("status", "use octo network status (per Status header amendment chain)"),
-    };
-    result
 }
 ```
+
+The pre-cut clap derive struct (with the five stub `Commands` variants
+and the `commands::stub::print_deprecated` dispatch arms) lives in git
+history at commit `2c28cbb2~1`. Consult `git show
+2c28cbb2~1:crates/octo-cli/src/commands/stub.rs` to retrieve the
+deprecated wrappers + banner-emission prose that drove the migration
+etiquette.
 
 ## Identity Subcommands
 
@@ -1144,7 +1070,7 @@ Per RFC-0011 §Subcommand Taxonomy, `octo policy show <name>` delegates to
 to any nested secret fields. The CLI does NOT introspect policy body structure
 beyond the redactor pass.
 
-## Stub Command Deprecation (REMOVED v2.0)
+## Stub Command Deprecation (Removed)
 
 `crates/octo-cli/src/commands/stub.rs` and `crates/octo-cli/tests/stub.rs`
 were deleted in the stub-removal cut (RFC-0011 §Changelog;
@@ -1243,8 +1169,8 @@ test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs`
   the three remaining test files in `crates/octo-cli/tests/`; identity.rs additionally
   carries 5 non-`tv_*` clap-parse smoke tests (`clap_*_help_parses`), bringing
   the integration-test `#[test]` total to 54. Inline lib `#[cfg(test)]` modules
-  in `src/error.rs` (now ~10 with the v2.0 `tv_stalestub_v2_replaced_by_display_format`
-  add) + `src/output.rs` (9) + `src/redact.rs` (20) = ~39 lib
+  in `src/error.rs` (now 12 with the v2.0 `tv_stalestub_v2_replaced_by_display_format`
+  and `tv_stalestub_v2_replaced_by_user_message` adds) + `src/output.rs` (9) + `src/redact.rs` (20) = 41 lib
   tests cover error / envelope / redact / env-errors surfaces.
 
 ## Test Vectors (YAML)

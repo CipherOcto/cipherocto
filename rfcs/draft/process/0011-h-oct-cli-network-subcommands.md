@@ -88,7 +88,7 @@ Subcommands documented "DEFERRED (substrate-additions prerequisite)" NOT in bina
 | Coordinator           | `CoordinatorRecord` (octo-coordinator-types)                                  | gate `coordinator show` (read-only; admin deferred per RFC-0861)                                   | RFC-0855p-c                                                                |
 | Governance Voter      | `VotingTally` (struct defined in `crates/octo-network/src/mon/governance.rs`) | gate `governance tally` read                                                                       | substrate-canonical (no governing RFC); spec surface deferred to substrate |
 
-**† DEFERRED rows:** All DEFERRED rows have paired companion missions in §Substrate-Additions; migration fallback documented in the paired mission YAML. Operators calling pre-landing hit clap `UnrecognizedSubcommand` (exit 2) per §Exit Codes — the clap arm is NOT registered for DEFERRED rows (which is why they are DEFERRED and not BLOCKED; BLOCKED rows have the clap arm registered but gated on substrate surface, see Caveat Matrix note column).
+**† DEFERRED rows:** All DEFERRED rows have paired companion missions in §Substrate-Additions; migration fallback documented in the paired mission YAML. † DEFERRED rows have paired companion missions; clap arm NOT registered (exit 2). BLOCKED rows register the clap arm but gate on substrate — see note column.
 
 ### Per-Subcommand Capability Caveat Matrix
 
@@ -810,7 +810,7 @@ Each entry is substrate-first mission YAML that lands missing substrate type/met
 ### Phase 6: Closure artifacts
 
 - [ ] Drift-closure mission `0011-h-0851p-a-seed-health-check-archive` — archive `0851p-a-seed-health-check` (status: stub pending CLAIMED-time per [[no-phantom-mission-pointers]]; YAML to be created when this Phase 6 work enters its own DRY cycle)
-- [ ] File 2 follow-on missions when work enters Phase 1 of its own RFC/mission cycle (placeholder paths filed at CLAIMED-time per [[no-phantom-mission-pointers]]; prometheus-metric-export + operator-guide companion work not yet cite-locked under any RFC)
+- [ ] File 2 follow-on companion missions (paths filed at CLAIMED-time per [[no-phantom-mission-pointers]])
 - [ ] Final audit doc + memory card + MEMORY.md index entry
 - [ ] Per-RFC amendments and Draft promotions deferred to §Future Work items F8 + F9; each requires its own DRY cycle. Out of scope for THIS amendment's DRY CLOSED gate; cross-cited only.
 

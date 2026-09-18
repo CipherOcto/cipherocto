@@ -6,6 +6,8 @@ metadata:
   type: cli-substrate
   originSessionId: RFC-0011 author session
   created: 2026-08-27
+  closed: 2026-09-18
+  closure_basis: v2.0 stub removal cut landed at commit 2c28cbb2 on next 2026-09-17; 10 review-sweep commits culminating at 6175e71e; R11+R12 = 2 consecutive zero-finding 5-len rounds = DRY CLOSED on attempt 2 of new pair per standing rules
   v: "2.0"
   depends_on:
     - RFC-0011
@@ -22,12 +24,12 @@ metadata:
   release_gate:
     require: "v1.1 cycle elapsed on next per RFC-0011 §Changelog (banner-only default; operator opt-in window via OCTO_STALE_STUB_WINDOW=1)"
     released_version: "2.0"
-status: Claimed
+status: Completed
 ---
 
 # 0011-deprecation-stub-removal — Drop stub commands (init, join, status)
 
-**Status:** Claimed — see §Status below.
+**Status:** Completed (2026-09-18) — see §Status below.
 **Substrate:** RFC-0011 §Compatibility (stub deprecation timeline)
 **Parent:** RFC-0011
 **Depends on:**
@@ -46,7 +48,7 @@ status: Claimed
 
 ## Status
 
-Claimed — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. Implementation complete; awaiting DRY closure gate per [[feedback_initiation_user_only]] + [[git-workflow]].
+Completed (2026-09-18) — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. 10 review-sweep commits culminating at 6175e71e (2026-09-18). R11+R12 = 2 consecutive zero-finding 5-len rounds = DRY CLOSED on attempt 2 of new pair per standing rules. Mission YAML archived to `missions/archived/completed/` per [[feedback_initiation_user_only]] + [[git-workflow]]. Closure audit at `docs/audits/2026-09-18-0011-deprecation-stub-removal-dry-closure.md`. Memory card at `~/.claude/projects/.../memory/0011-deprecation-stub-removal-dry-closure-2026-09-18.md`.
 
 ## RFC
 

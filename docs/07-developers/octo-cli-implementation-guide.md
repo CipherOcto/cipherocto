@@ -1149,7 +1149,7 @@ beyond the redactor pass.
 ## Stub Command Deprecation (REMOVED v2.0)
 
 `crates/octo-cli/src/commands/stub.rs` and `crates/octo-cli/tests/stub.rs`
-were deleted in the v2.0 stub-removal cut (RFC-0011 §Changelog v2.0 row;
+were deleted in the stub-removal cut (RFC-0011 §Changelog;
 commit 2c28cbb2 on `next`). The clap variants `Commands::Init`, `Commands::Join`,
 and `Commands::Status` were removed from `lib.rs`; `Commands::Role` and
 `Commands::Agent` were already first-class subcommands in the v2.0 binary
@@ -1238,7 +1238,7 @@ identically to Unix. CI asserts Windows + Linux + macOS all pass.
 **CI coverage requirements:** every test vector above MUST have a corresponding
 test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs`
 (no `tests/stub.rs` since v2.0 — the stub file was deleted in commit
-2c28cbb2 per RFC-0011 §Changelog v2.0 row). Error + envelope
+2c28cbb2 per RFC-0011 §Changelog). Error + envelope
 
 - redact + env-errors tests live inline in their respective `src/` modules.
   The count is 17 + 22 + 8 = 47 named `fn tv_*` integration tests across

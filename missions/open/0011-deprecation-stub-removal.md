@@ -66,7 +66,7 @@ Operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) unt
 
 ## StaleStub retention rationale
 
-`OctoCliError::StaleStub` retained (not deleted) with new `replaced_by: &'static str` field. Preserves operator switch tables that map exit code 65 to "stub removed; see X". Substrate-faithful to [[cipherocto-design-principles]] §Extension over enumeration: `#[non_exhaustive]` library surface must not lose variants. Soft sentinel — non-stale code paths (e.g. clap `unrecognized subcommand`) supersede this path per RFC-0011 §Changelog v2.0 entry.
+`OctoCliError::StaleStub` retained (not deleted) with new `replaced_by: &'static str` field. Preserves operator switch tables that map exit code 65 to "stub removed; see X". Substrate-faithful to [[cipherocto-design-principles]] §Extension over enumeration: `#[non_exhaustive]` library surface must not lose variants. Soft sentinel — non-stale code paths (e.g. clap `unrecognized subcommand`) supersede this path per RFC-0011 §Changelog.
 
 ## Acceptance Criteria
 
@@ -77,7 +77,7 @@ Operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) unt
 - [x] Tests referencing stub commands deleted (`commands/stub.rs` 4 unit tests + `tests/stub.rs` 4 integration tests)
 - [x] `§Stub command compatibility` section rewritten in RFC-0011: timeline table preserved; banner-emission prose removed
 - [x] `§Changelog` section ADDED with v1.0 / v1.1 / v2.0 rows
-- [x] Cross-mission AC: final integration — `octo` exposes only RFC-0011 subcommands + amendments (verified via `clap_surface_is_valid` test)
+- [x] Cross-mission AC: final integration — `octo` exposes only RFC-0011 subcommands + amendments (structural validity via `clap_surface_is_valid` `debug_assert`; explicit surface enumeration deferred to a follow-on per-crate list-extension test)
 - [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
 - [x] Cargo clippy --workspace --all-targets -- -D warnings clean (octo-cli)
 - [x] Cargo test -p octo-cli --lib green (322 passed post-cut)
@@ -164,7 +164,7 @@ None added or removed. Pure deletion.
 
 ## Test Vectors
 
-`tv_dep1_warning_text` + `tv_dep2_exit_65` DELETED with `commands/stub.rs` (4 unit tests) + `tests/stub.rs` (4 integration tests) per RFC-0011 §Changelog v2.0 row. The new `tv_stalestub_v2_replaced_by_display_format` (in `crates/octo-cli/src/error.rs`) is the only post-cut test pinning the `StaleStub` variant; it asserts the v2.0 Display format carries both `name` and `replaced_by` substrings plus the `octo --help` operator pointer.
+`tv_dep1_warning_text` + `tv_dep2_exit_65` DELETED with `commands/stub.rs` (4 unit tests) + `tests/stub.rs` (4 integration tests) per RFC-0011 §Changelog. The new `tv_stalestub_v2_replaced_by_display_format` (in `crates/octo-cli/src/error.rs`) is the only post-cut test pinning the `StaleStub` variant; it asserts the Display format carries both `name` and `replaced_by` substrings plus the `octo --help` operator pointer.
 
 Post-cut verification:
 

@@ -16,17 +16,17 @@ Draft (2026-09-18)
 
 ## Summary
 
-Adds `Commands::Network { NetworkAction }` to `octo` CLI (RFC-0011). 15 substrate-faithful subcommands delegate to real `octo-network` types/methods verified by R1 dry-review ground-truth grep 2026-09-18.
+Adds `Commands::Network { NetworkAction }` to `octo` CLI (RFC-0011). 17 substrate-faithful subcommands delegate to real `octo-network` types/methods verified by R1 dry-review ground-truth grep 2026-09-18 + R2 substrate-faithfulness re-verification.
 
-5 functional families:
+5 functional families (4 subcommand groups; `bind-envelope` straddles Bootstrap + Discovery + Envelope by substrate module, NOT by functional family):
 
-| Family                | Subcommands                                                            | Substrate                                                                                        |
-| --------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Bootstrap + Discovery | `peers`, `identity`, `mode`, `authority`, `bind-envelope`, `discovery` | `mon/bootstrap.rs`, `mon/bind_envelope.rs`, `mon/discovery.rs`, `gdp/cache.rs`, `dot/gateway.rs` |
-| Trust + Reputation    | `trust-graph`, `slash`                                                 | `mon/trust_graph.rs`, `reputation/slash_store.rs`                                                |
-| Coordinator           | `coordinator`                                                          | `mon/coordinator.rs`, `octo_coordinator_types`                                                   |
-| Governance            | `governance`                                                           | `mon/governance.rs`, `mon/governance_rotation.rs`                                                |
-| Envelope              | `bind-envelope rebind-{prepare,commit,abort}`                          | `mon/bind_envelope.rs`                                                                           |
+| Family                | Subcommands                                                          | Substrate                                                                |
+| --------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Bootstrap + Discovery | `peers`, `identity`, `mode`, `authority`, `discovery`                | `mon/bootstrap.rs`, `mon/discovery.rs`, `gdp/cache.rs`, `dot/gateway.rs` |
+| Trust + Reputation    | `trust-graph`, `slash`                                               | `mon/trust_graph.rs`, `reputation/slash_store.rs`                        |
+| Coordinator           | `coordinator`                                                        | `mon/coordinator.rs`, `octo_coordinator_types`                           |
+| Governance            | `governance`                                                         | `mon/governance.rs`, `mon/governance_rotation.rs`                        |
+| Envelope              | `bind-envelope` (all 4 ops: `show`, `rebind-{prepare,commit,abort}`) | `mon/bind_envelope.rs`                                                   |
 
 Every subcommand is Layer C façade over real `octo-network` (Layer B) call. No CLI reach into substrate internals; all cross typed substrate boundary per [[cipherocto-design-principles]] §Stable Abstractions Principle.
 
@@ -46,7 +46,7 @@ Subcommands documented "DEFERRED (substrate-additions prerequisite)" NOT in bina
 - RFC-0851p-a — Network Bootstrap Protocol (substrate for `mode`, `authority`, `slash`, `bind-envelope`, `discovery`)
 - RFC-0855 — Mission Overlay Networks (substrate for `bind-envelope rebind-*`)
 - RFC-0855p-c — Domain Coordinator Role (substrate for `coordinator`)
-- RFC-0855p-b — Coordinator Lifecycle (slash reason code allocation in `mon/slashing.rs` / `mon/slash_aggregation.rs`)
+- RFC-0855p-b — Coordinator Lifecycle (slash reason code allocation in `mon/slashing.rs`)
 - RFC-0861 — Coordinator Admin Trait Refinements (substrate for `coordinator admin`)
 - RFC-0862 — Writer Election Bootstrap (substrate for `governance tally` via `mon/governance.rs:VotingTally`)
 - RFC-0871 — Specialized Node Protocol Envelope (substrate for `bind-envelope`)
@@ -59,22 +59,22 @@ Subcommands documented "DEFERRED (substrate-additions prerequisite)" NOT in bina
 | ---- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | G1   | Operator-driven bootstrap/status without substrate reach-arounds                                         | `octo network mode show` + `octo network authority show` surface bootstrap state; `octo network peers list` surfaces `GatewayCache` without file-edit |
 | G2   | All subcommands delegate through typed substrate boundary                                                | Every CLI handler calls real `octo-network` Layer B function; zero direct reach into private items                                                    |
-| G3   | RFC-0011 §Exit Code future-amendment band extended additively                                            | New exit slots 79-89 (per RFC-0011 §Exit Code line 832); additive under `#[non_exhaustive]`                                                           |
+| G3   | RFC-0011 §Exit Code future-amendment band extended additively                                            | New exit slots 79-89 (per RFC-0011 §Exit Code); additive under `#[non_exhaustive]`                                                                    |
 | G4   | All mutating subcommands gated through `require_confirm` + `--confirm-acknowledge` + `--dry-run` default | RFC-0011 §Confirmation flag matrix extension                                                                                                          |
 | G5   | All network errors redacted in `OutputEnvelope.error`                                                    | RFC-0011 §Redaction layer extension; peer DIDs surface via `redacted: true` markers; envelope payload bytes never surface                             |
-| G6   | Deterministic per-invocation output                                                                      | All 15 subcommands Class C (read-only / local-payload-builder); no Class B consensus-impacting operations                                             |
+| G6   | Deterministic per-invocation output                                                                      | All 17 subcommands Class C (read-only / local-payload-builder); no Class B consensus-impacting operations                                             |
 | G7   | One mission per subcommand-cluster + explicit substrate-additions companion missions                     | Per [[no-phantom-mission-pointers]]; mission YAML paired with each subcommand's `## Subcommand Taxonomy` row                                          |
 
 ## Motivation
 
 0011-deprecation-stub-removal v2.0 cut (2026-09-17) removed `octo init` / `octo join` / `octo status`. User accepted deferral of `octo network bootstrap` + `octo network status` to a future amendment (User Decision 2026-09-17; `0011-deprecation-stub-removal` §Out of Scope). This amendment is that future amendment.
 
-Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 20 GAPs between `octo-network` substrate and current `Commands` enum (which has NO `Network { NetworkAction }` variant). R1 substrate-faithfulness review (2026-09-18) confirmed 15 GAPs have REAL substrate backing; remaining 5 are substrate-missing and become explicit companion missions.
+Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 20 GAPs between `octo-network` substrate and current `Commands` enum (which has NO `Network { NetworkAction }` variant). R1 + R2 substrate-faithfulness reviews (2026-09-18) confirmed 17 substrate-faithful subcommands map to real `octo-network` substrate; the remaining GAPs are substrate-missing and become explicit companion missions (§Substrate-Additions Companion Missions).
 
 3 concrete operator gaps:
 
 1. **Bootstrap config observability.** Operators edit `$OCTO_HOME/octotransport/bootstrap.toml` for `BootstrapMode` + `SeedListAuthority` but have no CLI surface. Substrate `BootstrapMode` enum + `verify_authority(SeedListAuthority, epoch)` + `SlashedSeedBlacklist` exist; CLI binding does not.
-2. **Network state observability.** Operators have no CLI surface for `GatewayCache` entries, trust-graph topology, slash reputation stats, coordinator lifecycle, governance tally. They grep substrate logs. Substrate functions exist for all 15 substrate-faithful subcommands.
+2. **Network state observability.** Operators have no CLI surface for `GatewayCache` entries, trust-graph topology, slash reputation stats, coordinator lifecycle, governance tally. They grep substrate logs. Substrate functions exist for all 17 substrate-faithful subcommands.
 3. **Mutating operations unsafe.** Substrate-faithful slice has 4 mutating subcommands (3 `bind-envelope rebind-*` payload builders + 1 deferred `slash mark`); every one must mirror RFC-0011 §Confirmation flag matrix with `--dry-run` default.
 
 ## Roles and Authorities
@@ -83,7 +83,7 @@ Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 20 
 
 | Role                  | Identifier                                   | Authority Scope                                                      | Source/Ref                                       |
 | --------------------- | -------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------ |
-| Operator (CLI caller) | OCTO_HOME path + capability caveats          | read (all 15); write (`bind-envelope rebind-{prepare,commit,abort}`) | RFC-0011 §Roles + RFC-0011-d §Role Provisioning  |
+| Operator (CLI caller) | OCTO_HOME path + capability caveats          | read (all 17); write (`bind-envelope rebind-{prepare,commit,abort}`) | RFC-0011 §Roles + RFC-0011-d §Role Provisioning  |
 | Bootstrap Authority   | `SeedListAuthority::{Foundation, Dao}`       | gate authority state display                                         | RFC-0851p-a                                      |
 | Coordinator           | `CoordinatorRecord` (octo-coordinator-types) | gate `coordinator show` (read-only; admin deferred per RFC-0861)     | RFC-0855p-c                                      |
 | Governance Voter      | `VotingTally`                                | gate `governance tally` read                                         | RFC-0862 (substrate reused: `mon/governance.rs`) |
@@ -95,18 +95,18 @@ Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 20 
 | `peers list` / `peers get`                    | yes                                                                         | yes | yes | yes      | read-only                                              |
 | `identity show`                               | yes                                                                         | yes | yes | redacted | peer DID redacted in Audit                             |
 | `mode show`                                   | yes                                                                         | yes | yes | yes      | read-only                                              |
-| `mode set`                                    | DEFERRED — substrate-additions prerequisite (BootstrapConfig missing)       |
+| `mode set`                                    | DEFERRED — substrate-additions prerequisite (BootstrapConfig missing)       | no  | no  | no       | see `0011-h-s-a-bootstrap-orchestrator` companion      |
 | `authority show`                              | yes                                                                         | yes | yes | yes      | read-only                                              |
-| `authority rotate`                            | DEFERRED — substrate-additions prerequisite (rotate_post_fork missing)      |
+| `authority rotate`                            | DEFERRED — substrate-additions prerequisite (rotate_post_fork missing)      | no  | no  | no       | see `0011-h-s-a-seed-list-authority-rotate` companion  |
 | `slash excluded` / `slash stats`              | yes                                                                         | yes | yes | redacted | DID redacted in Audit                                  |
-| `slash mark`                                  | DEFERRED — substrate-additions prerequisite (SlashStore missing)            |
-| `slash list` / `slash show`                   | DEFERRED — substrate-additions prerequisite (SlashStore missing)            |
+| `slash mark`                                  | DEFERRED — substrate-additions prerequisite (SlashStore missing)            | no  | no  | no       | see `0011-h-s-a-slash-store` companion                 |
+| `slash list` / `slash show`                   | DEFERRED — substrate-additions prerequisite (SlashStore missing)            | no  | no  | no       | see `0011-h-s-a-slash-store` companion                 |
 | `trust-graph render`                          | yes                                                                         | yes | yes | yes      | read-only; `--depth` clamped 1-100                     |
 | `coordinator show`                            | yes                                                                         | yes | yes | redacted | coordinator DID redacted in Audit                      |
-| `coordinator admin`                           | DEFERRED — substrate-additions prerequisite (CoordinatorAdminTrait missing) |
+| `coordinator admin`                           | DEFERRED — substrate-additions prerequisite (CoordinatorAdminTrait missing) | no  | no  | no       | see `0011-h-s-a-coordinator-admin-trait` companion     |
 | `governance tally`                            | yes                                                                         | yes | yes | yes      | read-only                                              |
 | `governance rotation status`                  | yes                                                                         | yes | yes | yes      | read-only                                              |
-| `governance vote`                             | OUT — `octo governance vote` per RFC-0011-g                                 |
+| `governance vote`                             | OUT — `octo governance vote` per RFC-0011-g                                 | no  | no  | no       | lives in RFC-0011-g, not this amendment                |
 | `bind-envelope show`                          | yes                                                                         | yes | yes | redacted | payload bytes never surfaced                           |
 | `bind-envelope rebind-{prepare,commit,abort}` | yes (write)                                                                 | no  | yes | no       | `--dry-run` default + `--confirm-acknowledge` required |
 | `discovery advertisement show`                | yes                                                                         | yes | yes | yes      | read-only                                              |
@@ -158,7 +158,7 @@ pub enum Commands {
 
     /// Network operations subcommands (RFC-0011-h).
     ///
-    /// Substrate-faithful slice of 15 subcommands delegating to
+    /// Substrate-faithful slice of 17 subcommands delegating to
     /// `octo-network` Layer B functions. Defer-to-substrate-additions
     /// subcommands tracked in §Substrate-Additions Companion Missions.
     Network {
@@ -202,25 +202,25 @@ pub enum NetworkAction {
 
 Each row maps: substrate function → governing RFC § → mission YAML.
 
-| Subcommand                     | Sub-action                                        | Substrate function(s)                                                            | Governing RFC §           | Mission YAML                                         | Phase |
-| ------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------- | ----- |
-| `peers list`                   | (read)                                            | `GatewayCache::iter()`                                                           | RFC-0851 §Discovery       | `0011-h-network-peers-identity` §peers-list          | 1     |
-| `peers get <gateway_id>`       | (read)                                            | `GatewayCache::get(gateway_id)`                                                  | RFC-0851 §Discovery       | `0011-h-network-peers-identity` §peers-get           | 1     |
-| `identity show`                | (read)                                            | Local public-key read → `GatewayIdentity::new(pk, net_id, gateway_class, epoch)` | RFC-0851 §Identity        | `0011-h-network-peers-identity` §identity            | 1     |
-| `mode show`                    | (read)                                            | Local config read → `BootstrapMode` enum                                         | RFC-0851p-a §F2/F5        | `0011-h-network-mode` §mode-show                     | 2     |
-| `authority show`               | (read)                                            | `verify_authority(SeedListAuthority, current_epoch)`                             | RFC-0851p-a §F1           | `0011-h-network-authority` §authority-show           | 2     |
-| `slash excluded <did>`         | (read)                                            | `SlashReputationStoreCompat::is_excluded(did)`                                   | RFC-0855p-b               | `0011-h-network-slash-stats` §slash-excluded         | 2     |
-| `slash stats`                  | (read)                                            | `SlashReputationStoreCompat::{did_count, total_slashes, global_slash_count}`     | RFC-0855p-b               | `0011-h-network-slash-stats` §slash-stats            | 2     |
-| `trust-graph render`           | (read; --depth 1-100; --format ascii\|dot)        | `TrustGraph::render(GraphFormat::{Ascii, Dot})`                                  | RFC-0851p-a §F4           | `0011-h-network-trust-graph`                         | 1     |
-| `coordinator show`             | (read)                                            | Local `CoordinatorRecord` load (octo-coordinator-types)                          | RFC-0855p-c + RFC-0861    | `0011-h-network-coordinator` §coordinator-show       | 3     |
-| `governance tally`             | (read)                                            | `VotingTally::{total_for, total_against, into_canonical}`                        | RFC-0862                  | `0011-h-network-governance` §governance-tally        | 3     |
-| `governance rotation status`   | (read)                                            | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window}`      | RFC-0862                  | `0011-h-network-governance` §governance-rotation     | 3     |
-| `bind-envelope show`           | (read)                                            | `BindEnvelope::{canonical_bytes, is_participant}`                                | RFC-0871 §Data Structures | `0011-h-network-bind-envelope` §bind-envelope-show   | 4     |
-| `bind-envelope rebind-prepare` | (write; --dry-run default; --confirm-acknowledge) | `RebindPrepare` struct builder                                                   | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
-| `bind-envelope rebind-commit`  | (write; --dry-run default; --confirm-acknowledge) | `RebindCommit` struct builder                                                    | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
-| `bind-envelope rebind-abort`   | (write; --dry-run default; --confirm-acknowledge) | `RebindAbort { reason: RebindAbortReason }` builder                              | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
-| `discovery advertisement show` | (read)                                            | `MissionAdvertisement::{advertisement_hash, is_encrypted, is_ttl_exceeded}`      | RFC-0851 §Discovery       | `0011-h-network-discovery` §discovery-advertisement  | 5     |
-| `discovery invitation show`    | (read)                                            | `MissionInvitation::to_signing_bytes`                                            | RFC-0851 §Discovery       | `0011-h-network-discovery` §discovery-invitation     | 5     |
+| Subcommand                     | Sub-action                                        | Substrate function(s)                                                                                                                                                                      | Governing RFC §           | Mission YAML                                         | Phase |
+| ------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- | ---------------------------------------------------- | ----- |
+| `peers list`                   | (read)                                            | `GatewayCache::iter()`                                                                                                                                                                     | RFC-0851 §Discovery       | `0011-h-network-peers-identity` §peers-list          | 1     |
+| `peers get <gateway_id>`       | (read)                                            | `GatewayCache::get(gateway_id)`                                                                                                                                                            | RFC-0851 §Discovery       | `0011-h-network-peers-identity` §peers-get           | 1     |
+| `identity show`                | (read)                                            | Local public-key read → `GatewayIdentity::new(pk, net_id, gateway_class, epoch)`                                                                                                           | RFC-0851 §Identity        | `0011-h-network-peers-identity` §identity            | 1     |
+| `mode show`                    | (read)                                            | Local config read → `BootstrapMode` enum                                                                                                                                                   | RFC-0851p-a §F2/F5        | `0011-h-network-mode` §mode-show                     | 2     |
+| `authority show`               | (read)                                            | `verify_authority(SeedListAuthority, current_epoch)`                                                                                                                                       | RFC-0851p-a §F1           | `0011-h-network-authority` §authority-show           | 2     |
+| `slash excluded <did>`         | (read)                                            | `SlashReputationStoreCompat::is_excluded(did)`                                                                                                                                             | RFC-0855p-b               | `0011-h-network-slash-stats` §slash-excluded         | 2     |
+| `slash stats`                  | (read)                                            | `SlashReputationStoreCompat::{did_count, total_slashes, global_slash_count}`                                                                                                               | RFC-0855p-b               | `0011-h-network-slash-stats` §slash-stats            | 2     |
+| `trust-graph render`           | (read; --depth 1-100; --format ascii\|dot)        | `TrustGraph::render(GraphFormat::{Ascii, Dot})`                                                                                                                                            | RFC-0851p-a §F4           | `0011-h-network-trust-graph`                         | 1     |
+| `coordinator show`             | (read)                                            | Local `CoordinatorRecord` load (octo-coordinator-types)                                                                                                                                    | RFC-0855p-c + RFC-0861    | `0011-h-network-coordinator` §coordinator-show       | 3     |
+| `governance tally`             | (read)                                            | `VotingTally::{total_for, total_against, into_canonical}`                                                                                                                                  | RFC-0862                  | `0011-h-network-governance` §governance-tally        | 3     |
+| `governance rotation status`   | (read)                                            | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window}`                                                                                                                | RFC-0862                  | `0011-h-network-governance` §governance-rotation     | 3     |
+| `bind-envelope show`           | (read)                                            | `BindEnvelope::{canonical_bytes, is_participant}`                                                                                                                                          | RFC-0871 §Data Structures | `0011-h-network-bind-envelope` §bind-envelope-show   | 4     |
+| `bind-envelope rebind-prepare` | (write; --dry-run default; --confirm-acknowledge) | `RebindPrepare` struct builder                                                                                                                                                             | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
+| `bind-envelope rebind-commit`  | (write; --dry-run default; --confirm-acknowledge) | `RebindCommit` struct builder                                                                                                                                                              | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
+| `bind-envelope rebind-abort`   | (write; --dry-run default; --confirm-acknowledge) | `RebindAbort { reason: RebindAbortReason }` builder                                                                                                                                        | RFC-0871                  | `0011-h-network-bind-envelope` §bind-envelope-rebind | 4     |
+| `discovery advertisement show` | (read)                                            | `MissionAdvertisement::{advertisement_hash, is_encrypted, is_ttl_exceeded(current_hops: u16)}` (hops from `--hops` clap arg, default 0; operator-supplied or derived from envelope header) | RFC-0851 §Discovery       | `0011-h-network-discovery` §discovery-advertisement  | 5     |
+| `discovery invitation show`    | (read)                                            | `MissionInvitation::to_signing_bytes`                                                                                                                                                      | RFC-0851 §Discovery       | `0011-h-network-discovery` §discovery-invitation     | 5     |
 
 ### Output Envelope
 
@@ -256,8 +256,8 @@ pub struct NetworkModeShowOutput {
 pub struct NetworkAuthorityShowOutput {
     pub authority: SeedListAuthority,         // Foundation | Dao
     pub current_epoch: u64,
-    pub authority_state: AuthorityState,      // Valid | Deprecated
-    pub migration_deadline_epoch: Option<u64>,
+    pub valid: bool,                          // maps verify_authority() Ok(())
+    pub message: Option<String>,              // Display of SeedAuthorityError when verify_authority() Err
 }
 
 // octo network slash stats (read)
@@ -290,7 +290,7 @@ pub struct NetworkGovernanceTallyOutput {
 pub struct NetworkBindEnvelopeShowOutput {
     pub envelope_id: String,
     pub participants: Vec<String>,            // participant peer_ids
-    pub canonical_bytes_len: usize,           // never the raw bytes
+    pub canonical_bytes_hash: String,         // blake3 hex of canonical_bytes(); raw bytes never surfaced
     pub body_redacted: bool,                  // always true; payload bytes never surfaced
 }
 
@@ -304,7 +304,7 @@ pub struct NetworkRebindPrepareOutput {
 
 ### RFC-0008 Execution Class Mapping
 
-All 15 substrate-faithful subcommands are **Class C** (read-only or local-payload-builder only). No Class B (consensus-impacting) operations in this slice. Class B operations (slash minting, election voting, envelope forwarding) are DEFERRED per §Substrate-Additions Companion Missions.
+All 17 substrate-faithful subcommands are **Class C** (read-only or local-payload-builder only). No Class B (consensus-impacting) operations in this slice. Class B operations (slash minting, election voting, envelope forwarding) are DEFERRED per §Substrate-Additions Companion Missions.
 
 ### Error Handling
 
@@ -368,7 +368,7 @@ All 10 `OctoCliError` variants are additive under `#[non_exhaustive]` per RFC-00
 
 ## Security Considerations
 
-- **Envelope payload bytes never echoed.** Per RFC-0011 §Redaction layer + RFC-0871 §Security Considerations. `bind-envelope show` returns metadata + `canonical_bytes_len` only; raw payload bytes NEVER surface in `OutputEnvelope` or logs. Test vectors assert no leak.
+- **Envelope payload bytes never echoed.** Per RFC-0011 §Redaction layer + RFC-0871 §Security Considerations. `bind-envelope show` returns metadata + `canonical_bytes_hash` (blake3 hex) only; raw payload bytes NEVER surface in `OutputEnvelope` or logs. Test vectors assert no leak.
 - **Mutating subcommands gated.** Every write subcommand requires `--confirm-acknowledge` AND capability caveat. Subcommand list: `bind-envelope rebind-{prepare,commit,abort}`. `--dry-run` is DEFAULT for all 3.
 - **Redaction placeholder form:** RFC-0011 §Redaction layer uses `[REDACTED:<kind>]` placeholders. `peer_did` → `[REDACTED:did]`, `coordinator_id` → `[REDACTED:coordinator_id]`, `multiaddr` → `[REDACTED:multiaddr]`. Audit mode applies same placeholders.
 - **`--depth` clamp on `trust-graph render`.** `depth` clamped 1-100; `--depth 0` → exit 85 (`NetworkGraphDepthExceeded`); `--depth 1000` clamped to 100 with warning.
@@ -379,18 +379,18 @@ All 10 `OctoCliError` variants are additive under `#[non_exhaustive]` per RFC-00
 
 ## Adversarial Review
 
-| Threat                                                                                    | Impact                                                 | Mitigation                                                                                                                               |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Operator edits `bootstrap.toml` to corrupted value                                        | MEDIUM — CLI surfaces corrupt value; no network effect | `mode show` returns parsed enum value (3 valid variants) OR `NetworkConfigParseFailed` exit 82                                           |
-| Operator runs `bind-envelope rebind-commit` on wrong target                               | HIGH — irreversible state change if substrate commits  | `--dry-run` default + `--confirm-acknowledge` gate + audit-log entry per RFC-0011-a §Audit substrate                                     |
-| Operator runs `trust-graph render --depth 1000000`                                        | MEDIUM — substrate OOM                                 | `--depth` clamped 1-100; values outside range → exit 85 or clamped with warning                                                          |
-| `coordinator show` leaks coordinator ID in Audit mode                                     | LOW — DIDs are public; redaction is for consistency    | Per RFC-0011 §Redaction layer: `coordinator_id` surface redacted via `[REDACTED:coordinator_id]` in Audit mode                           |
-| `slash stats` leaks peer DIDs in Audit mode                                               | LOW — DIDs are public; redaction is for consistency    | Per-did counts surface with `[REDACTED:did]` placeholder in Audit mode                                                                   |
-| `bind-envelope show` leaks payload bytes via `canonical_bytes_len` overflow or off-by-one | HIGH — payload disclosure                              | `canonical_bytes_len` is `usize` only; raw `canonical_bytes()` NEVER called from CLI; redaction test vectors assert no payload byte leak |
-| Adversary fabricates `BindEnvelope` payload via CLI mutation                              | MEDIUM — operator confusion                            | CLI builders construct payloads from typed substrate structs; CLI cannot inject arbitrary bytes                                          |
-| Adversary chains `rebind-prepare → rebind-commit` rapidly                                 | LOW — substrate owns lifecycle                         | Substrate enforces ordering; CLI emits payloads only; substrate decides whether to accept                                                |
-| `governance tally` reads stale tally                                                      | LOW — substrate owns freshness                         | Tally substrate owned by `mon/governance.rs:VotingTally`; CLI surfaces current state only                                                |
-| `authority show` exposes deprecated authority                                             | LOW — informational                                    | `authority_state: Deprecated` field explicitly surfaced; no network effect                                                               |
+| Threat                                                                                      | Impact                                                 | Mitigation                                                                                                                                   |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operator edits `bootstrap.toml` to corrupted value                                          | MEDIUM — CLI surfaces corrupt value; no network effect | `mode show` returns parsed enum value (3 valid variants) OR `NetworkConfigParseFailed` exit 82                                               |
+| Operator runs `bind-envelope rebind-commit` on wrong target                                 | HIGH — irreversible state change if substrate commits  | `--dry-run` default + `--confirm-acknowledge` gate + audit-log entry per RFC-0011-a §Audit substrate                                         |
+| Operator runs `trust-graph render --depth 1000000`                                          | MEDIUM — substrate OOM                                 | `--depth` clamped 1-100; values outside range → exit 85 or clamped with warning                                                              |
+| `coordinator show` leaks coordinator ID in Audit mode                                       | LOW — DIDs are public; redaction is for consistency    | Per RFC-0011 §Redaction layer: `coordinator_id` surface redacted via `[REDACTED:coordinator_id]` in Audit mode                               |
+| `slash stats` leaks peer DIDs in Audit mode                                                 | LOW — DIDs are public; redaction is for consistency    | Per-did counts surface with `[REDACTED:did]` placeholder in Audit mode                                                                       |
+| `bind-envelope show` leaks payload bytes via `canonical_bytes_hash` collision or off-by-one | HIGH — payload disclosure                              | `canonical_bytes_hash` is blake3 hex only; raw `canonical_bytes()` NEVER called from CLI; redaction test vectors assert no payload byte leak |
+| Adversary fabricates `BindEnvelope` payload via CLI mutation                                | MEDIUM — operator confusion                            | CLI builders construct payloads from typed substrate structs; CLI cannot inject arbitrary bytes                                              |
+| Adversary chains `rebind-prepare → rebind-commit` rapidly                                   | LOW — substrate owns lifecycle                         | Substrate enforces ordering; CLI emits payloads only; substrate decides whether to accept                                                    |
+| `governance tally` reads stale tally                                                        | LOW — substrate owns freshness                         | Tally substrate owned by `VotingTally` (RFC-0011-g §Voting substrate); CLI surfaces current state only                                       |
+| `authority show` exposes deprecated authority                                               | LOW — informational                                    | `authority_state: Deprecated` field explicitly surfaced; no network effect                                                                   |
 
 ## Adversary Analysis
 
@@ -415,7 +415,7 @@ All 10 `OctoCliError` variants are additive under `#[non_exhaustive]` per RFC-00
 1. Who benefits? Privacy attacker.
 2. Cost them? OCTO_HOME access (logs at `$OCTO_HOME/octo-cli/audit.log`).
 3. Gain if successful? Read payload bytes for committed envelopes.
-4. Defense? (a) `OctoCliRedactor` strips `*:payload`, `*:body`, `*:canonical_bytes` field-name patterns per RFC-0011 §Redaction layer; (b) `bind-envelope show` returns `canonical_bytes_len` only (usize), never raw bytes; (c) redaction test vectors assert no leak.
+4. Defense? (a) `OctoCliRedactor` strips `*:payload`, `*:body`, `*:canonical_bytes` field-name patterns per RFC-0011 §Redaction layer; (b) `bind-envelope show` returns `canonical_bytes_hash` only (blake3 hex), never raw bytes; (c) redaction test vectors assert no leak.
 5. Residual risk? Field-name pattern miss for new envelope payload field names. Substrate-faithful mitigation: redaction pattern is byte-precise over entire envelope body shape per RFC-0871 §Data Structures.
 
 ### A4 — DoS via unbounded trust-graph depth
@@ -494,25 +494,25 @@ Each subcommand has ≥2 test vectors per RFC-0011 §Test Vector convention. Per
 
 Each entry is substrate-first mission YAML that lands missing substrate type/method, gated BEFORE corresponding CLI mission. Each `depends_on:` RFC-0011-h + listed networking RFC(s).
 
-| GAP | Substrate-additions companion mission                           | Adds to substrate                                                                                                                                                                                             | Required by CLI mission (this RFC)                                    |
-| --- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| G1  | `0011-h-s-a-bootstrap-orchestrator`                             | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig) → BootstrapOutcome` + `status() → BootstrapState` + `BootstrapConfig::{load_toml, save_toml}` + `BootstrapConfig::bootstrap_mode` accessor | `octo network bootstrap` (deferred); `octo network status` (deferred) |
-| G2  | (subsumed by G1)                                                | —                                                                                                                                                                                                             | —                                                                     |
-| G7  | (subsumed by G1)                                                | —                                                                                                                                                                                                             | `octo network mode set` (deferred)                                    |
-| G8  | `0011-h-s-a-seed-list-authority-rotate`                         | `SeedListAuthority::rotate_post_fork(new_authority, governance_quorum_proof) → Result<SeedListAuthority, SeedAuthorityError>`                                                                                 | `octo network authority rotate` (deferred)                            |
-| G6  | `0011-h-s-a-slash-store`                                        | `SlashStore` struct + `list(reason_filter: Option<u16>) → Vec<SlashEnvelopeSummary>` + `show(slash_id: [u8;32]) → Option<SlashEnvelope>`                                                                      | `octo network slash list/show` (deferred)                             |
-| G9  | `0011-h-s-a-slash-bridge-trait`                                 | `SlashBridge` trait + `list() → Vec<BridgedSlash>` + `propagate_to(slash_envelope_id: [u8;32]) → Result<BridgeReceipt, BridgeError>`                                                                          | `octo network slash-bridge list/propagate` (deferred)                 |
-| G12 | `0011-h-s-a-coordinator-admin-trait`                            | `CoordinatorAdminTrait` trait + `DomainCoordinatorRecord::load(coordinator_id: &CoordinatorId)` + RFC-0861 admin actions                                                                                      | `octo network coordinator admin` (deferred)                           |
-| G15 | `0011-h-s-a-gossip-stats`                                       | `Gossip::stats() → GossipStats` impl (substrate-side anti-entropy counter)                                                                                                                                    | `octo network gossip --stats` (deferred)                              |
-| G16 | `0011-h-s-a-envelope-inspector` + `0011-h-s-a-forward-envelope` | `EnvelopeInspector::inspect(envelope_id) → EnvelopeMeta` + `ForwardEnvelope::build(...) → ForwardEnvelope`                                                                                                    | `octo network envelope inspect/forward` (deferred)                    |
-| G17 | `0011-h-s-a-heartbeat-probe`                                    | `Heartbeat::probe(peer_did: &Did) → HeartbeatProbeResult` impl                                                                                                                                                | `octo network heartbeat` (deferred)                                   |
-| G18 | `0011-h-s-a-writer-election`                                    | `WriterElection` struct (RFC-0862) + `state() → ElectionState` + `cast_vote(candidate_id, weight)`                                                                                                            | `octo network election show/cast-vote` (deferred)                     |
-| G19 | (subsumed by G9)                                                | —                                                                                                                                                                                                             | —                                                                     |
-| G20 | `0011-h-s-a-network-sender`                                     | `NetworkSender` trait + `SendContext` + `send(envelope) → Result<SendReceipt, SendError>` (RFC-0863 substrate)                                                                                                | `octo network routing send` (deferred)                                |
-| G11 | `0011-h-s-a-specialized-node-record`                            | `SpecializedNodeRecord::load(node_id) → Option<SpecializedNodeRecord>` + `bind_to_did(holder_did: &Did)`                                                                                                      | `octo network node show/bind` (deferred)                              |
-| G14 | `0011-h-s-a-quota-router-node`                                  | `QuotaRouterNode` struct + `status() → RouterStatus` + `peer_capacity(peer_node_id) → u64` (RFC-0870 substrate)                                                                                               | `octo network router status/peers` (deferred)                         |
-| G13 | `0011-h-s-a-reputation-store`                                   | `ReputationStore` struct + `list(filter: ReputationFilter) → Vec<PeerReputation>` + `peer_reputation(did)` (RFC-0860 substrate)                                                                               | `octo network reputation show/list` (deferred)                        |
-| G10 | `0011-h-s-a-topology-render`                                    | `Topology` struct + `render(format: GraphFormat) → String` impl                                                                                                                                               | `octo network topology` (deferred)                                    |
+| GAP | Substrate-additions companion mission                           | Adds to substrate                                                                                                                                                                                                                                             | Required by CLI mission (this RFC)                                    |
+| --- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| G1  | `0011-h-s-a-bootstrap-orchestrator`                             | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig) → BootstrapOutcome` + `status() → BootstrapState` + `BootstrapConfig::{load_toml, save_toml}` + `BootstrapConfig::bootstrap_mode` accessor                                                 | `octo network bootstrap` (deferred); `octo network status` (deferred) |
+| G2  | (subsumed by G1)                                                | —                                                                                                                                                                                                                                                             | —                                                                     |
+| G7  | (subsumed by G1)                                                | —                                                                                                                                                                                                                                                             | `octo network mode set` (deferred)                                    |
+| G8  | `0011-h-s-a-seed-list-authority-rotate`                         | `SeedListAuthority::rotate_post_fork(new_authority, governance_quorum_proof) → Result<SeedListAuthority, SeedAuthorityError>`                                                                                                                                 | `octo network authority rotate` (deferred)                            |
+| G6  | `0011-h-s-a-slash-store`                                        | Layer B façade `SlashStore` in `mon/slash_aggregation.rs` calling existing `quota_router_storage::slash_store` (Layer D persistence); adds `list(reason_filter: Option<u16>) → Vec<SlashEnvelopeSummary>` + `show(slash_id: [u8;32]) → Option<SlashEnvelope>` | `octo network slash list/show` (deferred)                             |
+| G9  | `0011-h-s-a-slash-bridge-trait`                                 | `SlashBridge` trait + `list() → Vec<BridgedSlash>` + `propagate_to(slash_envelope_id: [u8;32]) → Result<BridgeReceipt, BridgeError>`                                                                                                                          | `octo network slash-bridge list/propagate` (deferred)                 |
+| G12 | `0011-h-s-a-coordinator-admin-trait`                            | `CoordinatorAdminTrait` trait + `DomainCoordinatorRecord::load(coordinator_id: &CoordinatorId)` + RFC-0861 admin actions                                                                                                                                      | `octo network coordinator admin` (deferred)                           |
+| G15 | `0011-h-s-a-gossip-stats`                                       | `Gossip::stats() → GossipStats` impl (substrate-side anti-entropy counter)                                                                                                                                                                                    | `octo network gossip --stats` (deferred)                              |
+| G16 | `0011-h-s-a-envelope-inspector` + `0011-h-s-a-forward-envelope` | `EnvelopeInspector::inspect(envelope_id) → EnvelopeMeta` + `ForwardEnvelope::build(...) → ForwardEnvelope`                                                                                                                                                    | `octo network envelope inspect/forward` (deferred)                    |
+| G17 | `0011-h-s-a-heartbeat-probe`                                    | `Heartbeat::probe(peer_did: &Did) → HeartbeatProbeResult` impl                                                                                                                                                                                                | `octo network heartbeat` (deferred)                                   |
+| G18 | `0011-h-s-a-writer-election`                                    | `WriterElection` struct (RFC-0862) + `state() → ElectionState` + `cast_vote(candidate_id, weight)`                                                                                                                                                            | `octo network election show/cast-vote` (deferred)                     |
+| G19 | (subsumed by G9)                                                | —                                                                                                                                                                                                                                                             | —                                                                     |
+| G20 | `0011-h-s-a-network-sender`                                     | `NetworkSender` trait + `SendContext` + `send(envelope) → Result<SendReceipt, SendError>` (RFC-0863 substrate)                                                                                                                                                | `octo network routing send` (deferred)                                |
+| G11 | `0011-h-s-a-specialized-node-record`                            | `SpecializedNodeRecord::load(node_id) → Option<SpecializedNodeRecord>` + `bind_to_did(holder_did: &Did)`                                                                                                                                                      | `octo network node show/bind` (deferred)                              |
+| G14 | `0011-h-s-a-quota-router-node`                                  | `QuotaRouterNode` struct + `status() → RouterStatus` + `peer_capacity(peer_node_id) → u64` (RFC-0870 substrate)                                                                                                                                               | `octo network router status/peers` (deferred)                         |
+| G13 | `0011-h-s-a-reputation-store`                                   | `ReputationStore` struct + `list(filter: ReputationFilter) → Vec<PeerReputation>` + `peer_reputation(did)` (RFC-0860 substrate)                                                                                                                               | `octo network reputation show/list` (deferred)                        |
+| G10 | `0011-h-s-a-topology-render`                                    | `Topology` struct + `render(format: GraphFormat) → String` impl                                                                                                                                                                                               | `octo network topology` (deferred)                                    |
 
 **Substrate-first ordering invariant:** Each CLI mission YAML `depends_on:` above the substrate-additions companion mission. Per [[cipherocto-design-principles]] §No premature coupling + [[feedback-no-fabricated-commit-rule]], CLI cannot promise substrate call that doesn't exist. Each companion mission closes its own DRY CLOSED gate before its corresponding CLI mission opens.
 
@@ -559,7 +559,7 @@ Each entry is substrate-first mission YAML that lands missing substrate type/met
 ### Phase 4: Bind Envelope (read + payload builders)
 
 - [ ] Mission `0011-h-network-bind-envelope`
-  - [ ] `bind-envelope show` (read); `BindEnvelope::{canonical_bytes_len, is_participant}`; `NetworkBindEnvelopeShowOutput`
+  - [ ] `bind-envelope show` (read); `BindEnvelope::{canonical_bytes, is_participant}` with blake3 hash surfaced via `NetworkBindEnvelopeShowOutput.canonical_bytes_hash`; raw bytes NEVER echoed
   - [ ] `bind-envelope rebind-prepare` (write; `--dry-run` default); `RebindPrepare` builder; `NetworkRebindPrepareOutput`
   - [ ] `bind-envelope rebind-commit` (write; `--dry-run` default); `RebindCommit` builder; `NetworkRebindCommitOutput` (new envelope)
   - [ ] `bind-envelope rebind-abort` (write; `--dry-run` default); `RebindAbort { reason }` builder; `NetworkRebindAbortOutput` (new envelope)
@@ -577,10 +577,8 @@ Each entry is substrate-first mission YAML that lands missing substrate type/met
 
 - [ ] Drift-closure mission `0011-h-0851p-a-seed-health-check-archive` — archive `missions/claimed/0851p-a-seed-health-check.md` (frontmatter `status: Claimed` + §Status prose "LANDED 2026-08-13 (drift-closure)" mismatch per [[memory-is-never-status-ground-truth]])
 - [ ] File the 2 missing follow-on missions: `missions/open/0851p-a1-prometheus-metric-export.md` + `missions/open/0851p-a2-operator-guide.md`
-- [ ] RFC-0851p-a §F8 amendment: paired `## Network CLI Surface` section cross-citing this amendment (mirror RFC-0011-f pattern)
-- [ ] Per-RFC amendments (Phase 2.2 of umbrella plan): RFC-0851, RFC-0851p-b, RFC-0855, RFC-0855p-c, RFC-0855p-b, RFC-0861, RFC-0862, RFC-0871, RFC-0008 each gain `§Network CLI Surface` section cross-citing this amendment
-- [ ] RFC Draft promotions (Phase 2.3 of umbrella plan): RFC-0850p-d/e/f, RFC-0852, RFC-0854, RFC-0856, RFC-0857, RFC-0858, RFC-0859, RFC-0860 — each requires own DRY cycle (out of scope for THIS amendment; cross-cited)
 - [ ] Final audit doc + memory card + MEMORY.md index entry
+- [ ] Per-RFC amendments and Draft promotions deferred to §Future Work items F8 + F9; each requires its own DRY cycle. Out of scope for THIS amendment's DRY CLOSED gate; cross-cited only.
 
 ## Key Files to Modify
 
@@ -604,6 +602,8 @@ Each entry is substrate-first mission YAML that lands missing substrate type/met
 - **F5 — Multi-network topology.** Operators may want to view multiple networks simultaneously. Future amendment.
 - **F6 — Network simulation / replay.** Substrate-side replay surface for testing. Out of scope.
 - **F7 — Federation across CipherOcto instances.** Per RFC-0863 + RFC-0871. Out of scope.
+- **F8 — Per-RFC `§Network CLI Surface` amendments.** RFC-0851, RFC-0851p-b, RFC-0855, RFC-0855p-c, RFC-0855p-b, RFC-0861, RFC-0862, RFC-0871, RFC-0008 each gain a `§Network CLI Surface` section cross-citing this amendment. Each amendment is its own DRY cycle. Out of scope for this amendment.
+- **F9 — Draft→Accepted promotions for 8 networking RFCs.** RFC-0850p-d, RFC-0850p-e, RFC-0850p-f, RFC-0852, RFC-0854, RFC-0856, RFC-0857, RFC-0858, RFC-0859, RFC-0860 — each requires its own DRY cycle before promotion. Out of scope for this amendment.
 
 ## Rationale
 
@@ -625,11 +625,11 @@ Substrate-faithful umbrella pattern chosen because:
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                  |
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.1     | 2026-09-18 | Initial Draft. Umbrella amendment defining `Commands::Network { NetworkAction }` with 15 substrate-faithful subcommands (5 families). 10 `OctoCliError` variants in slots 79-88 (slot 89 reserved). 17 substrate-additions companion missions enumerated for deferred slice. R1 dry-review ground-truth grep verified every cited substrate type/method. |
+| 0.1     | 2026-09-18 | Initial Draft. Umbrella amendment defining `Commands::Network { NetworkAction }` with 17 substrate-faithful subcommands (5 families). 10 `OctoCliError` variants in slots 79-88 (slot 89 reserved). 17 substrate-additions companion missions enumerated for deferred slice. R1 dry-review ground-truth grep verified every cited substrate type/method. |
 
 ## Related RFCs
 
-**Required (Accepted):**
+**Required:**
 
 - RFC-0011 — `octo` CLI Substrate
 - RFC-0008 — Deterministic AI Execution Boundary
@@ -644,7 +644,7 @@ Substrate-faithful umbrella pattern chosen because:
 - RFC-0862 — Writer Election Bootstrap
 - RFC-0871 — Specialized Node Protocol Envelope
 
-**Optional (Draft — substrate for these subcommands is DEFERRED to companion missions):**
+**Optional (substrate for these subcommands is DEFERRED to companion missions):**
 
 - RFC-0852 — Deterministic Gossip Protocol
 - RFC-0853 — Overlay Cryptography
@@ -728,7 +728,11 @@ No reverse dependencies. No central enum edits. No per-extension crate pattern v
 
 ### C. Mission YAML Pattern Reference
 
-Each CLI mission YAML in `missions/open/0011-h-network-*.md` follows RFC-0011-c companion mission pattern (single mission, multiple ACs, 2-round DRY minimum). Example structure for `0011-h-network-mode`:
+Each CLI mission YAML in `missions/open/0011-h-network-*.md` follows RFC-0011-c companion mission pattern (single mission, multiple ACs, 2-round DRY minimum). Two pattern variants:
+
+#### Pattern A — Substrate-faithful CLI mission (no BLOCKED deps)
+
+Example: `0011-h-network-mode` (covers only `mode show`; substrate exists; no BLOCKED dep):
 
 ```markdown
 ---
@@ -743,13 +747,35 @@ metadata:
   depends_on:
     - RFC-0011-h
     - RFC-0851p-a
+status: Open
+---
+```
+
+#### Pattern B — CLI mission with BLOCKED substrate-additions companion
+
+When a CLI subcommand needs substrate that does NOT yet exist, the mission YAML adds an inline `depends_on:` note pointing to the substrate-additions companion mission. The companion mission is itself Pattern C (below) and must close its DRY CLOSED gate before this CLI mission opens.
+
+```markdown
+---
+name: 0011-h-network-mode-full
+description: octo network mode {show,set} subcommands per RFC-0011-h Phase 2
+metadata:
+  node_type: substrate-cli
+  type: cli-substrate
+  originSessionId: ...
+  created: 2026-09-18
+  v: "1.0"
+  depends_on:
+    - RFC-0011-h
+    - RFC-0851p-a
     - mission 0011-h-s-a-bootstrap-orchestrator (BLOCKED — must close first for `mode set`)
 status: Open
 ---
+```
 
-# 0011-h-network-mode — `octo network mode show`
+#### Pattern C — Substrate-additions companion mission (Layer B)
 
-## Status
+Each entry in §Substrate-Additions Companion Missions takes this shape. Single mission, multiple ACs, 2-round DRY minimum. The mission lands the missing substrate type/method BEFORE its paired CLI mission opens.
 
 Open (2026-09-18) — Phase 2 of RFC-0011-h
 
@@ -784,7 +810,7 @@ CLI binding for `BootstrapMode` substrate enum read. `mode set` is DEFERRED per 
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate `BootstrapMode` enum exists per `crates/octo-network/src/mon/bootstrap.rs:197`.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate `BootstrapMode` enum exists per `BootstrapMode` (RFC-0851p-a §F.2).
 
 ## Out of Scope
 
@@ -793,7 +819,8 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrat
 ## Notes
 
 Phase 2 of RFC-0011-h. Pair with `0011-h-network-authority` + `0011-h-network-slash-stats` for Phase 2 closure.
-```
+
+`````
 
 Each substrate-additions companion mission YAML follows similar pattern but ACs are substrate-side (Layer B additions to `octo-network`) — NOT CLI. Example for `0011-h-s-a-bootstrap-orchestrator`:
 
@@ -842,7 +869,8 @@ impl BootstrapConfig {
     pub fn from_toml(path: &Path) -> Result<Self, TomlError>;
     pub fn save_toml(&self, path: &Path) -> Result<(), TomlError>;
 }
-```
+`````
+
 ````
 
 ## Acceptance Criteria
@@ -873,3 +901,4 @@ Per [[memory-is-never-status-ground-truth]], this amendment's Phase 6 closure mu
 
 This RFC's R1 dry-review ground-truth grep (2026-09-18) verified every cited substrate type/method against `crates/octo-network/src/`. R1 substrate-faithfulness audit produced ~30 CRIT findings against original 19-subcommand draft; this 15-subcommand rewrite reflects actual substrate. Future amendments that add `NetworkAction` variants MUST re-verify substrate citations via cargo grep before drafting, per [[substrate-faithfulness-verification]].
 ```
+````

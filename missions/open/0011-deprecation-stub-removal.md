@@ -62,7 +62,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 - `octo network bootstrap` (replacement for `octo join`) — DEFERRED to future amendment
 - `octo network status` (replacement for `octo status`) — DEFERRED to future amendment
 
-See RFC-0011 §Compatibility for the post-cut operator impact (operators calling these hit clap `unrecognized subcommand`, exit 2). Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
+See RFC-0011 §Compatibility for the post-cut operator impact. Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
 
 ## Acceptance Criteria
 
@@ -96,7 +96,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Stub Deprecation for
 
 ## Risk
 
-- Removing stubs before forward amendment lands breaks operator workflow (`octo init`, `octo role`, `octo agent`, `octo join`, `octo status`). Mitigation: gate on RFC-0011 acceptance + 1 release cycle hard-error cycle (per RFC-0011 §Compatibility — Stub command compatibility).
+- Removing stubs before forward amendment lands breaks operator workflow (`octo init`, `octo join`, `octo status`). Mitigation: gate on RFC-0011 acceptance + 1 release cycle hard-error cycle (per RFC-0011 §Compatibility — Stub command compatibility).
 - Forward amendments (audit/reputation/agent-lifecycle/role-provisioning/vault-operations/mesh-operations/governance) may not land in the same release cycle as stub removal. Mitigation: each stub's replacement surface is independent; operators can keep using deprecated stubs until replacement amendment ships.
 
 ## Notes
@@ -105,20 +105,19 @@ Forward-references future amendment landing order per RFC-0011 §Implementation 
 
 ## Scope
 
-Remove the five stub commands that `crates/octo-cli/src/lib.rs` exposes today
-and RFC-0011 preserved as deprecated wrappers:
+Remove the three stub commands that `crates/octo-cli/src/lib.rs` exposed
+pre-cut and RFC-0011 preserved as deprecated wrappers:
 
 1. **`octo init`** — prints init banner. Replace landing is `octo-wallet init`
    (lands in RFC-0011 wallet substrate amendment; out of scope here).
 2. **`octo join`** — prints join banner. Replace landing is `octo network
 bootstrap` (per Status header amendment chain).
-3. **`octo role {builder,provider,storage,bandwidth,orchestrator}`** — prints
-   role banner. Replace landing is `octo role select` (per Status header
-   amendment chain).
-4. **`octo agent {create,run,list}`** — prints agent banner. Replace landing
-   is `octo agent lifecycle` (per Status header amendment chain).
-5. **`octo status`** — prints status banner. Replace landing is `octo network
+3. **`octo status`** — prints status banner. Replace landing is `octo network
 status` (per Status header amendment chain).
+
+`octo role` and `octo agent` were already first-class subcommands in the
+pre-cut substrate (RFC-0011-d Phase 1 + RFC-0011-c) and are not part of
+this removal.
 
 Per RFC-0011 §Compatibility timeline:
 
@@ -194,14 +193,9 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
 - **Breaking change** for any operator script that still calls `octo init`,
   `octo join`, `octo status`, etc. Per RFC migration etiquette, this is
   acceptable after 1 release cycle deprecation + 1 release cycle hard-error.
-- `octo` now exposes the post-cut surface per `crates/octo-cli/src/lib.rs`
-  `Commands` enum: `whoami`, `identity {show,rotate,revoke}`,
-  `capability {list,mint,attenuate}`, `policy {show,list}`,
-  `role {select,...}` (RFC-0011-d), `reputation {list,show}` (RFC-0011-b),
-  `mesh {peers,connect,status,...}` (RFC-0011-f), `vault {list,balance,...}` (RFC-0011-e),
-  `agent {create,run,list,destroy,attach}` (RFC-0011-c),
-  `governance {snapshot,attest,vote,...}` (RFC-0011-g), `audit {list,show,redact,...}`
-  (RFC-0011-a).
+- `octo` exposes the post-cut surface per the `Commands` enum in
+  `crates/octo-cli/src/lib.rs`. For the full subcommand list, run
+  `octo --help` or consult that file directly.
 - `OctoCliError::StaleStub` retained with the `replaced_by: &'static str`
   field — library-API soft sentinel for any downstream consumer of
   `OctoCliError` that matches on the variant. CLI operators never
@@ -215,8 +209,7 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
 
 - RFC-0011 §Compatibility — stub deprecation timeline
 - RFC-0011 §Status header amendment chain — role provisioning (lands role
-  select), agent lifecycle (lands agent lifecycle), mesh operations (lands
-  network bootstrap + status)
+  select), mesh operations (lands network bootstrap + status)
 - [[cipherocto-design-principles]] — Layer C per-RFC evolution
 
 ## Claimant

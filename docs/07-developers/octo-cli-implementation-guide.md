@@ -1,7 +1,7 @@
 # `octo` CLI — Implementation Guide
 
 > **RFC:** RFC-0011
-> **Companion to:** `rfcs/draft/process/0011-octo-cli-substrate.md`
+> **Companion to:** `rfcs/accepted/process/0011-octo-cli-substrate.md`
 > **Per:** `docs/BLUEPRINT.md` §Tools → Implementation Guides (required for 10+
 > types / 4+ phases)
 
@@ -881,12 +881,11 @@ pub enum Commands {
 }
 ```
 
-The pre-cut clap derive struct (with the five stub `Commands` variants
+The pre-cut clap derive struct (with the three stub `Commands` variants
 and the `commands::stub::print_deprecated` dispatch arms) lives in git
-history at commit `2c28cbb2~1`. Consult `git show
-2c28cbb2~1:crates/octo-cli/src/commands/stub.rs` to retrieve the
-deprecated wrappers + banner-emission prose that drove the migration
-etiquette.
+history at commit `2c28cbb2~1`. Consult `git show 2c28cbb2~1 --
+crates/octo-cli/src/commands/stub.rs` to retrieve the deprecated
+wrappers + banner-emission prose that drove the migration etiquette.
 
 ## Identity Subcommands
 
@@ -1079,11 +1078,13 @@ and `Commands::Status` were removed from `lib.rs`; `Commands::Role` and
 `Commands::Agent` were already first-class subcommands in the v2.0 binary
 (no stub surface to remove).
 
-The `OctoCliError::StaleStub` variant is retained as a soft sentinel — it
-gained a `replaced_by: &'static str` field so operator switch tables that
-map exit 65 to "stub removed; see X" continue to work via library callers.
-v2.0+ operators invoking `octo init` / `octo join` / `octo status` hit clap
-`unrecognized subcommand` (exit 2) instead of the v1.x deprecation banner.
+The `OctoCliError::StaleStub` variant is retained as a `#[non_exhaustive]`
+library-API soft sentinel — it gained a `replaced_by: &'static str` field
+for downstream library consumers of `OctoCliError` that match on the
+variant. v2.0+ operators invoking `octo init` / `octo join` / `octo status`
+hit clap `unrecognized subcommand` (exit 2) instead of the v1.x
+deprecation banner; the `StaleStub` variant is unreachable from CLI
+dispatch post-cut.
 
 The v1.0 → v1.1 → v2.0 transition record for the stub cut lives in git
 history at commit `2c28cbb2~1` (the commit immediately before the v2.0

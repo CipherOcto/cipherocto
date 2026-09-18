@@ -66,15 +66,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: PolicyAction,
     },
-    /// Deprecated — see RFC-0011 §Compatibility
-    #[command(hide = true)]
-    Init,
-    /// Deprecated — see RFC-0011 §Compatibility
-    #[command(hide = true)]
-    Join,
-    /// Deprecated — see RFC-0011 §Compatibility
-    #[command(hide = true)]
-    Status,
     /// Role provisioning subcommands (RFC-0011-d §7.4).
     Role {
         /// Role subcommand.

@@ -10,6 +10,14 @@ Accepted (2026-08-29)
 > role provisioning (RFC-0011-d), vault operations (RFC-0011-e), mesh
 > operations (RFC-0011-f), and governance (RFC-0011-g).
 
+## Changelog
+
+| Version | Date       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-29 | RFC-0011 Accepted. Stub commands (`init`, `join`, `role`, `agent`, `status`) emit deprecation banner on stderr, exit 0. Hidden from `--help`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v1.1    | 2026-09-01 | Stale-stub window opens. Operators MAY opt into v1.1 hard-error (`StaleStub`, exit 65) via the `OCTO_STALE_STUB_WINDOW=1` env-var override. Release compile flag is `false` until next minor; v1.1 default banner-only behaviour is unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v2.0    | 2026-09-17 | Stub commands removed entirely per §Compatibility timeline. `OctoCliError::StaleStub` retained (soft sentinel) with new `replaced_by: &'static str` field so operator switch tables and JSON envelope parsers can extract a replacement hint. Replacement landing: `octo-wallet init` (replaces `octo init` — landed via wallet substrate amendment), `octo role select` (replaces `octo role {…}` — landed via RFC-0011-d Phase 1), `octo agent {create,run,list,destroy,attach}` (replaces `octo agent` — landed via RFC-0011-c). `octo network bootstrap` (replaces `octo join`) and `octo network status` (replaces `octo status`) DEFERRED to a future amendment — operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) until that amendment lands. `commands/stub.rs` + `tests/stub.rs` deleted; `commands::stub` module re-export removed from `commands/mod.rs`. `OctoCliError::StaleStub` Display now surfaces `replaced_by` verbatim. |
+
 ## Authorship Note
 
 Authored by CipherOcto maintainers per git log (`git log --follow rfcs/accepted/process/0011-octo-cli-substrate.md`). Substrate-amendment RFCs in the RFC-0011 chain inherit the same authorship chain.
@@ -998,22 +1006,10 @@ reference to the dual-stake model until those amendments.
 
 ### Stub command compatibility
 
-The current stub commands (`init`, `join`, `role`, `agent`, `status`) are preserved
-in v1.0 as deprecated wrappers:
-
-- `init` — prints init banner + deprecation warning pointing to
-  `octo-wallet init` (out of scope for this RFC; lands via RFC-0011 wallet
-  substrate amendment).
-- `join` — prints join banner + deprecation warning pointing to
-  `octo network bootstrap` (out of scope for v1.0).
-- `role {builder,provider,storage,bandwidth,orchestrator}` — prints role banner +
-  deprecation warning pointing to the role-provisioning amendment per Status
-  header amendment chain.
-- `agent {create,run,list}` — prints agent banner + deprecation warning pointing
-  to the agent-lifecycle amendment per Status header amendment chain.
-- `status` — prints status banner + deprecation warning.
-
-Removal timeline:
+The stub-command deprecation timeline (v1.0 → v1.1 → v2.0) cleared in
+v2.0 (2026-09-17); see §Changelog for the per-version summary.
+This section preserves the deprecation behaviour matrix so future
+amendments can refer to the historical contract:
 
 | Version           | Stub command behavior                               |
 | ----------------- | --------------------------------------------------- |
@@ -1021,8 +1017,15 @@ Removal timeline:
 | v1.1 (next minor) | Emit hard error (exit code 65 (`StaleStub`)) on use |
 | v2.0 (next major) | Remove entirely                                     |
 
-Per RFC migration etiquette: 1 release cycle deprecation window + 1 release cycle
-hard-error window before removal.
+The five stub commands (`octo init`, `octo join`, `octo role {…}`,
+`octo agent {…}`, `octo status`) are no longer in the binary surface
+post-v2.0. `octo init`, `octo role {…}`, and `octo agent {…}` had
+their replacements land in their respective amendment RFCs (see
+§Changelog for landing references). The replacement surfaces for
+`octo join` (→ `octo network bootstrap`) and `octo status`
+(→ `octo network status`) are DEFERRED to a future amendment; calls
+to those post-v2.0 hit clap `unrecognized subcommand` (exit 2) until
+that amendment lands.
 
 #### Stale-stub window env-var override (v1.1 hard-error opt-in)
 

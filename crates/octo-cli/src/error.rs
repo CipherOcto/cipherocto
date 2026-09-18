@@ -131,11 +131,27 @@ pub enum OctoCliError {
     /// Filter expression is malformed.
     #[error("invalid filter: {0}")]
     InvalidFilter(String),
-    /// A deprecated stub was invoked during the stale-stub window.
-    #[error("`{name}` was removed")]
+    /// A deprecated stub was invoked (post-v2.0 cut; soft sentinel —
+    /// see RFC-0011 §Changelog v2.0 entry).
+    ///
+    /// Carries `replaced_by` so operator switch tables and JSON
+    /// envelope parsers can grep the outbound payload for a
+    /// human-readable replacement hint. Non-stale code paths
+    /// (e.g. clap `unrecognized subcommand`) supersede this path
+    /// for operators who invoke a removed stub fresh today; this
+    /// variant preserves the v1.1 `StaleStub` exit-65 contract
+    /// for any operator that observed the hard-error during the
+    /// v1.1 cycle, and for any library caller that surfaces the
+    /// variant directly. Retained per
+    /// [[cipherocto-design-principles]] §Extension over enumeration:
+    /// `#[non_exhaustive]` library surface must not lose variants.
+    #[error("`{name}` was removed; use `{replaced_by}` (see `octo --help` for the current subcommand list)")]
     StaleStub {
         /// Stub command name.
         name: String,
+        /// Human-readable replacement hint (e.g. `octo-wallet init`
+        /// for `octo init`).
+        replaced_by: &'static str,
     },
     /// Reputation aggregate for the given `(did, role)` was not found
     /// (RFC-0011-b §Substrate `[ADD]` map: `ReputationError::AggregateEmpty`).
@@ -1043,7 +1059,10 @@ impl OctoCliError {
                     "the {rfc_ref} substrate is not Accepted; the `attest` / `vote` primitives are reserved until the prerequisite RFC lands. Check `accepted/` for the current state"
                 )
             }
-            Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
+            Self::StaleStub { name, replaced_by } => format!(
+                "this command was removed; see the migration notes \
+                 (use `{replaced_by}` instead of `{name}`)"
+            ),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
             Self::RuntimeSpawnFailed { .. } => {
                 "the runtime spawn call failed at the substrate boundary (handle mint error, channel registration failure, or invalid attach handle token); retry; if the failure persists, check that the agent is in a transition-eligible state (`octo agent list`)".to_string()
@@ -1690,6 +1709,7 @@ mod tests {
             (
                 OctoCliError::StaleStub {
                     name: "init".into(),
+                    replaced_by: "octo-wallet init",
                 },
                 65,
             ),
@@ -2051,5 +2071,29 @@ mod tests {
         // `AttachError` is impossible (no private fields), so the
         // wildcard is contract-tested by the substrate's `non_exhaustive`
         // attribute alone — not asserted here.
+    }
+
+    /// RFC-0011 §Changelog v2.0 entry: `StaleStub` retains its
+    /// `replaced_by: &'static str` field so operator switch tables
+    /// can grep the outbound JSON envelope for a replacement hint.
+    /// Pins both the `Display` message (must surface `replaced_by`
+    /// verbatim) and the exit-code slot (must stay 65 per RFC-0011
+    /// §Exit Code table).
+    #[test]
+    fn tv_stalestub_v2_replaced_by_display_format() {
+        let err = OctoCliError::StaleStub {
+            name: "init".into(),
+            replaced_by: "octo-wallet init",
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("`octo-wallet init`"),
+            "Display MUST surface `replaced_by` hint, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("`init`"),
+            "Display MUST surface the original `name`, got: {rendered}"
+        );
+        assert_eq!(err.exit_code(), 65, "StaleStub MUST stay exit 65");
     }
 }

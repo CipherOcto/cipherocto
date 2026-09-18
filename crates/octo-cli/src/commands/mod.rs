@@ -10,7 +10,6 @@ pub mod peer;
 pub mod policy;
 pub mod reputation;
 pub mod role;
-pub mod stub;
 pub mod vault;
 
 pub use agent::AgentAction;
@@ -32,17 +31,6 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
         Commands::Identity { action } => identity::dispatch(action, cli),
         Commands::Capability { action } => capability::dispatch(action, cli),
         Commands::Policy { action } => policy::dispatch(action, cli),
-        Commands::Init => {
-            stub::print_deprecated("init", "use octo-wallet init (out of scope for this RFC)")
-        }
-        Commands::Join => stub::print_deprecated(
-            "join",
-            "use octo network bootstrap (out of scope for this RFC)",
-        ),
-        Commands::Status => stub::print_deprecated(
-            "status",
-            "use octo network status (per Status header amendment chain)",
-        ),
         Commands::Role { action } => role::dispatch(action, cli),
         Commands::Reputation { action } => reputation::dispatch(action, cli),
         Commands::Mesh { action } => mesh::dispatch(action, cli),

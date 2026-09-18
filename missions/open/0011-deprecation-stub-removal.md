@@ -6,17 +6,23 @@ metadata:
   type: cli-substrate
   originSessionId: RFC-0011 author session
   created: 2026-08-27
-  v: "1.0"
+  v: "2.0"
   depends_on:
     - RFC-0011
     - mission 0011-core-output-envelope-redaction
     - mission 0011-identity-commands
     - mission 0011-capability-commands
     - mission 0011-policy-commands
+    - mission 0011-c-agent-create-subcommand
+    - mission 0011-c-agent-list-subcommand
+    - mission 0011-c-agent-run-subcommand
+    - mission 0011-c-agent-destroy-subcommand
+    - mission 0011-c-agent-attach-subcommand
+    - mission 0011-d-role-subcommands-phase1
   release_gate:
-    require: "1 release cycle elapsed after v1.1 hard-error (StaleStub, exit 65)"
+    require: "v1.1 hard-error cycle elapsed on next"
     released_version: TBD
-status: Open
+status: Claimed
 ---
 
 # 0011-deprecation-stub-removal — Drop stub commands (init, join, role, agent, status)
@@ -42,11 +48,23 @@ Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elaps
 
 ## RFC
 
-RFC-0011 §Compatibility (rfcs/draft/process/0011-octo-cli-substrate.md)
+RFC-0011 §Compatibility (rfcs/accepted/process/0011-octo-cli-substrate.md)
+RFC-0011 §Changelog (rfcs/accepted/process/0011-octo-cli-substrate.md)
 
 ## Dependencies
 
 See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 → 3 → 4 → 5 per RFC-0011 §Implementation Phases.
+
+## Out of Scope (User Decision 2026-09-17)
+
+- `octo network bootstrap` (replacement for `octo join`) — DEFERRED to future amendment
+- `octo network status` (replacement for `octo status`) — DEFERRED to future amendment
+
+Operators calling these post-cut hit clap `unrecognized subcommand` (exit 2) until that amendment lands. Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
+
+## StaleStub retention rationale
+
+`OctoCliError::StaleStub` retained (not deleted) with new `replaced_by: &'static str` field. Preserves operator switch tables that map exit code 65 to "stub removed; see X". Substrate-faithful to [[cipherocto-design-principles]] §Extension over enumeration: `#[non_exhaustive]` library surface must not lose variants. Soft sentinel — non-stale code paths (e.g. clap `unrecognized subcommand`) supersede this path per RFC-0011 §Changelog v2.0 entry.
 
 ## Acceptance Criteria
 

@@ -391,40 +391,6 @@ All 10 `OctoCliError` variants are additive under `#[non_exhaustive]` per RFC-00
 | `governance tally` reads stale tally                                                        | LOW — substrate owns freshness                         | Tally substrate owned by `VotingTally` (RFC-0011-g §Voting substrate); CLI surfaces current state only                                                                |
 | `authority show` exposes deprecated authority                                               | LOW — informational                                    | `valid: bool=false` case explicitly surfaces `message: Option<String>` carrying the `Display` of `SeedAuthorityError::SeedListAuthorityDeprecated`; no network effect |
 
-## Adversary Analysis
-
-### A1 — Operator mis-edits bootstrap.toml to invalid mode
-
-1. Who benefits? Nobody (operator error).
-2. Cost them? Operator typing.
-3. Gain if successful? Network does not change — CLI surfaces invalid mode at `mode show` time (exit 82).
-4. Defense? Substrate `BootstrapMode` enum has 3 valid variants (Direct / TorOnly / TorWithIpFallback); CLI surfaces parsed enum value; any TOML parse failure returns exit 82.
-5. Residual risk? Operator who edits `bootstrap.toml` outside CLI does not get CLI error until next `mode show`. ACCEPTED RISK with operator responsibility.
-
-### A2 — Operator mis-confirms bind-envelope rebind-commit
-
-1. Who benefits? Nobody (operator error).
-2. Cost them? Operator typing + `--confirm-acknowledge` gate.
-3. Gain if successful? Substrate commits `RebindCommit` payload.
-4. Defense? (a) `--dry-run` DEFAULT for all 3 rebind subcommands; (b) `--confirm-acknowledge` gate; (c) `payload` field surfaced for operator review before commit; (d) audit-log entry per RFC-0011-a §Audit substrate; (e) `RebindCommit` payload itself does not mutate state — substrate owns commit semantics.
-5. Residual risk? Operator who skips `--dry-run` AND `--confirm-acknowledge` AND substrate has no further gate. Substrate-side gate (governance quorum per RFC-0871) is last line of defense. ACCEPTED RISK with operator responsibility.
-
-### A3 — Adversary scrapes audit-log for envelope canonical bytes
-
-1. Who benefits? Privacy attacker.
-2. Cost them? OCTO_HOME access (logs at `$OCTO_HOME/octo-cli/audit.log`).
-3. Gain if successful? Read payload bytes for committed envelopes.
-4. Defense? (a) `OctoCliRedactor` strips `*:payload`, `*:body`, `*:canonical_bytes` field-name patterns per RFC-0011 §Redaction layer; (b) `bind-envelope show` returns `canonical_bytes_hash` only (blake3 hex), never raw bytes; (c) redaction test vectors assert no leak.
-5. Residual risk? Field-name pattern miss for new envelope payload field names. Substrate-faithful mitigation: redaction pattern is byte-precise over entire envelope body shape per RFC-0871 §Data Structures.
-
-### A4 — DoS via unbounded trust-graph depth
-
-1. Who benefits? Attacker who wants operator station CPU/memory exhaustion.
-2. Cost them? Operator CLI invocation.
-3. Gain if successful? Slow / unresponsive operator session.
-4. Defense? (a) `--depth` clamped 1-100; (b) `--depth 0` rejected with exit 85; (c) `trust-graph render` performance target <2s for 100-node graph asserted by TV.
-5. Residual risk? Operator who runs `--depth 100 --format dot` on a 10000-node graph still gets <2s substrate-side render, but JSON envelope could exceed redaction layer scan budget. ACCEPTED RISK at documented substrate performance envelope.
-
 ## Compatibility
 
 **Backward:** `Commands::Network { NetworkAction }` is purely additive under `#[non_exhaustive]`. No existing CLI command renamed/removed. `octo mesh peer` (RFC-0011-f) remains mesh peer-table surface; this amendment adds `octo network peers` for gateway-cache surface (different substrate function — `octo_mesh::peers` vs `octo_network::gdp::cache::GatewayCache::iter`).
@@ -881,7 +847,7 @@ impl BootstrapConfig {
 - [ ] `Cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-network --lib` green
 
-### Dependencies
+## Dependencies
 
 Hard sequencing: this mission closes its DRY CLOSED gate BEFORE `0011-h-network-bootstrap-status` mission can open. Per [[feedback-no-fabricated-commit-rule]] + [[never-guess-hard-check]] + [[substrate-faithfulness-verification]].
 
@@ -898,6 +864,6 @@ Per [[memory-is-never-status-ground-truth]], this amendment's Phase 6 closure mu
 
 ### E. Substrate-Faithful Amendment Trail
 
-This RFC's R1 dry-review ground-truth grep (2026-09-18) verified every cited substrate type/method against `crates/octo-network/src/`. R1 substrate-faithfulness audit produced ~30 CRIT findings against original 19-subcommand draft; this 15-subcommand rewrite reflects actual substrate. Future amendments that add `NetworkAction` variants MUST re-verify substrate citations via cargo grep before drafting, per [[substrate-faithfulness-verification]].
+This RFC's R1 dry-review ground-truth grep (2026-09-18) verified every cited substrate type/method against `crates/octo-network/src/`. R1 substrate-faithfulness audit produced ~30 CRIT findings against original 19-subcommand draft; this 17-subcommand rewrite reflects actual substrate. Future amendments that add `NetworkAction` variants MUST re-verify substrate citations via cargo grep before drafting, per [[substrate-faithfulness-verification]].
 ```
 ````

@@ -2102,10 +2102,14 @@ mod tests {
     }
 
     /// RFC-0011 §Changelog v2.0 entry: `StaleStub`'s `replaced_by`
-    /// field is documented as the operator-observable hint in the
-    /// outbound JSON envelope, which is rendered via `user_message()`
-    /// (not raw `Display`). Pin both surfaces so a future refactor
-    /// cannot silently regress the JSON-envelope contract.
+    /// field is documented as the library-API soft sentinel hint
+    /// (per [[cipherocto-design-principles]] §Extension over
+    /// enumeration, since `OctoCliError` is `#[non_exhaustive]`).
+    /// The field surfaces verbatim via `user_message()` (the
+    /// outbound JSON envelope) so downstream library consumers
+    /// matching on the variant can extract the replacement hint
+    /// without depending on `Display` prose. Pin both surfaces so
+    /// a future refactor cannot silently regress the contract.
     #[test]
     fn tv_stalestub_v2_replaced_by_user_message() {
         let err = OctoCliError::StaleStub {

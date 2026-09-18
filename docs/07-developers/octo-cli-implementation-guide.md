@@ -881,11 +881,9 @@ pub enum Commands {
 }
 ```
 
-The pre-cut clap derive struct (with the three stub `Commands` variants
-and the `commands::stub::print_deprecated` dispatch arms) lives in git
-history at commit `2c28cbb2~1`. Consult `git show 2c28cbb2~1 --
-crates/octo-cli/src/commands/stub.rs` to retrieve the deprecated
-wrappers + banner-emission prose that drove the migration etiquette.
+For the pre-cut substrate retrieval pointer (deprecated stub wrappers +
+banner-emission prose that drove the migration etiquette), consult the
+`§Stub Command Deprecation` section below.
 
 ## Identity Subcommands
 
@@ -1088,9 +1086,11 @@ dispatch post-cut.
 
 The v1.0 → v1.1 → v2.0 transition record for the stub cut lives in git
 history at commit `2c28cbb2~1` (the commit immediately before the v2.0
-removal); consult `git show 2c28cbb2~1 -- crates/octo-cli/src/commands/stub.rs`
+removal); consult `git show 2c28cbb2~1:crates/octo-cli/src/commands/stub.rs`
 to retrieve the deprecated wrappers and banner-emission prose that drove
-the migration etiquette.
+the migration etiquette. The replacement for `octo init` is the separate
+`octo-wallet init` binary (not an `octo` subcommand); operators migrating
+scripts that called `octo init` should consult `octo-wallet --help`.
 
 ## Test Pattern
 

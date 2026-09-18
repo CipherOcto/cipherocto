@@ -59,7 +59,7 @@ Subcommands documented "DEFERRED (substrate-additions prerequisite)" NOT in bina
 | ---- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | G1   | Operator-driven bootstrap/status without substrate reach-arounds                                         | `octo network mode show` + `octo network mode set` + `octo network authority show` surface bootstrap state; `octo network peers list` surfaces `GatewayCache` without file-edit |
 | G2   | All subcommands delegate through typed substrate boundary                                                | Every CLI handler calls real `octo-network` Layer B function; zero direct reach into private items                                                                              |
-| G3   | RFC-0011 future-amendment band (additive exit slot extension via this RFC)                               | New exit slots 79-89; additive under `#[non_exhaustive]`                                                                                                                        |
+| G3   | RFC-0011 future-amendment band (additive exit slot extension via this RFC)                               | New exit slots 79-90; additive under `#[non_exhaustive]`                                                                                                                        |
 | G4   | All mutating subcommands gated through `require_confirm` + `--confirm-acknowledge` + `--dry-run` default | RFC-0011 confirmation-gate pattern (extended to network subcommands per this RFC)                                                                                               |
 | G5   | All network errors redacted in `OutputEnvelope.error`                                                    | RFC-0011 redaction layer (peer DIDs surface via `redacted: true` markers; envelope payload bytes never surface per this RFC)                                                    |
 | G6   | Deterministic per-invocation output                                                                      | All 17 subcommands Class C (read-only / local-payload-builder); no Class B consensus-impacting operations                                                                       |
@@ -75,7 +75,7 @@ Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 21 
 
 1. **Bootstrap config observability.** Operators edit `$OCTO_HOME/octotransport/bootstrap.toml` for `BootstrapMode` + `SeedListAuthority` but have no CLI surface. Substrate `BootstrapMode` enum + `verify_authority(SeedListAuthority, epoch)` + `SlashedSeedBlacklist` exist; CLI binding does not.
 2. **Network state observability.** Operators have no CLI surface for `GatewayCache` entries, trust-graph topology, slash reputation stats, coordinator lifecycle, governance tally. They grep substrate logs. Substrate functions exist for all 17 substrate-faithful subcommands.
-3. **Mutating operations unsafe.** Substrate-faithful slice has 3 mutating subcommands (the `bind-envelope rebind-{prepare,commit,abort}` payload builders); every one must mirror RFC-0011 §Confirmation flag matrix; every mutating subcommand defaults to `--dry-run`. (`slash mark` was originally counted but is read-only inquiry against `SlashReputationStoreCompat` aggregate; CLI never mints slashes — minting is Class B per RFC-0008 and out of scope for this amendment.)
+3. **Mutating operations unsafe.** Substrate-faithful slice has 3 mutating subcommands (the `bind-envelope rebind-{prepare,commit,abort}` payload builders); every one must mirror RFC-0011 §Confirmation Flag Matrix; every mutating subcommand defaults to `--dry-run`. (`slash mark` was originally counted but is read-only inquiry against `SlashReputationStoreCompat` aggregate; CLI never mints slashes — minting is Class B per RFC-0008 and out of scope for this amendment.)
 
 ## Roles and Authorities
 
@@ -83,7 +83,7 @@ Phase 0 recon (`docs/audits/2026-09-18-network-cli-gap-recon.md`) identified 21 
 
 | Role                  | Identifier                                                                            | Authority Scope                                                      | Source/Ref                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Operator (CLI caller) | OCTO_HOME path + capability caveats                                                   | read (all 17); write (`bind-envelope rebind-{prepare,commit,abort}`) | RFC-0011 §Roles + RFC-0011-d §Roles and Authorities                        |
+| Operator (CLI caller) | OCTO_HOME path + capability caveats                                                   | read (all 17); write (`bind-envelope rebind-{prepare,commit,abort}`) | RFC-0011 §Roles and Authorities + RFC-0011-d §Roles and Authorities        |
 | Bootstrap Authority   | `SeedListAuthority::{Foundation, Dao}`                                                | gate authority state display                                         | RFC-0851p-a                                                                |
 | Coordinator           | `CoordinatorRecord` (octo-coordinator-types)                                          | gate `coordinator show` (read-only; admin deferred per RFC-0861)     | RFC-0855p-c                                                                |
 | Governance Voter      | `VotingTally` (substrate-canonical at `crates/octo-network/src/mon/governance.rs:67`) | gate `governance tally` read                                         | substrate-canonical (no governing RFC); spec surface deferred to substrate |
@@ -174,7 +174,7 @@ pub enum Commands {
 }
 ```
 
-`NetworkAction` enum (10 wrapper variants, `#[non_exhaustive]` per RFC-0011 §Error envelope additive contract; 17 substrate-faithful leaf subcommands via nested sub-actions per §Subcommand Taxonomy). Each nested action enum below carries its own `#[non_exhaustive]` per F-14 pattern (GovernanceAction / AgentAction / AuditAction precedent at `crates/octo-cli/src/commands/{governance,agent,audit}.rs`):
+`NetworkAction` enum (10 wrapper variants, `#[non_exhaustive]` per RFC-0011 §Error Handling additive contract; 17 substrate-faithful leaf subcommands via nested sub-actions per §Subcommand Taxonomy). Each nested action enum below carries its own `#[non_exhaustive]` per F-14 pattern (GovernanceAction / AgentAction / AuditAction precedent at `crates/octo-cli/src/commands/{governance,agent,audit}.rs`):
 
 ```rust
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
@@ -258,7 +258,7 @@ Each row maps: substrate function → governing RFC section → mission YAML.
 | `authority show`               | (read)                                                                                                                                                                                                                                                                            | `verify_authority(SeedListAuthority, current_epoch)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | RFC-0851p-a §1 BootstrapNode Registry                                                                 | `0011-h-network-authority` §authority-show           | 2     | Bootstrap Authority |
 | `slash excluded <did>`         | (read)                                                                                                                                                                                                                                                                            | `SlashReputationStoreCompat::is_excluded(did)`; `<did>` accepts 104-char hex (52-byte `RecorderDid` per `crates/octo-reputation/src/types.rs`); CLI parser maps to `RecorderDid`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | RFC-0855p-b                                                                                           | `0011-h-network-slash-stats` §slash-excluded         | 2     | Operator            |
 | `slash stats`                  | (read)                                                                                                                                                                                                                                                                            | `SlashReputationStoreCompat::{did_count, total_slashes, global_slash_count}` (see G6b for aggregation rationale; cross-platform witness aggregation lives in `mon/slash_aggregation.rs` per RFC-0850p-c, SEPARATE substrate concern per [[cipherocto-design-principles]] §Separation of concerns). `per_did` accessor DEFERRED to G6 `0011-h-s-a-slash-store` companion mission per §Substrate-Additions (substrate lacks `iter_dids()` accessor verified 2026-09-18)                                                                                                                                                                                              | RFC-0855p-b                                                                                           | `0011-h-network-slash-stats` §slash-stats            | 2     | Operator            |
-| `trust-graph render`           | --depth 1-100; --format ascii or dot                                                                                                                                                                                                                                              | `TrustGraph::render(&self, format: GraphFormat) -> String`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | RFC-0851p-a §F.4                                                                                      | `0011-h-network-trust-graph`                         | 1     | Operator            |
+| `trust-graph render`           | --depth 1-100; --format ascii or dot                                                                                                                                                                                                                                              | `TrustGraph::render(&self, format: GraphFormat) -> String`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | RFC-0851p-a §10 Error Handling                                                                        | `0011-h-network-trust-graph`                         | 1     | Operator            |
 | `coordinator show`             | (read; BLOCKED — pending G12b `0011-h-s-a-coordinator-record-loader` closure)                                                                                                                                                                                                     | `CoordinatorRecord` load via `octo-coordinator-types` (canonical type at `octo_coordinator_types::state::CoordinatorRecord`); substrate currently exposes no public `CoordinatorRecord::load(coordinator_id)` entry point — see `0011-h-s-a-coordinator-record-loader` companion mission in §Substrate-Additions Companion Missions for the loader addition                                                                                                                                                                                                                                                                                                        | RFC-0855p-c + RFC-0861                                                                                | `0011-h-network-coordinator` §coordinator-show       | 3     | Coordinator         |
 | `governance tally`             | (read; BLOCKED — pending G3b `0011-h-s-a-voting-tally-canonical-bytes` closure)                                                                                                                                                                                                   | `VotingTally::{total_for, total_against, into_canonical}`. CLI MUST read total_for/total_against BEFORE moving self into into_canonical (`into_canonical` consumes self per substrate signature at `crates/octo-network/src/mon/governance.rs` — reading fields after the call would be a use-after-move substrate violation). `into_canonical` requires 7-arg proposal context (proposal_id, issuer, decision, state, voting_opens_at_millis, voting_closes_at_millis, total_eligible_weight); CLI call site must supply context from substrate. `canonical_bytes_hash` field BLOCKED per §Substrate-Additions G3b (governance tally helper missing in substrate) | substrate-canonical (VotingTally at `crates/octo-network/src/mon/governance.rs:67`; no governing RFC) | `0011-h-network-governance` §governance-tally        | 3     | Governance Voter    |
 | `governance rotation status`   | (read)                                                                                                                                                                                                                                                                            | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch: u64)}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | RFC-0862                                                                                              | `0011-h-network-governance` §governance-rotation     | 3     | Governance Voter    |
@@ -353,8 +353,8 @@ pub struct NetworkCoordinatorShowOutput {
 // octo network governance tally (read)
 #[derive(Serialize, JsonSchema)]
 pub struct NetworkGovernanceTallyOutput {
-    pub total_for: u64,
-    pub total_against: u64,
+    pub votes_for: BTreeMap<[u8;32], u64>,    // substrate-canonical field per `crates/octo-network/src/mon/governance.rs:67` (VotingTally::votes_for)
+    pub votes_against: BTreeMap<[u8;32], u64>, // substrate-canonical field per `crates/octo-network/src/mon/governance.rs:67` (VotingTally::votes_against)
     pub canonical_bytes_hash: String,         // blake3 hex via `octo_cap_macaroon::blake3_hash(&governance_proposal_canonical_bytes(&proposal))` — HYPOTHETICAL caller chain (the `governance_proposal_canonical_bytes` helper is BLOCKED per §Substrate-Additions G3b; helper absent in substrate TODAY, verified 2026-09-18). `OutputType` itself is BLOCKED: this field is rendered as `"[REDACTED]"` until G3b lands. Once G3b lands, the helper signature is `fn governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32]` consuming the Layer A frozen `GovernanceProposal` at `crates/octo-governance-core/src/proposal.rs` (NOT Layer B).
 }
 
@@ -365,7 +365,7 @@ pub struct NetworkBindEnvelopeShowOutput {
     pub platform: String,                     // substrate-faithful to BindEnvelope::platform (e.g. "whatsapp", "matrix", "telegram")
     pub group_id: String,                     // substrate-faithful to BindEnvelope::group_id (physical group identifier per platform)
     pub participant_filter: Option<Vec<String>>, // substrate-faithful to BindEnvelope::participant_filter (public field per `crates/octo-network/src/mon/bind_envelope.rs`; Option<Vec<String>>, None = no filter)
-    pub member_count_at_bind: u16,            // substrate-faithful to BindEnvelope::member_count_at_bind (group size at binding time per RFC-0855p-c-slash-small-groups)
+    pub member_count_at_bind: u16,            // substrate-faithful to BindEnvelope::member_count_at_bind (group size at binding time per RFC-0855p-c)
     pub signature_redacted: bool,             // true: signature bytes never echoed (no-payload-bytes-leak invariant)
     pub canonical_bytes_hash: String,         // blake3 hex via `octo_cap_macaroon::blake3_hash(&env.canonical_bytes())`
 }
@@ -424,47 +424,46 @@ pub struct NetworkDiscoveryInvitationOutput {
 
 See also §Exit Codes for the operator-facing code-to-symbol mapping. Slots 80 and 81 are RESERVED; see footnote [†] below.
 
-| Substrate error                           | CLI exit code slot | `OctoCliError` variant           | Redaction level       |
-| ----------------------------------------- | ------------------ | -------------------------------- | --------------------- |
-| `GatewayCache::get` returns `None`        | 79                 | `NetworkPeerNotFound` (NEW)      | `gateway_id` redacted |
-| <sup>[†](#slot-reserve-footnote)</sup> 80 | (RESERVED)         | n/a                              | n/a                   |
-| <sup>[†](#slot-reserve-footnote)</sup> 81 | (RESERVED)         | n/a                              | n/a                   |
-| Local config parse failure                | 82                 | `NetworkConfigParseFailed` (NEW) | file path redacted    |
+| Substrate error                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | CLI exit code slot | `OctoCliError` variant                   | Redaction level         |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------- | ----------------------- |
+| `GatewayCache::get` returns `None`                                                                                                                                                                                                                                                                                                                                                                                                                                                | 79                 | `NetworkPeerNotFound` (NEW)              | `gateway_id` redacted   |
+| <sup>[†](#slot-reserve-footnote)</sup> 80                                                                                                                                                                                                                                                                                                                                                                                                                                         | (RESERVED)         | n/a                                      | n/a                     |
+| <sup>[†](#slot-reserve-footnote)</sup> 81                                                                                                                                                                                                                                                                                                                                                                                                                                         | (RESERVED)         | n/a                                      | n/a                     |
+| Local config parse failure                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 82                 | `NetworkConfigParseFailed` (NEW)         | file path redacted      |
+| Local public-key unavailable                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 83                 | `NetworkLocalKeyUnavailable` (NEW)       | n/a                     |
+| <a id="slot-reserve-footnote"></a>[†] Slots 80 (`NetworkEnvelopeEncodeFailed`) and 81 (`NetworkRebindReasonInvalid`) are RESERVED at Draft time. Substrate `BindEnvelope::canonical_bytes()` returns infallible `Vec<u8>` (no overflow path) and `RebindAbortReason` is a closed 3-variant enum (no invalid variant path). Per substrate-faithfulness audit 2026-09-18, slots revert to candidate status if either substrate surface lands a fallible path in a future amendment. |
+| `CoordinatorRecord` not found                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 84                 | `NetworkCoordinatorNotFound` (NEW)       | coordinator_id redacted |
+| `TrustGraph` depth below 1 (`--depth 0`)                                                                                                                                                                                                                                                                                                                                                                                                                                          | 85                 | `NetworkGraphDepthBelowRange` (NEW)      | n/a                     |
+| DID codec rejection (RFC-0010)                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 86                 | `NetworkInvalidDid` (NEW)                | DID redacted            |
+| `--confirm-acknowledge` missing on write                                                                                                                                                                                                                                                                                                                                                                                                                                          | 87                 | `NetworkConfirmRequired` (NEW)           | n/a                     |
+| `--dry-run` explicit + operator denied                                                                                                                                                                                                                                                                                                                                                                                                                                            | 88                 | `NetworkDryRunDenied` (NEW)              | n/a                     |
+| Substrate state not loaded (companion)                                                                                                                                                                                                                                                                                                                                                                                                                                            | 89                 | `NetworkSubstrateUnavailable` (RESERVED) | n/a                     |
+| CI mode detected on rebind-* write path (env-var `OCTO_CLI_CI=1` or non-TTY stdin)                                                                                                                                                                                                                                                                                                                                                                                                | 90                 | `NetworkCIRebindDenied` (NEW)            | n/a                     |
 
-<a id="slot-reserve-footnote"></a>[†] Slots 80 (`NetworkEnvelopeEncodeFailed`) and 81 (`NetworkRebindReasonInvalid`) are RESERVED at Draft time. Substrate `BindEnvelope::canonical_bytes()` returns infallible `Vec<u8>` (no overflow path) and `RebindAbortReason` is a closed 3-variant enum (no invalid variant path). Per substrate-faithfulness audit 2026-09-18; slots revert to candidate status if either substrate surface lands a fallible path in a future amendment.
-| Local public-key unavailable | 83 | `NetworkLocalKeyUnavailable` (NEW) | n/a |
-| `CoordinatorRecord` not found | 84 | `NetworkCoordinatorNotFound` (NEW) | coordinator_id redacted |
-| `TrustGraph` depth below 1 (`--depth 0`) | 85 | `NetworkGraphDepthBelowRange` (NEW) | n/a |
-| DID codec rejection (RFC-0010) | 86 | `NetworkInvalidDid` (NEW) | DID redacted |
-| `--confirm-acknowledge` missing on write | 87 | `NetworkConfirmRequired` (NEW) | n/a |
-| `--dry-run` explicit + operator denied | 88 | `NetworkDryRunDenied` (NEW) | n/a |
-| Substrate state not loaded (companion) | 89 | `NetworkSubstrateUnavailable` (RESERVED) | n/a |
+All 9 NEW `OctoCliError` variants (slots 79 + 82-88 + 90) + 2 RESERVED slots (80, 81) + slot 89 RESERVED (no fallback; see foot-note [†] above). Additive under `#[non_exhaustive]` per RFC-0011 §Error Handling + [[cipherocto-design-principles]] §Extension over enumeration. Slot range 79-90 claimed within parent RFC-0011 §Exit Codes future-amendment band (79-99).
 
-All 8 NEW `OctoCliError` variants (slots 79 + 82-88) + slot 89 RESERVED (no fallback; see foot-note [†] above). Additive under `#[non_exhaustive]` per RFC-0011 §Error envelope + [[cipherocto-design-principles]] §Extension over enumeration. Slot range 79-89 claimed within parent RFC-0011 §Exit Code future-amendment band (79-99).
-
-RFC-0011-c/d/e/f/g all below slot 79; slots 79 + 82-89 free at Draft time. Substrate-faithfulness rationale for the slots 80 + 81 RESERVEs lives in the footnote [†] above (single canonical cite).
+RFC-0011-c/d/e/f/g all below slot 79; slots 79 + 82-90 free at Draft time. Substrate-faithfulness rationale for the slots 80 + 81 RESERVEs lives in the footnote [†] above (single canonical cite).
 
 ### Exit Codes
 
-| Code | Symbol                                                 | Description                                              |
-| ---- | ------------------------------------------------------ | -------------------------------------------------------- |
-| 0    | `Ok`                                                   | Success                                                  |
-| 2    | `UnrecognizedSubcommand`                               | clap default                                             |
-| 65   | `StaleStub`                                            | RFC-0011                                                 |
-| 79   | `NetworkPeerNotFound`                                  | `GatewayCache::get` returns `None` (gateway_id redacted) |
-| 80   | <sup>[†](#slot-reserve-footnote-exit)</sup> (RESERVED) | No substrate failure path; see footnote [†]              |
-| 81   | <sup>[†](#slot-reserve-footnote-exit)</sup> (RESERVED) | No substrate failure path; see footnote [†]              |
-| 82   | `NetworkConfigParseFailed`                             | Local config parse failure (file path redacted)          |
-
-<a id="slot-reserve-footnote-exit"></a>[†] Slots 80 and 81 are RESERVED at Draft time per substrate-faithfulness audit 2026-09-18. Substrate `BindEnvelope::canonical_bytes()` is infallible; `RebindAbortReason` is a closed 3-variant enum. See §Error Handling for cross-reference.
-| 83 | `NetworkLocalKeyUnavailable` | Local public-key unavailable |
-| 84 | `NetworkCoordinatorNotFound` | `CoordinatorRecord` not found (coordinator_id redacted) |
-| 85 | `NetworkGraphDepthBelowRange` | `TrustGraph` depth below 1 (per §Adversarial Review directionality) |
-| 86 | `NetworkInvalidDid` | DID codec rejection per RFC-0010 (Canonical DID Codec; DID redacted in variant name) |
-| 87 | `NetworkConfirmRequired` | `--confirm-acknowledge` OR `--confirm` (rebind-commit only) missing on write path |
-| 88 | `NetworkDryRunDenied` | `--dry-run` explicit + operator denied |
-| 89 | `NetworkSubstrateUnavailable` | Substrate state not loaded (RESERVED — gated on companion mission landing) |
-| ≥128 | `SubstrateErrorPanic` | RFC-0011 §Exit Code |
+| Code | Symbol                                                 | Description                                                                          |
+| ---- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| 0    | `Ok`                                                   | Success                                                                              |
+| 2    | `UnrecognizedSubcommand`                               | clap default                                                                         |
+| 65   | `StaleStub`                                            | RFC-0011                                                                             |
+| 79   | `NetworkPeerNotFound`                                  | `GatewayCache::get` returns `None` (gateway_id redacted)                             |
+| 80   | <sup>[†](#slot-reserve-footnote-exit)</sup> (RESERVED) | No substrate failure path; see footnote [†]                                          |
+| 81   | <sup>[†](#slot-reserve-footnote-exit)</sup> (RESERVED) | No substrate failure path; see footnote [†]                                          |
+| 82   | `NetworkConfigParseFailed`                             | Local config parse failure (file path redacted)                                      |
+| 83   | `NetworkLocalKeyUnavailable`                           | Local public-key unavailable                                                         |
+| 84   | `NetworkCoordinatorNotFound`                           | `CoordinatorRecord` not found (coordinator_id redacted)                              |
+| 85   | `NetworkGraphDepthBelowRange`                          | `TrustGraph` depth below 1 (per §Adversarial Review directionality)                  |
+| 86   | `NetworkInvalidDid`                                    | DID codec rejection per RFC-0010 (Canonical DID Codec; DID redacted in variant name) |
+| 87   | `NetworkConfirmRequired`                               | `--confirm-acknowledge` OR `--confirm` (rebind-commit only) missing on write path    |
+| 88   | `NetworkDryRunDenied`                                  | `--dry-run` explicit + operator denied                                               |
+| 89   | `NetworkSubstrateUnavailable`                          | Substrate state not loaded (RESERVED — gated on companion mission landing)           |
+| 90   | `NetworkCIRebindDenied`                                | CI mode detected on rebind-* write path (env-var `OCTO_CLI_CI=1` or non-TTY stdin)   |
+| ≥128 | `SubstrateErrorPanic`                                  | RFC-0011 §Exit Codes                                                                 |
 
 ## Performance Targets
 
@@ -477,7 +476,7 @@ RFC-0011-c/d/e/f/g all below slot 79; slots 79 + 82-89 free at Draft time. Subst
 | `authority show` wall-clock                   | <10ms  | Pure function call (no I/O)                             |
 | `slash stats` wall-clock                      | <100ms | O(distinct DID count)                                   |
 | `slash excluded` wall-clock                   | <50ms  | HashMap probe                                           |
-| `trust-graph render ascii`                    | <2s    | 100-node graph; per RFC-0851p-a §F.4                    |
+| `trust-graph render ascii`                    | <2s    | 100-node graph; per RFC-0851p-a §10 Error Handling      |
 | `trust-graph render dot`                      | <2s    | 100-node graph                                          |
 | `coordinator show`                            | <100ms | Local record load                                       |
 | `governance tally`                            | <50ms  | O(1) tally reads                                        |
@@ -514,7 +513,7 @@ Narrative threat model. Operator-facing decision matrix in §Adversarial Review 
 | Threat                                                                                      | Impact                                                 | Mitigation                                                                                                                                                                                                  |
 | ------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Operator edits `bootstrap.toml` to corrupted value                                          | MEDIUM — CLI surfaces corrupt value; no network effect | `mode show` returns parsed enum value (3 valid variants) OR `NetworkConfigParseFailed` exit 82                                                                                                              |
-| Operator runs `bind-envelope rebind-commit` on wrong target                                 | HIGH — irreversible state change if substrate commits  | `--dry-run` default + TWO confirm flags (`--confirm` + `--confirm-acknowledge`) + `--no-dry-run` triple + audit-log entry per RFC-0011-a §Audit substrate                                                   |
+| Operator runs `bind-envelope rebind-commit` on wrong target                                 | HIGH — irreversible state change if substrate commits  | `--dry-run` default + TWO confirm flags (`--confirm` + `--confirm-acknowledge`) + `--no-dry-run` triple + audit-log entry per RFC-0011-a §7.4 Substrate [ADD] signatures                                    |
 | Operator runs `trust-graph render --depth 1000000`                                          | MEDIUM — substrate OOM                                 | `--depth` clamp 1-100; values below range (`--depth 0`) → exit 85; values above range (e.g. `--depth 1000000`) → clamped to 100 with warning; clap u32 parse error for negative values (exit 2 `ClapParse`) |
 | `coordinator show` leaks coordinator ID in Audit mode                                       | LOW — DIDs are public; redaction is for consistency    | Per RFC-0011 §Redaction layer: `coordinator_id` surface redacted via `[REDACTED:coordinator_id]` in Audit mode                                                                                              |
 | `slash stats` leaks peer DIDs in Audit mode                                                 | LOW — DIDs are public; redaction is for consistency    | Per-did counts surface with `[REDACTED:did]` placeholder in Audit mode                                                                                                                                      |
@@ -531,15 +530,15 @@ Narrative threat model. Operator-facing decision matrix in §Adversarial Review 
 
 | Subcommand            | CI behavior  | Rationale                                                                                                                                                                       |
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rebind-prepare`      | DENY default | CI pipelines cannot satisfy `--confirm-acknowledge` (interactive pastejacking defense); CLI surfaces exit 86 `NetworkCIRebindDenied`. Operators MUST run via interactive shell. |
+| `rebind-prepare`      | DENY default | CI pipelines cannot satisfy `--confirm-acknowledge` (interactive pastejacking defense); CLI surfaces exit 90 `NetworkCIRebindDenied`. Operators MUST run via interactive shell. |
 | `rebind-commit`       | DENY default | Irreversible state mutation; CI cannot satisfy double-confirm gate (`--confirm-acknowledge` + `--confirm`). CLI surfaces exit 86.                                               |
 | `rebind-abort`        | DENY default | Roll-back state operation; substrate may interpret double-abort as no-op per RFC-0871 §Algorithms idempotency, but CI pastejacking risk remains. CLI surfaces exit 86.          |
 | `bind-envelope show`  | ALLOW in CI  | Read-only; safe for CI.                                                                                                                                                         |
-| `peers/identity/etc.` | ALLOW in CI  | All read paths; per RFC-0011 §Class C determinism.                                                                                                                              |
+| `peers/identity/etc.` | ALLOW in CI  | All read paths; per RFC-0008 §RFC-0008 Execution Class Mapping (read-side determinism).                                                                                         |
 
 > **CI detection:** `OCTO_CLI_CI=1` env-var (set by most CI providers automatically; CLI double-checks with `[ -t 0 ]` on stdin). When set OR stdin is non-TTY, CI mode engages for all CI-DENY subcommands. CLI flag `--allow-ci-rebind` (DEBUG-ONLY, never documented in `--help`) is reserved for emergency operator override; surfaces in changelog as experimental and removed before v1.0.
 
-The 3 CI-DENY subcommands reuse the existing CLI confirm-gate pattern. Exit code 86 (`NetworkCIRebindDenied`) maps to `OctoCliError::NetworkCIRebindDenied` (slot 86) per §Error Handling table above. No new substrate required; pure CLI gate per RFC-0011 §Confirmation flag matrix.
+The 3 CI-DENY subcommands reuse the existing CLI confirm-gate pattern. Exit code 90 (`NetworkCIRebindDenied`) maps to `OctoCliError::NetworkCIRebindDenied` (slot 90) per §Error Handling table above. No new substrate required; pure CLI gate per RFC-0011 §Confirmation Flag Matrix.
 
 ## Compatibility
 
@@ -553,7 +552,7 @@ The 3 CI-DENY subcommands reuse the existing CLI confirm-gate pattern. Exit code
 
 ## Test Vectors
 
-Each subcommand has ≥2 test vectors per RFC-0011 §Test Vector convention. Per RFC-0011-f pattern (lowercase `tv-network-<subcommand>-<num>`):
+Each subcommand has ≥2 test vectors per RFC-0011 §Test Vectors. Per RFC-0011-f pattern (lowercase `tv-network-<subcommand>-<num>`):
 
 | Test vector ID                              | Subcommand                     | Scenario                                                                                                                                                                                        |
 | ------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -712,16 +711,16 @@ Each entry is substrate-first mission YAML that lands missing substrate type/met
 
 ## Key Files to Modify
 
-| File                                                          | Change                                                                                       |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md` | NEW (this RFC, promoted from `rfcs/draft/process/`)                                          |
-| `crates/octo-cli/src/lib.rs`                                  | ADD `Commands::Network { NetworkAction }` variant                                            |
-| `crates/octo-cli/src/commands/mod.rs`                         | ADD `pub mod network;` + `pub use network::NetworkAction;`                                   |
-| `crates/octo-cli/src/commands/network.rs`                     | NEW (~500 lines; clap derive + handlers + output envelopes + tests)                          |
-| `crates/octo-cli/src/error.rs`                                | ADD 10 `OctoCliError` variants (slots 79-88; slot 89 reserved; `#[non_exhaustive]` additive) |
-| `crates/octo-cli/src/output.rs`                               | NEW envelope types per Phase 1-5                                                             |
-| `crates/octo-cli/tests/network.rs`                            | NEW (~400 lines; test vectors per subcommand)                                                |
-| `rfcs/accepted/networking/<each-RFC>`                         | ADD §Network CLI Surface section (Phase 2.2 per-RFC amendments)                              |
+| File                                                          | Change                                                                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md` | NEW (this RFC, promoted from `rfcs/draft/process/`)                                              |
+| `crates/octo-cli/src/lib.rs`                                  | ADD `Commands::Network { NetworkAction }` variant                                                |
+| `crates/octo-cli/src/commands/mod.rs`                         | ADD `pub mod network;` + `pub use network::NetworkAction;`                                       |
+| `crates/octo-cli/src/commands/network.rs`                     | NEW (~500 lines; clap derive + handlers + output envelopes + tests)                              |
+| `crates/octo-cli/src/error.rs`                                | ADD 11 `OctoCliError` variants (slots 79-90; slots 80+81 RESERVED; `#[non_exhaustive]` additive) |
+| `crates/octo-cli/src/output.rs`                               | NEW envelope types per Phase 1-5                                                                 |
+| `crates/octo-cli/tests/network.rs`                            | NEW (~400 lines; test vectors per subcommand)                                                    |
+| `rfcs/accepted/networking/<each-RFC>`                         | ADD §Network CLI Surface section (Phase 2.2 per-RFC amendments)                                  |
 
 ## Future Work
 
@@ -976,7 +975,7 @@ impl BootstrapConfig {
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate `BootstrapMode` enum exists per `BootstrapMode` (RFC-0851p-a §F.2).
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate `BootstrapMode` enum exists per `BootstrapMode` (RFC-0851p-a §3 Mode A).
 
 ## Out of Scope
 
@@ -985,8 +984,7 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrat
 ## Notes
 
 Phase 2 of RFC-0011-h. Pair with `0011-h-network-authority` + `0011-h-network-slash-stats` for Phase 2 closure.
-
-```
+````
 
 Example showing the structure for one of the substrate-helper companions (e.g. `0011-h-s-a-voting-tally-canonical-bytes`) follows the same Pattern C shape but ACs are substrate-side (Layer B additions to `octo-governance` facade, with re-exports of Layer A frozen types from `octo-governance-core`).
 
@@ -1004,5 +1002,7 @@ Per [[memory-is-never-status-ground-truth]], this amendment's Phase 6 closure mu
 ### E. Substrate-Faithful Amendment Trail
 
 This RFC's R1 dry-review ground-truth grep (2026-09-18) verified every cited substrate type/method against `crates/octo-network/src/`. R1 substrate-faithfulness audit produced ~30 CRIT findings against original 19-subcommand draft; this 17-subcommand rewrite reflects actual substrate. Future amendments that add `NetworkAction` variants MUST re-verify substrate citations via cargo grep before drafting, per [[substrate-faithfulness-verification]].
+
 ```
-````
+
+```

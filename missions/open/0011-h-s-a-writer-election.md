@@ -1,4 +1,4 @@
-# 0011-h-s-a-writer-election — Substrate additions for WriterElection struct (RFC-0862)
+# 0011-h-s-a-writer-election — Substrate additions for WriterElection struct (RFC-0862p-a)
 
 ## Status
 

@@ -128,7 +128,7 @@ Per RFC-0011 §Compatibility timeline:
 
 | Version           | Stub behavior                                      |
 | ----------------- | -------------------------------------------------- |
-| v1.0 (RFC-0011)   | Hidden from `--help`; deprecation warning on use   |
+| v1.0              | Hidden from `--help`; deprecation warning on use   |
 | v1.1 (next minor) | Emit hard error (`StaleStub`, exit code 65) on use |
 | v2.0 (next major) | Remove entirely                                    |
 

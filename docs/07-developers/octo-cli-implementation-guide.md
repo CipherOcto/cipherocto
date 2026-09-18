@@ -328,8 +328,8 @@ pub enum OctoCliError {
     #[error("invalid filter: {0}")]
     InvalidFilter(String),                                  // exit 16 (reserved per Status header amendment chain)
 
-    #[error("stub command {name} is stale; use the replacement documented in RFC-0011 §Compatibility")]
-    StaleStub { name: String },                             // exit 65
+    #[error("`{name}` was removed; use `{replaced_by}` (see `octo --help` for the current subcommand list)")]
+    StaleStub { name: String, replaced_by: &'static str },  // exit 65 (soft sentinel retained per RFC-0011 §Changelog)
 
     #[error("internal error: {0}")]
     Internal(String),                                       // exit 64

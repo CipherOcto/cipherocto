@@ -64,13 +64,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 See RFC-0011 §Compatibility for the post-cut operator impact. Accepted risk: v1.1 cycle was observed in the substrate; no operator scripts are expected to depend on `octo join` / `octo status` in production (those surfaces have been banner-only since v1.0).
 
-> **Disposition (R5 CRIT L4, rejected per user decision 2026-09-17):**
-> The clap default Levenshtein suggestion for `octo init` would have
-> recommended `identity` as the nearest subcommand. This disposition was
-> rejected because clap's Levenshtein machinery cannot suggest a
-> subcommand from a different binary (`octo-wallet`) in the same
-> workspace, and the user accepted exit-2 risk for `octo network
-bootstrap` + `octo network status` as part of the same decision.
+> **Disposition (R5 CRIT L4, rejected per user decision 2026-09-17):** The clap default Levenshtein suggestion for `octo init` would have recommended `identity` as the nearest subcommand. Rejected because clap's Levenshtein machinery cannot suggest a subcommand across binaries to `octo-wallet`; exit-2 risk for `octo network bootstrap` + `octo network status` was accepted as part of the same decision.
 
 ## Acceptance Criteria
 
@@ -113,17 +107,11 @@ Forward-references future amendment landing order per RFC-0011 §Implementation 
 
 ## Scope
 
-Remove the three stub commands that `crates/octo-cli/src/lib.rs` exposed
-pre-cut. `octo role` and `octo agent` were already first-class
-subcommands (RFC-0011-d Phase 1 + RFC-0011-c) and are NOT part of this
-removal. The three stubs removed:
+Remove the three stub commands that `crates/octo-cli/src/lib.rs` exposed pre-cut; `octo role` + `octo agent` were first-class via RFC-0011-d Phase 1 + RFC-0011-c and are NOT in scope. The three stubs removed:
 
-1. **`octo init`** — prints init banner. Replace landing is `octo-wallet init`
-   (lands in RFC-0011 wallet substrate amendment; out of scope here).
-2. **`octo join`** — prints join banner. Replace landing is `octo network
-bootstrap` (per Status header amendment chain).
-3. **`octo status`** — prints status banner. Replace landing is `octo network
-status` (per Status header amendment chain).
+1. **`octo init`** → `octo-wallet init` (lands in wallet substrate amendment; out of scope here)
+2. **`octo join`** → `octo network bootstrap` (per Status header amendment chain)
+3. **`octo status`** → `octo network status` (per Status header amendment chain)
 
 Per RFC-0011 §Compatibility timeline:
 
@@ -201,6 +189,8 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
   acceptable after 1 release cycle deprecation + 1 release cycle hard-error.
 - `octo` exposes the post-cut surface per the `Commands` enum in
   `crates/octo-cli/src/lib.rs`; live surface via `octo --help`.
+  (`octo init` operators: replacement lives at the separate `octo-wallet
+init` binary — see `octo-wallet --help`.)
 - `OctoCliError::StaleStub` retained with the `replaced_by: &'static str`
   field — library-API soft sentinel for any downstream consumer of
   `OctoCliError` that matches on the variant. CLI operators never

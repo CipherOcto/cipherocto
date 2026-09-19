@@ -120,6 +120,13 @@ Subcommands documented "DEFERRED (substrate-additions prerequisite)" NOT in bina
 
 ### Confirmation Flag Matrix
 
+**Three-axis gating model**: the §Confirmation Flag Matrix below composes three orthogonal gating axes:
+
+- **Axis 1: companion-mission closure gate.** Each write subcommand has a substrate-side companion mission (G1/G3b/G6/G6b/G8/G12/G12b/G21/G22/G23/G24). The Axis 1 state is BLOCKED until that companion lands; post-landing the substrate path becomes available.
+- **Axis 2: CI detection gate.** The 6 CI-DENY-default writes additionally gate on G25 companion. Pre-G25 the CI gate is absent; post-G25 the CI gate fires BEFORE substrate dispatch for CI agents.
+- _*Axis 3: clap-arm-registration gate (for G21 rebind-* only)._* Per L91 case (a), pre-G21 the rebind-* clap arm is NOT registered (operator hits clap `UnrecognizedSubcommand` exit 2). Post-G21 the clap arm registers and falls through to Axis 1 + Axis 2.
+- All three axes compose: a subcommand's effective exit code = the most-restrictive exit across all applicable axes.
+
 This subsection enumerates the confirmation-flag surface for every `octo network` subcommand family; mutating subcommands MUST default to `--dry-run` (no substrate dispatch) and require operator confirmation to lift dry-run per the row below. Read-only subcommands have no flag requirement. Pre-landing BLOCKED rows split per the BLOCKED-row gating summary above this table: (a) clap arm NOT registered (G21 rebind-*) → exit 2 `UnrecognizedSubcommand`; (b) clap arm registered but dispatch gated on companion mission closure (G1/G6/G6b/G8/G12/G22/G23/G24) → exit 89 `NetworkSubstrateUnavailable`. Pre-landing behavior for DEFERRED rows: clap arm NOT registered → invocation returns exit 2 `UnrecognizedSubcommand`. Post-G25: CI gate (slot 90 `NetworkCIRebindDenied`) fires BEFORE substrate dispatch for the 6 CI-DENY-default writes per §Error Handling row 90; non-CI humans fall through to substrate state. Pre-landing vs post-landing distinction preserved per [^substrate-absence-vs-error].
 
 Footnote semantics (cited in row notes below): `[^clap-arm-gated]` = clap arm registered but substrate surface BLOCKED: pending companion mission closure (exit 89 pre-gating); `[^substrate-path]` = canonical substrate file path is elided from row note and lives in the matching §Substrate-Additions Companion Missions row; `[^ci-detection-gated]` = CI detection mechanism BLOCKED: pending G25 companion (pre-G25 the 3 BLOCKED-substrate CI-DENY-default writes fall through to exit 89; the 3 LANDED-substrate rebind-* writes fall through to exit 0 once clap arm opens post-G21; post-G25 the gate fires and all 6 exit 90). See individual footnote definitions for full text.

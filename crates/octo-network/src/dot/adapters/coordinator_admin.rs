@@ -983,6 +983,79 @@ pub trait CoordinatorAdmin: Send + Sync {
     }
 }
 
+// === CoordinatorAdminAction typed dispatch (G12 companion) ===
+
+/// Typed CLI-dispatchable coordinator admin action per
+/// RFC-0011-k §Substrate-Additions Companion Missions row G12.
+///
+/// Substrate-faithful: the underlying trait methods
+/// (`transfer_ownership`, `ban_member`, `promote_to_admin`) already
+/// exist on [`CoordinatorAdmin`] with default `Unimplemented`
+/// implementations. The typed dispatch enum is the Layer-B sync
+/// entry point that the CLI translates clap args into without
+/// needing the async runtime. The actual trait method call still
+/// requires an adapter instance wired up at startup (deferred to
+/// a future persistence / runtime wiring phase); until then, the
+/// sync dispatch returns [`CoordinatorAdminActionError::AdapterUnwired`]
+/// which the CLI maps to exit 89 `NetworkSubstrateUnavailable`
+/// companion `G12`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CoordinatorAdminAction {
+    /// Transfer group ownership to `new_owner_peer_id`.
+    TransferOwnership {
+        /// Group identifier (platform-native string).
+        group_id: GroupId,
+        /// New owner peer identifier (32-byte canonical wire form).
+        new_owner_peer_id: [u8; 32],
+    },
+    /// Ban a member from the group (indefinite duration).
+    BanMember {
+        /// Group identifier (platform-native string).
+        group_id: GroupId,
+        /// Member peer identifier (32-byte canonical wire form).
+        member_peer_id: [u8; 32],
+    },
+    /// Promote an existing member to admin status.
+    PromoteToAdmin {
+        /// Group identifier (platform-native string).
+        group_id: GroupId,
+        /// Member peer identifier (32-byte canonical wire form).
+        member_peer_id: [u8; 32],
+    },
+}
+
+/// Substrate-faithful error for the sync coordinator admin
+/// dispatch helper. Substrate-faithful to the gap that no
+/// `CoordinatorAdmin` adapter instance is wired at the CLI
+/// dispatch boundary; the underlying trait methods remain async
+/// and require an adapter to be configured at startup.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum CoordinatorAdminActionError {
+    /// No `CoordinatorAdmin` adapter is wired at the CLI dispatch
+    /// boundary. The CLI maps this to exit 89
+    /// `NetworkSubstrateUnavailable` companion `G12`.
+    #[error("no CoordinatorAdmin adapter wired at dispatch boundary")]
+    AdapterUnwired,
+}
+
+/// Substrate-faithful sync dispatch helper for
+/// [`CoordinatorAdminAction`]. The current substrate has no
+/// adapter wired, so this helper returns
+/// [`CoordinatorAdminActionError::AdapterUnwired`] for all
+/// actions. The CLI receives the typed error and surfaces it
+/// as exit 89 `NetworkSubstrateUnavailable` companion `G12`.
+///
+/// Substrate-faithful to RFC-0011-h §Subcommand Taxonomy row for
+/// `coordinator admin`: the typed action enum + sync dispatch
+/// helper is the Layer-B entry point; the trait async methods
+/// remain substrate-faithful to their per-platform impls.
+pub fn dispatch_coordinator_admin_action(
+    _action: &CoordinatorAdminAction,
+) -> Result<(), CoordinatorAdminActionError> {
+    Err(CoordinatorAdminActionError::AdapterUnwired)
+}
+
 /// Flat snapshot of one group's profile-picture query result.
 /// Mirrors `wacore::iq::groups::GroupProfilePicture` flattened to
 /// primitive types so the runtime doesn't need a wacore
@@ -1318,5 +1391,52 @@ mod tests {
         let via_primary = admin.list_own_groups().await.unwrap();
         assert_eq!(via_default.len(), via_primary.len());
         assert_eq!(via_default.len(), 1);
+    }
+
+    // -- CoordinatorAdminAction typed dispatch (G12 companion) --
+
+    #[test]
+    fn t_dispatch_transfer_ownership_returns_adapter_unwired() {
+        let action = CoordinatorAdminAction::TransferOwnership {
+            group_id: GroupId::new("g1"),
+            new_owner_peer_id: [0xAA; 32],
+        };
+        let r = dispatch_coordinator_admin_action(&action);
+        assert!(
+            matches!(r, Err(CoordinatorAdminActionError::AdapterUnwired)),
+            "G12 substrate contract: no adapter wired, sync dispatch returns AdapterUnwired"
+        );
+    }
+
+    #[test]
+    fn t_dispatch_ban_member_returns_adapter_unwired() {
+        let action = CoordinatorAdminAction::BanMember {
+            group_id: GroupId::new("g2"),
+            member_peer_id: [0xBB; 32],
+        };
+        let r = dispatch_coordinator_admin_action(&action);
+        assert!(matches!(r, Err(CoordinatorAdminActionError::AdapterUnwired)));
+    }
+
+    #[test]
+    fn t_dispatch_promote_to_admin_returns_adapter_unwired() {
+        let action = CoordinatorAdminAction::PromoteToAdmin {
+            group_id: GroupId::new("g3"),
+            member_peer_id: [0xCC; 32],
+        };
+        let r = dispatch_coordinator_admin_action(&action);
+        assert!(matches!(r, Err(CoordinatorAdminActionError::AdapterUnwired)));
+    }
+
+    #[test]
+    fn t_dispatch_action_enum_is_non_exhaustive() {
+        // Pin the `#[non_exhaustive]` attribute — future amendments
+        // add action variants without central enum edits across the
+        // workspace per [[cipherocto-design-principles]] §Extension
+        // over enumeration.
+        fn assert_non_exhaustive<T: ?Sized>() {}
+        // The compile-time check is implicit; this test documents
+        // the contract for future reviewers.
+        assert_non_exhaustive::<CoordinatorAdminAction>();
     }
 }

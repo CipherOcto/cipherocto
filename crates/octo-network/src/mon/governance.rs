@@ -143,6 +143,50 @@ impl VotingTally {
     }
 }
 
+/// BLAKE3 domain prefix for governance proposal canonical-bytes
+/// derivation. Per RFC-0126 §3.2 — domain separation via prefix.
+/// Pinned string (not derived from any runtime state) so the
+/// canonical_bytes hash is byte-stable across processes / nodes.
+pub const BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN: &[u8] = b"cipherocto/governance/proposal/v1";
+
+/// Canonical-bytes derivation for [`GovernanceProposal`] per
+/// RFC-0011-k §Substrate-Additions Companion Missions row G3b.
+///
+/// Returns `BLAKE3(BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN || serde_json_canonical(self))`
+/// truncated to 32 bytes (BLAKE3 native output). The domain prefix
+/// provides keyless domain separation per RFC-0126 §3.2.
+///
+/// Substrate-faithful: the helper lives in the Layer-B mon module
+/// (NOT on `GovernanceProposal` directly) because Layer-A
+/// `octo-governance-core` is RFC-frozen per
+/// [[cipherocto-design-principles]] §Stable Abstractions Principle.
+/// The Layer-B wrapper IS the canonical entry point per the
+/// `VotingTally::into_canonical` pattern at this same module.
+///
+/// `serde_json` is used (not `borsh`) because `octo-network` does
+/// not depend on `borsh` directly; JSON serialization with
+/// field-order preservation is the substrate-faithful canonical
+/// form per RFC-0855 §11 governance substrate migration note
+/// (BTreeMap-keyed tally + JSON canonical encoding).
+#[must_use]
+pub fn governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32] {
+    let buf = borsh_compat_bytes(p);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN);
+    hasher.update(&buf);
+    let hash = hasher.finalize();
+    *hash.as_bytes()
+}
+
+/// Substrate-faithful canonical-bytes encoding for
+/// `GovernanceProposal`. Uses `serde_json` to_vec (NOT pretty)
+/// for byte-stable output. Field order matches the struct
+/// declaration order in `octo-governance-core::proposal::GovernanceProposal`
+/// (Serde respects declaration order for named structs).
+fn borsh_compat_bytes(p: &GovernanceProposal) -> Vec<u8> {
+    serde_json::to_vec(p).expect("GovernanceProposal serde_json always succeeds")
+}
+
 /// Adapter: default DAO policy at the substrate canonical shape.
 ///
 /// `2/3` quorum (6667 bps) + `>50%` approval (5001 bps) +
@@ -410,6 +454,48 @@ mod tests {
         );
         assert_eq!(p.approval_tally_bps, 0);
         assert_eq!(p.rejection_tally_bps, 0);
+    }
+
+    // -- governance_proposal_canonical_bytes helper (G3b companion) --
+
+    #[test]
+    fn governance_proposal_canonical_bytes_round_trip() {
+        // Same proposal twice → same hash (deterministic).
+        let p = GovernanceProposal {
+            proposal_id: 42,
+            issuer: sample_did(5),
+            decision: DecisionType::Admission,
+            state: ProposalState::Voting,
+            voting_opens_at_millis: 1_000,
+            voting_closes_at_millis: 2_000,
+            approval_tally_bps: 6_000,
+            rejection_tally_bps: 1_000,
+        };
+        let h1 = governance_proposal_canonical_bytes(&p);
+        let h2 = governance_proposal_canonical_bytes(&p);
+        assert_eq!(h1, h2, "canonical_bytes must be deterministic");
+    }
+
+    #[test]
+    fn governance_proposal_canonical_bytes_changes_with_state() {
+        // Different state → different hash.
+        let mut p = GovernanceProposal {
+            proposal_id: 42,
+            issuer: sample_did(6),
+            decision: DecisionType::Admission,
+            state: ProposalState::Voting,
+            voting_opens_at_millis: 1_000,
+            voting_closes_at_millis: 2_000,
+            approval_tally_bps: 6_000,
+            rejection_tally_bps: 1_000,
+        };
+        let h_voting = governance_proposal_canonical_bytes(&p);
+        p.state = ProposalState::Approved;
+        let h_approved = governance_proposal_canonical_bytes(&p);
+        assert_ne!(
+            h_voting, h_approved,
+            "canonical_bytes must change when proposal state changes"
+        );
     }
 
     // -- ProposalState state machine transitions --

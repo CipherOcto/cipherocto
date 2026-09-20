@@ -321,6 +321,31 @@ impl CoordinatorRecord {
         let bytes = borsh::to_vec(self).expect("CoordinatorRecord borsh serializes");
         blake3_hash_with_domain(BLAKE3_REPUTATION_COORDINATOR_DOMAIN, &bytes)
     }
+
+    /// Substrate-faithful loader for `CoordinatorRecord` per
+    /// RFC-0011-k §Substrate-Additions Companion Missions row G12b.
+    ///
+    /// Substrate contract: returns `None` when no record exists
+    /// for the given `coordinator_id`. The CLI translates
+    /// `None` → exit 84 `NetworkCoordinatorNotFound` (Phase 3
+    /// OctoCliError variant) per RFC-0011-h §Error Handling row 537.
+    ///
+    /// Substrate-faithful implementation: returns `None` until
+    /// the persistence adapter lands (Phase 6 follow-on per
+    /// `0011-h-s-a-coordinator-record-persistence`). The current
+    /// substrate has no on-disk record store; the loader is
+    /// substrate-faithful to that gap.
+    ///
+    /// The `_coordinator_id` parameter is consumed but ignored
+    /// (preserved for forward-compat once persistence lands).
+    #[must_use]
+    pub fn load(_coordinator_id: &CoordinatorId) -> Option<Self> {
+        // Substrate-faithful: no persistence adapter yet; the
+        // loader returns `None` until Phase 6 lands the persistence
+        // surface. The CLI receives `None` and translates to exit 84
+        // `NetworkCoordinatorNotFound`.
+        None
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -750,5 +775,33 @@ mod tests {
         // 12 distinct variants all show as distinct matches (guaranteed by
         // enum discriminants). Sanity check is ≥6.
         assert!(variants.len() >= 6);
+    }
+
+    // -- CoordinatorRecord::load (G12b companion) --
+
+    #[test]
+    fn t_load_returns_none_substrate_faithful() {
+        // Substrate-faithful: no persistence adapter yet, the
+        // loader returns `None` for any coordinator_id. The CLI
+        // receives `None` and translates to exit 84
+        // `NetworkCoordinatorNotFound`. This test pins the
+        // substrate contract; once Phase 6 lands the persistence
+        // adapter, this test pins the still-`None` path until the
+        // adapter is wired.
+        let id: CoordinatorId = [0xABu8; 32];
+        assert!(
+            CoordinatorRecord::load(&id).is_none(),
+            "G12b substrate contract: no persistence adapter, load returns None"
+        );
+    }
+
+    #[test]
+    fn t_load_idempotent_for_same_id() {
+        // Same coordinator_id → same result across multiple calls
+        // (substrate-faithful deterministic contract).
+        let id: CoordinatorId = [0xCDu8; 32];
+        let r1 = CoordinatorRecord::load(&id);
+        let r2 = CoordinatorRecord::load(&id);
+        assert_eq!(r1, r2);
     }
 }

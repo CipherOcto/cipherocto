@@ -33,7 +33,8 @@ pub mod witness;
 
 pub use adapters::{
     coordinator_admin::{
-        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+        dispatch_coordinator_admin_action, AdminCapabilityReport, CoordinatorAdmin,
+        CoordinatorAdminAction, CoordinatorAdminActionError, GroupHandle, GroupId, GroupMemberSpec,
         GroupMetadata, GroupModeFlags, InviteRef, PeerId,
     },
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,

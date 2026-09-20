@@ -2,11 +2,11 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G6a
+Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G6b
 
 ## RFC
 
-RFC-0011-h §Substrate-Additions Companion Missions row G6a
+RFC-0011-h §Substrate-Additions Companion Missions row G6b
 
 ## Summary
 
@@ -23,7 +23,7 @@ loader
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/mon/slash_store.rs` per RFC-0011-h §Substrate-Additions row G6a
+- [ ] Substrate additions land in `crates/octo-network/src/mon/slash_store.rs` per RFC-0011-h §Substrate-Additions row G6b
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-network --lib` green
 - [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)

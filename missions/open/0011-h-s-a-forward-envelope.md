@@ -2,11 +2,11 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G16b
+Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G16
 
 ## RFC
 
-RFC-0011-h §Substrate-Additions Companion Missions row G16b
+RFC-0011-h §Substrate-Additions Companion Missions row G16
 
 ## Summary
 
@@ -23,7 +23,7 @@ envelope
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/mon/forward_envelope.rs (NEW)` per RFC-0011-h §Substrate-Additions row G16b
+- [ ] Substrate additions land in `crates/octo-network/src/mon/forward_envelope.rs (NEW)` per RFC-0011-h §Substrate-Additions row G16
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-network --lib` green
 - [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)

@@ -606,10 +606,12 @@ pub struct SlashBridgeListArgs {
 /// write per RFC-0011-o §Confirmation Flag).
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
 pub struct SlashBridgePropagateArgs {
-    /// 32-byte `slash_envelope_id` as 64 lowercase hex chars
-    /// (RFC-0855p-b §Wire Format). Mixed-case input is rejected
-    /// (pastejacking defense per RFC-0011-o §Confirmation Flag).
-    #[arg(value_parser = parse_gateway_id_hex)]
+    /// 32-byte `slash_envelope_id` as 64 hex chars (lowercase
+    /// OR uppercase; mixed-case rejected) (RFC-0855p-b
+    /// §Wire Format). Pastejacking defense per
+    /// RFC-0011-o §Confirmation Flag + parse_32_byte_hex shared
+    /// helper.
+    #[arg(value_parser = parse_slash_envelope_id_hex)]
     pub slash_envelope_id: [u8; 32],
     /// Emit preview envelope with computed `BridgeReceipt` shape
     /// (default behavior; mutually exclusive with --apply per
@@ -2152,6 +2154,15 @@ fn parse_32_byte_hex(s: &str, field_name: &'static str) -> Result<[u8; 32], Octo
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+/// Clap-compatible 1-arg wrapper around
+/// `parse_32_byte_hex` for `slash_envelope_id` (Phase 7).
+/// Surfacing the typed `OctoCliError` through clap directly
+/// (rather than the `String` error from a 1-arg wrapper)
+/// keeps the envelope uniform across all 32-byte hex args.
+fn parse_slash_envelope_id_hex(s: &str) -> Result<[u8; 32], String> {
+    parse_32_byte_hex(s, "slash_envelope_id").map_err(|e| e.to_string())
 }
 
 /// Shared preview-payload helper for the rebind-* trio dry-run
@@ -4234,13 +4245,32 @@ mod tests {
     }
 
     // tv_net7_6: slash-bridge propagate pastejacking defense — mixed-case hex
-    //              rejected by parse_gateway_id_hex (RFC-0011-h pastejacking defense)
+    //              rejected by parse_32_byte_hex shared helper
+    //              (RFC-0011-h pastejacking defense pattern)
     #[test]
     fn tv_net7_6_slash_bridge_propagate_rejects_mixed_case_hex() {
         let mixed_case = "Aa".repeat(32);
         let result =
             TestPhase7Cli::try_parse_from(["test", "slash-bridge", "propagate", &mixed_case]);
         assert!(result.is_err(), "mixed-case hex must be rejected");
+    }
+
+    // tv_net7_6b: slash-bridge propagate accepts uppercase-only hex
+    //              (parse_32_byte_hex shared helper accepts
+    //              lowercase OR uppercase; only mixed-case is
+    //              rejected). Confirms Phase 7 pastejacking defense
+    //              aligns with RFC-0011-h shared helper contract
+    //              (NOT the narrower parse_gateway_id_hex
+    //              implementation).
+    #[test]
+    fn tv_net7_6b_slash_bridge_propagate_accepts_uppercase_only_hex() {
+        let upper_hex = "A".repeat(64);
+        let result =
+            TestPhase7Cli::try_parse_from(["test", "slash-bridge", "propagate", &upper_hex]);
+        assert!(
+            result.is_ok(),
+            "uppercase-only hex per parse_32_byte_hex must be accepted"
+        );
     }
 
     /// Test CLI struct for Phase 7 slash-bridge surface.

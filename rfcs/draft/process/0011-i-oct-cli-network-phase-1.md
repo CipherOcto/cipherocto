@@ -26,7 +26,7 @@ RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Imp
 | `octo network trust-graph render`         | `TrustGraph::render(format: GraphFormat)`                                                                                    | `crates/octo-network/src/mon/trust_graph.rs:89`            |
 | `octo network governance rotation status` | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}`                                   | `crates/octo-network/src/mon/governance_rotation.rs:61-78` |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions for Phase 1 = **none** (read-only surface on existing Layer B substrate).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in THIS RFC = **none**; Phase 1 IMPLEMENTATION requires 1 companion substrate mission (`0011-h-s-a-local-gateway-identity-state`) to land BEFORE CLI dispatch for `identity show` (per R1.5 fix per F2).
 
 ## Dependencies
 
@@ -401,7 +401,7 @@ Per RFC-0011-i scope:
 
 ## Rationale
 
-Phase 1 is the **lowest-risk starting point** for the multiphase rollout: read-only observability on existing substrate, zero Layer A change, zero companion mission gating. The 4 error variants (slots 79, 83, 85, 86) land as pure CLI predicates, no substrate fault-class mapping required.
+Phase 1 is the **lowest-risk starting point** for the multiphase rollout: read-only observability on existing substrate, zero Layer A change, 1 companion mission gating (`0011-h-s-a-local-gateway-identity-state` for `identity show` only). The 4 error variants (slots 79, 83, 85, 86) land as pure CLI predicates, no substrate fault-class mapping required.
 
 The pattern follows RFC-0011-c (agent), RFC-0011-d (role), RFC-0011-g (governance) precedents: each amendment RFC combines scope + implementation for its phase, lands through 5-len DRY CLOSURE gate (2 consecutive zero-finding rounds), and updates the mission YAMLs from `Open` → `Claimed` → `Completed` → archived per [[no-phantom-mission-pointers]].
 
@@ -409,6 +409,7 @@ Per RFC-0011-h §Implementation Phases ordering, Phase 1 is highest priority bec
 
 ## Version History
 
-| Version | Date       | Notes                                                                                                                |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-09-20 | Initial draft. Phase 1 scope established; substrate verified at RFC-0011-h closure. Pending 5-len DRY CLOSURE cycle. |
+| Version | Date       | Notes                                                                                                                                                                                                                             |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-09-20 | Initial draft. Phase 1 scope established; substrate verified at RFC-0011-h closure. Pending 5-len DRY CLOSURE cycle.                                                                                                              |
+| v0.2    | 2026-09-20 | R1.5 fix sweep: F1 HIGH cite hygiene (substrate-local anchor for trust-graph render); F2 CRITICAL companion mission (NEW `0011-h-s-a-local-gateway-identity-state`); F3 LOW arg naming (standardize `gateway_class`). Pending R2. |

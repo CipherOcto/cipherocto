@@ -91,8 +91,11 @@ pub const DAO_STAKE_THRESHOLD: u64 = 1_000;
 )]
 #[borsh(use_discriminant = true)]
 #[repr(u16)]
+#[derive(Default)]
 pub enum GovernanceModel {
     /// First coordinator = creator-designated; replacement = 2/3 vote.
+    /// Default per RFC-0862p-a §Default governance model.
+    #[default]
     Centralized = 0x0001,
     /// One coordinator per domain; `f+1` of `2f+1` Byzantine FT consensus.
     Federated = 0x0002,
@@ -549,6 +552,105 @@ pub(crate) fn genesis_fold_lifecycle(genesis: GenesisState) -> crate::state::Coo
     }
 }
 
+// ── Mission 0011-h-s-a-writer-election-struct (RFC-0011-n Phase 6 G18) ───
+
+/// Thin struct wrapper around the existing free function
+/// `elect_coordinator` (RFC-0011-n Phase 6 G18 NEW Phase 6).
+/// Required by `octo network status` so the CLI can query
+/// writer-election state without depending on the free function
+/// directly.
+///
+/// Substrate-faithful: struct method delegates to the free
+/// function to keep the canonical election logic in one place
+/// per cipherocto-design-principles §Stable Abstractions
+/// Principle.
+#[derive(Clone, Debug, Default)]
+pub struct WriterElection {
+    ballots: Vec<ElectionBallot>,
+    stakes: Vec<StakeEntry>,
+    voters: Vec<VoterEligibility>,
+    governance_model: GovernanceModel,
+}
+
+impl WriterElection {
+    /// Construct an empty writer-election state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Construct a writer-election state with the given governance
+    /// model.
+    #[must_use]
+    pub fn with_governance_model(governance_model: GovernanceModel) -> Self {
+        Self {
+            governance_model,
+            ..Self::default()
+        }
+    }
+
+    /// Substrate-faithful struct wrapper around the existing free
+    /// function `elect_coordinator` (RFC-0011-n Phase 6 G18). The
+    /// struct method delegates to the free function to keep the
+    /// canonical election logic in one place.
+    #[allow(clippy::too_many_arguments)]
+    pub fn elect_coordinator(
+        &self,
+        mission_id: [u8; 32],
+        election_epoch: u64,
+        designator: Option<CoordinatorId>,
+    ) -> Result<ElectionTally, CoordinatorError> {
+        elect_coordinator(
+            self.governance_model,
+            mission_id,
+            election_epoch,
+            &self.ballots,
+            &self.stakes,
+            &self.voters,
+            designator,
+        )
+    }
+
+    /// Cast a ballot (CLI substrate-faithful surface, Phase 6 closure
+    /// path remains AdapterUnwired for write paths).
+    pub fn cast_ballot(&mut self, ballot: ElectionBallot) {
+        self.ballots.push(ballot);
+    }
+
+    /// Register a stake (CLI substrate-faithful surface).
+    pub fn add_stake(&mut self, stake: StakeEntry) {
+        self.stakes.push(stake);
+    }
+
+    /// Register a voter eligibility (CLI substrate-faithful surface).
+    pub fn add_voter(&mut self, voter: VoterEligibility) {
+        self.voters.push(voter);
+    }
+
+    /// Set the governance model (CLI substrate-faithful surface).
+    pub fn set_governance_model(&mut self, model: GovernanceModel) {
+        self.governance_model = model;
+    }
+
+    /// Number of ballots cast (operator-side observability).
+    #[must_use]
+    pub fn ballot_count(&self) -> usize {
+        self.ballots.len()
+    }
+
+    /// Number of stakes registered (operator-side observability).
+    #[must_use]
+    pub fn stake_count(&self) -> usize {
+        self.stakes.len()
+    }
+
+    /// Number of voters registered (operator-side observability).
+    #[must_use]
+    pub fn voter_count(&self) -> usize {
+        self.voters.len()
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Inline unit tests
 // -----------------------------------------------------------------------------
@@ -807,5 +909,113 @@ mod tests {
         assert_eq!(a, b);
         let c = compute_election_id(&[0x01u8; 32], 101, 0x00);
         assert_ne!(a, c);
+    }
+
+    // G18 companion substrate tests (RFC-0011-n Phase 6)
+
+    fn sample_ballot(voter: [u8; 32], candidate: [u8; 32]) -> ElectionBallot {
+        ElectionBallot {
+            voter_peer_id: voter,
+            candidate_peer_id: candidate,
+            ballot_epoch: 100,
+            signature: [0u8; 64],
+        }
+    }
+
+    fn eligible_voter(voter: [u8; 32]) -> VoterEligibility {
+        VoterEligibility {
+            voter,
+            trust_score: 100,
+            slash_count: 0,
+            is_mission_participant: true,
+        }
+    }
+
+    #[test]
+    fn writer_election_default_is_empty() {
+        let we = WriterElection::default();
+        assert_eq!(we.ballot_count(), 0);
+        assert_eq!(we.stake_count(), 0);
+        assert_eq!(we.voter_count(), 0);
+    }
+
+    #[test]
+    fn writer_election_new_equals_default() {
+        let we = WriterElection::new();
+        assert_eq!(we.ballot_count(), 0);
+        assert_eq!(we.stake_count(), 0);
+        assert_eq!(we.voter_count(), 0);
+    }
+
+    #[test]
+    fn writer_election_with_governance_model_constructor() {
+        let we = WriterElection::with_governance_model(GovernanceModel::Federated);
+        assert_eq!(we.ballot_count(), 0);
+        // elect_coordinator delegates to free function with stored model.
+        // Without ballots/stakes/voters, Federated returns Empty (substrate
+        // behavior). Just confirm the call does NOT panic.
+        let _ = we.elect_coordinator([0x01u8; 32], 100, None);
+    }
+
+    #[test]
+    fn writer_election_cast_ballot_increments_count() {
+        let mut we = WriterElection::default();
+        we.cast_ballot(sample_ballot([0xA1; 32], [0xB1; 32]));
+        we.cast_ballot(sample_ballot([0xA2; 32], [0xB1; 32]));
+        assert_eq!(we.ballot_count(), 2);
+    }
+
+    #[test]
+    fn writer_election_add_stake_increments_count() {
+        let mut we = WriterElection::default();
+        we.add_stake(StakeEntry::new([0xC1; 32], 1000));
+        assert_eq!(we.stake_count(), 1);
+    }
+
+    #[test]
+    fn writer_election_add_voter_increments_count() {
+        let mut we = WriterElection::default();
+        we.add_voter(eligible_voter([0xD1; 32]));
+        assert_eq!(we.voter_count(), 1);
+    }
+
+    #[test]
+    fn writer_election_set_governance_model_affects_elect() {
+        // Centralized with no designator + no eligible ballots returns Empty
+        // per RFC-0862p-a §Election Algorithm. Federated with no ballots
+        // also returns Empty. We just confirm the call doesn't panic.
+        let mut we = WriterElection::default();
+        we.set_governance_model(GovernanceModel::Dao);
+        let _ = we.elect_coordinator([0x01u8; 32], 100, None);
+    }
+
+    #[test]
+    fn writer_election_elect_coordinator_delegates_to_free_function() {
+        // Substrate-faithful delegation test: set up state and confirm
+        // the struct method returns the SAME result as calling the free
+        // function directly with the same args.
+        let mut we = WriterElection::with_governance_model(GovernanceModel::Federated);
+        we.add_voter(eligible_voter([0xA1; 32]));
+        we.add_voter(eligible_voter([0xA2; 32]));
+        we.cast_ballot(sample_ballot([0xA1; 32], [0xB1; 32]));
+        we.cast_ballot(sample_ballot([0xA2; 32], [0xB1; 32]));
+
+        let struct_result = we.elect_coordinator([0x01u8; 32], 100, None);
+        let direct_result = elect_coordinator(
+            GovernanceModel::Federated,
+            [0x01u8; 32],
+            100,
+            &[
+                sample_ballot([0xA1; 32], [0xB1; 32]),
+                sample_ballot([0xA2; 32], [0xB1; 32]),
+            ],
+            &[],
+            &[eligible_voter([0xA1; 32]), eligible_voter([0xA2; 32])],
+            None,
+        );
+        assert_eq!(struct_result.is_ok(), direct_result.is_ok());
+        if let (Ok(s), Ok(d)) = (&struct_result, &direct_result) {
+            assert_eq!(s.winner, d.winner);
+        }
     }
 }

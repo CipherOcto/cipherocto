@@ -744,6 +744,46 @@ pub enum OctoCliError {
         /// Highest `since_unix` previously accepted for this session.
         recorded_cursor: u64,
     },
+    /// `octo network peers get` lookup miss.
+    ///
+    /// Substrate `GatewayCache::get` returns `Option::None`; CLI
+    /// translates `None` → this variant (RFC-0011-h §Error Handling
+    /// row 79 + RFC-0011-i §Error Handling). Exit 79.
+    #[error("network peer not found")]
+    NetworkPeerNotFound {
+        /// Redacted gateway id (32 bytes hex per RFC-0011-h §Redaction Layer).
+        gateway_id_hex: String,
+    },
+    /// `octo network identity show` precondition failure.
+    ///
+    /// `LocalGatewayIdentity::load` returns `NotInitialized` because
+    /// `<octo_home>/network/local-gateway-identity.toml` is missing.
+    /// CLI-side predicate, not substrate fault class per RFC-0011-h
+    /// §Error Handling row 83 + RFC-0011-i §Error Handling. Exit 83.
+    #[error("local gateway identity not initialized; run `octo network bootstrap` first")]
+    NetworkLocalKeyUnavailable,
+    /// `octo network trust-graph render --depth <n>` out-of-range.
+    ///
+    /// CLI-asserted clamp 1-100 protects substrate from OOM;
+    /// `--depth 0` via programmatic bypass surfaces this variant
+    /// (clap `value_parser` would catch user-facing path → exit 2
+    /// `ValueValidation` per RFC-0011-h §Exit Codes row 2). CLI-only
+    /// predicate; no substrate fault class. Exit 85.
+    #[error("graph depth {depth} is below the 1..=100 range enforced by the CLI clamp")]
+    NetworkGraphDepthBelowRange {
+        /// Offending depth value.
+        depth: u32,
+    },
+    /// `octo network identity show` DID codec rejection.
+    ///
+    /// CLI pre-validates DID format before substrate dispatch per
+    /// RFC-0011-h §Error Handling row 86 + RFC-0011-i §Error Handling.
+    /// DID redacted in operator-facing render. Exit 86.
+    #[error("invalid network DID format (redacted in operator envelope)")]
+    NetworkInvalidDid {
+        /// Redacted DID string.
+        did_redacted: String,
+    },
 }
 
 impl OctoCliError {
@@ -879,6 +919,14 @@ impl OctoCliError {
             // boundary so the operator can read the diagnostic
             // without re-deriving from event-stream state.
             Self::ReplayDetected { .. } => 61,
+            // RFC-0011-h §Error Handling + RFC-0011-i Phase 1 slots 79/83/85/86
+            // (FORWARD-LOOKING per RFC-0011-h §Error Handling row 537
+            // substrate-faithfulness rationale; variants land during
+            // implementation across Phases 1-6).
+            Self::NetworkPeerNotFound { .. } => 79,
+            Self::NetworkLocalKeyUnavailable => 83,
+            Self::NetworkGraphDepthBelowRange { .. } => 85,
+            Self::NetworkInvalidDid { .. } => 86,
         }
     }
 
@@ -1108,6 +1156,19 @@ impl OctoCliError {
                 format!(
                     "the AttachHandle token has been consumed once already (since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}); mint a fresh token via `octo agent run --detach` and retry the attach"
                 )
+            }
+            // RFC-0011-h §Error Handling + RFC-0011-i Phase 1 slots 79/83/85/86
+            Self::NetworkPeerNotFound { .. } => {
+                "verify the gateway_id hex (32 bytes); peer cache lookup returned None; check FederationState membership".to_string()
+            }
+            Self::NetworkLocalKeyUnavailable => {
+                "local gateway identity state is uninitialized; run `octo network bootstrap` to write `<octo_home>/network/local-gateway-identity.toml`".to_string()
+            }
+            Self::NetworkGraphDepthBelowRange { .. } => {
+                "graph depth must be in 1..=100; the CLI clamp protects substrate from OOM".to_string()
+            }
+            Self::NetworkInvalidDid { .. } => {
+                "verify the DID format (104-char hex of 52-byte RawDid per RFC-0010); CLI pre-validates before substrate dispatch".to_string()
             }
         };
         Some(h)

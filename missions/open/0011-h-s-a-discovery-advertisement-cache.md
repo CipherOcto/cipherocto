@@ -1,44 +1,94 @@
-# 0011-h-s-a-discovery-advertisement-cache — Substrate additions for MissionAdvertisementCache::get lookup
+# 0011-h-s-a-discovery-advertisement-cache — Substrate additions for MissionAdvertisementCache::get + iter
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G23
+Open (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G23 + RFC-0011-m Phase 5 §Substrate-Additions Companion Missions. Substrate slice pending per the Phase 4 paired-substrate completion pattern (companion YAML filled in → substrate lands → YAML Claimed → CLI dispatch lands → YAML Completed paired).
 
 ## RFC
 
-RFC-0011-h §Substrate-Additions Companion Missions row G23
+RFC-0011-h §Substrate-Additions Companion Missions row G23 + RFC-0011-m Phase 5 §Substrate-Additions Companion Missions + RFC-0855 §8.2 Mission Advertisement
 
 ## Summary
 
-Lookup façade for cached mission advertisements. Required by `octo network discovery advertisement show`.
+Adds lookup + iteration façade for cached mission advertisements. Required by `octo network discovery advertisement show` (Phase 5 G23 substrate companion).
 
 ### Substrate additions target
 
 ```rust
-// crates/octo-network/src/discovery/advertisement_cache.rs (NEW)
-cache
+// crates/octo-network/src/mon/discovery.rs (existing module extended)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MissionAdvertisementCache {
+    entries: BTreeMap<[u8; 32], MissionAdvertisement>,
+}
+
+impl MissionAdvertisementCache {
+    /// Substrate-faithful lookup helper for `octo network
+    /// discovery advertisement show --advertisement-id <ID>`
+    /// (RFC-0011-m Phase 5 G23).
+    #[must_use]
+    pub fn get(&self, advertisement_id: &[u8; 32]) -> Option<&MissionAdvertisement> {
+        self.entries.get(advertisement_id)
+    }
+
+    /// Substrate-faithful iterator for `octo network
+    /// discovery advertisement show` (RFC-0011-m Phase 5 G23).
+    /// Returns gateway-id-keyed iteration per RFC-0855 §8.2.
+    pub fn iter(&self) -> impl Iterator<Item = ([u8; 32], &MissionAdvertisement)> {
+        self.entries.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// Insert or replace an advertisement entry (substrate-faithful
+    /// registry surface; Phase 5 closure path remains
+    /// `AdapterUnwired` for write paths).
+    pub fn insert(&mut self, advertisement: MissionAdvertisement) {
+        let key = advertisement.advertisement_hash();
+        self.entries.insert(key, advertisement);
+    }
+
+    /// Number of cached advertisements (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
 ```
 
-(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per [[no-phantom-mission-pointers]].)
+Layer B substrate additions land in `crates/octo-network/src/mon/discovery.rs` (existing module extended). No new module: the cache types are surfaced in the existing discovery module because they share the same substrate anchors (`MissionAdvertisement`, `MissionId`, scope enum) per RFC-0855 §8.2.
+
+`BTreeMap` chosen over `HashMap` for deterministic iteration order (RFC-0011-h §Output Envelope order determinism) and substrate-faithful ordering on `iter()` output (RFC-0855 §8.2 deterministic ordering contract).
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/discovery/advertisement_cache.rs (NEW)` per RFC-0011-h §Substrate-Additions row G23
+- [ ] `MissionAdvertisementCache` struct lands in `crates/octo-network/src/mon/discovery.rs` per RFC-0011-h §Substrate-Additions row G23 (next PENDING substrate slice)
+- [ ] `get(advertisement_id: &[u8; 32]) -> Option<&MissionAdvertisement>` method lands at same path
+- [ ] `iter() -> impl Iterator<Item = ([u8; 32], &MissionAdvertisement)>` method lands at same path
+- [ ] `insert(MissionAdvertisement)` registry helper lands (substrate-faithful surface; CLI dispatch does NOT call this — write paths remain `AdapterUnwired` per Phase 6 follow-on `0011-h-s-a-discovery-advertisement-persistence`)
+- [ ] `len()` + `is_empty()` observability helpers land
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green
+- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added above Phase 4 baseline of 1438)
 - [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test
+- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin get-miss + get-hit + iter-empty + iter-non-empty + insert-idempotent + BTreeMap deterministic ordering)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per [[no-phantom-mission-pointers]]: G23 substrate slice (this mission) lands BEFORE Phase 5 CLI dispatch slice.
 
 ## Out of Scope
 
-- CLI dispatch (paired CLI mission `0011-h-network-*` covers that surface)
+- CLI dispatch (paired CLI mission `0011-h-network-discovery` covers that surface in Phase 5 CLI dispatch slice)
 - Wire format versioning (deferred to substrate-additions companion)
 - Per-extension transport impl (deferred to per-extension crate pattern)
+- Persistence adapter (Phase 6 follow-on per `0011-h-s-a-discovery-advertisement-persistence`)
+- TTL eviction policy (deferred to substrate-additions companion; substrate-faithful surface exposes `is_ttl_exceeded` on `MissionAdvertisement` already)
 
 ## Notes
 
-Stub filed 2026-09-18 per [[no-phantom-mission-pointers]]. Full AC + scope land when work enters Phase X.
+Stub fill-in 2026-09-20 per RFC-0011-m closure card. Substrate slice pending per directive sequencing (substrate coding is LAST). The substrate-faithful `Option<&MissionAdvertisement>` translation surfaces as typed exit 89 `NetworkSubstrateUnavailable { companion: "G23" }` once the CLI dispatch slice consumes it. The `BTreeMap` choice honors the deterministic ordering contract per RFC-0855 §8.2 + RFC-0011-h §Output Envelope order determinism. The `iter()` method returns owned `[u8; 32]` keys so the iterator lifetime is decoupled from the cache lifetime (substrate-faithful boundary per [[cipherocto-design-principles]] §No premature coupling).

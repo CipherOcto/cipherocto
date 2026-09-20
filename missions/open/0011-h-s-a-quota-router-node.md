@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Stub fill-in LANDED at `next c0c3539f`. Substrate slice LANDED at `next 52a99360` (NEW module `crates/octo-network/src/quota/router_node.rs` with `QuotaRouterNode` struct + `RouterStatus` enum + `status()` + `peer_capacity()` + `reachable_peer_count()` + `total_peer_count()` + 6 substrate unit tests; `pub mod quota;` insertion in `crates/octo-network/src/lib.rs`). Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G10 + RFC-0011-p Phase 8 §Substrate-Additions Companion Missions. RFC-0011-p Phase 8 quota-router-node amendment Draft landed at `next 92b69be3`. CLI dispatch slice pending per the Phase 4 paired-substrate completion pattern (companion YAML Claimed → CLI dispatch lands → YAML Completed paired).
+Completed (2026-09-20) — Stub fill-in LANDED at `next c0c3539f`. Substrate slice LANDED at `next 52a99360` (NEW module `crates/octo-network/src/quota/router_node.rs` with `QuotaRouterNode` struct + `RouterStatus` enum + `QuotaRouterNodeAccess` trait + `status()` + `peer_capacity()` + `reachable_peer_count()` + `total_peer_count()` + `last_sync_epoch()` methods + 6 substrate unit tests; `pub mod quota;` insertion in `crates/octo-network/src/lib.rs`). CLI dispatch slice LANDED at `next cee393d2`. Paired CLI mission YAML `0011-h-network-router` CREATED Completed at `next PENDING` per user decision. Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G10 + RFC-0011-p Phase 8 §Substrate-Additions Companion Missions. RFC-0011-p Phase 8 quota-router-node amendment Draft landed at `next 92b69be3`.
 
 ## RFC
 

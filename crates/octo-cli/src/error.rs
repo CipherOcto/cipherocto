@@ -784,6 +784,38 @@ pub enum OctoCliError {
         /// Redacted DID string.
         did_redacted: String,
     },
+    /// `octo network mode set` / `octo network authority rotate`
+    /// persistence failure — TOML parse error or IO error.
+    ///
+    /// `BootstrapConfig::from_toml` or `save_toml` returned
+    /// `BootstrapConfigError` which is forwarded to the operator
+    /// envelope after CLI-side redaction. CLI-only predicate; the
+    /// substrate failure class lives at the `BootstrapConfigError`
+    /// boundary (Layer B per RFC-0011-j §Substrate-Additions G1 row).
+    /// Exit 82.
+    #[error("network config parse/write failure (redacted in operator envelope)")]
+    NetworkConfigParseFailed {
+        /// Redacted reason tag (one of: `io`, `toml_parse`, `toml_serialize`).
+        kind_redacted: String,
+        /// Optional path to the offending file (redacted if it
+        /// contains operator home path components).
+        path_redacted: Option<String>,
+    },
+    /// `octo network slash excluded` / `slash stats` /
+    /// `slash list` / `slash show` / `mode show` / `authority show`
+    /// companion mission closure gating.
+    ///
+    /// Pre-companion (G1/G6/G6b/G8 not yet LANDED), CLI dispatch
+    /// surfaces exit 89 so operators see the substrate is unavailable
+    /// rather than a confusing panic. Post-companion (after
+    /// `next 931dc7b1` + `next ca3ceee1`), dispatch routes to
+    /// substrate and exits 0. CLI-only predicate; no substrate
+    /// fault class. Exit 89.
+    #[error("network substrate unavailable (companion mission closure gating)")]
+    NetworkSubstrateUnavailable {
+        /// Companion mission tag (e.g., `G1`, `G6`, `G6b`, `G8`).
+        companion: &'static str,
+    },
 }
 
 impl OctoCliError {
@@ -924,9 +956,19 @@ impl OctoCliError {
             // substrate-faithfulness rationale; variants land during
             // implementation across Phases 1-6).
             Self::NetworkPeerNotFound { .. } => 79,
+            // RFC-0011-j §Error Handling row 82 — TOML parse/write
+            // failure for `octo network mode set` + `authority rotate`.
+            Self::NetworkConfigParseFailed { .. } => 82,
             Self::NetworkLocalKeyUnavailable => 83,
             Self::NetworkGraphDepthBelowRange { .. } => 85,
             Self::NetworkInvalidDid { .. } => 86,
+            // RFC-0011-j §Error Handling row 89 — companion mission
+            // closure gating. Pre-companion (G1/G6/G6b/G8 not yet
+            // LANDED), CLI dispatch surfaces exit 89. Post-companion
+            // (after substrate slice commits at `next 931dc7b1` and
+            // `next ca3ceee1`), dispatch routes to substrate and
+            // exits 0.
+            Self::NetworkSubstrateUnavailable { .. } => 89,
         }
     }
 
@@ -1169,6 +1211,19 @@ impl OctoCliError {
             }
             Self::NetworkInvalidDid { .. } => {
                 "verify the DID format (104-char hex of 52-byte RawDid per RFC-0010); CLI pre-validates before substrate dispatch".to_string()
+            }
+            // RFC-0011-j §Error Handling row 82 — TOML parse/write
+            // failure for `octo network mode set` + `authority rotate`.
+            Self::NetworkConfigParseFailed { .. } => {
+                "verify `<octo_home>/network/<file>.toml` exists and is well-formed; the substrate-side BootstrapConfigError is forwarded with operator-safe redaction".to_string()
+            }
+            // RFC-0011-j §Error Handling row 89 — companion mission
+            // closure gating. Pre-companion (G1/G6/G6b/G8 not yet
+            // LANDED), CLI dispatch surfaces exit 89.
+            Self::NetworkSubstrateUnavailable { companion } => {
+                format!(
+                    "the `{companion}` companion mission has not yet landed; the substrate write path is gated pending acceptance of the companion mission YAML; retry after the substrate slice commit lands"
+                )
             }
         };
         Some(h)

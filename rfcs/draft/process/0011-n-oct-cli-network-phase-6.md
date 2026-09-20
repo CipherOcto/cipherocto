@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-n lands RFC-0011-h §Implementation Phases Phase 6. Two DEFERRED subcommands (`bootstrap` + `status`) land via companion G1 substrate (lands in Phase 2). Three additional substrate missions (G18 writer-election + G20 NetworkSender trait + G1 closure cascade) plus drift-closure mission + 2 follow-on companion missions + final closure artifacts. Layer discipline preserved: zero Layer A change.
+Draft (2026-09-20) — RFC-0011-n lands RFC-0011-h §Implementation Phases Phase 6. Two DEFERRED subcommands (`bootstrap` + `status`) land via NEW Phase 6 companion G26 substrate (`BootstrapOrchestrator` struct, does NOT reuse Phase 2 G1 which is parser/saver only — R1 substrate-faithfulness finding corrected the false attribution). Three NEW Phase 6 substrate missions (G26 BootstrapOrchestrator + G18 WriterElection struct wrapping existing `elect_coordinator` free function + G20 NetworkSender trait + `SendContext`) plus drift-closure mission + 2 follow-on companion missions + final closure artifacts. Layer discipline preserved: zero Layer A change.
 
 > **Amendment chain:** Sixth and final amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (this RFC).
 
@@ -54,10 +54,10 @@ Plus closure artifacts:
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G1 from Phase 2 + G18 + G20) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 2 (clap `UnrecognizedSubcommand`) per DEFERRED-clap-arm-not-registered pattern (RFC-0011-h row 91 footnote pattern a); post-companion, dispatch routes to substrate.
+1. **Substrate-first ordering** — companion substrate missions (G26 NEW Phase 6 + G18 NEW Phase 6 + G20 NEW Phase 6) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 2 (clap `UnrecognizedSubcommand`) per DEFERRED-clap-arm-not-registered pattern (RFC-0011-h row 91 footnote pattern a); post-companion, dispatch routes to substrate.
 2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
 3. **Slot arithmetic preserved** — Phase 6 lands 0 NEW OctoCliError variants; reuses slot 89 (substrate-absent) from Phase 2. Final slot arithmetic: 6 of 10 + slot 91 pre-allocated filled across Phases 1-6 (slots 79, 82, 83, 84, 85, 86, 87, 88, 89 = 9 variants; slot 90 = `NetworkCIDenyDefault` deferred per RFC-0011-h row 543 footnote pending G25 + user decision).
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G1/G18/G20); Layer C CLI dispatch = 2 subcommand arms + final closure artifacts.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 NEW Phase 6 companion missions (G26 BootstrapOrchestrator + G18 WriterElection struct + G20 NetworkSender + SendContext); Layer C CLI dispatch = 2 subcommand arms + final closure artifacts.
 5. **Test vector coverage** — 6 test vectors (3 for `bootstrap` + 3 for `status`) per RFC-0011-h §Implementation Phases Phase 6.
 6. **Closure artifact completeness** — drift-closure mission + 2 follow-on companion missions + final audit doc + memory card + MEMORY.md index entry all land in this phase per `0011-h-multiphase-rollout-plan` §2.6.
 

@@ -1415,7 +1415,10 @@ mod tests {
             member_peer_id: [0xBB; 32],
         };
         let r = dispatch_coordinator_admin_action(&action);
-        assert!(matches!(r, Err(CoordinatorAdminActionError::AdapterUnwired)));
+        assert!(matches!(
+            r,
+            Err(CoordinatorAdminActionError::AdapterUnwired)
+        ));
     }
 
     #[test]
@@ -1425,7 +1428,10 @@ mod tests {
             member_peer_id: [0xCC; 32],
         };
         let r = dispatch_coordinator_admin_action(&action);
-        assert!(matches!(r, Err(CoordinatorAdminActionError::AdapterUnwired)));
+        assert!(matches!(
+            r,
+            Err(CoordinatorAdminActionError::AdapterUnwired)
+        ));
     }
 
     #[test]

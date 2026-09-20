@@ -816,6 +816,19 @@ pub enum OctoCliError {
         /// Companion mission tag (e.g., `G1`, `G6`, `G6b`, `G8`).
         companion: &'static str,
     },
+    /// `octo network coordinator show` lookup miss.
+    ///
+    /// `CoordinatorRecord::load(coordinator_id)` returned `None`
+    /// (substrate-faithful per RFC-0011-k §Substrate-Additions G12b
+    /// row, landed at `next 10ae8e18`). Translates the substrate
+    /// miss into a typed operator-facing exit. CLI-only predicate;
+    /// no substrate fault class — the substrate returns `Option`
+    /// not `Result`. Exit 84.
+    #[error("network coordinator not found (substrate `CoordinatorRecord::load` returned None)")]
+    NetworkCoordinatorNotFound {
+        /// 52-char hex-encoded coordinator ID (CLI-parsed form).
+        coordinator_id_redacted: String,
+    },
 }
 
 impl OctoCliError {
@@ -960,6 +973,9 @@ impl OctoCliError {
             // failure for `octo network mode set` + `authority rotate`.
             Self::NetworkConfigParseFailed { .. } => 82,
             Self::NetworkLocalKeyUnavailable => 83,
+            // RFC-0011-k §Error Handling row 84 — coordinator lookup
+            // miss (substrate-faithful Option::None translation).
+            Self::NetworkCoordinatorNotFound { .. } => 84,
             Self::NetworkGraphDepthBelowRange { .. } => 85,
             Self::NetworkInvalidDid { .. } => 86,
             // RFC-0011-j §Error Handling row 89 — companion mission
@@ -1224,6 +1240,13 @@ impl OctoCliError {
                 format!(
                     "the `{companion}` companion mission has not yet landed; the substrate write path is gated pending acceptance of the companion mission YAML; retry after the substrate slice commit lands"
                 )
+            }
+            // RFC-0011-k §Error Handling row 84 — coordinator lookup
+            // miss. Substrate returns `Option::None`; CLI translates
+            // to a typed exit so operator switch tables can grep on
+            // exit code 84.
+            Self::NetworkCoordinatorNotFound { .. } => {
+                "verify the 52-char hex coordinator_id; substrate `CoordinatorRecord::load` returned None (Phase 6 persistence adapter is the planned follow-on, not yet LANDED)".to_string()
             }
         };
         Some(h)

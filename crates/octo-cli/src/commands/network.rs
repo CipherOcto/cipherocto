@@ -88,6 +88,19 @@ use octo_network::mon::local_gateway_identity::LocalGatewayIdentity;
 use octo_network::mon::trust_graph::{GraphFormat, TrustGraph};
 use octo_network::reputation::{SlashListFilter, SlashReputationStoreCompat};
 
+// Phase 3 (RFC-0011-k) substrate additions (LANDED at `next 10ae8e18`):
+// `CoordinatorRecord::load` lives in `octo-coordinator-types` (Layer A
+// additive surface) and is re-exported through the canonical path. The
+// governance canonical-bytes helper + `CoordinatorAdmin` typed dispatch
+// live in `octo-network` Layer B.
+use octo_coordinator_types::state::CoordinatorRecord;
+use octo_network::dot::adapters::coordinator_admin::{
+    dispatch_coordinator_admin_action, CoordinatorAdminAction, CoordinatorAdminActionError, GroupId,
+};
+use octo_network::mon::governance::{
+    governance_proposal_canonical_bytes, DecisionType, GovernanceProposal, ProposalState,
+};
+
 // === Subcommand taxonomy (RFC-0011-i §Subcommand Taxonomy Phase 1) ===
 
 /// CLI-facing network subcommand enum (Layer C). `#[non_exhaustive]`
@@ -137,6 +150,12 @@ pub enum NetworkAction {
         /// Slash subcommand.
         #[command(subcommand)]
         action: NetworkSlashAction,
+    },
+    /// Coordinator record + admin subcommands (RFC-0011-k Phase 3).
+    Coordinator {
+        /// Coordinator subcommand.
+        #[command(subcommand)]
+        action: NetworkCoordinatorAction,
     },
 }
 
@@ -224,6 +243,9 @@ pub enum NetworkGovernanceAction {
         #[command(subcommand)]
         action: NetworkGovernanceRotationAction,
     },
+    /// Governance tally read surface (RFC-0011-k Phase 3 substrate
+    /// `governance_proposal_canonical_bytes`).
+    Tally(GovernanceTallyArgs),
 }
 
 /// Governance rotation subcommand surface.
@@ -243,6 +265,67 @@ pub struct GovernanceRotationStatusArgs {
     /// via `NetworkInvalidDid` (slot 86).
     #[arg(long)]
     pub did_codec: String,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network governance tally` arguments (RFC-0011-k Phase 3
+/// Substrate-Additions row G3b).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct GovernanceTallyArgs {
+    /// Monotonic proposal id (per-issuer; issuer enforces uniqueness).
+    #[arg(long)]
+    pub proposal_id: u64,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Coordinator subcommand surface (RFC-0011-k Phase 3).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkCoordinatorAction {
+    /// Show one coordinator record by 32-byte coordinator_id
+    /// (read-only; `CoordinatorRecord::load` substrate-faithful
+    /// Option::None translation).
+    Show(CoordinatorShowArgs),
+    /// Dispatch a typed `CoordinatorAdminAction` to the substrate
+    /// sync helper (write; 3-flag confirmation; substrate returns
+    /// `AdapterUnwired` until the wired adapter lands).
+    Admin(CoordinatorAdminArgs),
+}
+
+/// `octo network coordinator show` arguments (RFC-0011-k Phase 3
+/// Substrate-Additions row G12b).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct CoordinatorShowArgs {
+    /// 32-byte coordinator_id as 64 lowercase hex chars. Zero-digest
+    /// is rejected at parse time (pastejacking defense).
+    #[arg(value_parser = parse_64_char_hex_32byte)]
+    pub coordinator_id: [u8; 32],
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network coordinator admin` arguments (RFC-0011-k Phase 3
+/// Substrate-Additions row G12).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct CoordinatorAdminArgs {
+    /// Typed admin action label.
+    ///
+    /// `transfer_ownership` -> `CoordinatorAdminAction::TransferOwnership`
+    /// `ban_member` -> `CoordinatorAdminAction::BanMember`
+    /// `promote_to_admin` -> `CoordinatorAdminAction::PromoteToAdmin`
+    #[arg(long, value_parser = parse_coordinator_admin_action_label)]
+    pub action: CoordinatorAdminActionLabel,
+    /// Group id (canonical RFC-0011-h string form).
+    #[arg(long)]
+    pub group_id: String,
+    /// Target peer id as 64 lowercase hex chars (32-byte wire form).
+    #[arg(long, value_parser = parse_64_char_hex_32byte)]
+    pub target: [u8; 32],
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -632,6 +715,83 @@ pub struct SlashEnvelopeDetailOutput {
     pub domain_id: String,
 }
 
+// === Output envelopes (RFC-0011-k §Output Envelope Phase 3) ===
+
+/// Render payload for `octo network governance tally --proposal-id <N>`
+/// (RFC-0011-k §Output Envelope Phase 3 `governance tally`).
+///
+/// Substrate-faithful: today the canonical-bytes helper (`G3b`) is the
+/// only persistence surface; the full tally ledger lands as the Phase 6
+/// follow-on. The CLI projects the canonical-bytes hash of the
+/// zero-default proposal at the requested proposal_id.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkGovernanceTallyOutput {
+    /// Monotonic proposal id (per-issuer).
+    pub proposal_id: u64,
+    /// 32-byte canonical-bytes hash as 64 lowercase hex chars
+    /// (BLAKE3 over the canonical JSON encoding per G3b).
+    pub canonical_hash_hex: String,
+    /// Lifecycle state label (`voting` — the substrate-faithful
+    /// state for a fresh proposal).
+    pub state: String,
+}
+
+/// Render payload for `octo network coordinator show <coordinator_id>`
+/// (RFC-0011-k §Output Envelope Phase 3 `coordinator show`).
+///
+/// Substrate-faithful: today `CoordinatorRecord::load` returns `None`
+/// for all ids; the CLI surfaces exit 84 `NetworkCoordinatorNotFound`.
+/// The envelope contract is reserved for the populated branch (Phase 6
+/// persistence adapter follow-on); the CLI never emits a success
+/// envelope in current substrate.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkCoordinatorShowOutput {
+    /// 32-byte coordinator_id as 64 lowercase hex chars.
+    pub coordinator_id_hex: String,
+    /// Substrate-faithful record fields. All `None` until the
+    /// persistence adapter lands.
+    pub record: Option<CoordinatorRecordProjectionOutput>,
+}
+
+/// Substrate-faithful projection of `CoordinatorRecord` for
+/// `octo network coordinator show` (RFC-0011-k §Output Envelope).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct CoordinatorRecordProjectionOutput {
+    /// Coordinator peer identifier (32-byte hex form).
+    pub coordinator_peer_id_hex: String,
+    /// Lifecycle label (`created` | `active` | `resigned` | `inactive`
+    /// | `banned`).
+    pub state: String,
+    /// Epoch this term started.
+    pub term_start_epoch: u64,
+    /// Epoch this term ends (exclusive).
+    pub term_end_epoch: u64,
+    /// Slash count (cool-down ban at 5).
+    pub slash_count: u32,
+    /// Locked `octo_o_stake` for this term.
+    pub octo_o_stake_locked: u64,
+}
+
+/// Render payload for `octo network coordinator admin --action ...`
+/// (RFC-0011-k §Output Envelope Phase 3 `coordinator admin`).
+///
+/// Substrate-faithful: today `dispatch_coordinator_admin_action`
+/// returns `AdapterUnwired`; the CLI surfaces the typed failure as
+/// `OctoCliError::Internal("coordinator admin adapter not yet wired")`.
+/// The envelope contract is reserved for the wired branch (Phase 6
+/// adapter follow-on); the CLI never emits a success envelope in
+/// current substrate.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkCoordinatorAdminOutput {
+    /// Action label (`transfer_ownership` | `ban_member` |
+    /// `promote_to_admin`).
+    pub action: String,
+    /// Group id (canonical string form).
+    pub group_id: String,
+    /// Redacted target peer id (first 8 + last 4 chars of 64 hex).
+    pub target_peer_redacted: String,
+}
+
 // === Dispatch ===
 
 /// Dispatch a `NetworkAction` to its handler. Top-level entry point
@@ -654,6 +814,7 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
                     governance_rotation_status(args, cli)
                 }
             },
+            NetworkGovernanceAction::Tally(args) => governance_tally(args, cli),
         },
         NetworkAction::Mode { action: mode_act } => match mode_act {
             NetworkModeAction::Show(args) => mode_show(args, cli),
@@ -668,6 +829,10 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
             NetworkSlashAction::Stats(args) => slash_stats(args, cli),
             NetworkSlashAction::List(args) => slash_list(args, cli),
             NetworkSlashAction::Show(args) => slash_show(args, cli),
+        },
+        NetworkAction::Coordinator { action: coord_act } => match coord_act {
+            NetworkCoordinatorAction::Show(args) => coordinator_show(args, cli),
+            NetworkCoordinatorAction::Admin(args) => coordinator_admin(args, cli),
         },
     }
 }
@@ -967,6 +1132,76 @@ fn slash_show(args: &SlashShowArgs, cli: &Octo) -> Result<(), OctoCliError> {
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
+fn governance_tally(args: &GovernanceTallyArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // Substrate-faithful: canonical-bytes hash of the canonical
+    // zero-default proposal at `args.proposal_id`. Substrate persistence
+    // adapter is the Phase 6 follow-on; today the substrate exposes
+    // only the canonical-bytes helper (G3b) so the CLI projects the
+    // tally surface from a deterministic zero-default proposal.
+    let proposal = GovernanceProposal {
+        proposal_id: args.proposal_id,
+        issuer: String::new(),
+        decision: DecisionType::Admission,
+        state: ProposalState::Voting,
+        voting_opens_at_millis: 0,
+        voting_closes_at_millis: 0,
+        approval_tally_bps: 0,
+        rejection_tally_bps: 0,
+    };
+    let canonical_hash_hex = hex::encode(governance_proposal_canonical_bytes(&proposal));
+    let env = OutputEnvelope::new(
+        "octo.network.governance.tally.v1",
+        NetworkGovernanceTallyOutput {
+            proposal_id: args.proposal_id,
+            canonical_hash_hex,
+            state: "voting".to_string(),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+fn coordinator_show(args: &CoordinatorShowArgs, _cli: &Octo) -> Result<(), OctoCliError> {
+    // Substrate-faithful: `CoordinatorRecord::load` returns `None`
+    // until the persistence adapter lands (Phase 6 follow-on per
+    // `0011-h-s-a-coordinator-record-persistence`). CLI translates
+    // Option::None to typed exit 84 `NetworkCoordinatorNotFound`.
+    if CoordinatorRecord::load(&args.coordinator_id).is_none() {
+        return Err(OctoCliError::NetworkCoordinatorNotFound {
+            coordinator_id_redacted: hex::encode(args.coordinator_id),
+        });
+    }
+    // Unreachable in current substrate (load always returns None);
+    // substrate persistence adapter lands the populated branch
+    // post-Phase 6.
+    Err(OctoCliError::Internal(
+        "coordinator record found but substrate persistence adapter not yet wired".into(),
+    ))
+}
+
+fn coordinator_admin(args: &CoordinatorAdminArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // 3-flag confirmation per `require_confirm`.
+    crate::commands::identity::require_confirm(cli, "network coordinator admin")?;
+    let group_id = GroupId(args.group_id.clone());
+    let substrate_action = args.action.to_substrate(group_id, args.target);
+    // Substrate-faithful: dispatch returns `AdapterUnwired` until
+    // a `CoordinatorAdmin` adapter is wired at the dispatch boundary.
+    // Phase 6 follow-on per `0011-h-s-a-coordinator-admin-adapter`.
+    dispatch_coordinator_admin_action(&substrate_action).map_err(|e| match e {
+        CoordinatorAdminActionError::AdapterUnwired => OctoCliError::Internal(
+            "coordinator admin adapter not yet wired (Phase 6 follow-on)".into(),
+        ),
+    })?;
+    let env = OutputEnvelope::new(
+        "octo.network.coordinator.admin.v1",
+        NetworkCoordinatorAdminOutput {
+            action: args.action.as_str().to_string(),
+            group_id: args.group_id.clone(),
+            target_peer_redacted: redact_target_peer(&hex::encode(args.target)),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
 // === Helpers ===
 
 fn render_envelope<T: Serialize>(
@@ -1166,6 +1401,57 @@ fn parse_seed_list_authority(s: &str) -> Result<SeedListAuthority, String> {
         "dao" => Ok(SeedListAuthority::Dao),
         other => Err(format!(
             "authority must be one of foundation|dao (got `{other}`)"
+        )),
+    }
+}
+
+/// CLI-facing action label for `octo network coordinator admin
+/// --action <LABEL>`. Translates to the substrate `CoordinatorAdminAction`
+/// typed enum at the dispatch boundary.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CoordinatorAdminActionLabel {
+    /// `CoordinatorAdminAction::TransferOwnership`.
+    TransferOwnership,
+    /// `CoordinatorAdminAction::BanMember`.
+    BanMember,
+    /// `CoordinatorAdminAction::PromoteToAdmin`.
+    PromoteToAdmin,
+}
+
+impl CoordinatorAdminActionLabel {
+    fn to_substrate(self, group_id: GroupId, target: [u8; 32]) -> CoordinatorAdminAction {
+        match self {
+            Self::TransferOwnership => CoordinatorAdminAction::TransferOwnership {
+                group_id,
+                new_owner_peer_id: target,
+            },
+            Self::BanMember => CoordinatorAdminAction::BanMember {
+                group_id,
+                member_peer_id: target,
+            },
+            Self::PromoteToAdmin => CoordinatorAdminAction::PromoteToAdmin {
+                group_id,
+                member_peer_id: target,
+            },
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TransferOwnership => "transfer_ownership",
+            Self::BanMember => "ban_member",
+            Self::PromoteToAdmin => "promote_to_admin",
+        }
+    }
+}
+
+fn parse_coordinator_admin_action_label(s: &str) -> Result<CoordinatorAdminActionLabel, String> {
+    match s {
+        "transfer_ownership" => Ok(CoordinatorAdminActionLabel::TransferOwnership),
+        "ban_member" => Ok(CoordinatorAdminActionLabel::BanMember),
+        "promote_to_admin" => Ok(CoordinatorAdminActionLabel::PromoteToAdmin),
+        other => Err(format!(
+            "action must be one of transfer_ownership|ban_member|promote_to_admin (got `{other}`)"
         )),
     }
 }
@@ -1441,9 +1727,18 @@ mod tests {
             "did:octo:router:abc",
         ])
         .unwrap();
-        let NetworkGovernanceAction::Rotation { action } = cli.action;
-        let NetworkGovernanceRotationAction::Status(args) = action;
-        assert_eq!(args.did_codec, "did:octo:router:abc");
+        match cli.action {
+            NetworkGovernanceAction::Rotation { action } => {
+                let NetworkGovernanceRotationAction::Status(args) = action;
+                assert_eq!(args.did_codec, "did:octo:router:abc");
+            }
+            // Phase 3 `Tally` variant is a sibling (Phase 3 dispatch
+            // test `tv_net3_5_governance_tally_parses_with_proposal_id`
+            // covers the new arm); this test pins the Phase 1 surface.
+            NetworkGovernanceAction::Tally(_) => {
+                panic!("expected Rotation, got Tally (Phase 3 variant)")
+            }
+        }
     }
 
     // tv_net1_12: governance rotation status with malformed DID emits
@@ -1561,6 +1856,19 @@ mod tests {
     struct TestSlashCli {
         #[command(subcommand)]
         action: NetworkSlashAction,
+    }
+
+    // Phase 3 test fixtures (RFC-0011-k §Test Vectors).
+    #[derive(Parser, Debug)]
+    struct TestCoordinatorCli {
+        #[command(subcommand)]
+        action: NetworkCoordinatorAction,
+    }
+
+    #[derive(Parser, Debug)]
+    struct TestNetCoordinatorCli {
+        #[command(subcommand)]
+        action: NetworkAction,
     }
 
     // tv_net2_1: mode show subcommand parses
@@ -1942,5 +2250,170 @@ mod tests {
         let did_hex = "AB".repeat(52);
         let r = parse_did_hex_52byte(&did_hex);
         assert!(r.is_err(), "uppercase DID hex must be rejected");
+    }
+
+    // === Test vectors (RFC-0011-k §Test Vectors Phase 3) ===
+
+    // tv_net3_1: coordinator show parses with <coordinator_id> 64-char hex
+    #[test]
+    fn tv_net3_1_coordinator_show_parses_with_id() {
+        let id_hex = "a".repeat(64);
+        let cli = TestCoordinatorCli::try_parse_from(["test", "show", &id_hex]).unwrap();
+        match cli.action {
+            NetworkCoordinatorAction::Show(args) => {
+                assert_eq!(hex::encode(args.coordinator_id), id_hex);
+            }
+            NetworkCoordinatorAction::Admin(_) => {
+                panic!("expected Show, got Admin")
+            }
+        }
+    }
+
+    // tv_net3_2: coordinator show rejects malformed (non-hex) coordinator_id
+    #[test]
+    fn tv_net3_2_coordinator_show_rejects_non_hex() {
+        let bad = "Z".repeat(64);
+        let r = TestCoordinatorCli::try_parse_from(["test", "show", &bad]);
+        assert!(r.is_err(), "non-hex coordinator_id must be rejected");
+    }
+
+    // tv_net3_3: coordinator admin parses with --action transfer_ownership
+    #[test]
+    fn tv_net3_3_coordinator_admin_parses_transfer_ownership() {
+        let target_hex = "b".repeat(64);
+        let cli = TestCoordinatorCli::try_parse_from([
+            "test",
+            "admin",
+            "--action",
+            "transfer_ownership",
+            "--group-id",
+            "grp-001",
+            "--target",
+            &target_hex,
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkCoordinatorAction::Admin(args) => {
+                assert_eq!(args.action, CoordinatorAdminActionLabel::TransferOwnership);
+                assert_eq!(args.group_id, "grp-001");
+                assert_eq!(hex::encode(args.target), target_hex);
+            }
+            NetworkCoordinatorAction::Show(_) => {
+                panic!("expected Admin, got Show")
+            }
+        }
+    }
+
+    // tv_net3_4: coordinator admin rejects unknown action label
+    #[test]
+    fn tv_net3_4_coordinator_admin_rejects_unknown_label() {
+        let target_hex = "c".repeat(64);
+        let r = TestCoordinatorCli::try_parse_from([
+            "test",
+            "admin",
+            "--action",
+            "kick_ban",
+            "--group-id",
+            "grp-002",
+            "--target",
+            &target_hex,
+        ]);
+        assert!(r.is_err(), "unknown action label must be rejected");
+    }
+
+    // tv_net3_5: governance tally parses with --proposal-id
+    #[test]
+    fn tv_net3_5_governance_tally_parses_with_proposal_id() {
+        let cli = TestNetCoordinatorCli::try_parse_from([
+            "test",
+            "governance",
+            "tally",
+            "--proposal-id",
+            "42",
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkAction::Governance {
+                action: NetworkGovernanceAction::Tally(args),
+            } => {
+                assert_eq!(args.proposal_id, 42);
+            }
+            other => panic!("expected Governance Tally, got {other:?}"),
+        }
+    }
+
+    // tv_net3_6: coordinator show calls CoordinatorRecord::load and emits
+    // NetworkCoordinatorNotFound exit 84 (substrate-faithful: load always
+    // returns None in current substrate).
+    #[test]
+    fn tv_net3_6_coordinator_show_emits_network_coordinator_not_found() {
+        let id_hex = "d".repeat(64);
+        let args = CoordinatorShowArgs {
+            coordinator_id: [0x0d_u8; 32],
+            json: false,
+        };
+        let res = coordinator_show(
+            &args,
+            &build_cli(&["octo", "network", "coordinator", "show", &id_hex]),
+        );
+        assert!(
+            matches!(res, Err(OctoCliError::NetworkCoordinatorNotFound { .. })),
+            "expected NetworkCoordinatorNotFound, got {res:?}"
+        );
+    }
+
+    // tv_net3_7: coordinator admin substrate dispatch returns AdapterUnwired
+    // (mapped to OctoCliError::Internal by the handler).
+    #[test]
+    fn tv_net3_7_coordinator_admin_substrate_returns_adapter_unwired() {
+        let target_hex = "e".repeat(64);
+        let mut cli = build_cli(&[
+            "octo",
+            "network",
+            "coordinator",
+            "admin",
+            "--action",
+            "ban_member",
+            "--group-id",
+            "grp-007",
+            "--target",
+            &target_hex,
+        ]);
+        // Bypass 3-flag confirmation gate via --dry-run; substrate still
+        // rejects (AdapterUnwired).
+        cli.mode.dry_run = true;
+        let args = CoordinatorAdminArgs {
+            action: CoordinatorAdminActionLabel::BanMember,
+            group_id: "grp-007".to_string(),
+            target: [0x0e_u8; 32],
+            json: false,
+        };
+        let res = coordinator_admin(&args, &cli);
+        assert!(
+            matches!(res, Err(OctoCliError::Internal(_))),
+            "expected Internal (AdapterUnwired mapping), got {res:?}"
+        );
+    }
+
+    // tv_net3_8: governance tally handler computes canonical-bytes hash
+    // for a zero-default proposal at the requested proposal_id
+    // (substrate-faithful: G3b canonical-bytes helper is the only
+    // persistence surface today).
+    #[test]
+    fn tv_net3_8_governance_tally_handler_emits_canonical_hash() {
+        let args = GovernanceTallyArgs {
+            proposal_id: 7,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "governance",
+            "tally",
+            "--proposal-id",
+            "7",
+        ]);
+        let res = governance_tally(&args, &cli);
+        assert!(res.is_ok(), "expected Ok, got {res:?}");
     }
 }

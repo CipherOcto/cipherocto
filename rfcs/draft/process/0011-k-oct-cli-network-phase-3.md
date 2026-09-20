@@ -46,7 +46,7 @@ RFC-0011-k lands the **coordinator lifecycle + governance tally visibility** sli
 
 1. **Substrate-first ordering** — companion substrate missions (G12/G12b/G3b) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
 2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
-3. **Slot arithmetic preserved** — Phase 3 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 84). The remaining 3 (slots 87, 88, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
+3. **Slot arithmetic preserved (forward-looking)** — Phase 3 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 84, `NetworkCoordinatorNotFound`). FORWARD-LOOKING per RFC-0011-h §Error Handling + §Exit Codes — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 3 implementation. The remaining 3 (slots 87, 88, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan. **R1 substrate-fault-class finding (cross-RFC, same as RFC-0011-n R2):** slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
 4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G12/G12b/G3b); Layer C CLI dispatch = 3 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
 5. **Test vector coverage** — 8 test vectors (3 for coordinator show + 3 for coordinator admin + 2 for governance tally) per RFC-0011-h §Implementation Phases Phase 3.
 
@@ -255,3 +255,4 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 | Version | Date       | Notes                                                         |
 | ------- | ---------- | ------------------------------------------------------------- |
 | v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle          |
+| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 84 `NetworkCoordinatorNotFound` arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling (variant does NOT exist in `error.rs` today; lands during implementation) |

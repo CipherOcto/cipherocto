@@ -47,7 +47,7 @@ RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-
    - rebind-* trio = clap arm gated (exit 2) per RFC-0011-h row 91 pattern (a)
    - bind-envelope show = substrate absent (exit 89) per pattern (b)
 2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
-3. **Slot arithmetic preserved** — Phase 4 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 88). The remaining 2 (slots 90, 91 pre-allocated) land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
+3. **Slot arithmetic preserved (forward-looking)** — Phase 4 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 88, `NetworkDryRunDenied`). FORWARD-LOOKING per RFC-0011-h §Error Handling + §Exit Codes — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 4 implementation. The remaining 2 (slots 90, 91 pre-allocated) land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan. **R1 substrate-fault-class finding (cross-RFC, same as RFC-0011-n R2 + RFC-0011-k R1):** slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
 4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G21/G22/G25); Layer C CLI dispatch = 4 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
 5. **Test vector coverage** — 12 test vectors (3 for bind-envelope show + 4 for rebind-prepare + 3 for rebind-commit + 2 for rebind-abort) per RFC-0011-h §Implementation Phases Phase 4.
 
@@ -268,3 +268,4 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 | Version | Date       | Notes                                                         |
 | ------- | ---------- | ------------------------------------------------------------- |
 | v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle          |
+| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 88 `NetworkDryRunDenied` arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling (variant does NOT exist in `error.rs` today; lands during implementation) |

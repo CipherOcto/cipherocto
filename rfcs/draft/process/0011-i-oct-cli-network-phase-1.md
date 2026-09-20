@@ -243,7 +243,7 @@ Phase 1 lands exactly 4 of the 10 RFC-0011-h-defined `OctoCliError` variants:
 | 85   | `NetworkGraphDepthBelowRange` (NEW) | `GraphDepthOOB` (CLI-gate)         | programmatic bypass of `--depth 0` (non-clap invocation) | substrate `TrustGraph::render` is infallible + zero depth awareness; CLI predicate is the only depth gate |
 | 86   | `NetworkInvalidDid` (NEW)           | `InvalidDid` (CLI-gate)            | DID codec rejection pre-dispatch                         | `DidError` enum at `crates/octo-ident/src/lib.rs:191`; CLI pre-validates format before substrate dispatch |
 
-**Reachability:** all 4 are CLI-gate/substrate-anchored predicates that fire before substrate dispatch; no companion gating (Phase 1 reads existing substrate).
+**Reachability:** all 4 are CLI-gate/substrate-anchored predicates that fire before substrate dispatch. Slots 79, 85, 86 have no companion gating (Phase 1 reads existing substrate). Slot 83 `NetworkLocalKeyUnavailable` has 1 companion gating (fires on `LocalGatewayIdentity::load` returning `NotInitialized` per companion mission `0011-h-s-a-local-gateway-identity-state`).
 
 **Slot arithmetic preserved:** 4 new variants land in slots 79, 83, 85, 86. The remaining 6 RFC-0011-h-defined variants (82, 84, 87, 88, 89, 90) + slot 91 pre-allocation land in subsequent phases per the multiphase plan. Total: 10 defined + slot 91 pre-allocated + slots 80/81 RESERVED = unchanged from RFC-0011-h closure baseline.
 
@@ -336,7 +336,7 @@ Per RFC-0011-h §Test Vectors redact-did-1 row, the redact-did-1 vector is a pro
 ## Alternatives Considered
 
 - **Single all-phases RFC** — rejected; would be 1000+ lines, exceeding DRY review surface per RFC-0011-h precedent. Phase-per-amendment RFC is the established pattern (RFC-0011-c, -d, -g, -h).
-- **Phase 1 substrate-first (companion missions for G22/G23/G24)** — rejected; Phase 1 needs NO substrate additions (verified at RFC-0011-h closure). Substrate-first amendment would be zero-substrate work.
+- **Phase 1 substrate-first (companion missions for G22/G23/G24)** — rejected; Phase 1 has 1 substrate addition (companion mission `0011-h-s-a-local-gateway-identity-state` for `identity show` 3-arg local state per R1.5 fix per F2), but the 4 remaining subcommands (`peers list`, `peers get`, `trust-graph render`, `governance rotation status`) have zero substrate additions (verified at RFC-0011-h closure). Substrate-first amendment would be zero-substrate work for those 4 subcommands but nonzero for `identity show`; CLI-first amendment RFC pattern preserved per RFC-0011-c / -d / -g / -h precedent.
 - **Different amendment letter** — considered RFC-0011-h-1 (sub-amendment) but rejected; letter-suffix series (`-i`, `-j`, `-k`, ...) follows established precedent of RFC-0011-c through RFC-0011-h as letter-suffixed amendments to RFC-0011.
 
 ## Substrate-Additions Companion Missions

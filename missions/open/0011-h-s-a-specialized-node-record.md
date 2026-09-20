@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G11 + RFC-0011-q Phase 9 §Substrate-Additions Companion Missions. Substrate slice pending per the Phase 4 paired-substrate completion pattern (companion YAML filled in → substrate lands → YAML Claimed → CLI dispatch lands → YAML Completed paired). RFC-0011-q Phase 9 specialized-node amendment Draft landed at `next c0287128`.
+Claimed (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G11 + RFC-0011-q Phase 9 §Substrate-Additions Companion Missions. Substrate slice LANDED at `next 8c11d683` (NEW `crates/octo-network/src/specialized/node_record.rs` + `mod.rs` + `pub mod specialized;` insertion). 6 unit tests added (1489/1489 octo-network lib tests pass). CLI dispatch slice pending per the Phase 4 paired-substrate completion pattern (substrate lands → YAML Claimed → CLI dispatch lands → YAML Completed paired). RFC-0011-q Phase 9 specialized-node amendment Draft landed at `next c0287128`. Stub fill-in landed at `next c0a33e5e`.
 
 ## RFC
 

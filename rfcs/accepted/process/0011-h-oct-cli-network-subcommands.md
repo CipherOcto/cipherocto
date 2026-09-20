@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-18)
+Accepted (2026-09-20) — DRY CLOSED via 5-len multi-round review (R92-R102). 11 commit review chain culminating in `ddc55d7d`. Gate pair = R102 post-fix zero + R103 post-fix zero = 2 consecutive zero-finding rounds.
 
 > **Amendment chain:** Subordinate amendment to RFC-0011. Closes the gap DEFERRED from 0011-deprecation-stub-removal (2026-09-17): `octo network bootstrap` + `octo network status` deferred to a future amendment. substrate-faithful scope bounded by what `octo-network` actually exposes today; substrate-missing slices become explicit companion missions per §Substrate-Additions Companion Missions.
 
@@ -953,16 +953,17 @@ substrate-faithful umbrella pattern chosen because:
 
 ## Version History
 
-| Version | Date | Changes                                                           |
-| ------- | ---- | ----------------------------------------------------------------- |
-| 0.1     |      | Initial Draft. 17 subcommands, 5 families, 19 companion missions. |
-| 0.2     |      | R5.5: fabricated fn refs; wire-format notes.                      |
-| 0.3     |      | R6.5: cite sweep + slot table + adversarial.                      |
-| 0.4     |      | R9.5: blake3 cite + GAPs + Security + Layer.                      |
-| 0.5     |      | R10.5: dry_run rename + matrix rows + bind-chain integrity.       |
-| 0.6     |      | R11.5: RebindAbort fields + BLOCKED + blake3 canonicalize.        |
-| 0.7     |      | R13.5: substrate-faithful fields + blake3 cite + new_bind struct. |
-| 0.8     |      | R14.5: type defs + Authority col + slot 85 + commit-3/4 TV.       |
+| Version | Date       | Changes                                                                                                                            |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1     |            | Initial Draft. 17 subcommands, 5 families, 19 companion missions.                                                                  |
+| 0.2     |            | R5.5: fabricated fn refs; wire-format notes.                                                                                       |
+| 0.3     |            | R6.5: cite sweep + slot table + adversarial.                                                                                       |
+| 0.4     |            | R9.5: blake3 cite + GAPs + Security + Layer.                                                                                       |
+| 0.5     |            | R10.5: dry_run rename + matrix rows + bind-chain integrity.                                                                        |
+| 0.6     |            | R11.5: RebindAbort fields + BLOCKED + blake3 canonicalize.                                                                         |
+| 0.7     |            | R13.5: substrate-faithful fields + blake3 cite + new_bind struct.                                                                  |
+| 0.8     |            | R14.5: type defs + Authority col + slot 85 + commit-3/4 TV.                                                                        |
+| 0.9     | 2026-09-20 | R92-R102 multi-axis DRY review sweep. 11 review-sweep commits. DRY CLOSED gate pair = R102 + R103 zero. Promoted Draft → Accepted. |
 
 ## Related RFCs
 

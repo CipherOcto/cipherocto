@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice LANDED at `next cb5e0d3a`. `BootstrapOrchestrator` struct + `BootstrapState` struct + `BootstrapError` enum + `start_bootstrap` + `status` + `reset` methods + `BootstrapMode::refuses_start` helper landed in `crates/octo-network/src/mon/bootstrap.rs` per RFC-0011-n Phase 6 G26 NEW companion mission. 10 substrate unit tests added (1461 total octo-network tests, was 1451). CLI dispatch slice pending.
+Completed (2026-09-20) — Substrate slice LANDED at `next cb5e0d3a`. CLI dispatch slice LANDED at `next 2ba4273b`. `BootstrapOrchestrator` struct + `BootstrapState` struct + `BootstrapError` enum + `start_bootstrap` + `status` + `reset` methods + `BootstrapMode::refuses_start` helper landed in `crates/octo-network/src/mon/bootstrap.rs` per RFC-0011-n Phase 6 G26 NEW companion mission. 10 substrate unit tests added (1461 total octo-network tests, was 1451). Phase 6 CLI dispatch slice atop this substrate LANDED at `next 2ba4273b` (402/402 octo-cli tests, was 396 before Phase 6 vectors). Phase 6 IMPLEMENTATION CLOSED for G26 per RFC-0011-n §Implementation Phases Phase 6 closure card.
 
 ## RFC
 

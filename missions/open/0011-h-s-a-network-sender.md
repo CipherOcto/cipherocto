@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice LANDED at `next a6627e53`. `NetworkSender` trait + `SendContext` struct + `WireFormat` enum + `NetworkSendError` enum + `SendSummary` struct + `NetworkSenderRegistry` struct landed in NEW directory `crates/octo-network/src/sender/` per RFC-0011-n Phase 6 G20 NEW companion mission + RFC-0863 General-Purpose Network Integration. Per-extension crate pattern preserved (trait in Layer B; per-transport impls OUT OF SCOPE). 11 substrate unit tests added (1472 total octo-network tests, was 1461). CLI dispatch slice pending.
+Completed (2026-09-20) — Substrate slice LANDED at `next a6627e53`. CLI dispatch slice LANDED at `next 2ba4273b`. `NetworkSender` trait + `SendContext` struct + `WireFormat` enum + `NetworkSendError` enum + `SendSummary` struct + `NetworkSenderRegistry` struct landed in NEW directory `crates/octo-network/src/sender/` per RFC-0011-n Phase 6 G20 NEW companion mission + RFC-0863 General-Purpose Network Integration. Per-extension crate pattern preserved (trait in Layer B; per-transport impls OUT OF SCOPE). 11 substrate unit tests added (1472 total octo-network tests, was 1461). Phase 6 CLI dispatch slice atop this substrate LANDED at `next 2ba4273b` (402/402 octo-cli tests, was 396). Phase 6 IMPLEMENTATION CLOSED for G20 per RFC-0011-n §Implementation Phases Phase 6 closure card.
 
 ## RFC
 

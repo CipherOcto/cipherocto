@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice LANDED at `next a58f2103`. `WriterElection` struct + `elect_coordinator` method (delegating to free function) + `cast_ballot` + `add_stake` + `add_voter` + `set_governance_model` + `ballot_count` + `stake_count` + `voter_count` + `with_governance_model` constructor landed in `crates/octo-coordinator-types/src/election.rs` per RFC-0011-n Phase 6 G18 NEW companion mission. 8 substrate unit tests added (54 total octo-coordinator-types tests, was 46). `GovernanceModel` now derives `Default` with `Centralized` as the `#[default]` variant. CLI dispatch slice pending.
+Completed (2026-09-20) — Substrate slice LANDED at `next a58f2103`. CLI dispatch slice LANDED at `next 2ba4273b`. `WriterElection` struct + `elect_coordinator` method (delegating to free function) + `cast_ballot` + `add_stake` + `add_voter` + `set_governance_model` + `ballot_count` + `stake_count` + `voter_count` + `with_governance_model` constructor landed in `crates/octo-coordinator-types/src/election.rs` per RFC-0011-n Phase 6 G18 NEW companion mission. 8 substrate unit tests added (54 total octo-coordinator-types tests, was 46). `GovernanceModel` now derives `Default` with `Centralized` as the `#[default]` variant. Phase 6 CLI dispatch slice atop this substrate LANDED at `next 2ba4273b` (402/402 octo-cli tests, was 396). Phase 6 IMPLEMENTATION CLOSED for G18 per RFC-0011-n §Implementation Phases Phase 6 closure card.
 
 ## RFC
 

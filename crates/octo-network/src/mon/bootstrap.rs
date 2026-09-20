@@ -156,6 +156,31 @@ pub enum SeedListAuthority {
     Dao,
 }
 
+impl SeedListAuthority {
+    /// Construct a rotated authority for the post-fork epoch window.
+    ///
+    /// Mission `0011-h-s-a-seed-list-authority-rotate` (G8) lands
+    /// this constructor as the substrate anchor for
+    /// `octo network authority rotate`. The constructor validates:
+    /// (1) the requested `new` authority is `Dao` (Foundation
+    /// rotation is not allowed post-fork — the foundation multi-sig
+    /// is deprecated at `EPOCH_GOVERNANCE_TAKEOVER`), (2) the
+    /// supplied `quorum_proof` is non-zero (zero-digest is a forgery
+    /// sentinel; semantic verification happens elsewhere).
+    pub fn rotate_post_fork(
+        new: SeedListAuthority,
+        quorum_proof: [u8; 32],
+    ) -> Result<Self, SeedAuthorityError> {
+        if new != SeedListAuthority::Dao {
+            return Err(SeedAuthorityError::SeedListAuthorityDeprecated);
+        }
+        if quorum_proof == [0u8; 32] {
+            return Err(SeedAuthorityError::BadSignature);
+        }
+        Ok(Self::Dao)
+    }
+}
+
 /// A seed list authority error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SeedAuthorityError {
@@ -783,5 +808,28 @@ mod tests {
             Err(BootstrapConfigError::Io(_)) => {}
             other => panic!("expected Io error, got {other:?}"),
         }
+    }
+
+    // G8 companion substrate tests (RFC-0011-j Phase 2)
+
+    #[test]
+    fn rotate_post_fork_accepts_dao_with_nonzero_proof() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Dao, [0xAB; 32]);
+        assert_eq!(result, Ok(SeedListAuthority::Dao));
+    }
+
+    #[test]
+    fn rotate_post_fork_rejects_foundation() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Foundation, [0xAB; 32]);
+        assert!(matches!(
+            result,
+            Err(SeedAuthorityError::SeedListAuthorityDeprecated)
+        ));
+    }
+
+    #[test]
+    fn rotate_post_fork_rejects_zero_proof() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Dao, [0u8; 32]);
+        assert!(matches!(result, Err(SeedAuthorityError::BadSignature)));
     }
 }

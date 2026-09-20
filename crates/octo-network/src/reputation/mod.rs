@@ -34,4 +34,6 @@ mod dc_store;
 mod slash_store;
 
 pub use dc_store::DcRootedSlashReputationStoreCompat;
-pub use slash_store::{SlashReputationStoreCompat, HARD_THRESHOLD};
+pub use slash_store::{
+    SlashListFilter, SlashReputationStoreCompat, SlashStoreLoader, HARD_THRESHOLD,
+};

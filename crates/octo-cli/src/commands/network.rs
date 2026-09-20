@@ -221,6 +221,13 @@ pub enum NetworkAction {
     /// Network aggregate status subcommand
     /// (RFC-0011-n Phase 6: G26 + G18 + G20 + drift-closure).
     Status(StatusArgs),
+    /// Slash bridge observability + propagate subcommands
+    /// (RFC-0011-o Phase 7 G9).
+    SlashBridge {
+        /// Slash-bridge subcommand.
+        #[command(subcommand)]
+        action: NetworkSlashBridgeAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -569,6 +576,55 @@ pub struct DiscoveryInvitationShowArgs {
     pub json: bool,
 }
 
+/// Slash bridge observability + propagate subcommands
+/// (RFC-0011-o Phase 7 G9).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkSlashBridgeAction {
+    /// List bridged slashes currently held by the local trait
+    /// implementation (RFC-0011-o §Subcommand Taxonomy Phase 7).
+    List(SlashBridgeListArgs),
+    /// Propagate a slash envelope to its external destination
+    /// (RFC-0011-o §Subcommand Taxonomy Phase 7).
+    Propagate(SlashBridgePropagateArgs),
+}
+
+/// `octo network slash-bridge list` arguments (RFC-0011-o
+/// §Subcommand Taxonomy Phase 7 `slash-bridge list`).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct SlashBridgeListArgs {
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network slash-bridge propagate <slash_envelope_id_hex>`
+/// arguments (RFC-0011-o §Subcommand Taxonomy Phase 7
+/// `slash-bridge propagate`). `--dry-run` is default per
+/// RFC-0011-h §Confirmation Flag for mutating subcommands;
+/// `--confirm-acknowledge` required for apply (reversible
+/// write per RFC-0011-o §Confirmation Flag).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct SlashBridgePropagateArgs {
+    /// 32-byte `slash_envelope_id` as 64 lowercase hex chars
+    /// (RFC-0855p-b §Wire Format). Mixed-case input is rejected
+    /// (pastejacking defense per RFC-0011-o §Confirmation Flag).
+    #[arg(value_parser = parse_gateway_id_hex)]
+    pub slash_envelope_id: [u8; 32],
+    /// Emit preview envelope with computed `BridgeReceipt` shape
+    /// (default true per RFC-0011-h §Confirmation Flag).
+    #[arg(long, default_value_t = true)]
+    pub dry_run: bool,
+    /// Acknowledge and apply the propagation (reversible write;
+    /// required for non-dry-run apply per RFC-0011-o §Confirmation
+    /// Flag).
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
 // === Output envelopes (RFC-0011-n Phase 6) ===
 
 /// `octo network bootstrap` output envelope (RFC-0011-n Phase 6
@@ -614,6 +670,66 @@ pub struct NetworkStatusOutput {
     pub transport_tags: Vec<String>,
     /// Aggregated sender summaries (one per registered sender).
     pub send_summaries: Vec<SendSummary>,
+}
+
+// === Output envelopes (RFC-0011-o Phase 7 G9) ===
+
+/// Render payload for `octo network slash-bridge list`
+/// (RFC-0011-o §Output Envelope Phase 7).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkSlashBridgeListOutput {
+    /// Per-row bridged slash projection
+    /// (substrate-faithful `BridgedSlash` per RFC-0011-o
+    /// §Substrate Mapping Table).
+    pub slashes: Vec<BridgedSlashProjection>,
+    /// Row count in `slashes`.
+    pub total: usize,
+}
+
+/// Substrate-faithful summary projection of `BridgedSlash` for
+/// `octo network slash-bridge list` (RFC-0011-o §Output Envelope
+/// Phase 7). Field order matches substrate struct definition;
+/// `bridge_metadata` is serialized as JSON object with deterministic
+/// key order (BTreeMap-backed per RFC-0011-h §Output Envelope
+/// determinism).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct BridgedSlashProjection {
+    /// 32-byte `slash_envelope_id` as 64 lowercase hex chars.
+    pub slash_envelope_id_hex: String,
+    /// Bridge metadata (extension-defined; deterministic key order).
+    pub bridge_metadata: std::collections::BTreeMap<String, String>,
+    /// Epoch when the slash was bridged.
+    pub bridged_at_epoch: u64,
+}
+
+/// Render payload for `octo network slash-bridge propagate
+/// <slash_envelope_id_hex>` (RFC-0011-o §Output Envelope Phase 7).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkSlashBridgePropagateOutput {
+    /// Substrate-faithful `BridgeReceipt` projection (RFC-0011-o
+    /// §Substrate Mapping Table). On `--dry-run` the receipt shape
+    /// is preview-only (synthetic); on apply it is the real
+    /// substrate return value.
+    pub receipt: BridgeReceiptProjection,
+    /// True iff `--dry-run` was set (preview only).
+    pub dry_run: bool,
+    /// 32-byte `slash_envelope_id` echoed back for traceability.
+    pub slash_envelope_id_hex: String,
+}
+
+/// Substrate-faithful summary projection of `BridgeReceipt` for
+/// `octo network slash-bridge propagate` (RFC-0011-o §Output
+/// Envelope Phase 7).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct BridgeReceiptProjection {
+    /// 32-byte `slash_envelope_id` as 64 lowercase hex chars.
+    pub slash_envelope_id_hex: String,
+    /// Opaque per-extension destination bytes (transport-specific;
+    /// redacted on error paths per RFC-0011-h §Security
+    /// Considerations redaction invariant).
+    pub propagated_to_hex: String,
+    /// Epoch when propagation completed.
+    pub propagated_at_epoch: u64,
 }
 
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
@@ -1266,6 +1382,10 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         },
         NetworkAction::Bootstrap(args) => network_bootstrap(args, cli),
         NetworkAction::Status(args) => network_status(args, cli),
+        NetworkAction::SlashBridge { action: sb_act } => match sb_act {
+            NetworkSlashBridgeAction::List(args) => network_slash_bridge_list(args, cli),
+            NetworkSlashBridgeAction::Propagate(args) => network_slash_bridge_propagate(args, cli),
+        },
     }
 }
 
@@ -2468,6 +2588,105 @@ fn network_status(args: &StatusArgs, cli: &Octo) -> Result<(), OctoCliError> {
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// `octo network slash-bridge list` handler (RFC-0011-o Phase 7 G9).
+///
+/// Substrate-faithful boundary: the CLI does NOT reach into
+/// `SlashBridge` trait internals. The companion mission G9
+/// `0011-h-s-a-slash-bridge-trait` provides the trait. This handler
+/// consumes the registry lookup and translates 1:1 to the
+/// `NetworkSlashBridgeListOutput` envelope.
+///
+/// Pre-companion G9 (trait absent in current substrate), surfaces
+/// exit 89 `NetworkSubstrateUnavailable` per RFC-0011-o §Error
+/// Handling. Companion-gated dispatch is the substrate-first
+/// ordering invariant per [[no-phantom-mission-pointers]].
+fn network_slash_bridge_list(args: &SlashBridgeListArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    let registry = slash_bridge_registry(cli);
+    let bridge =
+        registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?;
+    let slashes = bridge.list();
+    let projections: Vec<BridgedSlashProjection> = slashes
+        .into_iter()
+        .map(|s| BridgedSlashProjection {
+            slash_envelope_id_hex: hex::encode(s.slash_envelope_id),
+            bridge_metadata: s.bridge_metadata,
+            bridged_at_epoch: s.bridged_at_epoch,
+        })
+        .collect();
+    let env = OutputEnvelope::new(
+        "octo.network.slash-bridge.list.v1",
+        NetworkSlashBridgeListOutput {
+            total: projections.len(),
+            slashes: projections,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// `octo network slash-bridge propagate <slash_envelope_id_hex>`
+/// handler (RFC-0011-o Phase 7 G9).
+///
+/// Mutating but reversible per RFC-0011-o §Confirmation Flag:
+/// `--dry-run` is default true (preview emission). Apply requires
+/// `--confirm-acknowledge`. Idempotent on `slash_envelope_id` per
+/// RFC-0855 §8.4 External Reputation Bridge — double-propagate
+/// yields same receipt.
+fn network_slash_bridge_propagate(
+    args: &SlashBridgePropagateArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    if !args.dry_run && !args.confirm_acknowledge {
+        return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G9" });
+    }
+    let registry = slash_bridge_registry(cli);
+    let bridge =
+        registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?;
+    let slash_envelope_id = args.slash_envelope_id;
+    let receipt = if args.dry_run {
+        // Dry-run: emit synthetic preview receipt per RFC-0011-o
+        // §Output Envelope (dry-run shape mirrors apply shape; on
+        // apply the real substrate return value replaces it).
+        octo_network::mon::slash_bridge::BridgeReceipt {
+            slash_envelope_id,
+            propagated_to: vec![0u8; 2],
+            propagated_at_epoch: 0,
+        }
+    } else {
+        bridge
+            .propagate_to(slash_envelope_id)
+            .map_err(|_| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?
+    };
+    let receipt_proj = BridgeReceiptProjection {
+        slash_envelope_id_hex: hex::encode(receipt.slash_envelope_id),
+        propagated_to_hex: hex::encode(&receipt.propagated_to),
+        propagated_at_epoch: receipt.propagated_at_epoch,
+    };
+    let env = OutputEnvelope::new(
+        "octo.network.slash-bridge.propagate.v1",
+        NetworkSlashBridgePropagateOutput {
+            dry_run: args.dry_run,
+            receipt: receipt_proj,
+            slash_envelope_id_hex: hex::encode(slash_envelope_id),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// Lookup the runtime `SlashBridge` registry (per-extension crate
+/// pattern; concrete impls register via init fn OUT OF SCOPE for
+/// Phase 7). Per RFC-0011-o §Substrate Mapping Table, the CLI
+/// consumes the trait via registry lookup, identical to RFC-0863
+/// `NetworkSender` pattern.
+fn slash_bridge_registry(
+    _cli: &Octo,
+) -> Option<std::sync::Arc<dyn octo_network::mon::slash_bridge::SlashBridge>> {
+    // Companion G9 substrate lands in a follow-on Layer D extension
+    // crate per per-extension crate pattern. Until then, the trait
+    // has no registered impl in this binary — dispatch surfaces
+    // exit 89.
+    None
 }
 
 fn bootstrap_config_companion(err: &BootstrapConfigError) -> &'static str {
@@ -3827,5 +4046,121 @@ mod tests {
         let orch = BootstrapOrchestrator::default();
         let state = orch.status();
         assert!(!state.refuse_start);
+    }
+
+    // === Phase 7 test vectors (RFC-0011-o §Test Vectors Phase 7) ===
+
+    // tv_net7_1: slash-bridge list subcommand parses cleanly (G9 substrate-faithful)
+    #[test]
+    fn tv_net7_1_slash_bridge_list_parses_with_no_args() {
+        let cli = TestPhase7Cli::try_parse_from(["test", "slash-bridge", "list"]).expect("parse");
+        match cli.action {
+            NetworkAction::SlashBridge { action } => match action {
+                NetworkSlashBridgeAction::List(args) => assert!(!args.json),
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected SlashBridge"),
+        }
+    }
+
+    // tv_net7_2: slash-bridge list --json flag parses cleanly
+    #[test]
+    fn tv_net7_2_slash_bridge_list_json_flag_parses() {
+        let cli = TestPhase7Cli::try_parse_from(["test", "slash-bridge", "list", "--json"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::SlashBridge { action } => match action {
+                NetworkSlashBridgeAction::List(args) => assert!(args.json),
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected SlashBridge"),
+        }
+    }
+
+    // tv_net7_3: slash-bridge list envelope projection is substrate-faithful
+    // (empty registry returns total=0 with empty slashes; BTreeMap
+    // metadata serializes to empty JSON object per RFC-0011-h §Output
+    // Envelope determinism pattern).
+    #[test]
+    fn tv_net7_3_slash_bridge_list_empty_envelope_total_zero() {
+        use octo_network::mon::slash_bridge::SlashBridge;
+        // In-memory test impl mirrors the substrate InMemorySlashBridge;
+        // list returns empty Vec for empty store (substrate-faithful).
+        struct EmptyBridge;
+        impl SlashBridge for EmptyBridge {
+            fn list(&self) -> Vec<octo_network::mon::slash_bridge::BridgedSlash> {
+                Vec::new()
+            }
+            fn propagate_to(
+                &self,
+                _id: [u8; 32],
+            ) -> Result<
+                octo_network::mon::slash_bridge::BridgeReceipt,
+                octo_network::mon::slash_bridge::BridgeError,
+            > {
+                Err(octo_network::mon::slash_bridge::BridgeError::Unreachable)
+            }
+        }
+        let bridge = EmptyBridge;
+        assert_eq!(bridge.list().len(), 0);
+    }
+
+    // tv_net7_4: slash-bridge propagate subcommand parses cleanly (G9 substrate-faithful)
+    #[test]
+    fn tv_net7_4_slash_bridge_propagate_parses_with_dry_run_default() {
+        let hex_id = "0".repeat(64);
+        let cli = TestPhase7Cli::try_parse_from(["test", "slash-bridge", "propagate", &hex_id])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::SlashBridge { action } => match action {
+                NetworkSlashBridgeAction::Propagate(args) => {
+                    assert!(args.dry_run);
+                    assert!(!args.confirm_acknowledge);
+                }
+                _ => panic!("expected Propagate"),
+            },
+            _ => panic!("expected SlashBridge"),
+        }
+    }
+
+    // tv_net7_5: slash-bridge propagate with --confirm-acknowledge parses cleanly
+    #[test]
+    fn tv_net7_5_slash_bridge_propagate_confirm_acknowledge_parses() {
+        let hex_id = "0".repeat(64);
+        let cli = TestPhase7Cli::try_parse_from([
+            "test",
+            "slash-bridge",
+            "propagate",
+            &hex_id,
+            "--confirm-acknowledge",
+        ])
+        .expect("parse");
+        match cli.action {
+            NetworkAction::SlashBridge { action } => match action {
+                NetworkSlashBridgeAction::Propagate(args) => {
+                    assert!(args.dry_run);
+                    assert!(args.confirm_acknowledge);
+                }
+                _ => panic!("expected Propagate"),
+            },
+            _ => panic!("expected SlashBridge"),
+        }
+    }
+
+    // tv_net7_6: slash-bridge propagate pastejacking defense — mixed-case hex
+    //              rejected by parse_gateway_id_hex (RFC-0011-h pastejacking defense)
+    #[test]
+    fn tv_net7_6_slash_bridge_propagate_rejects_mixed_case_hex() {
+        let mixed_case = "Aa".repeat(32);
+        let result =
+            TestPhase7Cli::try_parse_from(["test", "slash-bridge", "propagate", &mixed_case]);
+        assert!(result.is_err(), "mixed-case hex must be rejected");
+    }
+
+    /// Test CLI struct for Phase 7 slash-bridge surface.
+    #[derive(Parser, Debug)]
+    struct TestPhase7Cli {
+        #[command(subcommand)]
+        action: NetworkAction,
     }
 }

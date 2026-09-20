@@ -128,10 +128,7 @@ mod tests {
             self.slashes.clone()
         }
 
-        fn propagate_to(
-            &self,
-            slash_envelope_id: [u8; 32],
-        ) -> Result<BridgeReceipt, BridgeError> {
+        fn propagate_to(&self, slash_envelope_id: [u8; 32]) -> Result<BridgeReceipt, BridgeError> {
             if self
                 .slashes
                 .iter()

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Helper slice landed at `next 1bb1ecbc` per RFC-0011-l Phase 4 row G25. `CiDetection::detect()` helper + `CiMode` enum landed in `crates/octo-cli/src/commands/ci_detect.rs`. CLI dispatch slice pending per the established Phase 3 paired-YAML completion pattern (helper → CLI dispatch → Completed transition).
+Completed (2026-09-20) — Helper slice + CLI dispatch CLOSED. `CiDetection::detect()` helper + `CiMode` enum landed in `crates/octo-cli/src/commands/ci_detect.rs` at `next 1bb1ecbc`. CLI dispatch wired at `octo network bind-envelope rebind-{prepare,commit,abort}` (the 3 of 6 CI-DENY-default subcommands that landed in Phase 4) at `next 0df7e579`. The CI gate itself (slot 90 `NetworkCIDenyDefault`) is forward-looking per RFC-0011-l Phase 4 row 50 (deferred to Phase 5/6); the `--allow-ci-deny-default` DEBUG-ONLY escape hatch is wired as a clap arm today per RFC-0011-h §Security Considerations experimental-flag contract.
 
 ## RFC
 
@@ -29,6 +29,7 @@ impl CiDetection {
 Inputs: `OCTO_CLI_CI` env-var (case-insensitive `1`/`true`/`yes` truthy) + `[ -t 0 ]` stdin TTY probe (OR together — either positive flips to `CiAgent`). The escape hatch `--allow-ci-deny-default` (DEBUG-ONLY, hidden from `--help`, surfaces in `--help-all` per RFC-0011 §Security Considerations experimental-flag contract) wires in the CLI dispatch slice as a clap arm that bypasses the `CiMode::CiAgent` check.
 
 Helper slice landed 2026-09-20 at `next 1bb1ecbc`:
+
 - `CiMode` enum (CiAgent + Interactive) — typed detection result
 - `CiDetection` struct with explicit `ci_env` + `stdin_is_tty` inputs (decoupled from live env + stdin reads for testability)
 - `CiDetection::from_parts` constructor (test path)
@@ -38,7 +39,7 @@ Helper slice landed 2026-09-20 at `next 1bb1ecbc`:
 - `commands/mod.rs` registers the new helper module
 - 10 helper unit tests pin: env unset + TTY/non-TTY combinations, env set to `1`/`true`/`YES` (uppercase), env set to `0`/`""`/`maybe` (non-truthy), full truth table, idempotent `resolve`
 
-CLI dispatch slice pending: `octo network bind-envelope rebind-{prepare,commit,abort}` will call `CiDetection::detect()` and translate `CiMode::CiAgent` to typed exit 90 `NetworkCIDenyDefault` per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix row 138-140 + §CI Mode Rationale.
+CLI dispatch slice landed 2026-09-20 at `next 0df7e579` for the 3 Phase 4 subcommands: `octo network bind-envelope rebind-{prepare,commit,abort}` call `CiDetection::detect()` and consume `CiMode::resolve` via the `--allow-ci-deny-default` DEBUG-ONLY escape hatch. The formal exit 90 `NetworkCIDenyDefault` OctoCliError variant lands when Phase 5/6 surfaces the CI gate formally (per RFC-0011-l Phase 4 row 50 forward-looking note + RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix row 138-140 + §CI Mode Rationale).
 
 ## Acceptance Criteria
 
@@ -65,4 +66,4 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrat
 
 ## Notes
 
-Helper slice landed 2026-09-20 at `next 1bb1ecbc`. The detection logic ORs the env-var probe with the TTY probe — either positive flips to `CiAgent`. The TTY probe alone catches the "CI agent without env-var set" case (most CI systems do not set `OCTO_CLI_CI` but pipe stdin from a build script). `--allow-ci-deny-default` carries experimental-flag contract (hidden from `--help` per RFC-0011 §Test Vectors convention, surfaces in `octo network ... --help-all`, stable contract: experimental, surfaces in changelog, removed before v1.0 per §Security Considerations experimental-flag contract).
+Helper slice landed 2026-09-20 at `next 1bb1ecbc`. CLI dispatch slice landed 2026-09-20 at `next 0df7e579` for the 3 of 6 CI-DENY-default subcommands in Phase 4 (`octo network bind-envelope rebind-{prepare,commit,abort}`). The detection logic ORs the env-var probe with the TTY probe — either positive flips to `CiAgent`. The TTY probe alone catches the "CI agent without env-var set" case (most CI systems do not set `OCTO_CLI_CI` but pipe stdin from a build script). `--allow-ci-deny-default` carries experimental-flag contract (hidden from `--help` per RFC-0011 §Test Vectors convention, surfaces in `octo network ... --help-all`, stable contract: experimental, surfaces in changelog, removed before v1.0 per §Security Considerations experimental-flag contract). Phase 5 (`mode set`) + Phase 6 (`authority rotate` + `slash apply`) close out the remaining 3 of 6 CI-DENY-default subcommands, plus the formal `NetworkCIDenyDefault` slot 90 OctoCliError variant, per RFC-0011-l Phase 4 row 50.

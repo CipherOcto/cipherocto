@@ -26,6 +26,7 @@ pub mod rebind_arm;
 pub mod reconciliation;
 pub mod slash;
 pub mod slash_aggregation;
+pub mod slash_bridge;
 pub mod slashing;
 pub mod topology;
 pub mod trust_graph;

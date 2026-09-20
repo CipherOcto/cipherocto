@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod audit;
 pub mod capability;
+pub mod ci_detect;
 pub mod governance;
 pub mod identity;
 pub mod mesh;

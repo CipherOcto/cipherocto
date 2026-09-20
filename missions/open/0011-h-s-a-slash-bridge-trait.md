@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — RFC-0011-o Phase 7 amendment Draft landed at `next 27fe1a48`; stub fill-in per RFC-0011-m Phase 5 step 1 precedent. Companion substrate mission G9 per RFC-0011-h §Substrate-Additions row 764 + RFC-0011-o §Substrate-Additions Companion Missions.
+Completed (2026-09-20) — RFC-0011-o Phase 7 amendment Draft landed at `next 27fe1a48`. Substrate slice LANDED at `next 8599f5c8` (SlashBridge trait + BridgedSlash + BridgeReceipt + BridgeError in crates/octo-network/src/mon/slash_bridge.rs, 206 lines + 5 unit tests). CLI dispatch slice LANDED at `next f3b9f48e`. Paired CLI mission YAML at missions/open/0011-h-network-slash-bridge.md CREATED Completed per RFC-0011-m Phase 5 step 5 precedent. Companion substrate mission G9 per RFC-0011-h §Substrate-Additions row 764 + RFC-0011-o §Substrate-Additions Companion Missions.
 
 ## RFC
 

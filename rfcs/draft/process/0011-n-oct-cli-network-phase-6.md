@@ -186,7 +186,7 @@ Phase 6 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 | ID | Subcommand                  | Scenario                                                |
 | -- | --------------------------- | ------------------------------------------------------- |
 | tv_net6_1 | `bootstrap`             | `BootstrapOrchestrator::start_bootstrap` success        |
-| tv_net6_2 | `bootstrap`             | pre-G1 → exit 2 (clap `UnrecognizedSubcommand`)         |
+| tv_net6_2 | `bootstrap`             | pre-G26 → exit 2 (clap `UnrecognizedSubcommand`)        |
 | tv_net6_3 | `bootstrap`             | `BootstrapOrchestrator::start_bootstrap` failure (substrate error) |
 | tv_net6_4 | `status`                | All substrate layers present → aggregate surfaced       |
 | tv_net6_5 | `status`                | Pre-Phase 6 closure → exit 2                            |
@@ -265,3 +265,4 @@ The corrected draft reflects this substrate-faithful reality throughout §Summar
 | v0.1.2  | 2026-09-20 | R1.5.5 fix sweep: residual stale G1 references in §Status block + §Design Goals rows 1 + 4 corrected to G26 NEW Phase 6 |
 | v0.1.3  | 2026-09-20 | R2.5 fix sweep: slot arithmetic in §Design Goals #3 + §Dependencies row for RFC-0011-h §Error Handling clarified as FORWARD-LOOKING per R2 substrate-fault-class finding (slots do NOT exist in `error.rs` today; land during implementation) |
 | v0.1.4  | 2026-09-20 | R3.5 fix sweep: L2 cite hygiene correction — RFC-0863 cited as "Onion Relay" in 3 locations; corrected to "General-Purpose Network Integration" per `rfcs/accepted/networking/0863-general-purpose-network-integration.md` (NetworkSender trait at L104, SendContext struct at L116). RFC-0858 is the actual Onion Relay Routing RFC, distinct concern |
+| v0.1.5  | 2026-09-20 | R4.5 fix sweep: residual stale "pre-G1" reference in §Test Vectors row tv_net6_2 corrected to "pre-G26" per L1 substrate-faithfulness (G26 is the NEW Phase 6 BootstrapOrchestrator companion, not G1) |

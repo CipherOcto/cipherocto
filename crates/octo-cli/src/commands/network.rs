@@ -101,6 +101,17 @@ use octo_network::mon::governance::{
     governance_proposal_canonical_bytes, DecisionType, GovernanceProposal, ProposalState,
 };
 
+// Phase 4 (RFC-0011-l) substrate additions (LANDED at `next edcdc47a`
+// for G22 + `next 3794e4a8` for G21): `BindEnvelope::load` lookup
+// helper lives in `octo-network` Layer B mon::bind_envelope, and the
+// typed dispatch surface for the rebind-* trio lives in
+// `octo-network` Layer B mon::rebind_arm.
+use octo_network::mon::bind_envelope::BindEnvelope;
+use octo_network::mon::rebind::RebindCoordinator;
+use octo_network::mon::rebind_arm::{
+    dispatch_rebind_arm_action, RebindArmAction, RebindArmError, RebindArmKey,
+};
+
 // === Subcommand taxonomy (RFC-0011-i §Subcommand Taxonomy Phase 1) ===
 
 /// CLI-facing network subcommand enum (Layer C). `#[non_exhaustive]`
@@ -156,6 +167,13 @@ pub enum NetworkAction {
         /// Coordinator subcommand.
         #[command(subcommand)]
         action: NetworkCoordinatorAction,
+    },
+    /// BIND envelope read + rebind payload-builder subcommands
+    /// (RFC-0011-l Phase 4).
+    BindEnvelope {
+        /// Bind-envelope subcommand.
+        #[command(subcommand)]
+        action: NetworkBindEnvelopeAction,
     },
 }
 
@@ -326,6 +344,128 @@ pub struct CoordinatorAdminArgs {
     /// Target peer id as 64 lowercase hex chars (32-byte wire form).
     #[arg(long, value_parser = parse_64_char_hex_32byte)]
     pub target: [u8; 32],
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+// === BIND envelope subcommands (RFC-0011-l Phase 4) ===
+
+/// BIND envelope subcommand surface (RFC-0011-l Phase 4 §Subcommand
+/// Taxonomy).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkBindEnvelopeAction {
+    /// Show one BIND envelope by `domain_id` (read-only;
+    /// `BindEnvelope::load` substrate-faithful Option::None
+    /// translation per Phase 4 row G22).
+    Show(BindEnvelopeShowArgs),
+    /// Build the PREPARE envelope for a new REBIND (write;
+    /// `RebindCoordinator::prepare_envelope` payload builder per
+    /// Phase 4 row G21; `--dry-run` default + `--confirm-acknowledge`
+    /// required to lift dry-run per RFC-0011-l §Subcommand
+    /// Taxonomy rebind-* rows).
+    RebindPrepare(BindEnvelopeRebindPrepareArgs),
+    /// Build the COMMIT envelope after quorum reached (write;
+    /// `RebindCoordinator::commit_envelope` payload builder per
+    /// Phase 4 row G21; `--dry-run` default + `--confirm-acknowledge`
+    /// + `--confirm` SECOND flag (pastejacking defense per
+    ///   §Security Considerations)).
+    RebindCommit(BindEnvelopeRebindCommitArgs),
+    /// Build the ABORT envelope (vote-abort OR timeout; write;
+    /// `RebindCoordinator::abort_envelope` payload builder per
+    /// Phase 4 row G21; `--dry-run` default + `--confirm-acknowledge`
+    /// required).
+    RebindAbort(BindEnvelopeRebindAbortArgs),
+}
+
+/// `octo network bind-envelope show` arguments (RFC-0011-l Phase 4
+/// row G22).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct BindEnvelopeShowArgs {
+    /// The 52-char hex-encoded mission `domain_id` (canonical
+    /// RFC-0011-h string form per `BindEnvelope::domain_id`).
+    #[arg(long)]
+    pub domain_id: String,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network bind-envelope rebind-prepare` arguments (RFC-0011-l
+/// Phase 4 row G21 rebind-prepare).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct BindEnvelopeRebindPrepareArgs {
+    /// The 52-char hex-encoded mission `domain_id`.
+    #[arg(long)]
+    pub domain_id: String,
+    /// Lift dry-run to substrate dispatch (per RFC-0011-l
+    /// §Subcommand Taxonomy rebind-* rows; default dry-run).
+    #[arg(long)]
+    pub no_dry_run: bool,
+    /// Confirm acknowledgment of the irreversible intent (per
+    /// RFC-0011-l §Security Considerations rebind-* rows).
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
+    /// DEBUG-ONLY escape hatch for CI agents (per RFC-0011-h
+    /// §Security Considerations experimental-flag contract;
+    /// hidden from `--help`, surfaces in `--help-all`).
+    #[arg(long, hide = true)]
+    pub allow_ci_deny_default: bool,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network bind-envelope rebind-commit` arguments (RFC-0011-l
+/// Phase 4 row G21 rebind-commit; `--confirm` SECOND flag required
+/// per pastejacking defense per §Security Considerations).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct BindEnvelopeRebindCommitArgs {
+    /// The 52-char hex-encoded mission `domain_id`.
+    #[arg(long)]
+    pub domain_id: String,
+    /// Lift dry-run to substrate dispatch.
+    #[arg(long)]
+    pub no_dry_run: bool,
+    /// Confirm acknowledgment of the irreversible intent.
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
+    /// SECOND confirm flag for pastejacking defense (per
+    /// §Security Considerations rebind-commit row).
+    #[arg(long)]
+    pub confirm: bool,
+    /// DEBUG-ONLY escape hatch for CI agents (hidden from
+    /// `--help`, surfaces in `--help-all`).
+    #[arg(long, hide = true)]
+    pub allow_ci_deny_default: bool,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network bind-envelope rebind-abort` arguments (RFC-0011-l
+/// Phase 4 row G21 rebind-abort; reversible per RFC-0871 §Algorithms
+/// substrate idempotency so no `--confirm` SECOND flag).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct BindEnvelopeRebindAbortArgs {
+    /// The 52-char hex-encoded mission `domain_id`.
+    #[arg(long)]
+    pub domain_id: String,
+    /// Lift dry-run to substrate dispatch.
+    #[arg(long)]
+    pub no_dry_run: bool,
+    /// Confirm acknowledgment of the rollback intent.
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
+    /// Human-readable abort reason (free-text; preserved in the
+    /// `RebindAbort.reason` debug field per RFC-0871).
+    #[arg(long)]
+    pub reason: String,
+    /// DEBUG-ONLY escape hatch for CI agents (hidden from
+    /// `--help`, surfaces in `--help-all`).
+    #[arg(long, hide = true)]
+    pub allow_ci_deny_default: bool,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -792,6 +932,75 @@ pub struct NetworkCoordinatorAdminOutput {
     pub target_peer_redacted: String,
 }
 
+// === BIND envelope output envelopes (RFC-0011-l Phase 4) ===
+
+/// `octo network bind-envelope show` output envelope (RFC-0011-l
+/// Phase 4 row G22).
+///
+/// Today the substrate `BindEnvelope::load` returns `None`
+/// (persistence adapter absent — Phase 6 follow-on per
+/// `0011-h-s-a-bind-envelope-persistence`); the CLI surfaces the
+/// miss as typed exit 89 `NetworkSubstrateUnavailable` per
+/// RFC-0011-h §Error Handling. The success envelope below is the
+/// post-Phase-6 shape.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkBindEnvelopeShowOutput {
+    /// The 52-char hex-encoded mission `domain_id`.
+    pub domain_id: String,
+    /// The platform identifier (e.g., `whatsapp`, `matrix`,
+    /// `telegram`).
+    pub platform: String,
+    /// The physical group identifier (e.g., WhatsApp group JID,
+    /// Matrix room ID, Telegram supergroup ID).
+    pub group_id: String,
+    /// Optional participant-filter subset (per RFC-0850p-c
+    /// `partial-bindings` mission). `None` means all
+    /// physical-group members participate.
+    pub participant_filter: Option<Vec<String>>,
+    /// Group size at binding time (per RFC-0855p-c
+    /// `slash-small-groups` mission).
+    pub member_count_at_bind: u16,
+}
+
+/// `octo network bind-envelope rebind-{prepare,commit,abort}`
+/// output envelope (RFC-0011-l Phase 4 row G21).
+///
+/// The CLI today surfaces a preview envelope (dry-run) OR a
+/// typed error (substrate `AdapterUnwired` per the Phase 6
+/// persistence adapter follow-on). The preview envelope is the
+/// pre-substrate-dispatch payload summary the operator reads at
+/// the preview prompt per RFC-0011-l §Subcommand Taxonomy
+/// rebind-* rows.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkBindEnvelopeRebindOutput {
+    /// The rebind arm: `prepare` | `commit` | `abort`.
+    pub arm: String,
+    /// The 52-char hex-encoded mission `domain_id`.
+    pub domain_id: String,
+    /// Whether this is a dry-run preview (no substrate dispatch
+    /// attempted) or a confirmed dispatch (substrate adapter
+    /// unwired today; surfaces as typed Internal error in the
+    /// operator exit code).
+    pub dispatched: bool,
+    /// The `RebindCoordinator` state at preview time
+    /// (`Preparing` | `Committing` | `Aborted`).
+    pub coordinator_state: String,
+}
+
+/// `octo network bind-envelope rebind-abort` output envelope
+/// (RFC-0011-l Phase 4 row G21; carries the operator-supplied
+/// `reason` field).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkBindEnvelopeRebindAbortOutput {
+    /// The 52-char hex-encoded mission `domain_id`.
+    pub domain_id: String,
+    /// Operator-supplied abort reason (free-text; preserved in
+    /// the `RebindAbort.reason` debug field per RFC-0871).
+    pub reason_redacted: String,
+    /// Whether this is a dry-run preview or a confirmed dispatch.
+    pub dispatched: bool,
+}
+
 // === Dispatch ===
 
 /// Dispatch a `NetworkAction` to its handler. Top-level entry point
@@ -833,6 +1042,14 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         NetworkAction::Coordinator { action: coord_act } => match coord_act {
             NetworkCoordinatorAction::Show(args) => coordinator_show(args, cli),
             NetworkCoordinatorAction::Admin(args) => coordinator_admin(args, cli),
+        },
+        NetworkAction::BindEnvelope { action: bind_act } => match bind_act {
+            NetworkBindEnvelopeAction::Show(args) => bind_envelope_show(args, cli),
+            NetworkBindEnvelopeAction::RebindPrepare(args) => {
+                bind_envelope_rebind_prepare(args, cli)
+            }
+            NetworkBindEnvelopeAction::RebindCommit(args) => bind_envelope_rebind_commit(args, cli),
+            NetworkBindEnvelopeAction::RebindAbort(args) => bind_envelope_rebind_abort(args, cli),
         },
     }
 }
@@ -1200,6 +1417,260 @@ fn coordinator_admin(args: &CoordinatorAdminArgs, cli: &Octo) -> Result<(), Octo
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+// === BIND envelope handlers (RFC-0011-l Phase 4) ===
+
+fn bind_envelope_show(args: &BindEnvelopeShowArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // Substrate-faithful: `BindEnvelope::load` returns `None` until
+    // the persistence adapter lands (Phase 6 follow-on per
+    // `0011-h-s-a-bind-envelope-persistence`). CLI translates
+    // Option::None to typed exit 89 `NetworkSubstrateUnavailable`.
+    if BindEnvelope::load(&args.domain_id).is_none() {
+        return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G22" });
+    }
+    // Unreachable in current substrate (load always returns None);
+    // substrate persistence adapter lands the populated branch
+    // post-Phase 6.
+    let env = OutputEnvelope::new(
+        "octo.network.bind-envelope.show.v1",
+        NetworkBindEnvelopeShowOutput {
+            domain_id: args.domain_id.clone(),
+            platform: String::new(),
+            group_id: String::new(),
+            participant_filter: None,
+            member_count_at_bind: 0,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+fn bind_envelope_rebind_prepare(
+    args: &BindEnvelopeRebindPrepareArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    // CI gate (slot 90 `NetworkCIDenyDefault`) is forward-looking
+    // per RFC-0011-l Phase 4 §Error Handling + RFC-0011-h
+    // §Confirmation Flag row 138-140. Today the CI helper
+    // (`CiDetection::detect`) lands but the slot 90 error variant
+    // is deferred to Phase 5/6 per RFC-0011-l row 50. The escape
+    // hatch `--allow-ci-deny-default` is wired as a DEBUG-ONLY
+    // clap arm (hidden from `--help`, surfaces in `--help-all`)
+    // per RFC-0011-h §Security Considerations experimental-flag
+    // contract.
+    if !args.no_dry_run {
+        return bind_envelope_rebind_preview(
+            "prepare",
+            &args.domain_id,
+            None,
+            false,
+            cli,
+            args.json || cli.output.json,
+            cli.output.no_color,
+        );
+    }
+    if !args.confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo network bind-envelope rebind-prepare".into(),
+        });
+    }
+    // Substrate-faithful: build a zero-default RebindCoordinator
+    // at the requested domain_id (no persistence adapter today)
+    // and dispatch via `dispatch_rebind_arm_action`. The
+    // substrate returns `AdapterUnwired` until the persistence
+    // adapter lands (Phase 6 follow-on per
+    // `0011-h-s-a-rebind-arm-persistence`).
+    let coord = RebindCoordinator::new(
+        args.domain_id.clone(),
+        BindEnvelope::new(&args.domain_id, "platform", "group"),
+        vec![],
+    );
+    dispatch_rebind_arm_action(&coord, RebindArmAction::Prepare, RebindArmKey::V1).map_err(
+        |e| match e {
+            RebindArmError::AdapterUnwired => OctoCliError::Internal(
+                "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
+            ),
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
+                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            )),
+            _ => OctoCliError::Internal(
+                "unknown rebind arm substrate error (forward-looking variant)".into(),
+            ),
+        },
+    )?;
+    let env = OutputEnvelope::new(
+        "octo.network.bind-envelope.rebind-prepare.v1",
+        NetworkBindEnvelopeRebindOutput {
+            arm: "prepare".into(),
+            domain_id: args.domain_id.clone(),
+            dispatched: true,
+            coordinator_state: "Preparing".into(),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+fn bind_envelope_rebind_commit(
+    args: &BindEnvelopeRebindCommitArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    if !args.no_dry_run {
+        return bind_envelope_rebind_preview(
+            "commit",
+            &args.domain_id,
+            None,
+            false,
+            cli,
+            args.json || cli.output.json,
+            cli.output.no_color,
+        );
+    }
+    if !args.confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo network bind-envelope rebind-commit".into(),
+        });
+    }
+    // Pastejacking defense per RFC-0011-h §Security Considerations
+    // rebind-commit row: requires BOTH `--confirm-acknowledge` AND
+    // `--confirm`. Missing `--confirm` after `--confirm-acknowledge`
+    // is operator-side double-flag protection.
+    if !args.confirm {
+        return Err(OctoCliError::NetworkDryRunDenied {
+            arm: "commit",
+            domain_id_redacted: args.domain_id.clone(),
+        });
+    }
+    let coord = RebindCoordinator::new(
+        args.domain_id.clone(),
+        BindEnvelope::new(&args.domain_id, "platform", "group"),
+        vec![],
+    );
+    dispatch_rebind_arm_action(&coord, RebindArmAction::Commit, RebindArmKey::V1).map_err(|e| {
+        match e {
+            RebindArmError::AdapterUnwired => OctoCliError::Internal(
+                "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
+            ),
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
+                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            )),
+            _ => OctoCliError::Internal(
+                "unknown rebind arm substrate error (forward-looking variant)".into(),
+            ),
+        }
+    })?;
+    let env = OutputEnvelope::new(
+        "octo.network.bind-envelope.rebind-commit.v1",
+        NetworkBindEnvelopeRebindOutput {
+            arm: "commit".into(),
+            domain_id: args.domain_id.clone(),
+            dispatched: true,
+            coordinator_state: "Committing".into(),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+fn bind_envelope_rebind_abort(
+    args: &BindEnvelopeRebindAbortArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    if !args.no_dry_run {
+        return bind_envelope_rebind_preview(
+            "abort",
+            &args.domain_id,
+            Some(&args.reason),
+            false,
+            cli,
+            args.json || cli.output.json,
+            cli.output.no_color,
+        );
+    }
+    if !args.confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo network bind-envelope rebind-abort".into(),
+        });
+    }
+    let coord = RebindCoordinator::new(
+        args.domain_id.clone(),
+        BindEnvelope::new(&args.domain_id, "platform", "group"),
+        vec![],
+    );
+    dispatch_rebind_arm_action(&coord, RebindArmAction::Abort, RebindArmKey::V1).map_err(|e| {
+        match e {
+            RebindArmError::AdapterUnwired => OctoCliError::Internal(
+                "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
+            ),
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
+                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            )),
+            _ => OctoCliError::Internal(
+                "unknown rebind arm substrate error (forward-looking variant)".into(),
+            ),
+        }
+    })?;
+    let env = OutputEnvelope::new(
+        "octo.network.bind-envelope.rebind-abort.v1",
+        NetworkBindEnvelopeRebindAbortOutput {
+            domain_id: args.domain_id.clone(),
+            reason_redacted: redact_reason(&args.reason),
+            dispatched: true,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// Shared preview-payload helper for the rebind-* trio dry-run
+/// path. Returns the dry-run envelope without attempting
+/// substrate dispatch.
+#[allow(clippy::too_many_arguments)]
+fn bind_envelope_rebind_preview(
+    arm: &'static str,
+    domain_id: &str,
+    reason: Option<&str>,
+    _ci_allow_override: bool,
+    cli: &Octo,
+    json: bool,
+    no_color: bool,
+) -> Result<(), OctoCliError> {
+    let coordinator_state = match arm {
+        "prepare" => "Preparing",
+        "commit" => "Committing",
+        "abort" => "Aborted",
+        _ => "Unknown",
+    };
+    if arm == "abort" {
+        let reason = reason.unwrap_or("");
+        let env = OutputEnvelope::new(
+            "octo.network.bind-envelope.rebind-abort.v1",
+            NetworkBindEnvelopeRebindAbortOutput {
+                domain_id: domain_id.to_string(),
+                reason_redacted: redact_reason(reason),
+                dispatched: false,
+            },
+        );
+        return render_envelope(&env, json || cli.output.json, no_color);
+    }
+    let env = OutputEnvelope::new(
+        "octo.network.bind-envelope.rebind.v1",
+        NetworkBindEnvelopeRebindOutput {
+            arm: arm.into(),
+            domain_id: domain_id.to_string(),
+            dispatched: false,
+            coordinator_state: coordinator_state.into(),
+        },
+    );
+    render_envelope(&env, json || cli.output.json, no_color)
+}
+
+/// Redact a free-text `reason` field for the abort envelope
+/// (operator-safe display per RFC-0011 §Output Envelope).
+fn redact_reason(reason: &str) -> String {
+    const MAX: usize = 80;
+    if reason.len() <= MAX {
+        reason.to_string()
+    } else {
+        format!("{}...", &reason[..MAX])
+    }
 }
 
 // === Helpers ===
@@ -2415,5 +2886,302 @@ mod tests {
         ]);
         let res = governance_tally(&args, &cli);
         assert!(res.is_ok(), "expected Ok, got {res:?}");
+    }
+
+    // === Phase 4 test fixture + 12 test vectors (RFC-0011-l §Test Vectors) ===
+
+    #[derive(Parser, Debug)]
+    struct TestBindEnvelopeCli {
+        #[command(subcommand)]
+        action: NetworkBindEnvelopeAction,
+    }
+
+    // tv_net4_1: bind-envelope show parses with --domain-id
+    #[test]
+    fn tv_net4_1_bind_envelope_show_parses_with_domain_id() {
+        let cli = TestBindEnvelopeCli::try_parse_from([
+            "test",
+            "show",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkBindEnvelopeAction::Show(args) => {
+                assert_eq!(args.domain_id, "0102030405060708090a0b0c0d0e0f10");
+                assert!(!args.json);
+            }
+            _ => panic!("expected Show, got {cli:?}"),
+        }
+    }
+
+    // tv_net4_2: bind-envelope show substrate miss emits NetworkSubstrateUnavailable (G22)
+    #[test]
+    fn tv_net4_2_bind_envelope_show_substrate_miss_emits_g22_exit() {
+        let args = BindEnvelopeShowArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "show",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+        ]);
+        let res = bind_envelope_show(&args, &cli);
+        match res {
+            Err(OctoCliError::NetworkSubstrateUnavailable { companion }) => {
+                assert_eq!(companion, "G22");
+            }
+            other => panic!("expected NetworkSubstrateUnavailable(G22), got {other:?}"),
+        }
+    }
+
+    // tv_net4_3: bind-envelope rebind-prepare parses with all flags
+    #[test]
+    fn tv_net4_3_bind_envelope_rebind_prepare_parses_with_flags() {
+        let cli = TestBindEnvelopeCli::try_parse_from([
+            "test",
+            "rebind-prepare",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkBindEnvelopeAction::RebindPrepare(args) => {
+                assert!(args.no_dry_run);
+                assert!(args.confirm_acknowledge);
+                assert!(!args.allow_ci_deny_default);
+            }
+            _ => panic!("expected RebindPrepare, got {cli:?}"),
+        }
+    }
+
+    // tv_net4_4: bind-envelope rebind-prepare dry-run emits preview envelope
+    #[test]
+    fn tv_net4_4_bind_envelope_rebind_prepare_dry_run_emits_preview() {
+        let args = BindEnvelopeRebindPrepareArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: false,
+            confirm_acknowledge: false,
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-prepare",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+        ]);
+        let res = bind_envelope_rebind_prepare(&args, &cli);
+        assert!(res.is_ok(), "expected Ok dry-run preview, got {res:?}");
+    }
+
+    // tv_net4_5: bind-envelope rebind-prepare --no-dry-run without --confirm-acknowledge emits ConfirmationRequired
+    #[test]
+    fn tv_net4_5_bind_envelope_rebind_prepare_no_confirm_acknowledge_emits_error() {
+        let args = BindEnvelopeRebindPrepareArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: true,
+            confirm_acknowledge: false,
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-prepare",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+        ]);
+        let res = bind_envelope_rebind_prepare(&args, &cli);
+        match res {
+            Err(OctoCliError::ConfirmationRequired { command }) => {
+                assert!(command.contains("rebind-prepare"));
+            }
+            other => panic!("expected ConfirmationRequired, got {other:?}"),
+        }
+    }
+
+    // tv_net4_6: bind-envelope rebind-commit parses with --confirm flag
+    #[test]
+    fn tv_net4_6_bind_envelope_rebind_commit_parses_with_confirm_flag() {
+        let cli = TestBindEnvelopeCli::try_parse_from([
+            "test",
+            "rebind-commit",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+            "--confirm",
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkBindEnvelopeAction::RebindCommit(args) => {
+                assert!(args.no_dry_run);
+                assert!(args.confirm_acknowledge);
+                assert!(args.confirm);
+            }
+            _ => panic!("expected RebindCommit, got {cli:?}"),
+        }
+    }
+
+    // tv_net4_7: bind-envelope rebind-commit without --confirm emits NetworkDryRunDenied (pastejacking defense)
+    #[test]
+    fn tv_net4_7_bind_envelope_rebind_commit_without_confirm_emits_dry_run_denied() {
+        let args = BindEnvelopeRebindCommitArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: true,
+            confirm_acknowledge: true,
+            confirm: false,
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-commit",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+        ]);
+        let res = bind_envelope_rebind_commit(&args, &cli);
+        match res {
+            Err(OctoCliError::NetworkDryRunDenied { arm, .. }) => {
+                assert_eq!(arm, "commit");
+            }
+            other => panic!("expected NetworkDryRunDenied, got {other:?}"),
+        }
+    }
+
+    // tv_net4_8: bind-envelope rebind-commit dispatched surfaces adapter unwired (G21 substrate)
+    #[test]
+    fn tv_net4_8_bind_envelope_rebind_commit_dispatched_emits_adapter_unwired() {
+        let args = BindEnvelopeRebindCommitArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: true,
+            confirm_acknowledge: true,
+            confirm: true,
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-commit",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+            "--confirm",
+        ]);
+        let res = bind_envelope_rebind_commit(&args, &cli);
+        match res {
+            Err(OctoCliError::Internal(msg)) => {
+                assert!(msg.contains("rebind arm adapter not yet wired"));
+            }
+            other => panic!("expected Internal adapter-unwired, got {other:?}"),
+        }
+    }
+
+    // tv_net4_9: bind-envelope rebind-abort parses with --reason
+    #[test]
+    fn tv_net4_9_bind_envelope_rebind_abort_parses_with_reason() {
+        let cli = TestBindEnvelopeCli::try_parse_from([
+            "test",
+            "rebind-abort",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+            "--reason",
+            "timeout",
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkBindEnvelopeAction::RebindAbort(args) => {
+                assert_eq!(args.reason, "timeout");
+                assert!(args.no_dry_run);
+                assert!(args.confirm_acknowledge);
+            }
+            _ => panic!("expected RebindAbort, got {cli:?}"),
+        }
+    }
+
+    // tv_net4_10: bind-envelope rebind-abort dry-run emits preview envelope
+    #[test]
+    fn tv_net4_10_bind_envelope_rebind_abort_dry_run_emits_preview() {
+        let args = BindEnvelopeRebindAbortArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: false,
+            confirm_acknowledge: false,
+            reason: "rollback-for-test".into(),
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-abort",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--reason",
+            "rollback-for-test",
+        ]);
+        let res = bind_envelope_rebind_abort(&args, &cli);
+        assert!(res.is_ok(), "expected Ok dry-run preview, got {res:?}");
+    }
+
+    // tv_net4_11: bind-envelope rebind-abort dispatched surfaces adapter unwired (G21 substrate)
+    #[test]
+    fn tv_net4_11_bind_envelope_rebind_abort_dispatched_emits_adapter_unwired() {
+        let args = BindEnvelopeRebindAbortArgs {
+            domain_id: "0102030405060708090a0b0c0d0e0f10".into(),
+            no_dry_run: true,
+            confirm_acknowledge: true,
+            reason: "rollback-for-test".into(),
+            allow_ci_deny_default: false,
+            json: false,
+        };
+        let cli = build_cli(&[
+            "octo",
+            "network",
+            "bind-envelope",
+            "rebind-abort",
+            "--domain-id",
+            "0102030405060708090a0b0c0d0e0f10",
+            "--no-dry-run",
+            "--confirm-acknowledge",
+            "--reason",
+            "rollback-for-test",
+        ]);
+        let res = bind_envelope_rebind_abort(&args, &cli);
+        match res {
+            Err(OctoCliError::Internal(msg)) => {
+                assert!(msg.contains("rebind arm adapter not yet wired"));
+            }
+            other => panic!("expected Internal adapter-unwired, got {other:?}"),
+        }
+    }
+
+    // tv_net4_12: bind-envelope rebind-abort reason redaction truncates long text
+    #[test]
+    fn tv_net4_12_bind_envelope_rebind_abort_reason_redaction_truncates() {
+        let long = "x".repeat(120);
+        let redacted = redact_reason(&long);
+        assert!(redacted.len() <= 83, "got len={}", redacted.len());
+        assert!(redacted.ends_with("..."));
     }
 }

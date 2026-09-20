@@ -829,6 +829,26 @@ pub enum OctoCliError {
         /// 52-char hex-encoded coordinator ID (CLI-parsed form).
         coordinator_id_redacted: String,
     },
+    /// `octo network bind-envelope rebind-{prepare,commit,abort}`
+    /// dry-run denial.
+    ///
+    /// Per RFC-0011-l Phase 4 §Subcommand Taxonomy rebind-* rows,
+    /// the rebind trio defaults to `--dry-run` and requires
+    /// `--confirm-acknowledge` (and for `rebind-commit` also
+    /// `--confirm` per the §Security Considerations pastejacking
+    /// defense) to lift dry-run. When the operator invokes with
+    /// `--no-dry-run` but declines at the preview prompt, the
+    /// CLI fires this typed exit. CLI-only predicate (the preview
+    /// prompt is a CLI-side gate, not a substrate fault class).
+    /// Exit 88 per RFC-0011-h §Error Handling row 88.
+    #[error("network dry-run denied (operator declined at preview prompt)")]
+    NetworkDryRunDenied {
+        /// The rebind arm that the operator declined
+        /// (`prepare` | `commit` | `abort`).
+        arm: &'static str,
+        /// The 52-char hex domain_id the operator was previewing.
+        domain_id_redacted: String,
+    },
 }
 
 impl OctoCliError {
@@ -985,6 +1005,10 @@ impl OctoCliError {
             // `next ca3ceee1`), dispatch routes to substrate and
             // exits 0.
             Self::NetworkSubstrateUnavailable { .. } => 89,
+            // RFC-0011-l Phase 4 §Error Handling row 88 — rebind-*
+            // interactive dry-run denial. CLI-side preview prompt
+            // decline; not a substrate fault class.
+            Self::NetworkDryRunDenied { .. } => 88,
         }
     }
 
@@ -1247,6 +1271,14 @@ impl OctoCliError {
             // exit code 84.
             Self::NetworkCoordinatorNotFound { .. } => {
                 "verify the 52-char hex coordinator_id; substrate `CoordinatorRecord::load` returned None (Phase 6 persistence adapter is the planned follow-on, not yet LANDED)".to_string()
+            }
+            // RFC-0011-l Phase 4 §Error Handling row 88 — rebind-*
+            // interactive dry-run denial. Operator declined at the
+            // preview prompt; no substrate call attempted.
+            Self::NetworkDryRunDenied { arm, .. } => {
+                format!(
+                    "rebind `{arm}` aborted at the preview prompt (per RFC-0011-l Phase 4 §Subcommand Taxonomy rebind-* rows); re-run with `--no-dry-run` + `--confirm-acknowledge` (and for `commit` also `--confirm` per the §Security Considerations pastejacking defense) only after the operator is ready to author the state change"
+                )
             }
         };
         Some(h)

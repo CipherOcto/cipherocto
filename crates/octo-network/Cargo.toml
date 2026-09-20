@@ -8,6 +8,10 @@ tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { workspace = true }
 serde_bytes = "0.11"
+# Mission 0011-h-s-a-local-gateway-identity-state: TOML persistence for
+# local gateway identity state at <octo_home>/network/local-gateway-identity.toml
+# per RFC-0011-i §Substrate-Additions row (NEW) + RFC-0011-h §Error Handling row 83
+toml = "0.8"
 async-trait = "0.1"
 thiserror = "2.0"
 tracing = { workspace = true }

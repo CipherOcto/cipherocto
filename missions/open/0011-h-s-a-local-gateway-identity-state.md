@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-20) — Substrate-additions prerequisite per RFC-0011-i §Substrate-Additions Companion Missions (NEW row added by R1.5 fix per F2 finding). Companion mission to RFC-0011-i `octo network identity show`.
+Claimed (2026-09-20) — Substrate-additions prerequisite per RFC-0011-i §Substrate-Additions Companion Missions (NEW row added by R1.5 fix per F2 finding). Companion mission to RFC-0011-i `octo network identity show`. Substrate implementation landing in `crates/octo-network/src/mon/local_gateway_identity.rs` per mission YAML substrate additions target.
 
 ## RFC
 
@@ -41,7 +41,7 @@ Storage path: `$OCTO_HOME/network/local-gateway-identity.toml` per octo-home sub
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/mon/local_gateway_identity.rs (NEW)` per RFC-0011-i §Substrate-Additions row (NEW)
+- [x] Substrate additions land in `crates/octo-network/src/mon/local_gateway_identity.rs (NEW)` per RFC-0011-i §Substrate-Additions row (NEW)
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-network --lib` green
 - [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)

@@ -17,6 +17,7 @@ pub mod governance_rotation;
 pub mod keys;
 pub mod lifecycle;
 pub mod liveness;
+pub mod local_gateway_identity;
 pub mod membership;
 pub mod nostr_bootstrap;
 pub mod quadratic;

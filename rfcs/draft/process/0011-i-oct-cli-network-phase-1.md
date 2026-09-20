@@ -45,7 +45,7 @@ RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Imp
 1. **Read-only surface first** — Phase 1 makes no state changes. All 5 subcommands are pure observers of Layer B state. Per RFC-0011-h §Implementation Phases ordering, Phase 1 lands observability before any write paths.
 2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
 3. **Slot arithmetic preserved** — Phase 1 lands exactly 4 of the 10 RFC-0011-h-defined OctoCliError variants (slots 79, 83, 85, 86). The remaining 6 (slots 82, 84, 87, 88, 89, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate already present; Layer C CLI dispatch is the only net-new code.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate already present for 4 of 5 subcommands (1 companion substrate mission `0011-h-s-a-local-gateway-identity-state` adds local identity state for `identity show` per R1.5 fix per F2); Layer C CLI dispatch is the net-new code for all 5 subcommands.
 5. **Test vector coverage** — 13 test vectors (7 for peers-identity, 4 for trust-graph, 2 for governance rotation) per RFC-0011-h §Implementation Phases Phase 1.
 
 ## Motivation
@@ -175,7 +175,7 @@ The clap `value_parser` for `--depth 1-100` enforces slot 85 invariant at the cl
 **Footnote semantics:**
 
 - `[^substrate-path]`: substrate file path elided; see matching RFC-0011-h §Substrate-Additions row.
-- `[^clap-arm-gated]`: clap arm registered but substrate surface BLOCKED — pending companion mission. **Not applicable to Phase 1** — all 5 substrate paths verified present at RFC-0011-i draft time.
+- `[^clap-arm-gated]`: clap arm registered but substrate surface BLOCKED — pending companion mission. **Not applicable to Phase 1** — 4 of 5 substrate paths verified present at RFC-0011-i draft time; `identity show` requires companion substrate mission `0011-h-s-a-local-gateway-identity-state` to land BEFORE Phase 1 implementation per R1.5 fix per F2.
 - `[^companion-prereq]`: `identity show` requires companion substrate mission `0011-h-s-a-local-gateway-identity-state` to land BEFORE Phase 1 implementation (substrate `GatewayIdentity::new` requires 4 args but CLI source provides only 1; the missing 3 fields `network_id`, `gateway_class`, `creation_epoch` must persist locally). Per RFC-0011-i R1 finding F2.
 
 ### Output Envelope

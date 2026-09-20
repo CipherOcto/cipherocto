@@ -22,6 +22,7 @@ pub mod membership;
 pub mod nostr_bootstrap;
 pub mod quadratic;
 pub mod rebind;
+pub mod rebind_arm;
 pub mod reconciliation;
 pub mod slash;
 pub mod slash_aggregation;
@@ -59,6 +60,9 @@ pub use mission_id::{MissionId, MissionType};
 pub use nostr_bootstrap::{DotCapabilityClaim, Nip05Error, Nip05Identifier, NostrBootstrapAdapter};
 pub use quadratic::{elect, voting_weight, CoordinatorCandidate, ElectionResult};
 pub use rebind::{CoordinatorState, PrepareVote, RebindCoordinator, REBIND_TIMEOUT_SECS};
+pub use rebind_arm::{
+    dispatch_rebind_arm_action, RebindArmAction, RebindArmError, RebindArmKey, RebindArmPayload,
+};
 pub use reconciliation::{MobilitySession, ReconciliationState, TransportCarrier};
 pub use slash::{slash_code, BootstrapMisbehavior, SlashEnvelope};
 pub use slash_aggregation::{

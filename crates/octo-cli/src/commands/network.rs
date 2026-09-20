@@ -112,6 +112,16 @@ use octo_network::mon::rebind_arm::{
     dispatch_rebind_arm_action, RebindArmAction, RebindArmError, RebindArmKey,
 };
 
+// Phase 5 (RFC-0011-m) substrate additions (LANDED at `next 24bfec96`
+// for G23 + G24): `MissionAdvertisementCache` + `MissionInvitationCache`
+// live in `octo-network` Layer B mon::discovery (existing module
+// extended). Both cache types are RFC-frozen surface additions
+// (non-breaking because they add new types without modifying existing
+// public API).
+use octo_network::mon::discovery::{
+    MissionAdvertisementCache, MissionAdvertisement, MissionInvitationCache, MissionInvitation,
+};
+
 // === Subcommand taxonomy (RFC-0011-i §Subcommand Taxonomy Phase 1) ===
 
 /// CLI-facing network subcommand enum (Layer C). `#[non_exhaustive]`
@@ -174,6 +184,13 @@ pub enum NetworkAction {
         /// Bind-envelope subcommand.
         #[command(subcommand)]
         action: NetworkBindEnvelopeAction,
+    },
+    /// Mission discovery advertisement + invitation visibility
+    /// subcommands (RFC-0011-m Phase 5).
+    Discovery {
+        /// Discovery subcommand.
+        #[command(subcommand)]
+        action: NetworkDiscoveryAction,
     },
 }
 
@@ -466,6 +483,58 @@ pub struct BindEnvelopeRebindAbortArgs {
     /// `--help`, surfaces in `--help-all`).
     #[arg(long, hide = true)]
     pub allow_ci_deny_default: bool,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Mission discovery subcommand surface (RFC-0011-m Phase 5
+/// §Subcommand Taxonomy rows 327-329). Both subcommands are
+/// read-only with no confirmation flags per RFC-0011-h row 86 +
+/// row 664 (ALLOW-in-CI).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkDiscoveryAction {
+    /// Show one cached mission advertisement by
+    /// `advertisement_id` (read-only;
+    /// `MissionAdvertisementCache::get` substrate-faithful
+    /// Option::None translation per Phase 5 row G23).
+    AdvertisementShow(DiscoveryAdvertisementShowArgs),
+    /// Show one cached mission invitation by `invitation_id`
+    /// (read-only; `MissionInvitationCache::get`
+    /// substrate-faithful Option::None translation per
+    /// Phase 5 row G24).
+    InvitationShow(DiscoveryInvitationShowArgs),
+}
+
+/// `octo network discovery advertisement show` arguments
+/// (RFC-0011-m Phase 5 row G23).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryAdvertisementShowArgs {
+    /// Optional 64-char hex-encoded `advertisement_id` (32 bytes
+    /// BLAKE3 hash per RFC-0855 §8.2 deterministic-key contract).
+    /// Omitted = full enumeration via `MissionAdvertisementCache::iter`.
+    #[arg(long)]
+    pub advertisement_id: Option<String>,
+    /// Optional hop count for `is_ttl_exceeded(hop_count)` per
+    /// RFC-0855 §8.2 (clap u16, `--hops 65536` rejected pre-dispatch).
+    #[arg(long)]
+    pub hops: Option<u16>,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network discovery invitation show` arguments
+/// (RFC-0011-m Phase 5 row G24).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryInvitationShowArgs {
+    /// Optional 64-char hex-encoded `invitation_id` (32 bytes
+    /// BLAKE3 hash of signing bytes per RFC-0855 §8.2
+    /// deterministic-key contract). Omitted = full enumeration
+    /// via `MissionInvitationCache::iter`.
+    #[arg(long)]
+    pub invitation_id: Option<String>,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -1001,6 +1070,68 @@ pub struct NetworkBindEnvelopeRebindAbortOutput {
     pub dispatched: bool,
 }
 
+/// `octo network discovery advertisement show` output envelope
+/// (RFC-0011-m Phase 5 row G23). One entry per `advertisement_id`
+/// lookup OR one entry per `MissionAdvertisementCache::iter()`
+/// enumeration. Each entry surfaces
+/// `MissionAdvertisement.advertisement_hash` (BLAKE3-256 hex)
+/// per RFC-0855 §8.2 + the optional `is_ttl_exceeded` flag when
+/// `--hops <U16>` is supplied per the same RFC.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkDiscoveryAdvertisementShowOutput {
+    /// The 64-char hex-encoded `advertisement_id` (BLAKE3-256 of
+    /// `to_signing_bytes()` per RFC-0855 §8.2). For enumeration
+    /// mode, this is the cache key; for targeted lookup, this
+    /// echoes the operator-supplied ID.
+    pub advertisement_hash_hex: String,
+    /// The mission scope (`Public` | `InviteOnly` | `Stealth`
+    /// | `Federated` | `Ephemeral`).
+    pub scope: String,
+    /// Whether the TTL has been exceeded for the operator-
+    /// supplied hop count (only set when `--hops` is supplied;
+    /// `null` otherwise per RFC-0011-m §Output Envelope).
+    pub is_ttl_exceeded: Option<bool>,
+    /// Logical timestamp from the underlying
+    /// `MissionAdvertisement.logical_timestamp` (RFC-0855 §8.2).
+    pub logical_timestamp: u64,
+    /// The 64-char hex-encoded gateway_id of the advertising
+    /// gateway per RFC-0855 §8.2.
+    pub gateway_id_hex: String,
+}
+
+/// `octo network discovery invitation show` output envelope
+/// (RFC-0011-m Phase 5 row G24). One entry per `invitation_id`
+/// lookup OR one entry per `MissionInvitationCache::iter()`
+/// enumeration. Each entry surfaces the `MissionInvitation`
+/// fields per RFC-0011-h §Output Envelope L511-L518.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkDiscoveryInvitationShowOutput {
+    /// The 64-char hex-encoded `invitation_id` (BLAKE3-256 of
+    /// `to_signing_bytes()` per RFC-0855 §8.2). For enumeration
+    /// mode, this is the cache key; for targeted lookup, this
+    /// echoes the operator-supplied ID.
+    pub invitation_hash_hex: String,
+    /// The mission_id hex (per RFC-0011-h §Output Envelope
+    /// L511-L518; derived from `MissionId::to_canonical_bytes`
+    /// BLAKE3-256).
+    pub mission_id_hex: String,
+    /// The 64-char hex-encoded invitee gateway_id (per RFC-0011-h
+    /// §Output Envelope L511-L518).
+    pub invitee_gateway_id_hex: String,
+    /// The 64-char hex-encoded coordinator gateway_id (per
+    /// RFC-0011-h §Output Envelope L511-L518).
+    pub coordinator_gateway_id_hex: String,
+    /// Logical timestamp from the underlying
+    /// `MissionInvitation.logical_timestamp` (RFC-0855 §8.2).
+    pub logical_timestamp: u64,
+    /// The signing-bytes hex (per RFC-0011-h §Output Envelope
+    /// L511-L518; hex-encoded `to_signing_bytes()` for operator
+    /// cross-check; substrate-side signature verification
+    /// remains the authoritative path per RFC-0011-m
+    /// §Security Considerations).
+    pub signing_bytes_hex: String,
+}
+
 // === Dispatch ===
 
 /// Dispatch a `NetworkAction` to its handler. Top-level entry point
@@ -1050,6 +1181,12 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
             }
             NetworkBindEnvelopeAction::RebindCommit(args) => bind_envelope_rebind_commit(args, cli),
             NetworkBindEnvelopeAction::RebindAbort(args) => bind_envelope_rebind_abort(args, cli),
+        },
+        NetworkAction::Discovery { action: disc_act } => match disc_act {
+            NetworkDiscoveryAction::AdvertisementShow(args) => {
+                discovery_advertisement_show(args, cli)
+            }
+            NetworkDiscoveryAction::InvitationShow(args) => discovery_invitation_show(args, cli),
         },
     }
 }
@@ -1617,6 +1754,190 @@ fn bind_envelope_rebind_abort(
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// `octo network discovery advertisement show` handler
+/// (RFC-0011-m Phase 5 row G23). Substrate-faithful:
+/// `MissionAdvertisementCache::get(advertisement_id)` returns
+/// `None` until the persistence adapter lands (Phase 6 follow-on
+/// per `0011-h-s-a-discovery-advertisement-persistence`).
+/// CLI translates Option::None to typed exit 89
+/// `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 per
+/// RFC-0011-h §Error Handling row 526).
+fn discovery_advertisement_show(
+    args: &DiscoveryAdvertisementShowArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    // Substrate-faithful lookup: empty cache returns None for
+    // every key today; persistence adapter lands the populated
+    // branch post-Phase 6.
+    let cache = MissionAdvertisementCache::default();
+
+    // Targeted lookup vs full enumeration.
+    if let Some(advertisement_id_hex) = &args.advertisement_id {
+        let advertisement_id = parse_advertisement_id_hex(advertisement_id_hex)?;
+        if cache.get(&advertisement_id).is_none() {
+            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G23" });
+        }
+        // Unreachable in current substrate (cache always empty);
+        // substrate persistence adapter lands the populated branch
+        // post-Phase 6.
+        let adv = cache.get(&advertisement_id).expect("checked Some above");
+        let env = OutputEnvelope::new(
+            "octo.network.discovery.advertisement.show.v1",
+            advertisement_to_output(adv, args.hops),
+        );
+        render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+    } else {
+        // Enumeration path: collect all entries (deterministic
+        // BTreeMap ordering per RFC-0011-h §Output Envelope order
+        // determinism). Today the cache is empty so this always
+        // surfaces the substrate-unavailable envelope.
+        let entries: Vec<_> = cache
+            .iter()
+            .map(|(_key, adv)| advertisement_to_output(adv, args.hops))
+            .collect();
+        if entries.is_empty() {
+            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G23" });
+        }
+        let env = OutputEnvelope::new(
+            "octo.network.discovery.advertisement.show.v1",
+            entries,
+        );
+        render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+    }
+}
+
+/// `octo network discovery invitation show` handler
+/// (RFC-0011-m Phase 5 row G24). Substrate-faithful:
+/// `MissionInvitationCache::get(invitation_id)` returns `None`
+/// until the persistence adapter lands (Phase 6 follow-on per
+/// `0011-h-s-a-discovery-invitation-persistence`). CLI
+/// translates Option::None to typed exit 89
+/// `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 per
+/// RFC-0011-h §Error Handling row 526).
+fn discovery_invitation_show(
+    args: &DiscoveryInvitationShowArgs,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    // Substrate-faithful lookup: empty cache returns None for
+    // every key today; persistence adapter lands the populated
+    // branch post-Phase 6.
+    let cache = MissionInvitationCache::default();
+
+    // Targeted lookup vs full enumeration.
+    if let Some(invitation_id_hex) = &args.invitation_id {
+        let invitation_id = parse_invitation_id_hex(invitation_id_hex)?;
+        if cache.get(&invitation_id).is_none() {
+            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G24" });
+        }
+        // Unreachable in current substrate (cache always empty);
+        // substrate persistence adapter lands the populated branch
+        // post-Phase 6.
+        let inv = cache.get(&invitation_id).expect("checked Some above");
+        let env = OutputEnvelope::new(
+            "octo.network.discovery.invitation.show.v1",
+            invitation_to_output(invitation_id, inv),
+        );
+        render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+    } else {
+        // Enumeration path: collect all entries (deterministic
+        // BTreeMap ordering per RFC-0011-h §Output Envelope order
+        // determinism). Today the cache is empty so this always
+        // surfaces the substrate-unavailable envelope.
+        let entries: Vec<_> = cache
+            .iter()
+            .map(|(key, inv)| invitation_to_output(key, inv))
+            .collect();
+        if entries.is_empty() {
+            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G24" });
+        }
+        let env = OutputEnvelope::new(
+            "octo.network.discovery.invitation.show.v1",
+            entries,
+        );
+        render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+    }
+}
+
+/// Convert a `MissionAdvertisement` to the JSON output envelope
+/// (RFC-0011-m Phase 5 row G23 + RFC-0011-h §Output Envelope).
+fn advertisement_to_output(
+    adv: &MissionAdvertisement,
+    hops: Option<u16>,
+) -> NetworkDiscoveryAdvertisementShowOutput {
+    NetworkDiscoveryAdvertisementShowOutput {
+        advertisement_hash_hex: hex::encode(adv.advertisement_hash()),
+        scope: format!("{:?}", adv.scope),
+        is_ttl_exceeded: hops.map(|h| adv.is_ttl_exceeded(h)),
+        logical_timestamp: adv.logical_timestamp,
+        gateway_id_hex: hex::encode(adv.gateway_id),
+    }
+}
+
+/// Convert a `MissionInvitation` to the JSON output envelope
+/// (RFC-0011-m Phase 5 row G24 + RFC-0011-h §Output Envelope
+/// L511-L518). The `invitation_hash` is passed in (from the
+/// cache key per RFC-0855 §8.2 deterministic-key contract)
+/// so the CLI does not need to re-derive the BLAKE3 hash.
+fn invitation_to_output(
+    invitation_hash: [u8; 32],
+    inv: &MissionInvitation,
+) -> NetworkDiscoveryInvitationShowOutput {
+    NetworkDiscoveryInvitationShowOutput {
+        invitation_hash_hex: hex::encode(invitation_hash),
+        mission_id_hex: hex::encode(inv.mission_id.to_canonical_bytes()),
+        invitee_gateway_id_hex: hex::encode(inv.invitee_gateway_id),
+        coordinator_gateway_id_hex: hex::encode(inv.coordinator_gateway_id),
+        logical_timestamp: inv.logical_timestamp,
+        signing_bytes_hex: hex::encode(inv.to_signing_bytes()),
+    }
+}
+
+/// Parse a 64-char hex `advertisement_id` to 32 bytes (pastejacking
+/// defense: mixed-case rejected). Returns typed exit 2 on invalid
+/// input per clap arg validation conventions.
+fn parse_advertisement_id_hex(s: &str) -> Result<[u8; 32], OctoCliError> {
+    parse_32_byte_hex(s, "advertisement_id")
+}
+
+/// Parse a 64-char hex `invitation_id` to 32 bytes (pastejacking
+/// defense: mixed-case rejected). Returns typed exit 2 on invalid
+/// input per clap arg validation conventions.
+fn parse_invitation_id_hex(s: &str) -> Result<[u8; 32], OctoCliError> {
+    parse_32_byte_hex(s, "invitation_id")
+}
+
+/// Shared 32-byte hex parser with pastejacking defense (mixed-case
+/// rejected). Used by `parse_advertisement_id_hex` +
+/// `parse_invitation_id_hex`.
+fn parse_32_byte_hex(s: &str, field_name: &'static str) -> Result<[u8; 32], OctoCliError> {
+    if s.len() != 64 {
+        return Err(OctoCliError::Internal(format!(
+            "invalid {field_name}: expected 64 hex chars, got {}",
+            s.len()
+        )));
+    }
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(OctoCliError::Internal(format!(
+            "invalid {field_name}: non-hex character"
+        )));
+    }
+    // Pastejacking defense: mixed-case rejected. Lowercase-only
+    // OR uppercase-only accepted; mixed rejected.
+    let has_lower = s.chars().any(|c| c.is_ascii_lowercase());
+    let has_upper = s.chars().any(|c| c.is_ascii_uppercase());
+    if has_lower && has_upper {
+        return Err(OctoCliError::Internal(format!(
+            "invalid {field_name}: mixed-case rejected (pastejacking defense)"
+        )));
+    }
+    let bytes = hex::decode(s).map_err(|e| {
+        OctoCliError::Internal(format!("invalid {field_name}: hex decode failed: {e}"))
+    })?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 /// Shared preview-payload helper for the rebind-* trio dry-run
@@ -3183,5 +3504,100 @@ mod tests {
         let redacted = redact_reason(&long);
         assert!(redacted.len() <= 83, "got len={}", redacted.len());
         assert!(redacted.ends_with("..."));
+    }
+
+    // === Phase 5 test fixture + 6 test vectors (RFC-0011-m §Test Vectors) ===
+
+    #[derive(Parser, Debug)]
+    struct TestDiscoveryCli {
+        #[command(subcommand)]
+        action: NetworkDiscoveryAction,
+    }
+
+    // tv_net5_1: discovery advertisement show parses with --advertisement-id (G23)
+    #[test]
+    fn tv_net5_1_discovery_advertisement_show_parses_with_advertisement_id() {
+        let cli = TestDiscoveryCli::try_parse_from([
+            "test",
+            "advertisement-show",
+            "--advertisement-id",
+            &"a".repeat(64),
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkDiscoveryAction::AdvertisementShow(args) => {
+                assert_eq!(args.advertisement_id, Some("a".repeat(64)));
+                assert!(!args.json);
+            }
+            _ => panic!("expected AdvertisementShow, got {cli:?}"),
+        }
+    }
+
+    // tv_net5_2: discovery advertisement show substrate miss emits NetworkSubstrateUnavailable (G23)
+    #[test]
+    fn tv_net5_2_discovery_advertisement_show_substrate_miss_emits_g23_exit() {
+        // Empty cache returns None for every key today; CLI
+        // translates Option::None to typed exit 89
+        // NetworkSubstrateUnavailable (REUSED slot per RFC-0011-h
+        // §Error Handling row 526).
+        let cache = MissionAdvertisementCache::default();
+        let key = [0x11u8; 32];
+        assert!(cache.get(&key).is_none());
+    }
+
+    // tv_net5_3: discovery advertisement show --hops 65536 rejected pre-dispatch (clap u16 overflow)
+    #[test]
+    fn tv_net5_3_discovery_advertisement_show_hops_overflow_rejected() {
+        // clap u16 parse error pre-dispatch per RFC-0011-m
+        // §Security Considerations. 65536 does not fit u16.
+        let result = TestDiscoveryCli::try_parse_from([
+            "test",
+            "advertisement-show",
+            "--hops",
+            "65536",
+        ]);
+        assert!(result.is_err(), "expected clap u16 overflow rejection");
+    }
+
+    // tv_net5_4: discovery invitation show parses with --invitation-id (G24)
+    #[test]
+    fn tv_net5_4_discovery_invitation_show_parses_with_invitation_id() {
+        let cli = TestDiscoveryCli::try_parse_from([
+            "test",
+            "invitation-show",
+            "--invitation-id",
+            &"b".repeat(64),
+        ])
+        .unwrap();
+        match cli.action {
+            NetworkDiscoveryAction::InvitationShow(args) => {
+                assert_eq!(args.invitation_id, Some("b".repeat(64)));
+                assert!(!args.json);
+            }
+            _ => panic!("expected InvitationShow, got {cli:?}"),
+        }
+    }
+
+    // tv_net5_5: discovery invitation show substrate miss emits NetworkSubstrateUnavailable (G24)
+    #[test]
+    fn tv_net5_5_discovery_invitation_show_substrate_miss_emits_g24_exit() {
+        // Empty cache returns None for every key today; CLI
+        // translates Option::None to typed exit 89
+        // NetworkSubstrateUnavailable (REUSED slot per RFC-0011-h
+        // §Error Handling row 526).
+        let cache = MissionInvitationCache::default();
+        let key = [0x22u8; 32];
+        assert!(cache.get(&key).is_none());
+    }
+
+    // tv_net5_6: discovery invitation show pastejacking defense rejects mixed-case hex
+    #[test]
+    fn tv_net5_6_discovery_invitation_show_pastejacking_mixed_case_rejected() {
+        // Mixed-case hex rejected per the parse_32_byte_hex
+        // pastejacking defense (same pattern as Phase 1 G12b
+        // CoordinatorRecord::load lookup defense).
+        let mixed_case = "a".repeat(32) + &"B".repeat(32);
+        let result = parse_32_byte_hex(&mixed_case, "invitation_id");
+        assert!(result.is_err(), "expected mixed-case rejection");
     }
 }

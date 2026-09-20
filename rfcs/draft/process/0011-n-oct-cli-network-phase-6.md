@@ -28,7 +28,7 @@ Plus closure artifacts:
 | Artifact                                              | Substrate / Mission YAML                                       |
 | ----------------------------------------------------- | -------------------------------------------------------------- |
 | `0011-h-s-a-writer-election-struct` (G18)             | new `WriterElection` struct wrapping `elect_coordinator` free function at `octo-coordinator-types/src/election.rs` |
-| `0011-h-s-a-network-sender` (G20)                     | new `NetworkSender` trait + `SendContext` per RFC-0863; per-extension crate pattern |
+| `0011-h-s-a-network-sender` (G20)                     | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration; per-extension crate pattern |
 | Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | TBD (drift identified during 6-phase rollout)              |
 | 2 follow-on companion missions                        | Created at CLAIMED-time per [[no-phantom-mission-pointers]]   |
 
@@ -47,7 +47,7 @@ Plus closure artifacts:
 - **RFC-0011-f (mesh peer-table)** — interim substitute cited by RFC-0011-h row 97-98 for operators needing `bootstrap` / `status` BEFORE Phase 6 closure
 - **RFC-0851p-a §3 Mode A** — `BootstrapMode` enum substrate anchor at `crates/octo-network/src/mon/bootstrap.rs:197`
 - **RFC-0862p-a Writer Election Bootstrap** — `elect_coordinator` free function at `octo-coordinator-types/src/election.rs:218` substrate anchor
-- **RFC-0863 Onion Relay** — `NetworkSender` trait + `SendContext` substrate anchors (NOT yet in substrate; G20 companion mission lands both)
+- **RFC-0863 General-Purpose Network Integration** — `NetworkSender` trait at `rfcs/accepted/networking/0863-general-purpose-network-integration.md:104` + `SendContext` struct at L116 substrate anchors (NOT yet in substrate; G20 companion mission lands both)
 - **Companion mission `0011-h-s-a-bootstrap-orchestrator-v2` (G26)** — NEW Layer B substrate for `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig)` + `status()` methods at `crates/octo-network/src/mon/bootstrap.rs` (does NOT reuse Phase 2 G1 — R1 substrate-faithfulness finding corrected the false attribution)
 - **Companion mission `0011-h-s-a-writer-election-struct` (G18)** — NEW Layer B substrate for `WriterElection` struct wrapping the existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs:218` (struct method `WriterElection::elect_coordinator` does NOT exist today; G18 adds the wrapper)
 - **Companion mission `0011-h-s-a-network-sender` (G20)** — NEW Layer B substrate for `NetworkSender` trait + `SendContext` at new `crates/octo-network/src/sender/` directory (per-extension crate pattern)
@@ -206,7 +206,7 @@ Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 3 NEW Phas
 | ------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
 | `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig)` + `status() -> BootstrapState` at `crates/octo-network/src/mon/bootstrap.rs` | B     |
 | `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6)    | `WriterElection` struct wrapping existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs:218` | B     |
-| `0011-h-s-a-network-sender` (G20 NEW Phase 6)            | new `NetworkSender` trait + `SendContext` per RFC-0863 at new `crates/octo-network/src/sender/`; per-extension crate pattern | B     |
+| `0011-h-s-a-network-sender` (G20 NEW Phase 6)            | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration at new `crates/octo-network/src/sender/`; per-extension crate pattern | B     |
 | `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | TBD (drift identified during 6-phase rollout)                       | B     |
 | 2 follow-on companion missions                          | Created at CLAIMED-time per [[no-phantom-mission-pointers]]         | B     |
 
@@ -262,3 +262,6 @@ The corrected draft reflects this substrate-faithful reality throughout §Summar
 | ------- | ---------- | ------------------------------------------------------------- |
 | v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle          |
 | v0.1.1  | 2026-09-20 | R1.5 fix sweep: substrate-faithfulness correction for BootstrapOrchestrator attribution (Phase 2 G1 → Phase 6 G26); added WriterElection struct wrapper clarification (G18); 3 NEW Phase 6 companion missions (was 3 mixed-attributed) |
+| v0.1.2  | 2026-09-20 | R1.5.5 fix sweep: residual stale G1 references in §Status block + §Design Goals rows 1 + 4 corrected to G26 NEW Phase 6 |
+| v0.1.3  | 2026-09-20 | R2.5 fix sweep: slot arithmetic in §Design Goals #3 + §Dependencies row for RFC-0011-h §Error Handling clarified as FORWARD-LOOKING per R2 substrate-fault-class finding (slots do NOT exist in `error.rs` today; land during implementation) |
+| v0.1.4  | 2026-09-20 | R3.5 fix sweep: L2 cite hygiene correction — RFC-0863 cited as "Onion Relay" in 3 locations; corrected to "General-Purpose Network Integration" per `rfcs/accepted/networking/0863-general-purpose-network-integration.md` (NetworkSender trait at L104, SendContext struct at L116). RFC-0858 is the actual Onion Relay Routing RFC, distinct concern |

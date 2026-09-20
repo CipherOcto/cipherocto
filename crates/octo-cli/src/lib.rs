@@ -12,6 +12,7 @@ pub mod redact;
 pub use commands::agent::AgentAction;
 pub use commands::audit::AuditAction;
 pub use commands::governance::GovernanceAction;
+pub use commands::network::NetworkAction;
 pub use commands::peer::PeerAction;
 pub use error::{sanitize_substrate_error, OctoCliError};
 pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
@@ -126,6 +127,18 @@ pub enum Commands {
         /// Audit subcommand.
         #[command(subcommand)]
         action: AuditAction,
+    },
+    /// Network read surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
+    ///
+    /// Phase 1 lands 5 read-only subcommands: `peers list`, `peers get`,
+    /// `identity show`, `trust-graph render`, `governance rotation
+    /// status`. `octo network bootstrap` + `octo network status` are
+    /// DEFERRED per RFC-0011-h row 543 footnote pending user decision
+    /// on write-path gate surface (G25 amendment).
+    Network {
+        /// Network subcommand.
+        #[command(subcommand)]
+        action: NetworkAction,
     },
 }
 

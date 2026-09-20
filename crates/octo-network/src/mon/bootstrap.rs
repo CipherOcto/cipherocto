@@ -205,6 +205,98 @@ pub enum BootstrapMode {
     TorWithIpFallback,
 }
 
+// ── Mission 0011-h-s-a-bootstrap-orchestrator (RFC-0011-j G1) ────
+
+/// Operator-editable bootstrap configuration persisted at
+/// `$OCTO_HOME/octotransport/bootstrap.toml`.
+///
+/// Phase 2 lands this struct as the substrate anchor for
+/// `octo network mode show` (read via `BootstrapConfig::from_toml`)
+/// + `octo network mode set` (write via `save_toml`).
+///
+/// The struct is intentionally minimal: semantic mode-transition
+/// validation is the substrate's responsibility (companion mission
+/// `0011-h-s-a-bootstrap-orchestrator` reserves `BootstrapOrchestrator`
+/// for Phase 6 `octo network bootstrap` + `octo network status`
+/// surface).
+///
+/// # Field bounds
+///
+/// - `mode`: full `BootstrapMode` enum coverage (Direct | TorOnly |
+///   TorWithIpFallback).
+/// - `listen_addr`: non-empty.
+/// - `target_peers`: 1..=256 (preserves substrate-flood damping).
+/// - `governance_quorum_proof`: optional 32-byte BLAKE3 digest that
+///   gates `octo network authority rotate` (separate write surface
+///   in Phase 2; carried here so a single TOML manages all mode +
+///   authority state). `Some` for Dao rotation only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapConfig {
+    pub mode: BootstrapMode,
+    pub listen_addr: String,
+    pub target_peers: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance_quorum_proof: Option<[u8; 32]>,
+}
+
+/// Error surface for `BootstrapConfig` TOML load/save.
+#[derive(Debug)]
+pub enum BootstrapConfigError {
+    Io(std::io::Error),
+    TomlParse(toml::de::Error),
+    TomlSerialize(toml::ser::Error),
+}
+
+impl std::fmt::Display for BootstrapConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "bootstrap config io error: {e}"),
+            Self::TomlParse(e) => write!(f, "bootstrap config toml parse error: {e}"),
+            Self::TomlSerialize(e) => write!(f, "bootstrap config toml serialize error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for BootstrapConfigError {}
+
+impl From<std::io::Error> for BootstrapConfigError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<toml::de::Error> for BootstrapConfigError {
+    fn from(e: toml::de::Error) -> Self {
+        Self::TomlParse(e)
+    }
+}
+
+impl From<toml::ser::Error> for BootstrapConfigError {
+    fn from(e: toml::ser::Error) -> Self {
+        Self::TomlSerialize(e)
+    }
+}
+
+impl BootstrapConfig {
+    /// Read a `BootstrapConfig` from a TOML file at `path`.
+    pub fn from_toml(path: &std::path::Path) -> Result<Self, BootstrapConfigError> {
+        let body = std::fs::read_to_string(path)?;
+        let parsed: Self = toml::from_str(&body)?;
+        Ok(parsed)
+    }
+
+    /// Persist a `BootstrapConfig` to a TOML file at `path`.
+    /// Creates parent directory if missing. Overwrites existing file.
+    pub fn save_toml(&self, path: &std::path::Path) -> Result<(), BootstrapConfigError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let body = toml::to_string(self)?;
+        std::fs::write(path, body)?;
+        Ok(())
+    }
+}
+
 // ── Mission 0851p-a-bootstrap-slashing ───────────────────────────
 
 /// The set of slashed `peer_id`s (bootstrap nodes that have been
@@ -620,5 +712,76 @@ mod tests {
         // without also updating the deprecation notice.
         let bl = SlashedSeedBlacklist::new();
         assert!(bl.is_empty());
+    }
+
+    // G1 companion substrate tests (RFC-0011-j Phase 2)
+
+    fn tmp_file(label: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "octo-bootstrap-cfg-{label}-{}.toml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        dir
+    }
+
+    #[test]
+    fn bootstrap_config_default_round_trip() {
+        let path = tmp_file("roundtrip");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        let cfg = BootstrapConfig {
+            mode: BootstrapMode::TorWithIpFallback,
+            listen_addr: "127.0.0.1:9100".into(),
+            target_peers: 12,
+            governance_quorum_proof: None,
+        };
+        cfg.save_toml(&path).expect("save must succeed");
+        let loaded = BootstrapConfig::from_toml(&path).expect("load must succeed");
+        assert_eq!(loaded, cfg);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_with_quorum_proof_round_trip() {
+        let path = tmp_file("quorum");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        let cfg = BootstrapConfig {
+            mode: BootstrapMode::Direct,
+            listen_addr: "0.0.0.0:9100".into(),
+            target_peers: 64,
+            governance_quorum_proof: Some([0xAB; 32]),
+        };
+        cfg.save_toml(&path).expect("save must succeed");
+        let loaded = BootstrapConfig::from_toml(&path).expect("load must succeed");
+        assert_eq!(loaded.governance_quorum_proof, Some([0xAB; 32]));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_from_toml_rejects_corrupt_payload() {
+        let path = tmp_file("corrupt");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        std::fs::write(&path, "this is not toml").expect("write");
+        match BootstrapConfig::from_toml(&path) {
+            Err(BootstrapConfigError::TomlParse(_)) => {}
+            other => panic!("expected TomlParse error, got {other:?}"),
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_from_toml_io_error_on_missing_file() {
+        let path = tmp_file("missing");
+        std::fs::remove_file(&path).ok();
+        match BootstrapConfig::from_toml(&path) {
+            Err(BootstrapConfigError::Io(_)) => {}
+            other => panic!("expected Io error, got {other:?}"),
+        }
     }
 }

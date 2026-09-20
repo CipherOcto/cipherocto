@@ -41,7 +41,7 @@ pub use bootstrap::{
     SeedEntry, SeedHealth, SeedListAuthority, SeedListEnvelope, SlashedSeedBlacklist, StaleSeed,
     EPOCH_GOVERNANCE_TAKEOVER, MAX_SEED_AGE_EPOCHS,
 };
-pub use discovery::MissionDiscoveryScope;
+pub use discovery::{MissionAdvertisementCache, MissionDiscoveryScope, MissionInvitationCache};
 pub use error::MonError;
 pub use gossip::{
     MissionGossipMessage, MissionGossipScope, MissionPropagationClass, SCOPE_FLAG_ENCRYPTED,

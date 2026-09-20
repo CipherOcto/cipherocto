@@ -3,6 +3,8 @@
 //! Mission discovery with 5 scopes, advertisement generation,
 //! scope-based isolation, and GDP integration.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::mission_id::MissionId;
@@ -210,6 +212,115 @@ pub fn is_discovery_authorized(
     }
 }
 
+/// Cache for mission advertisements (RFC-0011-h §Substrate-Additions
+/// row G23 + RFC-0011-m Phase 5). Backing store keyed by the
+/// BLAKE3-256 advertisement hash per RFC-0855 §8.2 deterministic-key
+/// contract. BTreeMap chosen over HashMap for deterministic iteration
+/// order per RFC-0011-h §Output Envelope order determinism.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MissionAdvertisementCache {
+    entries: BTreeMap<[u8; 32], MissionAdvertisement>,
+}
+
+impl MissionAdvertisementCache {
+    /// Substrate-faithful lookup helper for `octo network
+    /// discovery advertisement show --advertisement-id <ID>`
+    /// (RFC-0011-m Phase 5 G23).
+    #[must_use]
+    pub fn get(&self, advertisement_id: &[u8; 32]) -> Option<&MissionAdvertisement> {
+        self.entries.get(advertisement_id)
+    }
+
+    /// Substrate-faithful iterator for `octo network
+    /// discovery advertisement show` (RFC-0011-m Phase 5 G23).
+    /// Returns gateway-id-keyed iteration per RFC-0855 §8.2.
+    /// Owned-key iteration decouples the iterator lifetime from
+    /// the cache lifetime per [[cipherocto-design-principles]]
+    /// §No premature coupling.
+    pub fn iter(&self) -> impl Iterator<Item = ([u8; 32], &MissionAdvertisement)> {
+        self.entries.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// Insert or replace an advertisement entry (substrate-faithful
+    /// registry surface; CLI dispatch does NOT call this — write
+    /// paths remain `AdapterUnwired` per Phase 6 follow-on
+    /// `0011-h-s-a-discovery-advertisement-persistence`).
+    pub fn insert(&mut self, advertisement: MissionAdvertisement) {
+        let key = advertisement.advertisement_hash();
+        self.entries.insert(key, advertisement);
+    }
+
+    /// Number of cached advertisements (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Cache for mission invitations (RFC-0011-h §Substrate-Additions
+/// row G24 + RFC-0011-m Phase 5). Backing store keyed by the
+/// BLAKE3-256 hash of the invitation signing bytes per
+/// RFC-0855 §8.2 deterministic-key contract. BTreeMap chosen over
+/// HashMap for deterministic iteration order per RFC-0011-h
+/// §Output Envelope order determinism.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MissionInvitationCache {
+    entries: BTreeMap<[u8; 32], MissionInvitation>,
+}
+
+impl MissionInvitationCache {
+    /// Substrate-faithful lookup helper for `octo network
+    /// discovery invitation show --invitation-id <ID>`
+    /// (RFC-0011-m Phase 5 G24).
+    #[must_use]
+    pub fn get(&self, invitation_id: &[u8; 32]) -> Option<&MissionInvitation> {
+        self.entries.get(invitation_id)
+    }
+
+    /// Substrate-faithful iterator for `octo network
+    /// discovery invitation show` (RFC-0011-m Phase 5 G24).
+    /// Returns gateway-id-keyed iteration per RFC-0855 §8.2.
+    /// Owned-key iteration decouples the iterator lifetime from
+    /// the cache lifetime per [[cipherocto-design-principles]]
+    /// §No premature coupling.
+    pub fn iter(&self) -> impl Iterator<Item = ([u8; 32], &MissionInvitation)> {
+        self.entries.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// Insert or replace an invitation entry (substrate-faithful
+    /// registry surface; CLI dispatch does NOT call this — write
+    /// paths remain `AdapterUnwired` per Phase 6 follow-on
+    /// `0011-h-s-a-discovery-invitation-persistence`). The
+    /// invitation key is the BLAKE3-256 hash of `to_signing_bytes()`
+    /// per RFC-0855 §8.2 deterministic-key contract.
+    pub fn insert(&mut self, invitation: MissionInvitation) {
+        let key = *blake3::hash(&invitation.to_signing_bytes()).as_bytes();
+        self.entries.insert(key, invitation);
+    }
+
+    /// Number of cached invitations (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty (operator-side
+    /// observability helper).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,5 +522,203 @@ mod tests {
             false,
             false
         ));
+    }
+
+    // --- MissionAdvertisementCache tests (G23 substrate) ---
+
+    fn make_advertisement(scope: MissionDiscoveryScope) -> MissionAdvertisement {
+        MissionAdvertisement::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xBB; 32],
+            scope,
+            5,
+            3,
+            [0xCC; 32],
+            1000,
+        )
+    }
+
+    #[test]
+    fn t_advertisement_cache_get_returns_none_substrate_faithful() {
+        let cache = MissionAdvertisementCache::default();
+        let key = [0x11u8; 32];
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn t_advertisement_cache_get_returns_some_after_insert() {
+        let mut cache = MissionAdvertisementCache::default();
+        let adv = make_advertisement(MissionDiscoveryScope::Public);
+        let key = adv.advertisement_hash();
+        cache.insert(adv);
+        assert!(cache.get(&key).is_some());
+    }
+
+    #[test]
+    fn t_advertisement_cache_insert_idempotent_for_same_advertisement() {
+        let mut cache = MissionAdvertisementCache::default();
+        let adv = make_advertisement(MissionDiscoveryScope::Public);
+        let key = adv.advertisement_hash();
+        cache.insert(adv.clone());
+        cache.insert(adv);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key).is_some());
+    }
+
+    #[test]
+    fn t_advertisement_cache_iter_empty_substrate_faithful() {
+        let cache = MissionAdvertisementCache::default();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+        let collected: Vec<_> = cache.iter().collect();
+        assert_eq!(collected.len(), 0);
+    }
+
+    #[test]
+    fn t_advertisement_cache_iter_returns_inserted_entries_in_btreemap_order() {
+        let mut cache = MissionAdvertisementCache::default();
+        // Two advertisements with distinct gateway_ids produce
+        // distinct hashes — BTreeMap iter is sorted ascending
+        let adv_a = MissionAdvertisement::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xBB; 32],
+            MissionDiscoveryScope::Public,
+            5,
+            3,
+            [0xCC; 32],
+            1000,
+        );
+        let adv_b = MissionAdvertisement::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xBB; 32],
+            MissionDiscoveryScope::Public,
+            5,
+            3,
+            [0xDD; 32],
+            1000,
+        );
+        let key_a = adv_a.advertisement_hash();
+        let key_b = adv_b.advertisement_hash();
+        cache.insert(adv_a);
+        cache.insert(adv_b);
+        let collected: Vec<_> = cache.iter().map(|(k, _)| k).collect();
+        assert_eq!(collected.len(), 2);
+        // BTreeMap iter is ascending order; verify by sorting
+        let mut expected = vec![key_a, key_b];
+        expected.sort();
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn t_advertisement_cache_len_and_is_empty_observability_helpers() {
+        let cache = MissionAdvertisementCache::default();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+        let mut cache = cache;
+        cache.insert(make_advertisement(MissionDiscoveryScope::Public));
+        assert_eq!(cache.len(), 1);
+        assert!(!cache.is_empty());
+    }
+
+    // --- MissionInvitationCache tests (G24 substrate) ---
+
+    fn make_invitation() -> MissionInvitation {
+        MissionInvitation::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xBB; 32],
+            [0xCC; 32],
+            1000,
+        )
+    }
+
+    fn invitation_key(inv: &MissionInvitation) -> [u8; 32] {
+        *blake3::hash(&inv.to_signing_bytes()).as_bytes()
+    }
+
+    #[test]
+    fn t_invitation_cache_get_returns_none_substrate_faithful() {
+        let cache = MissionInvitationCache::default();
+        let key = [0x11u8; 32];
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn t_invitation_cache_get_returns_some_after_insert() {
+        let mut cache = MissionInvitationCache::default();
+        let inv = make_invitation();
+        let key = invitation_key(&inv);
+        cache.insert(inv);
+        assert!(cache.get(&key).is_some());
+    }
+
+    #[test]
+    fn t_invitation_cache_insert_idempotent_for_same_invitation() {
+        let mut cache = MissionInvitationCache::default();
+        let inv = make_invitation();
+        let key = invitation_key(&inv);
+        cache.insert(inv.clone());
+        cache.insert(inv);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key).is_some());
+    }
+
+    #[test]
+    fn t_invitation_cache_iter_empty_substrate_faithful() {
+        let cache = MissionInvitationCache::default();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+        let collected: Vec<_> = cache.iter().collect();
+        assert_eq!(collected.len(), 0);
+    }
+
+    #[test]
+    fn t_invitation_cache_iter_returns_inserted_entries_in_btreemap_order() {
+        let mut cache = MissionInvitationCache::default();
+        let inv_a = MissionInvitation::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xBB; 32],
+            [0xCC; 32],
+            1000,
+        );
+        let inv_b = MissionInvitation::new(
+            MissionId::new(1, &[0xAA; 32], 100, &[0xBB; 32], 1),
+            [0xDD; 32],
+            [0xEE; 32],
+            2000,
+        );
+        let key_a = invitation_key(&inv_a);
+        let key_b = invitation_key(&inv_b);
+        cache.insert(inv_a);
+        cache.insert(inv_b);
+        let collected: Vec<_> = cache.iter().map(|(k, _)| k).collect();
+        assert_eq!(collected.len(), 2);
+        let mut expected = vec![key_a, key_b];
+        expected.sort();
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn t_invitation_cache_insert_key_is_blake3_of_signing_bytes() {
+        let mut cache = MissionInvitationCache::default();
+        let inv = make_invitation();
+        let expected_key = *blake3::hash(&inv.to_signing_bytes()).as_bytes();
+        cache.insert(inv);
+        // The key is derived from signing bytes, not the field
+        // tuple — verify by checking the cache has exactly one
+        // entry with the expected key
+        assert_eq!(cache.len(), 1);
+        let collected: Vec<_> = cache.iter().map(|(k, _)| k).collect();
+        assert_eq!(collected[0], expected_key);
+    }
+
+    #[test]
+    fn t_invitation_cache_len_and_is_empty_observability_helpers() {
+        let cache = MissionInvitationCache::default();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+        let mut cache = cache;
+        cache.insert(make_invitation());
+        assert_eq!(cache.len(), 1);
+        assert!(!cache.is_empty());
     }
 }

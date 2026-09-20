@@ -612,12 +612,18 @@ pub struct SlashBridgePropagateArgs {
     #[arg(value_parser = parse_gateway_id_hex)]
     pub slash_envelope_id: [u8; 32],
     /// Emit preview envelope with computed `BridgeReceipt` shape
-    /// (default true per RFC-0011-h §Confirmation Flag).
-    #[arg(long, default_value_t = true)]
+    /// (default behavior; mutually exclusive with --apply per
+    /// RFC-0011-h §Confirmation Flag).
+    #[arg(long, conflicts_with = "apply")]
     pub dry_run: bool,
     /// Acknowledge and apply the propagation (reversible write;
-    /// required for non-dry-run apply per RFC-0011-o §Confirmation
-    /// Flag).
+    /// required for apply per RFC-0011-o §Confirmation Flag).
+    /// Mutually exclusive with --dry-run; both flags imply
+    /// explicit operator intent.
+    #[arg(long, conflicts_with = "dry_run", requires = "confirm_acknowledge")]
+    pub apply: bool,
+    /// Acknowledge the apply intent (reversible write; required
+    /// for --apply per RFC-0011-o §Confirmation Flag).
     #[arg(long)]
     pub confirm_acknowledge: bool,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
@@ -1589,6 +1595,7 @@ fn authority_rotate(args: &AuthorityRotateArgs, cli: &Octo) -> Result<(), OctoCl
                 SeedAuthorityError::BadSignature => "G8",
                 SeedAuthorityError::DaoNotYetActive => "G8",
             },
+            detail: "".to_string(),
         })?;
     let env = OutputEnvelope::new(
         "octo.network.authority.rotate.v1",
@@ -1762,7 +1769,10 @@ fn bind_envelope_show(args: &BindEnvelopeShowArgs, cli: &Octo) -> Result<(), Oct
     // `0011-h-s-a-bind-envelope-persistence`). CLI translates
     // Option::None to typed exit 89 `NetworkSubstrateUnavailable`.
     if BindEnvelope::load(&args.domain_id).is_none() {
-        return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G22" });
+        return Err(OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G22",
+            detail: "".to_string(),
+        });
     }
     // Unreachable in current substrate (load always returns None);
     // substrate persistence adapter lands the populated branch
@@ -1975,7 +1985,10 @@ fn discovery_advertisement_show(
     if let Some(advertisement_id_hex) = &args.advertisement_id {
         let advertisement_id = parse_advertisement_id_hex(advertisement_id_hex)?;
         if cache.get(&advertisement_id).is_none() {
-            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G23" });
+            return Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G23",
+                detail: "".to_string(),
+            });
         }
         // Unreachable in current substrate (cache always empty);
         // substrate persistence adapter lands the populated branch
@@ -1996,7 +2009,10 @@ fn discovery_advertisement_show(
             .map(|(_key, adv)| advertisement_to_output(adv, args.hops))
             .collect();
         if entries.is_empty() {
-            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G23" });
+            return Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G23",
+                detail: "".to_string(),
+            });
         }
         let env = OutputEnvelope::new("octo.network.discovery.advertisement.show.v1", entries);
         render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
@@ -2024,7 +2040,10 @@ fn discovery_invitation_show(
     if let Some(invitation_id_hex) = &args.invitation_id {
         let invitation_id = parse_invitation_id_hex(invitation_id_hex)?;
         if cache.get(&invitation_id).is_none() {
-            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G24" });
+            return Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G24",
+                detail: "".to_string(),
+            });
         }
         // Unreachable in current substrate (cache always empty);
         // substrate persistence adapter lands the populated branch
@@ -2045,7 +2064,10 @@ fn discovery_invitation_show(
             .map(|(key, inv)| invitation_to_output(key, inv))
             .collect();
         if entries.is_empty() {
-            return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G24" });
+            return Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G24",
+                detail: "".to_string(),
+            });
         }
         let env = OutputEnvelope::new("octo.network.discovery.invitation.show.v1", entries);
         render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
@@ -2529,6 +2551,7 @@ fn network_bootstrap(args: &BootstrapArgs, cli: &Octo) -> Result<(), OctoCliErro
     let cfg = BootstrapConfig::from_toml(&path).map_err(|e| {
         OctoCliError::NetworkSubstrateUnavailable {
             companion: bootstrap_config_companion(&e),
+            detail: "".to_string(),
         }
     })?;
     let mut orch = BootstrapOrchestrator::default();
@@ -2539,6 +2562,7 @@ fn network_bootstrap(args: &BootstrapArgs, cli: &Octo) -> Result<(), OctoCliErro
                 octo_network::mon::bootstrap::BootstrapError::InvalidConfig(_) => "G26",
                 octo_network::mon::bootstrap::BootstrapError::SeedListUnavailable(_) => "G26",
             },
+            detail: "".to_string(),
         })?;
     let state = orch.status();
     let env = OutputEnvelope::new(
@@ -2604,8 +2628,10 @@ fn network_status(args: &StatusArgs, cli: &Octo) -> Result<(), OctoCliError> {
 /// ordering invariant per [[no-phantom-mission-pointers]].
 fn network_slash_bridge_list(args: &SlashBridgeListArgs, cli: &Octo) -> Result<(), OctoCliError> {
     let registry = slash_bridge_registry(cli);
-    let bridge =
-        registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?;
+    let bridge = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G9",
+        detail: "".to_string(),
+    })?;
     let slashes = bridge.list();
     let projections: Vec<BridgedSlashProjection> = slashes
         .into_iter()
@@ -2637,14 +2663,24 @@ fn network_slash_bridge_propagate(
     args: &SlashBridgePropagateArgs,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    if !args.dry_run && !args.confirm_acknowledge {
-        return Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G9" });
+    // RFC-0011-o §Confirmation Flag: --apply + --confirm-acknowledge
+    // required for apply (reversible write). Without --apply, default
+    // is dry-run preview. --apply alone (without --confirm-acknowledge)
+    // is an operator input error (ConfirmationRequired), NOT a
+    // substrate-unavailability error (per reviewer 1 R1.5 fix
+    // distinguishing user-input from system-state errors).
+    if args.apply && !args.confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo network slash-bridge propagate".to_string(),
+        });
     }
     let registry = slash_bridge_registry(cli);
-    let bridge =
-        registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?;
+    let bridge = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G9",
+        detail: "".to_string(),
+    })?;
     let slash_envelope_id = args.slash_envelope_id;
-    let receipt = if args.dry_run {
+    let receipt = if !args.apply {
         // Dry-run: emit synthetic preview receipt per RFC-0011-o
         // §Output Envelope (dry-run shape mirrors apply shape; on
         // apply the real substrate return value replaces it).
@@ -2654,9 +2690,40 @@ fn network_slash_bridge_propagate(
             propagated_at_epoch: 0,
         }
     } else {
-        bridge
-            .propagate_to(slash_envelope_id)
-            .map_err(|_| OctoCliError::NetworkSubstrateUnavailable { companion: "G9" })?
+        // Per RFC-0011-o §Error Handling reachability matrix, each
+        // BridgeError variant maps to slot 89 NetworkSubstrateUnavailable
+        // with a distinct message. Operators can distinguish Unreachable
+        // (transient) from Refused (permanent) from CLI message alone.
+        // (Reviewer 3 R1.5 fix: explicit variant matching instead of
+        // discarding the error via `|_|`.)
+        let propagate_result = bridge.propagate_to(slash_envelope_id);
+        match propagate_result {
+            Ok(receipt) => receipt,
+            Err(bridge_err) => {
+                let msg = match &bridge_err {
+                    octo_network::mon::slash_bridge::BridgeError::Unreachable => {
+                        "slash bridge: destination unreachable".to_string()
+                    }
+                    octo_network::mon::slash_bridge::BridgeError::Refused => {
+                        "slash bridge: bridge refused".to_string()
+                    }
+                    octo_network::mon::slash_bridge::BridgeError::PayloadTooLarge => {
+                        "slash bridge: payload too large".to_string()
+                    }
+                    octo_network::mon::slash_bridge::BridgeError::WireFormatMismatch => {
+                        "slash bridge: wire format mismatch".to_string()
+                    }
+                    octo_network::mon::slash_bridge::BridgeError::Internal(m) => {
+                        format!("slash bridge: internal error: {m}")
+                    }
+                    _ => format!("slash bridge: {bridge_err}"),
+                };
+                return Err(OctoCliError::NetworkSubstrateUnavailable {
+                    companion: "G9",
+                    detail: msg,
+                });
+            }
+        }
     };
     let receipt_proj = BridgeReceiptProjection {
         slash_envelope_id_hex: hex::encode(receipt.slash_envelope_id),
@@ -2666,7 +2733,7 @@ fn network_slash_bridge_propagate(
     let env = OutputEnvelope::new(
         "octo.network.slash-bridge.propagate.v1",
         NetworkSlashBridgePropagateOutput {
-            dry_run: args.dry_run,
+            dry_run: !args.apply,
             receipt: receipt_proj,
             slash_envelope_id_hex: hex::encode(slash_envelope_id),
         },
@@ -3161,7 +3228,10 @@ mod tests {
         assert!(
             matches!(
                 res,
-                Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G8" })
+                Err(OctoCliError::NetworkSubstrateUnavailable {
+                    companion: "G8",
+                    detail: _
+                })
             ),
             "expected NetworkSubstrateUnavailable(G8), got {res:?}"
         );
@@ -3191,7 +3261,10 @@ mod tests {
         };
         let res = authority_rotate(&r, &cli);
         match res {
-            Err(OctoCliError::NetworkSubstrateUnavailable { companion: "G8" }) => {}
+            Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G8",
+                detail: _,
+            }) => {}
             Err(other) => panic!("expected NetworkSubstrateUnavailable(G8), got {other:?}"),
             Ok(()) => panic!("expected NetworkSubstrateUnavailable, got Ok"),
         }
@@ -3627,7 +3700,10 @@ mod tests {
         ]);
         let res = bind_envelope_show(&args, &cli);
         match res {
-            Err(OctoCliError::NetworkSubstrateUnavailable { companion }) => {
+            Err(OctoCliError::NetworkSubstrateUnavailable {
+                companion,
+                detail: _,
+            }) => {
                 assert_eq!(companion, "G22");
             }
             other => panic!("expected NetworkSubstrateUnavailable(G22), got {other:?}"),
@@ -4105,17 +4181,25 @@ mod tests {
         assert_eq!(bridge.list().len(), 0);
     }
 
-    // tv_net7_4: slash-bridge propagate subcommand parses cleanly (G9 substrate-faithful)
+    // tv_net7_4: slash-bridge propagate subcommand parses cleanly with --apply + --confirm-acknowledge
     #[test]
-    fn tv_net7_4_slash_bridge_propagate_parses_with_dry_run_default() {
+    fn tv_net7_4_slash_bridge_propagate_parses_with_apply_and_confirm() {
         let hex_id = "0".repeat(64);
-        let cli = TestPhase7Cli::try_parse_from(["test", "slash-bridge", "propagate", &hex_id])
-            .expect("parse");
+        let cli = TestPhase7Cli::try_parse_from([
+            "test",
+            "slash-bridge",
+            "propagate",
+            &hex_id,
+            "--apply",
+            "--confirm-acknowledge",
+        ])
+        .expect("parse");
         match cli.action {
             NetworkAction::SlashBridge { action } => match action {
                 NetworkSlashBridgeAction::Propagate(args) => {
-                    assert!(args.dry_run);
-                    assert!(!args.confirm_acknowledge);
+                    assert!(args.apply);
+                    assert!(args.confirm_acknowledge);
+                    assert!(!args.dry_run);
                 }
                 _ => panic!("expected Propagate"),
             },
@@ -4123,28 +4207,30 @@ mod tests {
         }
     }
 
-    // tv_net7_5: slash-bridge propagate with --confirm-acknowledge parses cleanly
+    // tv_net7_5: slash-bridge propagate with --apply but no --confirm-acknowledge is
+    //             rejected at parse-time by clap (requires="confirm_acknowledge" on --apply).
+    //             Parse-time rejection is preferred over runtime ConfirmationRequired because
+    //             the operator sees the missing flag in --help before invocation.
     #[test]
-    fn tv_net7_5_slash_bridge_propagate_confirm_acknowledge_parses() {
+    fn tv_net7_5_slash_bridge_propagate_apply_rejects_missing_confirm_at_parse_time() {
         let hex_id = "0".repeat(64);
-        let cli = TestPhase7Cli::try_parse_from([
+        let result = TestPhase7Cli::try_parse_from([
             "test",
             "slash-bridge",
             "propagate",
             &hex_id,
-            "--confirm-acknowledge",
-        ])
-        .expect("parse");
-        match cli.action {
-            NetworkAction::SlashBridge { action } => match action {
-                NetworkSlashBridgeAction::Propagate(args) => {
-                    assert!(args.dry_run);
-                    assert!(args.confirm_acknowledge);
-                }
-                _ => panic!("expected Propagate"),
-            },
-            _ => panic!("expected SlashBridge"),
-        }
+            "--apply",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected parse-time rejection when --apply passed without --confirm-acknowledge, but parse succeeded"
+        );
+        let err = result.expect_err("parse-time rejection");
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("--confirm-acknowledge"),
+            "expected error to mention --confirm-acknowledge, got: {err_str}"
+        );
     }
 
     // tv_net7_6: slash-bridge propagate pastejacking defense — mixed-case hex

@@ -815,6 +815,10 @@ pub enum OctoCliError {
     NetworkSubstrateUnavailable {
         /// Companion mission tag (e.g., `G1`, `G6`, `G6b`, `G8`).
         companion: &'static str,
+        /// Optional detail message (e.g., `BridgeError` variant
+        /// for Phase 7 RFC-0011-o). Additive field; pre-existing
+        /// call sites use `detail: ""` (empty detail).
+        detail: String,
     },
     /// `octo network coordinator show` lookup miss.
     ///
@@ -1260,10 +1264,16 @@ impl OctoCliError {
             // RFC-0011-j §Error Handling row 89 — companion mission
             // closure gating. Pre-companion (G1/G6/G6b/G8 not yet
             // LANDED), CLI dispatch surfaces exit 89.
-            Self::NetworkSubstrateUnavailable { companion } => {
-                format!(
-                    "the `{companion}` companion mission has not yet landed; the substrate write path is gated pending acceptance of the companion mission YAML; retry after the substrate slice commit lands"
-                )
+            Self::NetworkSubstrateUnavailable { companion, detail } => {
+                if detail.is_empty() {
+                    format!(
+                        "the `{companion}` substrate trait is unavailable in this build (either companion mission YAML has not landed, or no per-extension impl crate has been registered); retry after the substrate slice commit lands and a concrete extension impl is registered"
+                    )
+                } else {
+                    format!(
+                        "the `{companion}` substrate trait returned an error: {detail}"
+                    )
+                }
             }
             // RFC-0011-k §Error Handling row 84 — coordinator lookup
             // miss. Substrate returns `Option::None`; CLI translates

@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h row 764) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
+Draft (2026-09-20) — RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h §Substrate-Additions Companion Missions row G9) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 4 envelope structs (2 wrapper envelopes + 2 projection subtypes) + 6 test vectors.
 
-> **Amendment chain:** Seventh amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (DRY CLOSED). Phase 7 = RFC-0011-o (this RFC).
+> **Amendment chain:** Seventh amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o (this RFC). Phase 1-6 are sequenced hard dependencies for layer-C CLI dispatch + slot 89 substrate-absent pattern + confirmation-flag pattern + dry-run pattern + closure artifact pattern; see MEMORY.md closure cards for status of each.
 
 ## Authors
 
@@ -30,17 +30,17 @@ RFC-0011-o lands the **slash bridge observability + propagate** slice of RFC-001
 - **RFC-0011-h §Implementation Phases Phase 7** — canonical scope
 - **RFC-0011-h §Subcommand Taxonomy** rows for `slash-bridge list`, `slash-bridge propagate`
 - **RFC-0011-h §Error Handling** row 89 (slot 89 = `NetworkSubstrateUnavailable`, REUSED from Phase 2; no NEW variants in Phase 7 per user decision)
-- **RFC-0011-h §Substrate-Additions Companion Missions** row G9 (verbatim at L764)
-- **RFC-0011-i (Phase 1, DRY CLOSED)** — hard sequencing dependency for layer-C CLI dispatch pattern
-- **RFC-0011-j (Phase 2, DRY CLOSED)** — hard sequencing dependency for slot 89 substrate-absent pattern
-- **RFC-0011-k (Phase 3, DRY CLOSED)** — hard sequencing dependency for confirmation-flag pattern
-- **RFC-0011-l (Phase 4, DRY CLOSED)** — hard sequencing dependency for `--dry-run` + `--confirm-acknowledge` + `--confirm` pastejacking defense pattern
-- **RFC-0011-m (Phase 5, DRY CLOSED)** — hard sequencing dependency for slot 89 REUSE pattern with substrate-absent companion gating
-- **RFC-0011-n (Phase 6, DRY CLOSED)** — hard sequencing dependency for closure artifact pattern
+- **RFC-0011-h §Substrate-Additions Companion Missions** row G9
+- **RFC-0011-i (Phase 1)** — hard sequencing dependency for layer-C CLI dispatch pattern
+- **RFC-0011-j (Phase 2)** — hard sequencing dependency for slot 89 substrate-absent pattern
+- **RFC-0011-k (Phase 3)** — hard sequencing dependency for confirmation-flag pattern
+- **RFC-0011-l (Phase 4)** — hard sequencing dependency for `--dry-run` + `--confirm-acknowledge` + `--confirm` pastejacking defense pattern
+- **RFC-0011-m (Phase 5)** — hard sequencing dependency for slot 89 REUSE pattern with substrate-absent companion gating
+- **RFC-0011-n (Phase 6)** — hard sequencing dependency for closure artifact pattern
 - **RFC-0855 Mission Overlay Networks §8.4 External Reputation Bridge** — `BridgedSlash` + `BridgeReceipt` + `BridgeError` substrate anchors
 - **RFC-0855p-b §External Reputation Wire Format** — `slash_envelope_id` 32-byte canonical encoding
 - **RFC-0863 General-Purpose Network Integration** — `SendContext` substrate anchor (downstream consumer; not in Phase 7 scope)
-- **Companion mission `0011-h-s-a-slash-bridge-trait`** — Layer B substrate for `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types (G9 per RFC-0011-h L764)
+- **Companion mission `0011-h-s-a-slash-bridge-trait`** — Layer B substrate for `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types (G9 per RFC-0011-h §Substrate-Additions Companion Missions row G9)
 
 ## Design Goals
 
@@ -66,10 +66,10 @@ The slash bridge is the **outbound bridge** between `SlashStore` and external re
 
 Per RFC-0011-h §Role/Authority Coverage Table:
 
-| Subcommand                                       | Authority Role | Confirmation axes                                                                                     |
-| ------------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------- |
-| `slash-bridge list`                              | Operator       | (read-only)                                                                                           |
-| `slash-bridge propagate <slash_envelope_id_hex>` | Operator       | `--dry-run` default + `--confirm-acknowledge` (no `--confirm`; propagate is reversible per substrate) |
+| Subcommand                                       | Authority Role | Confirmation axes                                                                                                                                         |
+| ------------------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `slash-bridge list`                              | Operator       | (read-only)                                                                                                                                               |
+| `slash-bridge propagate <slash_envelope_id_hex>` | Operator       | mutually-exclusive `--dry-run` / `--apply` flag group; `--apply` requires `--confirm-acknowledge` (no `--confirm`; propagate is reversible per substrate) |
 
 Both subcommands carry the Operator authority role. `slash-bridge propagate` is a mutating operation (outbound write to external reputation substrate) but is reversible per substrate `BridgeReceipt` semantics (propagation is idempotent on the same `slash_envelope_id`). No `--confirm` flag (pastejacking defense not required for reversible writes per RFC-0011-h §Confirmation Flag precedent).
 
@@ -106,7 +106,7 @@ SlashBridge(SlashBridgeAction)
 The `slash-bridge` action has 2 sub-actions:
 
 - `slash-bridge list` (read; no args)
-- `slash-bridge propagate <slash_envelope_id_hex>` (write; `<slash_envelope_id_hex>` mandatory arg parsed via `parse_32_byte_hex` shared helper; `--dry-run` default; `--confirm-acknowledge` required for apply)
+- `slash-bridge propagate <slash_envelope_id_hex>` (write; `<slash_envelope_id_hex>` mandatory arg parsed via `parse_32_byte_hex` shared helper; mutually-exclusive `--dry-run` / `--apply` flag group via clap `conflicts_with`; `--apply` requires `--confirm-acknowledge` via clap `requires` attribute)
 
 ### Subcommand Taxonomy
 
@@ -119,7 +119,7 @@ Per RFC-0011-h §Subcommand Taxonomy Phase 7 rows:
 
 ### Substrate Mapping Table
 
-Per RFC-0011-h §Substrate-Additions row G9 (verbatim at L764):
+Per RFC-0011-h §Substrate-Additions row G9:
 
 | Subcommand                                       | Substrate call                                                                                       | Trait contract                                                                                |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -128,38 +128,58 @@ Per RFC-0011-h §Substrate-Additions row G9 (verbatim at L764):
 
 ### Output Envelope
 
-Phase 7 lands 2 output envelopes, one per subcommand:
+Phase 7 lands 4 envelope structs (2 top-level envelopes + 2 projection helpers), one pair per subcommand:
 
-| Subcommand                                       | Output envelope                     |
-| ------------------------------------------------ | ----------------------------------- |
-| `slash-bridge list`                              | `NetworkSlashBridgeListOutput`      |
-| `slash-bridge propagate <slash_envelope_id_hex>` | `NetworkSlashBridgePropagateOutput` |
+| Subcommand                                       | Output envelope                     | Projection helper         |
+| ------------------------------------------------ | ----------------------------------- | ------------------------- |
+| `slash-bridge list`                              | `NetworkSlashBridgeListOutput`      | `BridgedSlashProjection`  |
+| `slash-bridge propagate <slash_envelope_id_hex>` | `NetworkSlashBridgePropagateOutput` | `BridgeReceiptProjection` |
 
 ```rust
 #[derive(Serialize, JsonSchema)]
 pub struct NetworkSlashBridgeListOutput {
-    pub slashes: Vec<BridgedSlash>,    // substrate-faithful; BTreeMap-keyed by slash_envelope_id if needed for determinism
+    pub slashes: Vec<BridgedSlashProjection>,    // CLI-side projection of substrate BridgedSlash (hex-encoded id; BTreeMap metadata preserved)
     pub total: usize,
 }
 
 #[derive(Serialize, JsonSchema)]
+pub struct BridgedSlashProjection {
+    pub slash_envelope_id_hex: String,           // hex encoding of substrate [u8; 32]
+    pub bridge_metadata: BTreeMap<String, String>,  // preserved from substrate BTreeMap for determinism
+    pub bridged_at_epoch: u64,
+}
+
+#[derive(Serialize, JsonSchema)]
 pub struct NetworkSlashBridgePropagateOutput {
-    pub receipt: BridgeReceipt,        // substrate-faithful
+    pub dry_run: bool,
+    pub receipt: BridgeReceiptProjection,
+    pub slash_envelope_id_hex: String,           // input echo
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct BridgeReceiptProjection {
+    pub slash_envelope_id_hex: String,
+    pub propagated_to_hex: String,               // hex encoding of substrate Vec<u8>
+    pub propagated_at_epoch: u64,
 }
 ```
 
-`BridgedSlash` + `BridgeReceipt` are re-used from substrate `crates/octo-network/src/mon/slash_bridge.rs` (companion G9). **No parallel envelopes; no CLI-side shadow.**
+Top-level envelopes wrap in `OutputEnvelope::new("octo.network.slash-bridge.list.v1", payload)` and `OutputEnvelope::new("octo.network.slash-bridge.propagate.v1", payload)` per RFC-0011-m Phase 5 + RFC-0011-n Phase 6 pattern.
 
-**Determinism invariant:** Per RFC-0011-h §Output Envelope determinism pattern, any `Map<_, _>` collection in `BridgedSlash` MUST use `BTreeMap<_, _>` (NOT `HashMap<_, _>`) for canonical JSON encoding. Phase 7 implementation MUST verify this at envelope serialization time.
+`BridgedSlash` + `BridgeReceipt` are re-used from substrate `crates/octo-network/src/mon/slash_bridge.rs` (companion G9). The 2 projection helpers convert substrate byte arrays to hex strings for JSON serialization while preserving `BTreeMap` metadata ordering. **No parallel envelopes; no CLI-side shadow.**
+
+**Determinism invariant:** Per RFC-0011-h §Output Envelope determinism pattern, `BridgedSlashProjection.bridge_metadata` MUST use `BTreeMap<_, _>` (NOT `HashMap<_, _>`) for canonical JSON encoding. The substrate `BridgedSlash.bridge_metadata` is also `BTreeMap`, so the projection inherits determinism without an additional conversion step. Phase 7 implementation MUST verify this at envelope serialization time.
 
 **Pastejacking defense:** Per RFC-0011-h §Confirmation Flag precedent + [[pastejacking-defense-pattern]], the `<slash_envelope_id_hex>` arg is parsed via the `parse_32_byte_hex` shared helper (clap `value_parser` at clappy path; programmatic-bypass fallback at CLI predicate layer). Malformed hex (length != 64, non-hex chars, prefix `0x`) triggers clap parse error (exit 2) before substrate dispatch.
 
 ### Confirmation Flag
 
-Per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix, Phase 7 mutating subcommand carries 2 confirmation flags:
+Per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix, Phase 7 mutating subcommand carries 2 mutually-exclusive confirmation flags:
 
-- `--dry-run` (default true) — emit preview envelope with computed `BridgeReceipt` shape, exit 0
-- `--confirm-acknowledge` (required for apply) — emit apply envelope with real `BridgeReceipt`, exit 0
+- `--dry-run` — emit preview envelope with computed `BridgeReceipt` shape, exit 0
+- `--apply` — emit apply envelope with real `BridgeReceipt`, exit 0; requires `--confirm-acknowledge` via clap `requires` attribute (parse-time rejection if missing)
+
+The two flags are clap `conflicts_with` peers (passing both is a clap parse error, exit 2). Neither flag has a default value — operator MUST choose one explicitly. `--apply` without `--confirm-acknowledge` is rejected at parse time by clap, surfacing `--confirm-acknowledge` in the usage hint. The runtime handler additionally emits `ConfirmationRequired` if `--apply` is set without `--confirm-acknowledge` (defense-in-depth, unreachable under normal clap invocation).
 
 NO `--confirm` flag (pastejacking defense not required for reversible writes per RFC-0011-h §Confirmation Flag precedent — `slash-bridge propagate` is idempotent on the same `slash_envelope_id` per substrate semantics; the same slash envelope propagated twice yields the same `BridgeReceipt`).
 
@@ -215,20 +235,20 @@ Per RFC-0011-h §Security Considerations Phase 7 rows:
 - **`slash-bridge propagate` is mutating but reversible.** Substrate `SlashBridge::propagate_to` is idempotent on `slash_envelope_id` per RFC-0855 §8.4; double-propagate yields same `BridgeReceipt`. `--confirm` not required per RFC-0011-h §Confirmation Flag precedent for reversible writes.
 - **Pastejacking defense via `parse_32_byte_hex`.** The `<slash_envelope_id_hex>` arg is parsed via the shared `parse_32_byte_hex` helper; clap `value_parser` enforces 64-char hex at clappy path; programmatic-bypass fallback at CLI predicate layer. Malformed hex rejected pre-dispatch (exit 2) per [[pastejacking-defense-pattern]].
 - **No key material leakage.** `BridgedSlash` surfaces metadata only (slash_envelope_id + bridge metadata); raw 32-byte payload NEVER echoed in error envelopes.
-- **No CI gate.** `slash-bridge propagate` is reversible; not in the 6 CI-DENY-default set per RFC-0011-h row 156.
+- **No CI gate.** `slash-bridge propagate` is reversible; not in the 6 CI-DENY-default set per RFC-0011-h §CI-DENY-default table.
 - **Per-extension transport auth.** Concrete impl crates (Layer D, OUT OF SCOPE) handle transport-layer authentication per their own threat models. CLI does not reach into transport internals.
 
 ### Adversarial Review
 
 Per RFC-0011-h §Adversarial Review Phase 7 rows:
 
-| Threat                                                                      | Severity | Mitigation                                                                |
-| --------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
-| `slash-bridge propagate` pastejacking via crafted `<slash_envelope_id_hex>` | MEDIUM   | `parse_32_byte_hex` shared helper + clap value_parser pre-dispatch        |
-| `slash-bridge propagate` double-propagate yields duplicate `BridgeReceipt`  | LOW      | Substrate idempotency per RFC-0855 §8.4; second call returns same receipt |
-| `slash-bridge list` leaks raw payload bytes                                 | LOW      | `BridgedSlash` surfaces metadata only; raw 32-byte form NEVER echoed      |
-| Per-extension impl crate returns malformed `BridgeReceipt`                  | LOW      | Substrate validates receipt shape; CLI translates substrate errors 1:1    |
-| Operator calls `slash-bridge propagate` without `--confirm-acknowledge`     | MEDIUM   | `--dry-run` default; preview emitted (exit 0); apply requires flag        |
+| Threat                                                                          | Severity | Mitigation                                                                                                                 |
+| ------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `slash-bridge propagate` pastejacking via crafted `<slash_envelope_id_hex>`     | MEDIUM   | `parse_32_byte_hex` shared helper + clap value_parser pre-dispatch                                                         |
+| `slash-bridge propagate` double-propagate yields duplicate `BridgeReceipt`      | LOW      | Substrate idempotency per RFC-0855 §8.4; second call returns same receipt                                                  |
+| `slash-bridge list` leaks raw payload bytes                                     | LOW      | `BridgedSlash` surfaces metadata only; raw 32-byte form NEVER echoed                                                       |
+| Per-extension impl crate returns malformed `BridgeReceipt`                      | LOW      | Substrate validates receipt shape; CLI translates substrate errors 1:1                                                     |
+| Operator calls `slash-bridge propagate --apply` without `--confirm-acknowledge` | MEDIUM   | clap `requires = "confirm_acknowledge"` blocks parse (exit 2); runtime `ConfirmationRequired` fallback is defense-in-depth |
 
 ### Compatibility
 
@@ -238,20 +258,20 @@ Phase 7 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 6 test vectors total per RFC-0011-h §Test Vectors Phase 7 + Phase 5 precedent (tv_net5_* numbering):
 
-| ID          | Subcommand                                       | Scenario                                                                                                |
-| ----------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `tv_net7_1` | `slash-bridge list`                              | empty bridge → `slashes: [], total: 0`                                                                  |
-| `tv_net7_2` | `slash-bridge list`                              | populated bridge with 3 bridged slashes; verify hex encoding + total field                              |
-| `tv_net7_3` | `slash-bridge list`                              | pre-G9 → exit 89 `NetworkSubstrateUnavailable` (substrate absent)                                       |
-| `tv_net7_4` | `slash-bridge propagate <slash_envelope_id_hex>` | `--dry-run` default → preview `BridgeReceipt` shape emitted, exit 0                                     |
-| `tv_net7_5` | `slash-bridge propagate <slash_envelope_id_hex>` | `--confirm-acknowledge` → apply; real `BridgeReceipt` returned                                          |
-| `tv_net7_6` | `slash-bridge propagate <slash_envelope_id_hex>` | pre-G9 → exit 89 (substrate absent) OR `BridgeError::Unreachable` → exit 89 + "destination unreachable" |
+| ID          | Subcommand                                                                            | Scenario                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `tv_net7_1` | `slash-bridge list`                                                                   | empty bridge → `slashes: [], total: 0`                                                                  |
+| `tv_net7_2` | `slash-bridge list`                                                                   | populated bridge with 3 bridged slashes; verify hex encoding + total field                              |
+| `tv_net7_3` | `slash-bridge list`                                                                   | pre-G9 → exit 89 `NetworkSubstrateUnavailable` (substrate absent)                                       |
+| `tv_net7_4` | `slash-bridge propagate <slash_envelope_id_hex> --apply --confirm-acknowledge`        | apply; real `BridgeReceipt` returned, exit 0                                                            |
+| `tv_net7_5` | `slash-bridge propagate <slash_envelope_id_hex> --apply` (no `--confirm-acknowledge`) | clap parse-time rejection with `--confirm-acknowledge` in usage hint, exit 2                            |
+| `tv_net7_6` | `slash-bridge propagate <slash_envelope_id_hex>`                                      | pre-G9 → exit 89 (substrate absent) OR `BridgeError::Unreachable` → exit 89 + "destination unreachable" |
 
 Per RFC-0011-h §Test Vectors redact-did-1 row + §Security Considerations redaction invariant, `slash_envelope_id` field uses 64-char hex encoding in JSON output; the underlying 32-byte raw form is NEVER echoed in error envelopes.
 
 ## Alternatives Considered
 
-1. **Skip `slash-bridge list` (only wire `propagate`).** Rejected; RFC-0011-h §Substrate-Additions row G9 (L764) explicitly lands BOTH `list()` and `propagate_to()` on the `SlashBridge` trait, and operators cannot observe bridge state without `list`.
+1. **Skip `slash-bridge list` (only wire `propagate`).** Rejected; RFC-0011-h §Substrate-Additions row G9 explicitly lands BOTH `list()` and `propagate_to()` on the `SlashBridge` trait, and operators cannot observe bridge state without `list`.
 2. **Single read-only stub RFC (defer `propagate` further).** Rejected; per [[feedback_initiation_user_only]], mutating subcommands land WITH their companion substrate mission in the same amendment to keep the layer-A→B→C dependency graph visible. Splitting the read + write paths across two RFCs would create a phantom-substrate gap for `propagate` between amendments.
 3. **Land `slash-bridge` as part of Phase 6 (RFC-0011-n closure).** Rejected; RFC-0011-n explicitly closes the `bootstrap` + `status` DEFERRED gap from `0011-deprecation-stub-removal`. `slash-bridge` is unrelated to that gap; landing in Phase 7 preserves substrate-first ordering invariant and keeps each amendment scope-coherent.
 4. **Add NEW `NetworkBridgeError` OctoCliError variant instead of REUSING slot 89.** Rejected per user decision; per [[no-new-cli-errors-during-rollout]] precedent, Phase 7 REUSES slot 89 with distinct messages to avoid expanding the OctoCliError surface mid-rollout. A future post-rollout RFC may add a dedicated `NetworkBridgeError` variant after the 6-phase + Phase 7 rollout closes.
@@ -260,7 +280,7 @@ Per RFC-0011-h §Test Vectors redact-did-1 row + §Security Considerations redac
 
 Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 1 companion substrate mission. Mission YAML exists at `missions/open/0011-h-s-a-slash-bridge-trait.md`.
 
-Per RFC-0011-h §Substrate-Additions Companion Missions row G9 (verbatim at L764):
+Per RFC-0011-h §Substrate-Additions Companion Missions row G9:
 
 | Companion mission                    | Substrate addition                                                                                                                    | Layer |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----- |
@@ -304,7 +324,7 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 ## Rationale
 
-Phase 7 lands the **slash bridge observability + propagate** surface, closing G9 from RFC-0011-h §Substrate-Additions row 764 that has been DEFERRED since RFC-0011-h closure. The 1 mutating subcommand (`slash-bridge propagate`) carries 2 confirmation flags (`--dry-run` + `--confirm-acknowledge`); no `--confirm` flag per RFC-0011-h §Confirmation Flag precedent for reversible writes. Slot 89 REUSE confirmed per RFC-0011-h §Error Handling row 89 — 0 NEW OctoCliError variants in Phase 7.
+Phase 7 lands the **slash bridge observability + propagate** surface, closing G9 from RFC-0011-h §Substrate-Additions Companion Missions row G9 that has been DEFERRED since RFC-0011-h closure. The 1 mutating subcommand (`slash-bridge propagate`) carries 2 confirmation flags (`--dry-run` + `--confirm-acknowledge`); no `--confirm` flag per RFC-0011-h §Confirmation Flag precedent for reversible writes. Slot 89 REUSE confirmed per RFC-0011-h §Error Handling row 89 — 0 NEW OctoCliError variants in Phase 7.
 
 The per-extension crate pattern is preserved per [[cipherocto-design-principles]] §User extensibility: `SlashBridge` trait in Layer B, concrete impl crates in Layer D (OUT OF SCOPE). The CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
 
@@ -318,7 +338,7 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 
 ## Cross-references
 
-- **RFC-0011-h** §Substrate-Additions Companion Missions row G9 (L764) — canonical substrate spec for `SlashBridge` trait + `list()` + `propagate_to()` + `BridgeReceipt` + `BridgeError`
+- **RFC-0011-h** §Substrate-Additions Companion Missions row G9 — canonical substrate spec for `SlashBridge` trait + `list()` + `propagate_to()` + `BridgeReceipt` + `BridgeError`
 - **RFC-0011-h** §Error Handling row 89 — slot 89 `NetworkSubstrateUnavailable` REUSE
 - **RFC-0011-h** §Exit Codes slot 89 — REUSE per Phase 7
 - **RFC-0011-h** §Confirmation Flag + Per-Axis Exit Code Matrix — `--dry-run` + `--confirm-acknowledge` precedent
@@ -332,4 +352,4 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 - **RFC-0855 Mission Overlay Networks** §8.4 External Reputation Bridge — `BridgedSlash` + `BridgeReceipt` + `BridgeError` substrate anchors
 - **RFC-0855p-b** §External Reputation Wire Format — `slash_envelope_id` 32-byte canonical encoding
 - **RFC-0863 General-Purpose Network Integration** — `SendContext` substrate anchor (downstream consumer; not in Phase 7 scope)
-- **RFC-0011-i through RFC-0011-n** — Phase 1-6 amendment chain (DRY CLOSED); Phase 7 (RFC-0011-o) is the final amendment in the rollout
+- **RFC-0011-i through RFC-0011-n** — Phase 1-6 amendment chain (see MEMORY.md closure cards); Phase 7 (RFC-0011-o) is the final amendment in the rollout

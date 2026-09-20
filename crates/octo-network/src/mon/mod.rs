@@ -37,8 +37,9 @@ pub mod routing;
 // Re-exports for convenience
 pub use bind_envelope::{BindEnvelope, RebindAbortReason, RebindEnvelope, RebindPrepare};
 pub use bootstrap::{
-    verify_authority, BootstrapConfig, BootstrapConfigError, BootstrapMode, SeedAuthorityError,
-    SeedEntry, SeedHealth, SeedListAuthority, SeedListEnvelope, SlashedSeedBlacklist, StaleSeed,
+    verify_authority, BootstrapConfig, BootstrapConfigError, BootstrapError, BootstrapMode,
+    BootstrapOrchestrator, BootstrapState, SeedAuthorityError, SeedEntry, SeedHealth,
+    SeedListAuthority, SeedListEnvelope, SlashedSeedBlacklist, StaleSeed,
     EPOCH_GOVERNANCE_TAKEOVER, MAX_SEED_AGE_EPOCHS,
 };
 pub use discovery::{MissionAdvertisementCache, MissionDiscoveryScope, MissionInvitationCache};

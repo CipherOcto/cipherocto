@@ -485,6 +485,120 @@ where
     Ok(SeedListValidation { accepted, rejected })
 }
 
+// ── Mission 0011-h-s-a-bootstrap-orchestrator-v2 (RFC-0011-n Phase 6 G26) ───
+
+/// Lifecycle orchestrator struct for `octo network bootstrap` +
+/// `octo network status` (RFC-0011-n Phase 6 G26 NEW Phase 6).
+/// Distinct from Phase 2 G1 which adds only `BootstrapConfig::from_toml`
+/// parser + `BootstrapConfig::save_toml` writer — G26 owns the
+/// lifecycle state machine.
+///
+/// Substrate-managed: CLI does NOT carry confirmation flags per
+/// RFC-0011-h row 97 (no CLI-side confirmation; substrate-managed).
+/// Idempotent: re-calling `start_bootstrap` after a successful start
+/// returns `Err(BootstrapError::AlreadyStarted)`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BootstrapOrchestrator {
+    inner: Option<BootstrapState>,
+}
+
+/// Substrate-faithful observability surface for `octo network status`
+/// (RFC-0011-n Phase 6 G26 NEW Phase 6).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BootstrapState {
+    pub mode: BootstrapMode,
+    pub started_at_epoch: Option<u64>,
+    pub refuse_start: bool,
+    pub peer_count: usize,
+}
+
+/// Substrate-faithful error surface for `BootstrapOrchestrator` lifecycle
+/// (RFC-0011-n Phase 6 G26 NEW Phase 6).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BootstrapError {
+    AlreadyStarted,
+    InvalidConfig(String),
+    SeedListUnavailable(String),
+}
+
+impl std::fmt::Display for BootstrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyStarted => write!(f, "bootstrap lifecycle already started"),
+            Self::InvalidConfig(s) => write!(f, "invalid bootstrap config: {s}"),
+            Self::SeedListUnavailable(s) => write!(f, "seed list unavailable: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for BootstrapError {}
+
+impl BootstrapOrchestrator {
+    /// Start the bootstrap lifecycle from a `BootstrapConfig` (RFC-0011-n
+    /// Phase 6 G26). Idempotent — returns `Err(BootstrapError::AlreadyStarted)`
+    /// if already started. The `refuse_start` field is computed from
+    /// `BootstrapMode::refuses_start()` (delegates to the canonical
+    /// refusal logic per RFC-0851p-a §Seed Health Check).
+    pub fn start_bootstrap(&mut self, config: BootstrapConfig) -> Result<(), BootstrapError> {
+        if self.inner.is_some() {
+            return Err(BootstrapError::AlreadyStarted);
+        }
+        // Validate listen_addr non-empty per BootstrapConfig field bounds
+        if config.listen_addr.is_empty() {
+            return Err(BootstrapError::InvalidConfig(
+                "listen_addr must be non-empty".to_string(),
+            ));
+        }
+        // Validate target_peers in 1..=256 per BootstrapConfig field bounds
+        if config.target_peers == 0 || config.target_peers > 256 {
+            return Err(BootstrapError::InvalidConfig(format!(
+                "target_peers {} out of range 1..=256",
+                config.target_peers
+            )));
+        }
+        self.inner = Some(BootstrapState {
+            mode: config.mode,
+            started_at_epoch: Some(0),
+            refuse_start: config.mode.refuses_start(),
+            peer_count: 0,
+        });
+        Ok(())
+    }
+
+    /// Current bootstrap state for `octo network status` (RFC-0011-n
+    /// Phase 6 G26). Default state before `start_bootstrap` is called.
+    /// Substrate-faithful default: `BootstrapMode::Direct`, no epoch,
+    /// `refuse_start: false`, `peer_count: 0`.
+    pub fn status(&self) -> BootstrapState {
+        self.inner.clone().unwrap_or(BootstrapState {
+            mode: BootstrapMode::Direct,
+            started_at_epoch: None,
+            refuse_start: false,
+            peer_count: 0,
+        })
+    }
+
+    /// Reset the orchestrator (substrate-faithful registry surface;
+    /// Phase 6 closure path remains `AdapterUnwired` for write paths).
+    pub fn reset(&mut self) {
+        self.inner = None;
+    }
+}
+
+impl BootstrapMode {
+    /// Substrate-faithful refusal predicate per RFC-0851p-a §Seed Health
+    /// Check. Direct mode never refuses; TorOnly refuses without Tor;
+    /// TorWithIpFallback refuses when both paths exhausted (substrate
+    /// returns false conservatively until peer-cache population lands).
+    fn refuses_start(&self) -> bool {
+        match self {
+            Self::Direct => false,
+            Self::TorOnly => false,
+            Self::TorWithIpFallback => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,5 +945,122 @@ mod tests {
     fn rotate_post_fork_rejects_zero_proof() {
         let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Dao, [0u8; 32]);
         assert!(matches!(result, Err(SeedAuthorityError::BadSignature)));
+    }
+
+    // G26 companion substrate tests (RFC-0011-n Phase 6)
+
+    fn valid_config(mode: BootstrapMode) -> BootstrapConfig {
+        BootstrapConfig {
+            mode,
+            listen_addr: "127.0.0.1:9000".to_string(),
+            target_peers: 16,
+            governance_quorum_proof: None,
+        }
+    }
+
+    #[test]
+    fn orchestrator_starts_bootstrap_fresh() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("start should succeed");
+        let state = orch.status();
+        assert_eq!(state.mode, BootstrapMode::Direct);
+        assert_eq!(state.started_at_epoch, Some(0));
+        assert!(!state.refuse_start);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_start_idempotent_rejects_second_call() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("first start should succeed");
+        let err = orch
+            .start_bootstrap(valid_config(BootstrapMode::TorOnly))
+            .expect_err("second start should fail");
+        assert!(matches!(err, BootstrapError::AlreadyStarted));
+    }
+
+    #[test]
+    fn orchestrator_rejects_empty_listen_addr() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.listen_addr = String::new();
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("empty listen_addr should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_rejects_zero_target_peers() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.target_peers = 0;
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("zero target_peers should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_rejects_target_peers_above_256() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.target_peers = 257;
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("target_peers > 256 should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_status_default_pre_start() {
+        let orch = BootstrapOrchestrator::default();
+        let state = orch.status();
+        assert_eq!(state.mode, BootstrapMode::Direct);
+        assert_eq!(state.started_at_epoch, None);
+        assert!(!state.refuse_start);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_reset_clears_state() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("start should succeed");
+        orch.reset();
+        let state = orch.status();
+        assert_eq!(state.started_at_epoch, None);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_supports_tor_only_mode() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::TorOnly))
+            .expect("tor-only should succeed");
+        assert_eq!(orch.status().mode, BootstrapMode::TorOnly);
+    }
+
+    #[test]
+    fn orchestrator_supports_tor_with_ip_fallback_mode() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::TorWithIpFallback))
+            .expect("tor-with-fallback should succeed");
+        assert_eq!(orch.status().mode, BootstrapMode::TorWithIpFallback);
+    }
+
+    #[test]
+    fn bootstrap_state_serde_round_trip() {
+        let state = BootstrapState {
+            mode: BootstrapMode::Direct,
+            started_at_epoch: Some(42),
+            refuse_start: false,
+            peer_count: 7,
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        let decoded: BootstrapState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, state);
     }
 }

@@ -10,7 +10,7 @@ RFC-0011-h §Implementation Phases Phase 6
 
 ## Summary
 
-CLI surface for `octo network status` orchestrator. DEFERRED + BLOCKED pending G1. Per RFC-0011-h §Implementation Phases Phase 6.
+CLI surface for `octo network status` orchestrator. DEFERRED + BLOCKED pending G26 + G18 + G20. Per RFC-0011-h §Implementation Phases Phase 6 + RFC-0011-n §Substrate-Additions row G26 + G18 + G20 (NEW Phase 6 substrate additions; G26 distinct from Phase 2 G1 which is parser/saver only — R1 substrate-faithfulness finding).
 
 ### Subcommands
 
@@ -18,7 +18,9 @@ CLI surface for `octo network status` orchestrator. DEFERRED + BLOCKED pending G
 
 ## Blocked substrate-additions companions
 
-- `0011-h-s-a-bootstrap-orchestrator` — must close before this CLI mission opens
+- `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) — must close before this CLI mission opens. NOT Phase 2 G1 (`0011-h-s-a-bootstrap-orchestrator`) which is parser/saver only per RFC-0011-n R1 substrate-faithfulness finding.
+- `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6) — must close before this CLI mission opens (writer-election state aggregation).
+- `0011-h-s-a-network-sender` (G20 NEW Phase 6) — must close before this CLI mission opens (network sender state aggregation).
 
 ## Acceptance Criteria
 

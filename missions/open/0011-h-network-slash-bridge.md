@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice LANDED at `next f3b9f48e`. Paired substrate mission G9 LANDED at `next 8599f5c8`. Substrate-first ordering preserved per [[no-phantom-mission-pointers]]: G9 substrate (`SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types) landed BEFORE CLI dispatch. CLI dispatch slice atop the substrate adds: `NetworkAction::SlashBridge` clap variant + nested `NetworkSlashBridgeAction` enum + `SlashBridgeListArgs` + `SlashBridgePropagateArgs` (with `parse_gateway_id_hex` pastejacking defense per RFC-0011-h §Confirmation Flag) + 4 output envelopes (`NetworkSlashBridgeListOutput` + `BridgedSlashProjection` + `NetworkSlashBridgePropagateOutput` + `BridgeReceiptProjection`) + dispatch arm + `network_slash_bridge_list` + `network_slash_bridge_propagate` handlers + `slash_bridge_registry` helper. 6 Phase 7 test vectors (`tv_net7_1` through `tv_net7_6`) added to `crates/octo-cli/src/commands/network.rs`. 408/408 octo-cli tests pass (was 402). Closes the DEFERRED gap from RFC-0011-h §Substrate-Additions row G9.
+Completed (2026-09-20) — CLI dispatch slice LANDED at `next f3b9f48e` + R1.5 fix sweep LANDED at `next 172957d7` + R2.5 fix sweep LANDED at `next 25a625c9`. Paired substrate mission G9 LANDED at `next 8599f5c8` (stub fill-in at `next 3d81ecad`, YAMLs Completed paired at `next 288be12c`). Substrate-first ordering preserved per [[no-phantom-mission-pointers]]: G9 substrate (`SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types) landed BEFORE CLI dispatch. CLI dispatch slice atop the substrate adds: `NetworkAction::SlashBridge` clap variant + nested `NetworkSlashBridgeAction` enum + `SlashBridgeListArgs` + `SlashBridgePropagateArgs` (with `parse_32_byte_hex` shared helper per RFC-0011-h §Pastejacking Defense + R2.5 parser migration; mutually-exclusive `--dry-run` / `--apply` flag group per R1.5 clap `conflicts_with`; `--apply` requires `--confirm-acknowledge` via clap `requires` attribute) + 4 output envelopes (`NetworkSlashBridgeListOutput` + `BridgedSlashProjection` + `NetworkSlashBridgePropagateOutput` + `BridgeReceiptProjection`) + dispatch arm + `network_slash_bridge_list` + `network_slash_bridge_propagate` handlers + `slash_bridge_registry` helper. 7 Phase 7 test vectors (`tv_net7_1` through `tv_net7_6b`) added to `crates/octo-cli/src/commands/network.rs`. 409/409 octo-cli tests pass (was 402). Closes the DEFERRED gap from RFC-0011-h §Substrate-Additions row G9.
 
 ## RFC
 
@@ -30,16 +30,17 @@ Mutating but reversible per RFC-0011-o §Confirmation Flag. Propagates a slash e
 octo network slash-bridge propagate <slash_envelope_id_hex> [--dry-run] [--confirm-acknowledge] [--json]
 ```
 
-`--dry-run` defaults to `true` per RFC-0011-h §Confirmation Flag. Apply (reversible write) requires `--confirm-acknowledge`. `slash_envelope_id` is 32-byte canonical identifier (RFC-0855p-b §Wire Format) accepted as 64 lowercase hex chars; mixed-case rejected by `parse_gateway_id_hex` pastejacking defense.
+`--dry-run` defaults to `false` per RFC-0011-h §Confirmation Flag (R1.5 mutually-exclusive flag group). `--dry-run` and `--apply` are mutually exclusive (clap `conflicts_with`); `--apply` requires `--confirm-acknowledge` (clap `requires`, parse-time rejection). Both flags opt-in; operator MUST choose one. `slash_envelope_id` is 32-byte canonical identifier (RFC-0855p-b §Wire Format) accepted as 64 hex chars (lowercase OR uppercase); mixed-case rejected by `parse_32_byte_hex` pastejacking defense (R2.5 migration).
 
 ## Test vectors (RFC-0011-o §Test Vectors Phase 7)
 
 - `tv_net7_1_slash_bridge_list_parses_with_no_args` — list subcommand parses cleanly
 - `tv_net7_2_slash_bridge_list_json_flag_parses` — list --json flag parses cleanly
 - `tv_net7_3_slash_bridge_list_empty_envelope_total_zero` — list envelope projection is substrate-faithful (empty registry returns total=0)
-- `tv_net7_4_slash_bridge_propagate_parses_with_dry_run_default` — propagate subcommand parses cleanly with dry_run default true
-- `tv_net7_5_slash_bridge_propagate_confirm_acknowledge_parses` — propagate --confirm-acknowledge parses cleanly
-- `tv_net7_6_slash_bridge_propagate_rejects_mixed_case_hex` — pastejacking defense rejects mixed-case hex
+- `tv_net7_4_slash_bridge_propagate_parses_with_apply_and_confirm` — propagate subcommand parses cleanly with --apply --confirm-acknowledge (R1.5)
+- `tv_net7_5_slash_bridge_propagate_apply_rejects_missing_confirm_at_parse_time` — propagate --apply WITHOUT --confirm-acknowledge rejected at parse-time by clap (R1.5)
+- `tv_net7_6_slash_bridge_propagate_rejects_mixed_case_hex` — pastejacking defense rejects mixed-case hex via `parse_32_byte_hex` shared helper (R2.5)
+- `tv_net7_6b_slash_bridge_propagate_accepts_uppercase_only_hex` — pastejacking defense accepts uppercase-only hex via `parse_32_byte_hex` shared helper (R2.5)
 
 ## Dependencies
 
@@ -57,7 +58,7 @@ octo network slash-bridge propagate <slash_envelope_id_hex> [--dry-run] [--confi
 
 - `cargo clippy -p octo-cli --all-targets -- -D warnings` clean (zero warnings)
 - `cargo clippy -p octo-network --all-targets -- -D warnings` clean (zero warnings)
-- `cargo test -p octo-cli --lib` passes 408/408 (was 402 before, plus 6 Phase 7 vectors)
+- `cargo test -p octo-cli --lib` passes 409/409 (was 402 before, plus 7 Phase 7 vectors tv_net7_1 through tv_net7_6b)
 - `cargo test -p octo-network --lib mon::slash_bridge` passes 5/5 substrate unit tests
 - `cargo fmt --all` clean
 

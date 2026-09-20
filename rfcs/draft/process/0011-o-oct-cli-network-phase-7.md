@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h §Substrate-Additions Companion Missions row G9) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 4 envelope structs (2 wrapper envelopes + 2 projection subtypes) + 6 test vectors.
+Draft (2026-09-20) — RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h §Substrate-Additions Companion Missions row G9) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 4 envelope structs (2 wrapper envelopes + 2 projection subtypes) + 7 test vectors (tv_net7_1 through tv_net7_6 + tv_net7_6b).
 
 > **Amendment chain:** Seventh amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o (this RFC). Phase 1-6 are sequenced hard dependencies for layer-C CLI dispatch + slot 89 substrate-absent pattern + confirmation-flag pattern + dry-run pattern + closure artifact pattern; see MEMORY.md closure cards for status of each.
 
@@ -49,7 +49,7 @@ RFC-0011-o lands the **slash bridge observability + propagate** slice of RFC-001
 3. **Per-extension crate pattern preserved** — `SlashBridge` trait in Layer B `octo-network` (`crates/octo-network/src/mon/slash_bridge.rs`); concrete per-transport impl crates (e.g. substrate-ext-bridge-ipfs, substrate-ext-bridge-libp2p) are OUT OF SCOPE per [[cipherocto-design-principles]] §User extensibility. CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
 4. **Slot arithmetic preserved (forward-looking, REUSE)** — Phase 7 lands 0 NEW OctoCliError variants; REUSES slot 89 (`NetworkSubstrateUnavailable`, FORWARD-LOOKING per RFC-0011-h §Error Handling row 89 — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 2 implementation). Substrate `BridgeError` variants translate to slot 89 with distinct error messages per §Error Handling reachability matrix below.
 5. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 1 companion mission (G9 `SlashBridge` trait + types); Layer C CLI dispatch = 2 subcommand arms. Companion mission lands in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
-6. **Test vector coverage** — 6 test vectors (3 for `slash-bridge list` + 3 for `slash-bridge propagate`) per RFC-0011-h §Test Vectors Phase 7.
+6. **Test vector coverage** — 7 test vectors (3 for `slash-bridge list` + 3 for `slash-bridge propagate` + 1 supplementary `tv_net7_6b` for `parse_32_byte_hex` uppercase-only acceptance per R2.5) per RFC-0011-h §Test Vectors Phase 7.
 
 ## Motivation
 
@@ -195,7 +195,7 @@ Per RFC-0011-h §Error Handling row 89, substrate `BridgeError` variants transla
 | `BridgeError::WireFormatMismatch` | 89        | "slash bridge: wire format mismatch"      |
 | `BridgeError::Internal(String)`   | 89        | "slash bridge: internal error: {message}" |
 
-Pre-companion G9 (trait absent): exit 89 with message "slash bridge substrate unavailable; companion G9 `0011-h-s-a-slash-bridge-trait` not landed".
+Pre-companion G9 (trait absent): exit 89 with generic `NetworkSubstrateUnavailable` remediation message per `error.rs` `hint()` arm (the `detail: String` field is empty when `slash_bridge_registry(cli)` returns `None`; the generic remediation in `hint()` says "the `G9` substrate trait is unavailable in this build..."). The handler does NOT carry a Phase 7-specific literal message in this path; the generic remediation is the operator-facing wording per RFC-0011-h §Error Handling precedent. Post-companion-with-extension-crate-impl returning a `BridgeError` variant: exit 89 with `detail` populated per the reachability matrix above.
 
 ### Exit Codes
 
@@ -256,16 +256,19 @@ Phase 7 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 ## Test Vectors
 
-6 test vectors total per RFC-0011-h §Test Vectors Phase 7 + Phase 5 precedent (tv_net5_* numbering):
+7 test vectors total per RFC-0011-h §Test Vectors Phase 7 + Phase 5 precedent (tv_net5_* numbering):
 
-| ID          | Subcommand                                                                            | Scenario                                                                                                |
-| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `tv_net7_1` | `slash-bridge list`                                                                   | empty bridge → `slashes: [], total: 0`                                                                  |
-| `tv_net7_2` | `slash-bridge list`                                                                   | populated bridge with 3 bridged slashes; verify hex encoding + total field                              |
-| `tv_net7_3` | `slash-bridge list`                                                                   | pre-G9 → exit 89 `NetworkSubstrateUnavailable` (substrate absent)                                       |
-| `tv_net7_4` | `slash-bridge propagate <slash_envelope_id_hex> --apply --confirm-acknowledge`        | apply; real `BridgeReceipt` returned, exit 0                                                            |
-| `tv_net7_5` | `slash-bridge propagate <slash_envelope_id_hex> --apply` (no `--confirm-acknowledge`) | clap parse-time rejection with `--confirm-acknowledge` in usage hint, exit 2                            |
-| `tv_net7_6` | `slash-bridge propagate <slash_envelope_id_hex>`                                      | pre-G9 → exit 89 (substrate absent) OR `BridgeError::Unreachable` → exit 89 + "destination unreachable" |
+**Coverage split per Phase 5 precedent:** Each vector splits its assertion across CLI-parse-level test (`crates/octo-cli/src/commands/network.rs` `tv_net7_*` fn) + substrate-trait-level test (`crates/octo-network/src/mon/slash_bridge.rs` `test_*` fn). The CLI tests cover clap parsing + handler dispatch to the trait boundary; the substrate tests cover the trait behavior (empty list, populated list, propagate success, propagate unreachable, error display). End-to-end CLI dispatch through a concrete per-extension impl crate is OUT OF SCOPE per RFC-0863 per-extension crate pattern + per-extension concrete impls are Layer D follow-on missions.
+
+| ID           | Subcommand                                                                            | CLI test scope                                                                                             | Substrate test scope                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `tv_net7_1`  | `slash-bridge list`                                                                   | clap parses no-args                                                                                        | empty `BridgedSlash` projection (substrate `test_bridge_list_empty`)                                               |
+| `tv_net7_2`  | `slash-bridge list`                                                                   | clap parses `--json` flag                                                                                  | populated `BridgedSlash` projection with hex encoding + total field                                                |
+| `tv_net7_3`  | `slash-bridge list`                                                                   | registry-None returns exit 89 via empty `EmptyBridge` impl                                                 | (covered by `test_bridge_list_empty`)                                                                              |
+| `tv_net7_4`  | `slash-bridge propagate <slash_envelope_id_hex> --apply --confirm-acknowledge`        | clap parses apply + confirm                                                                                | propagate-to returns real `BridgeReceipt` (substrate `test_propagate_to_success`)                                  |
+| `tv_net7_5`  | `slash-bridge propagate <slash_envelope_id_hex> --apply` (no `--confirm-acknowledge`) | clap parse-time rejection with `--confirm-acknowledge` in error string, exit 2                             | (no substrate coverage — clap-level defense)                                                                       |
+| `tv_net7_6`  | `slash-bridge propagate <slash_envelope_id_hex>`                                      | mixed-case hex rejected by `parse_32_byte_hex` (pastejacking defense)                                      | `BridgeError::Unreachable` returns exit 89 + "destination unreachable" (substrate `test_propagate_to_unreachable`) |
+| `tv_net7_6b` | `slash-bridge propagate <slash_envelope_id_hex>`                                      | uppercase-only hex accepted by `parse_32_byte_hex` (R2.5 added — confirms shared helper alphabet contract) | (no substrate coverage — parser-level acceptance)                                                                  |
 
 Per RFC-0011-h §Test Vectors redact-did-1 row + §Security Considerations redaction invariant, `slash_envelope_id` field uses 64-char hex encoding in JSON output; the underlying 32-byte raw form is NEVER echoed in error envelopes.
 
@@ -295,9 +298,11 @@ Phase 7 RFC carries 1 substrate addition; 0 substrate additions in this RFC itse
 **RFC-0011-o is the Phase 7 amendment.** Phase 7 implementation sequencing per `0011-h-multiphase-rollout-plan` §2.7 + RFC-0011-m §Implementation Phases (Phase 5 precedent for test vector naming `tv_net7_*`):
 
 1. **Substrate-first slice (1 companion mission):** G9 `0011-h-s-a-slash-bridge-trait` lands per companion mission YAML at `missions/open/0011-h-s-a-slash-bridge-trait.md`.
-2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 6 test vectors (tv_net7_1 through tv_net7_6) + 0 NEW OctoCliError variants (REUSES slot 89) land AFTER companion mission G9 closes per substrate-first ordering.
+2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 7 test vectors (tv_net7_1 through tv_net7_6b per §Test Vectors split between CLI-parse-level + substrate-trait-level coverage) + 0 NEW OctoCliError variants (REUSES slot 89) land AFTER companion mission G9 closes per substrate-first ordering.
 
 User-gated decision on slice ordering per [[feedback_initiation_user_only]].
+
+> **Next amendment:** RFC-0011-p Phase 8 lands `octo network router status` + `octo network router peers <peer_node_id_hex>` against substrate companion G10 `0011-h-s-a-quota-router-node` (per RFC-0011-h §Substrate-Additions row G10). Phase 8 depends on Phase 7's `OutputEnvelope::new` wrapping pattern + BTreeMap determinism + `parse_32_byte_hex` pastejacking defense pattern.
 
 ## Key Files to Modify
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G18
+Superseded (2026-09-20) by `0011-h-s-a-writer-election-struct` (RFC-0011-n Phase 6 G18 NEW companion). The Phase 6 G18 mission adds the `WriterElection` struct wrapper around the existing `elect_coordinator` free function at `crates/octo-coordinator-types/src/election.rs` (G18 NEW Phase 6 substrate slice landed `next a58f2103`; CLI dispatch slice landed `next 2ba4273b`). This stub's expected substrate path `crates/octo-network/src/mon/writer_election.rs` was a 2026-09-18 placeholder; Phase 6 G18 substrate landed at `crates/octo-coordinator-types/src/election.rs` per RFC-0011-n §RFC-0855p-b §Election Algorithm anchor. Mission YAML closed as Superseded paired with Phase 6 IMPLEMENTATION closure card `next 93cba06d` per [[no-phantom-mission-pointers]] pairing invariant. Archive target: `missions/archived/superseded/0011-h-s-a-writer-election.md` per user gating on archive transitions per [[feedback_initiation_user_only]] workflow.
 
 ## RFC
 

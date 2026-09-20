@@ -228,7 +228,7 @@ Phase 2 lands additively. No existing CLI subcommand changes. No existing OctoCl
 | tv_net2_3 | `mode show`             | bootstrap.toml corrupted → exit 82                      |
 | tv_net2_4 | `authority show`         | SeedListAuthority = Foundation, epoch < takeover        |
 | tv_net2_5 | `authority show`         | SeedListAuthority = Dao, epoch >= takeover              |
-| tv_net2_6 | `authority show`         | SeedListAuthority = FoundationDeprecated, exit 89       |
+| tv_net2_6 | `authority show`         | SeedListAuthority = FoundationDeprecated, `valid: false`, `message: Option<String>` carrying `SeedAuthorityError::SeedListAuthorityDeprecated` Debug format, exit 0 |
 | tv_net2_7 | `slash stats`            | Empty substrate → `did_count: 0, total_slashes: 0`      |
 | tv_net2_8 | `slash stats`            | Populated substrate → counts                             |
 | tv_net2_9 | `slash excluded <did>`   | DID not in substrate → `excluded: false`                |

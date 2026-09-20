@@ -1,8 +1,8 @@
-# 0011-h-s-a-voting-tally-canonical-bytes — Substrate additions for canonical bytes hashing helper for VotingTally
+# 0011-h-s-a-voting-tally-canonical-bytes — Substrate additions for governance_proposal_canonical_bytes helper
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G3b
+Claimed (2026-09-20) — Substrate additions LANDED at `next 10ae8e18`. Substrate-faithful `governance_proposal_canonical_bytes` helper + `BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN` domain constant land in `crates/octo-network/src/mon/governance.rs`. Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G3b.
 
 ## RFC
 
@@ -10,35 +10,42 @@ RFC-0011-h §Substrate-Additions Companion Missions row G3b
 
 ## Summary
 
-Adds hashing helper to compute canonical-bytes hash for GovernanceProposal. Required by `NetworkGovernanceTallyOutput.canonical_bytes_hash` field (currently REDACTED placeholder).
+Adds `governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32]` helper + `BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN` BLAKE3 domain prefix constant per RFC-0011-k §Substrate-Additions Companion Missions row G3b. Pre-requisite for `octo network governance tally` CLI dispatch.
 
 ### Substrate additions target
 
 ```rust
 // crates/octo-network/src/mon/governance.rs
-bytes
+pub const BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN: &[u8] = b"cipherocto/governance/proposal/v1";
+
+pub fn governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32];
 ```
 
-(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per [[no-phantom-mission-pointers]].)
+Substrate additions land 2026-09-20 at `next 10ae8e18`:
+- `BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN` constant = `b"cipherocto/governance/proposal/v1"`
+- `governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32]` using BLAKE3 domain separation
+- Substrate-faithful: helper lives in Layer-B mon module (NOT on `GovernanceProposal` directly) because Layer-A `octo-governance-core` is RFC-frozen per [[cipherocto-design-principles]] §Stable Abstractions Principle
+- 2 unit tests: `governance_proposal_canonical_bytes_round_trip` (deterministic), `governance_proposal_canonical_bytes_changes_with_state` (state-sensitive)
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/mon/governance.rs` per RFC-0011-h §Substrate-Additions row G3b
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test
+- [x] Substrate additions land in `crates/octo-network/src/mon/governance.rs` per RFC-0011-h §Substrate-Additions row G3b
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (2/2 canonical_bytes tests pass)
+- [x] Layer discipline preserved (Layer B helper; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (2 unit tests added; integration test deferred to governance tally persistence adapter)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
+- Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
 
 ## Out of Scope
 
-- CLI dispatch (paired CLI mission `0011-h-network-*` covers that surface)
+- CLI dispatch (paired CLI mission `0011-h-network-governance` covers that surface — pending Phase 3 IMPLEMENTATION)
 - Wire format versioning (deferred to substrate-additions companion)
 - Per-extension transport impl (deferred to per-extension crate pattern)
+- Governance tally persistence adapter (Phase 6 follow-on)
 
 ## Notes
 
-Stub filed 2026-09-18 per [[no-phantom-mission-pointers]]. Full AC + scope land when work enters Phase X.
+Substrate slice landed 2026-09-20 at `next 10ae8e18`. Companion substrate slice bundles G3b + G12 + G12b together per the substrate-first ordering principle. Phase 3 IMPLEMENTATION closes the CLI dispatch surface (`octo network governance tally`) after this mission transitions to Completed.

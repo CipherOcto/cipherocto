@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice landed at `next 24bfec96` per RFC-0011-m Phase 5 row G23. `MissionAdvertisementCache` struct + `get` + `iter` + `insert` + `len` + `is_empty` landed in `crates/octo-network/src/mon/discovery.rs` (existing module extended). CLI dispatch slice pending per the Phase 4 paired-substrate completion pattern (substrate → YAML Claimed → CLI dispatch → YAML Completed paired).
+Completed (2026-09-20) — Substrate additions + CLI dispatch CLOSED. Substrate-faithful `MissionAdvertisementCache` lookup + iteration landed in `crates/octo-network/src/mon/discovery.rs` at `next 24bfec96`. CLI dispatch wired at `octo network discovery advertisement show --advertisement-id <HEX> [--hops <U16>]` at `next 346f10cc`. Substrate-additions + CLI dispatch landed end-to-end per RFC-0011-m Phase 5 row G23.
 
 ## RFC
 
@@ -91,4 +91,4 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrat
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-m closure card at `next 8e7c5cec`. Substrate slice landed 2026-09-20 at `next 24bfec96`. CLI dispatch slice pending per the Phase 4 paired-substrate completion pattern. The substrate-faithful `Option<&MissionAdvertisement>` translation surfaces as typed exit 89 `NetworkSubstrateUnavailable { companion: "G23" }` once the CLI dispatch slice consumes it. The `BTreeMap` choice honors the deterministic ordering contract per RFC-0855 §8.2 + RFC-0011-h §Output Envelope order determinism. The `iter()` method returns owned `[u8; 32]` keys so the iterator lifetime is decoupled from the cache lifetime (substrate-faithful boundary per [[cipherocto-design-principles]] §No premature coupling).
+Stub fill-in 2026-09-20 per RFC-0011-m closure card at `next 8e7c5cec`. Substrate slice landed 2026-09-20 at `next 24bfec96`. CLI dispatch slice landed 2026-09-20 at `next 346f10cc`. The substrate-faithful `Option<&MissionAdvertisement>` translation surfaces as typed exit 89 `NetworkSubstrateUnavailable { companion: "G23" }` in the CLI dispatch slice. The `BTreeMap` choice honors the deterministic ordering contract per RFC-0855 §8.2 + RFC-0011-h §Output Envelope order determinism. The `iter()` method returns owned `[u8; 32]` keys so the iterator lifetime is decoupled from the cache lifetime (substrate-faithful boundary per [[cipherocto-design-principles]] §No premature coupling).

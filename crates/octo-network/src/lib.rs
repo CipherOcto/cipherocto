@@ -42,6 +42,8 @@ pub mod drs;
 pub mod mon;
 /// Federation reputation (mission 0855p-b / 0968 Phase 4).
 pub mod reputation;
+/// Network sender substrate (RFC-0863) — mission 0011-h-s-a-network-sender.
+pub mod sender;
 // Re-export the reputation gossip substrate so callers can
 // `octo_network::gossip::start_reputation_gossip` without
 // descending into the inner module.

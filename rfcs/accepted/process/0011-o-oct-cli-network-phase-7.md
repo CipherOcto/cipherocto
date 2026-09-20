@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h §Substrate-Additions Companion Missions row G9) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 4 envelope structs (2 wrapper envelopes + 2 projection subtypes) + 7 test vectors (tv_net7_1 through tv_net7_6 + tv_net7_6b).
+Accepted (2026-09-20) — DRY CLOSED via 5-len multi-round review (R1-R5). 8-commit review+implementation chain culminating in `next e30e4c2b`. Gate pair = R4 post-R3.5 zero + R5 dual-reviewer zero (Layer discipline 12/12 PASS + spec/implementation alignment 22/22 PASS) = 2 consecutive zero-finding rounds. RFC-0011-o lands RFC-0011-h §Implementation Phases Phase 7. Two subcommands wire slash bridge observability + propagate path to the CLI. Substrate absent: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` MISSING from `crates/octo-network/src/mon/slash_bridge.rs`; this amendment adds 1 companion substrate mission (G9 `0011-h-s-a-slash-bridge-trait` per RFC-0011-h §Substrate-Additions Companion Missions row G9) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 4 envelope structs (2 wrapper envelopes + 2 projection subtypes) + 7 test vectors (tv_net7_1 through tv_net7_6 + tv_net7_6b). Implementation CLOSED at `next 288be12c` (YAMLs Completed paired) + `next f3b9f48e` (CLI dispatch slice) + `next 8599f5c8` (G9 substrate) + `next 3d81ecad` (G9 stub fill-in) + `next 172957d7` (R1.5 fix sweep) + `next 25a625c9` (R2.5 fix sweep) + `next e30e4c2b` (R3.5 fix sweep). 409/409 octo-cli tests pass; 5/5 octo-network mon::slash_bridge substrate unit tests pass; clippy clean on both crates. Layer A frozen preserved throughout. Per-extension crate pattern preserved (SlashBridge trait in Layer B; per-transport impls OUT OF SCOPE for follow-on Layer D missions).
 
 > **Amendment chain:** Seventh amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o (this RFC). Phase 1-6 are sequenced hard dependencies for layer-C CLI dispatch + slot 89 substrate-absent pattern + confirmation-flag pattern + dry-run pattern + closure artifact pattern; see MEMORY.md closure cards for status of each.
 
@@ -337,9 +337,10 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 
 ## Version History
 
-| Version | Date       | Notes                                                |
-| ------- | ---------- | ---------------------------------------------------- |
-| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle |
+| Version | Date       | Notes                                                                                                                                                                                                                                                            |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                             |
+| v0.9.0  | 2026-09-20 | R1-R3.5 multi-axis DRY review sweep. 8 review+implementation commits. DRY CLOSED gate pair = R4 zero (R3.5 effectiveness) + R5 zero (dual reviewer: Layer discipline 12/12 + spec/implementation alignment 22/22). Promoted Draft → Accepted at `next e30e4c2b`. |
 
 ## Cross-references
 

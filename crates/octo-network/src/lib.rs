@@ -67,5 +67,7 @@ pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.
 pub mod porelay;
 
+/// Quota Router Network substrate — RFC-0870 (mission 0011-h-s-a-quota-router-node).
+pub mod quota;
 /// Data sync transport bridge — RFC-0862 carrier integration.
 pub mod sync;

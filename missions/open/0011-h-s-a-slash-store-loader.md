@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G6b
+Claimed (2026-09-20) — Substrate additions LANDED at `next 931dc7b1`. Substrate-faithful `SlashStoreLoader` sync validation+ingest façade lands in `crates/octo-network/src/reputation/slash_store.rs`. Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G6b.
 
 ## RFC
 
@@ -15,19 +15,27 @@ Loader façade for persisted SlashStore; integrates with RFC-0860 substrate for 
 ### Substrate additions target
 
 ```rust
-// crates/octo-network/src/mon/slash_store.rs
+// crates/octo-network/src/reputation/slash_store.rs
 loader
 ```
 
-(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per [[no-phantom-mission-pointers]].)
+Substrate additions land 2026-09-20 at `next 931dc7b1`:
+- `SlashStoreLoader` struct (zero-state sync façade)
+- `SlashStoreLoader::new` / `Default` constructors
+- `SlashStoreLoader::hydrate` validation+ingest path
+  - Validates `slash_reason != 0` (zero reason = rejected stub)
+  - Forwards accepted envelopes to `SlashReputationStoreCompat::record_slash_envelope`
+  - Returns count of ingested envelopes
+- 4 unit tests: `loader_hydrate_ingests_all_valid_envelopes`, `loader_hydrate_rejects_zero_reason`, `loader_hydrate_accepts_extension_reason`, `loader_hydrate_empty_iter_yields_zero`
+- Re-exports: `SlashStoreLoader` through `crates/octo-network/src/reputation/mod.rs`
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land in `crates/octo-network/src/mon/slash_store.rs` per RFC-0011-h §Substrate-Additions row G6b
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test
+- [x] Substrate additions land in `crates/octo-network/src/reputation/slash_store.rs` per RFC-0011-h §Substrate-Additions row G6b
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (4/4 loader tests pass)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (4 unit tests added)
 
 ## Dependencies
 
@@ -35,10 +43,11 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
 
 ## Out of Scope
 
-- CLI dispatch (paired CLI mission `0011-h-network-*` covers that surface)
+- CLI dispatch (paired CLI mission `0011-h-network-*` covers that surface — pending Phase 2 IMPLEMENTATION)
 - Wire format versioning (deferred to substrate-additions companion)
 - Per-extension transport impl (deferred to per-extension crate pattern)
 
 ## Notes
 
-Stub filed 2026-09-18 per [[no-phantom-mission-pointers]]. Full AC + scope land when work enters Phase X.
+Substrate slice landed 2026-09-20. Companion substrate slice (`0011-h-s-slash-store-seed-rotate-substrate` commit `931dc7b1`) bundles G6 + G6b + G8 together per the substrate-first ordering principle. Phase 2 IMPLEMENTATION closes the CLI dispatch surface (`octo network slash excluded` + `slash stats`) after this mission transitions to Completed.
+

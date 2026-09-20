@@ -57,6 +57,50 @@ pub enum RouterStatus {
     Offline,
 }
 
+/// `QuotaRouterNodeAccess` — trait abstraction over
+/// quota router node state per RFC-0011-p Phase 8 G10
+/// per-extension crate pattern. Trait in Layer B;
+/// concrete impl crates (substrate-ext-quota-router-*)
+/// in Layer D, OUT OF SCOPE.
+pub trait QuotaRouterNodeAccess: Send + Sync {
+    /// Return the local node_id (32-byte canonical).
+    fn node_id(&self) -> [u8; 32];
+    /// Return the current operational status.
+    fn status(&self) -> RouterStatus;
+    /// Return the remaining quota capacity for the given
+    /// peer node id, or `None` if the peer is not in the
+    /// local routing table.
+    fn peer_capacity(&self, peer_node_id: &[u8; 32]) -> Option<u64>;
+    /// Return the number of peers with non-zero capacity.
+    fn reachable_peer_count(&self) -> usize;
+    /// Return the total peer count including zero-capacity
+    /// peers.
+    fn total_peer_count(&self) -> usize;
+    /// Return the last capacity sync epoch.
+    fn last_sync_epoch(&self) -> u64;
+}
+
+impl QuotaRouterNodeAccess for QuotaRouterNode {
+    fn node_id(&self) -> [u8; 32] {
+        self.node_id
+    }
+    fn status(&self) -> RouterStatus {
+        self.status
+    }
+    fn peer_capacity(&self, peer_node_id: &[u8; 32]) -> Option<u64> {
+        self.peer_capacities.get(peer_node_id).copied()
+    }
+    fn reachable_peer_count(&self) -> usize {
+        self.peer_capacities.values().filter(|&&c| c > 0).count()
+    }
+    fn total_peer_count(&self) -> usize {
+        self.peer_capacities.len()
+    }
+    fn last_sync_epoch(&self) -> u64 {
+        self.last_sync_epoch
+    }
+}
+
 impl Default for QuotaRouterNode {
     /// Default node state is Offline with empty peer
     /// capacities (substrate-faithful projection of a

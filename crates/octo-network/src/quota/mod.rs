@@ -10,4 +10,4 @@
 
 pub mod router_node;
 
-pub use router_node::{QuotaRouterNode, RouterStatus};
+pub use router_node::{QuotaRouterNode, QuotaRouterNodeAccess, RouterStatus};

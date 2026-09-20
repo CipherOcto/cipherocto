@@ -228,6 +228,13 @@ pub enum NetworkAction {
         #[command(subcommand)]
         action: NetworkSlashBridgeAction,
     },
+    /// Quota router node status + peer capacity subcommands
+    /// (RFC-0011-p Phase 8 G10).
+    Router {
+        /// Router subcommand.
+        #[command(subcommand)]
+        action: NetworkRouterAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -633,6 +640,44 @@ pub struct SlashBridgePropagateArgs {
     pub json: bool,
 }
 
+/// Quota router node subcommand surface (RFC-0011-p Phase 8 G10).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkRouterAction {
+    /// Show local quota router node operational status
+    /// (RFC-0011-p §Subcommand Taxonomy Phase 8).
+    Status(RouterStatusArgs),
+    /// Show remaining quota capacity for a specific peer
+    /// (RFC-0011-p §Subcommand Taxonomy Phase 8).
+    Peers(RouterPeersArgs),
+}
+
+/// `octo network router status` arguments (RFC-0011-p
+/// §Subcommand Taxonomy Phase 8 `router status`).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct RouterStatusArgs {
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network router peers <peer_node_id_hex>` arguments
+/// (RFC-0011-p §Subcommand Taxonomy Phase 8 `router peers`).
+/// `peer_node_id` is 32-byte canonical identifier accepted as
+/// 64 hex chars (lowercase OR uppercase); mixed-case rejected
+/// by `parse_32_byte_hex` pastejacking defense.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct RouterPeersArgs {
+    /// 32-byte peer_node_id as 64 hex chars (lowercase OR
+    /// uppercase; mixed-case rejected). Pastejacking defense
+    /// per RFC-0011-h §Pastejacking Defense pattern.
+    #[arg(value_parser = parse_router_peer_node_id_hex)]
+    pub peer_node_id: [u8; 32],
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
 // === Output envelopes (RFC-0011-n Phase 6) ===
 
 /// `octo network bootstrap` output envelope (RFC-0011-n Phase 6
@@ -738,6 +783,36 @@ pub struct BridgeReceiptProjection {
     pub propagated_to_hex: String,
     /// Epoch when propagation completed.
     pub propagated_at_epoch: u64,
+}
+
+/// `octo network router status` output envelope (RFC-0011-p
+/// Phase 8 G10).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkRouterStatusOutput {
+    /// Node-local self identifier as 64 lowercase hex chars.
+    pub node_id_hex: String,
+    /// Operational status (lowercase: healthy | degraded |
+    /// offline).
+    pub status: String,
+    /// Number of peers with non-zero capacity.
+    pub reachable_peer_count: usize,
+    /// Total peer count including zero-capacity peers.
+    pub total_peer_count: usize,
+    /// Last capacity sync epoch.
+    pub last_sync_epoch: u64,
+}
+
+/// `octo network router peers <peer_node_id_hex>` output
+/// envelope (RFC-0011-p Phase 8 G10).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkRouterPeersOutput {
+    /// Input peer_node_id as 64 lowercase hex chars (echo).
+    pub peer_node_id_hex: String,
+    /// Remaining quota capacity for the peer (None = peer
+    /// not in local routing table).
+    pub capacity: Option<u64>,
+    /// Whether the peer is in the local routing table.
+    pub reachable: bool,
 }
 
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
@@ -1393,6 +1468,10 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         NetworkAction::SlashBridge { action: sb_act } => match sb_act {
             NetworkSlashBridgeAction::List(args) => network_slash_bridge_list(args, cli),
             NetworkSlashBridgeAction::Propagate(args) => network_slash_bridge_propagate(args, cli),
+        },
+        NetworkAction::Router { action: router_act } => match router_act {
+            NetworkRouterAction::Status(args) => network_router_status(args, cli),
+            NetworkRouterAction::Peers(args) => network_router_peers(args, cli),
         },
     }
 }
@@ -2165,6 +2244,13 @@ fn parse_slash_envelope_id_hex(s: &str) -> Result<[u8; 32], String> {
     parse_32_byte_hex(s, "slash_envelope_id").map_err(|e| e.to_string())
 }
 
+/// `parse_32_byte_hex` for `peer_node_id` (Phase 8 G10).
+/// Symmetric to `parse_slash_envelope_id_hex` (Phase 7)
+/// per RFC-0011-h §Pastejacking Defense pattern.
+fn parse_router_peer_node_id_hex(s: &str) -> Result<[u8; 32], String> {
+    parse_32_byte_hex(s, "peer_node_id").map_err(|e| e.to_string())
+}
+
 /// Shared preview-payload helper for the rebind-* trio dry-run
 /// path. Returns the dry-run envelope without attempting
 /// substrate dispatch.
@@ -2765,6 +2851,72 @@ fn slash_bridge_registry(
     // has no registered impl in this binary — dispatch surfaces
     // exit 89.
     None
+}
+
+/// Lookup the runtime `QuotaRouterNode` registry (per-extension
+/// crate pattern; concrete impls register via init fn OUT OF
+/// SCOPE for Phase 8). Per RFC-0011-p §Substrate Mapping Table,
+/// the CLI consumes the struct via registry lookup, identical to
+/// RFC-0863 `NetworkSender` pattern.
+fn router_node_registry(
+    _cli: &Octo,
+) -> Option<std::sync::Arc<dyn octo_network::quota::router_node::QuotaRouterNodeAccess>> {
+    // Companion G10 substrate lands in a follow-on Layer D
+    // extension crate per per-extension crate pattern. Until
+    // then, the struct has no registered impl in this binary —
+    // dispatch surfaces exit 89.
+    None
+}
+
+/// `octo network router status` handler (RFC-0011-p Phase 8 G10).
+fn network_router_status(args: &RouterStatusArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    let registry = router_node_registry(cli);
+    let node = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G10",
+        detail: "".to_string(),
+    })?;
+    let status = node.status();
+    let env = OutputEnvelope::new(
+        "octo.network.router.status.v1",
+        NetworkRouterStatusOutput {
+            node_id_hex: hex::encode(node.node_id()),
+            status: status_label(status).to_string(),
+            reachable_peer_count: node.reachable_peer_count(),
+            total_peer_count: node.total_peer_count(),
+            last_sync_epoch: node.last_sync_epoch(),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// `octo network router peers <peer_node_id_hex>` handler
+/// (RFC-0011-p Phase 8 G10).
+fn network_router_peers(args: &RouterPeersArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    let registry = router_node_registry(cli);
+    let node = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G10",
+        detail: "".to_string(),
+    })?;
+    let capacity = node.peer_capacity(&args.peer_node_id);
+    let env = OutputEnvelope::new(
+        "octo.network.router.peers.v1",
+        NetworkRouterPeersOutput {
+            peer_node_id_hex: hex::encode(args.peer_node_id),
+            reachable: capacity.is_some(),
+            capacity,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// Map `RouterStatus` enum to its lowercase string label for
+/// projection output (RFC-0011-p §Output Envelope).
+fn status_label(status: octo_network::quota::router_node::RouterStatus) -> &'static str {
+    match status {
+        octo_network::quota::router_node::RouterStatus::Healthy => "healthy",
+        octo_network::quota::router_node::RouterStatus::Degraded => "degraded",
+        octo_network::quota::router_node::RouterStatus::Offline => "offline",
+    }
 }
 
 fn bootstrap_config_companion(err: &BootstrapConfigError) -> &'static str {
@@ -4278,5 +4430,103 @@ mod tests {
     struct TestPhase7Cli {
         #[command(subcommand)]
         action: NetworkAction,
+    }
+
+    // === Phase 8 test vectors (RFC-0011-p §Test Vectors Phase 8) ===
+
+    /// Test CLI struct for Phase 8 router surface.
+    #[derive(Parser, Debug)]
+    struct TestPhase8Cli {
+        #[command(subcommand)]
+        action: NetworkAction,
+    }
+
+    // tv_net8_1: router status subcommand parses cleanly
+    // (G10 substrate-faithful)
+    #[test]
+    fn tv_net8_1_router_status_parses_with_no_args() {
+        let cli = TestPhase8Cli::try_parse_from(["test", "router", "status"]).expect("parse");
+        match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Status(args) => assert!(!args.json),
+                _ => panic!("expected Status"),
+            },
+            _ => panic!("expected Router"),
+        }
+    }
+
+    // tv_net8_2: router status --json flag parses cleanly
+    #[test]
+    fn tv_net8_2_router_status_json_flag_parses() {
+        let cli =
+            TestPhase8Cli::try_parse_from(["test", "router", "status", "--json"]).expect("parse");
+        match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Status(args) => assert!(args.json),
+                _ => panic!("expected Status"),
+            },
+            _ => panic!("expected Router"),
+        }
+    }
+
+    // tv_net8_3: router status envelope projection is
+    // substrate-faithful (default node has Offline status
+    // with empty peer counts).
+    #[test]
+    fn tv_net8_3_router_status_default_envelope_is_offline() {
+        use octo_network::quota::router_node::{QuotaRouterNode, RouterStatus};
+        let node = QuotaRouterNode::default();
+        assert_eq!(node.status(), RouterStatus::Offline);
+        assert_eq!(status_label(node.status()), "offline");
+        assert_eq!(node.reachable_peer_count(), 0);
+        assert_eq!(node.total_peer_count(), 0);
+    }
+
+    // tv_net8_4: router peers subcommand parses cleanly with
+    // lowercase hex peer_node_id (G10 substrate-faithful)
+    #[test]
+    fn tv_net8_4_router_peers_parses_with_lowercase_hex() {
+        let hex_id = "a".repeat(64);
+        let cli =
+            TestPhase8Cli::try_parse_from(["test", "router", "peers", &hex_id]).expect("parse");
+        match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Peers(args) => {
+                    assert_eq!(args.peer_node_id, [0xAA; 32]);
+                    assert!(!args.json);
+                }
+                _ => panic!("expected Peers"),
+            },
+            _ => panic!("expected Router"),
+        }
+    }
+
+    // tv_net8_5: router peers pastejacking defense — mixed-case
+    // hex rejected by parse_32_byte_hex shared helper
+    // (RFC-0011-h §Pastejacking Defense pattern)
+    #[test]
+    fn tv_net8_5_router_peers_rejects_mixed_case_hex() {
+        let mixed_case = "Aa".repeat(32);
+        let result = TestPhase8Cli::try_parse_from(["test", "router", "peers", &mixed_case]);
+        assert!(result.is_err(), "mixed-case hex must be rejected");
+    }
+
+    // tv_net8_6: router peers accepts uppercase-only hex
+    // (parse_32_byte_hex shared helper accepts lowercase OR
+    // uppercase; only mixed-case is rejected).
+    #[test]
+    fn tv_net8_6_router_peers_accepts_uppercase_only_hex() {
+        let upper_hex = "B".repeat(64);
+        let cli =
+            TestPhase8Cli::try_parse_from(["test", "router", "peers", &upper_hex]).expect("parse");
+        match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Peers(args) => {
+                    assert_eq!(args.peer_node_id, [0xBB; 32]);
+                }
+                _ => panic!("expected Peers"),
+            },
+            _ => panic!("expected Router"),
+        }
     }
 }

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-m lands RFC-0011-h §Implementation Phases Phase 5. Two subcommands wire mission discovery advertisement + invitation visibility to the CLI. Substrate absent: both `MissionAdvertisementCache` + `MissionInvitationCache` types MISSING; this amendment adds 2 companion substrate missions + 0 NEW OctoCliError variants (uses slot 89 already) + 2 output envelopes + 6 test vectors.
+Accepted (2026-09-21) — RFC-0011-m promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 5 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus IMPLEMENTATION COMPLETE at `next 97955c00`. Two subcommands wire mission discovery advertisement + invitation visibility to the CLI. Substrate absent: both `MissionAdvertisementCache` + `MissionInvitationCache` types MISSING; this amendment adds 2 companion substrate missions + 0 NEW OctoCliError variants (uses slot 89 already) + 2 output envelopes + 6 test vectors.
 
 > **Amendment chain:** Fifth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 6 = RFC-0011-n (closure artifacts).
 
@@ -18,10 +18,10 @@ Draft (2026-09-20) — RFC-0011-m lands RFC-0011-h §Implementation Phases Phase
 
 RFC-0011-m lands the **mission discovery advertisement + invitation visibility** slice of RFC-0011-h §Implementation Phases. Two read-only CLI subcommands wire to substrate (companion missions for cache types):
 
-| Subcommand                                            | Authority Role | Substrate                                                       | Companion mission                                       |
-| ----------------------------------------------------- | -------------- | --------------------------------------------------------------- | ------------------------------------------------------- |
-| `octo network discovery advertisement show`           | Operator       | `MissionAdvertisementCache::get(iter)` (MISSING)                | `0011-h-s-a-discovery-advertisement-cache` (G23)        |
-| `octo network discovery invitation show`              | Operator       | `MissionInvitationCache::get(iter)` (MISSING)                   | `0011-h-s-a-discovery-invitation-cache` (G24)           |
+| Subcommand                                  | Authority Role | Substrate                                        | Companion mission                                |
+| ------------------------------------------- | -------------- | ------------------------------------------------ | ------------------------------------------------ |
+| `octo network discovery advertisement show` | Operator       | `MissionAdvertisementCache::get(iter)` (MISSING) | `0011-h-s-a-discovery-advertisement-cache` (G23) |
+| `octo network discovery invitation show`    | Operator       | `MissionInvitationCache::get(iter)` (MISSING)    | `0011-h-s-a-discovery-invitation-cache` (G24)    |
 
 **Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **2 companion missions (Layer B)**; 0 of 2 subcommands has substrate present (both require companion missions for the cache types).
 
@@ -51,6 +51,7 @@ RFC-0011-m lands the **mission discovery advertisement + invitation visibility**
 Phase 1-4 land read-only observability + bootstrap lifecycle + slash reputation + coordinator visibility + bind envelope payload builders. Phase 5 lands **mission discovery advertisement + invitation visibility**, completing the read-only observability surface for RFC-0011-h §Subcommand Taxonomy.
 
 Without Phase 5, operators have no way to:
+
 - Inspect a mission advertisement (read `discovery advertisement show`)
 - Inspect a mission invitation (read `discovery invitation show`)
 
@@ -60,10 +61,10 @@ Both subcommands are read-only with no confirmation flags required per RFC-0011-
 
 Per RFC-0011-h §Role/Authority Coverage Table:
 
-| Subcommand                          | Authority Role | Confirmation axes |
-| ----------------------------------- | -------------- | ----------------- |
-| `discovery advertisement show`      | Operator       | (read-only)       |
-| `discovery invitation show`         | Operator       | (read-only)       |
+| Subcommand                     | Authority Role | Confirmation axes |
+| ------------------------------ | -------------- | ----------------- |
+| `discovery advertisement show` | Operator       | (read-only)       |
+| `discovery invitation show`    | Operator       | (read-only)       |
 
 Both subcommands carry no confirmation flags. CI agents allowed per RFC-0011-h row 664 (ALLOW in CI but exit 89 pre-companion; exit 0 post-companion).
 
@@ -103,19 +104,19 @@ The `discovery` umbrella action has 2 sub-actions:
 
 Per RFC-0011-h §Subcommand Taxonomy Phase 5 rows:
 
-| Subcommand                          | Existing substrate                                              | Companion mission required                |
-| ----------------------------------- | --------------------------------------------------------------- | ----------------------------------------- |
-| `discovery advertisement show`      | (none — cache missing)                                          | G23: `MissionAdvertisementCache` + `get + iter` |
-| `discovery invitation show`         | (none — cache missing)                                          | G24: `MissionInvitationCache` + `get + iter`    |
+| Subcommand                     | Existing substrate     | Companion mission required                      |
+| ------------------------------ | ---------------------- | ----------------------------------------------- |
+| `discovery advertisement show` | (none — cache missing) | G23: `MissionAdvertisementCache` + `get + iter` |
+| `discovery invitation show`    | (none — cache missing) | G24: `MissionInvitationCache` + `get + iter`    |
 
 ### Output Envelope
 
 Phase 5 lands 2 output envelopes, one per subcommand:
 
-| Subcommand                          | Output envelope                                |
-| ----------------------------------- | ---------------------------------------------- |
-| `discovery advertisement show`      | `NetworkDiscoveryAdvertisementShowOutput`      |
-| `discovery invitation show`         | `NetworkDiscoveryInvitationShowOutput`         |
+| Subcommand                     | Output envelope                           |
+| ------------------------------ | ----------------------------------------- |
+| `discovery advertisement show` | `NetworkDiscoveryAdvertisementShowOutput` |
+| `discovery invitation show`    | `NetworkDiscoveryInvitationShowOutput`    |
 
 `NetworkDiscoveryAdvertisementShowOutput` surfaces: `advertisement_hash` (hex), per RFC-0011-h §Output Envelope L503-L506. `NetworkDiscoveryInvitationShowOutput` surfaces: `mission_id_hex`, `invitee_gateway_id_hex`, `coordinator_gateway_id_hex`, `logical_timestamp`, `signing_bytes_hex` per RFC-0011-h §Output Envelope L511-L518.
 
@@ -123,9 +124,9 @@ Phase 5 lands 2 output envelopes, one per subcommand:
 
 Phase 5 lands 0 NEW OctoCliError variants; reuses slot 89 from Phase 2.
 
-| Slot | Variant                              | Trigger                                                    |
-| ---- | ------------------------------------ | ---------------------------------------------------------- |
-| 89   | `NetworkSubstrateUnavailable`        | Companion mission closure gating (pre-G23/G24 exit)        |
+| Slot | Variant                       | Trigger                                             |
+| ---- | ----------------------------- | --------------------------------------------------- |
+| 89   | `NetworkSubstrateUnavailable` | Companion mission closure gating (pre-G23/G24 exit) |
 
 **Reachability matrix:**
 
@@ -139,19 +140,19 @@ Phase 5 uses slot 89 (REUSED) from RFC-0011-h §Exit Codes table. Remaining slot
 
 Per RFC-0011-h §Performance Targets Phase 5 rows:
 
-| Subcommand                          | Target    | Rationale                               |
-| ----------------------------------- | --------- | --------------------------------------- |
-| `discovery advertisement show` wall-clock | <50ms | Local advertisement cache lookup        |
-| `discovery invitation show` wall-clock | <50ms | Local invitation cache lookup           |
+| Subcommand                                | Target | Rationale                        |
+| ----------------------------------------- | ------ | -------------------------------- |
+| `discovery advertisement show` wall-clock | <50ms  | Local advertisement cache lookup |
+| `discovery invitation show` wall-clock    | <50ms  | Local invitation cache lookup    |
 
 ## Implicit Assumptions Audit
 
 Per RFC-0011-h §Implicit Assumptions Audit Phase 5 rows:
 
-| Assumption                                                 | Affected subcommands                | Fallback                                                |
-| ---------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------- |
-| `MissionAdvertisementCache` type + lookup methods exist   | `discovery advertisement show`      | exit 89 `NetworkSubstrateUnavailable` (gated on G23)    |
-| `MissionInvitationCache` type + lookup methods exist      | `discovery invitation show`         | exit 89 `NetworkSubstrateUnavailable` (gated on G24)    |
+| Assumption                                              | Affected subcommands           | Fallback                                             |
+| ------------------------------------------------------- | ------------------------------ | ---------------------------------------------------- |
+| `MissionAdvertisementCache` type + lookup methods exist | `discovery advertisement show` | exit 89 `NetworkSubstrateUnavailable` (gated on G23) |
+| `MissionInvitationCache` type + lookup methods exist    | `discovery invitation show`    | exit 89 `NetworkSubstrateUnavailable` (gated on G24) |
 
 ## Security Considerations
 
@@ -165,11 +166,11 @@ Per RFC-0011-h §Security Considerations Phase 5 rows:
 
 Per RFC-0011-h §Adversarial Review Phase 5 rows:
 
-| Threat                                                          | Severity | Mitigation                                                |
-| --------------------------------------------------------------- | -------- | --------------------------------------------------------- |
-| `discovery advertisement show` leaks TTL-expired advertisements | LOW      | `is_ttl_exceeded = true` surfaced per `tv-network-discovery-advert-2` |
-| `discovery invitation show` leaks signing bytes                  | LOW      | Signing bytes hex-encoded; no plaintext; no signature verification on CLI side (substrate-side) |
-| `--hops` arg overflow                                            | LOW      | clap u16 parse error pre-dispatch                          |
+| Threat                                                          | Severity | Mitigation                                                                                      |
+| --------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `discovery advertisement show` leaks TTL-expired advertisements | LOW      | `is_ttl_exceeded = true` surfaced per `tv-network-discovery-advert-2`                           |
+| `discovery invitation show` leaks signing bytes                 | LOW      | Signing bytes hex-encoded; no plaintext; no signature verification on CLI side (substrate-side) |
+| `--hops` arg overflow                                           | LOW      | clap u16 parse error pre-dispatch                                                               |
 
 ## Compatibility
 
@@ -179,14 +180,14 @@ Phase 5 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 6 test vectors total per RFC-0011-h §Test Vectors Phase 5 + tv-network-discovery-*:
 
-| ID | Subcommand                          | Scenario                                                |
-| -- | ----------------------------------- | ------------------------------------------------------- |
-| tv_net5_1 | `discovery advertisement show` | Existing advertisement + TTL OK → shown           |
-| tv_net5_2 | `discovery advertisement show` | TTL exceeded → `is_ttl_exceeded = true` surfaced  |
-| tv_net5_3 | `discovery advertisement show` | `--hops 65536` → clap u16 parse error (exit 2)    |
-| tv_net5_4 | `discovery invitation show`    | Existing invitation shown                          |
-| tv_net5_5 | `discovery invitation show`    | Missing invitation → exit 89 (pre-G24)            |
-| tv_net5_6 | `discovery advertisement show` | pre-G23 → exit 89 (substrate absent)               |
+| ID        | Subcommand                     | Scenario                                         |
+| --------- | ------------------------------ | ------------------------------------------------ |
+| tv_net5_1 | `discovery advertisement show` | Existing advertisement + TTL OK → shown          |
+| tv_net5_2 | `discovery advertisement show` | TTL exceeded → `is_ttl_exceeded = true` surfaced |
+| tv_net5_3 | `discovery advertisement show` | `--hops 65536` → clap u16 parse error (exit 2)   |
+| tv_net5_4 | `discovery invitation show`    | Existing invitation shown                        |
+| tv_net5_5 | `discovery invitation show`    | Missing invitation → exit 89 (pre-G24)           |
+| tv_net5_6 | `discovery advertisement show` | pre-G23 → exit 89 (substrate absent)             |
 
 ## Alternatives Considered
 
@@ -198,10 +199,10 @@ Phase 5 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 2 companion substrate missions. Both are Open as of 2026-09-20.
 
-| Companion mission                                       | Substrate addition                                                  | Layer |
-| ------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
-| `0011-h-s-a-discovery-advertisement-cache` (G23)        | `MissionAdvertisementCache` struct + `get(advertisement_id: &[u8; 32]) -> Option<MissionAdvertisement>` + `iter() -> impl Iterator<Item = (GatewayId, MissionAdvertisement)>` | B     |
-| `0011-h-s-a-discovery-invitation-cache` (G24)           | `MissionInvitationCache` struct + `get(invitation_id: &[u8; 32]) -> Option<MissionInvitation>` + `iter() -> impl Iterator<Item = (GatewayId, MissionInvitation)>` | B     |
+| Companion mission                                | Substrate addition                                                                                                                                                            | Layer |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `0011-h-s-a-discovery-advertisement-cache` (G23) | `MissionAdvertisementCache` struct + `get(advertisement_id: &[u8; 32]) -> Option<MissionAdvertisement>` + `iter() -> impl Iterator<Item = (GatewayId, MissionAdvertisement)>` | B     |
+| `0011-h-s-a-discovery-invitation-cache` (G24)    | `MissionInvitationCache` struct + `get(invitation_id: &[u8; 32]) -> Option<MissionInvitation>` + `iter() -> impl Iterator<Item = (GatewayId, MissionInvitation)>`             | B     |
 
 Phase 5 RFC carries 2 substrate additions; 0 substrate additions in this RFC itself (the 2 substrate additions are documented here but land via companion missions per substrate-first ordering).
 
@@ -216,11 +217,11 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 ## Key Files to Modify
 
-| File                                                                            | Action                        |
-| ------------------------------------------------------------------------------- | ----------------------------- |
-| `crates/octo-cli/src/main.rs::Commands::Network::Discovery`                     | ADD 1 umbrella action + 2 sub-actions |
-| `crates/octo-cli/src/commands/network.rs`                                       | ADD 2 dispatch fns + envelopes |
-| `crates/octo-network/src/discovery/` (companion G23 + G24)                      | Layer B substrate additions (NOT this RFC; companion missions) |
+| File                                                        | Action                                                         |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| `crates/octo-cli/src/main.rs::Commands::Network::Discovery` | ADD 1 umbrella action + 2 sub-actions                          |
+| `crates/octo-cli/src/commands/network.rs`                   | ADD 2 dispatch fns + envelopes                                 |
+| `crates/octo-network/src/discovery/` (companion G23 + G24)  | Layer B substrate additions (NOT this RFC; companion missions) |
 
 ## Future Work
 
@@ -234,8 +235,9 @@ Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abs
 
 ## Version History
 
-| Version | Date       | Notes                                                         |
-| ------- | ---------- | ------------------------------------------------------------- |
-| v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle          |
-| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 89 `NetworkSubstrateUnavailable` REUSED arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling row 89 (variant does NOT exist in `error.rs` today; lands during implementation) |
+| Version | Date       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 89 `NetworkSubstrateUnavailable` REUSED arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling row 89 (variant does NOT exist in `error.rs` today; lands during implementation)                                                                                                                                                                                                                  |
 | v0.2    | 2026-09-20 | R2 + R3 zero-finding 5-len DRY CLOSURE rounds: L1 substrate-faithfulness PASS (G23 missing `MissionAdvertisementCache` + G24 missing `MissionInvitationCache` cache types verified against `crates/octo-network/src/discovery/`); L2 cite hygiene PASS (RFC-0855 §8.2 Mission Advertisement anchor verified); L3 substrate-fault-class PASS (REUSED slot 89 confirmed); L4 operator-clarity PASS; L5 simplification PASS. Gate GREEN on attempt 1 of new pair. DRY CLOSED per RFC-0011-h precedent |
+| v0.3    | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-m year-stable per Layer B substrate convention. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-v directory convention.                                                                                                                                                                                                                                                                                                     |

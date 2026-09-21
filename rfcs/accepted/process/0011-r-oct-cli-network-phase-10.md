@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-r lands RFC-0011-h §Implementation Phases Phase 10. Two subcommands wire reputation list + show to the CLI. Substrate PARTIAL: `ReputationStore` trait exists at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) impls per RFC-0968 §3; this amendment adds 2 new trait methods (`list(filter)` + `peer_reputation(did)`) + companion stub mission (G13 `0011-h-s-a-reputation-store` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 15 test vectors.
+Accepted (2026-09-21) — RFC-0011-r promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 10 retroactive multi-round DRY gate GREEN at R4 zero per the existing closure chain culminating in `next 6588aaf2` (4 rounds R1 fail → R1.5 fix → R2 fail → R2.5 fix → R3 fail → R3.5 fix → R4 zero = GATE GREEN).
 
 > **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r (this RFC).
 
@@ -227,9 +227,10 @@ RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" d
 
 ## Version History
 
-| Version | Date       | Notes                                                |
-| ------- | ---------- | ---------------------------------------------------- |
-| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle |
+| Version | Date       | Notes                                                                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                                                                                                                             |
+| v0.2.0  | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-r year-stable per Layer B substrate convention. Retroactive multi-round DRY CLOSED at `next 6588aaf2` after 4 rounds (R1 fail → R1.5 fix → R2 fail → R2.5 fix → R3 fail → R3.5 fix → R4 zero = GATE GREEN). File moved from `rfcs/draft/process/` to `rfcs/accepted/process/` per accepted RFC-0011-v directory convention. |
 
 ## Cross-references
 

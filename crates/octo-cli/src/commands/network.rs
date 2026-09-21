@@ -267,6 +267,12 @@ pub enum NetworkAction {
         #[command(subcommand)]
         action: NetworkEnvelopeAction,
     },
+    /// Heartbeat probe (RFC-0011-v Phase 14 G17).
+    Heartbeat {
+        /// Heartbeat subcommand.
+        #[command(subcommand)]
+        action: NetworkHeartbeatAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -1296,6 +1302,54 @@ pub struct NetworkEnvelopeForwardOutput {
     pub dry_run: bool,
 }
 
+/// Heartbeat probe subcommand surface
+/// (RFC-0011-v Phase 14 G17).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkHeartbeatAction {
+    /// Probe a peer for reachability
+    /// (RFC-0011-v §Subcommand Taxonomy Phase 14 `heartbeat probe`).
+    Probe(HeartbeatProbeArgs),
+}
+
+/// `octo network heartbeat probe <peer_did>` arguments
+/// (RFC-0011-v §Subcommand Taxonomy Phase 14 `heartbeat probe`).
+/// Read-only subcommand; clap u16 overflow pre-dispatch rejection
+/// per Phase 5 RFC-0011-m precedent.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct HeartbeatProbeArgs {
+    /// Peer DID (e.g. `did:octo:example-peer`).
+    pub peer_did: String,
+    /// Probe timeout in milliseconds (clap u16; default 5000ms).
+    #[arg(long, default_value = "5000")]
+    pub timeout_ms: u16,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network heartbeat probe` output envelope
+/// (RFC-0011-v Phase 14 G17). Wraps the substrate
+/// `HeartbeatProbeResult` projection for CLI dispatch.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkHeartbeatProbeOutput {
+    /// Peer DID (echo).
+    pub peer_did: String,
+    /// Probe result label (`reachable` / `unreachable` / `timeout`).
+    pub result_label: String,
+    /// Round-trip-time in milliseconds (only present when
+    /// `result_label == "reachable"`).
+    pub rtt_ms: Option<u32>,
+    /// Unreachable reason label (only present when
+    /// `result_label == "unreachable"`).
+    pub unreachable_reason_label: Option<String>,
+    /// Unreachable reason detail (only present for
+    /// `UnreachableReason::Other`).
+    pub unreachable_reason_detail: Option<String>,
+    /// Probe timeout in milliseconds (echo).
+    pub timeout_ms: u16,
+}
+
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
 
 /// Mode (bootstrap transport) subcommand surface.
@@ -1971,6 +2025,9 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         NetworkAction::Envelope { action: env_act } => match env_act {
             NetworkEnvelopeAction::Inspect(args) => network_envelope_inspect(args, cli),
             NetworkEnvelopeAction::Forward(args) => network_envelope_forward(args, cli),
+        },
+        NetworkAction::Heartbeat { action: hb_act } => match hb_act {
+            NetworkHeartbeatAction::Probe(args) => network_heartbeat_probe(args, cli),
         },
     }
 }
@@ -3918,6 +3975,64 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
+/// `octo network heartbeat probe <peer_did> [--timeout-ms <N>]`
+/// handler (RFC-0011-v Phase 14 G17).
+///
+/// Read-only subcommand; delegates to the substrate
+/// `Heartbeat::probe()` module (Phase 14 additive type extension
+/// per RFC-0011-v). Real transport-level probe OUT OF SCOPE; the
+/// `heartbeat_probe_registry` marker returns false in this
+/// additive-type-only phase. clap u16 overflow pre-dispatch
+/// rejection per Phase 5 RFC-0011-m precedent.
+fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    if !heartbeat_probe_registry(cli) {
+        return Err(OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G17",
+            detail: "".to_string(),
+        });
+    }
+    let hb = octo_network::mon::heartbeat::Heartbeat;
+    let result = hb.probe(&args.peer_did, args.timeout_ms);
+    let (result_label, rtt_ms, reason_label, reason_detail) = match &result {
+        octo_network::mon::heartbeat::HeartbeatProbeResult::Reachable { rtt_ms } => {
+            ("reachable".to_string(), Some(*rtt_ms), None, None)
+        }
+        octo_network::mon::heartbeat::HeartbeatProbeResult::Unreachable { reason } => {
+            let (label, detail) = match reason {
+                octo_network::mon::heartbeat::UnreachableReason::InvalidPeerDid => {
+                    ("invalid_peer_did".to_string(), None)
+                }
+                octo_network::mon::heartbeat::UnreachableReason::NoTransportAdapter => {
+                    ("no_transport_adapter".to_string(), None)
+                }
+                octo_network::mon::heartbeat::UnreachableReason::AdapterRefused => {
+                    ("adapter_refused".to_string(), None)
+                }
+                octo_network::mon::heartbeat::UnreachableReason::Other(s) => {
+                    ("other".to_string(), Some(s.clone()))
+                }
+                _ => ("unknown".to_string(), None),
+            };
+            ("unreachable".to_string(), None, Some(label), detail)
+        }
+        octo_network::mon::heartbeat::HeartbeatProbeResult::Timeout => {
+            ("timeout".to_string(), None, None, None)
+        }
+    };
+    let env = OutputEnvelope::new(
+        "octo.network.heartbeat.probe.v1",
+        NetworkHeartbeatProbeOutput {
+            peer_did: args.peer_did.clone(),
+            result_label,
+            rtt_ms,
+            unreachable_reason_label: reason_label,
+            unreachable_reason_detail: reason_detail,
+            timeout_ms: args.timeout_ms,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
 /// Lookup the runtime envelope inspect marker
 /// (RFC-0011-u Phase 13 G16a). Returns false in this
 /// additive-type-only phase; per-extension Layer D
@@ -3931,6 +4046,14 @@ fn envelope_inspect_registry(_cli: &Octo) -> bool {
 /// additive-type-only phase; per-extension Layer D
 /// live envelope propagation init fn OUT OF SCOPE.
 fn envelope_forward_registry(_cli: &Octo) -> bool {
+    false
+}
+
+/// Lookup the runtime heartbeat probe marker
+/// (RFC-0011-v Phase 14 G17). Returns false in this
+/// additive-type-only phase; per-extension Layer D
+/// live transport-level probe init fn OUT OF SCOPE.
+fn heartbeat_probe_registry(_cli: &Octo) -> bool {
     false
 }
 
@@ -6057,6 +6180,72 @@ mod tests {
                 _ => panic!("expected Forward"),
             },
             _ => panic!("expected Envelope"),
+        }
+    }
+
+    // tv_net14_1: heartbeat probe default (no --timeout-ms) parses
+    // cleanly with default 5000ms timeout.
+    #[test]
+    fn tv_net14_1_heartbeat_probe_default_timeout_parses() {
+        let cli =
+            TestPhase10Cli::try_parse_from(["test", "heartbeat", "probe", "did:octo:example-peer"])
+                .expect("parse");
+        match cli.action {
+            NetworkAction::Heartbeat { action } => match action {
+                NetworkHeartbeatAction::Probe(args) => {
+                    assert_eq!(args.peer_did, "did:octo:example-peer");
+                    assert_eq!(args.timeout_ms, 5000);
+                    assert!(!args.json);
+                }
+            },
+            _ => panic!("expected Heartbeat"),
+        }
+    }
+
+    // tv_net14_2: heartbeat probe --timeout-ms 1000 parses cleanly.
+    #[test]
+    fn tv_net14_2_heartbeat_probe_timeout_ms_1000_parses() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "heartbeat",
+            "probe",
+            "did:octo:example-peer",
+            "--timeout-ms",
+            "1000",
+        ])
+        .expect("parse");
+        match cli.action {
+            NetworkAction::Heartbeat { action } => match action {
+                NetworkHeartbeatAction::Probe(args) => {
+                    assert_eq!(args.peer_did, "did:octo:example-peer");
+                    assert_eq!(args.timeout_ms, 1000);
+                }
+            },
+            _ => panic!("expected Heartbeat"),
+        }
+    }
+
+    // tv_net14_3: heartbeat probe --timeout-ms 65535 parses cleanly
+    // (clap u16 max per Phase 5 RFC-0011-m precedent).
+    #[test]
+    fn tv_net14_3_heartbeat_probe_timeout_ms_u16_max_parses() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "heartbeat",
+            "probe",
+            "did:octo:example-peer",
+            "--timeout-ms",
+            "65535",
+        ])
+        .expect("parse");
+        match cli.action {
+            NetworkAction::Heartbeat { action } => match action {
+                NetworkHeartbeatAction::Probe(args) => {
+                    assert_eq!(args.peer_did, "did:octo:example-peer");
+                    assert_eq!(args.timeout_ms, u16::MAX);
+                }
+            },
+            _ => panic!("expected Heartbeat"),
         }
     }
 }

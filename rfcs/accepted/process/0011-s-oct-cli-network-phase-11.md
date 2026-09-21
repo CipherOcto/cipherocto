@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-s lands RFC-0011-h §Implementation Phases Phase 11. One subcommand wires topology render via the existing `TopologyCommitment` substrate (EXTEND `mon/topology.rs` with `render()` method per Phase 5 precedent). Companion stub mission G14 + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 1 output envelope + 13 test vectors.
+Accepted (2026-09-21) — RFC-0011-s lands RFC-0011-h §Implementation Phases Phase 11. One subcommand wires topology render via the existing `TopologyCommitment` substrate (EXTEND `mon/topology.rs` with `render()` method per Phase 5 precedent). Companion stub mission G14 + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 1 output envelope + 13 test vectors.
+
+Promoted Draft → Accepted at `next 8d00e0ff` per RFC-0011-h promotion precedent (R1+R2 zero rounds gate pair at R4).
 
 > **Amendment chain:** Eleventh amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r. Phase 11 = RFC-0011-s (this RFC).
 

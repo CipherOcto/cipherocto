@@ -4,7 +4,7 @@
 
 Draft (2026-09-20) — RFC-0011-p lands RFC-0011-h §Implementation Phases Phase 8. Two subcommands wire quota router node observability to the CLI. Substrate absent: `QuotaRouterNode` struct + `RouterStatus` enum + `status()` + `peer_capacity()` methods MISSING from `crates/octo-network/src/quota/router_node.rs`; this amendment adds 1 companion substrate mission (G10 `0011-h-s-a-quota-router-node` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Eighth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (DRY CLOSED). Phase 7 = RFC-0011-o (DRY CLOSED). Phase 8 = RFC-0011-p (this RFC).
+> **Amendment chain:** Eighth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p (this RFC).
 
 ## Authors
 
@@ -31,13 +31,13 @@ RFC-0011-p lands the **quota router node observability** slice of RFC-0011-h §I
 - **RFC-0011-h §Subcommand Taxonomy** rows for `router status`, `router peers`
 - **RFC-0011-h §Error Handling** row 89 (slot 89 = `NetworkSubstrateUnavailable`, REUSED from Phase 2; no NEW variants in Phase 8 per user decision)
 - **RFC-0011-h §Substrate-Additions Companion Missions** row G10
-- **RFC-0011-i (Phase 1, DRY CLOSED)** — hard sequencing dependency for layer-C CLI dispatch pattern
-- **RFC-0011-j (Phase 2, DRY CLOSED)** — hard sequencing dependency for slot 89 substrate-absent pattern
-- **RFC-0011-k (Phase 3, DRY CLOSED)** — hard sequencing dependency for confirmation-flag pattern
-- **RFC-0011-l (Phase 4, DRY CLOSED)** — hard sequencing dependency for `--dry-run` + `--confirm-acknowledge` pastejacking defense pattern
-- **RFC-0011-m (Phase 5, DRY CLOSED)** — hard sequencing dependency for slot 89 REUSE pattern with substrate-absent companion gating
-- **RFC-0011-n (Phase 6, DRY CLOSED)** — hard sequencing dependency for closure artifact pattern
-- **RFC-0011-o (Phase 7, DRY CLOSED)** — hard sequencing dependency for `OutputEnvelope::new` wrapping pattern + BTreeMap determinism
+- **RFC-0011-i** — hard sequencing dependency for layer-C CLI dispatch pattern
+- **RFC-0011-j** — hard sequencing dependency for slot 89 substrate-absent pattern
+- **RFC-0011-k** — hard sequencing dependency for confirmation-flag pattern
+- **RFC-0011-l** — hard sequencing dependency for `--dry-run` + `--confirm-acknowledge` pastejacking defense pattern
+- **RFC-0011-m** — hard sequencing dependency for slot 89 REUSE pattern with substrate-absent companion gating
+- **RFC-0011-n** — hard sequencing dependency for closure artifact pattern
+- **RFC-0011-o** — hard sequencing dependency for `OutputEnvelope::new` wrapping pattern + BTreeMap determinism
 - **RFC-0870 Distributed Quota Router Network** — substrate anchor for `QuotaRouterNode` + `RouterStatus` + `SelectionState` semantics
 - **RFC-0863 General-Purpose Network Integration** — `NodeTransport` + `NetworkSender` + `NetworkReceiver` substrate anchor (downstream consumer; not in Phase 8 scope)
 - **Companion mission `0011-h-s-a-quota-router-node`** — Layer B substrate for `QuotaRouterNode` struct + `RouterStatus` enum + `status()` + `peer_capacity()` methods (G10 per RFC-0011-h row)
@@ -260,7 +260,7 @@ The slash bridge observability (Phase 7 RFC-0011-o) + quota router observability
 - RFC-0011-h §Confirmation Flag pastejacking defense pattern
 - RFC-0870 Distributed Quota Router Network
 - RFC-0863 General-Purpose Network Integration
-- RFC-0011-o (Phase 7, DRY CLOSED) — `OutputEnvelope::new` wrapping pattern + BTreeMap determinism + parse_32_byte_hex pastejacking defense pattern
+- RFC-0011-o — `OutputEnvelope::new` wrapping pattern + BTreeMap determinism + parse_32_byte_hex pastejacking defense pattern
 - [[cipherocto-design-principles]] §User extensibility (per-extension crate pattern) + §Stable Abstractions Principle + §No premature coupling
 - [[no-phantom-mission-pointers]] (substrate-first ordering invariant)
 - [[no-line-refs-anywhere]] (§section refs only)

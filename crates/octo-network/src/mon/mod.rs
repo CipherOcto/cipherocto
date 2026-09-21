@@ -16,6 +16,7 @@ pub mod forward_envelope;
 pub mod gossip;
 pub mod governance;
 pub mod governance_rotation;
+pub mod heartbeat;
 pub mod keys;
 pub mod lifecycle;
 pub mod liveness;

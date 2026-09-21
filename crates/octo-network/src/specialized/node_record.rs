@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn tv_phase9_substrate_2_specialized_node_record_field_round_trip() {
+    fn tv_phase9_substrate_2_specialized_node_record_field_assignment() {
         let did = HolderDid::new(
             "did:octo:0xababababababababababababababababababababababababababababababababab",
         );
@@ -246,10 +246,20 @@ mod tests {
             serde_json::to_string(&NodeClass::Orchestrator).expect("serialize Orchestrator"),
             "\"orchestrator\""
         );
-        // Deserialize roundtrip
+        // Deserialize roundtrip covers all 5 variants — a serde
+        // rename regression on any one variant will fail this test
+        let parsed_builder: NodeClass =
+            serde_json::from_str("\"builder\"").expect("parse lowercase builder");
+        assert_eq!(parsed_builder, NodeClass::Builder);
         let parsed_provider: NodeClass =
             serde_json::from_str("\"provider\"").expect("parse lowercase provider");
         assert_eq!(parsed_provider, NodeClass::Provider);
+        let parsed_storage: NodeClass =
+            serde_json::from_str("\"storage\"").expect("parse lowercase storage");
+        assert_eq!(parsed_storage, NodeClass::Storage);
+        let parsed_bandwidth: NodeClass =
+            serde_json::from_str("\"bandwidth\"").expect("parse lowercase bandwidth");
+        assert_eq!(parsed_bandwidth, NodeClass::Bandwidth);
         let parsed_orchestrator: NodeClass =
             serde_json::from_str("\"orchestrator\"").expect("parse lowercase orchestrator");
         assert_eq!(parsed_orchestrator, NodeClass::Orchestrator);

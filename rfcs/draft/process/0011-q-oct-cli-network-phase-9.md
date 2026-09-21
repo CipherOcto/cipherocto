@@ -199,7 +199,7 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 | --------- | --------------- | -------------------------------------------------------------------------- |
 | tv_net9_1 | CLI parse       | `node show <64-hex node_id>` parses cleanly with required hex arg           |
 | tv_net9_2 | CLI parse       | `node show <64-hex node_id> --json` flag parses cleanly                     |
-| tv_net9_3 | substrate trait | substrate struct field round-trip: `node_class_label` projection + `creation_epoch` + `holder_did: None` + `metadata` BTreeMap key order |
+| tv_net9_3 | substrate trait | substrate struct field round-trip: `node_class_label` projection + `creation_epoch` + `holder_did: None` + `metadata` BTreeMap value lookup (key-order assertion lives in substrate-side `tv_phase9_substrate_4_btreemap_deterministic_ordering`) |
 | tv_net9_4 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply --confirm-acknowledge` parses cleanly |
 | tv_net9_5 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply` without `--confirm-acknowledge` rejected at parse-time |
 | tv_net9_6 | pastejacking    | `node bind <mixed-case hex>` rejected by `parse_32_byte_hex` shared helper  |

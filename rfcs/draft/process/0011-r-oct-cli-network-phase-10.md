@@ -162,14 +162,16 @@ Layer B only. `#[non_exhaustive]` not needed on `ReputationFilter` (closed enum)
 
 ### Test Vectors (RFC-0011-h §Test Vectors Phase 10)
 
-| Vector     | Surface         | Coverage                                                                |
-| ---------- | --------------- | ----------------------------------------------------------------------- |
-| tv_net10_1 | CLI parse       | `reputation list` parses cleanly with no args                           |
-| tv_net10_2 | CLI parse       | `reputation list --filter all` flag parses cleanly                      |
-| tv_net10_3 | substrate trait | `reputation list` envelope projection is substrate-faithful (empty Vec) |
-| tv_net10_4 | CLI parse       | `reputation show <peer_did_hex>` parses cleanly                         |
-| tv_net10_5 | CLI parse       | `reputation show --json` flag parses cleanly                            |
-| tv_net10_6 | pastejacking    | `reputation list` accepts uppercase-only filter; rejects malformed      |
+| Vector     | Surface      | Coverage                                                                                  |
+| ---------- | ------------ | ----------------------------------------------------------------------------------------- |
+| tv_net10_1 | CLI parse    | `reputation list --filter all` parses cleanly with `All` filter + `None` threshold         |
+| tv_net10_2 | CLI parse    | `reputation list --filter above-score --threshold 100` parses with composed args           |
+| tv_net10_3 | handler rule | `reputation list --filter above-score` WITHOUT `--threshold` rejected by handler validation (`ConfirmationRequired`) — args-construction contract test (parse-time enforcement lives in handler per Phase 7 RFC-0011-o precedent) |
+| tv_net10_4 | CLI parse    | `reputation show <did:octo:0x<104-lowercase-hex>>` parses cleanly                          |
+| tv_net10_5 | pastejacking | `reputation show <mixed-case hex peer_did>` rejected by `parse_reputation_peer_did`       |
+| tv_net10_6 | pastejacking | `reputation show <uppercase-only hex peer_did>` accepted by `parse_reputation_peer_did`   |
+
+Substrate-side coverage (Phase 10 substrate trait extension) lives in `crates/octo-reputation/src/store/memory.rs` + `stoolap.rs` + `compat/mod.rs` test modules as `tv_phase10_substrate_*` (e.g., `tv_phase10_substrate_1_reputation_filter_variants`, `tv_phase10_substrate_3_in_memory_list_returns_empty_by_default`). Substrate tests verify trait behavior; CLI tests verify clap parsing + handler dispatch to the trait boundary (per Phase 5 RFC-0011-m precedent).
 
 Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + handler dispatch to the trait boundary; substrate tests cover trait behavior (stub impls return empty).
 

@@ -1899,6 +1899,8 @@ mod stub {
             "query_anchors_by_controller_id" => {
                 "stoolap_backend_unimplemented:query_anchors_by_controller_id"
             }
+            "list" => "stoolap_backend_unimplemented:list",
+            "peer_reputation" => "stoolap_backend_unimplemented:peer_reputation",
             _ => "stoolap_backend_unimplemented",
         }))
     }

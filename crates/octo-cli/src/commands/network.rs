@@ -6079,34 +6079,51 @@ mod tests {
     }
 
     // tv_net10_3: reputation list --filter above-score WITHOUT
-    // --threshold is rejected at parse time. We verify this
-    // at the args-construction level (clap does not enforce
-    // threshold) but the handler validation does — we test
-    // that the required threshold validation lives at the
-    // boundary. Since the validation is in the handler, we
-    // document the contract here rather than invoke the
-    // full handler (which requires a constructed Octo).
+    // --threshold is rejected by the handler's threshold
+    // validation rule. Clap does NOT enforce threshold at
+    // parse-time (threshold is an Option<u32>); the handler
+    // enforces it BEFORE the substrate-unavailability guard
+    // per RFC-0011-h §Confirmation Flag pattern. Verifies
+    // that the handler returns ConfirmationRequired when
+    // filter is AboveScore and threshold is None.
     #[test]
     fn tv_net10_3_reputation_list_above_score_requires_threshold() {
-        // The handler validation rule: above-score +
-        // below-score REQUIRE --threshold. Documented in
-        // ReputationListArgs doc comment. Confirmed via the
-        // DispatchDocCheck: the validation lives BEFORE the
-        // substrate-unavailability guard (correct ordering:
-        // operator input error first, then substrate
-        // fallback).
-        let args = ReputationListArgs {
-            filter: ReputationFilterKind::AboveScore,
-            threshold: None,
-            json: false,
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "reputation",
+            "list",
+            "--filter",
+            "above-score",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(a) => a,
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
         };
-        // Args constructed; handler will reject the None
-        // threshold by contract.
-        assert!(
-            args.threshold.is_none(),
-            "threshold must be None to trigger the handler's ConfirmationRequired"
-        );
-        assert!(matches!(args.filter, ReputationFilterKind::AboveScore));
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "reputation",
+            "list",
+            "--filter",
+            "above-score",
+        ])
+        .expect("runtime parse");
+        let result = network_reputation_list(&args, &runtime);
+        match result {
+            Err(OctoCliError::ConfirmationRequired { command }) => {
+                assert!(
+                    command.contains("threshold required"),
+                    "ConfirmationRequired command must mention threshold required, got {command:?}"
+                );
+            }
+            other => panic!(
+                "expected ConfirmationRequired with threshold required detail, got {other:?}"
+            ),
+        }
     }
 
     // tv_net10_4: reputation show parses with canonical

@@ -627,7 +627,6 @@ impl ReputationStore for InMemoryReputationStore {
         // phase. Per-extension impl crates (Layer D) provide real
         // implementations. Returns empty Vec per RFC-0011-r
         // §Substrate Mapping Table Phase 10.
-        let _inner = self.inner.read().await;
         Ok(Vec::new())
     }
 

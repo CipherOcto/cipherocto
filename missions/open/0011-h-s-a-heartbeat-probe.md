@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice landed at `next ffd3b9bf` (Heartbeat + HeartbeatProbeResult + UnreachableReason additive types + probe method on NEW module mon/heartbeat.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 2bb4bfb2`. Stub fill-in at `next d7be389d`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
+Completed (2026-09-20) — Substrate slice landed at `next ffd3b9bf` (Heartbeat + HeartbeatProbeResult + UnreachableReason additive types + probe method on NEW module mon/heartbeat.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 2bb4bfb2`. Stub fill-in at `next d7be389d`. Paired-YAML Claimed transition at `next 64e8dd4c`. Paired-YAML Completed transition paired with CLI mission YAML `0011-h-network-heartbeat` CREATION at CLI dispatch slice `next f622434c` per no-phantom-mission-pointers pairing invariant.
 
 ## RFC
 

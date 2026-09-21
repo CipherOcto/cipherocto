@@ -143,9 +143,10 @@ pub fn verify_mission_scope(
 /// Phase 12 G15 per RFC-0011-t §Substrate Mapping Table. Operates on
 /// the in-memory snapshot of the gossip state; live gossip adapter
 /// OUT OF SCOPE for Phase 12. Per-extension impl crates (Layer D)
-/// provide real gossip adapters in follow-on missions.
-/// BTreeMap-based deterministic iteration ordering preserved per
-/// RFC-0011-h §Output Envelope determinism.
+/// provide real gossip adapters in follow-on missions. Scalar
+/// field-order determinism preserved per RFC-0011-h §Output Envelope
+/// determinism (no HashMap/BTreeMap iteration; zero collection
+/// dependencies — counters are plain `u64` fields).
 #[derive(Clone, Debug)]
 pub struct Gossip {
     mission_id: MissionId,
@@ -162,7 +163,7 @@ pub struct Gossip {
 /// Phase 12 G15 per RFC-0011-t §Substrate Mapping Table. Returned by
 /// `Gossip::stats()` for substrate-faithful projection to the CLI
 /// dispatch layer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GossipStats {
     pub mission_id_hex: String,
     pub peers_reachable: u64,
@@ -175,6 +176,15 @@ pub struct GossipStats {
 
 impl Gossip {
     /// Construct a new `Gossip` snapshot from explicit counters.
+    ///
+    /// `anti_entropy_rounds` is plumbed through the substrate API
+    /// but caller-stubbed at 0 in this phase per RFC-0011-t
+    /// §Substrate-faithfulness. The real anti-entropy counter
+    /// (RFC-0855 §8.2) is OUT OF SCOPE for Phase 12 and lands
+    /// in a follow-on Layer D adapter mission; until then
+    /// CLI callers MUST pass `0` for this slot so the substrate
+    /// contract remains substrate-faithful (no premature counter
+    /// semantics committed in Layer B).
     pub fn new(
         mission_id: MissionId,
         peers_reachable: u64,

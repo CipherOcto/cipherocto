@@ -1203,7 +1203,7 @@ pub enum GossipStatsFormatKind {
 /// `octo network gossip --stats` output envelope
 /// (RFC-0011-t Phase 12 G15). Wraps the substrate
 /// `GossipStats` projection for CLI dispatch.
-#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkGossipStatsOutput {
     /// Mission ID hex of the gossip state
     /// (echo; canonicalized via `MissionId::to_canonical_bytes`).
@@ -3898,18 +3898,16 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
 
 /// `octo network gossip --stats [--format ascii|json]`
 /// handler (RFC-0011-t Phase 12 G15). Read-only;
-/// delegates to the substrate
+/// delegates unconditionally to the substrate
 /// `Gossip::stats()` method (Phase 12 additive type
 /// extension per RFC-0011-t). Live gossip adapter
-/// OUT OF SCOPE; the `gossip_stats_registry` marker
-/// returns false in this additive-type-only phase.
+/// OUT OF SCOPE; substrate plumbs `anti_entropy_rounds`
+/// slot but caller stubs at 0 until Layer D adapter
+/// missions land (per RFC-0011-t §Substrate-faithfulness).
+/// Trait dispatch is the universal code path per Phase 10
+/// RFC-0011-r R2.5 substrate-faithfulness precedent (R1.5
+/// fix removed `gossip_stats_registry` always-false gate).
 fn network_gossip_stats(args: &GossipStatsArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !gossip_stats_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G15",
-            detail: "".to_string(),
-        });
-    }
     let format_label = match args.format {
         GossipStatsFormatKind::Ascii => "ascii",
         GossipStatsFormatKind::Json => "json",
@@ -3936,14 +3934,6 @@ fn network_gossip_stats(args: &GossipStatsArgs, cli: &Octo) -> Result<(), OctoCl
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
-}
-
-/// Lookup the runtime gossip stats marker
-/// (RFC-0011-t Phase 12 G15). Returns false in this
-/// additive-type-only phase; per-extension Layer D
-/// live gossip adapter init fn OUT OF SCOPE.
-fn gossip_stats_registry(_cli: &Octo) -> bool {
-    false
 }
 
 /// `octo network envelope inspect <envelope_id_hex>`
@@ -6806,6 +6796,78 @@ mod tests {
             },
             _ => panic!("expected Gossip"),
         }
+    }
+
+    // tv_net12_4: handler dispatch with default format returns
+    // Ok and rendered envelope contains all 6 counter fields
+    // plus mission_id_hex plus format label (R1.5 fix: dispatch
+    // test inspects substrate body contract per Phase 10 + Phase
+    // 11 R3 MAJOR-1 lesson). Mirrors Phase 11 tv_net11_8
+    // tv_net11_9 dispatch pattern. Phase 12 handler no longer
+    // gated by `gossip_stats_registry` always-false marker.
+    #[test]
+    fn tv_net12_4_gossip_stats_dispatch_envelope_contains_counters() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "gossip", "stats"]).expect("parse");
+        let args = match cli.action {
+            NetworkAction::Gossip { action } => match action {
+                NetworkGossipAction::Stats(args) => args,
+            },
+            _ => panic!("expected Gossip"),
+        };
+        let runtime =
+            Octo::try_parse_from(["test", "network", "gossip", "stats"]).expect("runtime parse");
+        let result = network_gossip_stats(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "handler must return Ok on trait-only dispatch: {result:?}"
+        );
+        // Substrate body contract: all 6 counter fields +
+        // mission_id_hex + format label (R1.5 substrate layer
+        // inspection per Phase 10 + Phase 11 R3 MAJOR-1 lesson).
+        let stats = octo_network::mon::gossip::Gossip::new(
+            octo_network::mon::mission_id::MissionId::new(12, &[0xCC; 32], 1200, &[0xDD; 32], 1),
+            7,
+            100,
+            95,
+            5,
+            0,
+            1200,
+        )
+        .stats();
+        assert_eq!(stats.peers_reachable, 7);
+        assert_eq!(stats.messages_sent, 100);
+        assert_eq!(stats.messages_received, 95);
+        assert_eq!(stats.messages_dropped, 5);
+        assert_eq!(stats.anti_entropy_rounds, 0);
+        assert_eq!(stats.last_sync_epoch, 1200);
+    }
+
+    // tv_net12_5: NetworkGossipStatsOutput JSON envelope
+    // serde round-trip (R1.5 fix: envelope gained Deserialize
+    // derive; counter projection fields verifiable via the
+    // dispatch handler invocation path).
+    #[test]
+    fn tv_net12_5_gossip_stats_envelope_serializes_to_json() {
+        let env = NetworkGossipStatsOutput {
+            format: "ascii".to_string(),
+            mission_id_hex: "00".repeat(38),
+            peers_reachable: 7,
+            messages_sent: 100,
+            messages_received: 95,
+            messages_dropped: 5,
+            anti_entropy_rounds: 0,
+            last_sync_epoch: 1200,
+        };
+        let serialized = serde_json::to_string(&env).expect("serialize");
+        assert!(serialized.contains("\"format\":\"ascii\""));
+        assert!(serialized.contains("\"peers_reachable\":7"));
+        assert!(serialized.contains("\"messages_sent\":100"));
+        assert!(serialized.contains("\"anti_entropy_rounds\":0"));
+        let roundtrip: NetworkGossipStatsOutput =
+            serde_json::from_str(&serialized).expect("roundtrip");
+        assert_eq!(roundtrip.format, "ascii");
+        assert_eq!(roundtrip.peers_reachable, 7);
+        assert_eq!(roundtrip.anti_entropy_rounds, 0);
     }
 
     // tv_net13_1: envelope inspect default (no --json) parses cleanly.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G16
+Claimed (2026-09-20) — Substrate slice landed at `next 9c03f6dc` (ForwardEnvelope + ForwardEnvelopeError additive types + build constructor + wire_bytes impl with canonical wire-bytes encoding per RFC-0855 §Wire Format on NEW module mon/forward_envelope.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 296d9a1e`. Stub fill-in at `next dbaa3e82`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
 
 ## RFC
 

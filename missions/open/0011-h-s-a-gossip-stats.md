@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice landed at `next c07ad375` (Gossip + GossipStats additive types + stats() impl + 4 substrate tests tv_phase12_substrate_1..4 on existing mon/gossip.rs module per Phase 5 RFC-0011-m EXTEND-existing precedent). RFC draft at `next 59bb39b4`. Stub fill-in at `next 8244e969`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
+Completed (2026-09-20) — Substrate slice landed at `next c07ad375` (Gossip + GossipStats additive types + stats() impl + 4 substrate tests tv_phase12_substrate_1..4 on existing mon/gossip.rs module per Phase 5 RFC-0011-m EXTEND-existing precedent). CLI dispatch slice at `next b0cc47cc`. RFC draft at `next 59bb39b4`. Stub fill-in at `next 8244e969`. Paired-YAML Claimed transition at `next 2a12bef4`. CLI mission YAML `0011-h-network-gossip` CREATED at CLI dispatch slice time per user decision (paired with this transition).
 
 ## RFC
 

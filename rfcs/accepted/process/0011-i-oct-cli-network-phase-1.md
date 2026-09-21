@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-i lands RFC-0011-h §Implementation Phases Phase 1. Read-only observability surface: `peers list`, `peers get <gateway_id>`, `identity show`, `trust-graph render`, `governance rotation status`. Substrate already present at `crates/octo-network/src/{gdp, dot, mon}/`; this amendment lands only Layer C CLI dispatch + 4 OctoCliError variants + 5 output envelopes + 13 test vectors.
+Accepted (2026-09-21) — RFC-0011-i promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 1 retroactive multi-round DRY gate GREEN at R3 zero per the existing closure chain culminating in `next c2fee8f3` (Phase 1 IMPLEMENTATION COMPLETE). Read-only observability surface: `peers list`, `peers get <gateway_id>`, `identity show`, `trust-graph render`, `governance rotation status`. Substrate already present at `crates/octo-network/src/{gdp, dot, mon}/`; this amendment lands only Layer C CLI dispatch + 4 OctoCliError variants + 5 output envelopes + 13 test vectors.
 
 > **Amendment chain:** First amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phases 2-6 land via RFC-0011-j through RFC-0011-n respectively. Substrate already verified at RFC-0011-h closure (commit `next 638c8ac7`).
 
@@ -409,8 +409,9 @@ Per RFC-0011-h §Implementation Phases ordering, Phase 1 is highest priority bec
 
 ## Version History
 
-| Version | Date       | Notes                                                                                                                                                                                                                             |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-09-20 | Initial draft. Phase 1 scope established; substrate verified at RFC-0011-h closure. Pending 5-len DRY CLOSURE cycle.                                                                                                              |
-| v0.2    | 2026-09-20 | R1.5 fix sweep: F1 HIGH cite hygiene (substrate-local anchor for trust-graph render); F2 CRITICAL companion mission (NEW `0011-h-s-a-local-gateway-identity-state`); F3 LOW arg naming (standardize `gateway_class`). Pending R2. |
+| Version | Date       | Notes                                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-09-20 | Initial draft. Phase 1 scope established; substrate verified at RFC-0011-h closure. Pending 5-len DRY CLOSURE cycle.                                                                                                                                                                           |
+| v0.2    | 2026-09-20 | R1.5 fix sweep: F1 HIGH cite hygiene (substrate-local anchor for trust-graph render); F2 CRITICAL companion mission (NEW `0011-h-s-a-local-gateway-identity-state`); F3 LOW arg naming (standardize `gateway_class`). Pending R2.                                                              |
 | v0.3    | 2026-09-20 | R2 + R3 zero-finding 5-len DRY CLOSURE rounds: L1 substrate-faithfulness PASS (companion substrate verified); L2 cite hygiene PASS; L3 substrate-fault-class PASS; L4 operator-clarity PASS; L5 simplification PASS. Gate GREEN on attempt 1 of new pair. DRY CLOSED per RFC-0011-h precedent. |
+| v0.4    | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-i year-stable per Layer B substrate convention. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-u directory convention.                                                                                                 |

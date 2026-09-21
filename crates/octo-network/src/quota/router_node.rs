@@ -80,27 +80,6 @@ pub trait QuotaRouterNodeAccess: Send + Sync {
     fn last_sync_epoch(&self) -> u64;
 }
 
-impl QuotaRouterNodeAccess for QuotaRouterNode {
-    fn node_id(&self) -> [u8; 32] {
-        self.node_id
-    }
-    fn status(&self) -> RouterStatus {
-        self.status
-    }
-    fn peer_capacity(&self, peer_node_id: &[u8; 32]) -> Option<u64> {
-        self.peer_capacities.get(peer_node_id).copied()
-    }
-    fn reachable_peer_count(&self) -> usize {
-        self.peer_capacities.values().filter(|&&c| c > 0).count()
-    }
-    fn total_peer_count(&self) -> usize {
-        self.peer_capacities.len()
-    }
-    fn last_sync_epoch(&self) -> u64 {
-        self.last_sync_epoch
-    }
-}
-
 impl Default for QuotaRouterNode {
     /// Default node state is Offline with empty peer
     /// capacities (substrate-faithful projection of a
@@ -153,6 +132,40 @@ impl QuotaRouterNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// In-memory `QuotaRouterNodeAccess` impl for testing.
+    /// Per-extension crates provide their own impls in
+    /// Layer D (OUT OF SCOPE for this module, per RFC-0011-p
+    /// §Layer discipline + [[cipherocto-design-principles]]
+    /// §User extensibility).
+    struct InMemoryQuotaRouter {
+        node: QuotaRouterNode,
+    }
+
+    impl QuotaRouterNodeAccess for InMemoryQuotaRouter {
+        fn node_id(&self) -> [u8; 32] {
+            self.node.node_id
+        }
+        fn status(&self) -> RouterStatus {
+            self.node.status
+        }
+        fn peer_capacity(&self, peer_node_id: &[u8; 32]) -> Option<u64> {
+            self.node.peer_capacities.get(peer_node_id).copied()
+        }
+        fn reachable_peer_count(&self) -> usize {
+            self.node
+                .peer_capacities
+                .values()
+                .filter(|&&c| c > 0)
+                .count()
+        }
+        fn total_peer_count(&self) -> usize {
+            self.node.peer_capacities.len()
+        }
+        fn last_sync_epoch(&self) -> u64 {
+            self.node.last_sync_epoch
+        }
+    }
 
     #[test]
     fn test_router_node_default_status_is_offline() {
@@ -232,5 +245,45 @@ mod tests {
         assert_eq!(healthy, "\"healthy\"");
         assert_eq!(degraded, "\"degraded\"");
         assert_eq!(offline, "\"offline\"");
+    }
+
+    #[test]
+    fn test_in_memory_router_trait_dispatch() {
+        let mut peer_capacities = BTreeMap::new();
+        peer_capacities.insert([0x01u8; 32], 100u64);
+        peer_capacities.insert([0x02u8; 32], 0u64);
+        let inner = QuotaRouterNode {
+            node_id: [0x42u8; 32],
+            status: RouterStatus::Degraded,
+            peer_capacities,
+            last_sync_epoch: 99,
+        };
+        let router = InMemoryQuotaRouter { node: inner };
+
+        assert_eq!(<InMemoryQuotaRouter as QuotaRouterNodeAccess>::node_id(&router), [0x42u8; 32]);
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::status(&router),
+            RouterStatus::Degraded,
+        );
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::peer_capacity(&router, &[0x01u8; 32]),
+            Some(100),
+        );
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::peer_capacity(&router, &[0xFFu8; 32]),
+            None,
+        );
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::reachable_peer_count(&router),
+            1,
+        );
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::total_peer_count(&router),
+            2,
+        );
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::last_sync_epoch(&router),
+            99,
+        );
     }
 }

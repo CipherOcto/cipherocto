@@ -79,42 +79,70 @@ impl TopologyCommitment {
     /// `GraphFormat` enum from `mon::trust_graph`
     /// (Phase 1 0851p-a-trust-ux import); zero NEW
     /// types.
-    pub fn render(&self, format: crate::mon::trust_graph::GraphFormat) -> String {
+    pub fn render(
+        &self,
+        format: crate::mon::trust_graph::GraphFormat,
+        depth: Option<u32>,
+    ) -> String {
         match format {
-            crate::mon::trust_graph::GraphFormat::Ascii => self.render_ascii(),
-            crate::mon::trust_graph::GraphFormat::Dot => self.render_dot(),
+            crate::mon::trust_graph::GraphFormat::Ascii => self.render_ascii(depth),
+            crate::mon::trust_graph::GraphFormat::Dot => self.render_dot(depth),
         }
     }
 
     /// Private ASCII rendering helper for
     /// `TopologyCommitment::render`. Produces a single
     /// label line per RFC-0855 §5.1 topology-model
-    /// field. Deterministic across calls (no HashMap
+    /// field, followed by a `depth={N}` (or
+    /// `depth=full`) footer line and an empty-topology
+    /// stub marker line. The depth footer surfaces the
+    /// `--depth` cap value in operator-visible output
+    /// so the cap is never silently dropped (Phase 11
+    /// trait-only dispatch does not depth-filter an
+    /// in-memory snapshot; the value is forwarded for
+    /// future Layer D live-topology adapters). The
+    /// empty-state marker mirrors the Phase 1
+    /// `TrustGraph::render_ascii` empty-state sentinel
+    /// precedent. Deterministic across calls (no HashMap
     /// iteration, no randomness).
-    fn render_ascii(&self) -> String {
+    fn render_ascii(&self, depth: Option<u32>) -> String {
         let label = format!(
-            "topology mission_id={} model={:?} epoch={}",
+            "topology mission_id={} model={:?} epoch={}\n",
             hex::encode(self.mission_id.to_canonical_bytes()),
             self.model,
             self.epoch,
         );
         let mut out = String::new();
         out.push_str(&label);
-        out.push('\n');
+        let depth_footer = match depth {
+            Some(d) => format!("depth={d}\n"),
+            None => "depth=full\n".to_string(),
+        };
+        out.push_str(&depth_footer);
+        out.push_str("(empty topology — live source adapter required for Phase 11)\n");
         out
     }
 
     /// Private DOT rendering helper for
     /// `TopologyCommitment::render`. Produces a
     /// `digraph G { ... }` block with deterministic
-    /// `mission_id` key order. The model label is DOT-
-    /// escaped via `escape_dot` (mirrors the Phase 1
-    /// `TrustGraph::render_dot` convention at
-    /// `mon::trust_graph::escape_dot`). Pipe output
-    /// to `dot -Tpng` or `dot -Tsvg` for visualization.
-    fn render_dot(&self) -> String {
+    /// `mission_id` key order. The depth footer and
+    /// empty-topology marker are embedded as DOT
+    /// comments INSIDE the digraph block so the output
+    /// remains valid DOT (bypass `dot -Tpng` /
+    /// `dot -Tsvg` to verify). The model label is
+    /// DOT-escaped via `escape_dot` (mirrors the
+    /// Phase 1 `TrustGraph::render_dot` convention at
+    /// `mon::trust_graph::escape_dot`).
+    fn render_dot(&self, depth: Option<u32>) -> String {
         let mut out = String::new();
         out.push_str("digraph G {\n");
+        let depth_comment = match depth {
+            Some(d) => format!("  // depth={d}\n"),
+            None => "  // depth=full\n".to_string(),
+        };
+        out.push_str(&depth_comment);
+        out.push_str("  // (empty topology — live source adapter required for Phase 11)\n");
         out.push_str(&format!(
             "  mission_{} [label=\"{}\"];\n",
             hex::encode(self.mission_id.to_canonical_bytes()),
@@ -239,7 +267,7 @@ mod tests {
     #[test]
     fn tv_phase11_substrate_1_render_ascii_contains_label() {
         let tc = phase11_commitment();
-        let out = tc.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
         assert!(
             out.starts_with("topology mission_id="),
             "ascii render must start with `topology mission_id=`, got {out:?}"
@@ -251,7 +279,7 @@ mod tests {
     #[test]
     fn tv_phase11_substrate_2_render_dot_is_digraph() {
         let tc = phase11_commitment();
-        let out = tc.render(crate::mon::trust_graph::GraphFormat::Dot);
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Dot, None);
         assert!(out.starts_with("digraph G {"));
         assert!(out.trim_end().ends_with('}'));
     }
@@ -260,10 +288,10 @@ mod tests {
     fn tv_phase11_substrate_3_render_deterministic_across_calls() {
         let tc1 = phase11_commitment();
         let tc2 = phase11_commitment();
-        let ascii1 = tc1.render(crate::mon::trust_graph::GraphFormat::Ascii);
-        let ascii2 = tc2.render(crate::mon::trust_graph::GraphFormat::Ascii);
-        let dot1 = tc1.render(crate::mon::trust_graph::GraphFormat::Dot);
-        let dot2 = tc2.render(crate::mon::trust_graph::GraphFormat::Dot);
+        let ascii1 = tc1.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
+        let ascii2 = tc2.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
+        let dot1 = tc1.render(crate::mon::trust_graph::GraphFormat::Dot, None);
+        let dot2 = tc2.render(crate::mon::trust_graph::GraphFormat::Dot, None);
         assert_eq!(ascii1, ascii2);
         assert_eq!(dot1, dot2);
     }
@@ -277,8 +305,8 @@ mod tests {
             TopologyCommitment::compute(mid, TopologyModel::Mesh, [0x11; 32], [0x22; 32], 1234);
         let tc_swarm =
             TopologyCommitment::compute(mid, TopologyModel::Swarm, [0x11; 32], [0x22; 32], 1234);
-        let a_mesh = tc_mesh.render(crate::mon::trust_graph::GraphFormat::Ascii);
-        let a_swarm = tc_swarm.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        let a_mesh = tc_mesh.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
+        let a_swarm = tc_swarm.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
         assert!(
             a_mesh.contains("model=Mesh"),
             "mesh render must label model=Mesh"
@@ -286,6 +314,99 @@ mod tests {
         assert!(
             a_swarm.contains("model=Swarm"),
             "swarm render must label model=Swarm"
+        );
+    }
+
+    // tv_phase11_substrate_5: render_ascii body contains
+    // `depth={N}` footer when `depth=Some(N)` (R3.5
+    // substrate contract per RFC-0011-s
+    // §Substrate-faithfulness). Closes R3 MAJOR-1
+    // (Phase 10 R3 MAJOR-1 lesson) by verifying the
+    // body contract at the substrate layer (not just
+    // `is_ok()` at the dispatch layer).
+    #[test]
+    fn tv_phase11_substrate_5_render_ascii_depth_footer_in_body() {
+        let tc = phase11_commitment();
+        let out_some = tc.render(crate::mon::trust_graph::GraphFormat::Ascii, Some(5));
+        let out_none = tc.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
+        assert!(
+            out_some.contains("depth=5"),
+            "ascii render with depth=Some(5) must contain `depth=5` footer, got {out_some:?}"
+        );
+        assert!(
+            out_none.contains("depth=full"),
+            "ascii render with depth=None must contain `depth=full` footer, got {out_none:?}"
+        );
+    }
+
+    // tv_phase11_substrate_6: render_dot body contains
+    // `// depth=N` comment INSIDE the digraph block so
+    // output remains valid DOT. The depth comment must
+    // appear BEFORE the closing `}` (R3.5 substrate
+    // contract; closes R3 bugs MINOR-1 DOT contamination
+    // regression that appended depth after the closing
+    // brace, breaking `dot -Tpng` / `dot -Tsvg`).
+    #[test]
+    fn tv_phase11_substrate_6_render_dot_depth_comment_inside_digraph() {
+        let tc = phase11_commitment();
+        let out_some = tc.render(crate::mon::trust_graph::GraphFormat::Dot, Some(5));
+        let out_none = tc.render(crate::mon::trust_graph::GraphFormat::Dot, None);
+        assert!(
+            out_some.starts_with("digraph G {"),
+            "dot render must start with `digraph G {{`, got {out_some:?}"
+        );
+        assert!(
+            out_some.contains("// depth=5"),
+            "dot render with depth=Some(5) must contain `// depth=5` comment, got {out_some:?}"
+        );
+        assert!(
+            out_none.contains("// depth=full"),
+            "dot render with depth=None must contain `// depth=full` comment, got {out_none:?}"
+        );
+        // Closing brace MUST come after the depth comment
+        // (DOT contamination regression guard: R3.5
+        // appended the comment INSIDE the digraph block,
+        // not after the closing brace).
+        let brace_pos = out_some.rfind('}').unwrap();
+        let comment_pos = out_some.find("// depth=5").unwrap();
+        assert!(
+            comment_pos < brace_pos,
+            "depth comment must appear BEFORE closing brace, got brace at {brace_pos} comment at {comment_pos}"
+        );
+    }
+
+    // tv_phase11_substrate_7: render_ascii body contains
+    // empty-topology stub marker line (R3.5 substrate
+    // contract; mirrors Phase 1 TrustGraph::render_ascii
+    // empty-state sentinel precedent).
+    #[test]
+    fn tv_phase11_substrate_7_render_ascii_empty_topology_marker() {
+        let tc = phase11_commitment();
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Ascii, None);
+        assert!(
+            out.contains("empty topology"),
+            "ascii render must contain empty-topology marker, got {out:?}"
+        );
+    }
+
+    // tv_phase11_substrate_8: render_dot body contains
+    // empty-topology marker as a DOT comment inside the
+    // digraph (R3.5 substrate contract; mirrors
+    // tv_phase11_substrate_6 regression guard for the
+    // empty marker position).
+    #[test]
+    fn tv_phase11_substrate_8_render_dot_empty_topology_marker_as_comment() {
+        let tc = phase11_commitment();
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Dot, None);
+        assert!(
+            out.contains("// (empty topology"),
+            "dot render must contain `// (empty topology ...)` comment, got {out:?}"
+        );
+        let brace_pos = out.rfind('}').unwrap();
+        let comment_pos = out.find("// (empty topology").unwrap();
+        assert!(
+            comment_pos < brace_pos,
+            "empty marker comment must appear BEFORE closing brace, got brace at {brace_pos} comment at {comment_pos}"
         );
     }
 }

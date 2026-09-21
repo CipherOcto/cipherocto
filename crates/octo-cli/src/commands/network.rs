@@ -69,7 +69,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::sanitize_substrate_error;
 use crate::error::OctoCliError;
@@ -1149,7 +1149,7 @@ pub struct NetworkReputationShowOutput {
 
 /// `octo network topology render` output envelope
 /// (RFC-0011-s Phase 11 G14).
-#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkTopologyRenderOutput {
     /// Mission ID hex of the rendered topology
     /// (echo; canonicalized via `MissionId::to_canonical_bytes`).
@@ -3874,28 +3874,16 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
         [0u8; 32],
         0,
     );
-    let mut render_body = tc.render(substrate_format);
-    // Phase 11 substrate-faithful dispatch: surface
-    // `--depth` in the output footer so operators can
-    // verify the cap value was honored. The Phase 11
-    // trait-only dispatch does not depth-filter an
-    // in-memory snapshot (live topology-source adapter
-    // is Layer D OUT OF SCOPE); the footer surfaces the
-    // value for forward-compatibility with Layer D
-    // adapters that will depth-filter the full graph.
-    let depth_footer = match args.depth {
-        Some(d) => format!("depth={d}\n"),
-        None => "depth=full\n".to_string(),
-    };
-    render_body.push_str(&depth_footer);
-    // Phase 11 substrate-faithfulness marker: the
-    // trait-only dispatch constructs an empty
-    // in-memory Mesh commitment; the footer line
-    // signals to operators that this is NOT a real
-    // topology commitment. Mirrors the Phase 1
-    // `TrustGraph::render_ascii` empty-state sentinel
-    // (mon::trust_graph::render_ascii at line 96-99).
-    render_body.push_str("(empty topology — live source adapter required for Phase 11)\n");
+    let render_body = tc.render(substrate_format, args.depth);
+    // Phase 11 substrate-faithful dispatch: substrate
+    // `render(format, depth)` embeds the depth footer
+    // (as trailing line for ASCII, as DOT comment for
+    // DOT — keeps DOT output valid) plus the
+    // empty-topology stub marker INSIDE the rendered
+    // body. No additional post-processing in the
+    // handler. The substrate contract is testable via
+    // `tv_phase11_substrate_*` R3.5 (Phase 10 R3
+    // MAJOR-1 lesson closed).
     let env = OutputEnvelope::new(
         "octo.network.topology.render.v1",
         NetworkTopologyRenderOutput {
@@ -6611,10 +6599,10 @@ mod tests {
 
     // tv_net11_8: handler→substrate dispatch test. Verifies
     // `--depth` value surfaces in the rendered output footer
-    // AND that the empty-topology stub marker is appended
-    // (Phase 11 trait-only dispatch contract per RFC-0011-s
-    // §Substrate-faithfulness). Mirrors the Phase 10
-    // `tv_net10_7_reputation_list_substrate_dispatch` pattern.
+    // (R3.5 fix: directly inspects the body contract at
+    // substrate layer per Phase 10 R3 MAJOR-1 lesson;
+    // dispatch handler itself returns Result<(), OctoCliError>
+    // so body inspection belongs at the substrate layer).
     #[test]
     fn tv_net11_8_topology_render_dispatch_depth_in_footer() {
         let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "5"])
@@ -6633,6 +6621,26 @@ mod tests {
         assert!(
             result.is_ok(),
             "handler must return Ok on trait-only dispatch: {result:?}"
+        );
+        // Substrate body contract: depth=5 footer + empty
+        // marker (R3.5 substrate layer inspection — Phase 10
+        // R3 MAJOR-1 lesson: dispatch tests must inspect
+        // body contract, not just is_ok).
+        let tc = octo_network::mon::topology::TopologyCommitment::compute(
+            octo_network::mon::mission_id::MissionId::new(1, &[0u8; 32], 42, &[0u8; 32], 1),
+            octo_network::mon::topology::TopologyModel::Mesh,
+            [0x11; 32],
+            [0x22; 32],
+            1234,
+        );
+        let body = tc.render(octo_network::mon::trust_graph::GraphFormat::Ascii, Some(5));
+        assert!(
+            body.contains("depth=5"),
+            "substrate body must contain depth=5 footer, got {body:?}"
+        );
+        assert!(
+            body.contains("empty topology"),
+            "substrate body must contain empty-topology marker, got {body:?}"
         );
     }
 
@@ -6655,6 +6663,103 @@ mod tests {
             result.is_ok(),
             "handler must return Ok on default dispatch: {result:?}"
         );
+        // Substrate body contract: depth=full footer for
+        // omitted depth (default dispatch case).
+        let tc = octo_network::mon::topology::TopologyCommitment::compute(
+            octo_network::mon::mission_id::MissionId::new(1, &[0u8; 32], 42, &[0u8; 32], 1),
+            octo_network::mon::topology::TopologyModel::Mesh,
+            [0x11; 32],
+            [0x22; 32],
+            1234,
+        );
+        let body = tc.render(octo_network::mon::trust_graph::GraphFormat::Ascii, None);
+        assert!(
+            body.contains("depth=full"),
+            "substrate body must contain depth=full footer for default dispatch, got {body:?}"
+        );
+    }
+
+    // tv_net11_10: topology render --json flag parses cleanly.
+    #[test]
+    fn tv_net11_10_topology_render_json_flag_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--json"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert!(args.json);
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_11: topology render --format dot parses cleanly.
+    #[test]
+    fn tv_net11_11_topology_render_format_dot_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--format", "dot"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert!(matches!(args.format, TopologyFormatKind::Dot));
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_12: topology render --depth non-numeric rejected
+    // pre-dispatch (parse_graph_depth integer parse).
+    #[test]
+    fn tv_net11_12_topology_render_depth_non_numeric_rejected() {
+        let result = TestPhase10Cli::try_parse_from([
+            "test",
+            "topology",
+            "render",
+            "--depth",
+            "not-a-number",
+        ]);
+        assert!(
+            result.is_err(),
+            "--depth non-numeric must be rejected pre-dispatch"
+        );
+    }
+
+    // tv_net11_13: NetworkTopologyRenderOutput JSON envelope
+    // round-trip serialization (R3.5 test coverage MINOR-3
+    // close; envelope serde contract verifiable via the
+    // dispatch handler invocation path).
+    #[test]
+    fn tv_net11_13_topology_render_envelope_serializes_to_json() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "5"])
+            .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => args,
+            },
+            _ => panic!("expected Topology"),
+        };
+        let runtime =
+            Octo::try_parse_from(["test", "network", "topology", "render", "--depth", "5"])
+                .expect("runtime parse");
+        let result = network_topology_render(&args, &runtime);
+        assert!(result.is_ok());
+        let env = NetworkTopologyRenderOutput {
+            mission_id_hex: "00".repeat(32),
+            format: "ascii".to_string(),
+            depth: Some(5),
+            render: "topology mission_id=00 model=Mesh epoch=1234\ndepth=5\nempty topology\n"
+                .to_string(),
+        };
+        let serialized = serde_json::to_string(&env).expect("serialize");
+        assert!(serialized.contains("\"format\":\"ascii\""));
+        assert!(serialized.contains("\"depth\":5"));
+        assert!(serialized.contains("\"mission_id_hex\""));
+        let roundtrip: NetworkTopologyRenderOutput =
+            serde_json::from_str(&serialized).expect("roundtrip");
+        assert_eq!(roundtrip.format, "ascii");
+        assert_eq!(roundtrip.depth, Some(5));
     }
 
     // tv_net12_1: gossip --stats default format (ascii) parses cleanly.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-q lands RFC-0011-h §Implementation Phases Phase 9. Two subcommands wire specialized node show + bind to the CLI. Substrate absent: `SpecializedNodeRecord` struct + `NodeClass` enum + `load()` + `bind_to_did()` methods MISSING from `crates/octo-network/src/specialized/node_record.rs`; this amendment adds 1 companion substrate mission (G11 `0011-h-s-a-specialized-node-record` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
+Accepted (2026-09-21) — RFC-0011-q promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 9 retroactive multi-round DRY gate GREEN at R3 zero per the existing closure chain culminating in `next ccf29693` (R1 + R2 + R3 zero rounds gate pair). Two subcommands wire specialized node show + bind to the CLI. Substrate absent: `SpecializedNodeRecord` struct + `NodeClass` enum + `load()` + `bind_to_did()` methods MISSING from `crates/octo-network/src/specialized/node_record.rs`; this amendment adds 1 companion substrate mission (G11 `0011-h-s-a-specialized-node-record` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
 > **Amendment chain:** Ninth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q (this RFC).
 
@@ -167,12 +167,12 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 
 ### Implicit Assumptions Audit (RFC-0011-h §Implicit Assumptions Audit Phase 9)
 
-| Assumption                                           | Where Relied Upon                         | Blast Radius if False                                     | Mitigation                                               |
-| ---------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------- |
-| `SpecializedNodeRecord` is per-node canonical record | substrate struct                          | bind fails or duplicates                                  | `node_id` collision check in `bind_to_did`               |
-| `NodeClass` enum is closed set                       | RFC-0871 + RFC-0011-d role taxonomy       | unknown class surfaces as `#[non_exhaustive]` fallthrough | `#[serde(rename_all = "lowercase")]` + catch-all variant; future roles land via RFC amendment to RFC-0011-d role taxonomy, NOT in-place enum expansion |
-| `HolderDid` is opaque-string at trait boundary       | trait surface (Layer B)                   | per-extension impl crates receive malformed DID           | per-extension impl crates own DID validation (parse + canonicalize + signature check); CLI passes `String` as-is, no CLI-side validation |
-| BTreeMap determinism                                 | metadata field                            | non-deterministic JSON output                             | BTreeMap over HashMap per RFC-0011-h §Output Envelope    |
+| Assumption                                           | Where Relied Upon                   | Blast Radius if False                                     | Mitigation                                                                                                                                             |
+| ---------------------------------------------------- | ----------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SpecializedNodeRecord` is per-node canonical record | substrate struct                    | bind fails or duplicates                                  | `node_id` collision check in `bind_to_did`                                                                                                             |
+| `NodeClass` enum is closed set                       | RFC-0871 + RFC-0011-d role taxonomy | unknown class surfaces as `#[non_exhaustive]` fallthrough | `#[serde(rename_all = "lowercase")]` + catch-all variant; future roles land via RFC amendment to RFC-0011-d role taxonomy, NOT in-place enum expansion |
+| `HolderDid` is opaque-string at trait boundary       | trait surface (Layer B)             | per-extension impl crates receive malformed DID           | per-extension impl crates own DID validation (parse + canonicalize + signature check); CLI passes `String` as-is, no CLI-side validation               |
+| BTreeMap determinism                                 | metadata field                      | non-deterministic JSON output                             | BTreeMap over HashMap per RFC-0011-h §Output Envelope                                                                                                  |
 
 ### Security Considerations (RFC-0011-h §Security Considerations Phase 9)
 
@@ -195,14 +195,14 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 
 ### Test Vectors (RFC-0011-h §Test Vectors Phase 9)
 
-| Vector    | Surface         | Coverage                                                                   |
-| --------- | --------------- | -------------------------------------------------------------------------- |
-| tv_net9_1 | CLI parse       | `node show <64-hex node_id>` parses cleanly with required hex arg           |
-| tv_net9_2 | CLI parse       | `node show <64-hex node_id> --json` flag parses cleanly                     |
+| Vector    | Surface         | Coverage                                                                                                                                                                                                                                          |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tv_net9_1 | CLI parse       | `node show <64-hex node_id>` parses cleanly with required hex arg                                                                                                                                                                                 |
+| tv_net9_2 | CLI parse       | `node show <64-hex node_id> --json` flag parses cleanly                                                                                                                                                                                           |
 | tv_net9_3 | substrate trait | substrate struct field round-trip: `node_class_label` projection + `creation_epoch` + `holder_did: None` + `metadata` BTreeMap value lookup (key-order assertion lives in substrate-side `tv_phase9_substrate_4_btreemap_deterministic_ordering`) |
-| tv_net9_4 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply --confirm-acknowledge` parses cleanly |
-| tv_net9_5 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply` without `--confirm-acknowledge` rejected at parse-time |
-| tv_net9_6 | pastejacking    | `node bind <mixed-case hex>` rejected by `parse_32_byte_hex` shared helper  |
+| tv_net9_4 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply --confirm-acknowledge` parses cleanly                                                                                                                                                              |
+| tv_net9_5 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply` without `--confirm-acknowledge` rejected at parse-time                                                                                                                                            |
+| tv_net9_6 | pastejacking    | `node bind <mixed-case hex>` rejected by `parse_32_byte_hex` shared helper                                                                                                                                                                        |
 
 Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + handler dispatch to the trait boundary; substrate tests cover trait behavior.
 
@@ -249,9 +249,10 @@ RFC-0011-q closes the G11 deferred stub per "everything included, no deferral" d
 
 ## Version History
 
-| Version | Date       | Notes                                                |
-| ------- | ---------- | ---------------------------------------------------- |
-| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle |
+| Version | Date       | Notes                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1.0  | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                                             |
+| v0.2.0  | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-q year-stable per Layer B substrate convention. Multi-round DRY CLOSED at `next ccf29693` per R1 + R2 + R3 zero rounds gate pair. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-v directory convention. |
 
 ## Cross-references
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G14 + RFC-0011-s Phase 11 §Substrate-Additions Companion Missions. Substrate slice pending per the Phase 5 RFC-0011-m precedent (additive method extension on existing `TopologyCommitment` struct + REUSE of existing `GraphFormat` enum). RFC-0011-s Phase 11 topology-render amendment Draft landed at `next a2bfc2cb`.
+Claimed (2026-09-20) — Substrate additions for TopologyCommitment::render Phase 11 G14. Substrate slice LANDED at `next 293556e4` (1 file changed, 125 insertions) per RFC-0011-h §Substrate-Additions Companion Missions row G14 + RFC-0011-s Phase 11 §Substrate-Additions. `TopologyCommitment` EXTENDED with `render(format: GraphFormat) -> String` method + private `render_ascii()` + `render_dot()` helpers at `crates/octo-network/src/mon/topology.rs:36` (EXTEND, not NEW — substrate-faithfulness audit per Phase 5 RFC-0011-m precedent overrides original G14 stub note). `GraphFormat` enum REUSED from existing `crates/octo-network/src/mon/trust_graph.rs:41` (zero NEW types). 4 NEW unit tests land at `crates/octo-network/src/mon/topology.rs` (tv_phase11_substrate_1 through tv_phase11_substrate_4) covering ASCII label format + DOT digraph format + deterministic-across-calls + distinct-per-topology-model. 1493/1493 octo-network tests pass + zero regression of existing 1489 tests. Cargo clippy -p octo-network --all-targets -- -D warnings clean. Layer B substrate addition only zero Layer A change. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). CLI dispatch slice PENDING per RFC-0011-s Phase 11 §Subcommand Taxonomy.
 
 ## RFC
 
@@ -66,20 +66,22 @@ EXTENDS the existing `TopologyCommitment` struct definition. No new types; no ne
 
 ## Acceptance Criteria
 
-- [ ] `TopologyCommitment::render(format)` method EXTENDED at `crates/octo-network/src/mon/topology.rs:36` per RFC-0011-h §Substrate-Additions row G14 + RFC-0011-s Phase 11 §Substrate Mapping Table
-- [ ] `render(format: GraphFormat) -> String` signature lands on the existing impl block
-- [ ] `render_ascii()` private helper lands (label line per RFC-0855 §5.1 topology-model field)
-- [ ] `render_dot()` private helper lands (`digraph G { ... }` block with deterministic key order)
-- [ ] `GraphFormat` enum REUSED from existing `crates/octo-network/src/mon/trust_graph.rs:41` (zero NEW types per Phase 5 precedent)
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean (NO regression of existing 1489 tests)
-- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin ascii rendering + dot rendering + model label correctness)
+- [x] `TopologyCommitment::render(format)` method EXTENDED at `crates/octo-network/src/mon/topology.rs:36` per RFC-0011-h §Substrate-Additions row G14 + RFC-0011-s Phase 11 §Substrate Mapping Table
+- [x] `render(format: GraphFormat) -> String` signature lands on the existing impl block
+- [x] `render_ascii()` private helper lands (label line per RFC-0855 §5.1 topology-model field)
+- [x] `render_dot()` private helper lands (`digraph G { ... }` block with deterministic key order)
+- [x] `GraphFormat` enum REUSED from existing `crates/octo-network/src/mon/trust_graph.rs:41` (zero NEW types per Phase 5 precedent)
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean (NO regression of existing 1489 tests)
+- [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin ascii rendering + dot rendering + model label correctness)
 
 ## Dependencies
 
 - RFC-0011-h Accepted (RFC-0011-h must be Accepted before this mission lands per RFC-0011-h §Substrate-Additions Companion Missions)
 - RFC-0011-s Phase 11 topology-render amendment Draft at `next a2bfc2cb`
+- Phase 11 G14 substrate stub fill-in at `next 5441fce4`
+- Phase 11 G14 substrate slice at `next 293556e4`
 - RFC-0855 §5.1 Topology Models (governing RFC)
 - Existing `TopologyCommitment` struct at `crates/octo-network/src/mon/topology.rs:36` (EXTEND, not NEW)
 - Existing `GraphFormat` enum at `crates/octo-network/src/mon/trust_graph.rs:41` (REUSE, not NEW)

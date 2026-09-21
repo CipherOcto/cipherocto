@@ -65,6 +65,60 @@ impl TopologyCommitment {
             commitment,
         }
     }
+
+    /// Render the topology commitment as ASCII or DOT
+    /// graph output (Phase 11 G14 per RFC-0011-s
+    /// §Substrate Mapping Table). Operates on the
+    /// in-memory snapshot of the commitment; live
+    /// topology-source adapter OUT OF SCOPE for Phase 11.
+    /// Per-extension impl crates (Layer D) provide real
+    /// topology-source adapters in follow-on missions.
+    /// BTreeMap-based deterministic iteration ordering
+    /// preserved per RFC-0011-h §Output Envelope
+    /// determinism. REUSES `GraphFormat` enum from
+    /// `mon::trust_graph` (Phase 1 0851p-a-trust-ux
+    /// import); zero NEW types.
+    pub fn render(&self, format: crate::mon::trust_graph::GraphFormat) -> String {
+        match format {
+            crate::mon::trust_graph::GraphFormat::Ascii => self.render_ascii(),
+            crate::mon::trust_graph::GraphFormat::Dot => self.render_dot(),
+        }
+    }
+
+    /// Private ASCII rendering helper for
+    /// `TopologyCommitment::render`. Produces a single
+    /// label line per RFC-0855 §5.1 topology-model
+    /// field. Deterministic across calls (no HashMap
+    /// iteration, no randomness).
+    fn render_ascii(&self) -> String {
+        let label = format!(
+            "topology mission_id={} model={:?} epoch={}",
+            hex::encode(self.mission_id.to_canonical_bytes()),
+            self.model,
+            self.epoch,
+        );
+        let mut out = String::new();
+        out.push_str(&label);
+        out.push('\n');
+        out
+    }
+
+    /// Private DOT rendering helper for
+    /// `TopologyCommitment::render`. Produces a
+    /// `digraph G { ... }` block with deterministic
+    /// `mission_id` key order. Pipe output to
+    /// `dot -Tpng` or `dot -Tsvg` for visualization.
+    fn render_dot(&self) -> String {
+        let mut out = String::new();
+        out.push_str("digraph G {\n");
+        out.push_str(&format!(
+            "  mission_{} [label=\"{:?}\"];\n",
+            hex::encode(self.mission_id.to_canonical_bytes()),
+            self.model,
+        ));
+        out.push_str("}\n");
+        out
+    }
 }
 
 /// Mission descriptor flags (RFC-0855 §2.2)
@@ -148,5 +202,76 @@ mod tests {
     fn test_mission_flags() {
         assert_eq!(MISSION_FLAG_STEALTH, 0x0001);
         assert_eq!(MISSION_FLAG_EPHEMERAL, 0x0008);
+    }
+
+    // === Phase 11 G14 substrate tests (RFC-0011-s) ===
+
+    fn phase11_mid() -> MissionId {
+        let peer = [0u8; 32];
+        let nonce = [0u8; 32];
+        MissionId::new(1, &peer, 42, &nonce, 1)
+    }
+
+    fn phase11_commitment() -> TopologyCommitment {
+        TopologyCommitment::compute(
+            phase11_mid(),
+            TopologyModel::Mesh,
+            [0x11; 32],
+            [0x22; 32],
+            1234,
+        )
+    }
+
+    #[test]
+    fn tv_phase11_substrate_1_render_ascii_contains_label() {
+        let tc = phase11_commitment();
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        assert!(
+            out.starts_with("topology mission_id="),
+            "ascii render must start with `topology mission_id=`, got {out:?}"
+        );
+        assert!(out.contains("model=Mesh"));
+        assert!(out.contains("epoch=1234"));
+    }
+
+    #[test]
+    fn tv_phase11_substrate_2_render_dot_is_digraph() {
+        let tc = phase11_commitment();
+        let out = tc.render(crate::mon::trust_graph::GraphFormat::Dot);
+        assert!(out.starts_with("digraph G {"));
+        assert!(out.trim_end().ends_with('}'));
+    }
+
+    #[test]
+    fn tv_phase11_substrate_3_render_deterministic_across_calls() {
+        let tc1 = phase11_commitment();
+        let tc2 = phase11_commitment();
+        let ascii1 = tc1.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        let ascii2 = tc2.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        let dot1 = tc1.render(crate::mon::trust_graph::GraphFormat::Dot);
+        let dot2 = tc2.render(crate::mon::trust_graph::GraphFormat::Dot);
+        assert_eq!(ascii1, ascii2);
+        assert_eq!(dot1, dot2);
+    }
+
+    #[test]
+    fn tv_phase11_substrate_4_render_distinct_per_topology_model() {
+        let peer = [0u8; 32];
+        let nonce = [0u8; 32];
+        let mid = MissionId::new(1, &peer, 42, &nonce, 1);
+        let tc_mesh =
+            TopologyCommitment::compute(mid, TopologyModel::Mesh, [0x11; 32], [0x22; 32], 1234);
+        let tc_swarm =
+            TopologyCommitment::compute(mid, TopologyModel::Swarm, [0x11; 32], [0x22; 32], 1234);
+        let a_mesh = tc_mesh.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        let a_swarm = tc_swarm.render(crate::mon::trust_graph::GraphFormat::Ascii);
+        assert!(
+            a_mesh.contains("model=Mesh"),
+            "mesh render must label model=Mesh"
+        );
+        assert!(
+            a_swarm.contains("model=Swarm"),
+            "swarm render must label model=Swarm"
+        );
     }
 }

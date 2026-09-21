@@ -1287,7 +1287,7 @@ pub struct EnvelopeForwardArgs {
 /// `octo network envelope inspect` output envelope
 /// (RFC-0011-u Phase 13 G16a). Wraps the substrate
 /// `EnvelopeMeta` projection for CLI dispatch.
-#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkEnvelopeInspectOutput {
     /// Envelope ID hex (echo).
     pub envelope_id_hex: String,
@@ -1307,7 +1307,7 @@ pub struct NetworkEnvelopeInspectOutput {
 /// `octo network envelope forward` output envelope
 /// (RFC-0011-u Phase 13 G16b). Wraps the substrate
 /// `ForwardEnvelope::wire_bytes()` projection for CLI dispatch.
-#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkEnvelopeForwardOutput {
     /// Source envelope ID hex (echo).
     pub source_envelope_id_hex: String,
@@ -3940,38 +3940,27 @@ fn network_gossip_stats(args: &GossipStatsArgs, cli: &Octo) -> Result<(), OctoCl
 /// handler (RFC-0011-u Phase 13 G16a). Read-only;
 /// delegates to the substrate `EnvelopeInspector`
 /// module (Phase 13 additive type extension per
-/// RFC-0011-u). Live envelope store OUT OF SCOPE;
-/// the `envelope_inspect_registry` marker returns
-/// false in this additive-type-only phase.
+/// RFC-0011-u). Handler invokes the substrate path
+/// unconditionally per Phase 12 RFC-0011-t R2.5
+/// substrate-faithfulness precedent (R1.5 fix
+/// removed the `envelope_inspect_registry` always-false
+/// gate). Live envelope store OUT OF SCOPE for the
+/// additive-type-only phase; `inspect()` returns `None`
+/// for unknown envelopes and the handler echoes
+/// `found: false` per substrate-faithfulness contract.
 fn network_envelope_inspect(args: &EnvelopeInspectArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !envelope_inspect_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G16a",
-            detail: "".to_string(),
-        });
-    }
     let envelope_id = parse_32_byte_hex(&args.envelope_id_hex, "envelope_id_hex").map_err(|e| {
         OctoCliError::ConfirmationRequired {
             command: format!("envelope_id_hex parse failed: {e}"),
         }
     })?;
-    // Phase 13 substrate-faithful stub: inspector returns None for
-    // unknown envelopes (live envelope store OUT OF SCOPE).
-    // For CLI exercise we project a synthetic EnvelopeMeta to
-    // exercise the type surface end-to-end.
+    // Phase 13 substrate-faithful stub: inspector returns None
+    // for unknown envelopes (live envelope store OUT OF SCOPE).
+    // Handler branches on Some/None per substrate-faithfulness
+    // contract — no synthetic projection.
     let insp = octo_network::mon::envelope_inspector::EnvelopeInspector;
-    let meta = insp.inspect(envelope_id).unwrap_or_else(|| {
-        octo_network::mon::envelope_inspector::EnvelopeInspector::from_fields(
-            envelope_id,
-            octo_network::mon::envelope_inspector::EnvelopeKind::Mission,
-            "did:octo:0x0000000000000000".to_string(),
-            0,
-            0,
-        )
-    });
-    let env = OutputEnvelope::new(
-        "octo.network.envelope.inspect.v1",
-        NetworkEnvelopeInspectOutput {
+    let payload = match insp.inspect(envelope_id) {
+        Some(meta) => NetworkEnvelopeInspectOutput {
             envelope_id_hex: args.envelope_id_hex.clone(),
             envelope_kind: meta.envelope_kind.as_str().to_string(),
             creator_did_hex: meta.creator_did_hex,
@@ -3979,7 +3968,16 @@ fn network_envelope_inspect(args: &EnvelopeInspectArgs, cli: &Octo) -> Result<()
             ttl_epochs: meta.ttl_epochs,
             found: true,
         },
-    );
+        None => NetworkEnvelopeInspectOutput {
+            envelope_id_hex: args.envelope_id_hex.clone(),
+            envelope_kind: String::new(),
+            creator_did_hex: String::new(),
+            creation_epoch: 0,
+            ttl_epochs: 0,
+            found: false,
+        },
+    };
+    let env = OutputEnvelope::new("octo.network.envelope.inspect.v1", payload);
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
@@ -3987,16 +3985,13 @@ fn network_envelope_inspect(args: &EnvelopeInspectArgs, cli: &Octo) -> Result<()
 /// handler (RFC-0011-u Phase 13 G16b). Mutating;
 /// delegates to the substrate `ForwardEnvelope` module
 /// (Phase 13 additive type extension per RFC-0011-u).
-/// Real network propagation OUT OF SCOPE; the
-/// `envelope_forward_registry` marker returns false in
-/// this additive-type-only phase.
+/// Handler invokes the substrate path unconditionally
+/// per Phase 12 RFC-0011-t R2.5 substrate-faithfulness
+/// precedent (R1.5 fix removed the
+/// `envelope_forward_registry` always-false gate).
+/// Real network propagation OUT OF SCOPE; `build()`
+/// and `wire_bytes()` exercise the type surface end-to-end.
 fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !envelope_forward_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G16b",
-            detail: "".to_string(),
-        });
-    }
     // Mutating-gate clap arg requirement per Phase 4 RFC-0011-l
     // precedent: --confirm-acknowledge required unless --dry-run.
     if !args.dry_run && !args.confirm_acknowledge {
@@ -4021,6 +4016,14 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
         0,
     )
     .map_err(|e| match e {
+        octo_network::mon::forward_envelope::ForwardEnvelopeError::TtlOverflow => {
+            OctoCliError::ConfirmationRequired {
+                command: format!(
+                    "forward envelope ttl_epochs {} exceeds FORWARD_ENVELOPE_MAX_TTL_EPOCHS",
+                    args.ttl_epochs
+                ),
+            }
+        }
         octo_network::mon::forward_envelope::ForwardEnvelopeError::InvalidPeerId => {
             OctoCliError::ConfirmationRequired {
                 command: "destination_peer_id_hex is all-zero (invalid)".to_string(),
@@ -4108,26 +4111,13 @@ fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), 
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
-/// Lookup the runtime envelope inspect marker
-/// (RFC-0011-u Phase 13 G16a). Returns false in this
-/// additive-type-only phase; per-extension Layer D
-/// live envelope store init fn OUT OF SCOPE.
-fn envelope_inspect_registry(_cli: &Octo) -> bool {
-    false
-}
-
-/// Lookup the runtime envelope forward marker
-/// (RFC-0011-u Phase 13 G16b). Returns false in this
-/// additive-type-only phase; per-extension Layer D
-/// live envelope propagation init fn OUT OF SCOPE.
-fn envelope_forward_registry(_cli: &Octo) -> bool {
-    false
-}
-
 /// Lookup the runtime heartbeat probe marker
 /// (RFC-0011-v Phase 14 G17). Returns false in this
 /// additive-type-only phase; per-extension Layer D
 /// live transport-level probe init fn OUT OF SCOPE.
+/// Phase 14 R1.5 fix sweep will remove this gate per
+/// Phase 12 RFC-0011-t R2.5 substrate-faithfulness
+/// precedent.
 fn heartbeat_probe_registry(_cli: &Octo) -> bool {
     false
 }
@@ -6926,7 +6916,7 @@ mod tests {
             "forward",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
             "--destination-peer-id-hex",
-            "aabbccddeeff00112233445566778899aabbccddeeff0011223344556677",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             "--ttl-epochs",
             "100",
         ])
@@ -6953,7 +6943,7 @@ mod tests {
             "forward",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
             "--destination-peer-id-hex",
-            "aabbccddeeff00112233445566778899aabbccddeeff0011223344556677",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             "--ttl-epochs",
             "100",
             "--dry-run",
@@ -6981,7 +6971,7 @@ mod tests {
             "forward",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
             "--destination-peer-id-hex",
-            "aabbccddeeff00112233445566778899aabbccddeeff0011223344556677",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             "--ttl-epochs",
             "100",
             "--confirm-acknowledge",
@@ -7010,7 +7000,7 @@ mod tests {
             "forward",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
             "--destination-peer-id-hex",
-            "aabbccddeeff00112233445566778899aabbccddeeff0011223344556677",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             "--ttl-epochs",
             "100",
         ])
@@ -7025,6 +7015,146 @@ mod tests {
             },
             _ => panic!("expected Envelope"),
         }
+    }
+
+    // tv_net13_7: envelope inspect dispatch body-contract inspection
+    // (R1.5 fix: dispatch test invokes `network_envelope_inspect`
+    // handler AND directly invokes substrate to verify body contract
+    // per Phase 10 + Phase 11 R3 MAJOR-1 lesson).
+    #[test]
+    fn tv_net13_7_envelope_inspect_dispatch_envelope_body_contract() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "envelope",
+            "inspect",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Envelope { action } => match action {
+                NetworkEnvelopeAction::Inspect(a) => a,
+                _ => panic!("expected Inspect"),
+            },
+            _ => panic!("expected Envelope"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "envelope",
+            "inspect",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        ])
+        .expect("runtime parse");
+        // Substrate-faithful projection: inspector returns None for
+        // unknown envelopes (live store OUT OF SCOPE). Handler
+        // echoes `found: false` per substrate-faithfulness contract.
+        let insp = octo_network::mon::envelope_inspector::EnvelopeInspector;
+        let substrate_meta = insp.inspect([0x00; 32]);
+        assert!(
+            substrate_meta.is_none(),
+            "default EnvelopeInspector must return None for unknown envelopes"
+        );
+        let result = network_envelope_inspect(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "envelope inspect dispatch must succeed (handler invokes substrate unconditionally), got {result:?}"
+        );
+    }
+
+    // tv_net13_8: envelope forward dispatch body-contract inspection
+    // (R1.5 fix: dispatch test invokes `network_envelope_forward`
+    // handler AND directly invokes substrate to verify body contract
+    // per Phase 10 + Phase 11 R3 MAJOR-1 lesson).
+    #[test]
+    fn tv_net13_8_envelope_forward_dispatch_envelope_body_contract() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "envelope",
+            "forward",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            "--destination-peer-id-hex",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+            "--ttl-epochs",
+            "100",
+            "--dry-run",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Envelope { action } => match action {
+                NetworkEnvelopeAction::Forward(a) => a,
+                _ => panic!("expected Forward"),
+            },
+            _ => panic!("expected Envelope"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "envelope",
+            "forward",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            "--destination-peer-id-hex",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+            "--ttl-epochs",
+            "100",
+            "--dry-run",
+        ])
+        .expect("runtime parse");
+        // Substrate-faithful projection: build + wire_bytes exercised
+        // unconditionally by handler (no registry gate).
+        let fe = octo_network::mon::forward_envelope::ForwardEnvelope::build(
+            [0xAA; 32], [0xBB; 32], 100, 0,
+        )
+        .expect("build ok");
+        let substrate_wire_bytes = fe.wire_bytes();
+        assert_eq!(substrate_wire_bytes.len(), 80);
+        assert_eq!(substrate_wire_bytes[0..32], [0xAA; 32]);
+        assert_eq!(substrate_wire_bytes[32..64], [0xBB; 32]);
+        let result = network_envelope_forward(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "envelope forward --dry-run dispatch must succeed (handler invokes substrate unconditionally), got {result:?}"
+        );
+    }
+
+    // tv_net13_9: envelope serde round-trip (R1.5 fix: envelope
+    // `Serialize + Deserialize` derives enable round-trip assertion).
+    #[test]
+    fn tv_net13_9_envelope_output_serde_round_trip() {
+        let inspect = NetworkEnvelopeInspectOutput {
+            envelope_id_hex: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                .to_string(),
+            envelope_kind: "mission".to_string(),
+            creator_did_hex: "did:octo:0xabcdef".to_string(),
+            creation_epoch: 1000,
+            ttl_epochs: 50,
+            found: true,
+        };
+        let json = serde_json::to_string(&inspect).expect("serialize");
+        let parsed: NetworkEnvelopeInspectOutput =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.envelope_id_hex, inspect.envelope_id_hex);
+        assert_eq!(parsed.envelope_kind, inspect.envelope_kind);
+        assert_eq!(parsed.creator_did_hex, inspect.creator_did_hex);
+        assert_eq!(parsed.creation_epoch, inspect.creation_epoch);
+        assert_eq!(parsed.ttl_epochs, inspect.ttl_epochs);
+        assert_eq!(parsed.found, inspect.found);
+
+        let forward = NetworkEnvelopeForwardOutput {
+            source_envelope_id_hex:
+                "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff".to_string(),
+            destination_peer_id_hex: "aabbccddeeff00112233445566778899aabbccddeeff0011223344556677"
+                .to_string(),
+            ttl_epochs: 100,
+            wire_bytes_hex: "aa".repeat(80),
+            wire_bytes_len: 80,
+            dry_run: false,
+        };
+        let json2 = serde_json::to_string(&forward).expect("serialize");
+        let parsed2: NetworkEnvelopeForwardOutput =
+            serde_json::from_str(&json2).expect("deserialize");
+        assert_eq!(parsed2.wire_bytes_len, 80);
+        assert_eq!(parsed2.ttl_epochs, 100);
+        assert!(!parsed2.dry_run);
     }
 
     // tv_net14_1: heartbeat probe default (no --timeout-ms) parses

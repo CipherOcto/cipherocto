@@ -11,9 +11,9 @@
 /// Phase 13 G16a per RFC-0011-u §Substrate Mapping Table. Operates
 /// on the in-memory snapshot; live envelope store OUT OF SCOPE for
 /// Phase 13. Per-extension impl crates (Layer D) provide real
-/// envelope stores in follow-on missions. BTreeMap-based
-/// deterministic iteration ordering preserved per RFC-0011-h
-/// §Output Envelope determinism.
+/// envelope stores in follow-on missions. Substrate-faithfulness
+/// contract: `inspect()` returns `None` for unknown envelopes
+/// (live store unwired in this additive-type-only phase).
 #[derive(Clone, Debug, Default)]
 pub struct EnvelopeInspector;
 

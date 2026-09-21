@@ -235,6 +235,13 @@ pub enum NetworkAction {
         #[command(subcommand)]
         action: NetworkRouterAction,
     },
+    /// Specialized node show + bind subcommands
+    /// (RFC-0011-q Phase 9 G11).
+    Node {
+        /// Node subcommand.
+        #[command(subcommand)]
+        action: NetworkNodeAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -678,6 +685,72 @@ pub struct RouterPeersArgs {
     pub json: bool,
 }
 
+/// Specialized node subcommand surface (RFC-0011-q Phase 9 G11).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkNodeAction {
+    /// Show specialized node record by node_id
+    /// (RFC-0011-q §Subcommand Taxonomy Phase 9).
+    Show(NodeShowArgs),
+    /// Bind a specialized node to a holder DID
+    /// (RFC-0011-q §Subcommand Taxonomy Phase 9).
+    Bind(NodeBindArgs),
+}
+
+/// `octo network node show <node_id_hex>` arguments
+/// (RFC-0011-q §Subcommand Taxonomy Phase 9 `node show`).
+/// `node_id` is 32-byte canonical identifier accepted as
+/// 64 hex chars (lowercase OR uppercase); mixed-case
+/// rejected by `parse_32_byte_hex` pastejacking defense.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct NodeShowArgs {
+    /// 32-byte node_id as 64 hex chars (lowercase OR
+    /// uppercase; mixed-case rejected). Pastejacking defense
+    /// per RFC-0011-q §Pastejacking Defense pattern.
+    #[arg(value_parser = parse_specialized_node_id_hex)]
+    pub node_id: [u8; 32],
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `octo network node bind <node_id_hex> --holder-did <did>`
+/// arguments (RFC-0011-q §Subcommand Taxonomy Phase 9
+/// `node bind`). Bind is mutating but reversible per
+/// RFC-0011-h §Confirmation Flag (--apply + --confirm-
+/// acknowledge required for apply; default dry-run).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct NodeBindArgs {
+    /// 32-byte node_id as 64 hex chars (lowercase OR
+    /// uppercase; mixed-case rejected). Pastejacking defense
+    /// per RFC-0011-q §Pastejacking Defense pattern.
+    #[arg(value_parser = parse_specialized_node_id_hex)]
+    pub node_id: [u8; 32],
+    /// Holder DID in canonical `did:octo:0x<hex>` format
+    /// (RFC-0011-q §Subcommand Taxonomy Phase 9 `node bind`
+    /// `--holder-did`).
+    #[arg(long = "holder-did")]
+    pub holder_did: String,
+    /// Emit preview envelope without substrate dispatch
+    /// (default behavior; mutually exclusive with --apply
+    /// per RFC-0011-h §Confirmation Flag).
+    #[arg(long, conflicts_with = "apply")]
+    pub dry_run: bool,
+    /// Acknowledge and apply the bind (reversible write;
+    /// required for apply per RFC-0011-q §Confirmation Flag).
+    /// Mutually exclusive with --dry-run; both flags imply
+    /// explicit operator intent.
+    #[arg(long, conflicts_with = "dry_run", requires = "confirm_acknowledge")]
+    pub apply: bool,
+    /// Acknowledge the apply intent (reversible write;
+    /// required for --apply per RFC-0011-q §Confirmation Flag).
+    #[arg(long)]
+    pub confirm_acknowledge: bool,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
 // === Output envelopes (RFC-0011-n Phase 6) ===
 
 /// `octo network bootstrap` output envelope (RFC-0011-n Phase 6
@@ -813,6 +886,60 @@ pub struct NetworkRouterPeersOutput {
     pub capacity: Option<u64>,
     /// Whether the peer is in the local routing table.
     pub reachable: bool,
+}
+
+/// `octo network node show <node_id_hex>` output envelope
+/// (RFC-0011-q Phase 9 G11).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkNodeShowOutput {
+    /// 32-byte node_id as 64 lowercase hex chars (echo).
+    pub node_id_hex: String,
+    /// Substrate-faithful projection of the specialized
+    /// node record (None = node not in local registry).
+    /// Field order matches substrate struct definition;
+    /// metadata is serialized as JSON object with
+    /// deterministic key order (BTreeMap-backed per
+    /// RFC-0011-h §Output Envelope determinism).
+    pub record: Option<SpecializedNodeRecordProjection>,
+}
+
+/// Substrate-faithful summary projection of
+/// `SpecializedNodeRecord` for `octo network node show`
+/// (RFC-0011-q §Output Envelope Phase 9). Field order
+/// matches substrate struct definition; `metadata` is
+/// serialized as JSON object with deterministic key order
+/// (BTreeMap-backed per RFC-0011-h §Output Envelope
+/// determinism).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct SpecializedNodeRecordProjection {
+    /// 32-byte node_id as 64 lowercase hex chars.
+    pub node_id_hex: String,
+    /// Holder DID post-bind (None pre-bind).
+    pub holder_did: Option<String>,
+    /// Node class (lowercase: builder | provider |
+    /// storage | bandwidth | orchestrator).
+    pub node_class: String,
+    /// Creation epoch (RFC-0855 §epoch).
+    pub creation_epoch: u64,
+    /// Operator metadata (extension-defined; deterministic
+    /// BTreeMap key order).
+    pub metadata: std::collections::BTreeMap<String, String>,
+}
+
+/// `octo network node bind <node_id_hex> --holder-did <did>`
+/// output envelope (RFC-0011-q Phase 9 G11).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkNodeBindOutput {
+    /// 32-byte node_id as 64 lowercase hex chars (echo).
+    pub node_id_hex: String,
+    /// Holder DID that the node is bound to (echo of
+    /// --holder-did arg, redacted on error paths per
+    /// RFC-0011-q §Security Considerations redaction
+    /// invariant).
+    pub holder_did: String,
+    /// Whether the bind was applied (false = dry-run
+    /// preview only per RFC-0011-q §Confirmation Flag).
+    pub applied: bool,
 }
 
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
@@ -1472,6 +1599,10 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         NetworkAction::Router { action: router_act } => match router_act {
             NetworkRouterAction::Status(args) => network_router_status(args, cli),
             NetworkRouterAction::Peers(args) => network_router_peers(args, cli),
+        },
+        NetworkAction::Node { action: node_act } => match node_act {
+            NetworkNodeAction::Show(args) => network_node_show(args, cli),
+            NetworkNodeAction::Bind(args) => network_node_bind(args, cli),
         },
     }
 }
@@ -2251,6 +2382,15 @@ fn parse_router_peer_node_id_hex(s: &str) -> Result<[u8; 32], String> {
     parse_32_byte_hex(s, "peer_node_id").map_err(|e| e.to_string())
 }
 
+/// `parse_32_byte_hex` for `node_id` (Phase 9 G11). Symmetric
+/// to `parse_router_peer_node_id_hex` (Phase 8) +
+/// `parse_slash_envelope_id_hex` (Phase 7) per RFC-0011-h
+/// §Pastejacking Defense pattern. Accepts lowercase OR
+/// uppercase hex; rejects mixed-case.
+fn parse_specialized_node_id_hex(s: &str) -> Result<[u8; 32], String> {
+    parse_32_byte_hex(s, "node_id").map_err(|e| e.to_string())
+}
+
 /// Shared preview-payload helper for the rebind-* trio dry-run
 /// path. Returns the dry-run envelope without attempting
 /// substrate dispatch.
@@ -2917,6 +3057,131 @@ fn status_label(status: octo_network::quota::router_node::RouterStatus) -> &'sta
         octo_network::quota::router_node::RouterStatus::Degraded => "degraded",
         octo_network::quota::router_node::RouterStatus::Offline => "offline",
     }
+}
+
+/// Map `NodeClass` enum to its lowercase string label for
+/// projection output (RFC-0011-q §Output Envelope Phase 9).
+/// Mirrors the `#[serde(rename_all = "lowercase")]` derivation
+/// on the substrate `NodeClass` enum.
+fn node_class_label(class: octo_network::specialized::node_record::NodeClass) -> &'static str {
+    use octo_network::specialized::node_record::NodeClass;
+    match class {
+        NodeClass::Builder => "builder",
+        NodeClass::Provider => "provider",
+        NodeClass::Storage => "storage",
+        NodeClass::Bandwidth => "bandwidth",
+        NodeClass::Orchestrator => "orchestrator",
+    }
+}
+
+/// Lookup the runtime `SpecializedNodeRecord` registry
+/// (per-extension crate pattern; concrete impls register
+/// via init fn OUT OF SCOPE for Phase 9). Per
+/// RFC-0011-q §Substrate Mapping Table, the CLI consumes
+/// the trait via registry lookup, identical to RFC-0863
+/// `NetworkSender` pattern.
+fn specialized_node_registry(
+    _cli: &Octo,
+) -> Option<std::sync::Arc<dyn octo_network::specialized::node_record::SpecializedNodeRecordAccess>>
+{
+    // Companion G11 substrate lands in a follow-on Layer D
+    // extension crate per per-extension crate pattern. Until
+    // then, the trait has no registered impl in this binary
+    // — dispatch surfaces exit 89.
+    None
+}
+
+/// `octo network node show <node_id_hex>` handler
+/// (RFC-0011-q Phase 9 G11).
+fn network_node_show(args: &NodeShowArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    let registry = specialized_node_registry(cli);
+    let store = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G11",
+        detail: "".to_string(),
+    })?;
+    let record_proj = store
+        .load(&args.node_id)
+        .map(|rec| SpecializedNodeRecordProjection {
+            node_id_hex: hex::encode(rec.node_id),
+            holder_did: rec.holder_did.as_ref().map(|d| d.as_str().to_string()),
+            node_class: node_class_label(rec.node_class).to_string(),
+            creation_epoch: rec.creation_epoch,
+            metadata: rec.metadata,
+        });
+    let env = OutputEnvelope::new(
+        "octo.network.node.show.v1",
+        NetworkNodeShowOutput {
+            node_id_hex: hex::encode(args.node_id),
+            record: record_proj,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// `octo network node bind <node_id_hex> --holder-did <did>`
+/// handler (RFC-0011-q Phase 9 G11). Bind is mutating but
+/// reversible per RFC-0011-h §Confirmation Flag
+/// (--apply + --confirm-acknowledge required for apply).
+fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // RFC-0011-q §Confirmation Flag: --apply +
+    // --confirm-acknowledge required for apply (reversible
+    // write). Without --apply, default is dry-run preview.
+    // --apply alone (without --confirm-acknowledge) is an
+    // operator input error (ConfirmationRequired), NOT a
+    // substrate-unavailability error.
+    if args.apply && !args.confirm_acknowledge {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: "octo network node bind".to_string(),
+        });
+    }
+    let registry = specialized_node_registry(cli);
+    let store = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+        companion: "G11",
+        detail: "".to_string(),
+    })?;
+    if args.apply {
+        // Apply path: dispatch to substrate bind_to_did.
+        // Per RFC-0011-q §Error Handling, each
+        // SpecializedNodeError variant maps to slot 89
+        // NetworkSubstrateUnavailable with a distinct
+        // message. Operators can distinguish NotFound
+        // (transient) from AlreadyBound (permanent) from
+        // CLI message alone.
+        let holder = octo_network::specialized::node_record::HolderDid::new(&args.holder_did);
+        match store.bind_to_did(&args.node_id, &holder) {
+            Ok(()) => {}
+            Err(node_err) => {
+                let msg = match &node_err {
+                    octo_network::specialized::node_record::SpecializedNodeError::NotFound => {
+                        "specialized node not found".to_string()
+                    }
+                    octo_network::specialized::node_record::SpecializedNodeError::AlreadyBound => {
+                        "specialized node already bound".to_string()
+                    }
+                    octo_network::specialized::node_record::SpecializedNodeError::InvalidDid(m) => {
+                        format!("specialized node invalid DID: {m}")
+                    }
+                    octo_network::specialized::node_record::SpecializedNodeError::Internal(m) => {
+                        format!("specialized node internal error: {m}")
+                    }
+                    _ => format!("specialized node error: {node_err}"),
+                };
+                return Err(OctoCliError::NetworkSubstrateUnavailable {
+                    companion: "G11",
+                    detail: msg,
+                });
+            }
+        }
+    }
+    let env = OutputEnvelope::new(
+        "octo.network.node.bind.v1",
+        NetworkNodeBindOutput {
+            node_id_hex: hex::encode(args.node_id),
+            holder_did: args.holder_did.clone(),
+            applied: args.apply,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
 fn bootstrap_config_companion(err: &BootstrapConfigError) -> &'static str {
@@ -4528,5 +4793,142 @@ mod tests {
             },
             _ => panic!("expected Router"),
         }
+    }
+
+    // === Phase 9 test vectors (RFC-0011-q §Test Vectors Phase 9) ===
+
+    /// Test CLI struct for Phase 9 specialized-node surface.
+    #[derive(Parser, Debug)]
+    struct TestPhase9Cli {
+        #[command(subcommand)]
+        action: NetworkAction,
+    }
+
+    // tv_net9_1: node show subcommand parses cleanly with
+    // lowercase hex node_id (G11 substrate-faithful).
+    #[test]
+    fn tv_net9_1_node_show_parses_with_lowercase_hex() {
+        let hex_id = "c".repeat(64);
+        let cli = TestPhase9Cli::try_parse_from(["test", "node", "show", &hex_id]).expect("parse");
+        match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Show(args) => {
+                    assert_eq!(args.node_id, [0xCC; 32]);
+                    assert!(!args.json);
+                }
+                _ => panic!("expected Show"),
+            },
+            _ => panic!("expected Node"),
+        }
+    }
+
+    // tv_net9_2: node show --json flag parses cleanly.
+    #[test]
+    fn tv_net9_2_node_show_json_flag_parses() {
+        let hex_id = "d".repeat(64);
+        let cli = TestPhase9Cli::try_parse_from(["test", "node", "show", &hex_id, "--json"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Show(args) => assert!(args.json),
+                _ => panic!("expected Show"),
+            },
+            _ => panic!("expected Node"),
+        }
+    }
+
+    // tv_net9_3: node show envelope projection is
+    // substrate-faithful (None = not found). Default
+    // registry returns None (specialized_node_registry
+    // returns None pre-extension-crate-impl), surfacing
+    // exit 89 NetworkSubstrateUnavailable.
+    #[test]
+    fn tv_net9_3_node_show_default_registry_returns_none() {
+        use octo_network::specialized::node_record::{NodeClass, SpecializedNodeRecord};
+        let mut metadata = std::collections::BTreeMap::new();
+        metadata.insert("region".to_string(), "eu-west".to_string());
+        let rec = SpecializedNodeRecord {
+            node_id: [0xEE; 32],
+            holder_did: None,
+            node_class: NodeClass::Provider,
+            creation_epoch: 42,
+            metadata,
+        };
+        assert_eq!(node_class_label(rec.node_class), "provider");
+        assert_eq!(rec.creation_epoch, 42);
+        assert!(rec.holder_did.is_none());
+        assert_eq!(rec.metadata.get("region"), Some(&"eu-west".to_string()));
+    }
+
+    // tv_net9_4: node bind --apply --confirm-acknowledge
+    // parses cleanly with lowercase hex node_id.
+    #[test]
+    fn tv_net9_4_node_bind_apply_parses_with_confirm_acknowledge() {
+        let hex_id = "e".repeat(64);
+        let holder_did =
+            "did:octo:0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+        let cli = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+            "--apply",
+            "--confirm-acknowledge",
+        ])
+        .expect("parse");
+        match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Bind(args) => {
+                    assert_eq!(args.node_id, [0xEE; 32]);
+                    assert_eq!(args.holder_did, holder_did);
+                    assert!(args.apply);
+                    assert!(args.confirm_acknowledge);
+                    assert!(!args.dry_run);
+                }
+                _ => panic!("expected Bind"),
+            },
+            _ => panic!("expected Node"),
+        }
+    }
+
+    // tv_net9_5: node bind --apply without
+    // --confirm-acknowledge rejected at parse-time
+    // (clap `requires` constraint per RFC-0011-q
+    // §Confirmation Flag Phase 9).
+    #[test]
+    fn tv_net9_5_node_bind_apply_without_confirm_acknowledge_rejected() {
+        let hex_id = "f".repeat(64);
+        let holder_did = "did:octo:0xff";
+        let result = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+            "--apply",
+        ]);
+        assert!(
+            result.is_err(),
+            "--apply without --confirm-acknowledge must be rejected at parse-time"
+        );
+    }
+
+    // tv_net9_6: node bind pastejacking defense — mixed-case
+    // hex rejected by parse_32_byte_hex shared helper.
+    #[test]
+    fn tv_net9_6_node_bind_rejects_mixed_case_hex() {
+        let mixed_case = "Aa".repeat(32);
+        let result = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &mixed_case,
+            "--holder-did",
+            "did:octo:0xab",
+        ]);
+        assert!(result.is_err(), "mixed-case hex must be rejected");
     }
 }

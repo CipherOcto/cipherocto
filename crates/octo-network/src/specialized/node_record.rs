@@ -118,8 +118,16 @@ pub trait SpecializedNodeRecordAccess: Send + Sync {
     /// returns `AlreadyBound` if previously bound
     /// to a different DID; returns `NotFound` if
     /// the node is not in the local registry).
+    /// `&self` (not `&mut self`) so the trait
+    /// remains object-safe behind
+    /// `Arc<dyn SpecializedNodeRecordAccess>`
+    /// per RFC-0011-h §User extensibility
+    /// registry pattern. Concrete per-extension
+    /// impl crates (Layer D) own the data and
+    /// use interior mutability (`Mutex`/
+    /// `RwLock`) internally.
     fn bind_to_did(
-        &mut self,
+        &self,
         node_id: &[u8; 32],
         holder_did: &HolderDid,
     ) -> Result<(), SpecializedNodeError>;

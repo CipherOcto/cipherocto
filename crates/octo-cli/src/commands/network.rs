@@ -880,12 +880,15 @@ pub struct TopologyRenderArgs {
     /// Phase 11 `topology render` `--format`).
     #[arg(long, value_enum, default_value_t = TopologyFormatKind::Ascii)]
     pub format: TopologyFormatKind,
-    /// Optional depth cap (1-100). Clap enforces u16
-    /// overflow rejection pre-dispatch (65536 rejected).
-    /// Topology renderer respects the cap; live
+    /// Optional depth cap (1-100). Clap enforces the
+    /// 1..=100 range pre-dispatch via `parse_graph_depth`
+    /// (Phase 5 RFC-0011-m precedent shared with
+    /// `trust-graph render`). Values outside 1..=100
+    /// surface as `NetworkGraphDepthBelowRange` (slot 85)
+    /// or `NetworkGraphDepthAboveRange` (slot 84). Live
     /// topology-source adapter OUT OF SCOPE for Phase 11.
-    #[arg(long)]
-    pub depth: Option<u16>,
+    #[arg(long, value_parser = parse_graph_depth)]
+    pub depth: Option<u32>,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -1154,7 +1157,7 @@ pub struct NetworkTopologyRenderOutput {
     /// Format that was applied (`ascii` / `dot`).
     pub format: String,
     /// Optional depth cap (1-100) that was applied.
-    pub depth: Option<u16>,
+    pub depth: Option<u32>,
     /// Rendered graph output (string body).
     pub render: String,
 }
@@ -3833,17 +3836,15 @@ fn parse_reputation_peer_did(s: &str) -> Result<[u8; 52], OctoCliError> {
 /// [--depth <N>]` handler (RFC-0011-s Phase 11 G14).
 /// Read-only; delegates to the substrate
 /// `TopologyCommitment::render(format)` method (Phase 11
-/// additive method extension per RFC-0011-s). Live
-/// topology-source adapter OUT OF SCOPE; the
-/// `topology_render_registry` marker returns false
-/// in this trait-only phase.
+/// additive method extension per RFC-0011-s). The
+/// handler invokes the substrate trait method
+/// unconditionally — no registry gate (trait dispatch
+/// is the universal code path per Phase 10 RFC-0011-r
+/// R2.5 substrate-faithfulness precedent). Live
+/// topology-source adapter OUT OF SCOPE; the empty
+/// in-memory `TopologyCommitment` is the trait-only
+/// substrate stub.
 fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !topology_render_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G14",
-            detail: "".to_string(),
-        });
-    }
     let format_label = match args.format {
         TopologyFormatKind::Ascii => "ascii",
         TopologyFormatKind::Dot => "dot",
@@ -3852,12 +3853,13 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
         TopologyFormatKind::Ascii => octo_network::mon::trust_graph::GraphFormat::Ascii,
         TopologyFormatKind::Dot => octo_network::mon::trust_graph::GraphFormat::Dot,
     };
-    // Phase 11 substrate-faithful stub: an empty in-memory
-    // TopologyCommitment is rendered. Real
-    // live-topology-source adapter (Layer D) follows on;
-    // for now the handler exercises the render() method
-    // surface to confirm the trait-shape pairing works
-    // end-to-end through the CLI dispatch layer.
+    // Phase 11 substrate-faithful dispatch: construct the
+    // empty in-memory TopologyCommitment (per trait-only
+    // substrate spec) and invoke render() on the substrate
+    // type. Real live-topology-source adapter (Layer D)
+    // follows on; for now the handler exercises the
+    // render() method surface end-to-end through the CLI
+    // dispatch layer.
     let mid = octo_network::mon::mission_id::MissionId::new(0, &[0u8; 32], 0, &[0u8; 32], 1);
     let tc = octo_network::mon::topology::TopologyCommitment::compute(
         mid,
@@ -3877,14 +3879,6 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
-}
-
-/// Lookup the runtime topology renderer marker
-/// (RFC-0011-s Phase 11 G14). Returns false in this
-/// trait-only phase; per-extension Layer D live
-/// topology-source adapter init fn OUT OF SCOPE.
-fn topology_render_registry(_cli: &Octo) -> bool {
-    false
 }
 
 /// `octo network gossip --stats [--format ascii|json]`
@@ -6517,16 +6511,74 @@ mod tests {
         }
     }
 
-    // tv_net11_3: topology render --depth 65536 rejected pre-dispatch
-    // (clap u16 overflow per Phase 5 RFC-0011-m pastejacking defense
-    // pattern).
+    // tv_net11_3: topology render --depth 200 rejected pre-dispatch
+    // (parse_graph_depth 1..=100 clamp per Phase 5 RFC-0011-m
+    // pastejacking defense pattern; shared with `trust-graph render`).
     #[test]
-    fn tv_net11_3_topology_render_depth_overflow_rejected() {
+    fn tv_net11_3_topology_render_depth_above_range_rejected() {
         let result =
-            TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "65536"]);
+            TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "200"]);
         assert!(
             result.is_err(),
-            "--depth 65536 must be rejected pre-dispatch (clap u16 overflow)"
+            "--depth 200 must be rejected pre-dispatch (parse_graph_depth 1..=100 clamp)"
+        );
+    }
+
+    // tv_net11_4: topology render --depth 1 accepted pre-dispatch
+    // (lower boundary of parse_graph_depth 1..=100 clamp).
+    #[test]
+    fn tv_net11_4_topology_render_depth_lower_boundary_accepted() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "1"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert_eq!(args.depth, Some(1));
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_5: topology render --depth 100 accepted pre-dispatch
+    // (upper boundary of parse_graph_depth 1..=100 clamp).
+    #[test]
+    fn tv_net11_5_topology_render_depth_upper_boundary_accepted() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "100"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert_eq!(args.depth, Some(100));
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_6: topology render default ascii + default depth
+    // (no --depth flag) accepts None (depth cap is optional).
+    #[test]
+    fn tv_net11_6_topology_render_default_depth_none_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render"]).expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert_eq!(args.depth, None);
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_7: topology render --depth 0 rejected pre-dispatch
+    // (below-range boundary of parse_graph_depth 1..=100 clamp).
+    #[test]
+    fn tv_net11_7_topology_render_depth_below_range_rejected() {
+        let result = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "0"]);
+        assert!(
+            result.is_err(),
+            "--depth 0 must be rejected pre-dispatch (parse_graph_depth 1..=100 clamp)"
         );
     }
 

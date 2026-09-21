@@ -1071,9 +1071,12 @@ pub struct NetworkNodeBindOutput {
     /// 32-byte node_id as 64 lowercase hex chars (echo).
     pub node_id_hex: String,
     /// Holder DID that the node is bound to (echo of
-    /// --holder-did arg, redacted on error paths per
-    /// RFC-0011-q §Security Considerations redaction
-    /// invariant).
+    /// --holder-did arg). Surfaced only in the Ok apply or
+    /// dry-run preview envelope; NEVER surfaced on error
+    /// paths (handler returns OctoCliError directly on
+    /// substrate failure). Per-extension impl crates own
+    /// DID validation per RFC-0011-q §Implicit Assumptions
+    /// row 3.
     pub holder_did: String,
     /// Whether the bind was applied (false = dry-run
     /// preview only per RFC-0011-q §Confirmation Flag).
@@ -3550,28 +3553,30 @@ fn network_node_show(args: &NodeShowArgs, cli: &Octo) -> Result<(), OctoCliError
 fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError> {
     // RFC-0011-q §Confirmation Flag: --apply +
     // --confirm-acknowledge required for apply (reversible
-    // write). Without --apply, default is dry-run preview.
-    // --apply alone (without --confirm-acknowledge) is an
-    // operator input error (ConfirmationRequired), NOT a
+    // write). Without --apply, default is dry-run preview
+    // (rendered without substrate dispatch). --apply alone
+    // (without --confirm-acknowledge) is an operator input
+    // error (ConfirmationRequired), NOT a
     // substrate-unavailability error.
     if args.apply && !args.confirm_acknowledge {
         return Err(OctoCliError::ConfirmationRequired {
             command: "octo network node bind".to_string(),
         });
     }
-    let registry = specialized_node_registry(cli);
-    let store = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
-        companion: "G11",
-        detail: "".to_string(),
-    })?;
+    // Apply path only: dispatch to substrate bind_to_did. Per
+    // RFC-0011-q §Error Handling, each SpecializedNodeError
+    // variant maps to slot 89 NetworkSubstrateUnavailable with
+    // a distinct variant tag in detail. Per redaction
+    // invariant: InvalidDid(m) and Internal(m) detail strings
+    // are NEVER surfaced in detail — only the variant tag is
+    // surfaced, so any potentially-redacted content stays
+    // within the per-extension impl crate's logging boundary.
     if args.apply {
-        // Apply path: dispatch to substrate bind_to_did.
-        // Per RFC-0011-q §Error Handling, each
-        // SpecializedNodeError variant maps to slot 89
-        // NetworkSubstrateUnavailable with a distinct
-        // message. Operators can distinguish NotFound
-        // (transient) from AlreadyBound (permanent) from
-        // CLI message alone.
+        let registry = specialized_node_registry(cli);
+        let store = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G11",
+            detail: "".to_string(),
+        })?;
         let holder = octo_network::specialized::node_record::HolderDid::new(&args.holder_did);
         match store.bind_to_did(&args.node_id, &holder) {
             Ok(()) => {}
@@ -3583,13 +3588,13 @@ fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError
                     octo_network::specialized::node_record::SpecializedNodeError::AlreadyBound => {
                         "specialized node already bound".to_string()
                     }
-                    octo_network::specialized::node_record::SpecializedNodeError::InvalidDid(m) => {
-                        format!("specialized node invalid DID: {m}")
+                    octo_network::specialized::node_record::SpecializedNodeError::InvalidDid(_) => {
+                        "specialized node invalid DID".to_string()
                     }
-                    octo_network::specialized::node_record::SpecializedNodeError::Internal(m) => {
-                        format!("specialized node internal error: {m}")
+                    octo_network::specialized::node_record::SpecializedNodeError::Internal(_) => {
+                        "specialized node internal error".to_string()
                     }
-                    _ => format!("specialized node error: {node_err}"),
+                    _ => "specialized node error".to_string(),
                 };
                 return Err(OctoCliError::NetworkSubstrateUnavailable {
                     companion: "G11",

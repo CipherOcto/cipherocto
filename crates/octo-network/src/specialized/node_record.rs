@@ -21,20 +21,22 @@ use std::collections::BTreeMap;
 
 /// `HolderDid` — substrate-faithful holder DID newtype
 /// per RFC-0871 §Identity Projection. Local newtype
-/// (not octo-wallet::Did) to avoid adding a new
-/// cross-crate dependency on the substrate slice.
-/// CLI layer validates DID string format at the
-/// boundary; this type bounds the substrate surface
-/// for downstream per-extension impl crates.
+/// (not `octo-did::Did` or `octo-wallet::Did`) to avoid
+/// adding a new cross-crate dependency on the substrate
+/// slice per per-extension crate pattern. Per-extension
+/// impl crates in Layer D own DID validation
+/// (parse + canonicalize + signature check); CLI layer
+/// passes the `--holder-did` string as-is without
+/// validation per RFC-0011-q §Implicit Assumptions
+/// row 3.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HolderDid(String);
 
 impl HolderDid {
     /// Construct a `HolderDid` from a string slice.
-    /// No format validation at substrate layer (CLI
-    /// parse layer enforces canonical `did:octo:0x<hex>`
-    /// format per RFC-0011-q Phase 9 §Pastejacking
-    /// Defense).
+    /// No format validation at substrate layer —
+    /// per-extension impl crates own DID validation
+    /// per RFC-0011-q §Implicit Assumptions row 3.
     pub fn new(did: impl Into<String>) -> Self {
         Self(did.into())
     }

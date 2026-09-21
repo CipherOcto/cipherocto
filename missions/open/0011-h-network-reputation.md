@@ -56,7 +56,7 @@ octo network reputation show <peer_did> [--json]
 
 ### Dependencies
 
-- RFC-0011-r Phase 10 reputation-store amendment Draft at `next 76998e03`
+- RFC-0011-r Phase 10 reputation-store amendment at `next 76998e03`
 - Phase 10 G13 substrate stub fill-in at `next 6f32badb`
 - Phase 10 G13 substrate slice at `next c95fd8cb`
 - Phase 10 G13 paired-YAML Claimed transition at `next 9159e613`

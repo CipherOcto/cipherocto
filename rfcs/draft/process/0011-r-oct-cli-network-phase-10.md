@@ -21,12 +21,12 @@ RFC-0011-r lands the **reputation store list + show** slice of RFC-0011-h §Impl
 - `octo network reputation list [--filter <filter>]` — read-only projection of peer reputations matching filter
 - `octo network reputation show <peer_did>` — read-only projection of single peer reputation
 
-Substrate per RFC-0860 (Reputation Store). EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait (additive trait extension per Phase 4 G22 precedent). Per-extension transport impl crates (substrate-ext-reputation-store-*) OUT OF SCOPE.
+Substrate per RFC-0860. EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait (additive trait extension per Phase 4 G22 precedent). Per-extension transport impl crates (substrate-ext-reputation-store-*) OUT OF SCOPE.
 
 ## Dependencies
 
 - RFC-0011-h
-- RFC-0860 Reputation Store (governing RFC)
+- RFC-0860
 - RFC-0011-i
 - RFC-0011-j
 - RFC-0011-k
@@ -233,7 +233,7 @@ RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" d
 - **RFC-0011-h** §Implicit Assumptions Audit Phase 10 rows
 - **RFC-0011-h** §Security Considerations Phase 10 rows
 - **RFC-0011-h** §Adversarial Review Phase 10 rows — 4 threats
-- **RFC-0860** Reputation Store — governing RFC for substrate spec
+- **RFC-0860**
 - **RFC-0011-o** Phase 7 — prior phase (slash-bridge)
 - **RFC-0011-p** Phase 8 — prior phase (router)
 - **RFC-0011-q** Phase 9 — prior phase (specialized-node)

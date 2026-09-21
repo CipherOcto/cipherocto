@@ -6,7 +6,7 @@ Completed (2026-09-20) — Substrate additions for ReputationStore Phase 10 G13 
 
 ## RFC
 
-RFC-0011-h §Substrate-Additions Companion Missions row G13 + RFC-0011-r Phase 10 §Substrate-Additions Companion Missions + RFC-0860 Reputation Store.
+RFC-0011-h §Substrate-Additions Companion Missions row G13 + RFC-0011-r Phase 10 §Substrate-Additions Companion Missions + RFC-0860.
 
 ## Summary
 
@@ -90,11 +90,11 @@ Layer B substrate addition lands via EXTEND pattern (additive trait extension pe
 
 ## Dependencies
 
-- RFC-0011-h Accepted (RFC-0011-h must be Accepted before this mission lands per RFC-0011-h §Substrate-Additions Companion Missions)
-- RFC-0011-r Phase 10 reputation-store amendment Draft at `next 76998e03`
+- RFC-0011-h (must be Accepted before this mission lands per RFC-0011-h §Substrate-Additions Companion Missions)
+- RFC-0011-r Phase 10 reputation-store amendment at `next 76998e03`
 - Phase 10 G13 substrate stub fill-in at `next 6f32badb`
 - Phase 10 G13 substrate slice at `next c95fd8cb`
-- RFC-0860 Reputation Store (governing RFC)
+- RFC-0860
 - Existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait
 
 ## Out of Scope

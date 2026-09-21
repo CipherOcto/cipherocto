@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G13 + RFC-0011-r Phase 10 §Substrate-Additions Companion Missions. Substrate slice pending per the Phase 4 paired-substrate completion pattern (companion YAML filled in → substrate lands → YAML Claimed → CLI dispatch lands → YAML Completed paired). RFC-0011-r Phase 10 reputation-store amendment Draft landed at `next 76998e03`.
+Claimed (2026-09-20) — Substrate additions for ReputationStore Phase 10 G13. Substrate slice LANDED at `next c95fd8cb` (4 files changed, 208 insertions, 2 deletions) per RFC-0011-h §Substrate-Additions Companion Missions row G13 + RFC-0011-r Phase 10 §Substrate-Additions. `ReputationStore` trait EXTENDED with 2 new async methods (`list` + `peer_reputation`) + `ReputationFilter` enum (All + AboveScore(u32) + BelowScore(u32)) + `PeerReputation` struct land in `crates/octo-reputation/src/store/mod.rs`. Both `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) + `ReputationStoreCompat<S, L>` (compat/mod.rs) impls EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`. 6 unit tests land at `crates/octo-reputation/src/store/memory.rs` (tv_phase10_substrate_1 through tv_phase10_substrate_6). 239/239 octo-reputation tests pass + zero regression of existing 233 substrate tests. Cargo clippy -p octo-reputation --all-targets -- -D warnings clean. Layer B substrate addition only zero Layer A change. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). CLI dispatch slice PENDING per RFC-0011-r Phase 10 §Subcommand Taxonomy.
 
 ## RFC
 
@@ -76,22 +76,24 @@ Layer B substrate addition lands via EXTEND pattern (additive trait extension pe
 
 ## Acceptance Criteria
 
-- [ ] `ReputationStore` trait EXTENDED with 2 new async methods (`list` + `peer_reputation`) per RFC-0011-h §Substrate-Additions row G13 + RFC-0011-r Phase 10 §Substrate Mapping Table
-- [ ] `list(filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>>` signature lands at end of trait
-- [ ] `peer_reputation(did: &RecorderDid) -> StoreResult<Option<PeerReputation>>` signature lands at end of trait
-- [ ] `ReputationFilter` enum (All + AboveScore(u32) + BelowScore(u32)) lands at same path with `#[serde(rename_all = "lowercase")]`
-- [ ] `PeerReputation` struct lands at same path with `peer_did: RecorderDid` + `score: u32` + `attestations_count: u32` + `last_updated_epoch: u64`
-- [ ] `InMemoryReputationStore` (memory.rs) EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`
-- [ ] `StoolapReputationStore` (stoolap.rs) EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`
-- [ ] `cargo clippy -p octo-reputation --all-targets -- -D warnings` clean (NO regression of existing 11+ modules)
-- [ ] `cargo test -p octo-reputation --lib` green (≥5 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin filter-mapping + empty-default + above-score + below-score + RecorderDid equality)
+- [x] `ReputationStore` trait EXTENDED with 2 new async methods (`list` + `peer_reputation`) per RFC-0011-h §Substrate-Additions row G13 + RFC-0011-r Phase 10 §Substrate Mapping Table
+- [x] `list(filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>>` signature lands at end of trait
+- [x] `peer_reputation(did: &RecorderDid) -> StoreResult<Option<PeerReputation>>` signature lands at end of trait
+- [x] `ReputationFilter` enum (All + AboveScore(u32) + BelowScore(u32)) lands at same path with `#[serde(rename_all = "lowercase")]`
+- [x] `PeerReputation` struct lands at same path with `peer_did: RecorderDid` + `score: u32` + `attestations_count: u32` + `last_updated_epoch: u64`
+- [x] `InMemoryReputationStore` (memory.rs) EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`
+- [x] `StoolapReputationStore` (stoolap.rs) EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`
+- [x] `cargo clippy -p octo-reputation --all-targets -- -D warnings` clean (NO regression of existing 11+ modules)
+- [x] `cargo test -p octo-reputation --lib` green (≥5 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin filter-mapping + empty-default + above-score + below-score + RecorderDid equality)
 
 ## Dependencies
 
 - RFC-0011-h Accepted (RFC-0011-h must be Accepted before this mission lands per RFC-0011-h §Substrate-Additions Companion Missions)
 - RFC-0011-r Phase 10 reputation-store amendment Draft at `next 76998e03`
+- Phase 10 G13 substrate stub fill-in at `next 6f32badb`
+- Phase 10 G13 substrate slice at `next c95fd8cb`
 - RFC-0860 Reputation Store (governing RFC)
 - Existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:51`
 

@@ -224,6 +224,55 @@ pub trait ReputationStore: Send + Sync {
         &self,
         controller_id: ControllerId,
     ) -> StoreResult<Vec<AnchorRecord>>;
+
+    /// List peer reputations matching the given filter
+    /// (Phase 10 G13 per RFC-0011-r §Substrate Mapping
+    /// Table). Returns empty Vec if no peers match.
+    /// Additive trait extension per Phase 4 G22
+    /// precedent; per-extension impl crates (Layer D)
+    /// provide real implementations. Default impl
+    /// returns empty Vec (stoolap + memory stubs).
+    async fn list(&self, filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>>;
+
+    /// Load reputation for a specific peer DID
+    /// (Phase 10 G13 per RFC-0011-r §Substrate Mapping
+    /// Table). Returns None if the peer has no
+    /// recorded reputation. Default impl returns
+    /// None (stoolap + memory stubs).
+    async fn peer_reputation(&self, did: &RecorderDid) -> StoreResult<Option<PeerReputation>>;
+}
+
+/// `ReputationFilter` — filter enum for
+/// `ReputationStore::list` (Phase 10 G13 per
+/// RFC-0011-r §Substrate Mapping Table). Closed
+/// enum (not `#[non_exhaustive]`) per RFC-0011-h
+/// §Substrate-Additions Companion Missions row G13;
+/// `#[serde(rename_all = "lowercase")]` for
+/// canonical JSON encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReputationFilter {
+    /// All peers (no filter).
+    All,
+    /// Peers with score >= threshold.
+    AboveScore(u32),
+    /// Peers with score <= threshold.
+    BelowScore(u32),
+}
+
+/// `PeerReputation` — peer reputation summary
+/// projection (Phase 10 G13 per RFC-0011-r
+/// §Substrate Mapping Table).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerReputation {
+    /// Peer DID (RecorderDid canonical).
+    pub peer_did: RecorderDid,
+    /// Aggregate reputation score.
+    pub score: u32,
+    /// Number of attestations on record.
+    pub attestations_count: u32,
+    /// Last update epoch (RFC-0855 §epoch).
+    pub last_updated_epoch: u64,
 }
 
 /// One row of `reputation_anchors` joined to its underlying event

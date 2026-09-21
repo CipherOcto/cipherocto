@@ -261,6 +261,20 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
             .query_anchors_by_controller_id(controller_id)
             .await
     }
+
+    async fn list(
+        &self,
+        filter: crate::store::ReputationFilter,
+    ) -> StoreResult<Vec<crate::store::PeerReputation>> {
+        self.inner.list(filter).await
+    }
+
+    async fn peer_reputation(
+        &self,
+        did: &crate::types::RecorderDid,
+    ) -> StoreResult<Option<crate::store::PeerReputation>> {
+        self.inner.peer_reputation(did).await
+    }
 }
 
 /// Reasons a legacy shadow write can fail. The compat layer maps each to a

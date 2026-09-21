@@ -1811,6 +1811,21 @@ mod real {
             }
             Ok(out)
         }
+
+        async fn list(&self, _filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>> {
+            // Phase 10 G13 stub: no real aggregation in this
+            // trait-only phase. Per-extension impl crates (Layer D)
+            // provide real implementations. Returns empty Vec per
+            // RFC-0011-r §Substrate Mapping Table Phase 10.
+            Ok(Vec::new())
+        }
+
+        async fn peer_reputation(&self, _did: &RecorderDid) -> StoreResult<Option<PeerReputation>> {
+            // Phase 10 G13 stub: no real lookup in this
+            // trait-only phase. Returns None per RFC-0011-r
+            // §Substrate Mapping Table Phase 10.
+            Ok(None)
+        }
     }
 }
 
@@ -1844,6 +1859,7 @@ pub use real::StoolapReputationStore;
 mod stub {
     use super::*;
     use crate::store::AnchorRecord;
+    use crate::store::{PeerReputation, ReputationFilter};
     use crate::GossipCatchUp;
 
     pub struct StoolapReputationStore;
@@ -2002,6 +2018,14 @@ mod stub {
             _: ControllerId,
         ) -> StoreResult<Vec<AnchorRecord>> {
             stub("query_anchors_by_controller_id")
+        }
+
+        async fn list(&self, _filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>> {
+            stub("list")
+        }
+
+        async fn peer_reputation(&self, _did: &RecorderDid) -> StoreResult<Option<PeerReputation>> {
+            stub("peer_reputation")
         }
     }
 }

@@ -618,14 +618,36 @@ impl ReputationStore for InMemoryReputationStore {
         });
         Ok(out)
     }
+
+    async fn list(
+        &self,
+        _filter: crate::store::ReputationFilter,
+    ) -> StoreResult<Vec<crate::store::PeerReputation>> {
+        // Phase 10 G13 stub: no real aggregation in this trait-only
+        // phase. Per-extension impl crates (Layer D) provide real
+        // implementations. Returns empty Vec per RFC-0011-r
+        // §Substrate Mapping Table Phase 10.
+        let _inner = self.inner.read().await;
+        Ok(Vec::new())
+    }
+
+    async fn peer_reputation(
+        &self,
+        _did: &RecorderDid,
+    ) -> StoreResult<Option<crate::store::PeerReputation>> {
+        // Phase 10 G13 stub: no real lookup in this trait-only
+        // phase. Returns None per RFC-0011-r §Substrate Mapping
+        // Table Phase 10.
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth::{AssetTag, ChainRef, SlashDestination};
-    use crate::store::rotation_key;
-    use crate::types::ControllerId;
+    use crate::store::{rotation_key, PeerReputation, ReputationFilter};
+    use crate::types::{ControllerId, RecorderDid};
     use crate::{ReputationError, StakeComponent};
     use octo_determin::Dfp;
 
@@ -1343,5 +1365,102 @@ mod tests {
             out.iter().map(|r| r.recorded_at_unix).collect::<Vec<_>>(),
             vec![5_000, 5_000, 5_000]
         );
+    }
+
+    // === Phase 10 G13 test vectors (RFC-0011-r §Test Vectors Phase 10) ===
+
+    fn phase10_test_recorder_did(seed: u8) -> RecorderDid {
+        let mut bytes = [0u8; 52];
+        bytes[0] = seed;
+        RecorderDid::from_array(bytes)
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_1_reputation_filter_equality_and_distinct() {
+        // Verify ReputationFilter variants are distinct + Eq per
+        // RFC-0011-r §Substrate Mapping Table Phase 10.
+        let all = ReputationFilter::All;
+        let above = ReputationFilter::AboveScore(100);
+        let below = ReputationFilter::BelowScore(100);
+        assert_eq!(all, ReputationFilter::All);
+        assert_eq!(above, ReputationFilter::AboveScore(100));
+        assert_eq!(below, ReputationFilter::BelowScore(100));
+        assert_ne!(all, above);
+        assert_ne!(all, below);
+        assert_ne!(above, below);
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_2_peer_reputation_partial_eq() {
+        let did = phase10_test_recorder_did(1);
+        let a = PeerReputation {
+            peer_did: did,
+            score: 42,
+            attestations_count: 7,
+            last_updated_epoch: 1000,
+        };
+        let b = PeerReputation {
+            peer_did: did,
+            score: 42,
+            attestations_count: 7,
+            last_updated_epoch: 1000,
+        };
+        let c = PeerReputation {
+            peer_did: did,
+            score: 43,
+            attestations_count: 7,
+            last_updated_epoch: 1000,
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_3_in_memory_list_returns_empty_by_default() {
+        // Per RFC-0011-r §Substrate Mapping Table Phase 10, the
+        // stub impl returns empty Vec (no real aggregation in
+        // this trait-only phase).
+        let store = InMemoryReputationStore::default();
+        let result = ReputationStore::list(&store, ReputationFilter::All)
+            .await
+            .expect("list stub should not error");
+        assert!(result.is_empty());
+        let result_above = ReputationStore::list(&store, ReputationFilter::AboveScore(50))
+            .await
+            .expect("list stub should not error");
+        assert!(result_above.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_4_in_memory_peer_reputation_returns_none() {
+        // Per RFC-0011-r §Substrate Mapping Table Phase 10, the
+        // stub impl returns None (no real lookup in this
+        // trait-only phase).
+        let store = InMemoryReputationStore::default();
+        let did = phase10_test_recorder_did(2);
+        let result = ReputationStore::peer_reputation(&store, &did)
+            .await
+            .expect("peer_reputation stub should not error");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_5_reputation_filter_above_below_distinct() {
+        // AboveScore and BelowScore are distinct variants per
+        // RFC-0011-r §Substrate Mapping Table Phase 10.
+        let a = ReputationFilter::AboveScore(100);
+        let b = ReputationFilter::BelowScore(100);
+        assert_ne!(a, b);
+        assert_eq!(a, ReputationFilter::AboveScore(100));
+        assert_eq!(b, ReputationFilter::BelowScore(100));
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_6_recorder_did_distinct_instances() {
+        // Verify distinct RecorderDid seeds produce distinct DIDs.
+        let did_a = phase10_test_recorder_did(1);
+        let did_b = phase10_test_recorder_did(2);
+        assert_ne!(did_a, did_b);
+        assert_eq!(did_a, phase10_test_recorder_did(1));
     }
 }

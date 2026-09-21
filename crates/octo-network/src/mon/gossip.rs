@@ -138,6 +138,77 @@ pub fn verify_mission_scope(
     message.belongs_to_mission(expected_mission_id)
 }
 
+/// In-memory snapshot of the gossip protocol state for a mission scope.
+///
+/// Phase 12 G15 per RFC-0011-t §Substrate Mapping Table. Operates on
+/// the in-memory snapshot of the gossip state; live gossip adapter
+/// OUT OF SCOPE for Phase 12. Per-extension impl crates (Layer D)
+/// provide real gossip adapters in follow-on missions.
+/// BTreeMap-based deterministic iteration ordering preserved per
+/// RFC-0011-h §Output Envelope determinism.
+#[derive(Clone, Debug)]
+pub struct Gossip {
+    mission_id: MissionId,
+    peers_reachable: u64,
+    messages_sent: u64,
+    messages_received: u64,
+    messages_dropped: u64,
+    anti_entropy_rounds: u64,
+    last_sync_epoch: u64,
+}
+
+/// Aggregate gossip stats output (read-only projection).
+///
+/// Phase 12 G15 per RFC-0011-t §Substrate Mapping Table. Returned by
+/// `Gossip::stats()` for substrate-faithful projection to the CLI
+/// dispatch layer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GossipStats {
+    pub mission_id_hex: String,
+    pub peers_reachable: u64,
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub messages_dropped: u64,
+    pub anti_entropy_rounds: u64,
+    pub last_sync_epoch: u64,
+}
+
+impl Gossip {
+    /// Construct a new `Gossip` snapshot from explicit counters.
+    pub fn new(
+        mission_id: MissionId,
+        peers_reachable: u64,
+        messages_sent: u64,
+        messages_received: u64,
+        messages_dropped: u64,
+        anti_entropy_rounds: u64,
+        last_sync_epoch: u64,
+    ) -> Self {
+        Self {
+            mission_id,
+            peers_reachable,
+            messages_sent,
+            messages_received,
+            messages_dropped,
+            anti_entropy_rounds,
+            last_sync_epoch,
+        }
+    }
+
+    /// Read the gossip stats as a substrate-faithful projection.
+    pub fn stats(&self) -> GossipStats {
+        GossipStats {
+            mission_id_hex: hex::encode(self.mission_id.to_canonical_bytes()),
+            peers_reachable: self.peers_reachable,
+            messages_sent: self.messages_sent,
+            messages_received: self.messages_received,
+            messages_dropped: self.messages_dropped,
+            anti_entropy_rounds: self.anti_entropy_rounds,
+            last_sync_epoch: self.last_sync_epoch,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +344,67 @@ mod tests {
             );
         }
         assert!(MissionPropagationClass::from_u16(8).is_none());
+    }
+
+    fn phase12_test_mission_id() -> MissionId {
+        MissionId::new(12, &[0xCC; 32], 1200, &[0xDD; 32], 1)
+    }
+
+    #[test]
+    fn tv_phase12_substrate_1_gossip_new_constructs_with_counters() {
+        let mid = phase12_test_mission_id();
+        let g = Gossip::new(mid, 7, 100, 95, 5, 3, 1200);
+        let expected_mid = phase12_test_mission_id();
+        assert_eq!(g.peers_reachable, 7);
+        assert_eq!(g.messages_sent, 100);
+        assert_eq!(g.messages_received, 95);
+        assert_eq!(g.messages_dropped, 5);
+        assert_eq!(g.anti_entropy_rounds, 3);
+        assert_eq!(g.last_sync_epoch, 1200);
+        assert_eq!(g.mission_id, expected_mid);
+    }
+
+    #[test]
+    fn tv_phase12_substrate_2_gossip_stats_projects_counters() {
+        let mid = phase12_test_mission_id();
+        let g = Gossip::new(mid, 7, 100, 95, 5, 3, 1200);
+        let stats = g.stats();
+        assert_eq!(stats.peers_reachable, 7);
+        assert_eq!(stats.messages_sent, 100);
+        assert_eq!(stats.messages_received, 95);
+        assert_eq!(stats.messages_dropped, 5);
+        assert_eq!(stats.anti_entropy_rounds, 3);
+        assert_eq!(stats.last_sync_epoch, 1200);
+        // mission_id_hex is hex-encoded canonical bytes (76 chars for 38-byte
+        // MissionId canonical form per RFC-0855 §MissionId canonical encoding).
+        assert_eq!(stats.mission_id_hex.len(), 76);
+        assert!(stats.mission_id_hex.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(stats
+            .mission_id_hex
+            .chars()
+            .all(|c| !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn tv_phase12_substrate_3_gossip_stats_deterministic_across_calls() {
+        let mid = phase12_test_mission_id();
+        let g = Gossip::new(mid, 7, 100, 95, 5, 3, 1200);
+        let s1 = g.stats();
+        let s2 = g.stats();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn tv_phase12_substrate_4_gossip_stats_distinct_per_mission() {
+        let mid_a = MissionId::new(12, &[0xAA; 32], 1200, &[0xBB; 32], 1);
+        let mid_b = MissionId::new(13, &[0xAA; 32], 1200, &[0xBB; 32], 1);
+        let g_a = Gossip::new(mid_a, 7, 100, 95, 5, 3, 1200);
+        let g_b = Gossip::new(mid_b, 7, 100, 95, 5, 3, 1200);
+        let s_a = g_a.stats();
+        let s_b = g_b.stats();
+        assert_ne!(s_a.mission_id_hex, s_b.mission_id_hex);
+        // All counter fields identical (only mission differs).
+        assert_eq!(s_a.peers_reachable, s_b.peers_reachable);
+        assert_eq!(s_a.messages_sent, s_b.messages_sent);
     }
 }

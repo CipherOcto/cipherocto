@@ -249,6 +249,12 @@ pub enum NetworkAction {
         #[command(subcommand)]
         action: NetworkReputationAction,
     },
+    /// Topology render subcommand (RFC-0011-s Phase 11 G14).
+    Topology {
+        /// Topology subcommand.
+        #[command(subcommand)]
+        action: NetworkTopologyAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -822,6 +828,49 @@ pub struct ReputationShowArgs {
     pub json: bool,
 }
 
+/// Topology render subcommand surface (RFC-0011-s Phase 11 G14).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkTopologyAction {
+    /// Render the topology commitment as graph
+    /// (RFC-0011-s §Subcommand Taxonomy Phase 11).
+    Render(TopologyRenderArgs),
+}
+
+/// `octo network topology render [--format ascii|dot] [--depth <N>]`
+/// arguments (RFC-0011-s §Subcommand Taxonomy Phase 11
+/// `topology render`). `format` defaults to `ascii`
+/// (terminal-friendly); `dot` for graphviz pipe.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct TopologyRenderArgs {
+    /// Graph format (RFC-0011-s §Subcommand Taxonomy
+    /// Phase 11 `topology render` `--format`).
+    #[arg(long, value_enum, default_value_t = TopologyFormatKind::Ascii)]
+    pub format: TopologyFormatKind,
+    /// Optional depth cap (1-100). Clap enforces u16
+    /// overflow rejection pre-dispatch (65536 rejected).
+    /// Topology renderer respects the cap; live
+    /// topology-source adapter OUT OF SCOPE for Phase 11.
+    #[arg(long)]
+    pub depth: Option<u16>,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Bare-word enum for `topology render --format`
+/// (RFC-0011-s §Subcommand Taxonomy Phase 11). Maps
+/// to the substrate `GraphFormat` enum from
+/// `mon::trust_graph` (Phase 1 0851p-a-trust-ux).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopologyFormatKind {
+    /// ASCII (terminal-friendly).
+    Ascii,
+    /// DOT (graphviz pipe).
+    Dot,
+}
+
 // === Output envelopes (RFC-0011-n Phase 6) ===
 
 /// `octo network bootstrap` output envelope (RFC-0011-n Phase 6
@@ -1057,6 +1106,21 @@ pub struct NetworkReputationShowOutput {
     /// Optional peer reputation record (None when peer
     /// has no recorded reputation).
     pub record: Option<PeerReputationProjection>,
+}
+
+/// `octo network topology render` output envelope
+/// (RFC-0011-s Phase 11 G14).
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkTopologyRenderOutput {
+    /// Mission ID hex of the rendered topology
+    /// (echo; canonicalized via `MissionId::to_canonical_bytes`).
+    pub mission_id_hex: String,
+    /// Format that was applied (`ascii` / `dot`).
+    pub format: String,
+    /// Optional depth cap (1-100) that was applied.
+    pub depth: Option<u16>,
+    /// Rendered graph output (string body).
+    pub render: String,
 }
 
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
@@ -1724,6 +1788,9 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         NetworkAction::Reputation { action: rep_act } => match rep_act {
             NetworkReputationAction::List(args) => network_reputation_list(args, cli),
             NetworkReputationAction::Show(args) => network_reputation_show(args, cli),
+        },
+        NetworkAction::Topology { action: top_act } => match top_act {
+            NetworkTopologyAction::Render(args) => network_topology_render(args, cli),
         },
     }
 }
@@ -3447,6 +3514,64 @@ fn parse_reputation_peer_did(s: &str) -> Result<[u8; 52], OctoCliError> {
             })?;
     }
     Ok(out)
+}
+
+/// `octo network topology render [--format ascii|dot]
+/// [--depth <N>]` handler (RFC-0011-s Phase 11 G14).
+/// Read-only; delegates to the substrate
+/// `TopologyCommitment::render(format)` method (Phase 11
+/// additive method extension per RFC-0011-s). Live
+/// topology-source adapter OUT OF SCOPE; the
+/// `topology_render_registry` marker returns false
+/// in this trait-only phase.
+fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    if !topology_render_registry(cli) {
+        return Err(OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G14",
+            detail: "".to_string(),
+        });
+    }
+    let format_label = match args.format {
+        TopologyFormatKind::Ascii => "ascii",
+        TopologyFormatKind::Dot => "dot",
+    };
+    let substrate_format = match args.format {
+        TopologyFormatKind::Ascii => octo_network::mon::trust_graph::GraphFormat::Ascii,
+        TopologyFormatKind::Dot => octo_network::mon::trust_graph::GraphFormat::Dot,
+    };
+    // Phase 11 substrate-faithful stub: an empty in-memory
+    // TopologyCommitment is rendered. Real
+    // live-topology-source adapter (Layer D) follows on;
+    // for now the handler exercises the render() method
+    // surface to confirm the trait-shape pairing works
+    // end-to-end through the CLI dispatch layer.
+    let mid = octo_network::mon::mission_id::MissionId::new(0, &[0u8; 32], 0, &[0u8; 32], 1);
+    let tc = octo_network::mon::topology::TopologyCommitment::compute(
+        mid,
+        octo_network::mon::topology::TopologyModel::Mesh,
+        [0u8; 32],
+        [0u8; 32],
+        0,
+    );
+    let render_body = tc.render(substrate_format);
+    let env = OutputEnvelope::new(
+        "octo.network.topology.render.v1",
+        NetworkTopologyRenderOutput {
+            mission_id_hex: hex::encode(mid.to_canonical_bytes()),
+            format: format_label.to_string(),
+            depth: args.depth,
+            render: render_body,
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// Lookup the runtime topology renderer marker
+/// (RFC-0011-s Phase 11 G14). Returns false in this
+/// trait-only phase; per-extension Layer D live
+/// topology-source adapter init fn OUT OF SCOPE.
+fn topology_render_registry(_cli: &Octo) -> bool {
+    false
 }
 
 fn bootstrap_config_companion(err: &BootstrapConfigError) -> &'static str {
@@ -5323,6 +5448,52 @@ mod tests {
         assert!(
             result.is_ok(),
             "uppercase-only hex peer_did must be accepted"
+        );
+    }
+
+    // === Phase 11 test vectors (RFC-0011-s Phase 11 G14) ===
+
+    // tv_net11_1: topology render default format (ascii) parses cleanly.
+    #[test]
+    fn tv_net11_1_topology_render_default_format_ascii_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render"]).expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert!(matches!(args.format, TopologyFormatKind::Ascii));
+                    assert!(args.depth.is_none());
+                    assert!(!args.json);
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_2: topology render --format dot parses cleanly.
+    #[test]
+    fn tv_net11_2_topology_render_format_dot_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--format", "dot"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => {
+                    assert!(matches!(args.format, TopologyFormatKind::Dot));
+                }
+            },
+            _ => panic!("expected Topology"),
+        }
+    }
+
+    // tv_net11_3: topology render --depth 65536 rejected pre-dispatch
+    // (clap u16 overflow per Phase 5 RFC-0011-m pastejacking defense
+    // pattern).
+    #[test]
+    fn tv_net11_3_topology_render_depth_overflow_rejected() {
+        let result =
+            TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "65536"]);
+        assert!(
+            result.is_err(),
+            "--depth 65536 must be rejected pre-dispatch (clap u16 overflow)"
         );
     }
 }

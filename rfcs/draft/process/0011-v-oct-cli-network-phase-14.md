@@ -225,7 +225,7 @@ Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent + user decisio
 
 ## Layer discipline
 
-- **Layer A frozen preserved**: zero change to `octo-governance-core`, `octo-audit-core`, `octo-settlement-core`, `octo-vault-core`, `octo-wallet-core`.
+- **Layer A frozen preserved**: zero change to `octo-governance-core`, `octo-audit-core`, `octo-settlement-core`.
 - **Layer B substrate NEW MODULE**: `mon/heartbeat.rs` (per Phase 7 RFC-0011-o NEW module precedent for SlashBridge).
 - **Layer C CLI dispatch**: `commands/network.rs` extended with `NetworkAction::Heartbeat { action: NetworkHeartbeatAction }` clap variant; `NetworkHeartbeatAction::Probe(HeartbeatProbeArgs)`; 1 output envelope (`NetworkHeartbeatProbeOutput` with `Serialize + Deserialize` derives); 1 handler (`network_heartbeat_probe` invokes substrate unconditionally per Phase 12 RFC-0011-t R2.5 precedent); 12 test vectors (5 dispatch + 7 substrate).
 
@@ -292,12 +292,12 @@ All 8 CLI mission YAMLs paired with these G-rows (Created at CLI dispatch slice 
 
 ## Cross-references
 
-- [[RFC-0011-h Accepted]] — multi-phase rollout plan
-- [[RFC-0011-o Phase 7 RFC Draft]] — Phase 7 G9 spec
-- [[RFC-0011-p Phase 8 RFC Draft]] — Phase 8 G10 spec
-- [[RFC-0011-q Phase 9 RFC Draft]] — Phase 9 G11 spec
-- [[RFC-0011-r Phase 10 RFC Draft]] — Phase 10 G13 spec
-- [[RFC-0011-s Phase 11 RFC Draft]] — Phase 11 G14 spec
-- [[RFC-0011-t Phase 12 RFC Draft]] — Phase 12 G15 spec
-- [[RFC-0011-u Phase 13 RFC Draft]] — Phase 13 G16a + G16b spec
-- [[RFC-0011-v Phase 14 RFC Draft]] — Phase 14 G17 spec (this RFC)
+- [[RFC-0011-h]] — multi-phase rollout plan
+- [[RFC-0011-o]] — Phase 7 G9 spec
+- [[RFC-0011-p]] — Phase 8 G10 spec
+- [[RFC-0011-q]] — Phase 9 G11 spec
+- [[RFC-0011-r]] — Phase 10 G13 spec
+- [[RFC-0011-s]] — Phase 11 G14 spec
+- [[RFC-0011-t]] — Phase 12 G15 spec
+- [[RFC-0011-u]] — Phase 13 G16a + G16b spec
+- [[RFC-0011-v]] — Phase 14 G17 spec (this RFC)

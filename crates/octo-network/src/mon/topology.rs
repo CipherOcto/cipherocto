@@ -73,11 +73,12 @@ impl TopologyCommitment {
     /// topology-source adapter OUT OF SCOPE for Phase 11.
     /// Per-extension impl crates (Layer D) provide real
     /// topology-source adapters in follow-on missions.
-    /// BTreeMap-based deterministic iteration ordering
-    /// preserved per RFC-0011-h §Output Envelope
-    /// determinism. REUSES `GraphFormat` enum from
-    /// `mon::trust_graph` (Phase 1 0851p-a-trust-ux
-    /// import); zero NEW types.
+    /// Deterministic across calls (no HashMap iteration,
+    /// no randomness — `render_ascii` and `render_dot`
+    /// iterate zero collections of any kind). REUSES
+    /// `GraphFormat` enum from `mon::trust_graph`
+    /// (Phase 1 0851p-a-trust-ux import); zero NEW
+    /// types.
     pub fn render(&self, format: crate::mon::trust_graph::GraphFormat) -> String {
         match format {
             crate::mon::trust_graph::GraphFormat::Ascii => self.render_ascii(),
@@ -106,19 +107,32 @@ impl TopologyCommitment {
     /// Private DOT rendering helper for
     /// `TopologyCommitment::render`. Produces a
     /// `digraph G { ... }` block with deterministic
-    /// `mission_id` key order. Pipe output to
-    /// `dot -Tpng` or `dot -Tsvg` for visualization.
+    /// `mission_id` key order. The model label is DOT-
+    /// escaped via `escape_dot` (mirrors the Phase 1
+    /// `TrustGraph::render_dot` convention at
+    /// `mon::trust_graph::escape_dot`). Pipe output
+    /// to `dot -Tpng` or `dot -Tsvg` for visualization.
     fn render_dot(&self) -> String {
         let mut out = String::new();
         out.push_str("digraph G {\n");
         out.push_str(&format!(
-            "  mission_{} [label=\"{:?}\"];\n",
+            "  mission_{} [label=\"{}\"];\n",
             hex::encode(self.mission_id.to_canonical_bytes()),
-            self.model,
+            escape_dot(&format!("{:?}", self.model)),
         ));
         out.push_str("}\n");
         out
     }
+}
+
+/// DOT label escaper for `render_dot` — mirrors the
+/// Phase 1 `mon::trust_graph::escape_dot` precedent
+/// (RFC-0855 §Substrate-faithfulness escaping
+/// convention). Replaces `\` and `"` to prevent
+/// malformed DOT output for any future
+/// `TopologyModel` variant with String fields.
+fn escape_dot(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Mission descriptor flags (RFC-0855 §2.2)

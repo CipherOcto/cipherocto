@@ -36,8 +36,13 @@ pub struct TrustGraph {
     pub edges: Vec<TrustEdge>,
 }
 
-/// Output format.
+/// Output format. `#[non_exhaustive]` per RFC-0011-s
+/// §Substrate Extension claim: new variants added in
+/// follow-on amendments must not break downstream
+/// consumers (Layer C CLI handlers fall back to ASCII
+/// at unknown-variant dispatch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GraphFormat {
     Ascii,
     Dot,

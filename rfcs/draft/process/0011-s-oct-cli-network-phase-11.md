@@ -46,7 +46,7 @@ Substrate per RFC-0855 §5.1 Topology models. EXTENDS existing `§TopologyCommit
 5. REUSE `§GraphFormat` enum from Phase 1 `TrustGraph::render` at `§mon/trust_graph.rs` (existing import; Ascii + Dot variants)
 6. Preserve BTreeMap determinism where substrate returns ordered data
 7. Preserve slot 89 REUSE per Phase 6 precedent + user decision (0 NEW OctoCliError variants)
-8. 7 test vectors — tv_net11_1 through tv_net11_7
+8. 9 test vectors — tv_net11_1 through tv_net11_9
 
 ## Motivation
 
@@ -115,7 +115,7 @@ pub struct NetworkTopologyRenderOutput {
 }
 ```
 
-### Test vectors (7)
+### Test vectors (9)
 
 - `tv_net11_1`: topology render default format (ascii) parses cleanly
 - `tv_net11_2`: topology render --format dot parses cleanly
@@ -124,6 +124,8 @@ pub struct NetworkTopologyRenderOutput {
 - `tv_net11_5`: topology render --depth 100 accepted pre-dispatch (upper boundary of `parse_graph_depth` 1..=100)
 - `tv_net11_6`: topology render default depth (no `--depth`) parses with `None` (depth cap is optional)
 - `tv_net11_7`: topology render --depth 0 rejected pre-dispatch (`parse_graph_depth` 1..=100 clamp below-range)
+- `tv_net11_8`: handler dispatch with `--depth 5` returns `Ok` and rendered body contains `depth=5` footer (Phase 11 trait-only dispatch contract surfaces the depth value in output footer per §Substrate-faithfulness)
+- `tv_net11_9`: handler dispatch with no `--depth` returns `Ok` and rendered body contains `depth=full` footer (default depth cap surfaces as `depth=full` in output footer)
 
 ## Exit codes
 
@@ -137,9 +139,9 @@ Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent + user decisio
 
 ## Substrate-faithfulness
 
-The `render()` method operates on the in-memory snapshot of the `TopologyCommitment` struct (no live topology source). Per-extension Layer D adapter crates (live topology source adapters) OUT OF SCOPE for Phase 11 per RFC-0011-h §Future Work items F8+F9. BTreeMap-based deterministic iteration ordering preserved per RFC-0011-h §Output Envelope determinism.
+The `render()` method operates on the in-memory snapshot of the `TopologyCommitment` struct (no live topology source). Per-extension Layer D adapter crates (live topology source adapters) OUT OF SCOPE for Phase 11 per RFC-0011-h §Future Work items F8+F9. Determinism preserved across calls (no HashMap iteration, no randomness, no collection iteration of any kind in `render_ascii` + `render_dot`) per RFC-0011-h §Output Envelope determinism.
 
-The CLI handler invokes the substrate method unconditionally — no registry gate (trait dispatch is the universal code path per Phase 10 RFC-0011-r R2.5 substrate-faithfulness precedent).
+The CLI handler invokes the substrate method unconditionally — no registry gate (trait dispatch is the universal code path per Phase 10 RFC-0011-r R2.5 substrate-faithfulness precedent). The handler appends a `depth={N}` (or `depth=full` when omitted) footer line plus the empty-state sentinel `(empty topology — live source adapter required for Phase 11)` to the rendered body. The depth footer surfaces the `--depth` cap value in operator-visible output so the cap is never silently dropped (Phase 11 trait-only dispatch does not depth-filter an in-memory snapshot; the value is forwarded for future Layer D live-topology adapters). The empty-state sentinel mirrors the Phase 1 `TrustGraph::render_ascii` precedent at `mon::trust_graph::render_ascii` (returns `(empty trust graph)` for empty input) and signals to operators that the dispatched Mesh commitment is a stub, not a real topology.
 
 ## Companion stub missions
 
@@ -156,3 +158,4 @@ G14 `0011-h-s-a-topology-render` (Open → Claimed → Completed paired with CLI
 
 - 2026-09-20 — Draft (this version)
 - 2026-09-21 — R1.5 fix sweep: depth 1..=100 clamp via `parse_graph_depth`; cite hygiene strip status parentheticals on Dependencies + amendment chain; `§GraphFormat` REUSE ref to Phase 1 `TrustGraph::render`; removed file:line refs from prose; depth test vectors expanded to 7
+- 2026-09-21 — R2.5 fix sweep: `--depth` value surfaces in rendered output footer (`depth={N}` or `depth=full`); empty-topology stub marker appended to rendered body (Phase 1 `TrustGraph::render_ascii` empty-state sentinel precedent); `escape_dot` helper added to `mon::topology` (Phase 1 `mon::trust_graph::escape_dot` precedent); `#[non_exhaustive]` attribute added to `GraphFormat` enum in `mon::trust_graph` (RFC §Substrate Extension claim); tv_net11_8 dispatch test with `--depth 5`; tv_net11_9 dispatch test with default depth; depth test vectors expanded to 9

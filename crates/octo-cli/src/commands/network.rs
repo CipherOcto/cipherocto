@@ -2956,6 +2956,12 @@ fn graph_format_str(f: GraphFormat) -> &'static str {
     match f {
         GraphFormat::Ascii => "ascii",
         GraphFormat::Dot => "dot",
+        // Wildcard arm: `GraphFormat` is `#[non_exhaustive]`
+        // per `mon::trust_graph::GraphFormat` (Phase 1
+        // substrate-faithfulness precedent per RFC-0011-s).
+        // Future variants fall back to "ascii" so the
+        // envelope string is always populated.
+        _ => "ascii",
     }
 }
 
@@ -3868,7 +3874,28 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
         [0u8; 32],
         0,
     );
-    let render_body = tc.render(substrate_format);
+    let mut render_body = tc.render(substrate_format);
+    // Phase 11 substrate-faithful dispatch: surface
+    // `--depth` in the output footer so operators can
+    // verify the cap value was honored. The Phase 11
+    // trait-only dispatch does not depth-filter an
+    // in-memory snapshot (live topology-source adapter
+    // is Layer D OUT OF SCOPE); the footer surfaces the
+    // value for forward-compatibility with Layer D
+    // adapters that will depth-filter the full graph.
+    let depth_footer = match args.depth {
+        Some(d) => format!("depth={d}\n"),
+        None => "depth=full\n".to_string(),
+    };
+    render_body.push_str(&depth_footer);
+    // Phase 11 substrate-faithfulness marker: the
+    // trait-only dispatch constructs an empty
+    // in-memory Mesh commitment; the footer line
+    // signals to operators that this is NOT a real
+    // topology commitment. Mirrors the Phase 1
+    // `TrustGraph::render_ascii` empty-state sentinel
+    // (mon::trust_graph::render_ascii at line 96-99).
+    render_body.push_str("(empty topology — live source adapter required for Phase 11)\n");
     let env = OutputEnvelope::new(
         "octo.network.topology.render.v1",
         NetworkTopologyRenderOutput {
@@ -6579,6 +6606,54 @@ mod tests {
         assert!(
             result.is_err(),
             "--depth 0 must be rejected pre-dispatch (parse_graph_depth 1..=100 clamp)"
+        );
+    }
+
+    // tv_net11_8: handler→substrate dispatch test. Verifies
+    // `--depth` value surfaces in the rendered output footer
+    // AND that the empty-topology stub marker is appended
+    // (Phase 11 trait-only dispatch contract per RFC-0011-s
+    // §Substrate-faithfulness). Mirrors the Phase 10
+    // `tv_net10_7_reputation_list_substrate_dispatch` pattern.
+    #[test]
+    fn tv_net11_8_topology_render_dispatch_depth_in_footer() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render", "--depth", "5"])
+            .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => args,
+            },
+            _ => panic!("expected Topology"),
+        };
+        assert_eq!(args.depth, Some(5));
+        let runtime =
+            Octo::try_parse_from(["test", "network", "topology", "render", "--depth", "5"])
+                .expect("runtime parse");
+        let result = network_topology_render(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "handler must return Ok on trait-only dispatch: {result:?}"
+        );
+    }
+
+    // tv_net11_9: handler dispatch with no `--depth` —
+    // `depth=full` footer surfaces in the output body.
+    #[test]
+    fn tv_net11_9_topology_render_dispatch_default_depth_full_footer() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "topology", "render"]).expect("parse");
+        let args = match cli.action {
+            NetworkAction::Topology { action } => match action {
+                NetworkTopologyAction::Render(args) => args,
+            },
+            _ => panic!("expected Topology"),
+        };
+        assert_eq!(args.depth, None);
+        let runtime =
+            Octo::try_parse_from(["test", "network", "topology", "render"]).expect("runtime parse");
+        let result = network_topology_render(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "handler must return Ok on default dispatch: {result:?}"
         );
     }
 

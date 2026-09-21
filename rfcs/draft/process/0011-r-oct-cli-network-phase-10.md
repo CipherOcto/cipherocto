@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-r lands RFC-0011-h §Implementation Phases Phase 10. Two subcommands wire reputation list + show to the CLI. Substrate PARTIAL: `ReputationStore` trait exists at `crates/octo-reputation/src/store/mod.rs:51` with `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) impls per RFC-0968 §3; this amendment adds 2 new trait methods (`list(filter)` + `peer_reputation(did)`) + companion stub mission (G13 `0011-h-s-a-reputation-store` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
+Draft (2026-09-20) — RFC-0011-r lands RFC-0011-h §Implementation Phases Phase 10. Two subcommands wire reputation list + show to the CLI. Substrate PARTIAL: `ReputationStore` trait exists at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) impls per RFC-0968 §3; this amendment adds 2 new trait methods (`list(filter)` + `peer_reputation(did)`) + companion stub mission (G13 `0011-h-s-a-reputation-store` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (DRY CLOSED). Phase 7 = RFC-0011-o (DRY CLOSED + Accepted). Phase 8 = RFC-0011-p (IMPLEMENTATION CLOSED). Phase 9 = RFC-0011-q (IMPLEMENTATION CLOSED). Phase 10 = RFC-0011-r (this RFC).
+> **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r (this RFC).
 
 ## Authors
 
@@ -21,21 +21,21 @@ RFC-0011-r lands the **reputation store list + show** slice of RFC-0011-h §Impl
 - `octo network reputation list [--filter <filter>]` — read-only projection of peer reputations matching filter
 - `octo network reputation show <peer_did>` — read-only projection of single peer reputation
 
-Substrate per RFC-0860 (Reputation Store). EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:51` (additive trait extension per Phase 4 G22 precedent). Per-extension transport impl crates (substrate-ext-reputation-store-*) OUT OF SCOPE.
+Substrate per RFC-0860 (Reputation Store). EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait (additive trait extension per Phase 4 G22 precedent). Per-extension transport impl crates (substrate-ext-reputation-store-*) OUT OF SCOPE.
 
 ## Dependencies
 
-- RFC-0011-h Accepted
+- RFC-0011-h
 - RFC-0860 Reputation Store (governing RFC)
-- RFC-0011-i Phase 1 IMPLEMENTATION CLOSED
-- RFC-0011-j Phase 2 IMPLEMENTATION CLOSED
-- RFC-0011-k Phase 3 IMPLEMENTATION CLOSED
-- RFC-0011-l Phase 4 IMPLEMENTATION CLOSED
-- RFC-0011-m Phase 5 IMPLEMENTATION CLOSED
-- RFC-0011-n Phase 6 IMPLEMENTATION CLOSED
-- RFC-0011-o Phase 7 IMPLEMENTATION CLOSED + Accepted
-- RFC-0011-p Phase 8 IMPLEMENTATION CLOSED
-- RFC-0011-q Phase 9 IMPLEMENTATION CLOSED
+- RFC-0011-i
+- RFC-0011-j
+- RFC-0011-k
+- RFC-0011-l
+- RFC-0011-m
+- RFC-0011-n
+- RFC-0011-o
+- RFC-0011-p
+- RFC-0011-q
 
 ## Design Goals
 
@@ -63,7 +63,7 @@ RFC-0011-h §Implementation Phases Phase 10 calls for wiring reputation store ob
 
 ### Substrate additions
 
-EXTEND existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:51` with 2 new async methods. EXTEND both `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) with stub implementations returning empty Vec / None.
+EXTEND existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with 2 new async methods. EXTEND both `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) with stub implementations returning empty Vec / None.
 
 ```rust
 // In crates/octo-reputation/src/store/mod.rs (EXTEND existing trait)

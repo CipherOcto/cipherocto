@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — Substrate additions for ReputationStore Phase 10 G13 FULL slice CLOSED. Substrate slice at `next c95fd8cb` + paired-YAML Claimed transition at `next 9159e613` + CLI dispatch slice at `next 026c2e5a` (Phase 10 FULL chain closed). CLI mission YAML `0011-h-network-reputation` CREATED at CLI dispatch slice time per user decision (`Completed` status). 2 NEW subcommands (`reputation list` + `reputation show`) + 2 NEW output envelopes + 6 NEW test vectors `tv_net10_1` through `tv_net10_6`. Layer B substrate EXTENDED `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:235` with `list` + `peer_reputation` async methods + `ReputationFilter` enum + `PeerReputation` struct (additive trait extension per Phase 4 G22 precedent zero central edit). Layer C CLI dispatch exposes surface via `NetworkAction::Reputation { action: NetworkReputationAction }` clap variant. 427/427 octo-cli tests pass (was 421, +6 new). 239/239 octo-reputation tests pass (was 233, +6 substrate). 1489/1489 octo-network tests pass (zero regression). Layer A frozen preserved zero change. Slot 89 `NetworkSubstrateUnavailable` REUSE (0 NEW OctoCliError variants per user decision). Per-extension crate pattern preserved (trait in Layer B; concrete per-store impl extensions OUT OF SCOPE for follow-on Layer D adapter missions).
+Completed (2026-09-20) — Substrate additions for ReputationStore Phase 10 G13 FULL slice CLOSED. Substrate slice at `next c95fd8cb` + paired-YAML Claimed transition at `next 9159e613` + CLI dispatch slice at `next 026c2e5a` (Phase 10 FULL chain closed). CLI mission YAML `0011-h-network-reputation` CREATED at CLI dispatch slice time per user decision (`Completed` status). 2 NEW subcommands (`reputation list` + `reputation show`) + 2 NEW output envelopes + 6 NEW test vectors `tv_net10_1` through `tv_net10_6`. Layer B substrate EXTENDED `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with `list` + `peer_reputation` async methods + `ReputationFilter` enum + `PeerReputation` struct (additive trait extension per Phase 4 G22 precedent zero central edit). Layer C CLI dispatch exposes surface via `NetworkAction::Reputation { action: NetworkReputationAction }` clap variant. 427/427 octo-cli tests pass (was 421, +6 new). 239/239 octo-reputation tests pass (was 233, +6 substrate). 1489/1489 octo-network tests pass (zero regression). Layer A frozen preserved zero change. Slot 89 `NetworkSubstrateUnavailable` REUSE (0 NEW OctoCliError variants per user decision). Per-extension crate pattern preserved (trait in Layer B; concrete per-store impl extensions OUT OF SCOPE for follow-on Layer D adapter missions).
 
 ## RFC
 
@@ -10,12 +10,12 @@ RFC-0011-h §Substrate-Additions Companion Missions row G13 + RFC-0011-r Phase 1
 
 ## Summary
 
-EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:51` with 2 new async methods (`list(filter)` + `peer_reputation(did)`) + adds `ReputationFilter` enum (All + AboveScore(u32) + BelowScore(u32)) + adds `PeerReputation` struct (peer_did + score + attestations_count + last_updated_epoch). Required by `octo network reputation list` (read) + `octo network reputation show` (read) per RFC-0011-r Phase 10 §Subcommand Taxonomy.
+EXTENDS existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with 2 new async methods (`list(filter)` + `peer_reputation(did)`) + adds `ReputationFilter` enum (All + AboveScore(u32) + BelowScore(u32)) + adds `PeerReputation` struct (peer_did + score + attestations_count + last_updated_epoch). Required by `octo network reputation list` (read) + `octo network reputation show` (read) per RFC-0011-r Phase 10 §Subcommand Taxonomy.
 
 ### Substrate additions target
 
 ```rust
-// crates/octo-reputation/src/store/mod.rs (EXTEND existing trait at L51)
+// crates/octo-reputation/src/store/mod.rs (EXTEND existing trait)
 #[async_trait::async_trait]
 pub trait ReputationStore: Send + Sync {
     // ... existing 14+ methods unchanged ...
@@ -95,7 +95,7 @@ Layer B substrate addition lands via EXTEND pattern (additive trait extension pe
 - Phase 10 G13 substrate stub fill-in at `next 6f32badb`
 - Phase 10 G13 substrate slice at `next c95fd8cb`
 - RFC-0860 Reputation Store (governing RFC)
-- Existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs:51`
+- Existing `ReputationStore` trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait
 
 ## Out of Scope
 

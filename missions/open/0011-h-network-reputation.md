@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice for RFC-0011-r Phase 10 G13 reputation-store amendment LANDED at `next 026c2e5a`. CLI mission YAML CREATED at CLI dispatch slice time per user decision. Pairs with substrate companion YAML `0011-h-s-a-reputation-store` (substrate slice at `next c95fd8cb`, claimed transition at `next 9159e613`, completed transition paired). 2 NEW subcommands + 2 NEW output envelopes + 6 NEW test vectors `tv_net10_1` through `tv_net10_6`. Layer C CLI dispatch only; substrate trait lives at `crates/octo-reputation/src/store/mod.rs:235`.
+Completed (2026-09-20) — CLI dispatch slice for RFC-0011-r Phase 10 G13 reputation-store amendment LANDED at `next 026c2e5a`. CLI mission YAML CREATED at CLI dispatch slice time per user decision. Pairs with substrate companion YAML `0011-h-s-a-reputation-store` (substrate slice at `next c95fd8cb`, claimed transition at `next 9159e613`, completed transition paired). 2 NEW subcommands + 2 NEW output envelopes + 6 NEW test vectors `tv_net10_1` through `tv_net10_6`. Layer C CLI dispatch only; substrate trait lives at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait.
 
 ## RFC
 
@@ -61,7 +61,7 @@ octo network reputation show <peer_did> [--json]
 - Phase 10 G13 substrate slice at `next c95fd8cb`
 - Phase 10 G13 paired-YAML Claimed transition at `next 9159e613`
 - Phase 10 G13 CLI dispatch slice at `next 026c2e5a`
-- `octo_network` Layer B substrate (existing; Phase 10 EXTENDS the trait at `crates/octo-reputation/src/store/mod.rs:235`)
+- `octo_network` Layer B substrate (existing; Phase 10 EXTENDS the trait at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait)
 - Layer C CLI dispatch envelope/handler pattern (Phase 5 RFC-0011-m at `next 346f10cc`)
 
 ## Acceptance Criteria
@@ -94,4 +94,4 @@ octo network reputation show <peer_did> [--json]
 
 ## Notes
 
-RFC-0011-r Phase 10 G13 CLI surface exposed through `octo network reputation list` + `reputation show` subcommands. Substrate-faithful to `crates/octo-reputation/src/store/mod.rs:235` trait extension. CLI dispatch slice paired with substrate companion YAML via the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed). Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Per-extension crate pattern preserved (trait in Layer B; concrete per-extension impl crates in separate Layer D follow-on missions). pastejacking defense per Phase 5 RFC-0011-m precedent (mixed-case hex rejected). Layer A frozen preserved.
+RFC-0011-r Phase 10 G13 CLI surface exposed through `octo network reputation list` + `reputation show` subcommands. Substrate-faithful to `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait extension. CLI dispatch slice paired with substrate companion YAML via the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed). Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Per-extension crate pattern preserved (trait in Layer B; concrete per-extension impl crates in separate Layer D follow-on missions). pastejacking defense per Phase 5 RFC-0011-m precedent (mixed-case hex rejected). Layer A frozen preserved.

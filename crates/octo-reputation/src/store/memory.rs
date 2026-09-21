@@ -1462,4 +1462,29 @@ mod tests {
         assert_ne!(did_a, did_b);
         assert_eq!(did_a, phase10_test_recorder_did(1));
     }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_7_reputation_filter_serde_lowercase_round_trip() {
+        // serde rename_all lowercase covers all 3 variants
+        assert_eq!(
+            serde_json::to_string(&ReputationFilter::All).expect("All serialize"),
+            "\"all\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReputationFilter::AboveScore(50)).expect("AboveScore serialize"),
+            "{\"abovescore\":50}"
+        );
+        assert_eq!(
+            serde_json::to_string(&ReputationFilter::BelowScore(25)).expect("BelowScore serialize"),
+            "{\"belowscore\":25}"
+        );
+        let parsed_all: ReputationFilter = serde_json::from_str("\"all\"").expect("all parse");
+        assert_eq!(parsed_all, ReputationFilter::All);
+        let parsed_above: ReputationFilter =
+            serde_json::from_str("{\"abovescore\":100}").expect("above parse");
+        assert_eq!(parsed_above, ReputationFilter::AboveScore(100));
+        let parsed_below: ReputationFilter =
+            serde_json::from_str("{\"belowscore\":50}").expect("below parse");
+        assert_eq!(parsed_below, ReputationFilter::BelowScore(50));
+    }
 }

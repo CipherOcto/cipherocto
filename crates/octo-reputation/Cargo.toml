@@ -48,6 +48,10 @@ serde_json = { version = "1", optional = true }
 # so the store module no longer takes a direct `stoolap` Cargo.toml dep.
 octo-storage-core = { path = "../octo-storage-core", optional = true }
 
+[dev-dependencies]
+# Round-trip serde coverage on ReputationFilter + PeerReputation (Phase 10 R1.5)
+serde_json = "1"
+
 [[bin]]
 name = "reputation-parity"
 path = "src/bin/reputation-parity.rs"

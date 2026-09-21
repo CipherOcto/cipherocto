@@ -805,11 +805,19 @@ pub struct ReputationListArgs {
     /// forms are accepted for tab completion; composable
     /// arguments are passed as separate tokens
     /// (`--filter above-score --threshold 100`).
-    #[arg(long, value_enum)]
+    /// Default value per RFC-0011-r §Subcommand Taxonomy
+    /// Phase 10 is `all`.
+    #[arg(long, value_enum, default_value_t = ReputationFilterKind::All)]
     pub filter: ReputationFilterKind,
     /// Threshold value paired with `above-score` /
     /// `below-score` filters (RFC-0011-r §Subcommand
-    /// Taxonomy Phase 10).
+    /// Taxonomy Phase 10). Threshold validation lives in
+    /// the handler (network_reputation_list returns
+    /// ConfirmationRequired when above-score/below-score
+    /// is paired with None threshold); parse-time
+    /// enforcement is intentionally NOT used to keep
+    /// the handler validation rule as the single source
+    /// of truth.
     #[arg(long)]
     pub threshold: Option<u32>,
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
@@ -6166,6 +6174,63 @@ mod tests {
             result.is_ok(),
             "uppercase-only hex peer_did must be accepted"
         );
+    }
+
+    // tv_net10_7: reputation list with empty registry returns
+    // slot 89 NetworkSubstrateUnavailable per RFC-0011-h
+    // §Error Handling row 89 REUSE precedent.
+    #[test]
+    fn tv_net10_7_reputation_list_substrate_unavailable_dispatch() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "reputation", "list", "--filter", "all"])
+            .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(a) => a,
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
+        };
+        let runtime =
+            Octo::try_parse_from(["test", "network", "reputation", "list"]).expect("runtime parse");
+        let result = network_reputation_list(&args, &runtime);
+        match result {
+            Err(OctoCliError::NetworkSubstrateUnavailable { companion, detail }) => {
+                assert_eq!(companion, "G13");
+                assert_eq!(detail, "");
+            }
+            other => {
+                panic!("expected NetworkSubstrateUnavailable with companion G13, got {other:?}")
+            }
+        }
+    }
+
+    // tv_net10_8: reputation show with empty registry returns
+    // slot 89 NetworkSubstrateUnavailable per RFC-0011-h
+    // §Error Handling row 89 REUSE precedent.
+    #[test]
+    fn tv_net10_8_reputation_show_substrate_unavailable_dispatch() {
+        let peer_did = format!("did:octo:0x{}", "a".repeat(104));
+        let cli = TestPhase10Cli::try_parse_from(["test", "reputation", "show", &peer_did])
+            .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::Show(a) => a,
+                _ => panic!("expected Show"),
+            },
+            _ => panic!("expected Reputation"),
+        };
+        let runtime = Octo::try_parse_from(["test", "network", "reputation", "show", &peer_did])
+            .expect("runtime parse");
+        let result = network_reputation_show(&args, &runtime);
+        match result {
+            Err(OctoCliError::NetworkSubstrateUnavailable { companion, detail }) => {
+                assert_eq!(companion, "G13");
+                assert_eq!(detail, "");
+            }
+            other => {
+                panic!("expected NetworkSubstrateUnavailable with companion G13, got {other:?}")
+            }
+        }
     }
 
     // === Phase 11 test vectors (RFC-0011-s Phase 11 G14) ===

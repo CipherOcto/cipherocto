@@ -4,7 +4,7 @@
 
 Draft (2026-09-20) — RFC-0011-q lands RFC-0011-h §Implementation Phases Phase 9. Two subcommands wire specialized node show + bind to the CLI. Substrate absent: `SpecializedNodeRecord` struct + `NodeClass` enum + `load()` + `bind_to_did()` methods MISSING from `crates/octo-network/src/specialized/node_record.rs`; this amendment adds 1 companion substrate mission (G11 `0011-h-s-a-specialized-node-record` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Ninth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (DRY CLOSED). Phase 7 = RFC-0011-o (DRY CLOSED + Accepted). Phase 8 = RFC-0011-p (IMPLEMENTATION CLOSED). Phase 9 = RFC-0011-q (this RFC).
+> **Amendment chain:** Ninth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q (this RFC).
 
 ## Authors
 
@@ -25,16 +25,16 @@ Substrate per RFC-0871 (Specialized Node Protocol Envelope). Per-extension trans
 
 ## Dependencies
 
-- RFC-0011-h Accepted
-- RFC-0871 Specialized Node Protocol Envelope
-- RFC-0011-i Phase 1 IMPLEMENTATION CLOSED
-- RFC-0011-j Phase 2 IMPLEMENTATION CLOSED
-- RFC-0011-k Phase 3 IMPLEMENTATION CLOSED
-- RFC-0011-l Phase 4 IMPLEMENTATION CLOSED
-- RFC-0011-m Phase 5 IMPLEMENTATION CLOSED
-- RFC-0011-n Phase 6 IMPLEMENTATION CLOSED
-- RFC-0011-o Phase 7 IMPLEMENTATION CLOSED + Accepted
-- RFC-0011-p Phase 8 IMPLEMENTATION CLOSED
+- RFC-0011-h
+- RFC-0871
+- RFC-0011-i
+- RFC-0011-j
+- RFC-0011-k
+- RFC-0011-l
+- RFC-0011-m
+- RFC-0011-n
+- RFC-0011-o
+- RFC-0011-p
 
 ## Design Goals
 
@@ -64,18 +64,33 @@ RFC-0011-h §Implementation Phases Phase 9 calls for wiring specialized node obs
 NEW module `crates/octo-network/src/specialized/node_record.rs` (NEW subdir `specialized/`):
 
 ```rust
-use octo_did::Did;
 use serde::{Deserialize, Serialize};
 
+/// Local newtype for the holder DID (not `octo_did::Did` or
+/// `octo_wallet::Did`) per per-extension crate pattern: avoids
+/// adding a new cross-crate dependency for what is conceptually
+/// a free-form opaque string in the trait surface. Per-extension
+/// impl crates own DID validation (parse + canonicalize +
+/// signature check).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpecializedNodeRecord {
-    pub node_id: [u8; 32],
-    pub holder_did: Option<Did>,
-    pub node_class: NodeClass,
-    pub creation_epoch: u64,
-    pub metadata: BTreeMap<String, String>,
+pub struct HolderDid(String);
+
+impl HolderDid {
+    pub fn new(did: impl Into<String>) -> Self { Self(did.into()) }
+    pub fn as_str(&self) -> &str { &self.0 }
 }
 
+impl AsRef<str> for HolderDid {
+    fn as_ref(&self) -> &str { self.as_str() }
+}
+
+/// `NodeClass` is a closed enum per RFC-0871 §Node Taxonomy.
+/// Variant set is bounded by RFC-0011-d role taxonomy (matches
+/// existing role surface); future role additions land via RFC
+/// amendment to the role taxonomy, NOT via in-place enum
+/// expansion. This defends [[cipherocto-design-principles]]
+/// §Extension over enumeration by ensuring the enum surface
+/// does not become a central-edit chokepoint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeClass {
@@ -86,9 +101,22 @@ pub enum NodeClass {
     Orchestrator,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecializedNodeRecord {
+    pub node_id: [u8; 32],
+    pub holder_did: Option<HolderDid>,
+    pub node_class: NodeClass,
+    pub creation_epoch: u64,
+    pub metadata: BTreeMap<String, String>,
+}
+
 pub trait SpecializedNodeRecordAccess: Send + Sync {
     fn load(&self, node_id: &[u8; 32]) -> Option<SpecializedNodeRecord>;
-    fn bind_to_did(&mut self, node_id: &[u8; 32], holder_did: &Did) -> Result<(), SpecializedNodeError>;
+    /// Object-safety requirement: `&self` not `&mut self` so the
+    /// trait is dispatchable through `Arc<dyn ...>` registry
+    /// lookup. Concrete impls own their data and use interior
+    /// mutability (Mutex / RwLock) for write semantics.
+    fn bind_to_did(&self, node_id: &[u8; 32], holder_did: &HolderDid) -> Result<(), SpecializedNodeError>;
     fn node_id(&self) -> [u8; 32];
 }
 
@@ -97,12 +125,12 @@ pub trait SpecializedNodeRecordAccess: Send + Sync {
 pub enum SpecializedNodeError {
     NotFound,
     AlreadyBound,
-    InvalidDid(String),
-    Internal(String),
+    InvalidDid(String), // detail string redacted at CLI boundary per redaction invariant
+    Internal(String),    // detail string redacted at CLI boundary per redaction invariant
 }
 ```
 
-Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on error enum for forward-compatible variant growth.
+Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on error enum for forward-compatible variant growth. `HolderDid` is a local opaque-string newtype — per-extension impl crates in Layer D own DID validation (parse + canonicalize + signature check); CLI does not validate.
 
 ### Subcommand Taxonomy (RFC-0011-h §Subcommand Taxonomy Phase 9)
 
@@ -114,12 +142,12 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 ### Output Envelope (RFC-0011-h §Output Envelope Phase 9)
 
 - `octo.network.node.show.v1` — wrapper envelope `NetworkNodeShowOutput` + projection `SpecializedNodeRecordProjection`
-- `octo.network.node.bind.v1` — wrapper envelope `NetworkNodeBindOutput` + projection `BindReceiptProjection`
+- `octo.network.node.bind.v1` — wrapper envelope `NetworkNodeBindOutput` (inline fields; no separate projection type — bind envelope echoes caller-controlled fields only per RFC-0011-h §Output Envelope compactness precedent for confirmation-flag subcommands)
 
 ### Error Handling (RFC-0011-h §Error Handling Phase 9)
 
 - Pre-companion G11 path: surfaces exit 89 `NetworkSubstrateUnavailable` (companion = "G11", detail = "")
-- `bind_to_did` errors: per-variant mapping to exit 89 with distinct detail strings (NotFound, AlreadyBound, InvalidDid, Internal)
+- `bind_to_did` errors: per-variant mapping to exit 89 with **variant tag only** in detail (NotFound, AlreadyBound, InvalidDid, Internal). Per redaction invariant: `InvalidDid(m)` and `Internal(m)` detail strings are NEVER included in the surfaced detail — only the variant tag is surfaced, so any potentially-redacted content stays within the per-extension impl crate's logging boundary.
 
 ### Confirmation Flag (RFC-0011-h §Confirmation Flag Phase 9)
 
@@ -142,22 +170,22 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 | Assumption                                           | Where Relied Upon                         | Blast Radius if False                                     | Mitigation                                               |
 | ---------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------- |
 | `SpecializedNodeRecord` is per-node canonical record | substrate struct                          | bind fails or duplicates                                  | `node_id` collision check in `bind_to_did`               |
-| `NodeClass` enum is closed set                       | RFC-0871 + this RFC                       | unknown class surfaces as `#[non_exhaustive]` fallthrough | `#[serde(rename_all = "lowercase")]` + catch-all variant |
-| `Did` is parseable from string                       | clap value_parser for `--holder-did` flag | bind rejects malformed DID                                | pre-bind DID validation in `bind_to_did`                 |
+| `NodeClass` enum is closed set                       | RFC-0871 + RFC-0011-d role taxonomy       | unknown class surfaces as `#[non_exhaustive]` fallthrough | `#[serde(rename_all = "lowercase")]` + catch-all variant; future roles land via RFC amendment to RFC-0011-d role taxonomy, NOT in-place enum expansion |
+| `HolderDid` is opaque-string at trait boundary       | trait surface (Layer B)                   | per-extension impl crates receive malformed DID           | per-extension impl crates own DID validation (parse + canonicalize + signature check); CLI passes `String` as-is, no CLI-side validation |
 | BTreeMap determinism                                 | metadata field                            | non-deterministic JSON output                             | BTreeMap over HashMap per RFC-0011-h §Output Envelope    |
 
 ### Security Considerations (RFC-0011-h §Security Considerations Phase 9)
 
 - Bind requires `--confirm-acknowledge` (parse-time rejection prevents accidental bind)
 - Bind is reversible via `AlreadyBound` error path (operator can rebind)
-- Holder DID redacted on error paths per RFC-0011-h §Security Considerations redaction invariant
+- Holder DID redaction invariant: `InvalidDid(m)` and `Internal(m)` detail strings are NEVER included in the surfaced `NetworkSubstrateUnavailable.detail` — only the variant tag is surfaced (e.g., `"specialized node invalid DID"`). The `m` parameter (potentially containing redacted content) stays within the per-extension impl crate's logging boundary.
 
 ### Adversarial Review (RFC-0011-h §Adversarial Review Phase 9)
 
 - Threat 1: Operator binds node to wrong DID — mitigated by `--confirm-acknowledge` parse-time requirement
 - Threat 2: Pastejacking via mixed-case hex — mitigated by `parse_32_byte_hex` shared helper
-- Threat 3: Race condition on concurrent bind — single-threaded trait impl; per-extension impl crates handle concurrency
-- Threat 4: DID string injection via `--holder-did` — mitigated by `Did` parser rejecting malformed input
+- Threat 3: Race condition on concurrent bind — `&self` trait surface; concrete impls own data + use interior mutability; per-extension impl crates handle concurrency
+- Threat 4: DID string injection via `--holder-did` — per-extension impl crates own DID validation; CLI passes `String` as-is, no CLI-side pre-validation
 - Threat 5: Metadata injection via internal callers — BTreeMap<String, String> bounds check + size limit in follow-on Layer D impl
 
 ### Compatibility (RFC-0011-h §Compatibility Phase 9)
@@ -169,12 +197,12 @@ Layer B only. `BTreeMap` for `metadata` determinism. `#[non_exhaustive]` on erro
 
 | Vector    | Surface         | Coverage                                                                   |
 | --------- | --------------- | -------------------------------------------------------------------------- |
-| tv_net9_1 | CLI parse       | `node show` parses cleanly with no args                                    |
-| tv_net9_2 | CLI parse       | `node show --json` flag parses cleanly                                     |
-| tv_net9_3 | substrate trait | `node show` envelope projection is substrate-faithful (None = not found)   |
-| tv_net9_4 | CLI parse       | `node bind --apply --confirm-acknowledge` parses cleanly                   |
-| tv_net9_5 | CLI parse       | `node bind --apply` without `--confirm-acknowledge` rejected at parse-time |
-| tv_net9_6 | pastejacking    | `node bind` accepts uppercase-only hex; rejects mixed-case                 |
+| tv_net9_1 | CLI parse       | `node show <64-hex node_id>` parses cleanly with required hex arg           |
+| tv_net9_2 | CLI parse       | `node show <64-hex node_id> --json` flag parses cleanly                     |
+| tv_net9_3 | substrate trait | substrate struct field round-trip: `node_class_label` projection + `creation_epoch` + `holder_did: None` + `metadata` BTreeMap key order |
+| tv_net9_4 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply --confirm-acknowledge` parses cleanly |
+| tv_net9_5 | CLI parse       | `node bind <64-hex> --holder-did <did> --apply` without `--confirm-acknowledge` rejected at parse-time |
+| tv_net9_6 | pastejacking    | `node bind <mixed-case hex>` rejected by `parse_32_byte_hex` shared helper  |
 
 Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + handler dispatch to the trait boundary; substrate tests cover trait behavior.
 

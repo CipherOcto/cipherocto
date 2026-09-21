@@ -2054,6 +2054,7 @@ impl crate::auth::ChainRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::ReputationFilter;
 
     #[test]
     fn chain_ref_placeholder_controller_is_deterministic() {
@@ -2085,5 +2086,39 @@ mod tests {
     fn dfp_from_blob_rejects_wrong_length() {
         let err = crate::types::dfp_from_blob(&[0u8; 23]).unwrap_err();
         assert_eq!(err, ReputationError::ScoreEncodingInvalid);
+    }
+
+    // tv_phase10_substrate_8_stoolap_cfg_off_list_stub:
+    // The cfg(not(feature = "stoolap")) stub returns
+    // ChainRefInvalid("stoolap_backend_unimplemented:list") —
+    // canonical colon-suffixed error string per RFC-0011-r
+    // §Substrate Mapping Table Phase 10 + the explicit-arms
+    // stub match table at the stub module.
+    #[tokio::test]
+    async fn tv_phase10_substrate_8_stoolap_cfg_off_list_stub() {
+        let store = StoolapReputationStore {};
+        let result = store.list(ReputationFilter::All).await;
+        match result {
+            Err(ReputationError::ChainRefInvalid(msg)) => {
+                assert_eq!(msg, "stoolap_backend_unimplemented:list");
+            }
+            other => panic!("expected ChainRefInvalid stub error, got {other:?}"),
+        }
+    }
+
+    // tv_phase10_substrate_9_stoolap_cfg_off_peer_reputation_stub:
+    // Symmetric with tv_phase10_substrate_8 for peer_reputation
+    // (RFC-0011-r §Substrate Mapping Table Phase 10).
+    #[tokio::test]
+    async fn tv_phase10_substrate_9_stoolap_cfg_off_peer_reputation_stub() {
+        let store = StoolapReputationStore {};
+        let did = RecorderDid::from_array([0u8; 52]);
+        let result = store.peer_reputation(&did).await;
+        match result {
+            Err(ReputationError::ChainRefInvalid(msg)) => {
+                assert_eq!(msg, "stoolap_backend_unimplemented:peer_reputation");
+            }
+            other => panic!("expected ChainRefInvalid stub error, got {other:?}"),
+        }
     }
 }

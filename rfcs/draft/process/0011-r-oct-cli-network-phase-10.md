@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-r lands RFC-0011-h §Implementation Phases Phase 10. Two subcommands wire reputation list + show to the CLI. Substrate PARTIAL: `ReputationStore` trait exists at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) impls per RFC-0968 §3; this amendment adds 2 new trait methods (`list(filter)` + `peer_reputation(did)`) + companion stub mission (G13 `0011-h-s-a-reputation-store` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
+Draft (2026-09-20) — RFC-0011-r lands RFC-0011-h §Implementation Phases Phase 10. Two subcommands wire reputation list + show to the CLI. Substrate PARTIAL: `ReputationStore` trait exists at `crates/octo-reputation/src/store/mod.rs` §ReputationStore trait with `InMemoryReputationStore` (memory.rs) + `StoolapReputationStore` (stoolap.rs) impls per RFC-0968 §3; this amendment adds 2 new trait methods (`list(filter)` + `peer_reputation(did)`) + companion stub mission (G13 `0011-h-s-a-reputation-store` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 12 test vectors.
 
 > **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r (this RFC).
 
@@ -46,7 +46,7 @@ Substrate per RFC-0860. EXTENDS existing `ReputationStore` trait at `crates/octo
 5. Preserve BTreeMap determinism where substrate returns ordered data
 6. Preserve slot 89 REUSE per Phase 6 precedent + user decision (0 NEW OctoCliError variants)
 7. Preserve async-trait pattern: new methods on existing `#[async_trait]` `ReputationStore`; CLI handler uses `tokio::runtime::Handle::block_on` or async-aware dispatch path
-8. 6 test vectors (3 per subcommand) — tv_net10_1 through tv_net10_6
+8. 12 test vectors (6 per subcommand) — tv_net10_1 through tv_net10_12
 
 ## Motivation
 
@@ -162,16 +162,22 @@ Layer B only. `#[non_exhaustive]` not needed on `ReputationFilter` (closed enum)
 
 ### Test Vectors (RFC-0011-h §Test Vectors Phase 10)
 
-| Vector     | Surface      | Coverage                                                                                  |
-| ---------- | ------------ | ----------------------------------------------------------------------------------------- |
-| tv_net10_1 | CLI parse    | `reputation list --filter all` parses cleanly with `All` filter + `None` threshold         |
-| tv_net10_2 | CLI parse    | `reputation list --filter above-score --threshold 100` parses with composed args           |
-| tv_net10_3 | handler rule | `reputation list --filter above-score` WITHOUT `--threshold` rejected by handler validation (`ConfirmationRequired`) — args-construction contract test (parse-time enforcement lives in handler per Phase 7 RFC-0011-o precedent) |
-| tv_net10_4 | CLI parse    | `reputation show <did:octo:0x<104-lowercase-hex>>` parses cleanly                          |
-| tv_net10_5 | pastejacking | `reputation show <mixed-case hex peer_did>` rejected by `parse_reputation_peer_did`       |
-| tv_net10_6 | pastejacking | `reputation show <uppercase-only hex peer_did>` accepted by `parse_reputation_peer_did`   |
+| Vector      | Surface          | Coverage                                                                                                                                                                                                                                 |
+| ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tv_net10_1  | CLI parse        | `reputation list --filter all` parses cleanly with `All` filter + `None` threshold                                                                                                                                                       |
+| tv_net10_2  | CLI parse        | `reputation list --filter above-score --threshold 100` parses with composed args                                                                                                                                                         |
+| tv_net10_3  | handler rule     | `reputation list --filter above-score` WITHOUT `--threshold` rejected by handler validation (`ConfirmationRequired`) — args-construction contract test (parse-time enforcement lives in handler per Phase 7 RFC-0011-o precedent)        |
+| tv_net10_4  | CLI parse        | `reputation show <did:octo:0x<104-lowercase-hex>>` parses cleanly                                                                                                                                                                        |
+| tv_net10_5  | pastejacking     | `reputation show <mixed-case hex peer_did>` rejected by `parse_reputation_peer_did`                                                                                                                                                      |
+| tv_net10_6  | pastejacking     | `reputation show <uppercase-only hex peer_did>` accepted by `parse_reputation_peer_did`                                                                                                                                                  |
+| tv_net10_7  | handler rule     | `reputation list --filter all` dispatches to `ReputationStore::list` substrate via `InMemoryReputationStore::list` returning `Ok(empty Vec)` which projects to envelope (substrate-faithful wiring per RFC-0011-h §Substrate Discipline) |
+| tv_net10_8  | handler rule     | `reputation show <peer_did>` dispatches to `ReputationStore::peer_reputation` substrate via `InMemoryReputationStore::peer_reputation` returning `Ok(None)` which projects to envelope (substrate-faithful wiring)                       |
+| tv_net10_9  | input validation | `reputation show <peer_did-without-0x-prefix>` rejected by `parse_reputation_peer_did` as `pastejacking-defense-prefix-missing`                                                                                                          |
+| tv_net10_10 | input validation | `reputation show <peer_did-wrong-byte-length>` rejected by `parse_reputation_peer_did` as `pastejacking-defense-length-mismatch`                                                                                                         |
+| tv_net10_11 | input validation | `reputation show <peer_did-with-non-hex-char>` rejected by `parse_reputation_peer_did` as `pastejacking-defense-invalid-hex`                                                                                                             |
+| tv_net10_12 | filter rule      | `reputation list --filter below-score --threshold 100` parses cleanly with `BelowScore(100)` filter (covers both threshold bound directions per RFC-0011-h §Subcommand Taxonomy Phase 10)                                                |
 
-Substrate-side coverage (Phase 10 substrate trait extension) lives in `crates/octo-reputation/src/store/memory.rs` + `stoolap.rs` + `compat/mod.rs` test modules as `tv_phase10_substrate_*` (e.g., `tv_phase10_substrate_1_reputation_filter_variants`, `tv_phase10_substrate_3_in_memory_list_returns_empty_by_default`). Substrate tests verify trait behavior; CLI tests verify clap parsing + handler dispatch to the trait boundary (per Phase 5 RFC-0011-m precedent).
+Substrate-side coverage (Phase 10 substrate trait extension) lives in `crates/octo-reputation/src/store/memory.rs` + `stoolap.rs` + `compat/mod.rs` test modules as `tv_phase10_substrate_*` (e.g., `tv_phase10_substrate_1_reputation_filter_variants`, `tv_phase10_substrate_3_in_memory_list_returns_empty_by_default`, `tv_phase10_substrate_10_compat_list_passthrough_returns_empty`, `tv_phase10_substrate_11_compat_peer_reputation_passthrough_returns_none`). Substrate tests verify trait behavior; CLI tests verify clap parsing + handler dispatch to the trait boundary (per Phase 5 RFC-0011-m precedent).
 
 Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + handler dispatch to the trait boundary; substrate tests cover trait behavior (stub impls return empty).
 

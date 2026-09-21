@@ -88,6 +88,13 @@ use octo_network::mon::local_gateway_identity::LocalGatewayIdentity;
 use octo_network::mon::trust_graph::{GraphFormat, TrustGraph};
 use octo_network::reputation::{SlashListFilter, SlashReputationStoreCompat};
 
+// Phase 10 (RFC-0011-r) substrate additions: `ReputationStore` trait
+// extension provides `list` + `peer_reputation` for the Phase 10
+// `reputation list` + `reputation show` CLI dispatch.
+use octo_reputation::store::PeerReputation;
+use octo_reputation::store::ReputationFilter;
+use octo_reputation::ReputationStore;
+
 // Phase 3 (RFC-0011-k) substrate additions (LANDED at `next 10ae8e18`):
 // `CoordinatorRecord::load` lives in `octo-coordinator-types` (Layer A
 // additive surface) and is re-exported through the canonical path. The
@@ -3624,9 +3631,13 @@ fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError
 
 /// `octo network reputation list [--filter <filter>]`
 /// handler (RFC-0011-r Phase 10 G13). Read-only;
-/// substrate stub returns empty Vec per
-/// RFC-0011-r §Substrate Mapping Table. Per-extension
-/// impl crates (Layer D) provide real aggregations.
+/// substrate-faithful trait dispatch per Phase 1
+/// `slash_list` precedent at this module's
+/// `slash_list` handler. The `ReputationStore::list`
+/// trait method is exercised; the InMemory stub
+/// returns Ok(empty Vec) per RFC-0011-r §Substrate
+/// Mapping Table. Per-extension impl crates (Layer D)
+/// provide real aggregations.
 fn network_reputation_list(args: &ReputationListArgs, cli: &Octo) -> Result<(), OctoCliError> {
     // Compose substrate `ReputationFilter` from bare-word
     // clap enum + optional threshold. above-score /
@@ -3649,71 +3660,115 @@ fn network_reputation_list(args: &ReputationListArgs, cli: &Octo) -> Result<(), 
             ),
         });
     }
-    if !reputation_store_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G13",
-            detail: "".to_string(),
-        });
-    }
-    // Trait dispatch OUT OF SCOPE for Phase 10
-    // (reputation-store registry stub returns false;
-    // per-extension impl crates wire real stores in
-    // Layer D). Empty Vec envelope is the projection
-    // the substrate would produce when no peers are
-    // registered.
+    // Substrate-faithful: build the substrate
+    // `ReputationFilter` and invoke the trait method
+    // via a current-thread tokio runtime. Per Phase 5
+    // RFC-0011-m precedent + the agent.rs handler
+    // pattern, the runtime is dropped at end of scope.
+    let substrate_filter = match args.filter {
+        ReputationFilterKind::All => ReputationFilter::All,
+        ReputationFilterKind::AboveScore => {
+            ReputationFilter::AboveScore(args.threshold.unwrap_or(0))
+        }
+        ReputationFilterKind::BelowScore => {
+            ReputationFilter::BelowScore(args.threshold.unwrap_or(0))
+        }
+    };
+    let peers = {
+        let store = octo_reputation::InMemoryReputationStore::new();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!(
+                    "tokio runtime build: {e}"
+                )))
+            })?;
+        rt.block_on(store.list(substrate_filter)).map_err(|e| {
+            OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G13",
+                detail: format!("{e:?}"),
+            }
+        })?
+    };
     let env = OutputEnvelope::new(
         "octo.network.reputation.list.v1",
         NetworkReputationListOutput {
             filter: filter_label.to_string(),
             threshold: args.threshold,
-            peers: Vec::new(),
+            peers: peers.into_iter().map(reputation_to_projection).collect(),
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
 /// `octo network reputation show <peer_did>` handler
-/// (RFC-0011-r Phase 10 G13). Read-only; substrate
-/// stub returns None per RFC-0011-r §Substrate
-/// Mapping Table. Per-extension impl crates
-/// (Layer D) provide real aggregations.
+/// (RFC-0011-r Phase 10 G13). Read-only;
+/// substrate-faithful trait dispatch per Phase 1
+/// `slash_list` precedent. Input validation runs
+/// BEFORE substrate dispatch (operator input errors
+/// surface as ConfirmationRequired, not as substrate
+/// unavailability). The
+/// `ReputationStore::peer_reputation` trait method
+/// is exercised; the InMemory stub returns Ok(None)
+/// per RFC-0011-r §Substrate Mapping Table.
+/// Per-extension impl crates (Layer D) provide real
+/// lookups.
 fn network_reputation_show(args: &ReputationShowArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !reputation_store_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G13",
-            detail: "".to_string(),
-        });
-    }
-    // Parse the canonical `did:octo:0x<hex>` peer_did
-    // into a substrate `RecorderDid`. Substrate-faithful
-    // to RFC-0860; per-extension crates may accept
-    // additional DID methods.
-    let _did_bytes = parse_reputation_peer_did(&args.peer_did)?;
+    // Input validation FIRST: parse the canonical
+    // `did:octo:0x<hex>` peer_did into a substrate
+    // `RecorderDid`. Per-extension crates may accept
+    // additional DID methods. Order matters: operator
+    // input errors surface before substrate errors.
+    let did_bytes = parse_reputation_peer_did(&args.peer_did)?;
+    let did = octo_reputation::types::RecorderDid::from_bytes(&did_bytes).map_err(|_| {
+        OctoCliError::NetworkInvalidDid {
+            did_redacted: redact_did_bytes(&did_bytes),
+        }
+    })?;
+    // Substrate-faithful: invoke the trait method via
+    // a current-thread tokio runtime. Per Phase 5
+    // RFC-0011-m precedent + the agent.rs handler
+    // pattern, the runtime is dropped at end of scope.
+    let record = {
+        let store = octo_reputation::InMemoryReputationStore::new();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!(
+                    "tokio runtime build: {e}"
+                )))
+            })?;
+        rt.block_on(store.peer_reputation(&did)).map_err(|e| {
+            OctoCliError::NetworkSubstrateUnavailable {
+                companion: "G13",
+                detail: format!("{e:?}"),
+            }
+        })?
+    };
     let env = OutputEnvelope::new(
         "octo.network.reputation.show.v1",
         NetworkReputationShowOutput {
             peer_did: args.peer_did.clone(),
-            record: None,
+            record: record.map(reputation_to_projection),
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
 }
 
-/// Lookup the runtime `ReputationStore` registry
-/// marker (RFC-0011-r Phase 10 G13). Returns None when
-/// no runtime registry is wired (substrate-faithful
-/// default; per-extension init fn OUT OF SCOPE for
-/// Phase 10). Per RFC-0011-h §User extensibility
-/// registry pattern, concrete impls land in
-/// per-extension Layer D crates. The
-/// `ReputationStore` trait uses native `async fn`
-/// which is not dyn-compatible without
-/// `#[async_trait]`; since this CLI dispatch only
-/// guards on presence/absence (no trait dispatch
-/// happens here), the marker is a plain `bool` to
-/// preserve object-safety boundary.
-fn reputation_store_registry(_cli: &Octo) -> bool {
-    false
+/// Substrate-faithful projection from
+/// `PeerReputation` to `PeerReputationProjection`
+/// (RFC-0011-r §Output Envelope Phase 10).
+/// `peer_did` bytes are encoded as lowercase hex
+/// per RFC-0860 canonical form.
+fn reputation_to_projection(p: PeerReputation) -> PeerReputationProjection {
+    PeerReputationProjection {
+        peer_did_hex: hex::encode(p.peer_did.as_bytes()),
+        score: p.score,
+        attestations_count: p.attestations_count,
+        last_updated_epoch: p.last_updated_epoch,
+    }
 }
 
 /// Decode a canonical `did:octo:0x<104-hex>` peer DID
@@ -6176,11 +6231,13 @@ mod tests {
         );
     }
 
-    // tv_net10_7: reputation list with empty registry returns
-    // slot 89 NetworkSubstrateUnavailable per RFC-0011-h
-    // §Error Handling row 89 REUSE precedent.
+    // tv_net10_7: reputation list dispatch exercises the
+    // substrate trait method (RFC-0011-r Phase 10 G13).
+    // The InMemoryReputationStore stub returns Ok(empty
+    // Vec); the dispatch renders the empty envelope.
+    // Substrate-faithful per Phase 1 slash_list precedent.
     #[test]
-    fn tv_net10_7_reputation_list_substrate_unavailable_dispatch() {
+    fn tv_net10_7_reputation_list_substrate_dispatch() {
         let cli = TestPhase10Cli::try_parse_from(["test", "reputation", "list", "--filter", "all"])
             .expect("parse");
         let args = match cli.action {
@@ -6193,22 +6250,19 @@ mod tests {
         let runtime =
             Octo::try_parse_from(["test", "network", "reputation", "list"]).expect("runtime parse");
         let result = network_reputation_list(&args, &runtime);
-        match result {
-            Err(OctoCliError::NetworkSubstrateUnavailable { companion, detail }) => {
-                assert_eq!(companion, "G13");
-                assert_eq!(detail, "");
-            }
-            other => {
-                panic!("expected NetworkSubstrateUnavailable with companion G13, got {other:?}")
-            }
-        }
+        assert!(
+            result.is_ok(),
+            "reputation list dispatch must invoke substrate + render envelope, got {result:?}"
+        );
     }
 
-    // tv_net10_8: reputation show with empty registry returns
-    // slot 89 NetworkSubstrateUnavailable per RFC-0011-h
-    // §Error Handling row 89 REUSE precedent.
+    // tv_net10_8: reputation show dispatch exercises the
+    // substrate trait method (RFC-0011-r Phase 10 G13).
+    // The InMemoryReputationStore stub returns Ok(None);
+    // the dispatch renders the empty record envelope.
+    // Substrate-faithful per Phase 1 slash_list precedent.
     #[test]
-    fn tv_net10_8_reputation_show_substrate_unavailable_dispatch() {
+    fn tv_net10_8_reputation_show_substrate_dispatch() {
         let peer_did = format!("did:octo:0x{}", "a".repeat(104));
         let cli = TestPhase10Cli::try_parse_from(["test", "reputation", "show", &peer_did])
             .expect("parse");
@@ -6222,14 +6276,87 @@ mod tests {
         let runtime = Octo::try_parse_from(["test", "network", "reputation", "show", &peer_did])
             .expect("runtime parse");
         let result = network_reputation_show(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "reputation show dispatch must invoke substrate + render envelope, got {result:?}"
+        );
+    }
+
+    // tv_net10_9: parse_reputation_peer_did rejects a
+    // peer_did missing the did:octo:0x prefix (input
+    // validation before substrate dispatch per Phase 10
+    // G13; operator input error not substrate error).
+    #[test]
+    fn tv_net10_9_reputation_show_rejects_missing_prefix() {
+        let result = parse_reputation_peer_did("not-a-valid-did");
+        assert!(
+            matches!(result, Err(OctoCliError::ConfirmationRequired { .. })),
+            "missing-prefix peer_did must be rejected"
+        );
+    }
+
+    // tv_net10_10: parse_reputation_peer_did rejects a
+    // peer_did body that is not 104 hex chars
+    // (pastejacking defense per Phase 5 RFC-0011-m
+    // precedent).
+    #[test]
+    fn tv_net10_10_reputation_show_rejects_wrong_length() {
+        let short = format!("did:octo:0x{}", "a".repeat(50));
+        let result = parse_reputation_peer_did(&short);
+        assert!(
+            matches!(result, Err(OctoCliError::ConfirmationRequired { .. })),
+            "wrong-length peer_did must be rejected"
+        );
+    }
+
+    // tv_net10_11: parse_reputation_peer_did rejects a
+    // peer_did body containing non-hex characters
+    // (pastejacking defense per Phase 5 RFC-0011-m
+    // precedent).
+    #[test]
+    fn tv_net10_11_reputation_show_rejects_non_hex() {
+        let non_hex = format!("did:octo:0x{}", "z".repeat(104));
+        let result = parse_reputation_peer_did(&non_hex);
+        assert!(
+            matches!(result, Err(OctoCliError::ConfirmationRequired { .. })),
+            "non-hex peer_did must be rejected"
+        );
+    }
+
+    // tv_net10_12: reputation list with below-score
+    // filter WITHOUT threshold rejected by handler
+    // validation (symmetric with tv_net10_3 which
+    // covers above-score).
+    #[test]
+    fn tv_net10_12_reputation_list_below_score_requires_threshold() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "reputation",
+            "list",
+            "--filter",
+            "below-score",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(a) => a,
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
+        };
+        let runtime =
+            Octo::try_parse_from(["test", "network", "reputation", "list"]).expect("runtime parse");
+        let result = network_reputation_list(&args, &runtime);
         match result {
-            Err(OctoCliError::NetworkSubstrateUnavailable { companion, detail }) => {
-                assert_eq!(companion, "G13");
-                assert_eq!(detail, "");
+            Err(OctoCliError::ConfirmationRequired { command }) => {
+                assert!(
+                    command.contains("threshold required"),
+                    "ConfirmationRequired command must mention threshold required, got {command:?}"
+                );
             }
-            other => {
-                panic!("expected NetworkSubstrateUnavailable with companion G13, got {other:?}")
-            }
+            other => panic!(
+                "expected ConfirmationRequired with threshold required detail, got {other:?}"
+            ),
         }
     }
 

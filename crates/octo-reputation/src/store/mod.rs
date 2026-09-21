@@ -5,11 +5,15 @@
 //! `async fn` so tests stay deterministic. Session 4 adds the parity binary
 //! which composes both backends.
 //!
-//! The trait is 18 methods as of Session 8 (mission 0968 Phase 4): the
-//! original 12 plus four federation methods
+//! The trait is 23 methods as of Session 8 plus Phase 10 G13
+//! (mission 0968 Phase 4 plus RFC-0011-r): the original 12 plus
+//! four federation methods
 //! (`register_attestor`, `attestor_lookup_did`, `record_attestation`,
-//! `query_attestations`) and two quorum / catch-up methods
-//! (`attestor_quorum_reached`, `gossip_catch_up`) that own the gossip
+//! `query_attestations`) plus two quorum / catch-up methods
+//! (`attestor_quorum_reached`, `gossip_catch_up`) plus three anchor
+//! methods (`anchor_pending`, `set_event_anchor_tx_hash`,
+//! `query_anchors_by_controller_id`) plus two Phase 10 G13 methods
+//! (`list`, `peer_reputation`) that own the gossip
 //! substrate's read-side (RFC-0968 §12 + amendments 22, 28, 29).
 
 mod memory;
@@ -34,7 +38,8 @@ use serde::{Deserialize, Serialize};
 /// on user input — every domain error maps to a `ReputationError` variant.
 pub type StoreResult<T> = Result<T, ReputationError>;
 
-/// The 16-method canonical reputation store contract (RFC-0968 §3 + §12).
+/// The 23-method canonical reputation store contract
+/// (RFC-0968 §3 + §12 plus RFC-0011-r Phase 10 G13).
 ///
 /// `verify_governance_suspension` accepts `(auth, snapshot, now_unix)` — the
 /// post-Round-11 canonical signature. `slash_recorder` carries a
@@ -230,15 +235,19 @@ pub trait ReputationStore: Send + Sync {
     /// Table). Returns empty Vec if no peers match.
     /// Additive trait extension per Phase 4 G22
     /// precedent; per-extension impl crates (Layer D)
-    /// provide real implementations. Default impl
-    /// returns empty Vec (stoolap + memory stubs).
+    /// provide real implementations. The stub
+    /// implementations in `memory.rs` + `stoolap.rs`
+    /// return empty Vec (no real aggregation logic
+    /// in this trait-only phase).
     async fn list(&self, filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>>;
 
     /// Load reputation for a specific peer DID
     /// (Phase 10 G13 per RFC-0011-r §Substrate Mapping
     /// Table). Returns None if the peer has no
-    /// recorded reputation. Default impl returns
-    /// None (stoolap + memory stubs).
+    /// recorded reputation. The stub implementations
+    /// in `memory.rs` + `stoolap.rs` return None
+    /// (no real lookup logic in this trait-only
+    /// phase).
     async fn peer_reputation(&self, did: &RecorderDid) -> StoreResult<Option<PeerReputation>>;
 }
 

@@ -366,4 +366,49 @@ mod tests {
             "score_ewma must be byte-identical between two compat stores"
         );
     }
+
+    // -- Phase 10 G13: pass-through delegation of the new ReputationStore
+    // trait methods through the compat layer. The compat adapter forwards
+    // these methods to the inner store only (no legacy shim involvement,
+    // since the legacy SlashReputationStore predates the federation
+    // substrate). tv_phase10_substrate_10 covers `list` delegation;
+    // tv_phase10_substrate_11 covers `peer_reputation` delegation.
+    //
+    // The InMemoryReputationStore stub returns Ok(empty Vec) /
+    // Ok(None), so the compat layer must surface exactly that.
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_10_compat_list_passthrough_returns_empty() {
+        let inner = InMemoryReputationStore::new();
+        let legacy = SlashReputationStore::new();
+        let compat = ReputationStoreCompat::new(inner, legacy);
+
+        let result = compat.list(crate::store::ReputationFilter::All).await;
+        assert!(
+            result.is_ok(),
+            "compat.list pass-through must succeed: {result:?}"
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "compat.list pass-through must delegate to inner stub returning empty Vec"
+        );
+    }
+
+    #[tokio::test]
+    async fn tv_phase10_substrate_11_compat_peer_reputation_passthrough_returns_none() {
+        let inner = InMemoryReputationStore::new();
+        let legacy = SlashReputationStore::new();
+        let compat = ReputationStoreCompat::new(inner, legacy);
+
+        let did = RecorderDid::from_array([0xAAu8; 52]);
+        let result = compat.peer_reputation(&did).await;
+        assert!(
+            result.is_ok(),
+            "compat.peer_reputation pass-through must succeed: {result:?}"
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "compat.peer_reputation pass-through must delegate to inner stub returning None"
+        );
+    }
 }

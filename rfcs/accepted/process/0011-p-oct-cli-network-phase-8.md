@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-20) — RFC-0011-p lands RFC-0011-h §Implementation Phases Phase 8. Two subcommands wire quota router node observability to the CLI. Substrate absent: `QuotaRouterNode` struct + `RouterStatus` enum + `status()` + `peer_capacity()` methods MISSING from `crates/octo-network/src/quota/router_node.rs`; this amendment adds 1 companion substrate mission (G10 `0011-h-s-a-quota-router-node` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
+Accepted (2026-09-21) — RFC-0011-p promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 8 retroactive multi-round DRY gate GREEN at R3 zero per the existing closure chain culminating in `next ededbe4a` (R1 + R2 + R3 zero rounds gate pair). Two subcommands wire quota router node observability to the CLI. Substrate absent: `QuotaRouterNode` struct + `RouterStatus` enum + `status()` + `peer_capacity()` methods MISSING from `crates/octo-network/src/quota/router_node.rs`; this amendment adds 1 companion substrate mission (G10 `0011-h-s-a-quota-router-node` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
 > **Amendment chain:** Eighth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p (this RFC).
 
@@ -248,9 +248,10 @@ The slash bridge observability (Phase 7 RFC-0011-o) + quota router observability
 
 ## Version History
 
-| Version | Date       | Author     | Changes                                                 |
-| ------- | ---------- | ---------- | ------------------------------------------------------- |
-| v0.1    | 2026-09-20 | @mmacedoeu | Initial Draft — RFC-0011-p Phase 8 router/G10 amendment |
+| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-09-20 | @mmacedoeu | Initial Draft — RFC-0011-p Phase 8 router/G10 amendment                                                                                                                                                                                                                          |
+| v0.2    | 2026-09-21 | @mmacedoeu | Promoted Draft to Accepted. RFC-0011-p year-stable per Layer B substrate convention. Multi-round DRY CLOSED at `next ededbe4a` per R1 + R2 + R3 zero rounds gate pair. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-v directory convention. |
 
 ## Cross-references
 

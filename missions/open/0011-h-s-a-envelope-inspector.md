@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate slice landed at `next 9c03f6dc` (EnvelopeInspector + EnvelopeMeta + EnvelopeKind additive types + inspect method + from_fields constructor on NEW module mon/envelope_inspector.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 296d9a1e`. Stub fill-in at `next dbaa3e82`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
+Completed (2026-09-20) — Substrate slice landed at `next 9c03f6dc` (EnvelopeInspector + EnvelopeMeta + EnvelopeKind additive types + inspect method + from_fields constructor on NEW module mon/envelope_inspector.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 296d9a1e`. Stub fill-in at `next dbaa3e82`. Paired-YAML Claimed transition at `next 59e8c43e`. Paired-YAML Completed transition paired with CLI mission YAML `0011-h-network-envelope` CREATION at CLI dispatch slice `next 344bd8b5` per no-phantom-mission-pointers pairing invariant.
 
 ## RFC
 

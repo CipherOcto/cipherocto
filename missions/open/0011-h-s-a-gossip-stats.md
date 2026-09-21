@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G15
+Claimed (2026-09-20) — Substrate slice landed at `next c07ad375` (Gossip + GossipStats additive types + stats() impl + 4 substrate tests tv_phase12_substrate_1..4 on existing mon/gossip.rs module per Phase 5 RFC-0011-m EXTEND-existing precedent). RFC draft at `next 59bb39b4`. Stub fill-in at `next 8244e969`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
 
 ## RFC
 

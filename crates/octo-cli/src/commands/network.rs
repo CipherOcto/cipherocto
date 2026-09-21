@@ -3631,9 +3631,9 @@ fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError
 
 /// `octo network reputation list [--filter <filter>]`
 /// handler (RFC-0011-r Phase 10 G13). Read-only;
-/// substrate-faithful trait dispatch per Phase 1
-/// `slash_list` precedent at this module's
-/// `slash_list` handler. The `ReputationStore::list`
+/// substrate-faithful trait dispatch per the
+/// async-with-block_on precedent at agent.rs:1554-1586
+/// (R5.5 `octo agent attach`). The `ReputationStore::list`
 /// trait method is exercised; the InMemory stub
 /// returns Ok(empty Vec) per RFC-0011-r §Substrate
 /// Mapping Table. Per-extension impl crates (Layer D)
@@ -3687,7 +3687,7 @@ fn network_reputation_list(args: &ReputationListArgs, cli: &Octo) -> Result<(), 
         rt.block_on(store.list(substrate_filter)).map_err(|e| {
             OctoCliError::NetworkSubstrateUnavailable {
                 companion: "G13",
-                detail: format!("{e:?}"),
+                detail: sanitize_substrate_error(&format!("{e:?}")),
             }
         })?
     };
@@ -3704,8 +3704,9 @@ fn network_reputation_list(args: &ReputationListArgs, cli: &Octo) -> Result<(), 
 
 /// `octo network reputation show <peer_did>` handler
 /// (RFC-0011-r Phase 10 G13). Read-only;
-/// substrate-faithful trait dispatch per Phase 1
-/// `slash_list` precedent. Input validation runs
+/// substrate-faithful trait dispatch per the
+/// async-with-block_on precedent at agent.rs:1554-1586
+/// (R5.5 `octo agent attach`). Input validation runs
 /// BEFORE substrate dispatch (operator input errors
 /// surface as ConfirmationRequired, not as substrate
 /// unavailability). The
@@ -3721,9 +3722,16 @@ fn network_reputation_show(args: &ReputationShowArgs, cli: &Octo) -> Result<(), 
     // additional DID methods. Order matters: operator
     // input errors surface before substrate errors.
     let did_bytes = parse_reputation_peer_did(&args.peer_did)?;
-    let did = octo_reputation::types::RecorderDid::from_bytes(&did_bytes).map_err(|_| {
-        OctoCliError::NetworkInvalidDid {
-            did_redacted: redact_did_bytes(&did_bytes),
+    // `parse_reputation_peer_did` returns `[u8; 52]` on success, so the
+    // `RecorderDid::from_bytes` length check always passes. The `map_err`
+    // closure surfaces the substrate payload via NetworkSubstrateUnavailable
+    // (slot 89) instead of `NetworkInvalidDid` so the operator sees the
+    // real error from a future amendment that adds post-length semantic
+    // validation.
+    let did = octo_reputation::types::RecorderDid::from_bytes(&did_bytes).map_err(|e| {
+        OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G13",
+            detail: sanitize_substrate_error(&format!("RecorderDid::from_bytes: {e:?}")),
         }
     })?;
     // Substrate-faithful: invoke the trait method via
@@ -3743,7 +3751,7 @@ fn network_reputation_show(args: &ReputationShowArgs, cli: &Octo) -> Result<(), 
         rt.block_on(store.peer_reputation(&did)).map_err(|e| {
             OctoCliError::NetworkSubstrateUnavailable {
                 companion: "G13",
-                detail: format!("{e:?}"),
+                detail: sanitize_substrate_error(&format!("{e:?}")),
             }
         })?
     };
@@ -6235,7 +6243,8 @@ mod tests {
     // substrate trait method (RFC-0011-r Phase 10 G13).
     // The InMemoryReputationStore stub returns Ok(empty
     // Vec); the dispatch renders the empty envelope.
-    // Substrate-faithful per Phase 1 slash_list precedent.
+    // Substrate-faithful per agent.rs:1554-1586 R5.5
+    // precedent.
     #[test]
     fn tv_net10_7_reputation_list_substrate_dispatch() {
         let cli = TestPhase10Cli::try_parse_from(["test", "reputation", "list", "--filter", "all"])
@@ -6253,6 +6262,89 @@ mod tests {
         assert!(
             result.is_ok(),
             "reputation list dispatch must invoke substrate + render envelope, got {result:?}"
+        );
+    }
+
+    // tv_net10_7b: AboveScore handler dispatch path. The
+    // substrate trait stub is symmetric (returns empty
+    // Vec for any filter), but the handler match arm
+    // builds `ReputationFilter::AboveScore(args.threshold
+    // .unwrap_or(0))` — a bug there would not be caught
+    // by tv_net10_7. Symmetric tv_net10_7c covers
+    // BelowScore.
+    #[test]
+    fn tv_net10_7b_reputation_list_above_score_substrate_dispatch() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "reputation",
+            "list",
+            "--filter",
+            "above-score",
+            "--threshold",
+            "100",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(a) => a,
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "reputation",
+            "list",
+            "--filter",
+            "above-score",
+            "--threshold",
+            "100",
+        ])
+        .expect("runtime parse");
+        let result = network_reputation_list(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "reputation list above-score dispatch must invoke substrate + render envelope, got {result:?}"
+        );
+    }
+
+    // tv_net10_7c: BelowScore handler dispatch path.
+    // Symmetric with tv_net10_7b (above-score).
+    #[test]
+    fn tv_net10_7c_reputation_list_below_score_substrate_dispatch() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "reputation",
+            "list",
+            "--filter",
+            "below-score",
+            "--threshold",
+            "100",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(a) => a,
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "reputation",
+            "list",
+            "--filter",
+            "below-score",
+            "--threshold",
+            "100",
+        ])
+        .expect("runtime parse");
+        let result = network_reputation_list(&args, &runtime);
+        assert!(
+            result.is_ok(),
+            "reputation list below-score dispatch must invoke substrate + render envelope, got {result:?}"
         );
     }
 
@@ -6357,6 +6449,38 @@ mod tests {
             other => panic!(
                 "expected ConfirmationRequired with threshold required detail, got {other:?}"
             ),
+        }
+    }
+
+    // tv_net10_13: reputation list --filter below-score +
+    // --threshold 100 parses cleanly. Symmetric with
+    // tv_net10_2 (above-score direction); covers both
+    // threshold bound directions per RFC-0011-h
+    // §Subcommand Taxonomy Phase 10. Verifies that the
+    // clap parse layer surfaces BelowScore filter +
+    // threshold value end-to-end without invoking the
+    // handler.
+    #[test]
+    fn tv_net10_13_reputation_list_below_score_with_threshold_parses() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "reputation",
+            "list",
+            "--filter",
+            "below-score",
+            "--threshold",
+            "100",
+        ])
+        .expect("parse");
+        match cli.action {
+            NetworkAction::Reputation { action } => match action {
+                NetworkReputationAction::List(args) => {
+                    assert!(matches!(args.filter, ReputationFilterKind::BelowScore));
+                    assert_eq!(args.threshold, Some(100));
+                }
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Reputation"),
         }
     }
 

@@ -24,21 +24,21 @@ Substrate per RFC-0855 §Wire Format heartbeat probing. ONE NEW substrate module
 
 ## Dependencies
 
-- RFC-0011-h Accepted
-- RFC-0855 §Wire Format
-- RFC-0011-i Phase 1
-- RFC-0011-j Phase 2
-- RFC-0011-k Phase 3
-- RFC-0011-l Phase 4
-- RFC-0011-m Phase 5
-- RFC-0011-n Phase 6
-- RFC-0011-o Phase 7
-- RFC-0011-p Phase 8
-- RFC-0011-q Phase 9
-- RFC-0011-r Phase 10
-- RFC-0011-s Phase 11
-- RFC-0011-t Phase 12
-- RFC-0011-u Phase 13
+- RFC-0011-h
+- RFC-0855
+- RFC-0011-i
+- RFC-0011-j
+- RFC-0011-k
+- RFC-0011-l
+- RFC-0011-m
+- RFC-0011-n
+- RFC-0011-o
+- RFC-0011-p
+- RFC-0011-q
+- RFC-0011-r
+- RFC-0011-s
+- RFC-0011-t
+- RFC-0011-u
 
 ## Design Goals
 

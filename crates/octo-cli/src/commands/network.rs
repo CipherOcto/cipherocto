@@ -5668,6 +5668,82 @@ mod tests {
         }
     }
 
+    // tv_net8_7: status_label Healthy arm projection
+    // (G10 substrate-faithful; Healthy arm not previously
+    // covered by tv_net8_3 which only exercised the Offline
+    // default state).
+    #[test]
+    fn tv_net8_7_status_label_healthy_arm() {
+        use octo_network::quota::router_node::RouterStatus;
+        assert_eq!(status_label(RouterStatus::Healthy), "healthy");
+    }
+
+    // tv_net8_8: status_label Degraded arm projection
+    // (G10 substrate-faithful; Degraded arm not previously
+    // covered; covers middle-path operational state).
+    #[test]
+    fn tv_net8_8_status_label_degraded_arm() {
+        use octo_network::quota::router_node::RouterStatus;
+        assert_eq!(status_label(RouterStatus::Degraded), "degraded");
+    }
+
+    // tv_net8_9: router status handler surfaces slot-89
+    // NetworkSubstrateUnavailable when registry returns
+    // None (G10 per-extension crate pattern: concrete
+    // impl crates are OUT OF SCOPE; registry is None
+    // until a follow-on Layer D crate registers).
+    #[test]
+    fn tv_net8_9_router_status_substrate_unavailable_slot_89() {
+        let cli = TestPhase8Cli::try_parse_from(["test", "router", "status"]).expect("parse");
+        let args = match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Status(args) => args,
+                _ => panic!("expected Status"),
+            },
+            _ => panic!("expected Router"),
+        };
+        let runtime =
+            Octo::try_parse_from(["test", "network", "router", "status"]).expect("runtime parse");
+        let err = network_router_status(&args, &runtime)
+            .expect_err("registry None should yield slot-89 error");
+        match err {
+            OctoCliError::NetworkSubstrateUnavailable { companion, detail } => {
+                assert_eq!(companion, "G10");
+                assert_eq!(detail, "");
+            }
+            other => panic!("expected NetworkSubstrateUnavailable, got {other:?}"),
+        }
+    }
+
+    // tv_net8_10: router peers handler surfaces slot-89
+    // NetworkSubstrateUnavailable when registry returns
+    // None (G10 per-extension crate pattern; anchors the
+    // G10 error-path contract on slot 89 for CLI consumers).
+    #[test]
+    fn tv_net8_10_router_peers_substrate_unavailable_slot_89() {
+        let lower_hex = "a".repeat(64);
+        let cli =
+            TestPhase8Cli::try_parse_from(["test", "router", "peers", &lower_hex]).expect("parse");
+        let args = match cli.action {
+            NetworkAction::Router { action } => match action {
+                NetworkRouterAction::Peers(args) => args,
+                _ => panic!("expected Peers"),
+            },
+            _ => panic!("expected Router"),
+        };
+        let runtime = Octo::try_parse_from(["test", "network", "router", "peers", &lower_hex])
+            .expect("runtime parse");
+        let err = network_router_peers(&args, &runtime)
+            .expect_err("registry None should yield slot-89 error");
+        match err {
+            OctoCliError::NetworkSubstrateUnavailable { companion, detail } => {
+                assert_eq!(companion, "G10");
+                assert_eq!(detail, "");
+            }
+            other => panic!("expected NetworkSubstrateUnavailable, got {other:?}"),
+        }
+    }
+
     // === Phase 9 test vectors (RFC-0011-q §Test Vectors Phase 9) ===
 
     /// Test CLI struct for Phase 9 specialized-node surface.

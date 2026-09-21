@@ -260,7 +260,10 @@ mod tests {
         };
         let router = InMemoryQuotaRouter { node: inner };
 
-        assert_eq!(<InMemoryQuotaRouter as QuotaRouterNodeAccess>::node_id(&router), [0x42u8; 32]);
+        assert_eq!(
+            <InMemoryQuotaRouter as QuotaRouterNodeAccess>::node_id(&router),
+            [0x42u8; 32]
+        );
         assert_eq!(
             <InMemoryQuotaRouter as QuotaRouterNodeAccess>::status(&router),
             RouterStatus::Degraded,

@@ -181,3 +181,46 @@ Per Phase 6 `9a903993` precedent, the final commit for RFC-0011-v sweep any rema
 ## History
 
 - 2026-09-20 — Draft (this version)
+
+## Stale-Stub Sweep (Phase 14 closure)
+
+Per Phase 6 `9a903993` precedent, this section confirms that all 9 RFC-0011-h §Substrate-Additions Companion Missions G-rows G9-G17 are CLOSED with no remaining Open stubs after Phase 14 closure:
+
+| G-row | Substrate companion YAML             | Status    | Anchor commit             |
+| ----- | ------------------------------------ | --------- | ------------------------- |
+| G9    | `0011-h-s-a-slash-bridge-trait`      | Completed | RFC-0011-o Phase 7 chain  |
+| G10   | `0011-h-s-a-quota-router-node`       | Completed | RFC-0011-p Phase 8 chain  |
+| G11   | `0011-h-s-a-specialized-node-record` | Completed | RFC-0011-q Phase 9 chain  |
+| G13   | `0011-h-s-a-reputation-store`        | Completed | RFC-0011-r Phase 10 chain |
+| G14   | `0011-h-s-a-topology-render`         | Completed | RFC-0011-s Phase 11 chain |
+| G15   | `0011-h-s-a-gossip-stats`            | Completed | RFC-0011-t Phase 12 chain |
+| G16a  | `0011-h-s-a-envelope-inspector`      | Completed | RFC-0011-u Phase 13 chain |
+| G16b  | `0011-h-s-a-forward-envelope`        | Completed | RFC-0011-u Phase 13 chain |
+| G17   | `0011-h-s-a-heartbeat-probe`         | Completed | RFC-0011-v Phase 14 chain |
+
+All 8 CLI mission YAMLs paired with these G-rows (Created at CLI dispatch slice time per user decision 2026-09-20) are also Completed:
+
+| CLI mission YAML              | Subcommand count | Status    |
+| ----------------------------- | ---------------- | --------- |
+| `0011-h-network-slash-bridge` | 2                | Completed |
+| `0011-h-network-router`       | 2                | Completed |
+| `0011-h-network-node`         | 2                | Completed |
+| `0011-h-network-reputation`   | 2                | Completed |
+| `0011-h-network-topology`     | 1                | Completed |
+| `0011-h-network-gossip`       | 1                | Completed |
+| `0011-h-network-envelope`     | 2                | Completed |
+| `0011-h-network-heartbeat`    | 1                | Completed |
+
+**NO DEFERRAL per user directive 2026-09-20. Phase 7-14 rollout plan 100% complete.**
+
+## Cross-references
+
+- [[RFC-0011-h Accepted]] — multi-phase rollout plan
+- [[RFC-0011-o Phase 7 RFC Draft]] — Phase 7 (G9) spec
+- [[RFC-0011-p Phase 8 RFC Draft]] — Phase 8 (G10) spec
+- [[RFC-0011-q Phase 9 RFC Draft]] — Phase 9 (G11) spec
+- [[RFC-0011-r Phase 10 RFC Draft]] — Phase 10 (G13) spec
+- [[RFC-0011-s Phase 11 RFC Draft]] — Phase 11 (G14) spec
+- [[RFC-0011-t Phase 12 RFC Draft]] — Phase 12 (G15) spec
+- [[RFC-0011-u Phase 13 RFC Draft]] — Phase 13 (G16a + G16b) spec
+- [[RFC-0011-v Phase 14 RFC Draft]] — Phase 14 (G17) spec (this RFC)

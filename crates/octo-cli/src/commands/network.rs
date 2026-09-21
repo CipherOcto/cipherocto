@@ -5886,6 +5886,142 @@ mod tests {
         assert!(result.is_err(), "mixed-case hex must be rejected");
     }
 
+    // tv_net9_7: node bind dry-run path renders preview
+    // envelope without substrate dispatch (RFC-0011-q
+    // §Confirmation Flag: dry-run is default; standalone
+    // — does NOT require registry impl). Confirms Bug 4
+    // closure: default invocation returns Ok with
+    // applied=false, NOT slot 89 NetworkSubstrateUnavailable.
+    #[test]
+    fn tv_net9_7_node_bind_dry_run_renders_preview_without_substrate() {
+        let hex_id = "1".repeat(64);
+        let holder_did = "did:octo:0x11";
+        let cli = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Bind(a) => a,
+                _ => panic!("expected Bind"),
+            },
+            _ => panic!("expected Node"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+        ])
+        .expect("runtime parse");
+        let result = network_node_bind(&args, &runtime);
+        match result {
+            Ok(()) => {} // expected: dry-run returns Ok with applied=false envelope
+            Err(OctoCliError::NetworkSubstrateUnavailable { .. }) => {
+                panic!("dry-run path must NOT surface NetworkSubstrateUnavailable");
+            }
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    // tv_net9_8: node bind apply path surfaces slot 89
+    // NetworkSubstrateUnavailable when registry is empty
+    // (pre-extension-crate-impl). Companion-gated dispatch
+    // per RFC-0011-h §Error Handling row 89.
+    #[test]
+    fn tv_net9_8_node_bind_apply_surfaces_substrate_unavailable() {
+        let hex_id = "2".repeat(64);
+        let holder_did = "did:octo:0x22";
+        let cli = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+            "--apply",
+            "--confirm-acknowledge",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Bind(a) => a,
+                _ => panic!("expected Bind"),
+            },
+            _ => panic!("expected Node"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "node",
+            "bind",
+            &hex_id,
+            "--holder-did",
+            holder_did,
+            "--apply",
+            "--confirm-acknowledge",
+        ])
+        .expect("runtime parse");
+        let result = network_node_bind(&args, &runtime);
+        match result {
+            Err(OctoCliError::NetworkSubstrateUnavailable { companion, detail }) => {
+                assert_eq!(companion, "G11");
+                assert_eq!(detail, "");
+            }
+            other => panic!("expected NetworkSubstrateUnavailable {{ companion: G11, detail: \"\" }}, got {other:?}"),
+        }
+    }
+
+    // tv_net9_9: node_class_label maps all 5 NodeClass
+    // variants to their lowercase string labels per
+    // serde rename_all = lowercase + RFC-0011-q §Output
+    // Envelope Phase 9 (Builder / Provider / Storage /
+    // Bandwidth / Orchestrator).
+    #[test]
+    fn tv_net9_9_node_class_label_all_variants() {
+        use octo_network::specialized::node_record::NodeClass;
+        assert_eq!(node_class_label(NodeClass::Builder), "builder");
+        assert_eq!(node_class_label(NodeClass::Provider), "provider");
+        assert_eq!(node_class_label(NodeClass::Storage), "storage");
+        assert_eq!(node_class_label(NodeClass::Bandwidth), "bandwidth");
+        assert_eq!(node_class_label(NodeClass::Orchestrator), "orchestrator");
+    }
+
+    // tv_net9_10: node bind accepts uppercase-only hex
+    // (positive branch of pastejacking defense — parse_32_byte_hex
+    // shared helper accepts lowercase OR uppercase; rejects
+    // mixed-case only).
+    #[test]
+    fn tv_net9_10_node_bind_accepts_uppercase_only_hex() {
+        let upper_hex = "F".repeat(64);
+        let cli = TestPhase9Cli::try_parse_from([
+            "test",
+            "node",
+            "bind",
+            &upper_hex,
+            "--holder-did",
+            "did:octo:0xff",
+        ])
+        .expect("uppercase-only hex must parse cleanly");
+        match cli.action {
+            NetworkAction::Node { action } => match action {
+                NetworkNodeAction::Bind(args) => {
+                    assert_eq!(args.node_id, [0xFF; 32]);
+                }
+                _ => panic!("expected Bind"),
+            },
+            _ => panic!("expected Node"),
+        }
+    }
+
     // === Phase 10 test vectors (RFC-0011-r Phase 10 G13) ===
 
     #[derive(Parser, Debug)]

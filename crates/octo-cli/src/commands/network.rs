@@ -3435,14 +3435,20 @@ fn network_slash_bridge_propagate(
 /// Phase 7). Per RFC-0011-o §Substrate Mapping Table, the CLI
 /// consumes the trait via registry lookup, identical to RFC-0863
 /// `NetworkSender` pattern.
+///
+/// Per Phase 12 R2.5 / Phase 13 R1.5 / Phase 14 R1.5 substrate-faithfulness
+/// precedent: handlers must invoke substrate unconditionally. Returns
+/// the substrate-shipped `EmptyBridge` stub (RFC-0011-h
+/// §Substrate-Faithfulness) until a per-extension impl crate
+/// registers at runtime in a follow-on Layer D mission. Per-extension
+/// crate impl crates will replace this stub via the per-extension
+/// crate pattern registration hook.
 fn slash_bridge_registry(
     _cli: &Octo,
 ) -> Option<std::sync::Arc<dyn octo_network::mon::slash_bridge::SlashBridge>> {
-    // Companion G9 substrate lands in a follow-on Layer D extension
-    // crate per per-extension crate pattern. Until then, the trait
-    // has no registered impl in this binary — dispatch surfaces
-    // exit 89.
-    None
+    Some(std::sync::Arc::new(
+        octo_network::mon::slash_bridge::EmptyBridge,
+    ))
 }
 
 /// Lookup the runtime `QuotaRouterNode` registry (per-extension
@@ -5517,26 +5523,30 @@ mod tests {
     // Envelope determinism pattern).
     #[test]
     fn tv_net7_3_slash_bridge_list_empty_envelope_total_zero() {
-        use octo_network::mon::slash_bridge::SlashBridge;
-        // In-memory test impl mirrors the substrate InMemorySlashBridge;
-        // list returns empty Vec for empty store (substrate-faithful).
-        struct EmptyBridge;
-        impl SlashBridge for EmptyBridge {
-            fn list(&self) -> Vec<octo_network::mon::slash_bridge::BridgedSlash> {
-                Vec::new()
-            }
-            fn propagate_to(
-                &self,
-                _id: [u8; 32],
-            ) -> Result<
-                octo_network::mon::slash_bridge::BridgeReceipt,
-                octo_network::mon::slash_bridge::BridgeError,
-            > {
-                Err(octo_network::mon::slash_bridge::BridgeError::Unreachable)
-            }
-        }
+        // EmptyBridge stub (R1.5 fix) — use the substrate-shipped
+        // public EmptyBridge per Phase 12 R2.5 / Phase 13 R1.5 / Phase 14
+        // R1.5 substrate-faithfulness precedent. Test exercises the
+        // envelope projection: an empty substrate list must produce a
+        // NetworkSlashBridgeListOutput with total=0 and slashes=Vec::new(),
+        // matching RFC-0011-o §Output Envelope shape.
+        use octo_network::mon::slash_bridge::{EmptyBridge, SlashBridge};
         let bridge = EmptyBridge;
-        assert_eq!(bridge.list().len(), 0);
+        let slashes = bridge.list();
+        let projections: Vec<BridgedSlashProjection> = slashes
+            .into_iter()
+            .map(|s| BridgedSlashProjection {
+                slash_envelope_id_hex: hex::encode(s.slash_envelope_id),
+                bridge_metadata: s.bridge_metadata,
+                bridged_at_epoch: s.bridged_at_epoch,
+            })
+            .collect();
+        let env = NetworkSlashBridgeListOutput {
+            total: projections.len(),
+            slashes: projections,
+        };
+        assert_eq!(env.total, 0);
+        assert_eq!(env.slashes.len(), 0);
+        assert!(env.slashes.is_empty());
     }
 
     // tv_net7_4: slash-bridge propagate subcommand parses cleanly with --apply + --confirm-acknowledge

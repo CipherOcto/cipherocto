@@ -113,6 +113,33 @@ impl std::fmt::Display for BridgeError {
 
 impl std::error::Error for BridgeError {}
 
+/// Stub `SlashBridge` impl returning empty list + unreachable errors.
+///
+/// Per RFC-0011-h §Substrate-Faithfulness + Phase 12 R2.5 / Phase 13 R1.5
+/// / Phase 14 R1.5 precedent: CLI handlers must invoke substrate
+/// unconditionally. This stub provides a deterministic substrate surface
+/// for the pre-Layer-D-impl deployment window. Per-extension concrete
+/// impl crates (Layer D, OUT OF SCOPE) register their own impls at
+/// runtime via the per-extension crate pattern, replacing this stub.
+///
+/// `list` returns an empty `Vec` (no bridged slashes). `propagate_to`
+/// returns `BridgeError::Unreachable` for any input (no transport
+/// available). Idempotency is preserved structurally: calling
+/// `propagate_to` twice with the same `slash_envelope_id` returns the
+/// same `Err(BridgeError::Unreachable)` both times.
+#[derive(Clone, Debug, Default)]
+pub struct EmptyBridge;
+
+impl SlashBridge for EmptyBridge {
+    fn list(&self) -> Vec<BridgedSlash> {
+        Vec::new()
+    }
+
+    fn propagate_to(&self, _slash_envelope_id: [u8; 32]) -> Result<BridgeReceipt, BridgeError> {
+        Err(BridgeError::Unreachable)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +225,49 @@ mod tests {
             format!("{}", BridgeError::Internal("boom".to_string())),
             "internal error: boom"
         );
+    }
+
+    /// Idempotency contract (RFC-0011-o §Implicit Assumptions Audit
+    /// row 6): `propagate_to` is idempotent on `slash_envelope_id`.
+    /// `InMemorySlashBridge` is structurally idempotent (same input
+    /// yields same receipt). Calling twice with the same id must
+    /// return equal receipts.
+    #[test]
+    fn test_propagate_to_twice_with_same_id_yields_identical_receipt() {
+        let slashes = vec![BridgedSlash {
+            slash_envelope_id: [0x42; 32],
+            bridge_metadata: BTreeMap::new(),
+            bridged_at_epoch: 100,
+        }];
+        let bridge = InMemorySlashBridge { slashes };
+        let r1 = bridge.propagate_to([0x42; 32]).unwrap();
+        let r2 = bridge.propagate_to([0x42; 32]).unwrap();
+        assert_eq!(r1, r2);
+    }
+
+    /// `EmptyBridge` stub (R1.5 fix): `list` returns empty `Vec`;
+    /// `propagate_to` returns `Unreachable` for any input.
+    #[test]
+    fn test_empty_bridge_list_returns_empty() {
+        let bridge = EmptyBridge;
+        assert_eq!(bridge.list().len(), 0);
+    }
+
+    #[test]
+    fn test_empty_bridge_propagate_returns_unreachable() {
+        let bridge = EmptyBridge;
+        let result = bridge.propagate_to([0x99; 32]);
+        assert!(matches!(result, Err(BridgeError::Unreachable)));
+    }
+
+    /// `EmptyBridge::propagate_to` is structurally idempotent: same
+    /// input returns same `Unreachable` error both times.
+    #[test]
+    fn test_empty_bridge_propagate_idempotent() {
+        let bridge = EmptyBridge;
+        let r1 = bridge.propagate_to([0x42; 32]);
+        let r2 = bridge.propagate_to([0x42; 32]);
+        assert_eq!(r1, r2);
+        assert!(matches!(r1, Err(BridgeError::Unreachable)));
     }
 }

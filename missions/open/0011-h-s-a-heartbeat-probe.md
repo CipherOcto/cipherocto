@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-09-18) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G17. Stub originally filed 2026-09-18 per [[no-phantom-mission-pointers]].
+Claimed (2026-09-20) — Substrate slice landed at `next ffd3b9bf` (Heartbeat + HeartbeatProbeResult + UnreachableReason additive types + probe method on NEW module mon/heartbeat.rs per Phase 7 RFC-0011-o SlashBridge NEW module precedent). RFC draft at `next 2bb4bfb2`. Stub fill-in at `next d7be389d`. Paired-YAML Completed transition pending CLI dispatch slice per no-phantom-mission-pointers pairing invariant.
 
 ## RFC
 

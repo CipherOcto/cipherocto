@@ -1352,7 +1352,7 @@ pub struct HeartbeatProbeArgs {
 /// `octo network heartbeat probe` output envelope
 /// (RFC-0011-v Phase 14 G17). Wraps the substrate
 /// `HeartbeatProbeResult` projection for CLI dispatch.
-#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkHeartbeatProbeOutput {
     /// Peer DID (echo).
     pub peer_did: String,
@@ -4058,17 +4058,13 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
 ///
 /// Read-only subcommand; delegates to the substrate
 /// `Heartbeat::probe()` module (Phase 14 additive type extension
-/// per RFC-0011-v). Real transport-level probe OUT OF SCOPE; the
-/// `heartbeat_probe_registry` marker returns false in this
-/// additive-type-only phase. clap u16 overflow pre-dispatch
-/// rejection per Phase 5 RFC-0011-m precedent.
+/// per RFC-0011-v). Real transport-level probe OUT OF SCOPE;
+/// per-extension Layer D live transport-level probe init fn
+/// OUT OF SCOPE. Handler invokes substrate unconditionally per
+/// Phase 12 RFC-0011-t R2.5 substrate-faithfulness precedent.
+/// clap u16 overflow pre-dispatch rejection per Phase 5
+/// RFC-0011-m precedent.
 fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    if !heartbeat_probe_registry(cli) {
-        return Err(OctoCliError::NetworkSubstrateUnavailable {
-            companion: "G17",
-            detail: "".to_string(),
-        });
-    }
     let hb = octo_network::mon::heartbeat::Heartbeat;
     let result = hb.probe(&args.peer_did, args.timeout_ms);
     let (result_label, rtt_ms, reason_label, reason_detail) = match &result {
@@ -4076,6 +4072,9 @@ fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), 
             ("reachable".to_string(), Some(*rtt_ms), None, None)
         }
         octo_network::mon::heartbeat::HeartbeatProbeResult::Unreachable { reason } => {
+            // `UnreachableReason` is `#[non_exhaustive]`; catch-all
+            // covers unknown future variants defined by
+            // per-extension Layer D adapter crates.
             let (label, detail) = match reason {
                 octo_network::mon::heartbeat::UnreachableReason::InvalidPeerDid => {
                     ("invalid_peer_did".to_string(), None)
@@ -4089,13 +4088,17 @@ fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), 
                 octo_network::mon::heartbeat::UnreachableReason::Other(s) => {
                     ("other".to_string(), Some(s.clone()))
                 }
-                _ => ("unknown".to_string(), None),
+                _ => ("unknown_future_variant".to_string(), None),
             };
             ("unreachable".to_string(), None, Some(label), detail)
         }
         octo_network::mon::heartbeat::HeartbeatProbeResult::Timeout => {
             ("timeout".to_string(), None, None, None)
         }
+        // `HeartbeatProbeResult` is `#[non_exhaustive]`; catch-all
+        // covers unknown future variants defined by per-extension
+        // Layer D adapter crates.
+        _ => ("unknown_future_variant".to_string(), None, None, None),
     };
     let env = OutputEnvelope::new(
         "octo.network.heartbeat.probe.v1",
@@ -4109,17 +4112,6 @@ fn network_heartbeat_probe(args: &HeartbeatProbeArgs, cli: &Octo) -> Result<(), 
         },
     );
     render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
-}
-
-/// Lookup the runtime heartbeat probe marker
-/// (RFC-0011-v Phase 14 G17). Returns false in this
-/// additive-type-only phase; per-extension Layer D
-/// live transport-level probe init fn OUT OF SCOPE.
-/// Phase 14 R1.5 fix sweep will remove this gate per
-/// Phase 12 RFC-0011-t R2.5 substrate-faithfulness
-/// precedent.
-fn heartbeat_probe_registry(_cli: &Octo) -> bool {
-    false
 }
 
 fn bootstrap_config_companion(err: &BootstrapConfigError) -> &'static str {
@@ -7221,5 +7213,100 @@ mod tests {
             },
             _ => panic!("expected Heartbeat"),
         }
+    }
+
+    // tv_net14_4: heartbeat probe dispatch body-contract
+    // inspection (R1.5 fix: dispatch test invokes
+    // `network_heartbeat_probe` handler AND directly
+    // invokes substrate to verify body contract per
+    // Phase 10 + Phase 11 + Phase 13 R3 MAJOR-1 lesson).
+    // Handler must invoke substrate unconditionally (no
+    // registry gate) per Phase 12 RFC-0011-t R2.5
+    // substrate-faithfulness precedent.
+    #[test]
+    fn tv_net14_4_heartbeat_probe_dispatch_envelope_body_contract() {
+        let cli = TestPhase10Cli::try_parse_from([
+            "test",
+            "heartbeat",
+            "probe",
+            "did:octo:example-peer",
+            "--timeout-ms",
+            "1000",
+        ])
+        .expect("parse");
+        let args = match cli.action {
+            NetworkAction::Heartbeat { action } => match action {
+                NetworkHeartbeatAction::Probe(a) => a,
+            },
+            _ => panic!("expected Heartbeat"),
+        };
+        let runtime = Octo::try_parse_from([
+            "test",
+            "network",
+            "heartbeat",
+            "probe",
+            "did:octo:example-peer",
+            "--timeout-ms",
+            "1000",
+        ])
+        .expect("runtime parse");
+        // Substrate-faithful projection: Heartbeat::probe
+        // exercised unconditionally by handler (no
+        // registry gate).
+        let result = octo_network::mon::heartbeat::Heartbeat.probe(&args.peer_did, args.timeout_ms);
+        // Well-formed DID → Timeout (Phase 14 stub).
+        assert_eq!(
+            result,
+            octo_network::mon::heartbeat::HeartbeatProbeResult::Timeout
+        );
+        // Handler must succeed (no registry gate).
+        let handler_result = network_heartbeat_probe(&args, &runtime);
+        assert!(
+            handler_result.is_ok(),
+            "heartbeat probe dispatch must succeed (handler invokes substrate unconditionally), got {handler_result:?}"
+        );
+    }
+
+    // tv_net14_5: heartbeat probe output envelope serde
+    // round-trip (R1.5 fix: output envelope `Serialize +
+    // Deserialize` derives enable round-trip assertion;
+    // tv_net14_5 mirrors Phase 13 tv_net13_9 envelope
+    // serde round-trip test pattern).
+    #[test]
+    fn tv_net14_5_heartbeat_probe_output_serde_round_trip() {
+        let out = NetworkHeartbeatProbeOutput {
+            peer_did: "did:octo:example-peer".to_string(),
+            result_label: "timeout".to_string(),
+            rtt_ms: None,
+            unreachable_reason_label: None,
+            unreachable_reason_detail: None,
+            timeout_ms: 1000,
+        };
+        let json = serde_json::to_string(&out).expect("serialize");
+        let parsed: NetworkHeartbeatProbeOutput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.peer_did, "did:octo:example-peer");
+        assert_eq!(parsed.result_label, "timeout");
+        assert_eq!(parsed.rtt_ms, None);
+        assert_eq!(parsed.unreachable_reason_label, None);
+        assert_eq!(parsed.unreachable_reason_detail, None);
+        assert_eq!(parsed.timeout_ms, 1000);
+        // Variant 2: Unreachable InvalidPeerDid with reason label.
+        let out_unreachable = NetworkHeartbeatProbeOutput {
+            peer_did: "not-a-did".to_string(),
+            result_label: "unreachable".to_string(),
+            rtt_ms: None,
+            unreachable_reason_label: Some("invalid_peer_did".to_string()),
+            unreachable_reason_detail: None,
+            timeout_ms: 5000,
+        };
+        let json2 = serde_json::to_string(&out_unreachable).expect("serialize");
+        let parsed2: NetworkHeartbeatProbeOutput =
+            serde_json::from_str(&json2).expect("deserialize");
+        assert_eq!(parsed2.result_label, "unreachable");
+        assert_eq!(
+            parsed2.unreachable_reason_label,
+            Some("invalid_peer_did".to_string())
+        );
+        assert_eq!(parsed2.timeout_ms, 5000);
     }
 }

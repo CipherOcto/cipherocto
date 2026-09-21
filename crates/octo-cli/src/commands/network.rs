@@ -255,6 +255,12 @@ pub enum NetworkAction {
         #[command(subcommand)]
         action: NetworkTopologyAction,
     },
+    /// Gossip protocol stats (RFC-0011-t Phase 12 G15).
+    Gossip {
+        /// Gossip subcommand.
+        #[command(subcommand)]
+        action: NetworkGossipAction,
+    },
 }
 
 /// Peer subcommand surface (RFC-0011-i §Subcommand Taxonomy Phase 1).
@@ -1123,6 +1129,70 @@ pub struct NetworkTopologyRenderOutput {
     pub render: String,
 }
 
+/// Gossip stats subcommand surface (RFC-0011-t Phase 12 G15).
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkGossipAction {
+    /// Show gossip protocol stats
+    /// (RFC-0011-t §Subcommand Taxonomy Phase 12 `gossip --stats`).
+    Stats(GossipStatsArgs),
+}
+
+/// `octo network gossip --stats [--format ascii|json]`
+/// arguments (RFC-0011-t §Subcommand Taxonomy Phase 12
+/// `gossip --stats`). `format` defaults to `ascii`
+/// (terminal-friendly); `json` for machine-readable.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct GossipStatsArgs {
+    /// Output format (RFC-0011-t §Subcommand Taxonomy
+    /// Phase 12 `gossip --stats` `--format`).
+    #[arg(long, value_enum, default_value_t = GossipStatsFormatKind::Ascii)]
+    pub format: GossipStatsFormatKind,
+    /// Force JSON envelope output (RFC-0011 §Output Envelope).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Bare-word enum for `gossip --stats --format`
+/// (RFC-0011-t §Subcommand Taxonomy Phase 12). Reuses
+/// the substrate `GossipStats` projection from
+/// `mon::gossip::Gossip::stats()` (Phase 12 additive
+/// type extension per RFC-0011-t).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GossipStatsFormatKind {
+    /// ASCII (terminal-friendly).
+    Ascii,
+    /// JSON (machine-readable).
+    Json,
+}
+
+/// `octo network gossip --stats` output envelope
+/// (RFC-0011-t Phase 12 G15). Wraps the substrate
+/// `GossipStats` projection for CLI dispatch.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct NetworkGossipStatsOutput {
+    /// Mission ID hex of the gossip state
+    /// (echo; canonicalized via `MissionId::to_canonical_bytes`).
+    pub mission_id_hex: String,
+    /// Number of reachable peers (substrate-faithful projection).
+    pub peers_reachable: u64,
+    /// Messages sent (substrate-faithful projection).
+    pub messages_sent: u64,
+    /// Messages received (substrate-faithful projection).
+    pub messages_received: u64,
+    /// Messages dropped (substrate-faithful projection).
+    pub messages_dropped: u64,
+    /// Anti-entropy rounds (stub zero per Phase 12
+    /// additive-type-only; real counter in follow-on
+    /// Layer D adapter mission).
+    pub anti_entropy_rounds: u64,
+    /// Last sync epoch.
+    pub last_sync_epoch: u64,
+    /// Format that was applied (`ascii` / `json`).
+    pub format: String,
+}
+
 // === Subcommand arg structs (RFC-0011-j Phase 2) ===
 
 /// Mode (bootstrap transport) subcommand surface.
@@ -1791,6 +1861,9 @@ pub fn dispatch(action: &NetworkAction, cli: &Octo) -> Result<(), OctoCliError> 
         },
         NetworkAction::Topology { action: top_act } => match top_act {
             NetworkTopologyAction::Render(args) => network_topology_render(args, cli),
+        },
+        NetworkAction::Gossip { action: g_act } => match g_act {
+            NetworkGossipAction::Stats(args) => network_gossip_stats(args, cli),
         },
     }
 }
@@ -3571,6 +3644,56 @@ fn network_topology_render(args: &TopologyRenderArgs, cli: &Octo) -> Result<(), 
 /// trait-only phase; per-extension Layer D live
 /// topology-source adapter init fn OUT OF SCOPE.
 fn topology_render_registry(_cli: &Octo) -> bool {
+    false
+}
+
+/// `octo network gossip --stats [--format ascii|json]`
+/// handler (RFC-0011-t Phase 12 G15). Read-only;
+/// delegates to the substrate
+/// `Gossip::stats()` method (Phase 12 additive type
+/// extension per RFC-0011-t). Live gossip adapter
+/// OUT OF SCOPE; the `gossip_stats_registry` marker
+/// returns false in this additive-type-only phase.
+fn network_gossip_stats(args: &GossipStatsArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    if !gossip_stats_registry(cli) {
+        return Err(OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G15",
+            detail: "".to_string(),
+        });
+    }
+    let format_label = match args.format {
+        GossipStatsFormatKind::Ascii => "ascii",
+        GossipStatsFormatKind::Json => "json",
+    };
+    // Phase 12 substrate-faithful stub: an empty in-memory
+    // Gossip snapshot is projected. Real live-gossip adapter
+    // (Layer D) follows on; for now the handler exercises the
+    // stats() method surface to confirm the trait-shape
+    // pairing works end-to-end through the CLI dispatch layer.
+    let mid = octo_network::mon::mission_id::MissionId::new(0, &[0u8; 32], 0, &[0u8; 32], 1);
+    let gossip = octo_network::mon::gossip::Gossip::new(mid, 0, 0, 0, 0, 0, 0);
+    let stats = gossip.stats();
+    let env = OutputEnvelope::new(
+        "octo.network.gossip.stats.v1",
+        NetworkGossipStatsOutput {
+            mission_id_hex: stats.mission_id_hex,
+            peers_reachable: stats.peers_reachable,
+            messages_sent: stats.messages_sent,
+            messages_received: stats.messages_received,
+            messages_dropped: stats.messages_dropped,
+            anti_entropy_rounds: stats.anti_entropy_rounds,
+            last_sync_epoch: stats.last_sync_epoch,
+            format: format_label.to_string(),
+        },
+    );
+    render_envelope(&env, args.json || cli.output.json, cli.output.no_color)
+}
+
+/// Lookup the runtime gossip stats marker
+/// (RFC-0011-t Phase 12 G15). Returns false in this
+/// additive-type-only phase; per-extension Layer D
+/// live gossip adapter init fn OUT OF SCOPE.
+fn gossip_stats_registry(_cli: &Octo) -> bool {
     false
 }
 
@@ -5495,5 +5618,51 @@ mod tests {
             result.is_err(),
             "--depth 65536 must be rejected pre-dispatch (clap u16 overflow)"
         );
+    }
+
+    // tv_net12_1: gossip --stats default format (ascii) parses cleanly.
+    #[test]
+    fn tv_net12_1_gossip_stats_default_format_ascii_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "gossip", "stats"]).expect("parse");
+        match cli.action {
+            NetworkAction::Gossip { action } => match action {
+                NetworkGossipAction::Stats(args) => {
+                    assert!(matches!(args.format, GossipStatsFormatKind::Ascii));
+                    assert!(!args.json);
+                }
+            },
+            _ => panic!("expected Gossip"),
+        }
+    }
+
+    // tv_net12_2: gossip --stats --format json parses cleanly.
+    #[test]
+    fn tv_net12_2_gossip_stats_format_json_parses() {
+        let cli = TestPhase10Cli::try_parse_from(["test", "gossip", "stats", "--format", "json"])
+            .expect("parse");
+        match cli.action {
+            NetworkAction::Gossip { action } => match action {
+                NetworkGossipAction::Stats(args) => {
+                    assert!(matches!(args.format, GossipStatsFormatKind::Json));
+                }
+            },
+            _ => panic!("expected Gossip"),
+        }
+    }
+
+    // tv_net12_3: gossip --stats with --json flag parses cleanly.
+    #[test]
+    fn tv_net12_3_gossip_stats_json_flag_parses() {
+        let cli =
+            TestPhase10Cli::try_parse_from(["test", "gossip", "stats", "--json"]).expect("parse");
+        match cli.action {
+            NetworkAction::Gossip { action } => match action {
+                NetworkGossipAction::Stats(args) => {
+                    assert!(args.json);
+                    assert!(matches!(args.format, GossipStatsFormatKind::Ascii));
+                }
+            },
+            _ => panic!("expected Gossip"),
+        }
     }
 }

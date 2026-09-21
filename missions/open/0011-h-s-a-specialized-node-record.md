@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G11 + RFC-0011-q Phase 9 §Substrate-Additions Companion Missions. Substrate slice LANDED at `next 8c11d683` (NEW `crates/octo-network/src/specialized/node_record.rs` + `mod.rs` + `pub mod specialized;` insertion). 6 unit tests added (1489/1489 octo-network lib tests pass). CLI dispatch slice pending per the Phase 4 paired-substrate completion pattern (substrate lands → YAML Claimed → CLI dispatch lands → YAML Completed paired). RFC-0011-q Phase 9 specialized-node amendment Draft landed at `next c0287128`. Stub fill-in landed at `next c0a33e5e`.
+Completed (2026-09-20) — Substrate-additions prerequisite per RFC-0011-h §Substrate-Additions Companion Missions row G11 + RFC-0011-q Phase 9 §Substrate-Additions Companion Missions. Substrate slice LANDED at `next 8c11d683` (NEW `crates/octo-network/src/specialized/node_record.rs` + `mod.rs` + `pub mod specialized;` insertion). 6 unit tests added (1489/1489 octo-network lib tests pass). CLI dispatch slice LANDED at `next 54ac266d` (NetworkAction::Node + NetworkNodeAction + NodeShowArgs + NodeBindArgs + 2 envelopes + 2 handlers + specialized_node_registry + node_class_label + 6 test vectors tv_net9_1 through tv_net9_6). 421/421 octo-cli tests pass (was 415). Paired CLI mission `0011-h-network-node` CREATED Completed at `next PENDING`. Stub fill-in landed at `next c0a33e5e`. Paired-YAML Claimed at `next 7a3f0bd5`. RFC-0011-q Phase 9 specialized-node amendment Draft landed at `next c0287128`.
 
 ## RFC
 

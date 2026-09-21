@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-l promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 4 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21`. Four subcommands wire bind envelope read + payload builder surfaces to the CLI. Substrate partial: `RebindCoordinator::{prepare_envelope, commit_envelope, abort_envelope}` payload builders + `RebindEnvelope` umbrella enum + `RebindPrepare` + `RebindCommit` + `RebindAbort` structs land in substrate; this amendment adds 3 companion substrate missions + 1 OctoCliError variant + 4 output envelopes + 12 test vectors.
 
-> **Amendment chain:** Fourth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED 2026-09-20 at `next 87258a11`). Phase 2 = RFC-0011-j (DRY CLOSED 2026-09-20 at `next 88520ce4`). Phase 3 = RFC-0011-k (DRY CLOSED 2026-09-20 at `next 01a5e4dd`). Phase 5-6 land via RFC-0011-m + RFC-0011-n respectively.
+> **Amendment chain:** Fourth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 5-6 land via RFC-0011-m + RFC-0011-n respectively.
 
 ## Authors
 
@@ -33,9 +33,9 @@ RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-
 - **RFC-0011-h §Subcommand Taxonomy** rows for `bind-envelope show`, `bind-envelope rebind-prepare`, `bind-envelope rebind-commit`, `bind-envelope rebind-abort`
 - **RFC-0011-h §Error Handling** row 88 error variant (slot 88 = `NetworkDryRunDenied`)
 - **RFC-0011-h §Exit Codes** slot 88
-- **RFC-0011-i (Phase 1, DRY CLOSED 2026-09-20 at `next 87258a11`)** — hard sequencing dependency for layer-C CLI dispatch pattern
-- **RFC-0011-j (Phase 2, DRY CLOSED 2026-09-20 at `next 88520ce4`)** — hard sequencing dependency for substrate-absent pattern
-- **RFC-0011-k (Phase 3, DRY CLOSED 2026-09-20 at `next 01a5e4dd`)** — hard sequencing dependency for confirmation-flag pattern
+- **RFC-0011-i** — hard sequencing dependency for layer-C CLI dispatch pattern
+- **RFC-0011-j** — hard sequencing dependency for substrate-absent pattern
+- **RFC-0011-k** — hard sequencing dependency for confirmation-flag pattern
 - **RFC-0871 Specialized Node Protocol Envelope** — `RebindEnvelope` umbrella enum + `RebindPrepare` + `RebindCommit` + `RebindAbort` structs + `RebindCoordinator` payload builders
 - **Companion mission `0011-h-s-a-bind-envelope-lookup`** — Layer B substrate for `BindEnvelope::load(domain_id)` lookup method (G22)
 - **Companion mission `0011-h-s-a-attached-handle-key-rotation`** — Layer B substrate for clap arm registration on the rebind-* trio (G21); per RFC-0011-c §F.5.1 D2.1 + D2.2 paired-acceptance bridge (D2.1 discriminator LANDED at `next 01340b93`; D2.2 population policy deferred post-PQC; companion G21 wraps the clap arm registration on top of D2.1)

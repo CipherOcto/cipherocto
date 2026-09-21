@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-n promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 6 retroactive multi-round DRY gate GREEN at R5 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus IMPLEMENTATION CLOSED at `next 93cba06d`. Two DEFERRED subcommands (`bootstrap` + `status`) land via NEW Phase 6 companion G26 substrate (`BootstrapOrchestrator` struct, does NOT reuse Phase 2 G1 which is parser/saver only — R1 substrate-faithfulness finding corrected the false attribution). Three NEW Phase 6 substrate missions (G26 BootstrapOrchestrator + G18 WriterElection struct wrapping existing `elect_coordinator` free function + G20 NetworkSender trait + `SendContext`) plus drift-closure mission + 2 follow-on companion missions + final closure artifacts. Layer discipline preserved: zero Layer A change.
 
-> **Amendment chain:** Sixth and final amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 5 = RFC-0011-m (DRY CLOSED). Phase 6 = RFC-0011-n (this RFC).
+> **Amendment chain:** Sixth and final amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n (this RFC).
 
 ## Authors
 
@@ -29,7 +29,7 @@ Plus closure artifacts:
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `0011-h-s-a-writer-election-struct` (G18)                          | new `WriterElection` struct wrapping `elect_coordinator` free function at `octo-coordinator-types/src/election.rs`      |
 | `0011-h-s-a-network-sender` (G20)                                  | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration; per-extension crate pattern |
-| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | TBD (drift identified during 6-phase rollout)                                                                           |
+| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | Pending follow-on mission YAML per [[deferred-vs-unspecified]] (drift identified during 6-phase rollout)                |
 | 2 follow-on companion missions                                     | Created at CLAIMED-time per [[no-phantom-mission-pointers]]                                                             |
 
 **Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **3 NEW Phase 6 companion missions (Layer B)**: G26 BootstrapOrchestrator (does NOT reuse Phase 2 G1 — R1 substrate-faithfulness finding corrected the false attribution), G18 WriterElection struct wrapper around existing `elect_coordinator` free function, G20 NetworkSender trait + SendContext (per-extension crate pattern).
@@ -39,11 +39,11 @@ Plus closure artifacts:
 - **RFC-0011-h §Implementation Phases Phase 6** — canonical scope
 - **RFC-0011-h §Subcommand Taxonomy** rows for `bootstrap`, `status` (DEFERRED per user decision 2026-09-17; landed in Phase 6 closure)
 - **RFC-0011-h §Error Handling** row 89 (slot 89 = `NetworkSubstrateUnavailable`, REUSED; FORWARD-LOOKING per RFC-0011-h §Error Handling — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 2 implementation. NO NEW variants in Phase 6 since `bootstrap` + `status` are deferred clap-arm-not-registered pattern with exit 2 pre-companion)
-- **RFC-0011-i (Phase 1, DRY CLOSED)** — hard sequencing dependency
-- **RFC-0011-j (Phase 2, DRY CLOSED)** — hard sequencing dependency; consumes `BootstrapConfig::from_toml` + `BootstrapConfig::save_toml` from G1 (PARSE/SAVE only — does NOT expose `BootstrapOrchestrator`)
-- **RFC-0011-k (Phase 3, DRY CLOSED)** — hard sequencing dependency
-- **RFC-0011-l (Phase 4, DRY CLOSED)** — hard sequencing dependency
-- **RFC-0011-m (Phase 5, DRY CLOSED)** — hard sequencing dependency
+- **RFC-0011-i** — hard sequencing dependency
+- **RFC-0011-j** — hard sequencing dependency; consumes `BootstrapConfig::from_toml` + `BootstrapConfig::save_toml` from G1 (PARSE/SAVE only — does NOT expose `BootstrapOrchestrator`)
+- **RFC-0011-k** — hard sequencing dependency
+- **RFC-0011-l** — hard sequencing dependency
+- **RFC-0011-m** — hard sequencing dependency
 - **RFC-0011-f (mesh peer-table)** — interim substitute cited by RFC-0011-h row 97-98 for operators needing `bootstrap` / `status` BEFORE Phase 6 closure
 - **RFC-0851p-a §3 Mode A** — `BootstrapMode` enum substrate anchor at `crates/octo-network/src/mon/bootstrap.rs:197`
 - **RFC-0862p-a Writer Election Bootstrap** — `elect_coordinator` free function at `octo-coordinator-types/src/election.rs:218` substrate anchor
@@ -207,7 +207,7 @@ Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 3 NEW Phas
 | `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig)` + `status() -> BootstrapState` at `crates/octo-network/src/mon/bootstrap.rs`                 | B     |
 | `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6)    | `WriterElection` struct wrapping existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs:218`                                      | B     |
 | `0011-h-s-a-network-sender` (G20 NEW Phase 6)            | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration at new `crates/octo-network/src/sender/`; per-extension crate pattern | B     |
-| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | TBD (drift identified during 6-phase rollout)                                                                                                                    | B     |
+| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | Pending follow-on mission YAML per [[deferred-vs-unspecified]] (drift identified during 6-phase rollout)                                                         | B     |
 | 2 follow-on companion missions                           | Created at CLAIMED-time per [[no-phantom-mission-pointers]]                                                                                                      | B     |
 
 Phase 6 RFC carries 5-6 substrate additions total (3 NEW Phase 6 companions + 1 drift-closure + 2 follow-on); 0 substrate additions in this RFC itself (all substrate additions land via companion missions per substrate-first ordering). The Phase 2 G1 companion (`BootstrapConfig::from_toml` parser + `save_toml` writer) is consumed by Phase 2 only — it does NOT carry `BootstrapOrchestrator` (R1 substrate-faithfulness finding corrected the false attribution).

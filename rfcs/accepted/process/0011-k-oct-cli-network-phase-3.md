@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-k promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 3 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus `next 0afcc26a` (R1.5 fix sweep). Three subcommands wire coordinator lifecycle + governance tally surfaces to the CLI. Substrate partial: `VotingTally` struct + `CoordinatorRecord` canonical type land in substrate; this amendment adds 3 companion substrate missions + 1 OctoCliError variant + 3 output envelopes + 8 test vectors.
 
-> **Amendment chain:** Third amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED 2026-09-20 at `next 87258a11`). Phase 2 = RFC-0011-j (DRY CLOSED 2026-09-20 at `next 88520ce4`). Phase 4-6 land via RFC-0011-l through RFC-0011-n respectively.
+> **Amendment chain:** Third amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 4-6 land via RFC-0011-l through RFC-0011-n respectively.
 
 ## Authors
 
@@ -32,8 +32,8 @@ RFC-0011-k lands the **coordinator lifecycle + governance tally visibility** sli
 - **RFC-0011-h §Subcommand Taxonomy** rows for `coordinator show`, `coordinator admin`, `governance tally`
 - **RFC-0011-h §Error Handling** row 84 error variant (slot 84 = `NetworkCoordinatorNotFound`)
 - **RFC-0011-h §Exit Codes** slot 84
-- **RFC-0011-i (Phase 1, DRY CLOSED 2026-09-20 at `next 87258a11`)** — hard sequencing dependency for layer-C CLI dispatch pattern
-- **RFC-0011-j (Phase 2, DRY CLOSED 2026-09-20 at `next 88520ce4`)** — hard sequencing dependency for slash reputation pattern + slot 89 substrate-absent pattern
+- **RFC-0011-i** — hard sequencing dependency for layer-C CLI dispatch pattern
+- **RFC-0011-j** — hard sequencing dependency for slash reputation pattern + slot 89 substrate-absent pattern
 - **RFC-0855p-c Domain Coordinator Role** — `CoordinatorRecord` substrate anchor
 - **RFC-0861 Coordinator Admin Trait Refinements** — `CoordinatorAdmin` trait substrate anchor
 - **RFC-0862p-a Writer Election Bootstrap** — `VotingTally` substrate anchor

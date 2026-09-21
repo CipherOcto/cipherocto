@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-m promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 5 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus IMPLEMENTATION COMPLETE at `next 97955c00`. Two subcommands wire mission discovery advertisement + invitation visibility to the CLI. Substrate absent: both `MissionAdvertisementCache` + `MissionInvitationCache` types MISSING; this amendment adds 2 companion substrate missions + 0 NEW OctoCliError variants (uses slot 89 already) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Fifth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED). Phase 2 = RFC-0011-j (DRY CLOSED). Phase 3 = RFC-0011-k (DRY CLOSED). Phase 4 = RFC-0011-l (DRY CLOSED). Phase 6 = RFC-0011-n (closure artifacts).
+> **Amendment chain:** Fifth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 6 = RFC-0011-n (closure artifacts).
 
 ## Authors
 
@@ -30,10 +30,10 @@ RFC-0011-m lands the **mission discovery advertisement + invitation visibility**
 - **RFC-0011-h §Implementation Phases Phase 5** — canonical scope
 - **RFC-0011-h §Subcommand Taxonomy** rows for `discovery advertisement show`, `discovery invitation show`
 - **RFC-0011-h §Error Handling** row 89 (slot 89 = `NetworkSubstrateUnavailable`, REUSED; no NEW variants in Phase 5)
-- **RFC-0011-i (Phase 1, DRY CLOSED)** — hard sequencing dependency for layer-C CLI dispatch pattern
-- **RFC-0011-j (Phase 2, DRY CLOSED)** — hard sequencing dependency for slot 89 substrate-absent pattern
-- **RFC-0011-k (Phase 3, DRY CLOSED)** — hard sequencing dependency for confirmation-flag pattern
-- **RFC-0011-l (Phase 4, DRY CLOSED)** — hard sequencing dependency for umbrella-action pattern
+- **RFC-0011-i** — hard sequencing dependency for layer-C CLI dispatch pattern
+- **RFC-0011-j** — hard sequencing dependency for slot 89 substrate-absent pattern
+- **RFC-0011-k** — hard sequencing dependency for confirmation-flag pattern
+- **RFC-0011-l** — hard sequencing dependency for umbrella-action pattern
 - **RFC-0855 Mission Overlay Networks §8.2 Mission Advertisement** — `MissionAdvertisement` + `MissionInvitation` substrate anchors + cache contract
 - **Companion mission `0011-h-s-a-discovery-advertisement-cache`** — Layer B substrate for `MissionAdvertisementCache` struct + `get(advertisement_id: &[u8; 32]) -> Option<MissionAdvertisement>` + `iter()` method (G23)
 - **Companion mission `0011-h-s-a-discovery-invitation-cache`** — Layer B substrate for `MissionInvitationCache` struct + `get(invitation_id: &[u8; 32]) -> Option<MissionInvitation>` + `iter()` method (G24)

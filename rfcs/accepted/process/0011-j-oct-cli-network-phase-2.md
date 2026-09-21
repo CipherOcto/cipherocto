@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-j promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 2 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21`. Eight subcommands wire `octo-network` runtime + bootstrap lifecycle + slash reputation surfaces to the CLI. Substrate partial: `BootstrapMode` enum + `SeedListAuthority` + 8 public methods on `SlashReputationStoreCompat` (per `crates/octo-network/src/reputation/slash_store.rs` L58-L151) land in substrate; this amendment adds 4 companion substrate missions + 2 OctoCliError variants + 8 output envelopes + 17 test vectors.
 
-> **Amendment chain:** Second amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phase 1 = RFC-0011-i (DRY CLOSED 2026-09-20 at `next 87258a11`). Phase 3-6 land via RFC-0011-k through RFC-0011-n respectively. Substrate-faithfulness verified per §Substrate-Additions Companion Missions.
+> **Amendment chain:** Second amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 3-6 land via RFC-0011-k through RFC-0011-n respectively. Substrate-faithfulness verified per §Substrate-Additions Companion Missions.
 
 ## Authors
 
@@ -37,7 +37,7 @@ RFC-0011-j lands the **bootstrap lifecycle + slash reputation visibility + autho
 - **RFC-0011-h §Subcommand Taxonomy** rows for `mode show`, `mode set`, `authority show`, `authority rotate`, `slash excluded`, `slash stats`, `slash list`, `slash show`
 - **RFC-0011-h §Error Handling** row 82 + 89 error variants + slot 87/88/90 deferred
 - **RFC-0011-h §Exit Codes** slot 82 + 89 + slot 87/88/90 pre-allocated for downstream phases
-- **RFC-0011-i (Phase 1, DRY CLOSED 2026-09-20 at `next 87258a11`)** — hard sequencing dependency for layer-C CLI dispatch pattern + 5-len DRY CLOSURE cycle precedent
+- **RFC-0011-i** — hard sequencing dependency for layer-C CLI dispatch pattern + 5-len DRY CLOSURE cycle precedent
 - **RFC-0851p-a §1 BootstrapNode Registry + §3 Mode A** — `SeedListAuthority` + `BootstrapMode` enum substrate anchors
 - **RFC-0855p-b + RFC-0860** — `SlashReputationStoreCompat` substrate anchors
 - **Companion mission `0011-h-s-a-bootstrap-orchestrator`** — Layer B substrate for `BootstrapConfig::from_toml` + `BootstrapConfig::save_toml` (G1)

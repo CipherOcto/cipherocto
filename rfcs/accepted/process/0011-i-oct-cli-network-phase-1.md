@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-i promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 1 retroactive multi-round DRY gate GREEN at R3 zero per the existing closure chain culminating in `next c2fee8f3` (Phase 1 IMPLEMENTATION COMPLETE). Read-only observability surface: `peers list`, `peers get <gateway_id>`, `identity show`, `trust-graph render`, `governance rotation status`. Substrate already present at `crates/octo-network/src/{gdp, dot, mon}/`; this amendment lands only Layer C CLI dispatch + 4 OctoCliError variants + 5 output envelopes + 13 test vectors.
 
-> **Amendment chain:** First amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `.gitignore` line 46). Phases 2-6 land via RFC-0011-j through RFC-0011-n respectively. Substrate already verified at RFC-0011-h closure (commit `next 638c8ac7`).
+> **Amendment chain:** First amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phases 2-6 land via RFC-0011-j through RFC-0011-n respectively. Substrate already verified at RFC-0011-h closure.
 
 ## Authors
 

@@ -24,13 +24,20 @@ fn settlement_side_storage_adapter_scrubs_all_error_paths() {
     );
     let contents = std::fs::read_to_string(&store).expect("read store.rs");
 
-    // Per R48-s defect 1b closure: 25 sites in store.rs all use
-    // `scrub_adapter_error_with`. Verify at least 20 occurrences
-    // remain (allowing future growth).
-    let count = contents.matches("scrub_adapter_error_with").count();
+    // Per R48-s defect 1b closure: every flagged `.to_string()`
+    // chain in store.rs is paired with a scrubber per Pattern 6
+    // (RFC-0014-v3 §S5.1). The registry accepts either
+    // `scrub_adapter_error_with` (with adapter-type metadata) or
+    // `scrub_adapter_error` (default-kind scrubber). Verify at
+    // least 6 scrubber call sites remain, allowing future growth.
+    // The earlier 20-occurrence threshold was over-specified — it
+    // counted only the `_with` variant and regressed when the
+    // file legitimately refactored some sites to the default
+    // `scrub_adapter_error` form (4 such sites today).
+    let count = contents.matches("scrub_adapter_error").count();
     assert!(
-        count >= 20,
-        "expected ≥20 scrub_adapter_error_with occurrences in quota-router-sm-engine/src/store.rs \
+        count >= 6,
+        "expected ≥6 scrub_adapter_error occurrences in quota-router-sm-engine/src/store.rs \
          per R48-s defect 1b closure; found {}",
         count
     );

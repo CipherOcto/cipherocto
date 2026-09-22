@@ -10,6 +10,16 @@
 //! Phase 1: in-process `Mutex<HashMap<Did, u64>>`. Substrate-grade
 //! persistence ships when the slash-ledger-backed `BindingStore`
 //! replaces the in-memory store in `octo-role` (M4 deferred follow-on).
+//!
+//! Test isolation: each test in this module uses a unique `Did`
+//! namespace (`did:octo:0x00` through `did:octo:0xff`). The global
+//! counter map keys by `Did`, so concurrent tests cannot race on a
+//! shared entry. The earlier `reset_for_tests()` helper that wiped
+//! the entire map was unsafe under `cargo test`'s default
+//! multi-threaded runner — Test A's `reset_for_tests()` would clear
+//! Test B's seeded state mid-execution, surfacing as a non-
+//! deterministic `monotonic invariant: N -> 0` panic. The helper
+//! has been removed.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -41,15 +51,6 @@ pub fn next_nonce_counter(operator_did: &Did) -> Result<u64, WalletError> {
     Ok(n)
 }
 
-/// Test-only: reset the global counter map. NOT exposed outside `cfg(test)`.
-#[cfg(test)]
-pub fn reset_for_tests() {
-    COUNTERS
-        .lock()
-        .expect("role-nonce counter mutex poisoned")
-        .clear();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,7 +61,13 @@ mod tests {
 
     #[test]
     fn next_nonce_counter_starts_at_zero() {
-        reset_for_tests();
+        // Unique DID (did:octo:0x00) — no reset needed; per-DID
+        // isolation is the test contract. If the same crate runs
+        // this test multiple times in the same process, the
+        // second run sees the persisted counter from the first
+        // run. cargo test runs each `#[test]` exactly once per
+        // `cargo test` invocation, so the second-run scenario is
+        // out of scope here.
         let did = did_for("did:octo:0x00");
         assert_eq!(next_nonce_counter(&did).unwrap(), 0);
         assert_eq!(next_nonce_counter(&did).unwrap(), 1);
@@ -69,7 +76,6 @@ mod tests {
 
     #[test]
     fn next_nonce_counter_is_did_scoped() {
-        reset_for_tests();
         let a = did_for("did:octo:0x01");
         let b = did_for("did:octo:0x02");
         assert_eq!(next_nonce_counter(&a).unwrap(), 0);
@@ -80,11 +86,15 @@ mod tests {
 
     #[test]
     fn next_nonce_counter_is_monotonic() {
-        reset_for_tests();
+        // Unique DID (did:octo:0x03) — no reset needed. The
+        // discarded first call below advances the counter from
+        // the seed (0) so the loop measures strict monotonicity
+        // over the post-discard sequence. Prior to removing the
+        // global `reset_for_tests()` helper, this test would
+        // non-deterministically fail with `monotonic invariant:
+        // N -> 0` when a sibling test's `reset_for_tests()`
+        // wiped the map mid-loop.
         let did = did_for("did:octo:0x03");
-        // Skip any pre-seeded slot value from earlier tests in this
-        // process (the underflow test seeds `u64::MAX - 1`); start
-        // measuring monotonicity from the freshly-consumed value.
         let _ = next_nonce_counter(&did).unwrap();
         let mut prev = next_nonce_counter(&did).unwrap();
         for _ in 0..100 {
@@ -100,7 +110,6 @@ mod tests {
     /// have to special-case the saturation path.
     #[test]
     fn next_nonce_counter_returns_err_on_underflow() {
-        reset_for_tests();
         let did = did_for("did:octo:0xff");
         // Seed the counter at u64::MAX - 1 so the next call saturates.
         COUNTERS

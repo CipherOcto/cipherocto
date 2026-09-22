@@ -93,7 +93,7 @@ grammers-mtproto = { version = "0.9.0" }
 # (used by default in tests) does not pull grammers-client in.
 # When enabled, it also forces `default-features = false` so the
 # libsql transitive dep is excluded.
-grammers-client = { version = "0.9.0", default-features = false, optional = true, features = ["fs"] }
+grammers-client = { version = "0.10.0", default-features = false, optional = true, features = ["fs"] }
 grammers-tl-types = { version = "0.9.0", features = ["tl-mtproto"], optional = true }
 
 # --- Bot-API HTTP fallback transport (feature `bot-api`) ---

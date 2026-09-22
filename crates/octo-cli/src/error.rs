@@ -890,10 +890,6 @@ pub enum OctoCliError {
     /// `AttachError::UnknownKeyId` translation (LANDED at
     /// `crates/octo-runtime/src/handle/error.rs` per
     /// RFC-0011-c §F.5.1 paired-acceptance bridge; gated on
-    /// `octo-attach-key-rotation` Cargo feature). Substrate
-    /// `octo_runtime::AttachError::UnknownKeyId` (LANDED at
-    /// `crates/octo-runtime/src/handle/error.rs` per
-    /// RFC-0011-c §F.5.1 paired-acceptance bridge; gated on
     /// `octo-attach-key-rotation` Cargo feature). Variant mints
     /// unconditionally at slot 91 per RFC-0011-w §Motivation;
     /// the translation arm fires only when the substrate feature

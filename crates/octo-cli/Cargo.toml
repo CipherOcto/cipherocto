@@ -24,6 +24,17 @@ default = []
 # Phase C paired amendment: enable cross-process revocation
 # propagation via the Stoolap-backed Layer D persistence adapter.
 revocation-store-stoolap = ["dep:octo-runtime-revocation-store"]
+# RFC-0011-w: slot 91 activation. Feature propagation to CLI per
+# RFC-0011-w §Detailed Design §Feature flag wiring. Required
+# for the translation arm in `From<octo_runtime::AttachError>`
+# (compiles only when the substrate feature is enabled in
+# `octo-runtime`). No `dep:` prefix because `octo-runtime` is
+# declared as a required dep at `crates/octo-cli/Cargo.toml`,
+# not `optional = true`; the plain `<dep-name>/<feature>`
+# syntax activates the substrate feature on the existing
+# required dep without re-declaring it as optional per
+# [[substrate-faithfulness-verification]] R3.A HIGH-1 finding.
+octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

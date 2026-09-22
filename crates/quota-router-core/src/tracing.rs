@@ -5,10 +5,61 @@
 use opentelemetry::global;
 use opentelemetry::trace::Tracer;
 use opentelemetry::KeyValue;
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::{self, Sampler, TracerProvider};
+use opentelemetry_otlp::{ExporterBuildError, WithExportConfig};
+use opentelemetry_sdk::error::OTelSdkError;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
 use opentelemetry_sdk::Resource;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
+/// Holds the live SDK tracer provider so `shutdown_tracer` can invoke
+/// `SdkTracerProvider::shutdown` (the 0.32 replacement for the removed
+/// `global::shutdown_tracer_provider`). Set once on `init_tracer`,
+/// read once on `shutdown_tracer`.
+static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
+
+/// Error type for `init_tracer` and `shutdown_tracer`. Replaces the
+/// removed `opentelemetry::trace::TraceError` (the 0.32 SDK split the
+/// exporter-builder error (`ExporterBuildError`, in `opentelemetry_otlp`)
+/// from the SDK-runtime error (`OTelSdkError`, in `opentelemetry_sdk`)
+/// so a single sum type captures both surfaces).
+#[derive(Debug)]
+pub enum TracingError {
+    /// `opentelemetry_otlp::SpanExporter::builder()...build()` failed.
+    ExporterBuild(ExporterBuildError),
+    /// `SdkTracerProvider::shutdown` returned a non-Ok result.
+    Shutdown(OTelSdkError),
+}
+
+impl std::fmt::Display for TracingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExporterBuild(e) => write!(f, "exporter build error: {e}"),
+            Self::Shutdown(e) => write!(f, "tracer provider shutdown error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for TracingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ExporterBuild(e) => Some(e),
+            Self::Shutdown(e) => Some(e),
+        }
+    }
+}
+
+impl From<ExporterBuildError> for TracingError {
+    fn from(e: ExporterBuildError) -> Self {
+        Self::ExporterBuild(e)
+    }
+}
+
+impl From<OTelSdkError> for TracingError {
+    fn from(e: OTelSdkError) -> Self {
+        Self::Shutdown(e)
+    }
+}
 
 // ============================================================================
 // TracingConfig
@@ -83,7 +134,7 @@ impl Default for TracingConfig {
 ///
 /// Uses `install_batch()` for production (non-blocking span export).
 /// Falls back to `install_simple()` for development/testing.
-pub fn init_tracer(config: &TracingConfig) -> Result<(), opentelemetry::trace::TraceError> {
+pub fn init_tracer(config: &TracingConfig) -> Result<(), TracingError> {
     let mut resource_kvs = vec![
         KeyValue::new("service.name", config.service_name.clone()),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
@@ -93,7 +144,8 @@ pub fn init_tracer(config: &TracingConfig) -> Result<(), opentelemetry::trace::T
         resource_kvs.push(KeyValue::new("deployment.environment", env.clone()));
     }
 
-    let resource = Resource::new(resource_kvs);
+    // 0.32 SDK: `Resource::new` was made private; use the public builder.
+    let resource = Resource::builder().with_attributes(resource_kvs).build();
 
     let sampler = if config.sampling_rate >= 1.0 {
         Sampler::AlwaysOn
@@ -103,30 +155,46 @@ pub fn init_tracer(config: &TracingConfig) -> Result<(), opentelemetry::trace::T
         Sampler::TraceIdRatioBased(config.sampling_rate)
     };
 
-    let trace_config = trace::config()
-        .with_resource(resource)
-        .with_sampler(Sampler::ParentBased(Box::new(sampler)));
+    // 0.32 SDK: `Config` no longer exposes a `with_resource` / `with_sampler`
+    // builder; instead, the `TracerProviderBuilder` itself exposes those
+    // setters directly. Drop the intermediate Config entirely.
+    let sampler = Sampler::ParentBased(Box::new(sampler));
 
     match config.exporter.as_str() {
         "stdout" => {
             // For stdout, use no-op provider (tracing crate handles stdout)
             // In production, use OTLP exporter
-            let provider = TracerProvider::builder().with_config(trace_config).build();
-            global::set_tracer_provider(provider);
+            // 0.32 SDK: `TracerProvider` (struct) renamed to `SdkTracerProvider`,
+            // and its builder takes `with_resource` / `with_sampler` directly
+            // instead of via an intermediate `Config` struct.
+            let provider = SdkTracerProvider::builder()
+                .with_resource(resource)
+                .with_sampler(sampler)
+                .build();
+            global::set_tracer_provider(provider.clone());
+            // OnceLock::set only fails if a value is already present; the
+            // single-init-per-process invariant is upheld by callers (init
+            // happens once during service startup).
+            let _ = TRACER_PROVIDER.set(provider);
         }
         _ => {
-            // OTLP exporter
+            // OTLP exporter. 0.32: `with_tonic` is gated on the
+            // `grpc-tonic` cargo feature on `opentelemetry-otlp`; the build
+            // error type is `ExporterBuildError` (replacing `TraceError`).
             let exporter = opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .with_endpoint(&config.otlp_endpoint)
-                .build()
-                .map_err(|e| opentelemetry::trace::TraceError::from(e.to_string()))?;
+                .build()?;
 
-            let provider = TracerProvider::builder()
-                .with_config(trace_config)
-                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+            // 0.32 SDK: `with_batch_exporter` is now single-arg; the runtime
+            // is selected implicitly via the `rt-tokio` cargo feature.
+            let provider = SdkTracerProvider::builder()
+                .with_resource(resource)
+                .with_sampler(sampler)
+                .with_batch_exporter(exporter)
                 .build();
-            global::set_tracer_provider(provider);
+            global::set_tracer_provider(provider.clone());
+            let _ = TRACER_PROVIDER.set(provider);
         }
     }
 
@@ -134,8 +202,16 @@ pub fn init_tracer(config: &TracingConfig) -> Result<(), opentelemetry::trace::T
 }
 
 /// Shutdown the tracer, flushing any pending spans.
-pub fn shutdown_tracer() {
-    global::shutdown_tracer_provider();
+///
+/// 0.32 SDK replacement for `global::shutdown_tracer_provider` (removed):
+/// keep a handle to the SDK provider at init time and invoke its
+/// `shutdown` instance method here. Returns `OTelSdkError` if the
+/// provider was already shut down; we surface it via `TracingError`.
+pub fn shutdown_tracer() -> Result<(), TracingError> {
+    if let Some(provider) = TRACER_PROVIDER.get() {
+        provider.shutdown()?;
+    }
+    Ok(())
 }
 
 // ============================================================================

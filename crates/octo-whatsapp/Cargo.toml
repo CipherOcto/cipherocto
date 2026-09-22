@@ -122,10 +122,10 @@ futures-executor    = { version = "0.3", optional = true }
 # `--features otlp`. The library compiles cleanly with the feature
 # DISABLED — `observability/tracing.rs` is a no-op stub when `otlp`
 # is absent.
-opentelemetry         = { version = "0.27", optional = true }
-opentelemetry-otlp    = { version = "0.27", optional = true, features = ["grpc-tonic"] }
-opentelemetry_sdk     = { version = "0.27", optional = true, features = ["rt-tokio"] }
-tracing-opentelemetry = { version = "0.28", optional = true }
+opentelemetry         = { version = "0.32", optional = true }
+opentelemetry-otlp    = { version = "0.32", optional = true, features = ["grpc-tonic"] }
+opentelemetry_sdk     = { version = "0.32", optional = true, features = ["rt-tokio"] }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 [features]
 default       = []

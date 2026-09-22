@@ -60,7 +60,7 @@ use crate::types::{dfp_from_blob, dfp_to_blob};
 #[cfg(feature = "stoolap")]
 mod real {
     use super::*;
-    use crate::store::AnchorRecord;
+    use crate::store::{AnchorRecord, PeerReputation, ReputationFilter};
 
     /// `StoolapReputationStore` (real). Owns one `octo_storage_core::Database` behind
     /// `Arc` so trait methods can hold shared references. All mutating SQL
@@ -2054,6 +2054,7 @@ impl crate::auth::ChainRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "stoolap"))]
     use crate::store::ReputationFilter;
 
     #[test]
@@ -2094,6 +2095,7 @@ mod tests {
     // canonical colon-suffixed error string per RFC-0011-r
     // §Substrate Mapping Table Phase 10 + the explicit-arms
     // stub match table at the stub module.
+    #[cfg(not(feature = "stoolap"))]
     #[tokio::test]
     async fn tv_phase10_substrate_8_stoolap_cfg_off_list_stub() {
         let store = StoolapReputationStore {};
@@ -2109,6 +2111,7 @@ mod tests {
     // tv_phase10_substrate_9_stoolap_cfg_off_peer_reputation_stub:
     // Symmetric with tv_phase10_substrate_8 for peer_reputation
     // (RFC-0011-r §Substrate Mapping Table Phase 10).
+    #[cfg(not(feature = "stoolap"))]
     #[tokio::test]
     async fn tv_phase10_substrate_9_stoolap_cfg_off_peer_reputation_stub() {
         let store = StoolapReputationStore {};

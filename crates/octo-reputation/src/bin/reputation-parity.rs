@@ -30,9 +30,9 @@ use octo_reputation::store::InMemoryReputationStore;
 use octo_reputation::types::{EventId, SignalEvent};
 use octo_reputation::ControllerId;
 use octo_reputation::{
-    compute_parity_report, parity::now_unix_seconds, parity_gate_deadline_unix,
-    LegacyReputationStore, ReputationStore, SlashReputationStore, TripleClass,
-    PARITY_GATE_DEADLINE_DAYS, PARITY_THRESHOLD, PER_DID_MISMATCH_DOMINANCE,
+    compute_parity_report, parity, parity_gate_deadline_unix, LegacyReputationStore,
+    ReputationStore, SlashReputationStore, TripleClass, PARITY_GATE_DEADLINE_DAYS,
+    PARITY_THRESHOLD, PER_DID_MISMATCH_DOMINANCE,
 };
 use octo_reputation::{RecorderDid, ReputationLayer, SignalKind};
 

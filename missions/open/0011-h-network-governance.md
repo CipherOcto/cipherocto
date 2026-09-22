@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice CLOSED. `octo network governance tally --proposal-id <N>` wired at `next 624998ba` per RFC-0011-h §Implementation Phases Phase 3. `governance rotation status` was already wired in Phase 1 (next 2c4ef04e + next 3a2ed8e9).
+Completed (2026-09-20) — CLI dispatch slice CLOSED. `octo network governance tally --proposal-id <N>` wired at `next 624998ba` per RFC-0011-h §Implementation Phases Phase 3. `governance rotation status` was already wired in Phase 1 (next c2fee8f3).
 
 ## RFC
 

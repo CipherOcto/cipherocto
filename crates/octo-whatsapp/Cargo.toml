@@ -111,7 +111,7 @@ octo-storage-core   = { path = "../octo-storage-core" }
 tantivy             = { version = "0.24", optional = true }
 candle-core         = { version = "0.9", optional = true }
 candle-nn           = { version = "0.9", optional = true }
-candle-transformers = { version = "0.9", optional = true }
+candle-transformers = { version = "0.11", optional = true }
 tokenizers          = { version = "0.22", optional = true }
 hf-hub              = { version = "0.4", optional = true }
 # Minimal single-thread executor for the embedder worker (no tokio

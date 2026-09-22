@@ -162,7 +162,12 @@ dashmap = "5.0"
 instant = "0.1"
 
 # For L1 key cache LRU
-lru = "0.12"
+# Pinned to 0.16 to pull in the GHSA-rhfx-m35p-ff5j IterMut Stacked Borrows
+# fix. We do not call IterMut (cache.rs uses only new/get/put behind a Mutex),
+# so the bump is a passive CVE-mitigation upgrade. The basic LruCache API is
+# stable across 0.12 → 0.16, so no source edits are required. Cargo.lock
+# deduplicates against the existing 0.16.4 transitive resolution.
+lru = "0.16"
 
 # For Unicode NFC normalization (provider/model normalization per RFC-0909 CONSISTENCY GOAL)
 unicode-normalization = "0.1.25"

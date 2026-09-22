@@ -3,6 +3,40 @@
 use std::io::Write;
 use thiserror::Error;
 
+/// Categorical band of known keys in the verifier's `KeySet`
+/// per RFC-0011-h §Redaction Layer (3 bands; avoids leaking
+/// exact verifier `KeySet` cardinality).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KnownKeysBand {
+    /// 0 keys in `KeySet` (verifier misconfiguration)
+    None,
+    /// 1-8 keys in `KeySet` (typical deployment)
+    Few,
+    /// >8 keys in `KeySet` (large deployment or
+    /// > post-rotation grace period)
+    Many,
+}
+
+impl KnownKeysBand {
+    /// Map raw `KeySet` cardinality to the categorical
+    /// 3-band quantization per RFC-0011-h §Redaction Layer.
+    /// Bucket thresholds (0 / 1-8 / >8) are implementation
+    /// detail and are NOT echoed in operator-facing render;
+    /// only the enum tag is interpolated by the
+    /// `#[error(... {known_keys_band:?})]` Debug formatter.
+    /// Feature-gated to mirror the `AttachError::UnknownKeyId`
+    /// translation arm: only callable when the
+    /// `octo-attach-key-rotation` Cargo feature is enabled.
+    #[cfg(feature = "octo-attach-key-rotation")]
+    pub(crate) fn from_count(n: usize) -> Self {
+        match n {
+            0 => Self::None,
+            1..=8 => Self::Few,
+            _ => Self::Many,
+        }
+    }
+}
+
 /// Every operator-visible failure mode of the `octo` CLI.
 ///
 /// `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth
@@ -853,6 +887,38 @@ pub enum OctoCliError {
         /// The 52-char hex domain_id the operator was previewing.
         domain_id_redacted: String,
     },
+    /// `AttachError::UnknownKeyId` translation (LANDED at
+    /// `crates/octo-runtime/src/handle/error.rs` per
+    /// RFC-0011-c §F.5.1 paired-acceptance bridge; gated on
+    /// `octo-attach-key-rotation` Cargo feature). Substrate
+    /// `octo_runtime::AttachError::UnknownKeyId` (LANDED at
+    /// `crates/octo-runtime/src/handle/error.rs` per
+    /// RFC-0011-c §F.5.1 paired-acceptance bridge; gated on
+    /// `octo-attach-key-rotation` Cargo feature). Variant mints
+    /// unconditionally at slot 91 per RFC-0011-w §Motivation;
+    /// the translation arm fires only when the substrate feature
+    /// is enabled. Pre-RFC-0011-w, this slot was RESERVED per
+    /// [^rotation-error-slot-prealloc].
+    #[error("network key rotation: unknown key_id 0x{key_id_hex} (known_keys band: {known_keys_band:?})")]
+    NetworkKeyRotationUnknownId {
+        /// `key_id` discriminator rendered as 8 hex chars.
+        /// Substrate `KeyId = u32` (typed version discriminator
+        /// for holder signing key per RFC-0011-c §F.5.1; NOT a
+        /// Layer A cryptographic secret) hex-encoded big-endian
+        /// via `key_id.to_be_bytes()`. Mirrors the
+        /// `hex::encode(declared)` / `hex::encode(actual)` pattern
+        /// in the `SessionMismatch` translation arm.
+        key_id_hex: String,
+        /// Categorical band of known keys in the verifier's
+        /// `KeySet` (active + grace period). 3-band quantization
+        /// per §Redaction Layer: operator envelope renders the
+        /// enum tag only (`None` / `Few` / `Many`) via the
+        /// `#[error(... {known_keys_band:?})]` Debug formatter;
+        /// the bucket thresholds (0 / 1-8 / >8) are implementation
+        /// detail of `KnownKeysBand::from_count` and are NOT
+        /// echoed in operator-facing render.
+        known_keys_band: KnownKeysBand,
+    },
 }
 
 impl OctoCliError {
@@ -1013,6 +1079,14 @@ impl OctoCliError {
             // interactive dry-run denial. CLI-side preview prompt
             // decline; not a substrate fault class.
             Self::NetworkDryRunDenied { .. } => 88,
+            // RFC-0011-w: slot 91 activation per
+            // [^rotation-error-slot-prealloc]. Variant mints
+            // unconditionally; reachable when the
+            // `octo-attach-key-rotation` feature is enabled in
+            // `octo-runtime` AND a CLI caller surfaces the
+            // `AttachError::UnknownKeyId` translation path (future
+            // amendment per RFC-0011-w §Future Work F1).
+            Self::NetworkKeyRotationUnknownId { .. } => 91,
         }
     }
 
@@ -1289,6 +1363,9 @@ impl OctoCliError {
                 format!(
                     "rebind `{arm}` aborted at the preview prompt (per RFC-0011-l Phase 4 §Subcommand Taxonomy rebind-* rows); re-run with `--no-dry-run` + `--confirm-acknowledge` (and for `commit` also `--confirm` per the §Security Considerations pastejacking defense) only after the operator is ready to author the state change"
                 )
+            }
+            Self::NetworkKeyRotationUnknownId { .. } => {
+                "rotate the holder signing key per RFC-0011-c §F.5.1 paired-acceptance bridge: re-issue the holder signing key, register the new key_id in the verifier KeySet, and re-sign the attach token".to_string()
             }
         };
         Some(h)
@@ -1639,6 +1716,21 @@ impl From<octo_runtime::AttachError> for OctoCliError {
                 since_unix,
                 recorded_cursor,
             },
+            // RFC-0011-w: slot 91 activation. Feature-gated to
+            // mirror substrate `#[cfg(feature =
+            // "octo-attach-key-rotation")]` on
+            // `AttachError::UnknownKeyId`. When the feature is
+            // disabled, the substrate variant does not exist
+            // and the wildcard arm below catches any unknown
+            // variant → `Internal(reason)` exit 64
+            // (additive-safe per `#[non_exhaustive]`).
+            #[cfg(feature = "octo-attach-key-rotation")]
+            octo_runtime::AttachError::UnknownKeyId { key_id, known_keys } => {
+                Self::NetworkKeyRotationUnknownId {
+                    key_id_hex: redact_key_id(&key_id),
+                    known_keys_band: KnownKeysBand::from_count(known_keys.len()),
+                }
+            }
             // Additive-safe wildcard per `#[non_exhaustive]` on both
             // enums. Future substrate variants collapse to
             // `Internal(reason)` exit 64 — same pattern as the audit
@@ -1648,6 +1740,23 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             ))),
         }
     }
+}
+
+/// Redact the substrate `KeyId = u32` discriminator to 8 hex
+/// chars via `hex::encode(key_id.to_be_bytes())` per
+/// RFC-0011-h §Redaction Layer. Mirrors the existing
+/// `hex::encode(declared)` / `hex::encode(actual)` pattern in
+/// the `SessionMismatch` translation arm (which hex-encodes
+/// the 32-byte `SessionId`); per RFC-0011-c §F.5.1 the
+/// substrate `KeyId` has different byte width but the same
+/// RFC-0008 §Deterministic Encoding contract applies
+/// (big-endian byte order). Feature-gated to mirror the
+/// `AttachError::UnknownKeyId` translation arm: only callable
+/// when the `octo-attach-key-rotation` Cargo feature is
+/// enabled.
+#[cfg(feature = "octo-attach-key-rotation")]
+fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
+    hex::encode(key_id.to_be_bytes())
 }
 
 #[cfg(test)]
@@ -2303,5 +2412,72 @@ mod tests {
             rendered.contains("`init`"),
             "user_message MUST surface the original `name`, got: {rendered}"
         );
+    }
+
+    /// RFC-0011-w §Test Vectors `tv_w_1` — variant construction,
+    /// `exit_code()` returns 91, and `user_message()` renders the
+    /// `#[error]` template with both `key_id_hex` (8 hex chars
+    /// via `hex::encode(key_id.to_be_bytes())`) and
+    /// `known_keys_band` (Debug-rendered enum tag `None` / `Few`
+    /// / `Many`) interpolated. Feature OFF build: variant mints
+    /// unconditionally per RFC-0011-w §Motivation so the slot 91
+    /// arm is always present in the `#[non_exhaustive]` enum.
+    #[test]
+    fn tv_w_1_network_key_rotation_unknown_id_exit_91_and_template() {
+        let err = OctoCliError::NetworkKeyRotationUnknownId {
+            key_id_hex: "deadbeef".to_string(),
+            known_keys_band: KnownKeysBand::Few,
+        };
+        assert_eq!(
+            err.exit_code(),
+            91,
+            "exit_code() MUST return 91 per RFC-0011-w §Exit Codes row 91"
+        );
+        let msg = err.user_message();
+        assert!(
+            msg.contains("0xdeadbeef"),
+            "user_message MUST interpolate key_id_hex as 8 hex chars, got: {msg}"
+        );
+        assert!(
+            msg.contains("Few"),
+            "user_message MUST interpolate known_keys_band enum tag via Debug formatter, got: {msg}"
+        );
+    }
+
+    /// RFC-0011-w §Test Vectors `tv_w_2` — `From<octo_runtime::AttachError>`
+    /// translation arm signature: maps
+    /// `AttachError::UnknownKeyId { key_id, known_keys }` to
+    /// `Self::NetworkKeyRotationUnknownId { key_id_hex: hex::encode(key_id.to_be_bytes()),
+    /// known_keys_band: KnownKeysBand::from_count(known_keys.len()) }`.
+    /// Feature ON build: the substrate `AttachError::UnknownKeyId`
+    /// variant exists per RFC-0011-c §F.5.1 paired-acceptance bridge.
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn tv_w_2_attach_unknown_key_id_translates_to_slot_91_variant() {
+        let known = vec![1u32, 2, 3, 4];
+        let substrate_err = octo_runtime::AttachError::UnknownKeyId {
+            key_id: 0xdeadbeef,
+            known_keys: known.clone(),
+        };
+        let cli_err: OctoCliError = substrate_err.into();
+        match cli_err {
+            OctoCliError::NetworkKeyRotationUnknownId {
+                key_id_hex,
+                known_keys_band,
+            } => {
+                assert_eq!(
+                    key_id_hex, "deadbeef",
+                    "key_id_hex MUST be hex::encode(key_id.to_be_bytes()) per RFC-0011-w §Substrate-faithfulness audit, got: {key_id_hex}"
+                );
+                assert_eq!(
+                    known_keys_band,
+                    KnownKeysBand::Few,
+                    "known_keys_band MUST match KnownKeysBand::from_count(known_keys.len()) per Vec::len bucketing thresholds (1..=8 → Few)"
+                );
+            }
+            other => {
+                panic!("translation arm MUST yield NetworkKeyRotationUnknownId, got: {other:?}")
+            }
+        }
     }
 }

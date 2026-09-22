@@ -2442,6 +2442,64 @@ mod tests {
             msg.contains("Few"),
             "user_message MUST interpolate known_keys_band enum tag via Debug formatter, got: {msg}"
         );
+        // Hint arm contract per R1.B MEDIUM finding closure. The hint
+        // arm added at slot 91 per the R1.5 fix sweep prescribes the
+        // operational remediation (re-issue the holder signing key).
+        // Mirrors the precedent at `tv_mesh_forward_exit_codes_and_hints`
+        // which pairs exit-code + hint assertion per variant.
+        let hint = err.hint().expect(
+            "hint MUST be Some for NetworkKeyRotationUnknownId per RFC-0011-w §Detailed Design",
+        );
+        assert!(
+            hint.contains("rotate the holder signing key"),
+            "hint MUST prescribe the holder-signing-key rotation remediation, got: {hint}"
+        );
+        assert!(
+            hint.contains("RFC-0011-c §F.5.1"),
+            "hint MUST cite the paired-acceptance bridge section ref per RFC-0011-w §Redaction Layer, got: {hint}"
+        );
+    }
+
+    /// RFC-0011-w §Test Vectors `tv_w_1b` — `KnownKeysBand::from_count`
+    /// boundary coverage per R1.B HIGH finding closure. Exercises the
+    /// `None` (0 keys) and `Many` (>8 keys) branches of the 3-band
+    /// categorical quantization plus the `8 → Few` vs `9 → Many`
+    /// off-by-one boundary that was previously untested.
+    /// Feature-gated to mirror the substrate `octo-attach-key-rotation`
+    /// feature that gates `from_count` itself.
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn tv_w_1b_band_quantization_boundaries() {
+        // 0 keys → None (verifier misconfiguration sentinel)
+        assert_eq!(
+            KnownKeysBand::from_count(0),
+            KnownKeysBand::None,
+            "from_count(0) MUST yield None per RFC-0011-w §Redaction Layer"
+        );
+        // 1 key → Few (band lower edge)
+        assert_eq!(
+            KnownKeysBand::from_count(1),
+            KnownKeysBand::Few,
+            "from_count(1) MUST yield Few per 1..=8 threshold"
+        );
+        // 8 keys → Few (band upper edge; off-by-one test for 8 vs 9)
+        assert_eq!(
+            KnownKeysBand::from_count(8),
+            KnownKeysBand::Few,
+            "from_count(8) MUST yield Few per 1..=8 threshold (off-by-one sentinel)"
+        );
+        // 9 keys → Many (band lower edge; off-by-one test for 9 vs 8)
+        assert_eq!(
+            KnownKeysBand::from_count(9),
+            KnownKeysBand::Many,
+            "from_count(9) MUST yield Many per >8 threshold (off-by-one sentinel)"
+        );
+        // 16 keys → Many (interior band value)
+        assert_eq!(
+            KnownKeysBand::from_count(16),
+            KnownKeysBand::Many,
+            "from_count(16) MUST yield Many per >8 threshold (interior band value)"
+        );
     }
 
     /// RFC-0011-w §Test Vectors `tv_w_2` — `From<octo_runtime::AttachError>`

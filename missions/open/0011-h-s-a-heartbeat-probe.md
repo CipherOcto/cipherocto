@@ -77,16 +77,16 @@ NEW module `crates/octo-network/src/mon/heartbeat.rs`. No existing modules touch
 
 ## Acceptance Criteria
 
-- [ ] NEW module `crates/octo-network/src/mon/heartbeat.rs` lands per RFC-0011-h §Substrate-Additions row G17 + RFC-0011-v Phase 14 §Substrate Mapping Table
-- [ ] `Heartbeat` struct lands (Clone + Debug + Default)
-- [ ] `HeartbeatProbeResult` enum lands with 3 variants (Reachable { rtt_ms: u32 } + Unreachable { reason: UnreachableReason } + Timeout)
-- [ ] `UnreachableReason` enum lands `#[non_exhaustive]` with 4 variants (InvalidPeerDid + NoTransportAdapter + AdapterRefused + Other(String))
-- [ ] `Heartbeat::probe(&self, peer_did: &str, timeout_ms: u16) -> HeartbeatProbeResult` method lands (returns Timeout for Phase 14 stub)
-- [ ] `pub mod heartbeat;` added to `crates/octo-network/src/mon/mod.rs`
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin Timeout stub semantics + UnreachableReason enum variants + probe method signature)
+- [x] NEW module `crates/octo-network/src/mon/heartbeat.rs` lands per RFC-0011-h §Substrate-Additions row G17 + RFC-0011-v Phase 14 §Substrate Mapping Table
+- [x] `Heartbeat` struct lands (Clone + Debug + Default)
+- [x] `HeartbeatProbeResult` enum lands with 3 variants (Reachable { rtt_ms: u32 } + Unreachable { reason: UnreachableReason } + Timeout)
+- [x] `UnreachableReason` enum lands `#[non_exhaustive]` with 4 variants (InvalidPeerDid + NoTransportAdapter + AdapterRefused + Other(String))
+- [x] `Heartbeat::probe(&self, peer_did: &str, timeout_ms: u16) -> HeartbeatProbeResult` method lands (returns Timeout for Phase 14 stub)
+- [x] `pub mod heartbeat;` added to `crates/octo-network/src/mon/mod.rs`
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin Timeout stub semantics + UnreachableReason enum variants + probe method signature)
 
 ## Dependencies
 

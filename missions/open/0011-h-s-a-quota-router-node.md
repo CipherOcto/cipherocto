@@ -103,17 +103,17 @@ Per-extension crate pattern preserved: trait is in `octo-network` Layer B; concr
 
 ## Acceptance Criteria
 
-- [ ] `QuotaRouterNode` struct lands in NEW module `crates/octo-network/src/quota/router_node.rs` per RFC-0011-h §Substrate-Additions row G10 + RFC-0011-p Phase 8 §Substrate Mapping Table
-- [ ] `node_id: [u8; 32]` + `status: RouterStatus` + `peer_capacities: BTreeMap<[u8; 32], u64>` + `last_sync_epoch: u64` fields land
-- [ ] `RouterStatus` enum (Healthy + Degraded + Offline) lands at same path with `#[serde(rename_all = "lowercase")]`
-- [ ] `status() -> RouterStatus` method lands at same path
-- [ ] `peer_capacity(peer_node_id: &[u8; 32]) -> Option<u64>` method lands at same path
-- [ ] `reachable_peer_count()` + `total_peer_count()` observability helpers land
-- [ ] `pub mod router_node;` insertion in `crates/octo-network/src/quota/mod.rs` (NEW mod.rs if not present)
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥5 unit tests added above Phase 7 baseline of 1472)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin status-default + peer_capacity-miss + peer_capacity-hit + reachable_peer_count-zero + reachable_peer_count-nonzero + BTreeMap deterministic ordering)
+- [x] `QuotaRouterNode` struct lands in NEW module `crates/octo-network/src/quota/router_node.rs` per RFC-0011-h §Substrate-Additions row G10 + RFC-0011-p Phase 8 §Substrate Mapping Table
+- [x] `node_id: [u8; 32]` + `status: RouterStatus` + `peer_capacities: BTreeMap<[u8; 32], u64>` + `last_sync_epoch: u64` fields land
+- [x] `RouterStatus` enum (Healthy + Degraded + Offline) lands at same path with `#[serde(rename_all = "lowercase")]`
+- [x] `status() -> RouterStatus` method lands at same path
+- [x] `peer_capacity(peer_node_id: &[u8; 32]) -> Option<u64>` method lands at same path
+- [x] `reachable_peer_count()` + `total_peer_count()` observability helpers land
+- [x] `pub mod router_node;` insertion in `crates/octo-network/src/quota/mod.rs` (NEW mod.rs if not present)
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥5 unit tests added above Phase 7 baseline of 1472)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin status-default + peer_capacity-miss + peer_capacity-hit + reachable_peer_count-zero + reachable_peer_count-nonzero + BTreeMap deterministic ordering)
 
 ## Dependencies
 

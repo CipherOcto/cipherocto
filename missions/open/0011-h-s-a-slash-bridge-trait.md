@@ -53,15 +53,15 @@ Layer B substrate addition: `SlashBridge` trait + `BridgedSlash` + `BridgeReceip
 
 ## Acceptance Criteria
 
-- [ ] `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types land in NEW module `crates/octo-network/src/mon/slash_bridge.rs` per RFC-0011-h §Substrate-Additions row G9 + RFC-0011-o §Substrate-Additions Companion Missions
-- [ ] `pub mod slash_bridge;` declaration added to `crates/octo-network/src/mon/mod.rs` (alphabetically between `slash_aggregation` and `slashing`)
-- [ ] `BTreeMap` used (NOT `HashMap`) in `BridgedSlash::bridge_metadata` for deterministic iteration per RFC-0011-h §Output Envelope determinism pattern
-- [ ] `#[non_exhaustive]` on `BridgeError` enum per RFC-0011-l §non_exhaustive precedent
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green
-- [ ] ≥3 unit tests: `test_bridge_list_empty`, `test_bridge_list_populated`, `test_propagate_to_success` + 1 error path test
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] Per-extension crate pattern preserved (trait in Layer B; concrete impl crates in Layer D, OUT OF SCOPE per [[cipherocto-design-principles]] §User extensibility)
+- [x] `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types land in NEW module `crates/octo-network/src/mon/slash_bridge.rs` per RFC-0011-h §Substrate-Additions row G9 + RFC-0011-o §Substrate-Additions Companion Missions
+- [x] `pub mod slash_bridge;` declaration added to `crates/octo-network/src/mon/mod.rs` (alphabetically between `slash_aggregation` and `slashing`)
+- [x] `BTreeMap` used (NOT `HashMap`) in `BridgedSlash::bridge_metadata` for deterministic iteration per RFC-0011-h §Output Envelope determinism pattern
+- [x] `#[non_exhaustive]` on `BridgeError` enum per RFC-0011-l §non_exhaustive precedent
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green
+- [x] ≥3 unit tests: `test_bridge_list_empty`, `test_bridge_list_populated`, `test_propagate_to_success` + 1 error path test
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Per-extension crate pattern preserved (trait in Layer B; concrete impl crates in Layer D, OUT OF SCOPE per [[cipherocto-design-principles]] §User extensibility)
 
 ## Dependencies
 

@@ -99,17 +99,17 @@ NEW module `crates/octo-network/src/mon/envelope_inspector.rs`. No existing modu
 
 ## Acceptance Criteria
 
-- [ ] NEW module `crates/octo-network/src/mon/envelope_inspector.rs` lands per RFC-0011-h §Substrate-Additions row G16 + RFC-0011-u Phase 13 §Substrate Mapping Table
-- [ ] `EnvelopeInspector` struct lands (Clone + Debug + Default)
-- [ ] `EnvelopeMeta` struct lands with all 5 fields (envelope_id + envelope_kind + creator_did_hex + creation_epoch + ttl_epochs)
-- [ ] `EnvelopeKind` enum lands with 8 variants (Mission + Governance + Reputation + Slash + Forward + Bootstrap + Discovery + Coordinator)
-- [ ] `EnvelopeInspector::inspect(envelope_id) -> Option<EnvelopeMeta>` method lands (returns None for Phase 13 stub)
-- [ ] `EnvelopeInspector::from_fields(...)` constructor lands for substrate-faithful projection exercise
-- [ ] `pub mod envelope_inspector;` added to `crates/octo-network/src/mon/mod.rs`
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin unknown-envelope semantics + from_fields projection + EnvelopeKind enum variants)
+- [x] NEW module `crates/octo-network/src/mon/envelope_inspector.rs` lands per RFC-0011-h §Substrate-Additions row G16 + RFC-0011-u Phase 13 §Substrate Mapping Table
+- [x] `EnvelopeInspector` struct lands (Clone + Debug + Default)
+- [x] `EnvelopeMeta` struct lands with all 5 fields (envelope_id + envelope_kind + creator_did_hex + creation_epoch + ttl_epochs)
+- [x] `EnvelopeKind` enum lands with 8 variants (Mission + Governance + Reputation + Slash + Forward + Bootstrap + Discovery + Coordinator)
+- [x] `EnvelopeInspector::inspect(envelope_id) -> Option<EnvelopeMeta>` method lands (returns None for Phase 13 stub)
+- [x] `EnvelopeInspector::from_fields(...)` constructor lands for substrate-faithful projection exercise
+- [x] `pub mod envelope_inspector;` added to `crates/octo-network/src/mon/mod.rs`
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin unknown-envelope semantics + from_fields projection + EnvelopeKind enum variants)
 
 ## Dependencies
 

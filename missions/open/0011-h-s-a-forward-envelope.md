@@ -105,17 +105,17 @@ NEW module `crates/octo-network/src/mon/forward_envelope.rs`. No existing module
 
 ## Acceptance Criteria
 
-- [ ] NEW module `crates/octo-network/src/mon/forward_envelope.rs` lands per RFC-0011-h §Substrate-Additions row G16 + RFC-0011-u Phase 13 §Substrate Mapping Table
-- [ ] `ForwardEnvelope` struct lands (Clone + Debug + PartialEq + Eq) with 4 private fields
-- [ ] `ForwardEnvelopeError` enum lands with 3 variants (TtlOverflow + InvalidPeerId + Internal(String))
-- [ ] `ForwardEnvelope::build(...)` constructor lands with peer_id validation
-- [ ] `ForwardEnvelope::wire_bytes(&self) -> Vec<u8>` method lands with canonical wire-bytes encoding (source_envelope_id + destination_peer_id + ttl_epochs_be + construction_epoch_be)
-- [ ] Field accessor methods land (source_envelope_id + destination_peer_id + ttl_epochs + construction_epoch)
-- [ ] `pub mod forward_envelope;` added to `crates/octo-network/src/mon/mod.rs`
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin wire_bytes canonical encoding + InvalidPeerId rejection + Build constructor determinism)
+- [x] NEW module `crates/octo-network/src/mon/forward_envelope.rs` lands per RFC-0011-h §Substrate-Additions row G16 + RFC-0011-u Phase 13 §Substrate Mapping Table
+- [x] `ForwardEnvelope` struct lands (Clone + Debug + PartialEq + Eq) with 4 private fields
+- [x] `ForwardEnvelopeError` enum lands with 3 variants (TtlOverflow + InvalidPeerId + Internal(String))
+- [x] `ForwardEnvelope::build(...)` constructor lands with peer_id validation
+- [x] `ForwardEnvelope::wire_bytes(&self) -> Vec<u8>` method lands with canonical wire-bytes encoding (source_envelope_id + destination_peer_id + ttl_epochs_be + construction_epoch_be)
+- [x] Field accessor methods land (source_envelope_id + destination_peer_id + ttl_epochs + construction_epoch)
+- [x] `pub mod forward_envelope;` added to `crates/octo-network/src/mon/mod.rs`
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin wire_bytes canonical encoding + InvalidPeerId rejection + Build constructor determinism)
 
 ## Dependencies
 

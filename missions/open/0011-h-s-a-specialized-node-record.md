@@ -97,16 +97,16 @@ Per-extension crate pattern preserved: trait is in `octo-network` Layer B; concr
 
 ## Acceptance Criteria
 
-- [ ] `SpecializedNodeRecord` struct lands in NEW module `crates/octo-network/src/specialized/node_record.rs` per RFC-0011-h §Substrate-Additions row G11 + RFC-0011-q Phase 9 §Substrate Mapping Table
-- [ ] `node_id: [u8; 32]` + `holder_did: Option<Did>` + `node_class: NodeClass` + `creation_epoch: u64` + `metadata: BTreeMap<String, String>` fields land
-- [ ] `NodeClass` enum (Builder + Provider + Storage + Bandwidth + Orchestrator) lands at same path with `#[serde(rename_all = "lowercase")]`
-- [ ] `SpecializedNodeRecordAccess` trait (load + bind_to_did + node_id) lands at same path
-- [ ] `SpecializedNodeError` enum (NotFound + AlreadyBound + InvalidDid(String) + Internal(String)) lands at same path with `#[non_exhaustive]`
-- [ ] `pub mod specialized;` insertion in `crates/octo-network/src/lib.rs` + `pub mod node_record;` insertion in NEW `crates/octo-network/src/specialized/mod.rs`
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥5 unit tests added above Phase 8 baseline of 1477)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin load-miss + load-hit + bind-success + bind-already-bound + bind-not-found + BTreeMap deterministic ordering)
+- [x] `SpecializedNodeRecord` struct lands in NEW module `crates/octo-network/src/specialized/node_record.rs` per RFC-0011-h §Substrate-Additions row G11 + RFC-0011-q Phase 9 §Substrate Mapping Table
+- [x] `node_id: [u8; 32]` + `holder_did: Option<Did>` + `node_class: NodeClass` + `creation_epoch: u64` + `metadata: BTreeMap<String, String>` fields land
+- [x] `NodeClass` enum (Builder + Provider + Storage + Bandwidth + Orchestrator) lands at same path with `#[serde(rename_all = "lowercase")]`
+- [x] `SpecializedNodeRecordAccess` trait (load + bind_to_did + node_id) lands at same path
+- [x] `SpecializedNodeError` enum (NotFound + AlreadyBound + InvalidDid(String) + Internal(String)) lands at same path with `#[non_exhaustive]`
+- [x] `pub mod specialized;` insertion in `crates/octo-network/src/lib.rs` + `pub mod node_record;` insertion in NEW `crates/octo-network/src/specialized/mod.rs`
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥5 unit tests added above Phase 8 baseline of 1477)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin load-miss + load-hit + bind-success + bind-already-bound + bind-not-found + BTreeMap deterministic ordering)
 
 ## Dependencies
 

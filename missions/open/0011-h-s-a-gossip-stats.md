@@ -94,15 +94,15 @@ EXTENDS the existing `mon/gossip.rs` module with NEW additive types. No new modu
 
 ## Acceptance Criteria
 
-- [ ] `Gossip` struct lands at `crates/octo-network/src/mon/gossip.rs` per RFC-0011-h §Substrate-Additions row G15 + RFC-0011-t Phase 12 §Substrate Mapping Table
-- [ ] `GossipStats` struct lands with all 7 fields (mission_id_hex + peers_reachable + messages_sent + messages_received + messages_dropped + anti_entropy_rounds + last_sync_epoch)
-- [ ] `Gossip::new(...)` constructor lands with 7 explicit counter params
-- [ ] `Gossip::stats(&self) -> GossipStats` method lands
-- [ ] Existing `MissionGossipScope` + `MissionPropagationClass` + `MissionGossipMessage` types preserved (zero regression)
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
-- [ ] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin stats projection determinism + counter arithmetic + mission_id hex encoding)
+- [x] `Gossip` struct lands at `crates/octo-network/src/mon/gossip.rs` per RFC-0011-h §Substrate-Additions row G15 + RFC-0011-t Phase 12 §Substrate Mapping Table
+- [x] `GossipStats` struct lands with all 7 fields (mission_id_hex + peers_reachable + messages_sent + messages_received + messages_dropped + anti_entropy_rounds + last_sync_epoch)
+- [x] `Gossip::new(...)` constructor lands with 7 explicit counter params
+- [x] `Gossip::stats(&self) -> GossipStats` method lands
+- [x] Existing `MissionGossipScope` + `MissionPropagationClass` + `MissionGossipMessage` types preserved (zero regression)
+- [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin stats projection determinism + counter arithmetic + mission_id hex encoding)
 
 ## Dependencies
 

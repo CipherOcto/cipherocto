@@ -245,7 +245,7 @@ fn test_governance_proposal_full_lifecycle() {
         ProposalState::Voting,
         100_000,
         200_000,
-        100,
+        1000,
     );
     assert_eq!(proposal.state, ProposalState::Voting);
     assert_eq!(proposal.approval_tally_bps, 3_000);
@@ -305,13 +305,13 @@ fn test_governance_resolve_not_voting() {
 
 #[test]
 fn test_decision_type_variants() {
-    assert_eq!(DecisionType::Admission as u16, 0x0001);
-    assert_eq!(DecisionType::RoleAssignment as u16, 0x0002);
-    assert_eq!(DecisionType::TopologyChange as u16, 0x0003);
-    assert_eq!(DecisionType::MissionTermination as u16, 0x0004);
-    assert_eq!(DecisionType::PolicyModification as u16, 0x0005);
-    assert_eq!(DecisionType::EmergencyRekey as u16, 0x0006);
-    assert_eq!(DecisionType::ParticipantExpulsion as u16, 0x0007);
+    assert_eq!(DecisionType::Admission as u16, 0x0000);
+    assert_eq!(DecisionType::RoleAssignment as u16, 0x0001);
+    assert_eq!(DecisionType::TopologyChange as u16, 0x0002);
+    assert_eq!(DecisionType::MissionTermination as u16, 0x0003);
+    assert_eq!(DecisionType::PolicyModification as u16, 0x0004);
+    assert_eq!(DecisionType::EmergencyRekey as u16, 0x0005);
+    assert_eq!(DecisionType::ParticipantExpulsion as u16, 0x0006);
 }
 
 // ── Mission Discovery ──

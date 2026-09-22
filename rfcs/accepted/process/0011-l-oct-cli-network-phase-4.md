@@ -18,12 +18,12 @@ Accepted (2026-09-21) — RFC-0011-l promoted from Draft per the goal directive 
 
 RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-h §Implementation Phases. Four CLI subcommands wire to substrate (existing + companion missions):
 
-| Subcommand                                  | Authority Role | Substrate                                                 | Companion mission                               |
-| ------------------------------------------- | -------------- | --------------------------------------------------------- | ----------------------------------------------- |
-| `octo network bind-envelope show`           | Operator       | `BindEnvelope::load(domain_id)` lookup method (MISSING)   | `0011-h-s-a-bind-envelope-lookup` (G22)         |
-| `octo network bind-envelope rebind-prepare` | Operator       | `RebindCoordinator::prepare_envelope(signature)` (LANDED) | `0011-h-s-a-attached-handle-key-rotation` (G21) |
-| `octo network bind-envelope rebind-commit`  | Operator       | `RebindCoordinator::commit_envelope(signature)` (LANDED)  | `0011-h-s-a-attached-handle-key-rotation` (G21) |
-| `octo network bind-envelope rebind-abort`   | Operator       | `RebindCoordinator::abort_envelope(signature)` (LANDED)   | `0011-h-s-a-attached-handle-key-rotation` (G21) |
+| Subcommand                                  | Authority Role | Substrate                                                 | Companion mission                       |
+| ------------------------------------------- | -------------- | --------------------------------------------------------- | --------------------------------------- |
+| `octo network bind-envelope show`           | Operator       | `BindEnvelope::load(domain_id)` lookup method (MISSING)   | `0011-h-s-a-bind-envelope-lookup` (G22) |
+| `octo network bind-envelope rebind-prepare` | Operator       | `RebindCoordinator::prepare_envelope(signature)` (LANDED) | `0011-h-s-a-rebind-coordinator` (G21)   |
+| `octo network bind-envelope rebind-commit`  | Operator       | `RebindCoordinator::commit_envelope(signature)` (LANDED)  | `0011-h-s-a-rebind-coordinator` (G21)   |
+| `octo network bind-envelope rebind-abort`   | Operator       | `RebindCoordinator::abort_envelope(signature)` (LANDED)   | `0011-h-s-a-rebind-coordinator` (G21)   |
 
 **Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **3 companion missions (Layer B)**; 3 of 4 subcommands have substrate LANDED but clap arm gated (G21), 1 subcommand has substrate absent (G22).
 
@@ -38,7 +38,7 @@ RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-
 - **RFC-0011-k** — hard sequencing dependency for confirmation-flag pattern
 - **RFC-0871 Specialized Node Protocol Envelope** — `RebindEnvelope` umbrella enum + `RebindPrepare` + `RebindCommit` + `RebindAbort` structs + `RebindCoordinator` payload builders
 - **Companion mission `0011-h-s-a-bind-envelope-lookup`** — Layer B substrate for `BindEnvelope::load(domain_id)` lookup method (G22)
-- **Companion mission `0011-h-s-a-attached-handle-key-rotation`** — Layer B substrate for clap arm registration on the rebind-* trio (G21); per RFC-0011-c §F.5.1 D2.1 + D2.2 paired-acceptance bridge (D2.1 discriminator LANDED at `next 01340b93`; D2.2 population policy deferred post-PQC; companion G21 wraps the clap arm registration on top of D2.1)
+- **Companion mission `0011-h-s-a-rebind-coordinator`** — Layer B substrate for clap arm registration on the rebind-* trio (G21); per RFC-0011-c §F.5.1 D2.1 + D2.2 paired-acceptance bridge (D2.1 discriminator LANDED at `next 01340b93`; D2.2 population policy deferred post-PQC; companion G21 wraps the clap arm registration on top of D2.1)
 - **Pair-acceptance companion `0011-h-s-a-ci-detection` (G25)** — cross-RFC; rebind-* trio falls through to substrate success (exit 0) pre-G25 → CI gate fires (exit 90) post-G25 per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix row 138-140
 
 ## Design Goals
@@ -225,11 +225,11 @@ Write-path tests (tv_net4_4 through tv_net4_12) only fire `--dry-run` or full-co
 
 Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 3 companion substrate missions. All 3 are Open as of 2026-09-20.
 
-| Companion mission                               | Substrate addition                                                                                                                | Layer |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `0011-h-s-a-bind-envelope-lookup` (G22)         | `BindEnvelope::load(domain_id)` lookup method                                                                                     | B     |
-| `0011-h-s-a-attached-handle-key-rotation` (G21) | clap arm registration on rebind-* trio + paired RFC-0011-c §F.5.1 D2.1 discriminator + D2.2 population policy (deferred post-PQC) | B     |
-| `0011-h-s-a-ci-detection` (G25)                 | CI mode detection (`OCTO_CLI_CI=1` env-var + `[ -t 0 ]` stdin TTY probe + `--allow-ci-deny-default` DEBUG-ONLY escape hatch)      | C     |
+| Companion mission                       | Substrate addition                                                                                                                | Layer |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `0011-h-s-a-bind-envelope-lookup` (G22) | `BindEnvelope::load(domain_id)` lookup method                                                                                     | B     |
+| `0011-h-s-a-rebind-coordinator` (G21)   | clap arm registration on rebind-* trio + paired RFC-0011-c §F.5.1 D2.1 discriminator + D2.2 population policy (deferred post-PQC) | B     |
+| `0011-h-s-a-ci-detection` (G25)         | CI mode detection (`OCTO_CLI_CI=1` env-var + `[ -t 0 ]` stdin TTY probe + `--allow-ci-deny-default` DEBUG-ONLY escape hatch)      | C     |
 
 Phase 4 RFC carries 3 substrate additions; 0 substrate additions in this RFC itself (the 3 substrate additions are documented here but land via companion missions per substrate-first ordering).
 

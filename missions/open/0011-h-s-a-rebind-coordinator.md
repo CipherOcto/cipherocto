@@ -1,4 +1,4 @@
-# 0011-h-s-a-attached-handle-key-rotation — Substrate additions for AttachedHandleKeyRotation trait
+# 0011-h-s-a-rebind-coordinator — Substrate additions for RebindCoordinator payload builder
 
 ## Status
 

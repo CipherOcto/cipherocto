@@ -22,7 +22,7 @@ CLI surface for bind-envelope read (substrate-faithful `BindEnvelope::load` look
 ## Blocked substrate-additions companions (now CLOSED)
 
 - `0011-h-s-a-bind-envelope-lookup` (G22) — CLOSED at `next edcdc47a` (substrate `BindEnvelope::load` lookup method) + `next 475aa5af` (YAML Claimed) + `next 0df7e579` (CLI dispatch); YAML Completed landing
-- `0011-h-s-a-attached-handle-key-rotation` (G21) — CLOSED at `next 3794e4a8` (substrate `RebindArmAction` + `dispatch_rebind_arm_action`) + `next 475aa5af` (YAML Claimed) + `next 0df7e579` (CLI dispatch); YAML Completed landing
+- `0011-h-s-a-rebind-coordinator` (G21) — CLOSED at `next 3794e4a8` (substrate `RebindArmAction` + `dispatch_rebind_arm_action`) + `next 475aa5af` (YAML Claimed) + `next 0df7e579` (CLI dispatch); YAML Completed landing
 - `0011-h-s-a-ci-detection` (G25) — CLOSED at `next 1bb1ecbc` (`CiDetection::detect` + `CiMode` enum helper) + `next fd3127c2` (YAML Claimed); YAML Completed landing. The CI gate itself (slot 90 `NetworkCIDenyDefault`) is forward-looking per RFC-0011-l Phase 4 row 50 (deferred to Phase 5/6); the `--allow-ci-deny-default` DEBUG-ONLY escape hatch is wired as a clap arm today.
 
 ## Acceptance Criteria

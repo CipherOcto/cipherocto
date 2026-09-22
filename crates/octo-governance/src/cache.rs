@@ -13,8 +13,19 @@
 //! key would multiply cache entries without changing the
 //! projection; v1 collapses to `(active_did, chain_id)` and
 //! lets the cache hit reduce substrate re-fetch cost.
+//!
+//! **LRU ordering:** delegated to the `lru` crate (shared with
+//! `quota-router-core`) so the eviction order is true LRU by
+//! access (touch-on-read in `get_fresh`), independent of
+//! `HashMap` iteration order. The previous hand-rolled
+//! `HashMap`-based LRU relied on insertion-order iteration,
+//! which Rust's std `HashMap` does NOT guarantee (the
+//! `RandomState` default seeds vary per build), so the
+//! `capacity_triggers_lru_eviction` test was flaky.
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
 
 use crate::snapshot::SnapshotRef;
 
@@ -48,14 +59,16 @@ struct CachedEntry {
 /// `Default` constructs an empty cache with the canonical
 /// capacity (`SNAPSHOT_CACHE_CAPACITY`). `get_fresh()` returns the
 /// cached `SnapshotRef` only if `now_unix < expires_at_unix`;
-/// stale entries are evicted on read.
+/// stale entries are evicted on read. A successful fresh read
+/// also touches the LRU position so the entry moves to MRU.
 #[derive(Debug)]
 pub struct OctoGovernanceSnapshotCache {
-    capacity: usize,
-    /// Index map: cache key → cached entry. Rust's default
-    /// `HashMap` preserves insertion order so the LRU policy is
-    /// implemented by removing + re-inserting on `get_fresh()`.
-    index: HashMap<SnapshotCacheKey, CachedEntry>,
+    /// LRU-ordered index. The `lru` crate maintains true LRU
+    /// order via an internal doubly-linked list, so eviction
+    /// in `insert()` drops the least-recently-used entry
+    /// regardless of the underlying hash iteration order.
+    /// Capacity is held inside the `LruCache` itself.
+    index: LruCache<SnapshotCacheKey, CachedEntry>,
 }
 
 impl Default for OctoGovernanceSnapshotCache {
@@ -68,56 +81,54 @@ impl OctoGovernanceSnapshotCache {
     /// Construct a cache with the given capacity. Capacity is
     /// rounded up to `1` if a smaller value is supplied.
     pub fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(1);
+        let nz = NonZeroUsize::new(capacity).expect("capacity clamped to ≥ 1");
         Self {
-            capacity: capacity.max(1),
-            index: HashMap::new(),
+            index: LruCache::new(nz),
         }
     }
 
     /// Fetch a fresh (non-stale) snapshot for the given key.
     /// Returns `None` if the key is absent OR if the cached entry
-    /// has expired (`now_unix >= expires_at_unix`).
+    /// has expired (`now_unix >= expires_at_unix`). A successful
+    /// fresh read also touches the LRU position.
     pub fn get_fresh(&mut self, key: &SnapshotCacheKey, now_unix: u64) -> Option<SnapshotRef> {
-        let entry = self.index.get(key)?.clone();
-        if now_unix >= entry.expires_at_unix {
-            self.index.remove(key);
-            return None;
+        // Peek first to read the TTL without mutating LRU order —
+        // if the entry is stale we evict, which would otherwise be
+        // a redundant touch before the pop.
+        let entry = self.index.peek(key).cloned();
+        match entry {
+            None => None,
+            Some(e) if now_unix >= e.expires_at_unix => {
+                // Stale — evict on read.
+                self.index.pop(key);
+                None
+            }
+            Some(e) => {
+                // Fresh — touch the LRU position by issuing a
+                // `get`. The returned `&CachedEntry` is discarded;
+                // we use the cloned payload from the peek above.
+                let _ = self.index.get(key);
+                Some(e.snapshot)
+            }
         }
-        // LRU touch: remove + re-insert to move the key to the
-        // back of the HashMap iteration order (MRU position).
-        let snapshot = entry.snapshot.clone();
-        self.index.remove(key);
-        self.index.insert(
-            key.clone(),
-            CachedEntry {
-                snapshot: snapshot.clone(),
-                expires_at_unix: entry.expires_at_unix,
-            },
-        );
-        Some(snapshot)
     }
 
     /// Insert a snapshot under the given key. Returns
     /// `Ok(())` on success; `Err(reason)` if the cache fails to
     /// accommodate the entry (capacity exhausted and eviction
-    /// failed — currently a defensive guard).
+    /// failed — currently a defensive guard). The underlying
+    /// `LruCache::put` returns `()` and evicts the LRU entry
+    /// when at capacity, so the `Err` arm is unreachable in
+    /// practice and retained only for API compatibility with
+    /// the previous hand-rolled implementation.
     pub fn insert(
         &mut self,
         key: SnapshotCacheKey,
         snapshot: SnapshotRef,
         expires_at_unix: u64,
     ) -> Result<(), String> {
-        // LRU eviction: drop oldest until under capacity.
-        while self.index.len() >= self.capacity {
-            let oldest_key = self.index.keys().next().cloned();
-            match oldest_key {
-                Some(k) => {
-                    self.index.remove(&k);
-                }
-                None => break,
-            }
-        }
-        self.index.insert(
+        self.index.put(
             key,
             CachedEntry {
                 snapshot,
@@ -181,6 +192,13 @@ mod tests {
 
     #[test]
     fn capacity_triggers_lru_eviction() {
+        // Regression guard: prior hand-rolled HashMap-based LRU
+        // relied on `HashMap::keys().next()` for "oldest" key,
+        // but std HashMap iteration order is non-deterministic
+        // (RandomState default). This test ran ~50% of the time
+        // pre-fix because k1 was not always first. The `lru`
+        // crate uses a doubly-linked list so eviction is true
+        // LRU by access, independent of hash iteration order.
         let mut c = OctoGovernanceSnapshotCache::new(2);
         let k1 = key("a");
         let k2 = key("b");

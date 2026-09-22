@@ -19,6 +19,18 @@ octo-governance-core = { path = "../octo-governance-core" }
 blake3 = { version = "1.5", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+# Bounded LRU cache per RFC-0011-g §Snapshot Cache (600 s TTL, capacity 64).
+# Reuses the same `lru` crate that quota-router-core pulls in for
+# crates/quota-router-core/src/cache.rs — honors the
+# no-parallel-abstractions principle (one LRU primitive, one crate).
+# The previous HashMap-based implementation in this file relied on
+# HashMap insertion-order iteration, which is unspecified and
+# randomized per-build in Rust's std (RandomState), so the LRU
+# eviction test `capacity_triggers_lru_eviction` failed non-
+# deterministically. The `lru` crate uses an internal doubly-
+# linked list to maintain true LRU order independent of hash
+# iteration order.
+lru = "0.12"
 
 [lints.rust]
 unsafe_code = "forbid"

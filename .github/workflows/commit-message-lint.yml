@@ -75,37 +75,7 @@ jobs:
           done
 
           if [[ -n "$BAD" ]]; then
-            cat <<EOF
-
-================================================================================
-COMMIT MESSAGE LINT FAILED (Layer 6)
-================================================================================
-The following commits contain dangerous tokens in their message bodies:
-
-$BAD
-
-RFC-0011-c 2026-09-08 lesson: bash POSIX §2.6.3 expands backticks / \$(...)
-inside double-quoted \`git commit -m "..."\` BEFORE git sees the message.
-4 fix commits were pushed inadvertently that day. See
-[[no-backtick-in-commit-messages]] for the full incident write-up.
-
-Token list: scripts/wrappers/dangerous-tokens.sh
-
-Fix per offending commit:
-  git commit --amend -F /tmp/clean-msg.txt
-
-Where /tmp/clean-msg.txt is written via:
-
-  cat > /tmp/clean-msg.txt <<'EOF'
-  <subject>
-
-  <body — single-quoted heredoc, no shell expansion>
-  EOF
-
-Or, use the local safe-commit wrapper:
-  safe-commit --amend -F /tmp/clean-msg.txt
-================================================================================
-EOF
+            bash "${GITHUB_WORKSPACE}/scripts/ci/lint-commit-message-failure.sh" "$BAD"
             exit 1
           fi
 

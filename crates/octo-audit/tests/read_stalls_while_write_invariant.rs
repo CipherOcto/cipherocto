@@ -297,9 +297,15 @@ fn rsw_reads_completable_under_concurrent_writes() {
         }
     });
 
-    // Reader loop captures monotonic snapshots.
+    // Reader loop captures monotonic snapshots. Capture the snapshot
+    // BEFORE the exit-condition check so we always record at least
+    // one observation, even on heavily-loaded CI runners where the
+    // writer thread can complete its 200-iteration burst before the
+    // reader thread is scheduled (RFC-0016-a §6.11 invariant: readers
+    // can complete observation under concurrent writes — including
+    // zero-write windows where the writer has already finished).
     let mut observations = 0usize;
-    while total_appends.load(Ordering::SeqCst) < 50 {
+    loop {
         let snapshot: Vec<u64> = {
             let s = state.lock().expect("state lock");
             s.events.iter().map(|e| e.event_id).collect()
@@ -309,6 +315,9 @@ fn rsw_reads_completable_under_concurrent_writes() {
             "non-monotonic snapshot under concurrent writes: {snapshot:?}"
         );
         observations += 1;
+        if total_appends.load(Ordering::SeqCst) >= 50 {
+            break;
+        }
         thread::sleep(Duration::from_millis(1));
     }
 

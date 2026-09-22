@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-09-22) — Substrate-additions companion to RFC-0011-w §Substrate-Additions Companion Missions (NEW row added by R1 amendment cycle). Companion mission to RFC-0011-w `octo network` slot 91 `NetworkKeyRotationUnknownId` variant mint + translation arm + exit-code arm + redaction helper. Layer C CLI substrate additions landing in `crates/octo-cli/src/error.rs` per mission YAML substrate additions target. Zero Layer B substrate change (substrate `AttachError::UnknownKeyId` already LANDED at `crates/octo-runtime/src/handle/error.rs` per RFC-0011-c §F.5.1 paired-acceptance bridge).
+Completed (2026-09-22) — Substrate-additions companion to RFC-0011-w §Substrate-Additions Companion Missions (NEW row added by R1 amendment cycle). Companion mission to RFC-0011-w `octo network` slot 91 `NetworkKeyRotationUnknownId` variant mint + translation arm + exit-code arm + redaction helper. Layer C CLI substrate additions landing in `crates/octo-cli/src/error.rs` per mission YAML substrate additions target. Zero Layer B substrate change (substrate `AttachError::UnknownKeyId` already LANDED at `crates/octo-runtime/src/handle/error.rs` per RFC-0011-c §F.5.1 paired-acceptance bridge).
 
 ## RFC
 

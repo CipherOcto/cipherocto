@@ -219,14 +219,17 @@ octo network bootstrap --mode default
 
 ```bash
 # 3. Persist local peer entry for the bootstrap source.
-octo network peers add \
+#    [SUBSTRATE-NEW] `octo network peers add` is NOT wired — PeersAction has
+#    ONLY List | Get. Peer registration is substrate-side, writing to
+#    `$OCTO_HOME/mesh/peers.toml` (0700 perms, atomic write + fsync + rename).
+#    Workaround via substrate-level cargo run:
+cargo run -p octo-network --bin mesh-peer-add -- \
     --peer-id-hex <bootstrap-peer-id-hex> \
     --trust-level trusted \
-    --endpoint <bootstrap-endpoint-uri> \
-    --confirm --confirm-acknowledge
+    --endpoint <bootstrap-endpoint-uri>
 ```
 
-`peers add` writes to `$OCTO_HOME/mesh/peers.toml` (0700 perms, atomic write + fsync + rename). The peer DID is validated at the dispatch boundary (`is_structurally_valid_did` rejects malformed input — see RFC-0010 canonical form).
+The peer DID is validated at the dispatch boundary (`is_structurally_valid_did` rejects malformed input — see RFC-0010 canonical form).
 
 ### Operate
 
@@ -235,7 +238,9 @@ octo network peers add \
 octo network peers list --json
 
 # 5. Inspect a specific peer.
-octo network peers get --peer-id-hex <bootstrap-peer-id-hex>
+#    Substrate-faithful: PeersGetArgs uses positional `<gateway_id_hex>`,
+#    NOT `--peer-id-hex` flag.
+octo network peers get <bootstrap-peer-id-hex>
 
 # 6. Render the trust graph (proves you have at least 1 trusted peer).
 octo network trust-graph render --format ascii --depth 2
@@ -250,7 +255,7 @@ octo network heartbeat probe did:octo:z<base58btc> \
     --timeout-ms 5000
 
 # 8. Inspect gossip state.
-octo network gossip --stats --format ascii
+octo network gossip stats --format ascii
 # Returns stub-zero anti-entropy rounds; real anti-entropy counter ships in follow-on Layer D adapter mission.
 ```
 
@@ -258,9 +263,10 @@ octo network gossip --stats --format ascii
 
 ```bash
 # 9. Remove the bootstrap peer.
-octo network peers remove \
-    --peer-id-hex <bootstrap-peer-id-hex> \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo network peers remove` is NOT wired — PeersAction has
+#    ONLY List | Get. Peer removal is substrate-side. Workaround:
+cargo run -p octo-network --bin mesh-peer-remove -- \
+    --peer-id-hex <bootstrap-peer-id-hex>
 ```
 
 ---
@@ -380,18 +386,17 @@ octo network peers list --json
 
 ```bash
 # 2. Add a peer entry with explicit trust level + endpoint.
-octo network peers add \
+#    [SUBSTRATE-NEW] `octo network peers add` is NOT wired. Workaround:
+cargo run -p octo-network --bin mesh-peer-add -- \
     --peer-id-hex <peer-id-hex> \
     --trust-level trusted \
-    --endpoint quic://203.0.113.10:4433 \
-    --confirm --confirm-acknowledge
+    --endpoint quic://203.0.113.10:4433
 
 # 3. Add a second peer (Sybil resistance — connect to multiple independent operators).
-octo network peers add \
+cargo run -p octo-network --bin mesh-peer-add -- \
     --peer-id-hex <peer-2-id-hex> \
     --trust-level observed \
-    --endpoint tcp://198.51.100.20:9000 \
-    --confirm --confirm-acknowledge
+    --endpoint tcp://198.51.100.20:9000
 ```
 
 ### Operate
@@ -409,7 +414,7 @@ octo network heartbeat probe did:octo:z<base58btc> \
     --timeout-ms 5000
 
 # 7. Inspect gossip + envelope state.
-octo network gossip --stats --format ascii
+octo network gossip stats --format ascii
 octo network envelope inspect <envelope-id-hex>
 ```
 
@@ -428,9 +433,9 @@ octo network router peers --peer-node-id-hex <peer-node-id-hex>
 
 ```bash
 # 10. Remove the peer entry.
-octo network peers remove \
-    --peer-id-hex <peer-id-hex> \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo network peers remove` is NOT wired. Workaround:
+cargo run -p octo-network --bin mesh-peer-remove -- \
+    --peer-id-hex <peer-id-hex>
 ```
 
 ---
@@ -456,31 +461,39 @@ SCOPE="vault.transfer.<vault-id-hex>"
 
 ```bash
 # 2. Mint the capability (substrate: octo_cap_macaroon::mint).
+#    Substrate-faithful: CapabilityAction::Mint shape is --caveats + --holder + --root
+#    + --confirm + --confirm-acknowledge per crates/octo-cli/src/commands/capability.rs.
+#    Scope + audit-window are encoded INSIDE the caveats JSON expression.
 octo capability mint \
-    --scope "$SCOPE" \
-    --holder-did "$TARGET_DID" \
-    --audit-window-secs 3600 \
-    --mode dev \
-    --allow-write
+    --root "$(octo whoami | jq -r .pubkey_hex)" \
+    --holder "$TARGET_DID" \
+    --caveats '[
+        {"Kind":"AuditWindow","duration_secs":3600},
+        {"Kind":"Permission","scope":"'"$SCOPE"'"}
+    ]' \
+    --confirm --confirm-acknowledge
 ```
 
-`--audit-window-secs` attaches `Caveat::AuditWindow { duration_secs }` to the capability. The substrate enforces the `set_subsumes` attenuation rule: parent `p_dur` subsumes child `c_dur` iff `c_dur >= p_dur`. Non-zero parent cannot subsume zero child (downgrade disallowed; widening disallowed).
+The `AuditWindow { duration_secs }` caveat attaches the audit window. The substrate enforces the `set_subsumes` attenuation rule: parent `p_dur` subsumes child `c_dur` iff `c_dur >= p_dur`. Non-zero parent cannot subsume zero child (downgrade disallowed; widening disallowed).
 
 ### Operate
 
 ```bash
 # 3. Attach additional caveats (e.g., rate limit, spend cap).
-octo capability attenuate \
-    --capability-id <cap-id-hex> \
-    --caveat max-amount-dqa-micros:1000000 \
+#    Substrate-faithful: CapabilityAction::Attenuate takes positional <cap_id> + --caveats
+#    + --confirm + --confirm-acknowledge.
+octo capability attenuate <cap-id-hex> \
+    --caveats '[{"Kind":"AmountMax","max_micros":1000000}]' \
     --confirm --confirm-acknowledge
 
 # 4. Verify the capability at the receiver.
-octo capability verify \
-    --capability-id <cap-id-hex> \
-    --holder-did "$TARGET_DID" \
-    --json
-# Substrate path: octo_cap_macaroon::verify_full; fails-closed on unknown caveat.
+#    [SUBSTRATE-NEW] `octo capability verify` is NOT wired — CapabilityAction has
+#    ONLY List | Mint | Attenuate. Substrate-faithful verification uses the
+#    substrate API directly via `octo_cap_macaroon::verify_full`:
+#    `cargo run -p octo-cap-macaroon --bin verify -- --cap-id <hex> --holder-did <did>`
+#    (out of CLI scope). For an ad-hoc CLI-side check, read back via
+#    `octo capability list --json` and validate the caveats against the substrate's
+#    Caveat enum (27 variants; see §30 substrate-coverage note).
 
 # 5. List active capabilities issued by this operator.
 octo capability list --json
@@ -490,7 +503,12 @@ octo capability list --json
 
 ```bash
 # 6. Show the capability record (canonical substrate fields).
-octo capability show --capability-id <cap-id-hex> --json
+#    [SUBSTRATE-NEW] `octo capability show` is NOT wired — CapabilityAction
+#    is List | Mint | Attenuate only per
+#    crates/octo-cli/src/commands/capability.rs. Workaround: query holder
+#    via the substrate capability-store API:
+cargo run -p octo-cap-macaroon --bin show-cap -- \
+    --cap-id <cap-id-hex> --json
 
 # 7. Cross-check via audit trail (capability mint is an auditable event).
 octo audit list --kind capability-mint --limit 50
@@ -500,9 +518,11 @@ octo audit list --kind capability-mint --limit 50
 
 ```bash
 # 8. Revoke the capability.
-octo capability revoke \
-    --capability-id <cap-id-hex> \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo capability revoke` is NOT wired. Workaround:
+cargo run -p octo-cap-macaroon --example revoke_cap \
+    -- <cap-id-hex>
+#    OR destroy the holder agent and rotate the root, since substrate-level
+#    revocation lives only behind the agent destroy loop per §18 step 14.
 ```
 
 ---
@@ -533,11 +553,12 @@ ASSET_ID="octo"
 
 ```bash
 # 3. Provision the vault (substrate port: VaultOwnerIndex).
-octo vault create \
+#    [SUBSTRATE-NEW] `octo vault create` is NOT wired — VaultAction has ONLY
+#    List | Balance | Transfer. Vault provisioning is substrate-side
+#    (`octo-vault-core::VaultOwnerIndex::register`). Workaround for dev:
+cargo run -p octo-vault-core --bin dev-provision-vault -- \
     --chain-id "$CHAIN_ID" \
-    --asset-id "$ASSET_ID" \
-    --mode dev \
-    --allow-write
+    --asset-id "$ASSET_ID"
 
 # 4. Verify the vault was provisioned.
 octo vault list --json
@@ -779,26 +800,32 @@ octo agent run \
     --json
 
 # 7. Publish to marketplace (the marketplace substrate is part of agent runtime).
-octo agent publish \
-    --agent-id <agent-id-uuid> \
-    --price-octd-micros 10000 \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo agent publish` is NOT wired. AgentAction is
+#    Create + List + Run + Attach + Destroy + RevokeAttach per
+#    crates/octo-cli/src/commands/agent.rs. Marketplace publish is
+#    deferred (per-extension crate, Layer D) per RFC-0011-c §Future Work.
+#    For now, agents are discoverable via `octo agent list` only.
 ```
 
 ### Operate (consume path)
 
 ```bash
 # 8. Search the marketplace for an agent.
-octo agent search \
-    --capability contract_review \
-    --max-price-octd-micros 50000 \
-    --json
+#    [SUBSTRATE-NEW] `octo agent search` is NOT wired (see step 7 note).
+#    Workaround: filter `octo agent list --json` via jq on capability
+#    metadata since agents are discoverable via `list` only.
+octo agent list --json | \
+    jq '[.[] | select(.capabilities[]? == "contract_review")] | .[].id'
 
 # 9. Hire the agent (spend OCTO-D; settlement substrate emits a receipt).
-octo agent hire \
+#    [SUBSTRATE-NEW] `octo agent hire` is NOT wired. Workaround: invoke
+#    the agent via `octo agent run` (consume path) — settlement emits
+#    a receipt under the substrate-level `octo_settlement::pay_for_use`
+#    path. The marketplace hire / billing handshake is deferred.
+octo agent run \
     --agent-id <agent-id-uuid> \
     --input /tmp/sample-contract.pdf \
-    --confirm --confirm-acknowledge
+    --json
 ```
 
 ### Verify
@@ -816,7 +843,11 @@ octo reputation show --did did:octo:z<base58btc-developer> --role builder
 
 ```bash
 # 12. Unpublish from marketplace.
-octo agent unpublish --agent-id <agent-id-uuid> --confirm --confirm-acknowledge
+#     [SUBSTRATE-NEW] `octo agent unpublish` is NOT wired (see §18 step
+#     7 note). Marketplace publish + unpublish are deferred per-extension
+#     Layer D. Workaround: skip; tearing down via steps 13 + 14 below
+#     (`detach` + `destroy`) is sufficient to remove the agent from the
+#     discoverable `octo agent list` view.
 
 # 13. Detach the agent from the runtime.
 octo agent detach --agent-id <agent-id-uuid> --confirm --confirm-acknowledge
@@ -851,14 +882,18 @@ AUDIT_WINDOW_SECS=86400  # 1 day
 
 ```bash
 # 2. Mint the capability (substrate: octo_cap_macaroon::mint).
+#    Substrate-faithful: CapabilityAction::Mint shape is --caveats + --holder
+#    + --root + --confirm + --confirm-acknowledge.
 octo capability mint \
-    --scope "agent.spend.vault=$VAULT_ID" \
-    --holder-did "$BUYER_DID" \
-    --audit-window-secs "$AUDIT_WINDOW_SECS" \
-    --mode dev \
-    --allow-write
+    --root "$(octo whoami | jq -r .pubkey_hex)" \
+    --holder "$BUYER_DID" \
+    --caveats '[
+        {"Kind":"AuditWindow","duration_secs":'"$AUDIT_WINDOW_SECS"'},
+        {"Kind":"Permission","scope":"agent.spend.vault='"$VAULT_ID"'"}
+    ]' \
+    --confirm --confirm-acknowledge
 
-# Returns: { capability_id: <cap-id-hex>, caveats: [{ kind: AuditWindow, duration_secs: 86400 }, ...] }
+# Returns: { capability_id: <cap-id-hex>, caveats: [{ kind: AuditWindow, duration_secs: <n> }, ...] }
 ```
 
 ### Publish + discover + acquire
@@ -866,21 +901,24 @@ octo capability mint \
 ```bash
 # 3. Publish the capability listing (capability marketplace is part of
 # the capability substrate; the listing binds a capability to a price + recipient slot).
-octo capability publish \
-    --capability-id <cap-id-hex> \
-    --price-octd-micros 50000 \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo capability publish` is NOT wired — CapabilityAction has
+#    ONLY List | Mint | Attenuate. Capability marketplace listing is substrate-side
+#    (`octo_cap_macaroon::marketplace::Listing::publish`). Workaround:
+cargo run -p octo-cap-macaroon --bin marketplace-publish -- \
+    --cap-id <cap-id-hex> \
+    --price-octd-micros 50000
 
 # 4. Buyer discovers the listing.
-octo capability search \
-    --scope "agent.spend.vault=$VAULT_ID" \
-    --max-price-octd-micros 100000 \
-    --json
+#    [SUBSTRATE-NEW] `octo capability search` is NOT wired. Substrate-faithful
+#    alternative: enumerate via `octo capability list --json` and jq-filter on
+#    the Caveat::Permission scope:
+octo capability list --json | jq '.[] | select(.caveats[]? | .kind == "Permission" and .scope | contains("'"$VAULT_ID"'"))'
 
 # 5. Buyer acquires the listing (capability is transferred to the buyer's holder).
-octo capability acquire \
-    --listing-id <listing-id-hex> \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo capability acquire` is NOT wired. Substrate-side
+#    acquisition: cargo run marketplace-acquire with the listing id.
+cargo run -p octo-cap-macaroon --bin marketplace-acquire -- \
+    --listing-id <listing-id-hex>
 ```
 
 ### Redeem
@@ -1288,16 +1326,24 @@ End-to-end shutdown. Mirrors the reverse of §3-§14 to leave the operator envir
 
 ```bash
 # 1. Unpublish all agents.
-octo agent unpublish --all --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo agent unpublish` is NOT wired in AgentAction (Create |
+#    List | Run | Attach | Destroy | RevokeAttach). Unpublish is substrate-side:
+#    iterate agent list and call destroy (terminal lifecycle):
+octo agent list --json | jq -r '.[].agent_id' | while read -r agent_id; do
+    octo agent destroy --agent-id "$agent_id" --reason "tear-down" --confirm --confirm-acknowledge
+done
 
 # 2. Destroy all agents.
 for agent_id in $(octo agent list --json | jq -r '.[].agent_id'); do
-    octo agent destroy --agent-id "$agent_id" --confirm --confirm-acknowledge
+    octo agent destroy --agent-id "$agent_id" --reason "tear-down" --confirm --confirm-acknowledge
 done
 
 # 3. Revoke all capabilities.
+#    [SUBSTRATE-NEW] `octo capability revoke` is NOT wired — CapabilityAction has
+#    ONLY List | Mint | Attenuate. Capability revocation is substrate-side
+#    (`octo_cap_macaroon::CapabilityStore::revoke`). Workaround:
 for cap_id in $(octo capability list --json | jq -r '.[].capability_id'); do
-    octo capability revoke --capability-id "$cap_id" --confirm --confirm-acknowledge
+    cargo run -p octo-cap-macaroon --bin revoke -- --cap-id "$cap_id"
 done
 
 # 4. Freeze all vaults (substrate: VaultState::Frozen; no transfers in or out).
@@ -1306,8 +1352,12 @@ for vault_id in $(octo vault list --json | jq -r '.[].vault_id'); do
 done
 
 # 5. Remove all mesh peers.
+#    [SUBSTRATE-NEW] `octo network peers remove` is NOT wired. PeersAction
+#    is List + Get only per crates/octo-cli/src/commands/network.rs.
+#    Workaround:
 for peer_id in $(octo network peers list --json | jq -r '.[].peer_id_hex'); do
-    octo network peers remove --peer-id-hex "$peer_id" --confirm --confirm-acknowledge
+    cargo run -p octo-network --bin mesh-peer-remove -- \
+        --peer-id-hex "$peer_id"
 done
 
 # 6. Deregister all providers.
@@ -1723,7 +1773,7 @@ octo audit list --limit 200 --json | jq '.count_returned'
 
 # 17. Confirm the substrate cache + federation subscriptions are warm.
 octo reputation show --json --role builder
-octo network gossip --stats --format ascii
+octo network gossip stats --format ascii
 ```
 
 ### Tear down
@@ -2770,7 +2820,7 @@ rm -rf "$OCTO_HOME"
 
 **Cross-ref:** `docs/06-operations/bootstrap-slash-evidence-runbook.md` (operator-facing companion to the developer guide). Slash reasons live in RFC-0855p-b §B (e.g., 0x000D = `bootstrap_node_misbehavior`).
 
-> **Substrate-coverage note:** The current `NetworkSlashAction` enum has variants `Excluded | Stats | List | Show` only (per RFC-0011-c §Substrate-Additions). `slash defend` and `governance appeal` are not yet wired to the CLI dispatcher; the substrate governance-appeal substrate lives behind `octo governance vote` + a follow-on appeal envelope. `slash defend` lands via a future RFC amendment (slot 89 REUSE pattern).
+> **Substrate-coverage note:** The current `NetworkSlashAction` enum has variants `List | Show` only (per RFC-0011-c §Substrate-Additions). `octo network slash list` + `octo network slash show <slash-id-hex>` are the wired surface. `slash defend` and `governance appeal` are not yet wired to the CLI dispatcher; the substrate governance-appeal substrate lives behind `octo governance vote` + a follow-on appeal envelope. `slash defend` lands via a future RFC amendment (slot 89 REUSE pattern).
 
 ### Prerequisites
 
@@ -3039,9 +3089,10 @@ octo capability mint \
 #    capability bound at attach time.
 quota-router-cli route \
     --prompt /tmp/private-prompt.txt \
-    --provider <provider-peer-id-hex> \
-    --json
-# Substrate: quota-router-core RouteArgs (provider + prompt only) per RFC-0870 §Router CLI.
+    --provider <provider-peer-id-hex>
+# Substrate: quota-router-core RouteArgs (provider + prompt only) per
+# RFC-0870 §Router CLI. NO `--json` flag on Route variant — substrate writes
+# plain stdout; pipe through `tee` / `jq` if JSON shape is needed.
 # Privacy: the prompt content stays between operator and provider; relay peers
 # see only the encrypted mesh envelope.
 ```
@@ -3051,11 +3102,21 @@ quota-router-cli route \
 ```bash
 # 4. Confirm the recipient decrypted the capability (buyer decrypts and presents
 #    the plaintext at verify time).
-octo capability show <cap-id-hex> --json | jq '.holder_did'
+#    [SUBSTRATE-NEW] `octo capability show` is NOT wired — CapabilityAction
+#    is List | Mint | Attenuate only per
+#    crates/octo-cli/src/commands/capability.rs. Workaround: query holder
+#    via the substrate capability-store API:
+cargo run -p octo-cap-macaroon --bin show-cap -- \
+    --cap-id <cap-id-hex> --json | jq '.holder_did'
 
 # 5. Audit trail (encrypted events are auditable as ciphertexts only).
 octo audit list --kind capability-mint --limit 1 --json
-octo audit list --kind vault-transfer --filter-holder-did "$BUYER_DID" --limit 1 --json
+#    [SUBSTRATE-NEW] `--filter-holder-did` is NOT wired on AuditListArgs
+#    (substrate flags are --since / --until / --capability-root / --model /
+#    --router-id / --status / --include-reject / --limit / --cursor). Use
+#    the §17.0 jq-filter pattern (subject_did startswith canonical prefix):
+octo audit list --limit 100 --json \
+    | jq --arg d "$BUYER_DID" '.receipts[] | select(.subject_did == $d)'
 ```
 
 ### Tear down
@@ -3161,7 +3222,7 @@ done
 
 **New operator scenario.** Cross-cuts §22 (backup + restore) + §18 (operator onboarding) + §7 (vault recovery) + §11 (reputation recovery from gossip).
 
-> **Substrate-coverage note:** The current `ReputationAction` enum has `Show` only (per RFC-0011-r §Substrate-Additions). `octo reputation gossip refresh` is NOT yet wired in ReputationAction; gossip refresh is per-extension Layer D adapter. Peer-table writes are via `octo mesh peer add` (NOT `octo network peers add`). Ledger verification is via `Database::execute_checked` + `tracker::ensure_tracker_table` (NOT `Database::verify_schema`, which is the substrate-pre-`execute_checked` API). Mode-gate discipline: `octo network bootstrap` is mutating but its `BootstrapArgs` shape is substrate-managed (only `--json` per RFC-0011-h row 97) — no CLI-side confirmation flags. Mode gating is dispatch-side; in ci/dev, pass `--allow-write`.
+> **Substrate-coverage note:** The current `ReputationAction` enum has `Show` only (per RFC-0011-r §Substrate-Additions). `octo reputation gossip refresh` is NOT yet wired in ReputationAction; gossip refresh is per-extension Layer D adapter. Peer-table writes use `octo network mesh peer add` against the `NetworkAction::Mesh(MeshAction::PeerAdd)` arm (PeersAction is List + Get only; mesh peer add lives on the MeshAction dispatch path). Ledger verification is via `Database::execute_checked` + `tracker::ensure_tracker_table` (NOT `Database::verify_schema`, which is the substrate-pre-`execute_checked` API). Mode-gate discipline: `octo network bootstrap` is mutating but its `BootstrapArgs` shape is substrate-managed (only `--json` per RFC-0011-h row 97) — no CLI-side confirmation flags. Mode gating is dispatch-side; in ci/dev, pass `--allow-write`.
 
 ### Prerequisites
 

@@ -211,8 +211,12 @@ ls -la "$OCTO_HOME"
 # Expected: directory exists, empty (or only data/ subdir).
 
 # 2. Probe bootstrap reachability (read-only).
-octo network bootstrap --mode default
-# --mode default = Mode A bootstrap nodes.
+#    Substrate-faithful: BootstrapArgs has only --json per
+#    crates/octo-cli/src/commands/network.rs. There is NO --mode flag.
+#    Persist a bootstrap transport mode via:
+#      octo network mode set --bootstrap-mode default --confirm --confirm-acknowledge
+#    (NetworkModeAction has Show + Set per the same source.)
+octo network bootstrap --json
 ```
 
 ### Register
@@ -339,9 +343,18 @@ octo whoami
 octo identity rotate
 
 # 6. Bind a public role / node class to the identity (cross-cutting).
-# See RFC-0011-d for the role taxonomy; NodeClass mirrors role surface.
-octo role bind \
+#    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
+#    RoleAction has ONLY List + Show + Select per
+#    crates/octo-cli/src/commands/role.rs (no Bind variant). The substrate
+#    node-binding path is the SpecializedNodeRecord dispatch (per
+#    RFC-0011-q §Substrate-Additions): wire node-class to holder-DID via
+#    the network CLI after the identity is set active.
+#    Substrate-faithful path:
+octo network node bind \
+    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    --holder-did "$NEW_DID" \
     --node-class Builder \
+    --apply \
     --confirm --confirm-acknowledge
 ```
 
@@ -485,8 +498,8 @@ SCOPE="vault.transfer.<vault-id-hex>"
 octo capability mint \
     --holder "$TARGET_DID" \
     --caveats '[
-        {"Kind":"AuditWindow","duration_secs":3600},
-        {"Kind":"Permission","scope":"'"$SCOPE"'"}
+        {"type":"audit_window","value":{"duration_secs":3600}},
+        {"type":"permission","value":{"scope":"'"$SCOPE"'"}}
     ]' \
     --confirm --confirm-acknowledge
 ```
@@ -500,7 +513,7 @@ The `AuditWindow { duration_secs }` caveat attaches the audit window. The substr
 #    Substrate-faithful: CapabilityAction::Attenuate takes positional <cap_id> + --caveats
 #    + --confirm + --confirm-acknowledge.
 octo capability attenuate <cap-id-hex> \
-    --caveats '[{"Kind":"AmountMax","max_micros":1000000}]' \
+    --caveats '[{"type":"amount_max","value":"1.000000"}]' \
     --confirm --confirm-acknowledge
 
 # 4. Verify the capability at the receiver.
@@ -551,9 +564,15 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 #    bound to the capability substrate's holder-rotation pathway: rotate
 #    the active identity (Section 4 step 9), which cascades revocation
 #    through the holder-DID linkage in CapabilitySummaryView.
-#    `octo capability mint --root <root-cap-id>` can also issue a
-#    replacement token that supersedes an outstanding child token, since
-#    substrate enforces `set_subsumes` on attenuation.
+#    A replacement-cap pattern can also supersede an outstanding child
+#    token: a fresh `octo capability mint --root <parent-cap-id-hex>`
+#    creates a child whose root is the same parent; the substrate
+#    enforces `set_subsumes` on attenuation, so the new child carries
+#    the parent's authority. Pass --holder <DID> + --caveats <JSON> for
+#    a non-root mint; omit --root for a root-capability mint (parent
+#    is the holder's identity). Note: this is NOT the same as revoking
+#    the prior child — only the holder rotation is substrate-faithful
+#    revocation.
 ```
 
 ---
@@ -709,83 +728,78 @@ export QUOTA_ROUTER_BIN="$PWD/target/release/quota-router-cli"
 
 ```bash
 # 2. Configure local upstream providers (your API keys never leave the machine).
-$QUOTA_ROUTER_BIN upstream add \
-    --label openai-prod \
-    --endpoint https://api.openai.com/v1 \
-    --api-key-env OPENAI_API_KEY \
-    --allow-write
+#    [SUBSTRATE-NEW] The `quota-router-cli` Commands enum has only
+#    Init | AddProvider | Balance | List | Proxy | Route | Serve |
+#    ReputationShow per crates/quota-router-cli/src/cli.rs (no `upstream`
+#    / `market {list,listings,search,buy,delist}` / `policy {show}`).
+#    Substrate-faithful local-provider registration:
+$QUOTA_ROUTER_BIN init
+$QUOTA_ROUTER_BIN add-provider openai-prod
+$QUOTA_ROUTER_BIN add-provider anthropic-prod
 
-# 3. Add a second upstream for redundancy.
-$QUOTA_ROUTER_BIN upstream add \
-    --label anthropic-prod \
-    --endpoint https://api.anthropic.com/v1 \
-    --api-key-env ANTHROPIC_API_KEY \
-    --allow-write
-
-# 4. List configured upstreams.
-$QUOTA_ROUTER_BIN upstream list --json
+# 3. Check the router's OCTO-W balance.
+$QUOTA_ROUTER_BIN balance
 ```
 
 ### Operate — local routing
 
 ```bash
-# 5. Route a prompt to the lowest-latency upstream.
+# 4. Route a prompt to a registered provider. The substrate-faithful
+#    Route subcommand accepts --provider <name> + --prompt <text> ONLY
+#    (no --budget-dqa-micros / --routing-mode — per-call budget is
+#    enforced by the bound capability's Caveat::AmountMax, not by a
+#    per-call flag):
 $QUOTA_ROUTER_BIN route \
-    --prompt "Summarise the CipherOcto whitepaper" \
-    --budget-dqa-micros 100 \
-    --json
-# Returns the routed provider + response + cost in Dqa.
-
-# 6. Inspect routing policy.
-$QUOTA_ROUTER_BIN policy show --json
+    --provider openai-prod \
+    --prompt "Summarise the CipherOcto whitepaper"
+# Returns: routed provider + response text.
 ```
 
 ### Operate — marketplace listing
 
 ```bash
-# 7. List the local spare quota on the marketplace.
-# Each prompt costs 1 OCTO-W on the listing.
-$QUOTA_ROUTER_BIN market list \
-    --label openai-prod \
-    --spare-prompts 1000 \
-    --price-octw 1 \
-    --allow-write
-
-# 8. Show your marketplace listings.
-$QUOTA_ROUTER_BIN market listings --json
+# 5. Publish a quota offering on the marketplace.
+#    Substrate-faithful: `List { --prompts <N> --price <N> }` is the
+#    marketplace listing registration (NO `market list` / separate
+#    publish subcommand).
+$QUOTA_ROUTER_BIN list --prompts 1000 --price 1
 ```
 
 ### Operate — consume from marketplace
 
 ```bash
-# 9. Discover listings (peer queries the marketplace substrate).
-$QUOTA_ROUTER_BIN market search --min-prompts 100 --json
-
-# 10. Buy a listing (spend OCTO-W; receipts flow through settlement substrate).
-$QUOTA_ROUTER_BIN market buy \
-    --listing-id <listing-id-hex> \
-    --prompts 500 \
-    --confirm --confirm-acknowledge
+# 6. Discover a marketplace seller's reputation (the substrate-faithful
+#    discovery surface). Reads the persisted RFC-0968 aggregate for a
+#    peer DID (W3C `did:octo:z<base58btc>` 53-54 chars or legacy
+#    `did:octo:b<52>` 62 chars during the deprecation window).
+#    [SUBSTRATE-NEW] `quota-router-cli` does NOT have a `market search`
+#    / `market buy` / `market delist` subcommand today — discovery, buy,
+#    and delist surfaces land in the marketplace Layer D adapter crate
+#    (per-extension crate pattern; out of scope for this operator guide).
+$QUOTA_ROUTER_BIN reputation-show \
+    --did did:octo:b<52-zs> \
+    --backend memory
 ```
 
 ### Verify
 
 ```bash
-# 11. Confirm your balance reflects the transaction.
-$QUOTA_ROUTER_BIN balance --json
+# 7. Confirm your balance reflects the transaction.
+$QUOTA_ROUTER_BIN balance
 
-# 12. Audit trail (quota-marketplace buy/sell events).
+# 8. Audit trail (quota-marketplace buy/sell events).
 octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:quota:"))]'
 ```
 
 ### Tear down
 
 ```bash
-# 13. Delist the marketplace entry.
-$QUOTA_ROUTER_BIN market delist --listing-id <listing-id-hex> --confirm --confirm-acknowledge
-
-# 14. Remove the upstream (keys stay in your env; the router just forgets the policy).
-$QUOTA_ROUTER_BIN upstream remove --label openai-prod --confirm --confirm-acknowledge
+# 9. There is no CLI tear-down path for a published quota listing today
+#    — `quota-router-cli` exposes only the Init / AddProvider / Balance /
+#    List / Proxy / Route / Serve / ReputationShow surface (Step 5 above
+#    documents the gap). Marketplace delist lands in the Layer D adapter.
+#    The CLI daemon (if running) is stopped via the standard serve-mode
+#    SIGTERM handler (see §22 step 6 backup rotation teardown).
 ```
 
 ---
@@ -956,8 +970,8 @@ AUDIT_WINDOW_SECS=86400  # 1 day
 octo capability mint \
     --holder "$BUYER_DID" \
     --caveats '[
-        {"Kind":"AuditWindow","duration_secs":'"$AUDIT_WINDOW_SECS"'},
-        {"Kind":"Permission","scope":"agent.spend.vault='"$VAULT_ID"'"}
+        {"type":"audit_window","value":{"duration_secs":'"$AUDIT_WINDOW_SECS"'}},
+        {"type":"permission","value":{"scope":"agent.spend.vault='"$VAULT_ID"'"}}
     ]' \
     --confirm --confirm-acknowledge
 
@@ -980,7 +994,7 @@ octo capability mint \
 #    alternative: enumerate via `octo capability list --json` (envelope
 #    shape: .capabilities[]) and jq-filter on the Caveat::Permission scope:
 octo capability list --json | \
-    jq '[.capabilities[] | select(.caveats[]? | .Kind == "Permission" and .scope | contains("'"$VAULT_ID"'")))]'
+    jq '[.capabilities[] | select(.caveats[]? | .type == "permission" and .value.scope | contains("'"$VAULT_ID"'")))]'
 
 # 5. Buyer acquires the listing (capability is transferred to the buyer's
 #    holder).
@@ -1040,10 +1054,14 @@ octo reputation show --did "$BUYER_DID" --role builder
 ### Tear down
 
 ```bash
-# 11. Revoke the capability (substrate: octo_cap_macaroon::revoke).
-octo capability revoke \
-    --capability-id <cap-id-hex> \
-    --confirm --confirm-acknowledge
+# 11. Revoke the capability.
+#    [SUBSTRATE-NEW] `octo capability revoke` is NOT wired — CapabilityAction
+#    has ONLY List + Mint + Attenuate per
+#    crates/octo-cli/src/commands/capability.rs. The substrate-faithful
+#    revocation path is the holder-rotation cascade: rotate the active
+#    identity (see §4 step 9), which propagates revocation through the
+#    holder-DID linkage in CapabilitySummaryView. NO `--capability-id`
+#    flag exists; there is no `--confirm` translation to wire either.
 # Revocation propagates across CLI processes only when the
 # Stoolap-backed Layer D adapter is enabled (see §4 step 10).
 ```
@@ -1220,7 +1238,13 @@ octo governance snapshot --json
 
 ```bash
 # 2. Inspect a specific proposal.
-octo governance show --proposal-id <proposal-id-hex> --json
+#    [SUBSTRATE-NEW] `octo governance show --proposal-id` is NOT wired —
+#    GovernanceAction has ONLY Snapshot + Attest + Vote per
+#    crates/octo-cli/src/commands/governance.rs. Substrate-faithful path:
+#    snapshot the governance substrate, then filter the proposal in jq.
+PROPOSAL_ID_HEX="<proposal-id-hex>"
+octo governance snapshot --chain-id "$CHAIN_ID" --proposal-state active --json \
+    | jq --arg id "$PROPOSAL_ID_HEX" '.proposals[] | select(.id_hex == $id)'
 ```
 
 ### Operate
@@ -1257,7 +1281,7 @@ octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposa
 ```bash
 # 6. Re-take the snapshot (cache TTL 600s).
 octo governance snapshot --json
-octo governance snapshot --force --json  # bypass TTL
+octo governance snapshot --force-refresh --json  # bypass TTL
 
 # 7. Network-side rotation status (RFC-0011-w paired amendment).
 octo network governance rotation status --json
@@ -1302,9 +1326,14 @@ octo network coordinator show --json
 
 ```bash
 # 1. Bind a node class to your identity (one of: Builder | Provider | Storage | Bandwidth | Orchestrator).
-#    Mirrors the role taxonomy per RFC-0011-d; additive type per [extension over enumeration](..).
-octo role bind \
+#    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
+#    RoleAction has ONLY List + Show + Select. Substrate-faithful path is
+#    the SpecializedNodeRecord dispatch (RFC-0011-q §Substrate-Additions):
+octo network node bind \
+    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    --holder-did "$ACTIVE_DID" \
     --node-class Provider \
+    --apply \
     --confirm --confirm-acknowledge
 ```
 
@@ -1686,7 +1715,7 @@ The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register �
 
 Cause: `octo whoami` resolved no identity in the wallet.
 
-Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. The substrate-faithful wallet binary exposes ONLY `Init | DeriveCap | Vault` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`).
+Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. The substrate-faithful wallet binary exposes ONLY `Init | DeriveCap | Vault` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
 
 ### `OctoCliError::ConfirmationRequired { command }`
 
@@ -1829,11 +1858,15 @@ octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/operator-
 octo role select operator-main
 
 # 7. Bind your primary role / NodeClass.
-# NOTE: `octo role bind` is a planned follow-on command (per RFC-0011-d NodeClass pairing).
-# The substrate today only exposes octo role {list, show, select}; for now the active
-# identity's role surface is implicit in the identity-create step (see §4 step 2b).
-# When the `bind` command lands, replace this step with:
-#   octo role bind --node-class Operator --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
+#    RoleAction has ONLY List + Show + Select. The substrate-faithful
+#    SpecializedNodeRecord binding path is via the network CLI:
+octo network node bind \
+    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    --holder-did "$ACTIVE_DID" \
+    --node-class Operator \
+    --apply \
+    --confirm --confirm-acknowledge
 
 # 8. Backup the mnemonic + identity keys (offline; encrypted at rest).
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
@@ -2633,8 +2666,8 @@ octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposa
 #    Substrate-faithful alternative: bind a voter capability with
 #    Caveat::AmountMax + Caveat::AuditWindow (RFC-0011-e §Caveats).
 octo capability mint \
-    --caveats "amount-max:100000000 audit-window-secs:86400" \
-    --holder did:octo:z<voter-did-base58btc> \
+    --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
+    --holder "$VOTER_DID" \
     --root <root-cap-id-hex> \
     --confirm --confirm-acknowledge
 # Substrate: CapabilityAction::Mint per RFC-0011-e §Subcommand Taxonomy.
@@ -3099,7 +3132,7 @@ octo --mode dev --allow-write agent run \
 #    caveats expression per crate substrate).
 octo --mode dev --allow-write capability mint \
     --holder "$REMOTE_AGENT_DID" \
-    --caveats '{"AmountMax":"1.000000","Permission":"VaultMutation","Vault":"<vault-id-hex>","AuditWindow":{"duration_secs":3600}}' \
+    --caveats '{"type":"amount_max","value":"1.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":3600}}' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 
@@ -3189,7 +3222,7 @@ octo audit show <receipt-id-u64> --json
 #    privacy primitive is Caveat::AmountMax + Caveat::Provider scope filter.
 octo capability mint \
     --holder "$BUYER_DID" \
-    --caveats '{"AmountMax":"100.000000","Provider":["<provider-peer-id-hex>"],"Permission":"VaultMutation","Vault":"<vault-id-hex>","AuditWindow":{"duration_secs":86400}}' \
+    --caveats '{"type":"amount_max","value":"100.000000"},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}}' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 # Substrate: Caveat::AmountMax { amount } + Caveat::Provider { peer_ids } +
@@ -3207,7 +3240,7 @@ octo capability mint \
 #    inside the `--caveats` JSON expression.
 octo capability mint \
     --holder "$BUYER_DID" \
-    --caveats '{"AmountMax":"500.000000","Permission":"VaultMutation","Vault":"<vault-id-hex>","AuditWindow":{"duration_secs":86400},"Sharded":{"shard_id":0}}' \
+    --caveats '{"type":"amount_max","value":"500.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 # Substrate: Caveat::AmountMax + Caveat::Permission::VaultMutation +

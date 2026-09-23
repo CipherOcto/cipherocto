@@ -535,7 +535,7 @@ octo capability list --json \
         '.capabilities[] | select(.cap_id == $c)'
 
 # 7. Cross-check via audit trail (capability mint is an auditable event).
-octo audit list --kind capability-mint --limit 50
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
 ```
 
 ### Tear down
@@ -604,10 +604,10 @@ octo vault list --json
 
 ```bash
 # 5. Project balance (substrate canonical 7-param signature).
-octo vault balance \
-    --chain-id "$CHAIN_ID" \
-    --asset-id "$ASSET_ID" \
-    --json
+#    Substrate-faithful: VaultAction::Balance takes POSITIONAL `<vault-id>`
+#    per crates/octo-cli/src/commands/vault.rs (NO --chain-id, NO --asset-id,
+#    NO --vault-id flags; chain + asset are derived from the vault record).
+octo vault balance "$VAULT_ID" --json
 # Returns VaultBalanceProjection { chain_id, vault_id, asset_id, projected_balance: Dqa,
 #                                 projected_at_unix_seconds, registry_snapshot_epoch,
 #                                 source_kind: ProjectionSource }
@@ -616,18 +616,24 @@ octo vault balance \
 # 6. Initiate a transfer (substrate: initiate_transfer).
 # Pre-flight checks (CLI-side, NOT substrate): chain-affinity, balance-sufficient-source,
 # owner-authorized, vault-state-active, recipient-existence.
+# Substrate-faithful: VaultAction::Transfer shape is --from + --to + --amount + --asset
+# (long flags, all REQUIRED) per crates/octo-cli/src/commands/vault.rs:149-180.
+# --amount takes DQA canonical-form decimal string per RFC-0960-v36 §Wire Form
+# (NOT micro-integer; convert with `dfp scale --from micros` or compute manually).
 octo vault transfer \
-    --dest-vault-id <dest-vault-id-hex> \
-    --amount-dqa-micros 1000000 \
-    --asset-id "$ASSET_ID" \
+    --from "$SOURCE_VAULT_ID" \
+    --to "$DEST_VAULT_ID" \
+    --amount "1.000000" \
+    --asset "$ASSET_SYMBOL" \
     --dry-run
 # Dry-run prints the canonical envelope (handle_id + nonce + status); no signing, no broadcast.
 
 # 7. Re-run for real (production: HSM signs; dev: InMemorySigner).
 octo vault transfer \
-    --dest-vault-id <dest-vault-id-hex> \
-    --amount-dqa-micros 1000000 \
-    --asset-id "$ASSET_ID" \
+    --from "$SOURCE_VAULT_ID" \
+    --to "$DEST_VAULT_ID" \
+    --amount "1.000000" \
+    --asset "$ASSET_SYMBOL" \
     --confirm --confirm-acknowledge
 ```
 
@@ -637,11 +643,19 @@ Replay defense: the chain adapter is responsible for `TransferEventLog::insert` 
 
 ```bash
 # 8. Re-project balance (source should reflect debit; dest should reflect credit).
-octo vault balance --chain-id "$CHAIN_ID" --asset-id "$ASSET_ID"
+#    Substrate-faithful: positional <vault-id> (matches step 5).
+octo vault balance "$SOURCE_VAULT_ID" --json
+octo vault balance "$DEST_VAULT_ID" --json
 
 # 9. Audit trail (settlement substrate emits a receipt).
-octo audit list --kind vault-transfer --limit 10
-octo audit show --receipt-id <receipt-id-u64>
+#    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (only --since / --until
+#    / --capability-root / --model / --router-id / --status / --include-reject
+#    / --limit / --cursor / --json per crates/octo-cli/src/commands/audit.rs:66-170).
+#    AuditListOutput envelope is `.receipts[]` with `subject_did` (NOT `kind`).
+#    Substrate-faithful filter for vault-transfer events:
+octo audit list --limit 10 --json | \
+    jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault-transfer:"))]'
+octo audit show <receipt-id-u64>
 ```
 
 ### Tear down
@@ -659,9 +673,9 @@ octo audit show --receipt-id <receipt-id-u64>
 #     [SUBSTRATE-NEW] `octo vault destroy` is NOT wired — VaultAction
 #     has ONLY List + Balance + Transfer. Vault destruction is
 #     substrate-level (`octo_vault::destroy_vault`); for a CLI-bound
-#     path, drain all balances via `octo vault transfer --amount-dqa-micros`
-#     matching the existing balance, then revoke the holder identity
-#     (Section 4 step 9).
+#     path, drain all balances via `octo vault transfer --amount "1.000000"
+#     --asset "$ASSET_SYMBOL"` (substrate-faithful form) matching the existing
+#     balance, then revoke the holder identity (Section 4 step 9).
 ```
 
 ---
@@ -761,7 +775,7 @@ $QUOTA_ROUTER_BIN market buy \
 $QUOTA_ROUTER_BIN balance --json
 
 # 12. Audit trail (quota-marketplace buy/sell events).
-octo audit list --kind quota-marketplace-trade --limit 20
+octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:quota:"))]'
 ```
 
 ### Tear down
@@ -878,7 +892,7 @@ octo agent run \
 
 ```bash
 # 10. Audit trail (every execution emits an audit event).
-octo audit list --kind agent-execution --limit 50
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
 octo audit show --receipt-id <receipt-id-u64>
 
 # 11. Reputation snapshot (the developer earned +X from your execution).
@@ -990,10 +1004,15 @@ octo agent attach \
 # Substrate: octo_cap_macaroon::verify_full + octo_runtime::attach. Fails-closed on unknown caveat.
 
 # 7. Agent spends against the vault (reservations substrate per RFC-0965).
+#    Substrate-faithful: AgentAction::Run shape is --agent-id + --detach +
+#    --reason + --token-file per crates/octo-cli/src/commands/agent.rs (NO
+#    --vault-id flag). Vault spending authority is granted via the attached
+#    capability (see step 6 --capability-id above; the caveat chain encodes
+#    vault-binding). If persistence across the CLI exit is needed, add
+#    --detach (which makes --token-file available for cross-process re-entry).
 octo agent run \
     --agent-id "$AGENT_ID" \
     --input /tmp/task.json \
-    --vault-id "$VAULT_ID" \
     --json
 ```
 
@@ -1001,12 +1020,18 @@ octo agent run \
 
 ```bash
 # 8. Capability audit trail.
-octo audit list --kind capability-mint --limit 1
-octo audit list --kind capability-acquire --limit 1
-octo audit list --kind capability-redeem --limit 1
+#    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (see §17.0 substrate-shape
+#    note). Substrate-faithful jq-filter (envelope `.receipts[]` + `subject_did`):
+octo audit list --limit 1 --json | \
+    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:mint:"))]'
+octo audit list --limit 1 --json | \
+    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:acquire:"))]'
+octo audit list --limit 1 --json | \
+    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:redeem:"))]'
 
 # 9. Vault balance post-spend (should reflect the reservation).
-octo vault balance --vault-id "$VAULT_ID" --json
+#    Substrate-faithful: positional <vault-id> (no --vault-id flag).
+octo vault balance "$VAULT_ID" --json
 
 # 10. Agent reputation post-execution.
 octo reputation show --did "$BUYER_DID" --role builder
@@ -1087,7 +1112,7 @@ octo reputation show --did did:octo:0x<104-hex> --role builder
 
 ```bash
 # 7. Audit trail (attestations + votes are auditable).
-octo audit list --kind reputation-attest --limit 50
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
 
 # 8. Cross-check via the trust-graph render (peers with high reputation have higher trust edges).
 octo network trust-graph render --format ascii --depth 3
@@ -1124,10 +1149,10 @@ octo audit list --limit 100 --json
 
 ```bash
 # 2. (Optional) Filter by event kind.
-octo audit list --kind vault-transfer --limit 20 --json
-octo audit list --kind agent-execution --limit 20 --json
-octo audit list --kind capability-mint --limit 20 --json
-octo audit list --kind reputation-attest --limit 20 --json
+octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'
+octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
+octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
 ```
 
 ### Operate
@@ -1361,7 +1386,7 @@ octo network heartbeat probe did:octo:0x<104-hex> --timeout-ms 5000
 
 # 10. Reputation + audit trail for provider revenue.
 octo reputation show --did did:octo:0x<104-hex> --role builder
-octo audit list --kind provider-earning --limit 50
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:provider:"))]'
 ```
 
 ### Tear down
@@ -1407,8 +1432,15 @@ done
 #    read path remains available for verification after each revoke.
 
 # 4. Freeze all vaults (substrate: VaultState::Frozen; no transfers in or out).
+#    [SUBSTRATE-NEW] `octo vault freeze` is NOT wired — VaultAction has
+#    ONLY List + Balance + Transfer per `crates/octo-cli/src/commands/vault.rs:87`.
+#    VaultState::Freeze is a substrate-level operation; the only
+#    substrate-faithful in-CLI path is to halt the vault daemon or revoke
+#    the holder identity (Section 4 step 9) which freezes all vaults bound
+#    to that identity via the holder-DID linkage. See §7 step 10 for the
+#    same SUBSTRATE-NEW note.
 for vault_id in $(octo vault list --json | jq -r '.vaults[].vault_id'); do
-    octo vault freeze --vault-id "$vault_id" --confirm --confirm-acknowledge
+    echo "vault $vault_id: substrate-new; revoke holder identity or halt vault daemon"
 done
 
 # 5. Remove all mesh peers.
@@ -1579,7 +1611,7 @@ The substrate `AuditEventKind` enum has variants `Insert | Revoke | Sync | Agent
 octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:<event-kind-tag>"))'
 ```
 
-§18-§32 below may reference `octo audit list --kind <X>` as documentation of the OPERATOR INTENT (the kind being sought); this is shorthand for the jq-filter above. Where the doc explicitly cites a kind, the substrate-faithful translation is:
+§18-§32 below references the substrate-faithful jq-filter form directly. The shorthand `--kind <X>` is NOT a real flag on `AuditListArgs` (per `crates/octo-cli/src/commands/audit.rs:66-127`) and would fail clap with "unexpected argument"; the substrate-faithful translation table follows:
 
 | Operator intent (shorthand)         | Substrate-faithful jq filter (on `AuditListOutput.receipts[]`) |
 | ----------------------------------- | -------------------------------------------------------------- |
@@ -1708,7 +1740,7 @@ Fix: check the Stoolap adapter health; rebuild from the source-of-truth if the L
 
 Cause: chain rejection, IO error, or substrate validation failure.
 
-Fix: check `octo audit list --kind vault-transfer --limit 1` for the failure reason; replay with `--dry-run` to isolate substrate vs. chain-adapter.
+Fix: check `octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'` for the failure reason; replay with `--dry-run` to isolate substrate vs. chain-adapter.
 
 ### `EnvelopeMeta::None`
 
@@ -2069,7 +2101,7 @@ ls -la "$CIPHEROCTO_DATA_DIR/"
 # Expected: revocation.stoolap + per-crate ledger files (reputation.stoolap, vault.stoolap).
 
 # 10. Audit trail proves cross-process propagation worked.
-octo audit list --kind revocation --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:revoke:"))]'
 ```
 
 ### Tear down
@@ -2185,7 +2217,7 @@ octo network heartbeat probe did:octo:z<whatsapp> --timeout-ms 5000
 octo network heartbeat probe did:octo:z<matrix> --timeout-ms 5000
 
 # 12. Audit trail — every adapter event is auditable.
-octo audit list --kind adapter-event --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
 ```
 
 ### Tear down
@@ -2440,7 +2472,7 @@ octo reputation show --json --role builder
 #    substrate layer.
 
 # 10. Audit trail for migration events.
-octo audit list --kind substrate-migration --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:migrate:"))]'
 ```
 
 ### Tear down
@@ -2554,7 +2586,7 @@ octo network slash-bridge list --json
 # (NOT propagated_at_unix / target_peer_id_hex — those names are pre-substrate-faithful).
 
 # 7. Audit trail (bridge events are auditable).
-octo audit list --kind bridge-propagation --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:bridge:"))]'
 ```
 
 ### Tear down
@@ -2636,7 +2668,11 @@ octo governance vote <proposal-id-hex> reject \
 ```bash
 # 6. Confirm the vote was recorded (audit substrate; filter by event id
 #    returned from step 4/5).
-#    NOTE: `octo audit list --kind ...` is NOT typed by AuditEventKind
+#    NOTE: `octo audit list --kind ...` is NOT a real AuditListArgs flag
+#    (only --since / --until / --capability-root / --model / --router-id /
+#    --status / --include-reject / --limit / --cursor / --json per
+#    `crates/octo-cli/src/commands/audit.rs:66-170`). AuditEventKind is NOT
+#    typed by AuditListArgs discriminant
 #    discriminant (substrate has only Insert | Revoke | Sync | AgentTransition);
 #    use the audit event id returned by the vote receipt.
 octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.receipts[] | select((.receipt_id | tonumber) == ($id | tonumber))'
@@ -2674,7 +2710,7 @@ octo reputation show --did "did:octo:z<base58btc>" --role builder
 ```bash
 # 1. [SUBSTRATE-NEW] `octo reputation federation list` is not yet wired.
 #    Federation membership is discoverable via the audit substrate:
-octo audit list --kind reputation-federation-join --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:federation:"))]'
 # Substrate: octo_audit::AuditEvent { kind: reputation-federation-join, ... }.
 
 # 2. [SUBSTRATE-NEW] `octo reputation federation show` is not yet wired.
@@ -2738,7 +2774,7 @@ octo governance attest "did:octo:z<base58btc>" "route-quality:uptime-30d" \
 # 7. [SUBSTRATE-NEW] `octo reputation quorum show` is not yet wired.
 #    Substrate-faithful alternative: quorum status is read via the audit
 #    substrate:
-octo audit list --kind reputation-quorum-reached --limit 10 --json
+octo audit list --limit 10 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:quorum:"))]'
 # Substrate: octo_audit::AuditEvent { kind: reputation-quorum-reached, ... }
 # Threshold: MIN_ATTESTOR_QUORUM (default 3) per RFC-0968 §Quorum.
 ```
@@ -2750,7 +2786,7 @@ octo audit list --kind reputation-quorum-reached --limit 10 --json
 octo reputation show --did "did:octo:z<base58btc>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
-octo audit list --kind reputation-attest --limit 50 --json
+octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
 ```
 
 ### Tear down
@@ -2901,8 +2937,8 @@ chmod 0755 .git/hooks/pre-commit
 
 ```bash
 # 5. Confirm the CI run produced an audit trail.
-octo audit list --kind reputation-attest --limit 5
-octo audit list --kind governance-vote --limit 5
+octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:gov:"))]'
 ```
 
 ### Tear down
@@ -2943,7 +2979,7 @@ octo network slash show <slash-id-hex> --json
 
 ```bash
 # 3. Collect counter-evidence (audit trail + mesh records).
-octo audit list --kind bootstrap-evidence --limit 100 --json > defence-evidence.json
+octo audit list --limit 100 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:bootstrap:"))]' > defence-evidence.json
 octo network envelope inspect <evidence-id-hex> --json >> defence-evidence.json
 ```
 
@@ -2974,7 +3010,7 @@ octo network slash show <slash-id-hex> --json
 # (substrate-new per §28 header note above).
 
 # 6. Audit trail.
-octo audit list --kind slash-defence --limit 5
+octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:slash:"))]'
 
 # 7. (If ratified + governance appeal desired) Vote on the appeal proposal.
 #    [SUBSTRATE-NEW] `octo governance appeal` is not yet wired in GovernanceAction
@@ -3006,7 +3042,7 @@ octo governance vote <appeal-proposal-id-hex> reject \
 
 **Narrative cross-ref:** `hybrid-ai-blockchain-runtime.md` (the dual-local-+-chain execution path). Operators can run inference locally with verifiable proofs, or route to a paid remote agent with cryptographic attestation.
 
-> **Substrate-coverage note:** The current `AgentAction` enum has variants `Create | Run | List | Destroy | Attach | RevokeAttach` only (per RFC-0011-c §Substrate-Additions). `agent search` and `agent verify-trace` are not yet wired to the CLI dispatcher; mesh discovery is via `octo mesh peer list` and reasoning-trace verification is via the audit substrate (`octo audit list --kind reasoning-trace`). `octo agent run` accepts `--detach --reason --token-file` only (NOT `--input`, `--emit-reasoning-trace`, `--output-trace`) per the substrate-faithful RunArgs shape.
+> **Substrate-coverage note:** The current `AgentAction` enum has variants `Create | Run | List | Destroy | Attach | RevokeAttach` only (per RFC-0011-c §Substrate-Additions). `agent search` and `agent verify-trace` are not yet wired to the CLI dispatcher; mesh discovery is via `octo mesh peer list` and reasoning-trace verification is via the audit substrate (`octo audit list --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'` per §17.0). `octo agent run` accepts `--detach --reason --token-file` only (NOT `--input`, `--emit-reasoning-trace`, `--output-trace`) per the substrate-faithful RunArgs shape.
 
 ### Prerequisites
 
@@ -3212,7 +3248,7 @@ octo capability list --json | jq --arg c "<cap-id-hex>" \
     '.capabilities[] | select(.cap_id == $c) | .holder_did'
 
 # 5. Audit trail (encrypted events are auditable as ciphertexts only).
-octo audit list --kind capability-mint --limit 1 --json
+octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
 #    [SUBSTRATE-NEW] `--filter-holder-did` is NOT wired on AuditListArgs
 #    (substrate flags are --since / --until / --capability-root / --model /
 #    --router-id / --status / --include-reject / --limit / --cursor). Use

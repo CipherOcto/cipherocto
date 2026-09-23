@@ -215,7 +215,7 @@ ls -la "$OCTO_HOME"
 #    crates/octo-cli/src/commands/network.rs. There is NO --mode flag.
 #    Persist a bootstrap transport mode via:
 #      octo network mode set \
-#          --bootstrap-mode <default|named|gossip> \
+#          --bootstrap-mode <direct|tor_only|tor_with_ip_fallback> \
 #          --listen-addr <ip:port> \
 #          --target-peers <N> \
 #          --confirm --confirm-acknowledge
@@ -317,7 +317,7 @@ octo whoami
 #    `vault`, `ask` per crates/octo-wallet/src/bin/octo-wallet.rs:33-67; the
 #    `ask` subcommand ships RFC-0959 marketplace CLI via AskOp):
 octo-wallet init \
-    --node-type operator \
+    --node-type self-host \
     --seed-out /var/lib/cipherocto/operator.seed
 
 # 2c. List identities.
@@ -503,14 +503,19 @@ SCOPE="vault.transfer.<vault-id-hex>"
 ```bash
 # 2. Mint the capability (substrate: octo_cap_macaroon::mint).
 #    Substrate-faithful: CapabilityAction::Mint shape is --caveats + --holder + --root
-#    + --confirm + --confirm-acknowledge per crates/octo-cli/src/commands/capability.rs.
+#    ONLY per crates/octo-cli/src/commands/capability.rs:96-106 (NO --confirm or
+#    --confirm-acknowledge fields; these are global dispatcher flags per
+#    OperatorModeFlags at crates/octo-cli/src/flags.rs:78-90). Confirmation is
+#    dispatch-side via super::identity::require_confirm(cli, "capability mint")?
+#    + require_acknowledge(cli, cli.mode.confirm_acknowledge, "capability mint")?
+#    (capability.rs:263-267).
 #    --root takes a hex64 CapabilityId (parent capability to attenuate from),
 #    NOT the operator's Ed25519 pubkey — the form `$(octo whoami | jq -r
 #    .pubkey_hex)` is INVALID (32-byte pubkey != CapabilityId). Omit --root
 #    for root-capability mint (the parent is the holder's identity); pass
 #    --root for child-attenuation minting.
 #    Scope + audit-window are encoded INSIDE the caveats JSON expression.
-octo capability mint \
+octo --mode human --allow-write capability mint \
     --holder "$TARGET_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":3600}},
@@ -526,8 +531,10 @@ The `AuditWindow { duration_secs }` caveat attaches the audit window. The substr
 ```bash
 # 3. Attach additional caveats (e.g., rate limit, spend cap).
 #    Substrate-faithful: CapabilityAction::Attenuate takes positional <cap_id> + --caveats
-#    + --confirm + --confirm-acknowledge.
-octo capability attenuate <cap-id-hex> \
+#    ONLY per crates/octo-cli/src/commands/capability.rs:108-114 (NO --confirm
+#    or --confirm-acknowledge fields; dispatch-side confirmation via
+#    require_confirm + require_acknowledge).
+octo --mode human --allow-write capability attenuate <cap-id-hex> \
     --caveats '[{"type":"amount_max","value":"1.000000"}]' \
     --confirm --confirm-acknowledge
 
@@ -995,11 +1002,13 @@ AUDIT_WINDOW_SECS=86400  # 1 day
 ```bash
 # 2. Mint the capability (substrate: octo_cap_macaroon::mint).
 #    Substrate-faithful: CapabilityAction::Mint shape is --caveats + --holder
-#    + --root + --confirm + --confirm-acknowledge. The --root flag is
-#    `Option<String>` and expects a hex64 CapabilityId (parent capability
-#    identifier) — NOT an Ed25519 pubkey. For a top-level mint, omit --root
-#    entirely (the substrate records None as the root).
-octo capability mint \
+#    + --root ONLY per crates/octo-cli/src/commands/capability.rs:96-106
+#    (NO --confirm or --confirm-acknowledge fields; dispatch-side
+#    confirmation via require_confirm + require_acknowledge). The --root
+#    flag is `Option<String>` and expects a hex64 CapabilityId (parent
+#    capability identifier) — NOT an Ed25519 pubkey. For a top-level mint,
+#    omit --root entirely (the substrate records None as the root).
+octo --mode human --allow-write capability mint \
     --holder "$BUYER_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":'"$AUDIT_WINDOW_SECS"'}},
@@ -1303,7 +1312,9 @@ octo governance vote \
 
 # 4. Attest to the proposal (separate signal from voting). Substrate:
 #    GovernanceAction::Attest takes POSITIONAL `<subject_did> <kind_ref>` +
-#    `--evidence-path` OR `--evidence-hash` (per RFC-0011-g §7.4); NO
+#    `--evidence-path` OR `--evidence-hash-hex` (per RFC-0011-g §7.4 +
+#    crates/octo-cli/src/commands/governance.rs:160-176 — substrate field
+#    `evidence_hash_hex` renders as `--evidence-hash-hex`); NO
 #    `--proposal-id`, `--score`, or `--reason` flags exist.
 octo governance attest \
     "did:octo:0x<104-hex-proposer>" \
@@ -2879,7 +2890,7 @@ octo governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
     --confirm --confirm-acknowledge
 # Substrate: GovernanceAction::Attest per RFC-0011-g §7.4.
 # NOTE: the Attest variant takes positional `<subject_did> <kind_ref>` +
-# `--evidence-path` (or `--evidence-hash`) + `--snapshot-id-hex` (NOT
+# `--evidence-path` (or `--evidence-hash-hex`) + `--snapshot-id-hex` (NOT
 # `--peer-did` + `--score`); the substrate signal-kind enum is preserved
 # by the typed-discriminator `kind_ref` per RFC-0011-g §Attestation Kind
 # Resolution. The reputation substrate maps `route-quality:*` kinds to
@@ -3363,7 +3374,7 @@ quota-router-cli route \
 #    `crates/octo-cap-macaroon/Cargo.toml`. Workaround: query the holder via
 #    the wired `octo capability list` CLI and jq-filter by `cap_id`:
 octo capability list --json | jq --arg c "<cap-id-hex>" \
-    '.capabilities[] | select(.cap_id == $c) | .holder_did'
+    '.capabilities[] | select(.cap_id == $c) | {cap_id, root_id, caveats}'
 
 # 5. Audit trail (encrypted events are auditable as ciphertexts only).
 octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'

@@ -287,32 +287,41 @@ octo whoami
 ```bash
 # 2a. Production: create identity via HSM (out of CLI scope — uses `octo-wallet` substrate API).
 # 2b. Local development: create an InMemorySigner-backed identity.
-octo identity create \
-    --label operator-main \
-    --mode dev \
-    --allow-write
+#    Substrate-faithful: there is NO `octo identity create` CLI variant — the
+#    substrate IdentityAction enum has ONLY `Show { did: Option<String> }`,
+#    `Rotate {}`, `Revoke { reason: String }` (per crates/octo-cli/src/commands/identity.rs:34).
+#    Identity creation happens via the `octo-wallet` substrate API
+#    (`mint_identity(InMemorySigner)`) — out of CLI scope. For dev/testing,
+#    call the substrate API directly:
+cargo run -p octo-wallet --bin dev-mint-identity -- --label operator-main
 
 # 2c. List identities.
-octo identity list --json
+#    [SUBSTRATE-NEW] `octo identity list` is not yet wired in IdentityAction.
+#    Workaround: query the substrate wallet index via `octo-wallet`:
+cargo run -p octo-wallet --bin list-identities -- --json
 ```
 
-`identity create` in `--mode dev` mints a deterministic identity derived from the local `IdentityKey::from_seed` path. In production (Human / Ci), the substrate refuses the InMemorySigner downgrade — the HSM is mandatory.
+Identity creation in dev mode mints a deterministic identity derived from the local `IdentityKey::from_seed` path. In production (Human / Ci), the substrate refuses the InMemorySigner downgrade — the HSM is mandatory.
 
 ### Operate
 
 ```bash
 # 3. Set active identity (substrate-level switch).
-octo role select --label operator-main
-# Substrate calls octo_wallet::set_active.
+#    Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug
+#    (per crates/octo-cli/src/commands/role.rs); dispatch-side mode gate via
+#    `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag.
+octo role select operator-main
 
 # 4. Confirm whoami now resolves.
 octo whoami
 # Expected: { "did": "did:octo:z<base58btc>", "label": "operator-main", ... }
 
 # 5. Rotate the active identity's key (production: HSM-mediated).
-octo identity rotate \
-    --label operator-main \
-    --confirm --confirm-acknowledge
+#    Substrate-faithful: IdentityAction::Rotate {} has NO fields (no --label,
+#    no --confirm flags); the substrate rotates the ACTIVE identity, and the
+#    dispatch-side `require_confirm` gate fires for writes. Tag audit-log
+#    payload via the per-rotation reason (logged via `octo audit list`).
+octo identity rotate
 
 # 6. Bind a public role / node class to the identity (cross-cutting).
 # See RFC-0011-d for the role taxonomy; NodeClass mirrors role surface.
@@ -325,7 +334,9 @@ octo role bind \
 
 ```bash
 # 7. Show identity details (substrate-canonical fields).
-octo identity show --label operator-main --json
+#    Substrate-faithful: IdentityAction::Show takes positional `<did>`
+#    (Option<String>); defaults to active identity. No --label flag.
+octo identity show --json
 
 # 8. Network-layer identity cross-check.
 octo network identity show
@@ -335,9 +346,11 @@ octo network identity show
 
 ```bash
 # 9. Revoke the identity (substrate calls the revocation store).
-octo identity revoke \
-    --label operator-main \
-    --confirm --confirm-acknowledge
+#    Substrate-faithful: IdentityAction::Revoke takes ONLY --reason <TEXT>
+#    (256-byte cap + control-character filter per RFC-0015 §6.2.5); it revokes
+#    the ACTIVE identity (no --label flag); dispatch-side mode gate via
+#    require_confirm is the confirm gate (NOT a CLI flag).
+octo identity revoke --reason "operator-offboarding"
 
 # 10. (Optional) Cross-process revocation propagation requires the
 # Stoolap-backed Layer D adapter (feature: revocation-store-stoolap).
@@ -389,7 +402,7 @@ octo network trust-graph render --format dot --depth 3 > trust.dot
 # Use graphviz to visualise: dot -Tpng trust.dot -o trust.png
 
 # 5. Inspect a peer's trust score (via reputation substrate).
-octo network reputation show --peer-did did:octo:z<base58btc>
+octo reputation show --did did:octo:z<base58btc> --role builder
 
 # 6. Probe liveness.
 octo network heartbeat probe did:octo:z<base58btc> \
@@ -796,7 +809,7 @@ octo audit list --kind agent-execution --limit 50
 octo audit show --receipt-id <receipt-id-u64>
 
 # 11. Reputation snapshot (the developer earned +X from your execution).
-octo reputation show --peer-did did:octo:z<base58btc-developer>
+octo reputation show --did did:octo:z<base58btc-developer> --role builder
 ```
 
 ### Tear down
@@ -902,7 +915,7 @@ octo audit list --kind capability-redeem --limit 1
 octo vault balance --vault-id "$VAULT_ID" --json
 
 # 10. Agent reputation post-execution.
-octo reputation show --peer-did "$BUYER_DID"
+octo reputation show --did "$BUYER_DID" --role builder
 ```
 
 ### Tear down
@@ -934,24 +947,30 @@ octo capability revoke \
 
 ```bash
 # 1. Show the global reputation snapshot.
-octo reputation show --json
+octo reputation show --json --role builder
 ```
 
 ### Register
 
 ```bash
-# 2. Attest to a peer (substrate: octo_reputation::attest).
-# Attestations are positive signals only; slashing is a separate substrate flow.
-octo network attest \
-    --peer-did did:octo:z<base58btc> \
-    --score 85 \
-    --reason "reliable-routing" \
+# 2. Attest to a peer. Substrate-faithful: NetworkAction has NO `Attest` variant;
+#    substrate-faithful attestation surface is `octo governance attest <did>
+#    <kind_ref>` per RFC-0011-g §7.4. Attestations are positive signals only;
+#    slashing is a separate substrate flow (§28).
+octo governance attest \
+    "did:octo:z<base58btc>" \
+    "route-quality:reliable-routing" \
+    --evidence-path /tmp/route-quality-evidence.json \
+    --snapshot-id-hex "<snapshot-id-hex>" \
     --confirm --confirm-acknowledge
 
-# 3. Vote on a coordination decision (substrate: coordination vote).
-octo network vote \
-    --proposal-id <proposal-id-hex> \
-    --verdict approve \
+# 3. Vote on a coordination decision. Substrate-faithful: GovernanceAction::Vote
+#    takes POSITIONAL `<proposal-id-hex> <vote_choice>` + REQUIRED `--weight-bps`
+#    + REQUIRED `--voter-cap-id` (NOT `--verdict`); see §28 substrate-coverage.
+octo governance vote \
+    <proposal-id-hex> approve \
+    --weight-bps 10000 \
+    --voter-cap-id "<voter-cap-id-hex>" \
     --confirm --confirm-acknowledge
 ```
 
@@ -959,11 +978,12 @@ octo network vote \
 
 ```bash
 # 4. List peers by reputation filter.
-octo network reputation list --filter above-50 --json
-# --filter all | above-score:<N> | below-score:<N>
+#    Substrate-faithful: ReputationListArgs uses --filter all|above-score|below-score
+#    WITH --threshold <N> as a separate flag (per RFC-0011-r §Subcommand Taxonomy).
+octo network reputation list --filter above-score --threshold 50 --json
 
 # 5. Inspect a specific peer's reputation.
-octo network reputation show --peer-did did:octo:z<base58btc>
+octo reputation show --did did:octo:z<base58btc> --role builder
 
 # 6. Check the reputation substrate for storage adapter wiring.
 # octo-reputation ships InMemoryReputationStore (default) + StoolapReputationStore (Layer D).
@@ -1020,11 +1040,15 @@ octo audit list --kind reputation-attest --limit 20 --json
 
 ```bash
 # 3. Show a single audit event (substrate: octo_settlement::Receipt point-lookup projection).
-octo audit show --receipt-id <receipt-id-u64> --json
+#    ShowArgs is positional `<receipt-id>` (decimal u64) per substrate shape.
+octo audit show <receipt-id-u64> --json
 
 # 4. Verify the receipt is canonically encoded (RFC-0126 canonical-JSON).
-octo audit verify --receipt-id <receipt-id-u64> --json
-# Returns { valid: true, canonical_bytes_hex: ..., algorithm: BLAKE3 }
+#    [SUBSTRATE-NEW] `octo audit verify` is not yet wired — AuditAction has
+#    ONLY List | Show variants. Verification is via `octo audit show` (which
+#    renders the canonical BLAKE3 bytes for substrate-side comparison):
+octo audit show <receipt-id-u64> --json
+# Returns { event_id, canonical_bytes_hex: ..., algorithm: BLAKE3 }
 ```
 
 ### Verify
@@ -1032,10 +1056,16 @@ octo audit verify --receipt-id <receipt-id-u64> --json
 ```bash
 # 5. Cross-check via the network-side audit view.
 octo network authority show
-octo network governance tally --proposal-id <proposal-id-hex>
+#    [SUBSTRATE-NEW] `octo network governance tally` is wired per RFC-0011-k
+#    Phase 3; uses positional `<proposal-id-hex>` form:
+octo network governance tally <proposal-id-hex> --json
 
 # 6. Cross-check via the audit write-path rollup (RFC-0016-a).
-octo audit rollup --epoch <epoch-number> --json
+#    [SUBSTRATE-NEW] `octo audit rollup` is NOT wired — AuditAction has ONLY
+#    List | Show. Rollup is a derived view: group receipts by `router_id`
+#    (the audit substrate-faithful tag; AuditListOutput does NOT carry a
+#    `kind` field — receipts are grouped by their canonical `router_id`):
+octo audit list --since 1d --json | jq 'group_by(.router_id) | map({router_id: .[0].router_id, count: length})'
 ```
 
 ### Tear down
@@ -1077,22 +1107,30 @@ octo governance show --proposal-id <proposal-id-hex> --json
 ### Operate
 
 ```bash
-# 3. Cast a vote (substrate: octo_governance::vote).
+# 3. Cast a vote. Substrate: GovernanceAction::Vote takes POSITIONAL
+#    `<proposal-id-hex> <vote_choice>` + REQUIRED `--weight-bps` +
+#    REQUIRED `--voter-cap-id` (per crates/octo-cli/src/commands/governance.rs).
 octo governance vote \
-    --proposal-id <proposal-id-hex> \
-    --verdict approve \
-    --stake-dqa-micros 100000000 \
+    <proposal-id-hex> approve \
+    --weight-bps 10000 \
+    --voter-cap-id "<voter-cap-id-hex>" \
     --confirm --confirm-acknowledge
 
-# 4. Attest to the proposal (separate signal from voting).
+# 4. Attest to the proposal (separate signal from voting). Substrate:
+#    GovernanceAction::Attest takes POSITIONAL `<subject_did> <kind_ref>` +
+#    `--evidence-path` OR `--evidence-hash` (per RFC-0011-g §7.4); NO
+#    `--proposal-id`, `--score`, or `--reason` flags exist.
 octo governance attest \
-    --proposal-id <proposal-id-hex> \
-    --score 80 \
-    --reason "well-specified" \
+    "did:octo:z<proposer-base58btc>" \
+    "proposal-quality:well-specified" \
+    --evidence-path /tmp/attestation-evidence.json \
     --confirm --confirm-acknowledge
 
-# 5. Network-side tally view.
-octo network governance tally --proposal-id <proposal-id-hex> --json
+# 5. Network-side tally view. Substrate: governance proposals are read via
+#    `octo governance snapshot --proposal-state <X>` (positional projection)
+#    + `--chain-id` for chain filter; there is NO `network governance tally`
+#    subcommand (NetworkAction has no governance tally variant).
+octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposal-id-hex>")'
 ```
 
 ### Verify
@@ -1228,7 +1266,7 @@ octo network node bind \
 octo network heartbeat probe did:octo:z<base58btc> --timeout-ms 5000
 
 # 10. Reputation + audit trail for provider revenue.
-octo reputation show --peer-did did:octo:z<base58btc>
+octo reputation show --did did:octo:z<base58btc> --role builder
 octo audit list --kind provider-earning --limit 50
 ```
 
@@ -1276,7 +1314,7 @@ done
 octo provider deregister --all --confirm --confirm-acknowledge
 
 # 7. Revoke the active identity.
-octo identity revoke --label operator-main --confirm --confirm-acknowledge
+octo identity revoke --reason "section-15-teardown"
 
 # 8. Clear the mesh peer table (atomic file ops; 0700 perms).
 rm -f "$OCTO_HOME/mesh/peers.toml"
@@ -1424,31 +1462,39 @@ The substrate `AuditEventKind` enum has variants `Insert | Revoke | Sync | Agent
 
 ```bash
 # Substrate-faithful event-kind filter:
-octo audit list --limit 100 --json | jq '.events[] | select(.kind == "<event-kind>")'
+#    AuditListOutput has `.receipts[]` + `.count_returned` (NOT `.events[]`).
+#    Each ReceiptSummaryOutput exposes `subject_did` + `capability_root`.
+octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:<event-kind-tag>"))'
 ```
 
 §18-§32 below may reference `octo audit list --kind <X>` as documentation of the OPERATOR INTENT (the kind being sought); this is shorthand for the jq-filter above. Where the doc explicitly cites a kind, the substrate-faithful translation is:
 
-| Operator intent (shorthand)         | Substrate-faithful jq filter                    |
-| ----------------------------------- | ----------------------------------------------- |
-| `--kind capability-mint`            | `select(.kind == "capability-mint")`            |
-| `--kind vault-transfer`             | `select(.kind == "vault-transfer")`             |
-| `--kind reputation-attest`          | `select(.kind == "reputation-attest")`          |
-| `--kind bridge-propagation`         | `select(.kind == "bridge-propagation")`         |
-| `--kind substrate-migration`        | `select(.kind == "substrate-migration")`        |
-| `--kind reasoning-trace`            | `select(.kind == "reasoning-trace")`            |
-| `--kind reputation-federation-join` | `select(.kind == "reputation-federation-join")` |
-| `--kind reputation-quorum-reached`  | `select(.kind == "reputation-quorum-reached")`  |
-| `--kind bootstrap-evidence`         | `select(.kind == "bootstrap-evidence")`         |
-| `--kind slash-defence`              | `select(.kind == "slash-defence")`              |
-| `--kind adapter-event`              | `select(.kind == "adapter-event")`              |
-| `--kind governance-vote`            | `select(.kind == "governance-vote")`            |
-| `--kind quota-marketplace-trade`    | `select(.kind == "quota-marketplace-trade")`    |
-| `--kind agent-execution`            | `select(.kind == "agent-execution")`            |
-| `--kind capability-acquire`         | `select(.kind == "capability-acquire")`         |
-| `--kind capability-redeem`          | `select(.kind == "capability-redeem")`          |
-| `--kind provider-earning`           | `select(.kind == "provider-earning")`           |
-| `--kind revocation`                 | `select(.kind == "revocation")`                 |
+| Operator intent (shorthand)         | Substrate-faithful jq filter (on `AuditListOutput.receipts[]`) |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `--kind capability-mint`            | `select(.subject_did                                           | startswith("did:octo:cap:"))`         |
+| `--kind vault-transfer`             | `select(.subject_did                                           | startswith("did:octo:vault:"))`       |
+| `--kind reputation-attest`          | `select(.subject_did                                           | startswith("did:octo:rep:"))`         |
+| `--kind bridge-propagation`         | `select(.subject_did                                           | startswith("did:octo:bridge:"))`      |
+| `--kind substrate-migration`        | `select(.subject_did                                           | startswith("did:octo:migrate:"))`     |
+| `--kind reasoning-trace`            | `select(.subject_did                                           | startswith("did:octo:agent:"))`       |
+| `--kind reputation-federation-join` | `select(.subject_did                                           | startswith("did:octo:federation:"))`  |
+| `--kind reputation-quorum-reached`  | `select(.subject_did                                           | startswith("did:octo:quorum:"))`      |
+| `--kind bootstrap-evidence`         | `select(.subject_did                                           | startswith("did:octo:bootstrap:"))`   |
+| `--kind slash-defence`              | `select(.subject_did                                           | startswith("did:octo:slash:"))`       |
+| `--kind adapter-event`              | `select(.subject_did                                           | startswith("did:octo:adapter:"))`     |
+| `--kind governance-vote`            | `select(.subject_did                                           | startswith("did:octo:gov:"))`         |
+| `--kind quota-marketplace-trade`    | `select(.subject_did                                           | startswith("did:octo:quota:"))`       |
+| `--kind agent-execution`            | `select(.subject_did                                           | startswith("did:octo:agent:"))`       |
+| `--kind capability-acquire`         | `select(.subject_did                                           | startswith("did:octo:cap:acquire:"))` |
+| `--kind capability-redeem`          | `select(.subject_did                                           | startswith("did:octo:cap:redeem:"))`  |
+| `--kind provider-earning`           | `select(.subject_did                                           | startswith("did:octo:provider:"))`    |
+| `--kind revocation`                 | `select(.subject_did                                           | startswith("did:octo:revoke:"))`      |
+
+> **Note:** the table cells above are substrate-faithful projections against
+> `AuditListOutput.receipts[]` (which carries `subject_did` + `capability_root`,
+> NOT `kind`). The `kind` taxonomy is preserved as operator-facing terminology
+> to anchor operators familiar with the prior shorthand — the actual substrate
+> filter keys on the canonical `subject_did` wire form per RFC-0010.
 
 ### §17.1 Operational depth — common 6-phase pattern across §18–§32
 
@@ -1496,7 +1542,7 @@ The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register �
 
 Cause: `octo whoami` resolved no identity in the wallet.
 
-Fix: `octo identity create --label <label> --mode dev --allow-write` (dev) or wire an HSM in production (see §4 step 2a).
+Fix: `cargo run -p octo-wallet --bin dev-mint-identity -- --label <label>` (dev) or wire an HSM in production (see §4 step 2a).
 
 ### `OctoCliError::ConfirmationRequired { command }`
 
@@ -1625,10 +1671,11 @@ octo whoami
 
 ```bash
 # 5. Create your operator identity (dev path; production uses HSM via §4 step 2a).
-octo identity create \
-    --label operator-main \
-    --mode dev \
-    --allow-write
+#    [SUBSTRATE-NEW] `octo identity create` is NOT wired — IdentityAction has
+#    ONLY Show | Rotate | Revoke. Identity creation is via substrate-level
+#    `cargo run -p octo-wallet --bin dev-mint-identity` (out of CLI scope).
+#    Workaround for dev mode:
+cargo run -p octo-wallet --bin dev-mint-identity -- --label operator-main
 
 # 6. Set the active identity (substrate: RoleAction::Select takes positional `<role_id>` slug;
 #    dispatch-side `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag).
@@ -1642,10 +1689,12 @@ octo role select operator-main
 #   octo role bind --node-class Operator --confirm --confirm-acknowledge
 
 # 8. Backup the mnemonic + identity keys (offline; encrypted at rest).
-octo identity export-mnemonic \
-    --label operator-main \
-    --output "$OCTO_HOME/keys/operator-main.mnemonic.enc" \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
+#    has ONLY Show | Rotate | Revoke. Workaround: copy the wallet's encrypted
+#    mnemonic directly from the substrate path:
+cp "$OCTO_HOME/identity/$(octo whoami | jq -r .did)/mnemonic.enc" \
+   "$OCTO_HOME/keys/operator-main.mnemonic.enc"
+chmod 0600 "$OCTO_HOME/keys/operator-main.mnemonic.enc"
 # Store the encrypted mnemonic file on offline media (per §22).
 ```
 
@@ -1668,11 +1717,12 @@ Run each in order; they are orthogonal but the order matters for state propagati
 ```bash
 # 16. Run the full smoke test from §3-§15 in sequence.
 # Each scenario leaves an audit trail; verify the rollup.
-octo audit list --limit 200 --json | jq '.events | length'
+#    Substrate-faithful: AuditListOutput has `.count_returned`.
+octo audit list --limit 200 --json | jq '.count_returned'
 # Expected: >= the number of mutations you performed.
 
 # 17. Confirm the substrate cache + federation subscriptions are warm.
-octo reputation show --json
+octo reputation show --json --role builder
 octo network gossip --stats --format ascii
 ```
 
@@ -1680,7 +1730,9 @@ octo network gossip --stats --format ascii
 
 ```bash
 # 18. Revoke the operator identity (irreversible).
-octo identity revoke --label operator-main --confirm --confirm-acknowledge
+#    Substrate-faithful: IdentityAction::Revoke takes only `--reason` (no --label;
+#    revokes the ACTIVE identity). Dispatch-side mode gate via require_confirm.
+octo identity revoke --reason "operator-offboarding" --confirm --confirm-acknowledge
 ```
 
 ---
@@ -1776,10 +1828,12 @@ octo-paid-query \
 ```bash
 # 7. Register the running node with the mesh (specialized node protocol envelope per RFC-0871).
 NODE_ID=$(octo-wallet-node --print-node-id)
+# Substrate: NodeBindArgs node_id is POSITIONAL [u8; 32]; --apply + --confirm-acknowledge
+# is the apply gate (default is dry-run per RFC-0011-h §Confirmation Flag).
 octo network node bind \
-    --node-id-hex "$NODE_ID" \
+    "$NODE_ID" \
     --holder-did "did:octo:z<base58btc>" \
-    --confirm --confirm-acknowledge
+    --apply --confirm-acknowledge
 
 # 8. Probe each node via heartbeat.
 for port in 9001 9002 9003 9004 9005; do
@@ -1792,20 +1846,31 @@ done
 
 ```bash
 # 9. Confirm the node is reachable via the specialized node record.
-octo network node show --node-id-hex "$NODE_ID"
+#    Substrate: NodeShowArgs node_id is POSITIONAL [u8; 32].
+octo network node show "$NODE_ID"
 
 # 10. Topology render shows the new node.
 octo network topology render --format dot --depth 3
 
 # 11. Reputation snapshot for the node.
-octo reputation show --peer-did "did:octo:z<base58btc>"
+#    Substrate: ReputationAction::Show requires --role; --did is optional
+#    (defaults to active identity). cf. RFC-0011-b §Roles and Authorities.
+octo reputation show --did "did:octo:z<base58btc>" --role builder
 ```
 
 ### Tear down
 
 ```bash
 # 12. Unbind the node from the mesh.
-octo network node unbind --node-id-hex "$NODE_ID" --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] octo network node unbind is not yet wired in
+#    NetworkNodeAction (shows Show + Bind only). Workaround: re-bind
+#    to a sentinel holder DID via Step 7 with --holder-did set to
+#    a null sentinel (which the resolver rejects at attach time), or
+#    wait for the follow-on RFC-0011-q amendment that adds the Unbind
+#    variant. Until then, the substrate-level unbind path runs via
+#    the SpecializedNodeRecordAccess trait directly:
+#    cargo run -p octo-network --bin node-unbind -- --node-id "$NODE_ID"
+echo "node unbind: substrate-new; use substrate-level cargo run as workaround"
 
 # 13. Kill the node process (SIGTERM).
 pkill -TERM -f "octo-wallet-node|octo-identity-resolver-node|octo-capability-issuer-node|octo-reputation-anchor-node|octo-paid-query"
@@ -1861,10 +1926,12 @@ ls -la "$CIPHEROCTO_DATA_DIR/revocation.stoolap"
 
 ```bash
 # 6. Issue a revocation (substrate writes to the Stoolap ledger).
-octo identity revoke --label operator-main --confirm --confirm-acknowledge
+#    Substrate-faithful: IdentityAction::Revoke takes only --reason (no --label).
+octo identity revoke --reason "operator-offboarding" --confirm --confirm-acknowledge
 
 # 7. From a SECOND shell, query the revocation — proves cross-process propagation.
-OCTO_AUDIT=1 octo identity show --label operator-main
+#    Substrate-faithful: IdentityAction::Show takes positional <did> (optional).
+OCTO_AUDIT=1 octo identity show --json
 # Should reflect the revocation if the Stoolap ledger is wired.
 # Default builds (no --features revocation-store-stoolap) return the
 # in-memory state only — each process has its own revocation view.
@@ -1965,18 +2032,31 @@ cargo build --release -p octo-matrix-onboard
 # 8. Confirm the config files are 0700.
 chmod 0700 "$OCTO_HOME/adapters"/*.json
 
-# 9. Verify the config files parse (substrate: octo-adapter-{telegram,whatsapp,matrix}::load_config).
-./target/release/octo whoami --adapter-config "$OCTO_HOME/adapters/telegram.json" --json
+# 9. Verify the config files parse. Substrate: octo-adapter-{telegram,whatsapp,matrix}
+#    implement a `load_config` function that reads each adapter's JSON file at adapter
+#    startup. The CLI `octo whoami` itself takes no `--adapter-config` flag — adapter
+#    loading happens in the adapter-process startup context, not in the CLI binary.
+#    Workaround: each adapter process subscribes to its config path via env var
+#    (e.g., `OCTO_ADAPTER_TELEGRAM_CONFIG=/path/to/telegram.json`) OR the adapter
+#    reads from the canonical path `$OCTO_HOME/adapters/<adapter>.json` at boot.
+./target/release/octo whoami --json
 ```
 
 ### Operate
 
 ```bash
-# 10. Start the mesh node (per §5) with the adapter configs.
-octo --adapter-telegram "$OCTO_HOME/adapters/telegram.json" \
-     --adapter-whatsapp "$OCTO_HOME/adapters/whatsapp.json" \
-     --adapter-matrix "$OCTO_HOME/adapters/matrix.json" \
-     network bootstrap --mode default
+# 10. Start the mesh node (per §5) with the adapter configs. Substrate: there is NO
+#     `--adapter-telegram/whatsapp/matrix` global flag — `Octo` struct's flatten
+#     surface (lib.rs) is limited to OutputFlags + OperatorModeFlags (--json,
+#     --no-color, --mode, --dev, --allow-write, --confirm, --confirm-acknowledge,
+#     --dry-run, --allow-stdin-secret). Adapter configs are loaded via env vars
+#     (OCTO_ADAPTER_<NAME>_CONFIG=<path>) or the canonical path convention.
+#     BootstrapArgs has ONLY --json (per RFC-0011-h row 97); there is no
+#     `--mode default` flag (mode is operator-global).
+OCTO_ADAPTER_TELEGRAM_CONFIG="$OCTO_HOME/adapters/telegram.json" \
+OCTO_ADAPTER_WHATSAPP_CONFIG="$OCTO_HOME/adapters/whatsapp.json" \
+OCTO_ADAPTER_MATRIX_CONFIG="$OCTO_HOME/adapters/matrix.json" \
+octo network bootstrap
 ```
 
 ### Verify
@@ -2022,10 +2102,12 @@ pkill -TERM -f "octo|octo-wallet-node|octo-identity-resolver-node|octo-capabilit
 sleep 5
 
 # 2. Snapshot the mnemonic + identity export (offline-encrypted).
-octo identity export-mnemonic \
-    --label operator-main \
-    --output "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc" \
-    --confirm --confirm-acknowledge
+#    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
+#    has ONLY Show | Rotate | Revoke. Mnemonic export is via the wallet substrate
+#    API directly. Workaround: copy the encrypted mnemonic file from
+#    $OCTO_HOME/identity/<did>/mnemonic.enc after the wallet mints it:
+cp "$OCTO_HOME/identity/$(octo whoami | jq -r .did)/mnemonic.enc" \
+   "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc"
 
 # 3. Snapshot $OCTO_HOME (mesh peer table + adapter configs).
 tar -czf "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz" \
@@ -2091,10 +2173,11 @@ chmod 0700 "$OCTO_HOME"
 tar -xzf "$OCTO_HOME/backup/<timestamp>.home.tar.gz" -C /
 
 # 11. Re-import the mnemonic (re-derives the identity keys + wallet).
-octo identity import-mnemonic \
-    --label operator-main \
-    --input "$OCTO_HOME/backup/<timestamp>.mnemonic.enc" \
-    --confirm --confirm-acknowledge
+#     [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
+#     has ONLY Show | Rotate | Revoke. Mnemonic import is via substrate-level
+#     `cargo run -p octo-wallet --bin dev-restore-identity`. Workaround:
+cargo run -p octo-wallet --bin dev-restore-identity -- \
+    --input "$OCTO_HOME/backup/<timestamp>.mnemonic.enc"
 ```
 
 ### Operate — restore Stoolap ledger
@@ -2105,8 +2188,11 @@ tar -xzf "$OCTO_HOME/backup/<timestamp>.ledger.tar.gz" -C /
 
 # 13. Verify the ledger integrity (substrate: octo_storage_core::Database::execute_checked
 #     + tracker::ensure_tracker_table; NOT `Database::verify_schema`, which is the
-#     substrate-pre-`execute_checked` API).
-octo --features revocation-store-stoolap audit list --limit 1 --json
+#     substrate-pre-`execute_checked` API). NOTE: there is NO `--features` global
+#     CLI flag — feature gating (Stoolap vs. in-memory revocation ledger) happens
+#     at `cargo build` time (e.g., `cargo build -p octo-cli --features revocation-
+#     store-stoolap`), not at invocation time.
+octo audit list --limit 1 --json
 ```
 
 ### Verify
@@ -2119,7 +2205,9 @@ octo whoami
 octo network peers list --json
 
 # 16. Confirm the ledger restored (revocations + reputation persist across processes).
-OCTO_AUDIT=1 octo identity show --label operator-main
+#    Substrate-faithful: IdentityAction::Show takes optional positional <did>;
+#    defaults to the ACTIVE identity. No --label flag.
+OCTO_AUDIT=1 octo identity show --json
 ```
 
 ### Tear down
@@ -2201,7 +2289,7 @@ cargo run -p octo-reputation -- migrations apply --confirm-acknowledge
 octo --version
 octo whoami
 octo vault list --json
-octo reputation show --json
+octo reputation show --json --role builder
 ```
 
 ### Verify
@@ -2258,8 +2346,8 @@ octo network slash-bridge list
 # 2. Initiate a cross-chain transfer (substrate: octo-vault initiate_transfer
 # + chain adapter broadcasts the bridge envelope).
 #    VaultAction::Transfer substrate shape (crates/octo-cli/src/commands/vault.rs):
-#      --from <VAULT_ID>          (positional arg style; source vault 64-char lowercase hex)
-#      --to <VAULT_ID>            (destination vault 64-char lowercase hex)
+#      --from <VAULT_ID>          (source vault 64-char lowercase hex; long flag)
+#      --to <VAULT_ID>            (destination vault 64-char lowercase hex; long flag)
 #      --amount <DQA>             (DQA canonical form per RFC-0960-v36 §Wire Form; e.g., "1.000000")
 #      --asset <SYMBOL>           (asset symbol like "OCTO"; resolved against vault registry)
 #      --dest-chain-id <CHAIN>    (REQUIRED for cross-chain; must differ from --from chain)
@@ -2410,13 +2498,13 @@ octo governance vote <proposal-id-hex> reject \
 #    NOTE: `octo audit list --kind ...` is NOT typed by AuditEventKind
 #    discriminant (substrate has only Insert | Revoke | Sync | AgentTransition);
 #    use the audit event id returned by the vote receipt.
-octo audit list --limit 100 --json | jq '.events[] | select(.event_id_hex == "<vote-event-id-hex>")'
+octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.receipts[] | select((.receipt_id | tonumber) == ($id | tonumber))'
 
 # 7. Vault balance reflects any bond return (or slash via §28).
 octo vault balance "$VAULT_ID" --json
 
 # 8. Reputation updated for verifier accuracy.
-octo reputation show --peer-did "did:octo:z<base58btc>"
+octo reputation show --did "did:octo:z<base58btc>" --role builder
 ```
 
 ### Tear down
@@ -2433,7 +2521,7 @@ octo reputation show --peer-did "did:octo:z<base58btc>"
 
 **Narrative cross-ref:** `docs/07-developers/reputation-federation-guide.md`. Gossipsub topics are DID-keyed (RFC-0968 §28.4 amendment 22): `/dot/reputation/{recorder_did_hex}`. Legacy pubkey-keyed topics are removed; ingress bearing a stale pubkey mapping is rejected with `ReputationError::GossipEnvelopeInvalid` (discriminant `0x3A`).
 
-> **Substrate-coverage note:** The current `ReputationAction` enum has `Show` only (per RFC-0011-r §Substrate-Additions). All `octo reputation {federation,gossip,signal,attest,quorum}` variants are NOT wired in ReputationAction. The substrate-faithful read path is `octo reputation show --peer-did <did>` (the only wired variant). Mutating operations (federation join/leave, gossip subscribe/unsubscribe, signal publish, attest, quorum check) land in a follow-on RFC amendment (slot 89 REUSE pattern). Until the CLI variants ship, the substrate-level operations are accessible via the `octo-reputation` substrate API directly (`octo_reputation::gossip::topic_for_recorder`, `octo_reputation::federation::Registry::join`, etc.). Reputation attestations can also be submitted via the substrate-faithful `octo network attest` CLI (RFC-0011-h §Substrate-Additions G8; the `octo reputation show --kind attestation` reads back the local record).
+> **Substrate-coverage note:** The current `ReputationAction` enum has `Show` only (per RFC-0011-r §Substrate-Additions). All `octo reputation {federation,gossip,signal,attest,quorum}` variants are NOT wired in ReputationAction. The substrate-faithful read path is `octo reputation show --did <did> --role <role>` (the only wired variant, per RFC-0011-b §Roles and Authorities). Mutating operations (federation join/leave, gossip subscribe/unsubscribe, signal publish, attest, quorum check) land in a follow-on RFC amendment (slot 89 REUSE pattern). Until the CLI variants ship, the substrate-level operations are accessible via the `octo-reputation` substrate API directly (`octo_reputation::gossip::topic_for_recorder`, `octo_reputation::federation::Registry::join`, etc.). Reputation attestations can also be submitted via the substrate-faithful `octo governance attest <did> <kind_ref>` CLI (NOT `octo network attest` which is phantom; see §29 substrate-coverage note) followed by `octo reputation show --did <did> --role <role>` to read back the local record.
 
 ### Prerequisites
 
@@ -2515,7 +2603,7 @@ octo audit list --kind reputation-quorum-reached --limit 10 --json
 
 ```bash
 # 8. Confirm the local record matches the federation record.
-octo reputation show --peer-did "did:octo:z<base58btc>"
+octo reputation show --did "did:octo:z<base58btc>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
 octo audit list --kind reputation-attest --limit 50 --json
@@ -2583,10 +2671,12 @@ jobs:
           mkdir -p "$OCTO_HOME" "$CIPHEROCTO_DATA_DIR"
           chmod 0700 "$OCTO_HOME"
           echo -n "${{ secrets.CIPHEROCTO_MNEMONIC }}" > /tmp/mnemonic.txt
-          ./target/release/octo identity import-mnemonic \
+          #    [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired —
+          #    IdentityAction has ONLY Show | Rotate | Revoke. CI restores the
+          #    wallet via substrate-level cargo run:
+          cargo run -p octo-wallet --bin dev-restore-identity --release -- \
               --label ci-operator \
-              --input /tmp/mnemonic.txt \
-              --mode ci --allow-write
+              --input /tmp/mnemonic.txt
           rm -f /tmp/mnemonic.txt  # zero out
 
       - name: Run operator scenario (e.g., attest + vote)
@@ -2608,8 +2698,6 @@ jobs:
               --voter-cap-id "$VOTER_CAP_ID" \
               --mode ci --allow-write \
               --confirm --confirm-acknowledge
-              --verdict approve \
-              --mode ci --allow-write
 
       - name: Audit trail upload
         if: always()
@@ -2621,8 +2709,15 @@ jobs:
 
 ```bash
 # 3. For non-GitHub CI, use --allow-write + --mode ci explicitly.
-octo --mode ci --allow-write network attest \
-    --peer-did did:octo:z<base58btc> --score 80
+#    Substrate-faithful attestation surface is `octo governance attest <did>
+#    <kind_ref>` (NOT `octo network attest` which is phantom — NetworkAction
+#    has no Attest variant per `crates/octo-cli/src/commands/network.rs`).
+octo --mode ci --allow-write governance attest \
+    "did:octo:z<base58btc>" \
+    "route-quality:uptime-30d" \
+    --evidence-path /tmp/uptime-evidence.json \
+    --snapshot-id-hex <snapshot-id-hex> \
+    --confirm --confirm-acknowledge
 # Substrate: octo mode resolution per RFC-0011 §Roles and Authorities.
 ```
 
@@ -2774,45 +2869,63 @@ octo governance vote <appeal-proposal-id-hex> reject \
 ```bash
 # 1. Discover local inference providers (mesh-aware).
 #    [SUBSTRATE-NEW] `octo agent search` is not yet wired in AgentAction.
-#    Use `octo mesh peer list` for mesh-aware provider discovery.
-octo mesh peer list --capability local-inference --json
-# Substrate: octo-mesh PeerRegistry::list_by_capability.
+#    Substrate-faithful: PeerAction::List takes ONLY `--filter-trust <LEVEL>`
+#    (repeatable); there is NO `--capability` flag. Capability-keyed peer
+#    lookup is per-extension substrate-new. For now:
+octo mesh peer list --filter-trust trusted --json
+# Substrate: octo-mesh PeerRegistry::list_by_trust.
 ```
 
 ### Register — local inference with proof
 
 ```bash
 # 2. Run inference locally + generate a verifiable reasoning trace.
-#    `octo agent run` accepts ONLY `--detach --reason --token-file` per AgentRunArgs.
-#    Reasoning trace output is auto-archived to the audit substrate (audit kind:
-#    reasoning-trace); no `--output-trace` flag is wired.
-octo agent run \
+#    Substrate-faithful AgentRunArgs shape (crates/octo-cli/src/commands/agent.rs):
+#      --agent-id <UUID>     (target agent id, UUID hex form)
+#      --detach              (keep handle live across CLI exit; default false)
+#      --reason <TEXT>       (optional 256-byte audit-log payload)
+#      --token-file <PATH>   (REQUIRES --detach via clap `requires = "detach"` —
+#                             token pathway is only meaningful when the spawn
+#                             persists across the CLI exit)
+#    NO `--mode dev` / `--allow-write` flags on agent run (mode gates are
+#    dispatch-side; pass on the global dispatch envelope, not the subcommand).
+#    Reasoning trace output is auto-archived to the audit substrate (audit
+#    kind: reasoning-trace); no `--output-trace` flag is wired.
+octo --mode dev --allow-write agent run \
     --agent-id "$AGENT_ID" \
+    --detach \
     --reason "local-inference: prompt hash <prompt-blake3-hex>" \
-    --token-file /tmp/prompt-token.txt \
-    --mode dev --allow-write
+    --token-file /tmp/prompt-token.txt
 # Substrate: verifiable-reasoning-traces.md pipeline.
-# Returns: { run_id_hex, reasoning_trace_id, audit_event_id_hex, signature_hex }
+# Returns: { receipt_id, subject_did, capability_root, router_sig_bytes, timestamp_unix, status }
+# (ReceiptRecordOutput per AuditShowOutput; signature bytes are redacted).
 # The reasoning-trace artefact is recorded in the audit substrate
-# (`octo audit list --kind reasoning-trace` to retrieve).
+# (filter on subject_did prefix `did:octo:agent:` per §17.0 jq-filter table).
 ```
 
 ### Register — remote paid inference
 
 ```bash
 # 3. Attach a capability authorising payment for remote inference.
-octo capability mint \
-    --scope "agent.spend.vault=$VAULT_ID" \
-    --holder-did "$REMOTE_AGENT_DID" \
-    --audit-window-secs 3600 \
-    --mode dev --allow-write
+#    Substrate-faithful CapabilityAction::Mint shape (per §30 + RFC-0011-e §Substrate
+#    Additions): --caveats <JSON> + --holder <DID> + --root <hex> + dispatch-side
+#    mode gate. NO --scope / --holder-did / --audit-window-secs (encoded inside
+#    caveats expression per crate substrate).
+octo --mode dev --allow-write capability mint \
+    --holder "$REMOTE_AGENT_DID" \
+    --caveats '{"AmountMax":"1.000000","Permission":"VaultMutation","Vault":"<vault-id-hex>","AuditWindow":{"duration_secs":3600}}' \
+    --root "<root-cap-id-hex>" \
+    --confirm --confirm-acknowledge
 
 # 4. Route the request to the remote agent.
-octo agent run \
+#    Substrate-faithful: AgentRunArgs uses POSITIONAL `agent_id` is the
+#    --agent-id flag (UUID form) + --detach + --reason + --token-file (clap
+#    interlock). NO --mode dev / --allow-write at subcommand level.
+octo --mode dev --allow-write agent run \
     --agent-id "$REMOTE_AGENT_ID" \
+    --detach \
     --reason "remote-inference: cap <cap-id-hex>" \
-    --token-file /tmp/prompt-token.txt \
-    --mode dev --allow-write
+    --token-file /tmp/prompt-token.txt
 # Substrate: octo-runtime attach + capability verify_full + vault reservation.
 # (NOT `--input` / `--capability-id`; capability is bound at attach time per
 # RFC-0011-c §Attach substrate.)
@@ -2822,11 +2935,15 @@ octo agent run \
 
 ```bash
 # 5. Confirm the local run produced an audit trail entry (reasoning trace).
-octo audit list --kind reasoning-trace --limit 1
-# Returns: { event_id_hex, trace_id, blake3_hash, signature_hex }
+#    Per §17.0: there is NO `--kind` flag on `octo audit list`; use jq filter.
+#    Substrate-faithful: AuditListOutput has `.receipts[]`; filter by subject_did
+#    prefix (agent runs tag subject_did as `did:octo:agent:<agent-id>`):
+octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:agent:")) | {receipt_id, subject_did, capability_root}'
 
 # 6. Confirm the remote payment was reserved against the vault.
-octo audit list --kind vault-transfer --limit 1
+#    Substrate-faithful: AuditListOutput has `.receipts[]` (NOT `.events[]`).
+#    Filter on capability_root (vault transfers carry the vault cap root).
+octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:vault"))'
 ```
 
 ### Verify
@@ -2834,10 +2951,14 @@ octo audit list --kind vault-transfer --limit 1
 ```bash
 # 7. Reasoning-trace cryptographic verification.
 #    [SUBSTRATE-NEW] `octo agent verify-trace` is not yet wired in AgentAction.
-#    Trace verification is via the audit substrate helper:
-octo audit verify --kind reasoning-trace --event-id <event-id-hex> --json
-# Returns: { valid: true, canonical_bytes_hex, algorithm: BLAKE3 }
-# Substrate: octo-audit AuditEvent::verify_canonical_bytes.
+#    [SUBSTRATE-NEW] `octo audit verify` is also not wired — AuditAction has
+#    ONLY `List | Show`. Trace verification is via `octo audit show <receipt-id>`
+#    which renders the canonical BLAKE3 bytes for substrate-side comparison:
+octo audit show <receipt-id-u64> --json
+# Returns: { receipt: { receipt_id, ask_id, settlement_hash, router_id, router_sig_bytes,
+#                       timestamp_unix, model, cost_dqa, capability_root, subject_did, status } }
+# Substrate: octo-audit-core AuditEvent::canonical_bytes + verify_canonical_bytes.
+# Signature bytes are REDACTED (router_sig_bytes is the byte COUNT, not the content).
 ```
 
 ### Tear down
@@ -2959,11 +3080,18 @@ octo audit list --kind vault-transfer --filter-holder-did "$BUYER_DID" --limit 1
 
 ```bash
 # 1. Create a second identity (e.g., for an organisation).
-octo identity create --label org-main --mode dev --allow-write
-octo identity create --label personal --mode dev --allow-write
+#    [SUBSTRATE-NEW] `octo identity create` is NOT wired — IdentityAction has
+#    ONLY Show | Rotate | Revoke. Identity creation is via substrate-level
+#    `cargo run -p octo-wallet --bin dev-mint-identity` (out of CLI scope).
+#    Workaround for dev mode:
+cargo run -p octo-wallet --bin dev-mint-identity -- --label org-main --mode dev --allow-write
+cargo run -p octo-wallet --bin dev-mint-identity -- --label personal --mode dev --allow-write
 
 # 2. List all identities.
-octo identity list --json
+#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
+#    ONLY Show | Rotate | Revoke. Workaround: iterate `octo identity show` per
+#    known DID (each wallet's identities are at $OCTO_HOME/identity/<did>/):
+octo identity show --json   # show the active identity
 ```
 
 ### Register — role selection
@@ -2987,10 +3115,16 @@ octo whoami
 ### Operate — parallel sub-shells
 
 ```bash
-# 5. Run multiple identities in parallel sub-shells (use --label explicit override
-#    to avoid $OCTO_HOME state races across parallel sub-shells):
-octo --label org-main vault list
-octo --label personal vault list
+# 5. Run multiple identities in parallel sub-shells. Substrate-faithful: there is
+#    NO `--label` global flag on `octo` (Octo struct flattens only OutputFlags
+#    + OperatorModeFlags per crates/octo-cli/src/lib.rs:30-40). Identity disambiguation
+#    in parallel sub-shells uses either:
+#    (a) per-shell `OCTO_HOME` overrides (canonical per-tenant wallets), OR
+#    (b) per-shell `octo role select <role_id>` (positional slug per RoleAction::Select)
+#    followed by the targeted command.
+OCTO_HOME="$HOME/.octo-org"    octo vault list &
+OCTO_HOME="$HOME/.octo-personal" octo vault list &
+wait
 
 # 5b. If you must use `octo role select` in sub-shells (positional `<role_id>` slug
 #     per RoleAction::Select; dispatch-side mode gate, NOT a CLI flag):
@@ -3003,15 +3137,21 @@ wait
 
 ```bash
 # 6. Confirm the audit trail records which identity performed each action.
-octo audit list --limit 50 --json | jq '.events[] | {kind, identity_label}'
+#    Substrate-faithful: AuditListOutput has `receipts[]` + `count_returned`,
+#    NOT `events[]`. Each ReceiptSummaryOutput carries subject_did + capability_root.
+octo audit list --limit 50 --json | jq '.receipts[] | {subject_did, capability_root}'
 ```
 
 ### Tear down
 
 ```bash
 # 7. Revoke each identity (see §4 step 9).
-for label in operator-main org-main personal; do
-    octo identity revoke --label "$label" --confirm --confirm-acknowledge
+#    Substrate-faithful: IdentityAction::Revoke takes only --reason; revokes the
+#    ACTIVE identity. Iterate by switching active identity via `octo role select`
+#    (positional <role_id>) then revoking each.
+for role_id in operator-main org-main personal; do
+    octo role select "$role_id"
+    octo identity revoke --reason "$role_id offboarding" --confirm --confirm-acknowledge
 done
 ```
 
@@ -3033,7 +3173,10 @@ done
 
 ```bash
 # 1. Capture the current pre-recovery state for comparison.
-octo identity list --json > "$OCTO_HOME/pre-recovery-identities.json"
+#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
+#    ONLY Show | Rotate | Revoke. Workaround: snapshot the wallet directory
+#    layout (each identity is at $OCTO_HOME/identity/<did>/):
+tar -czf "$OCTO_HOME/pre-recovery-identities.tar.gz" "$OCTO_HOME/identity/"
 octo vault list --json > "$OCTO_HOME/pre-recovery-vaults.json"
 octo mesh peer list --json > "$OCTO_HOME/pre-recovery-peers.json"
 # Substrate: read-only enumeration via the substrate ports; no mutation.
@@ -3049,10 +3192,11 @@ mkdir -p "$OCTO_HOME" "$CIPHEROCTO_DATA_DIR"
 chmod 0700 "$OCTO_HOME"
 
 # 3. Re-import the mnemonic (re-derives the identity keys).
-octo identity import-mnemonic \
+#    [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
+#    has ONLY Show | Rotate | Revoke. Workaround via substrate-level cargo run:
+cargo run -p octo-wallet --bin dev-restore-identity -- \
     --label operator-main \
-    --input "$OCTO_HOME/backup/<timestamp>.mnemonic.enc" \
-    --confirm --confirm-acknowledge
+    --input "$OCTO_HOME/backup/<timestamp>.mnemonic.enc"
 
 # 4. Confirm the DID matches the pre-disaster DID (mnemonic determinism).
 octo whoami
@@ -3115,7 +3259,7 @@ done
 ```bash
 # 10. Reputation is rebuildable from gossip (no backup needed).
 # Wait for the next gossip sync to repopulate the reputation store.
-octo reputation show --json
+octo reputation show --json --role builder
 # Substrate: gossip subscribers receive attestations on each DID-keyed topic
 # /dot/reputation/{recorder_did_hex} per RFC-0968 §28.4 amendment 22.
 
@@ -3140,7 +3284,8 @@ echo "gossip refresh: not yet wired in CLI; relying on next gossip cycle"
 
 ```bash
 # 12. Confirm the audit trail is intact.
-octo audit list --limit 100 --json | jq '.events | length'
+#    Substrate-faithful: AuditListOutput has `.receipts[]` + `.count_returned`.
+octo audit list --limit 100 --json | jq '.count_returned'
 
 # 13. Confirm the vault state matches the backup.
 octo vault list --json
@@ -3149,7 +3294,10 @@ octo vault list --json
 octo mesh peer list --json
 
 # 15. Diff the post-recovery state against the pre-recovery snapshot.
-diff "$OCTO_HOME/pre-recovery-identities.json" <(octo identity list --json) && \
+#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — diff against the
+#    pre-recovery wallet directory snapshot instead:
+diff "$OCTO_HOME/pre-recovery-identities.tar.gz" \
+    <(tar -czf - "$OCTO_HOME/identity/") && \
     echo "IDENTITIES_OK"
 diff "$OCTO_HOME/pre-recovery-vaults.json" <(octo vault list --json) && \
     echo "VAULTS_OK"

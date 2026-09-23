@@ -333,7 +333,7 @@ octo role select operator-main
 
 # 4. Confirm whoami now resolves.
 octo whoami
-# Expected: { "did": "did:octo:z<base58btc>", "label": "operator-main", ... }
+# Expected: { "did": "did:octo:0x<104-hex>", "label": "operator-main", ... }
 
 # 5. Rotate the active identity's key (production: HSM-mediated).
 #    Substrate-faithful: IdentityAction::Rotate {} has NO fields (no --label,
@@ -483,7 +483,7 @@ octo mesh peer remove <peer-did> \
 
 ```bash
 # 1. Reserve a target DID + asset / scope.
-TARGET_DID="did:octo:z<base58btc-target>"
+TARGET_DID="did:octo:0x<104-hex-target>"
 SCOPE="vault.transfer.<vault-id-hex>"
 ```
 
@@ -777,14 +777,16 @@ $QUOTA_ROUTER_BIN list --prompts 1000 --price 1
 ```bash
 # 6. Discover a marketplace seller's reputation (the substrate-faithful
 #    discovery surface). Reads the persisted RFC-0968 aggregate for a
-#    peer DID (W3C `did:octo:z<base58btc>` 53-54 chars or legacy
-#    `did:octo:b<52>` 62 chars during the deprecation window).
+#    peer DID in canonical CipherOcto wire form `did:octo:0x<104-hex>` (104 hex chars after `0x`,
+#    matching `crates/octo-network/src/dc/admin_attest.rs:226` + :338 + :343 + :641 which
+#    reject any DID not matching the canonical `did:octo:0x<hex>` shape with the substrate-side
+#    error `operator_did is not a canonical did:octo:0x<hex> form`).
 #    [SUBSTRATE-NEW] `quota-router-cli` does NOT have a `market search`
 #    / `market buy` / `market delist` subcommand today — discovery, buy,
 #    and delist surfaces land in the marketplace Layer D adapter crate
 #    (per-extension crate pattern; out of scope for this operator guide).
 $QUOTA_ROUTER_BIN reputation-show \
-    --did did:octo:b<52-zs> \
+    --did did:octo:0x<104-hex-quota-seller> \
     --backend memory
 ```
 
@@ -829,7 +831,7 @@ cat > /tmp/legal-analyzer.json <<'EOF'
 {
   "name": "Legal Contract Analyzer",
   "version": "1.2.0",
-  "developer": "did:octo:z<base58btc-developer>",
+  "developer": "did:octo:0x<104-hex-developer>",
   "capabilities": ["contract_review", "risk_assessment", "compliance_check"],
   "pricing": {
     "per_execution_octd_micros": 10000
@@ -917,7 +919,7 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 octo audit show --receipt-id <receipt-id-u64>
 
 # 11. Reputation snapshot (the developer earned +X from your execution).
-octo reputation show --did did:octo:z<base58btc-developer> --role builder
+octo reputation show --did did:octo:0x<104-hex-developer> --role builder
 ```
 
 ### Tear down
@@ -959,7 +961,7 @@ octo agent destroy --agent-id <agent-id-uuid> --confirm --confirm-acknowledge
 
 ```bash
 # 1. Resolve the buyer DID + vault ID + audit window.
-BUYER_DID="did:octo:z<base58btc-buyer>"
+BUYER_DID="did:octo:0x<104-hex-buyer>"
 VAULT_ID="<vault-id-hex>"
 AGENT_ID="<agent-id-uuid>"
 AUDIT_WINDOW_SECS=86400  # 1 day
@@ -1102,7 +1104,7 @@ octo reputation show --json --role builder
 #    <kind_ref>` per RFC-0011-g §7.4. Attestations are positive signals only;
 #    slashing is a separate substrate flow (§28).
 octo governance attest \
-    "did:octo:z<base58btc>" \
+    "did:octo:0x<104-hex>" \
     "route-quality:reliable-routing" \
     --evidence-path /tmp/route-quality-evidence.json \
     --snapshot-id-hex "<snapshot-id-hex>" \
@@ -1271,7 +1273,7 @@ octo governance vote \
 #    `--evidence-path` OR `--evidence-hash` (per RFC-0011-g §7.4); NO
 #    `--proposal-id`, `--score`, or `--reason` flags exist.
 octo governance attest \
-    "did:octo:z<proposer-base58btc>" \
+    "did:octo:0x<104-hex-proposer>" \
     "proposal-quality:well-specified" \
     --evidence-path /tmp/attestation-evidence.json \
     --confirm --confirm-acknowledge
@@ -1408,8 +1410,9 @@ octo network node show --node-id-hex <node-id-hex>
 # 8. Bind the holder DID to the node record (positional node_id_hex
 #    + --holder-did + --apply + --confirm-acknowledge per NodeBindArgs
 #    at crates/octo-cli/src/commands/network.rs:761-789).
-#    Note: --holder-did takes the CLI projection form `did:octo:0x<104-hex>`,
-#    NOT `did:octo:z<base58btc>` (which is the canonical W3C wire form).
+#    Note: --holder-did takes the CLI projection form `did:octo:0x<104-hex>`
+#    (which IS the canonical CipherOcto wire form per
+#    `crates/octo-network/src/dc/admin_attest.rs:226, 338, 343, 641`).
 octo network node bind <node-id-hex> \
     --holder-did did:octo:0x<104-hex> \
     --apply --confirm-acknowledge
@@ -2059,7 +2062,7 @@ octo network topology render --format dot --depth 3
 # 11. Reputation snapshot for the node.
 #    Substrate: ReputationAction::Show requires --role; --did is optional
 #    (defaults to active identity). cf. RFC-0011-b §Roles and Authorities.
-octo reputation show --did "did:octo:z<base58btc>" --role builder
+octo reputation show --did "did:octo:0x<104-hex>" --role builder
 ```
 
 ### Tear down
@@ -2272,9 +2275,9 @@ octo network bootstrap
 
 ```bash
 # 11. Probe each adapter reachability.
-octo network heartbeat probe did:octo:z<telegram> --timeout-ms 5000
-octo network heartbeat probe did:octo:z<whatsapp> --timeout-ms 5000
-octo network heartbeat probe did:octo:z<matrix> --timeout-ms 5000
+octo network heartbeat probe did:octo:0x<104-hex-telegram-adapter> --timeout-ms 5000
+octo network heartbeat probe did:octo:0x<104-hex-whatsapp-adapter> --timeout-ms 5000
+octo network heartbeat probe did:octo:0x<104-hex-matrix-adapter> --timeout-ms 5000
 
 # 12. Audit trail — every adapter event is auditable.
 octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
@@ -2749,7 +2752,7 @@ octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.recei
 octo vault balance "$VAULT_ID" --json
 
 # 8. Reputation updated for verifier accuracy.
-octo reputation show --did "did:octo:z<base58btc>" --role builder
+octo reputation show --did "did:octo:0x<104-hex>" --role builder
 ```
 
 ### Tear down
@@ -2821,7 +2824,7 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 #    Substrate-faithful alternative: signals are submitted via the
 #    `octo governance attest` CLI (the wired attestation surface per
 #    RFC-0011-g §7.4 + RFC-0011-h §Substrate-Additions G8):
-octo governance attest "did:octo:z<base58btc>" "route-quality:uptime-30d" \
+octo governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
     --evidence-path /tmp/uptime-evidence.json \
     --snapshot-id-hex <snapshot-id-hex> \
     --confirm --confirm-acknowledge
@@ -2851,7 +2854,7 @@ octo audit list --limit 10 --json | jq '[.receipts[] | select(.subject_did | sta
 
 ```bash
 # 8. Confirm the local record matches the federation record.
-octo reputation show --did "did:octo:z<base58btc>" --role builder
+octo reputation show --did "did:octo:0x<104-hex>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
 octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
@@ -2938,7 +2941,7 @@ jobs:
           ./target/release/octo role select ci-operator --mode ci --allow-write
           # Substrate-faithful: attestation is GovernanceAction::Attest (RFC-0011-g §7.4);
           # positional `<subject_did> <kind_ref>` + --evidence-path + --snapshot-id-hex.
-          ./target/release/octo governance attest "did:octo:z<base58btc>" "route-quality:uptime-30d" \
+          ./target/release/octo governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
               --evidence-path /tmp/uptime-evidence.json \
               --snapshot-id-hex <snapshot-id-hex> \
               --mode ci --allow-write \
@@ -2965,7 +2968,7 @@ jobs:
 #    <kind_ref>` (NOT `octo network attest` which is phantom — NetworkAction
 #    has no Attest variant per `crates/octo-cli/src/commands/network.rs`).
 octo --mode ci --allow-write governance attest \
-    "did:octo:z<base58btc>" \
+    "did:octo:0x<104-hex>" \
     "route-quality:uptime-30d" \
     --evidence-path /tmp/uptime-evidence.json \
     --snapshot-id-hex <snapshot-id-hex> \
@@ -3372,11 +3375,11 @@ octo identity show --json   # show the active identity
 #    mode gate is dispatch-side `require_confirm(cli, "role select")`, NOT a CLI flag.
 octo role select org-main
 octo whoami
-# Expected: did:octo:z<org-main-did>
+# Expected: did:octo:0x<104-hex-org-main-did>
 
 octo role select personal
 octo whoami
-# Expected: did:octo:z<personal-did>
+# Expected: did:octo:0x<104-hex-personal-did>
 
 # 4. Verify the active identity persists across invocations.
 octo whoami
@@ -3475,7 +3478,7 @@ chmod 0700 "$OCTO_HOME"
 
 # 4. Confirm the DID matches the pre-disaster DID (mnemonic determinism).
 octo whoami
-# Expected: same did:octo:z<base58btc> as before the disaster.
+# Expected: same did:octo:0x<104-hex> as before the disaster.
 ```
 
 ### Setup — corrupted ledger
@@ -3523,7 +3526,7 @@ octo mesh peer list --json
 #    not in canonical form are SKIPPED (logged) rather than minted.
 for peer in $(cat "$OCTO_HOME/backup/peer-list.txt"); do
     octo mesh peer add \
-        "did:octo:z${peer}" \
+        "did:octo:0x<104-hex-${peer}>" \
         --endpoint "tcp://<peer-host>:<peer-port>"
 done
 # Substrate: PeerAction::Add (RFC-0011-h §Subcommand Taxonomy F-Mesh).

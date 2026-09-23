@@ -335,9 +335,16 @@ Identity creation in dev mode mints a deterministic identity derived from the lo
 ```bash
 # 3. Set active identity (substrate-level switch).
 #    Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug
-#    (per crates/octo-cli/src/commands/role.rs); dispatch-side mode gate via
-#    `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag.
-octo role select operator-main
+#    (per crates/octo-cli/src/commands/role.rs:180). TWO substrate gates apply:
+#    (a) dispatch-side require_confirm(cli, "role select") per
+#        crates/octo-cli/src/commands/identity.rs:478-535 — Human mode requires
+#        --confirm --confirm-acknowledge; Dev mode requires --allow-write alone.
+#    (b) per-operation is_dev_mode gate at active_signer_for_did per
+#        crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev or
+#        --dev REQUIRED (the in-memory DevSigner stub is the only Phase-1
+#        substrate signer; production HSM is out of scope).
+#    Net: only --mode dev --allow-write produces a successful role select.
+octo --mode dev --allow-write role select operator-main
 
 # 4. Confirm whoami now resolves.
 octo whoami
@@ -345,10 +352,19 @@ octo whoami
 
 # 5. Rotate the active identity's key (production: HSM-mediated).
 #    Substrate-faithful: IdentityAction::Rotate {} has NO fields (no --label,
-#    no --confirm flags); the substrate rotates the ACTIVE identity, and the
-#    dispatch-side `require_confirm` gate fires for writes. Tag audit-log
-#    payload via the per-rotation reason (logged via `octo audit list`).
-octo identity rotate
+#    no --confirm flags); the substrate rotates the ACTIVE identity. TWO
+#    substrate gates apply:
+#    (a) dispatch-side require_confirm (Human: --confirm --confirm-acknowledge;
+#        Dev: --allow-write alone) per crates/octo-cli/src/commands/identity.rs:478-535.
+#    (b) per-operation SEC-04 guard at crates/octo-cli/src/commands/identity.rs:324-332
+#        requires --mode dev or --dev because IdentityKey::from_seed([1u8; 32])
+#        is a publicly-known signature-forgeable test seed. The substrate
+#        refuses outside dev mode with Internal (exit 64). Use --dry-run
+#        for previews outside dev mode.
+#    Net: only --mode dev --allow-write produces a successful rotation
+#    outside dry-run. Tag audit-log payload via the per-rotation reason
+#    (logged via `octo audit list`).
+octo --mode dev --allow-write identity rotate
 
 # 6. Bind a public role / node class to the identity (cross-cutting).
 #    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
@@ -389,8 +405,12 @@ octo network identity show
 #    Substrate-faithful: IdentityAction::Revoke takes ONLY --reason <TEXT>
 #    (256-byte cap + control-character filter per RFC-0015 §6.2.5); it revokes
 #    the ACTIVE identity (no --label flag); dispatch-side mode gate via
-#    require_confirm is the confirm gate (NOT a CLI flag).
-octo identity revoke --reason "operator-offboarding"
+#    require_confirm per crates/octo-cli/src/commands/identity.rs:478-535.
+#    Revoke is NOT a dev-mode-gated substrate path (no is_dev_mode check);
+#    Human mode requires --confirm --confirm-acknowledge; Dev mode requires
+#    --allow-write alone. This step uses Human two-step.
+octo --mode human --allow-write identity revoke --reason "operator-offboarding" \
+    --confirm --confirm-acknowledge
 
 # 10. (Optional) Cross-process revocation propagation requires the
 # Stoolap-backed Layer D adapter (feature: revocation-store-stoolap).
@@ -515,13 +535,12 @@ SCOPE="vault.transfer.<vault-id-hex>"
 #    for root-capability mint (the parent is the holder's identity); pass
 #    --root for child-attenuation minting.
 #    Scope + audit-window are encoded INSIDE the caveats JSON expression.
-octo --mode human --allow-write capability mint \
+octo --mode dev --allow-write capability mint \
     --holder "$TARGET_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":3600}},
         {"type":"permission","value":{"scope":"'"$SCOPE"'"}}
-    ]' \
-    --confirm --confirm-acknowledge
+    ]'
 ```
 
 The `AuditWindow { duration_secs }` caveat attaches the audit window. The substrate enforces the `set_subsumes` attenuation rule: parent `p_dur` subsumes child `c_dur` iff `c_dur >= p_dur`. Non-zero parent cannot subsume zero child (downgrade disallowed; widening disallowed).
@@ -595,6 +614,13 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 #    is the holder's identity). Note: this is NOT the same as revoking
 #    the prior child — only the holder rotation is substrate-faithful
 #    revocation.
+#    DEV-MODE-ONLY: CapabilityAction::Mint requires `--mode dev` or
+#    `--dev` in production builds per the SEC-03 guard at
+#    crates/octo-cli/src/commands/capability.rs:328-339. The
+#    root-secret placeholder would be signature-forgeable; the substrate
+#    refuses outside dev mode with Internal (exit 64). Prefix the
+#    invocation with `--mode dev --allow-write` (dispatch-level global
+#    flags per crates/octo-cli/src/lib.rs:30-40).
 ```
 
 ---
@@ -1008,13 +1034,12 @@ AUDIT_WINDOW_SECS=86400  # 1 day
 #    flag is `Option<String>` and expects a hex64 CapabilityId (parent
 #    capability identifier) — NOT an Ed25519 pubkey. For a top-level mint,
 #    omit --root entirely (the substrate records None as the root).
-octo --mode human --allow-write capability mint \
+octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":'"$AUDIT_WINDOW_SECS"'}},
         {"type":"permission","value":{"scope":"agent.spend.vault='"$VAULT_ID"'"}}
-    ]' \
-    --confirm --confirm-acknowledge
+    ]'
 
 # Returns: { capability_id: <cap-id-hex>, caveats: [{ kind: AuditWindow, duration_secs: <n> }, ...] }
 ```
@@ -1556,7 +1581,12 @@ done
 #    via holder-identity revocation (above comment-block applies).
 
 # 7. Revoke the active identity.
-octo identity revoke --reason "section-15-teardown"
+#    Substrate-faithful: IdentityAction::Revoke takes only --reason (no --label).
+#    Revoke is NOT dev-mode-gated (no is_dev_mode check). Human mode
+#    requires --confirm --confirm-acknowledge per dispatch-side require_confirm
+#    at crates/octo-cli/src/commands/identity.rs:478-535 (pastejacking defense).
+octo --mode human --allow-write identity revoke --reason "section-15-teardown" \
+    --confirm --confirm-acknowledge
 
 # 8. Clear the mesh peer table (atomic file ops; 0700 perms).
 rm -f "$OCTO_HOME/mesh/peers.toml"
@@ -1919,12 +1949,20 @@ octo whoami
 #    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
 #    Workaround for dev mode:
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/operator-main.seed"
-# Subsequent identity switches: `octo role select operator-main` (positional
-# `<role_id>` per RoleAction::Select substrate shape).
+# Subsequent identity switches: `octo --mode dev --allow-write role select operator-main`
+# (positional `<role_id>` per RoleAction::Select substrate shape; --mode dev
+# REQUIRED per active_signer_for_did at
+# crates/octo-cli/src/commands/identity.rs:575-589).
 
-# 6. Set the active identity (substrate: RoleAction::Select takes positional `<role_id>` slug;
-#    dispatch-side `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag).
-octo role select operator-main
+# 6. Set the active identity (substrate: RoleAction::Select takes positional `<role_id>` slug).
+#    TWO substrate gates apply:
+#    (a) dispatch-side require_confirm(cli, "role select") per
+#        crates/octo-cli/src/commands/identity.rs:478-535 (Human requires
+#        --confirm --confirm-acknowledge; Dev requires --allow-write alone).
+#    (b) per-operation is_dev_mode at active_signer_for_did per
+#        crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED.
+#    Net: only --mode dev --allow-write produces a successful role select.
+octo --mode dev --allow-write role select operator-main
 
 # 7. Bind your primary role / NodeClass.
 #    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
@@ -1981,8 +2019,12 @@ octo network gossip stats --format ascii
 ```bash
 # 18. Revoke the operator identity (irreversible).
 #    Substrate-faithful: IdentityAction::Revoke takes only `--reason` (no --label;
-#    revokes the ACTIVE identity). Dispatch-side mode gate via require_confirm.
-octo identity revoke --reason "operator-offboarding"
+#    revokes the ACTIVE identity). Dispatch-side mode gate via require_confirm
+#    per crates/octo-cli/src/commands/identity.rs:478-535. Revoke is NOT
+#    dev-mode-gated (no is_dev_mode check); Human mode requires --confirm
+#    --confirm-acknowledge (pastejacking defense).
+octo --mode human --allow-write identity revoke --reason "operator-offboarding" \
+    --confirm --confirm-acknowledge
 ```
 
 ---
@@ -2197,7 +2239,11 @@ ls -la "$CIPHEROCTO_DATA_DIR/revocation.stoolap"
 ```bash
 # 6. Issue a revocation (substrate writes to the Stoolap ledger).
 #    Substrate-faithful: IdentityAction::Revoke takes only --reason (no --label).
-octo identity revoke --reason "operator-offboarding"
+#    Revoke is NOT dev-mode-gated (no is_dev_mode check); Human mode requires
+#    --confirm --confirm-acknowledge (pastejacking defense) per dispatch-side
+#    require_confirm at crates/octo-cli/src/commands/identity.rs:478-535.
+octo --mode human --allow-write identity revoke --reason "operator-offboarding" \
+    --confirm --confirm-acknowledge
 
 # 7. From a SECOND shell, query the revocation — proves cross-process propagation.
 #    Substrate-faithful: IdentityAction::Show takes positional <did> (optional).
@@ -2763,15 +2809,23 @@ octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposa
 # 3. [SUBSTRATE-NEW] `octo vault reserve` is not yet wired in VaultAction.
 #    Substrate-faithful alternative: bind a voter capability with
 #    Caveat::AmountMax + Caveat::AuditWindow (RFC-0011-e §Caveats).
-octo capability mint \
+octo --mode dev --allow-write capability mint \
     --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
     --holder "$VOTER_DID" \
-    --root <root-cap-id-hex> \
-    --confirm --confirm-acknowledge
+    --root <root-cap-id-hex>
 # Substrate: CapabilityAction::Mint per RFC-0011-e §Subcommand Taxonomy.
-# NOTE: CapabilityAction::Mint accepts `--caveats` (single expression), `--holder`,
-# `--root`. NOT `--scope`, `--holder-did`, `--mode`, `--allow-write`,
-# `--audit-window-secs` (audit-window goes inside the `--caveats` expression).
+# Substrate-faithful flags: `--caveats` (single JSON expression), `--holder`,
+# `--root`. NOT `--scope`, `--holder-did`, `--audit-window-secs` (audit-window
+# goes inside the `--caveats` expression).
+# DEV-MODE-ONLY: CapabilityAction::Mint requires `--mode dev` or `--dev`
+# in production builds per the SEC-03 guard at
+# crates/octo-cli/src/commands/capability.rs:328-339. The root-secret
+# placeholder would be signature-forgeable; the substrate refuses outside
+# dev mode with Internal (exit 64). `--mode` and `--allow-write` ARE
+# required DISPATCH-LEVEL global flags (Octo struct flattens
+# OperatorModeFlags per crates/octo-cli/src/lib.rs:30-40), not subcommand
+# flags. Dev mode requires `--allow-write` alone (the developer is the
+# acknowledgement per crates/octo-cli/src/commands/identity.rs:518-532).
 ```
 
 ### Operate — cast your verification vote
@@ -2996,9 +3050,11 @@ jobs:
 
       - name: Run operator scenario (e.g., attest + vote)
         run: |
-          # Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug;
-          # mode gate is dispatch-side `require_confirm(cli, "role select")`.
-          ./target/release/octo --mode ci --allow-write role select ci-operator
+          # Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug.
+          # mode gate is dispatch-side require_confirm + per-operation
+          # is_dev_mode at active_signer_for_did per
+          # crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED.
+          ./target/release/octo --mode dev --allow-write role select ci-operator
           # Substrate-faithful: attestation is GovernanceAction::Attest (RFC-0011-g §7.4);
           # positional `<subject_did> <kind_ref>` + --evidence-path + --snapshot-id-hex.
           ./target/release/octo --mode ci --allow-write governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
@@ -3057,9 +3113,11 @@ chmod 0755 .git/hooks/pre-commit
 #     applied to the workspace; the workflow itself is the Operate phase). Role select
 #     is performed inline per job per [[feedback-initiation-user-only]] (CI runs
 #     autonomously; --allow-write is the CI mode gate per RFC-0011-h §Mode Gating).
-#     Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug;
-#     dispatch-side `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag.
-./target/release/octo --mode ci --allow-write role select ci-operator
+#     Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug.
+#     TWO substrate gates apply: dispatch-side require_confirm +
+#     per-operation is_dev_mode at active_signer_for_did per
+#     crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED.
+./target/release/octo --mode dev --allow-write role select ci-operator
 ```
 
 ### Verify
@@ -3229,8 +3287,7 @@ octo --mode dev --allow-write agent run \
 octo --mode dev --allow-write capability mint \
     --holder "$REMOTE_AGENT_DID" \
     --caveats '[{"type":"amount_max","value":"1.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":3600}}]' \
-    --root "<root-cap-id-hex>" \
-    --confirm --confirm-acknowledge
+    --root "<root-cap-id-hex>"
 
 # 4. Route the request to the remote agent.
 #    Substrate-faithful: AgentRunArgs uses POSITIONAL `agent_id` is the
@@ -3310,17 +3367,21 @@ octo audit show <receipt-id-u64> --json
 #    NOTE: `--scope` is NOT a substrate flag (scope is encoded via
 #    Caveat::Provider / Caveat::Permission / Caveat::Vault in the caveat chain).
 #    NOTE: `--holder-did` is NOT a substrate flag (canonical flag is `--holder`).
-#    NOTE: `--mode dev` / `--allow-write` are NOT subcommand flags
-#    (mode gates are dispatch-side; pass on the global dispatch envelope).
+#    NOTE: `--mode dev` / `--allow-write` ARE required DISPATCH-LEVEL global
+#    flags (Octo struct flattens OperatorModeFlags per
+#    crates/octo-cli/src/lib.rs:30-40). CapabilityAction::Mint is gated by
+#    is_dev_mode (SEC-03) at crates/octo-cli/src/commands/capability.rs:328-339;
+#    production builds refuse outside dev mode with Internal (exit 64).
+#    Dev mode requires `--allow-write` alone (the developer is the
+#    acknowledgement per crates/octo-cli/src/commands/identity.rs:518-532).
 #    NOTE: `--audit-window-secs` is NOT a per-flag (audit window is encoded
 #    as `Caveat::AuditWindow { duration_secs }` inside the caveats expression).
 #    NOTE: `BlindedHolder` is NOT a substrate caveat variant; substrate-faithful
 #    privacy primitive is Caveat::AmountMax + Caveat::Provider scope filter.
-octo capability mint \
+octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
     --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
-    --root "<root-cap-id-hex>" \
-    --confirm --confirm-acknowledge
+    --root "<root-cap-id-hex>"
 # Substrate: Caveat::AmountMax { amount } + Caveat::Provider { peer_ids } +
 # Caveat::Permission + Caveat::Vault + Caveat::AuditWindow. Use provider narrowing
 # + amount caps + permission kind + vault pin to approximate blinded-holder
@@ -3334,11 +3395,10 @@ octo capability mint \
 #    Same CapabilityAction::Mint substrate shape (no per-flag shortcuts for
 #    audit-window or scope). The amount + permission + vault pin all live
 #    inside the `--caveats` JSON expression.
-octo capability mint \
+octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
     --caveats '[{"type":"amount_max","value":"500.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}]' \
-    --root "<root-cap-id-hex>" \
-    --confirm --confirm-acknowledge
+    --root "<root-cap-id-hex>"
 # Substrate: Caveat::AmountMax + Caveat::Permission::VaultMutation +
 # Caveat::Vault + Caveat::AuditWindow per RFC-0011-e §Substrate-Additions +
 # RFC-0965 §3.5. Privacy comes from scope narrowing + audit filter-by-holder-did
@@ -3415,8 +3475,10 @@ octo audit list --limit 100 --json \
 #    Workaround for dev mode:
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/org-main.seed"
 octo-wallet init --node-type self-host --seed-out "$OCTO_HOME/identity/personal.seed"
-# Subsequent identity switches: `octo role select org-main` / `octo role select personal`
-# (positional `<role_id>` per RoleAction::Select substrate shape).
+# Subsequent identity switches: `octo --mode dev --allow-write role select org-main`
+# / `octo --mode dev --allow-write role select personal` (positional `<role_id>`
+# per RoleAction::Select substrate shape; --mode dev REQUIRED per
+# active_signer_for_did at crates/octo-cli/src/commands/identity.rs:575-589).
 
 # 2. List all identities.
 #    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
@@ -3429,13 +3491,15 @@ octo identity show --json   # show the active identity
 
 ```bash
 # 3. Switch the active identity (substrate: octo_wallet::set_active).
-#    Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug;
-#    mode gate is dispatch-side `require_confirm(cli, "role select")`, NOT a CLI flag.
-octo role select org-main
+#    Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug.
+#    TWO substrate gates apply: dispatch-side require_confirm +
+#    per-operation is_dev_mode at active_signer_for_did per
+#    crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED.
+octo --mode dev --allow-write role select org-main
 octo whoami
 # Expected: did:octo:0x<104-hex-org-main-did>
 
-octo role select personal
+octo --mode dev --allow-write role select personal
 octo whoami
 # Expected: did:octo:0x<104-hex-personal-did>
 
@@ -3458,9 +3522,11 @@ OCTO_HOME="$HOME/.octo-personal" octo vault list &
 wait
 
 # 5b. If you must use `octo role select` in sub-shells (positional `<role_id>` slug
-#     per RoleAction::Select; dispatch-side mode gate, NOT a CLI flag):
-(octo role select org-main && octo vault list) &
-(octo role select personal && octo vault list) &
+#     per RoleAction::Select; dispatch-side require_confirm + per-operation
+#     is_dev_mode at active_signer_for_did per
+#     crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED):
+(octo --mode dev --allow-write role select org-main && octo vault list) &
+(octo --mode dev --allow-write role select personal && octo vault list) &
 wait
 ```
 
@@ -3479,10 +3545,13 @@ octo audit list --limit 50 --json | jq '.receipts[] | {subject_did, capability_r
 # 7. Revoke each identity (see §4 step 9).
 #    Substrate-faithful: IdentityAction::Revoke takes only --reason; revokes the
 #    ACTIVE identity. Iterate by switching active identity via `octo role select`
-#    (positional <role_id>) then revoking each.
+#    (positional <role_id>; --mode dev REQUIRED per active_signer_for_did at
+#    crates/octo-cli/src/commands/identity.rs:575-589). Revoke is NOT a
+#    dev-mode-gated substrate path; Dev mode requires --allow-write alone
+#    (the developer is the acknowledgement per identity.rs:518-532).
 for role_id in operator-main org-main personal; do
-    octo role select "$role_id"
-    octo identity revoke --reason "$role_id offboarding"
+    octo --mode dev --allow-write role select "$role_id"
+    octo --mode dev --allow-write identity revoke --reason "$role_id offboarding"
 done
 ```
 

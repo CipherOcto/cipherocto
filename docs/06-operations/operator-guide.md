@@ -426,12 +426,12 @@ octo mesh peer add <peer-did> \
     --confirm --confirm-acknowledge
 
 # 3. Add a second peer (Sybil resistance — connect to multiple independent operators).
+#    Substrate-faithful: PeerAction::Add takes POSITIONAL <peer_did> + --endpoint ONLY
+#    per crates/octo-cli/src/commands/peer.rs:42-72. Trust levels live on the read
+#    path (--filter-trust on PeerAction::List), NOT on Add. NO --peer-id-hex flag.
 octo mesh peer add <peer-did-2> \
     --endpoint quic://198.51.100.20:4433 \
     --confirm --confirm-acknowledge
-    --peer-id-hex <peer-2-id-hex> \
-    --trust-level observed \
-    --endpoint tcp://198.51.100.20:9000
 ```
 
 ### Operate
@@ -856,10 +856,11 @@ EOF
 
 ```bash
 # 2. Create the agent (substrate: spawn_agent returns deterministic UUIDv5 agent_id).
-octo agent create \
-    --manifest-path /tmp/legal-analyzer.json \
-    --mode dev \
-    --allow-write
+#    Substrate-faithful: AgentAction::Create takes --manifest-path + --capability-root
+#    only per crates/octo-cli/src/commands/agent.rs (no --mode / --allow-write).
+#    Mode gate lives at the dispatcher level per mode-gate-never-equals-interface.
+octo --mode dev --allow-write agent create \
+    --manifest-path /tmp/legal-analyzer.json
 
 # 3. Confirm the agent was created.
 octo agent list --json
@@ -871,10 +872,11 @@ octo agent list --json
 
 ```bash
 # 4. Attach the agent to a running runtime.
-octo agent attach \
-    --agent-id <agent-id-uuid> \
-    --mode dev \
-    --allow-write
+#    Substrate-faithful: AgentAction::Attach takes --agent-id + --since + --token-file
+#    per crates/octo-cli/src/commands/agent.rs:144-164. Mode gate lives at the
+#    dispatcher level (NOT a CLI flag); capability rides on --token-file per §10 step 6.
+octo --mode dev --allow-write agent attach \
+    --agent-id <agent-id-uuid>
 
 # 5. Confirm Running state.
 #    [SUBSTRATE-NEW] `octo agent state` is NOT wired — AgentAction has
@@ -1763,7 +1765,7 @@ Fix: pass BOTH flags. `--confirm` alone is rejected (clap `requires = "confirm"`
 
 Cause: mutating command in `--mode auditor` (or `OCTO_AUDIT=1`).
 
-Fix: Auditor mode is intentionally read-only. Switch modes via `octo network mode set --mode human --confirm --confirm-acknowledge` (or unset `OCTO_AUDIT`).
+Fix: Auditor mode is intentionally read-only. Switch modes via `octo --mode human --allow-write --confirm --confirm-acknowledge <mutating-subcommand>` (or unset `OCTO_AUDIT`). Operator mode is set via the global dispatcher flag per `crates/octo-cli/src/lib.rs` (`Octo` flattens `OutputFlags + OperatorModeFlags`), NOT via `octo network mode set` (which sets the bootstrap transport mode per `ModeSetArgs.bootstrap_mode`).
 
 ### `OctoCliError::ParseError`
 
@@ -2963,20 +2965,18 @@ jobs:
         run: |
           # Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug;
           # mode gate is dispatch-side `require_confirm(cli, "role select")`.
-          ./target/release/octo role select ci-operator --mode ci --allow-write
+          ./target/release/octo --mode ci --allow-write role select ci-operator
           # Substrate-faithful: attestation is GovernanceAction::Attest (RFC-0011-g §7.4);
           # positional `<subject_did> <kind_ref>` + --evidence-path + --snapshot-id-hex.
-          ./target/release/octo governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
+          ./target/release/octo --mode ci --allow-write governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
               --evidence-path /tmp/uptime-evidence.json \
               --snapshot-id-hex <snapshot-id-hex> \
-              --mode ci --allow-write \
               --confirm --confirm-acknowledge
           # Substrate-faithful: voting is GovernanceAction::Vote (RFC-0011-g §7.4);
           # positional `<proposal-id-hex> <vote_choice>` + --weight-bps + --voter-cap-id.
-          ./target/release/octo governance vote <proposal-id-hex> approve \
+          ./target/release/octo --mode ci --allow-write governance vote <proposal-id-hex> approve \
               --weight-bps 10000 \
               --voter-cap-id "$VOTER_CAP_ID" \
-              --mode ci --allow-write \
               --confirm --confirm-acknowledge
 
       - name: Audit trail upload
@@ -3026,7 +3026,7 @@ chmod 0755 .git/hooks/pre-commit
 #     autonomously; --allow-write is the CI mode gate per RFC-0011-h §Mode Gating).
 #     Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug;
 #     dispatch-side `require_confirm(cli, "role select")` is the mode gate, NOT a CLI flag.
-./target/release/octo role select ci-operator --mode ci --allow-write
+./target/release/octo --mode ci --allow-write role select ci-operator
 ```
 
 ### Verify

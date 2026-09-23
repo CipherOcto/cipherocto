@@ -686,7 +686,7 @@ octo vault balance "$DEST_VAULT_ID" --json
 # 9. Audit trail (settlement substrate emits a receipt).
 #    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (only --since / --until
 #    / --capability-root / --model / --router-id / --status / --include-reject
-#    / --limit / --cursor / --json per crates/octo-cli/src/commands/audit.rs:66-170).
+#    / --limit / --json per crates/octo-cli/src/commands/audit.rs:63-130).
 #    AuditListOutput envelope is `.receipts[]` with `subject_did` (NOT `kind`).
 #    Substrate-faithful filter for vault-transfer events:
 octo audit list --limit 10 --json | \
@@ -745,10 +745,13 @@ export QUOTA_ROUTER_BIN="$PWD/target/release/quota-router-cli"
 
 ```bash
 # 2. Configure local upstream providers (your API keys never leave the machine).
-#    [SUBSTRATE-NEW] The `quota-router-cli` Commands enum has only
+#    [SUBSTRATE-NEW] The `quota-router-cli` Commands enum has 12 variants:
 #    Init | AddProvider | Balance | List | Proxy | Route | Serve |
-#    ReputationShow per crates/quota-router-cli/src/cli.rs (no `upstream`
-#    / `market {list,listings,search,buy,delist}` / `policy {show}`).
+#    ReputationShow | Settle | SettleReplay | SettleList | Verify per
+#    crates/quota-router-cli/src/cli.rs:14-180 (the 4 settlement/verify
+#    subcommands ship per RFC-0959 §CLI + zk-proof-verification mission;
+#    no `upstream` / `market {list,listings,search,buy,delist}` /
+#    `policy {show}`).
 #    Substrate-faithful local-provider registration:
 $QUOTA_ROUTER_BIN init
 $QUOTA_ROUTER_BIN add-provider openai-prod
@@ -872,11 +875,14 @@ octo agent list --json
 
 ```bash
 # 4. Attach the agent to a running runtime.
-#    Substrate-faithful: AgentAction::Attach takes --agent-id + --since + --token-file
-#    per crates/octo-cli/src/commands/agent.rs:144-164. Mode gate lives at the
-#    dispatcher level (NOT a CLI flag); capability rides on --token-file per §10 step 6.
+#    Substrate-faithful: AgentAction::Attach takes --agent-id (REQUIRED) + --since
+#    (Option<u64>) + --token-file (REQUIRED PathBuf) per crates/octo-cli/src/commands/
+#    agent.rs:144-164. token_file is REQUIRED (NOT Option<PathBuf>) — clap rejects
+#    the call at parse time if missing. Mode gate lives at the dispatcher level
+#    (NOT a CLI flag); capability rides on --token-file per §10 step 6.
 octo --mode dev --allow-write agent attach \
-    --agent-id <agent-id-uuid>
+    --agent-id <agent-id-uuid> \
+    --token-file <path-to-attach-handle-token>
 
 # 5. Confirm Running state.
 #    [SUBSTRATE-NEW] `octo agent state` is NOT wired — AgentAction has
@@ -1761,7 +1767,7 @@ The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register �
 
 Cause: `octo whoami` resolved no identity in the wallet.
 
-Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. The substrate-faithful wallet binary exposes ONLY `Init | DeriveCap | Vault` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
+Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. The substrate-faithful wallet binary exposes 4 subcommands: `Init | DeriveCap | Vault | Ask` per `crates/octo-wallet/src/bin/octo-wallet.rs:34-66` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `Ask` subcommand ships RFC-0959 marketplace CLI per `AskOp::Publish { ... }` (sub-modes publish). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
 
 ### `OctoCliError::ConfirmationRequired { command }`
 
@@ -2429,12 +2435,14 @@ tar -xzf "$OCTO_HOME/backup/<timestamp>.home.tar.gz" -C /
 
 # 11. Re-import the mnemonic (re-derives the identity keys + wallet).
 #     [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
-#     has ONLY Show | Rotate | Revoke. The substrate wallet binary exposes ONLY
-#     Init | DeriveCap | Vault (no `dev-restore-identity` binary; `crates/octo-wallet/Cargo.toml`
-#     has one `[[bin]]` entry for `octo-wallet`). Mnemonic restore is via the
-#     substrate API directly: `octo_wallet::IdentityKey::from_seed(bytes)` +
-#     `std::fs::write(seed_out, ...)` (the Init subcommand's body). Until a
-#     substrate restore-binary ships, write a small extension crate that takes
+#     has ONLY Show | Rotate | Revoke. The substrate wallet binary exposes 4
+#     subcommands: Init | DeriveCap | Vault | Ask per
+#     crates/octo-wallet/src/bin/octo-wallet.rs:34-66 (no `dev-restore-identity`
+#     binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for
+#     `octo-wallet`). Mnemonic restore is via the substrate API directly:
+#     `octo_wallet::IdentityKey::from_seed(bytes)` + `std::fs::write(seed_out, ...)`
+#     (the Init subcommand's body). Until a substrate restore-binary ships,
+#     write a small extension crate that takes
 #     the encrypted mnemonic, derives the seed via Argon2id per RFC-0102 §Key
 #     Storage, and writes the 32-byte seed file with mode 0600 to
 #     `$OCTO_HOME/identity/<label>.seed`. The follow-on restore binary is a
@@ -2776,8 +2784,8 @@ octo governance vote <proposal-id-hex> reject \
 #    returned from step 4/5).
 #    NOTE: `octo audit list --kind ...` is NOT a real AuditListArgs flag
 #    (only --since / --until / --capability-root / --model / --router-id /
-#    --status / --include-reject / --limit / --cursor / --json per
-#    `crates/octo-cli/src/commands/audit.rs:66-170`). AuditEventKind is NOT
+#    --status / --include-reject / --limit / --json per
+#    `crates/octo-cli/src/commands/audit.rs:63-130`). AuditEventKind is NOT
 #    typed by AuditListArgs discriminant
 #    discriminant (substrate has only Insert | Revoke | Sync | AgentTransition);
 #    use the audit event id returned by the vote receipt.
@@ -3355,7 +3363,7 @@ octo capability list --json | jq --arg c "<cap-id-hex>" \
 octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
 #    [SUBSTRATE-NEW] `--filter-holder-did` is NOT wired on AuditListArgs
 #    (substrate flags are --since / --until / --capability-root / --model /
-#    --router-id / --status / --include-reject / --limit / --cursor). Use
+#    --router-id / --status / --include-reject / --limit). Use
 #    the §17.0 jq-filter pattern (subject_did startswith canonical prefix):
 octo audit list --limit 100 --json \
     | jq --arg d "$BUYER_DID" '.receipts[] | select(.subject_did == $d)'

@@ -124,10 +124,10 @@ Auto-detect: `OCTO_AUDIT=1` → Auditor; `CI=true` → Ci (unless `--confirm` / 
 ```mermaid
 flowchart TD
     A[mutating command] --> B{mode?}
-    B -->|Auditor| C[OctoCliError::AuditorDenied\nslot 88 adjacent, exit 2]
+    B -->|Auditor| C[OctoCliError::AuditorDenied\n(enum index 1 per error.rs), exit 2]
     B -->|Human| D{--confirm\nAND --confirm-acknowledge?}
     B -->|Ci / Dev| E{--allow-write?}
-    D -->|no| F[OctoCliError::ConfirmationRequired\nslot 87, exit 2]
+    D -->|no| F[OctoCliError::ConfirmationRequired\n(enum index 2 per error.rs), exit 2]
     D -->|yes| G[proceed]
     E -->|no| F
     E -->|yes| G
@@ -347,13 +347,17 @@ octo identity rotate
 #    RoleAction has ONLY List + Show + Select per
 #    crates/octo-cli/src/commands/role.rs (no Bind variant). The substrate
 #    node-binding path is the SpecializedNodeRecord dispatch (per
-#    RFC-0011-q §Substrate-Additions): wire node-class to holder-DID via
-#    the network CLI after the identity is set active.
-#    Substrate-faithful path:
+#    RFC-0011-q §Substrate-Additions). Substrate-faithful NodeBindArgs
+#    (crates/octo-cli/src/commands/network.rs NodeBindArgs) is POSITIONAL
+#    `<node-id-hex>` + --holder-did + --dry-run/--apply (mutually
+#    exclusive) + --confirm-acknowledge (required for --apply) + --json.
+#    There is NO --node-id flag and NO --node-class flag on NodeBindArgs;
+#    NodeClass is data-on-record per §14 substrate-coverage note, not a
+#    CLI flag. node_id is derived from `octo network status --json | jq
+#    '.local_node_id_hex'`.
 octo network node bind \
-    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$(octo network status --json | jq -r '.local_node_id_hex')" \
     --holder-did "$NEW_DID" \
-    --node-class Builder \
     --apply \
     --confirm --confirm-acknowledge
 ```
@@ -605,11 +609,14 @@ ASSET_ID="octo"
 # 3. Provision the vault (substrate port: VaultOwnerIndex).
 #    [SUBSTRATE-NEW] `octo vault create` is NOT wired — VaultAction has ONLY
 #    List | Balance | Transfer. Vault provisioning is substrate-side
-#    (`octo-vault-core::VaultOwnerIndex::register`). The `octo-vault-core`
+#    (`octo_vault::VaultOwnerIndex::register`, defined at
+#    `crates/octo-vault/src/vault_owner.rs:45` and re-exported at
+#    `crates/octo-vault/src/lib.rs:114`). The `octo-vault`
 #    crate has NO `[[bin]]` entries (no `dev-provision-vault` binary) per
-#    `crates/octo-vault-core/Cargo.toml`. Workaround for dev: call the substrate
-#    API directly via a small extension binary (per-extension crate pattern;
-#    Layer D adapter) that invokes `octo_vault_core::VaultOwnerIndex::register`
+#    `crates/octo-vault/Cargo.toml` (`crate-type = ["rlib"]`). Workaround for
+#    dev: call the substrate API directly via a small extension binary
+#    (per-extension crate pattern; Layer D adapter) that invokes
+#    `octo_vault::VaultOwnerIndex::register`
 #    and writes the vault id to `$OCTO_HOME/vault/<chain-id>-<asset-id>.id`.
 #    Alternatively, use `octo-wallet vault put <slot> <stdin>` to seed the
 #    active-identity vault with the chain/asset pair (VaultOp::Put per
@@ -1302,7 +1309,7 @@ octo network coordinator show --json
 
 ## §14 Provider network (compute/bandwidth/storage/data)
 
-> **Substrate-coverage note:** The `octo provider {compute,bandwidth,storage,data} {register,deregister}` CLI surface is NOT wired — `provider.rs` does not exist in `crates/octo-cli/src/commands/` (verified 2026-09-23). The substrate-faithful provider registration path is `octo network node bind` (NetworkAction::Node → NetworkNodeAction::Bind, per `crates/octo-cli/src/commands/network.rs`:761), which records the SpecializedNodeRecord via the registry pattern. The NodeClass taxonomy (Builder | Provider | Storage | Bandwidth | Orchestrator) is data-on-record (set when the per-extension Layer D adapter ships), NOT a CLI flag. Per-extension crate registry onboarding (for `octo-wallet-node`, `octo-identity-resolver-node`, `octo-capability-issuer-node`, `octo-reputation-anchor-node`, `octo-paid-query` per RFC-0871) lands in follow-on missions; `octo-wallet-node` is the only shipped `[[bin]]` today. The narrative use-case docs cited below describe the BUSINESS model (OCTO-A/OCTO-B/OCTO-S/OCTO-D mechanics); operator-facing CLI surface is deferred.
+> **Substrate-coverage note:** The `octo provider {compute,bandwidth,storage,data} {register,deregister}` CLI surface is NOT wired — `provider.rs` does not exist in `crates/octo-cli/src/commands/` (verified 2026-09-23). The substrate-faithful provider registration path is `octo network node bind` (NetworkAction::Node → NetworkNodeAction::Bind, per `crates/octo-cli/src/commands/network.rs`:761), which records the SpecializedNodeRecord via the registry pattern. The NodeClass taxonomy (Builder | Provider | Storage | Bandwidth | Orchestrator) is data-on-record (set when the per-extension Layer D adapter ships), NOT a CLI flag. Per-extension crate registry onboarding (for `octo-wallet-node`, `octo-identity-resolver-node`, `octo-capability-issuer-node`, `octo-reputation-anchor-node`, `octo-paid-query` per RFC-0871) lands in follow-on missions; NONE of these 5 specialized-node crates ship as `[[bin]]` today (all are rlib-only / `[lib]`-only with no `[[bin]]` entry and no `fn main()` in src/; verified 2026-09-23). The narrative use-case docs cited below describe the BUSINESS model (OCTO-A/OCTO-B/OCTO-S/OCTO-D mechanics); operator-facing CLI surface is deferred.
 
 **Narrative cross-refs (business model documentation only):**
 
@@ -1328,11 +1335,12 @@ octo network coordinator show --json
 # 1. Bind a node class to your identity (one of: Builder | Provider | Storage | Bandwidth | Orchestrator).
 #    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
 #    RoleAction has ONLY List + Show + Select. Substrate-faithful path is
-#    the SpecializedNodeRecord dispatch (RFC-0011-q §Substrate-Additions):
+#    the SpecializedNodeRecord dispatch (RFC-0011-q §Substrate-Additions)
+#    with POSITIONAL <node-id-hex> + --holder-did + --apply
+#    + --confirm-acknowledge. NodeClass is data-on-record (not a CLI flag).
 octo network node bind \
-    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$(octo network status --json | jq -r '.local_node_id_hex')" \
     --holder-did "$ACTIVE_DID" \
-    --node-class Provider \
     --apply \
     --confirm --confirm-acknowledge
 ```
@@ -1507,64 +1515,64 @@ rm -rf "$OCTO_HOME"
 
 ### Narrative use-cases in `docs/use-cases/`
 
-| Operator scenario          | Narrative use-case                                                                                                           | Token  | Substrate crate                                         |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------- |
-| §3 Bootstrap               | [dot-network-bootstrap.md](../use-cases/dot-network-bootstrap.md)                                                            | n/a    | `octo-network`                                          |
-| §3 Bootstrap               | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-mesh` + adapters                                  |
-| §4 Identity                | [canonical-octoid-identifier.md](../use-cases/canonical-octoid-identifier.md)                                                | n/a    | `octo-ident`                                            |
-| §5 Mesh peers              | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-mesh`                                             |
-| §6 Capability              | (no narrative — RFC-0957 + RFC-0965 are the canonical specs)                                                                 | n/a    | `octo-cap-macaroon`                                     |
-| §7 Vault                   | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-vault`                                            |
-| §8 Quota routing           | [ai-quota-marketplace.md](../use-cases/ai-quota-marketplace.md)                                                              | OCTO-W | `quota-router-core`                                     |
-| §8 Quota routing           | [enhanced-quota-router-gateway.md](../use-cases/enhanced-quota-router-gateway.md)                                            | OCTO-W | `quota-router-core`                                     |
-| §8 Quota routing           | [privacy-preserving-query-routing.md](../use-cases/privacy-preserving-query-routing.md)                                      | OCTO-W | `quota-router-core`                                     |
-| §9 Agent marketplace       | [agent-marketplace.md](../use-cases/agent-marketplace.md)                                                                    | OCTO-D | `octo-runtime`                                          |
-| §9 Agent marketplace       | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo-wallet` + `octo-wallet-node`                      |
-| §10 Capability delivery    | (new — RFC-0957 + RFC-0011-c composition)                                                                                    | n/a    | `octo-cap-macaroon` + `octo-runtime`                    |
-| §11 Reputation             | [reputation-persistence.md](../use-cases/reputation-persistence.md)                                                          | n/a    | `octo-reputation`                                       |
-| §11 Reputation             | [probabilistic-verification-markets.md](../use-cases/probabilistic-verification-markets.md)                                  | n/a    | `octo-reputation` + `octo-network`                      |
-| §12 Audit                  | [verifiable-reasoning-traces.md](../use-cases/verifiable-reasoning-traces.md)                                                | n/a    | `octo-audit` + `octo-settlement`                        |
-| §12 Audit                  | [verifiable-ai-agents-defi.md](../use-cases/verifiable-ai-agents-defi.md)                                                    | n/a    | `octo-audit` + `octo-settlement`                        |
-| §13 Governance             | [mission-coordinator-lifecycle.md](../use-cases/mission-coordinator-lifecycle.md)                                            | n/a    | `octo-network` (slash)                                  |
-| §13 Governance             | [orchestrator-role.md](../use-cases/orchestrator-role.md)                                                                    | OCTO-O | `octo-role` + `octo-governance`                         |
-| §13 Governance             | [dual-mode-authorization-workflow.md](../use-cases/dual-mode-authorization-workflow.md)                                      | n/a    | `octo-runtime`                                          |
-| §14 Provider network       | [compute-provider-network.md](../use-cases/compute-provider-network.md)                                                      | OCTO-A | `octo-network`                                          |
-| §14 Provider network       | [bandwidth-provider-network.md](../use-cases/bandwidth-provider-network.md)                                                  | OCTO-B | `octo-network`                                          |
-| §14 Provider network       | [storage-provider-network.md](../use-cases/storage-provider-network.md)                                                      | OCTO-S | `octo-network`                                          |
-| §14 Provider network       | [data-marketplace.md](../use-cases/data-marketplace.md)                                                                      | OCTO-D | `octo-network` + `octo-reputation`                      |
-| §14 Provider network       | [telegram-auth-onboarding.md](../use-cases/telegram-auth-onboarding.md)                                                      | n/a    | `octo-adapter-telegram`                                 |
-| §14 Provider network       | [decentralized-mission-execution.md](../use-cases/decentralized-mission-execution.md)                                        | n/a    | `octo-network` + `octo-runtime`                         |
-| §15 Tear down + cleanup    | (no narrative — synthesizes reverse of §3-§14)                                                                               | n/a    | `octo-wallet` + `octo-network`                          |
-| §16 Cross-reference map    | (self — this section)                                                                                                        | n/a    | n/a                                                     |
-| §17 Troubleshooting        | (no narrative — common-error-lookup reference; §17.1 enumerates the 6-phase pattern for §18-§32)                             | n/a    | `octo-cli::error`                                       |
-| §18 Operator onboarding    | [dot-network-bootstrap.md](../use-cases/dot-network-bootstrap.md)                                                            | n/a    | `octo-network` (bootstrap substrate)                    |
-| §18 Operator onboarding    | [canonical-octoid-identifier.md](../use-cases/canonical-octoid-identifier.md)                                                | n/a    | `octo-ident`                                            |
-| §19 Specialized nodes      | [compute-provider-network.md](../use-cases/compute-provider-network.md)                                                      | OCTO-A | `octo-network`                                          |
-| §19 Specialized nodes      | [bandwidth-provider-network.md](../use-cases/bandwidth-provider-network.md)                                                  | OCTO-B | `octo-network`                                          |
-| §19 Specialized nodes      | [storage-provider-network.md](../use-cases/storage-provider-network.md)                                                      | OCTO-S | `octo-network`                                          |
-| §19 Specialized nodes      | [orchestrator-role.md](../use-cases/orchestrator-role.md)                                                                    | OCTO-O | `octo-role`                                             |
-| §19 Specialized nodes      | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo-wallet-node`                                      |
-| §19 Specialized nodes      | [node-operations.md](../use-cases/node-operations.md)                                                                        | OCTO-N | `octo-network`                                          |
-| §20 Stoolap backend        | [stoolap-only-persistence.md](../use-cases/stoolap-only-persistence.md)                                                      | n/a    | `octo-storage-core`                                     |
-| §20 Stoolap backend        | [stoolap-data-sync-via-cipherocto-network.md](../use-cases/stoolap-data-sync-via-cipherocto-network.md)                      | n/a    | `octo-network`                                          |
-| §21 Transport adapter      | [telegram-auth-onboarding.md](../use-cases/telegram-auth-onboarding.md)                                                      | n/a    | `octo-adapter-telegram`                                 |
-| §21 Transport adapter      | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-adapter-{ws,p2p,…}`                               |
-| §22 Backup + restore       | (no narrative — substrate-new; substrate path: `octo-wallet` mnemonic + `octo-storage-core` ledger)                          | n/a    | `octo-wallet` + `octo-storage-core`                     |
-| §23 Substrate migration    | (no narrative — substrate-new; substrate path: `octo_vault::apply(db)` + `BUILTIN_MIGRATION_CATALOG` per RFC-0206)           | n/a    | `octo-storage-core::Database`                           |
-| §24 Cross-chain / bridge   | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-vault` + bridge substrate                         |
-| §25 Verification markets   | [probabilistic-verification-markets.md](../use-cases/probabilistic-verification-markets.md)                                  | n/a    | `octo-network` (slash + reputation)                     |
-| §26 Reputation federation  | [reputation-persistence.md](../use-cases/reputation-persistence.md)                                                          | n/a    | `octo-reputation`                                       |
-| §26 Reputation federation  | [reputation-federation-guide.md](../07-developers/reputation-federation-guide.md)                                            | n/a    | `octo-reputation` + RFC-0968 §28.4 amendment 22         |
-| §27 CI/CD                  | (no narrative — substrate-new)                                                                                               | n/a    | `octo-cli` (Ci/Dev modes)                               |
-| §28 Slash defence          | [bootstrap-slash-evidence-runbook.md](bootstrap-slash-evidence-runbook.md)                                                   | n/a    | `octo-network` (slash)                                  |
-| §29 Hybrid AI + blockchain | [hybrid-ai-blockchain-runtime.md](../use-cases/hybrid-ai-blockchain-runtime.md)                                              | OCTO-W | `octo-runtime` + AI substrate                           |
-| §29 Hybrid AI + blockchain | [verifiable-reasoning-traces.md](../use-cases/verifiable-reasoning-traces.md)                                                | n/a    | `octo-runtime` + ZK substrate                           |
-| §30 Privacy ops            | [privacy-preserving-query-routing.md](../use-cases/privacy-preserving-query-routing.md)                                      | OCTO-W | `quota-router-core`                                     |
-| §30 Privacy ops            | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-cap-macaroon`                                     |
-| §30 Privacy ops            | [enterprise-private-ai.md](../use-cases/enterprise-private-ai.md)                                                            | n/a    | `octo-runtime`                                          |
-| §31 Multi-tenant           | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo-wallet`                                           |
-| §31 Multi-tenant           | [dual-mode-authorization-workflow.md](../use-cases/dual-mode-authorization-workflow.md)                                      | n/a    | `octo-runtime`                                          |
-| §32 Disaster recovery      | (no narrative — substrate-new; substrate paths: mnemonic re-import + `Database::execute_checked` + reputation gossip replay) | n/a    | `octo-wallet` + `octo-storage-core` + `octo-reputation` |
+| Operator scenario          | Narrative use-case                                                                                                           | Token  | Substrate crate                                          |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------- |
+| §3 Bootstrap               | [dot-network-bootstrap.md](../use-cases/dot-network-bootstrap.md)                                                            | n/a    | `octo-network`                                           |
+| §3 Bootstrap               | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-mesh` + adapters                                   |
+| §4 Identity                | [canonical-octoid-identifier.md](../use-cases/canonical-octoid-identifier.md)                                                | n/a    | `octo-ident`                                             |
+| §5 Mesh peers              | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-mesh`                                              |
+| §6 Capability              | (no narrative — RFC-0957 + RFC-0965 are the canonical specs)                                                                 | n/a    | `octo-cap-macaroon`                                      |
+| §7 Vault                   | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-vault`                                             |
+| §8 Quota routing           | [ai-quota-marketplace.md](../use-cases/ai-quota-marketplace.md)                                                              | OCTO-W | `quota-router-core`                                      |
+| §8 Quota routing           | [enhanced-quota-router-gateway.md](../use-cases/enhanced-quota-router-gateway.md)                                            | OCTO-W | `quota-router-core`                                      |
+| §8 Quota routing           | [privacy-preserving-query-routing.md](../use-cases/privacy-preserving-query-routing.md)                                      | OCTO-W | `quota-router-core`                                      |
+| §9 Agent marketplace       | [agent-marketplace.md](../use-cases/agent-marketplace.md)                                                                    | OCTO-D | `octo-runtime`                                           |
+| §9 Agent marketplace       | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo-wallet` (no `octo-wallet-node` binary — rlib-only) |
+| §10 Capability delivery    | (new — RFC-0957 + RFC-0011-c composition)                                                                                    | n/a    | `octo-cap-macaroon` + `octo-runtime`                     |
+| §11 Reputation             | [reputation-persistence.md](../use-cases/reputation-persistence.md)                                                          | n/a    | `octo-reputation`                                        |
+| §11 Reputation             | [probabilistic-verification-markets.md](../use-cases/probabilistic-verification-markets.md)                                  | n/a    | `octo-reputation` + `octo-network`                       |
+| §12 Audit                  | [verifiable-reasoning-traces.md](../use-cases/verifiable-reasoning-traces.md)                                                | n/a    | `octo-audit` + `octo-settlement`                         |
+| §12 Audit                  | [verifiable-ai-agents-defi.md](../use-cases/verifiable-ai-agents-defi.md)                                                    | n/a    | `octo-audit` + `octo-settlement`                         |
+| §13 Governance             | [mission-coordinator-lifecycle.md](../use-cases/mission-coordinator-lifecycle.md)                                            | n/a    | `octo-network` (slash)                                   |
+| §13 Governance             | [orchestrator-role.md](../use-cases/orchestrator-role.md)                                                                    | OCTO-O | `octo-role` + `octo-governance`                          |
+| §13 Governance             | [dual-mode-authorization-workflow.md](../use-cases/dual-mode-authorization-workflow.md)                                      | n/a    | `octo-runtime`                                           |
+| §14 Provider network       | [compute-provider-network.md](../use-cases/compute-provider-network.md)                                                      | OCTO-A | `octo-network`                                           |
+| §14 Provider network       | [bandwidth-provider-network.md](../use-cases/bandwidth-provider-network.md)                                                  | OCTO-B | `octo-network`                                           |
+| §14 Provider network       | [storage-provider-network.md](../use-cases/storage-provider-network.md)                                                      | OCTO-S | `octo-network`                                           |
+| §14 Provider network       | [data-marketplace.md](../use-cases/data-marketplace.md)                                                                      | OCTO-D | `octo-network` + `octo-reputation`                       |
+| §14 Provider network       | [telegram-auth-onboarding.md](../use-cases/telegram-auth-onboarding.md)                                                      | n/a    | `octo-adapter-telegram`                                  |
+| §14 Provider network       | [decentralized-mission-execution.md](../use-cases/decentralized-mission-execution.md)                                        | n/a    | `octo-network` + `octo-runtime`                          |
+| §15 Tear down + cleanup    | (no narrative — synthesizes reverse of §3-§14)                                                                               | n/a    | `octo-wallet` + `octo-network`                           |
+| §16 Cross-reference map    | (self — this section)                                                                                                        | n/a    | n/a                                                      |
+| §17 Troubleshooting        | (no narrative — common-error-lookup reference; §17.1 enumerates the 6-phase pattern for §18-§32)                             | n/a    | `octo-cli::error`                                        |
+| §18 Operator onboarding    | [dot-network-bootstrap.md](../use-cases/dot-network-bootstrap.md)                                                            | n/a    | `octo-network` (bootstrap substrate)                     |
+| §18 Operator onboarding    | [canonical-octoid-identifier.md](../use-cases/canonical-octoid-identifier.md)                                                | n/a    | `octo-ident`                                             |
+| §19 Specialized nodes      | [compute-provider-network.md](../use-cases/compute-provider-network.md)                                                      | OCTO-A | `octo-network`                                           |
+| §19 Specialized nodes      | [bandwidth-provider-network.md](../use-cases/bandwidth-provider-network.md)                                                  | OCTO-B | `octo-network`                                           |
+| §19 Specialized nodes      | [storage-provider-network.md](../use-cases/storage-provider-network.md)                                                      | OCTO-S | `octo-network`                                           |
+| §19 Specialized nodes      | [orchestrator-role.md](../use-cases/orchestrator-role.md)                                                                    | OCTO-O | `octo-role`                                              |
+| §19 Specialized nodes      | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo_wallet_node` (rlib; no `[[bin]]` shipped)          |
+| §19 Specialized nodes      | [node-operations.md](../use-cases/node-operations.md)                                                                        | OCTO-N | `octo-network`                                           |
+| §20 Stoolap backend        | [stoolap-only-persistence.md](../use-cases/stoolap-only-persistence.md)                                                      | n/a    | `octo-storage-core`                                      |
+| §20 Stoolap backend        | [stoolap-data-sync-via-cipherocto-network.md](../use-cases/stoolap-data-sync-via-cipherocto-network.md)                      | n/a    | `octo-network`                                           |
+| §21 Transport adapter      | [telegram-auth-onboarding.md](../use-cases/telegram-auth-onboarding.md)                                                      | n/a    | `octo-adapter-telegram`                                  |
+| §21 Transport adapter      | [social-platform-transport-layer.md](../use-cases/social-platform-transport-layer.md)                                        | n/a    | `octo-adapter-{ws,p2p,…}`                                |
+| §22 Backup + restore       | (no narrative — substrate-new; substrate path: `octo-wallet` mnemonic + `octo-storage-core` ledger)                          | n/a    | `octo-wallet` + `octo-storage-core`                      |
+| §23 Substrate migration    | (no narrative — substrate-new; substrate path: `octo_vault::apply(db)` + `BUILTIN_MIGRATION_CATALOG` per RFC-0206)           | n/a    | `octo-storage-core::Database`                            |
+| §24 Cross-chain / bridge   | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-vault` + bridge substrate                          |
+| §25 Verification markets   | [probabilistic-verification-markets.md](../use-cases/probabilistic-verification-markets.md)                                  | n/a    | `octo-network` (slash + reputation)                      |
+| §26 Reputation federation  | [reputation-persistence.md](../use-cases/reputation-persistence.md)                                                          | n/a    | `octo-reputation`                                        |
+| §26 Reputation federation  | [reputation-federation-guide.md](../07-developers/reputation-federation-guide.md)                                            | n/a    | `octo-reputation` + RFC-0968 §28.4 amendment 22          |
+| §27 CI/CD                  | (no narrative — substrate-new)                                                                                               | n/a    | `octo-cli` (Ci/Dev modes)                                |
+| §28 Slash defence          | [bootstrap-slash-evidence-runbook.md](bootstrap-slash-evidence-runbook.md)                                                   | n/a    | `octo-network` (slash)                                   |
+| §29 Hybrid AI + blockchain | [hybrid-ai-blockchain-runtime.md](../use-cases/hybrid-ai-blockchain-runtime.md)                                              | OCTO-W | `octo-runtime` + AI substrate                            |
+| §29 Hybrid AI + blockchain | [verifiable-reasoning-traces.md](../use-cases/verifiable-reasoning-traces.md)                                                | n/a    | `octo-runtime` + ZK substrate                            |
+| §30 Privacy ops            | [privacy-preserving-query-routing.md](../use-cases/privacy-preserving-query-routing.md)                                      | OCTO-W | `quota-router-core`                                      |
+| §30 Privacy ops            | [asset-generic-payment-caveat.md](../use-cases/asset-generic-payment-caveat.md)                                              | OCTO   | `octo-cap-macaroon`                                      |
+| §30 Privacy ops            | [enterprise-private-ai.md](../use-cases/enterprise-private-ai.md)                                                            | n/a    | `octo-runtime`                                           |
+| §31 Multi-tenant           | [wallet-as-specialized-node.md](../use-cases/wallet-as-specialized-node.md)                                                  | n/a    | `octo-wallet`                                            |
+| §31 Multi-tenant           | [dual-mode-authorization-workflow.md](../use-cases/dual-mode-authorization-workflow.md)                                      | n/a    | `octo-runtime`                                           |
+| §32 Disaster recovery      | (no narrative — substrate-new; substrate paths: mnemonic re-import + `Database::execute_checked` + reputation gossip replay) | n/a    | `octo-wallet` + `octo-storage-core` + `octo-reputation`  |
 
 ### RFC substrate (Layer A frozen contracts + Layer B additive surface)
 
@@ -1591,24 +1599,24 @@ rm -rf "$OCTO_HOME"
 
 ### Crate map (operator-relevant)
 
-| Concern              | Crate                                                                                                                                                                  | Layer                                         |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Identity substrate   | `octo-ident`                                                                                                                                                           | B                                             |
-| Wallet substrate     | `octo-wallet`                                                                                                                                                          | B                                             |
-| Mesh peer table      | `octo-mesh`                                                                                                                                                            | B                                             |
-| Capability substrate | `octo-cap-macaroon`                                                                                                                                                    | B                                             |
-| Vault substrate      | `octo-vault`                                                                                                                                                           | B (depends on vault-core Layer A frozen)      |
-| Audit substrate      | `octo-audit`                                                                                                                                                           | B (depends on audit-core Layer A frozen)      |
-| Settlement substrate | `octo-settlement`                                                                                                                                                      | B (depends on settlement-core Layer A frozen) |
-| Governance substrate | `octo-governance`                                                                                                                                                      | B (depends on governance-core Layer A frozen) |
-| Reputation substrate | `octo-reputation`                                                                                                                                                      | B                                             |
-| Network substrate    | `octo-network`                                                                                                                                                         | B                                             |
-| Runtime substrate    | `octo-runtime`                                                                                                                                                         | B                                             |
-| Quota router         | `quota-router-core`                                                                                                                                                    | B (separate workspace member)                 |
-| CLI dispatcher       | `octo-cli` (binary `octo`)                                                                                                                                             | C                                             |
-| Quota router CLI     | `quota-router-cli`                                                                                                                                                     | C                                             |
-| Provider nodes       | `octo-capability-issuer-node`, `octo-identity-resolver-node`, `octo-paid-query`, `octo-reputation-anchor-node`, `octo-wallet-node`                                     | C                                             |
-| Transport adapters   | `octo-adapter-{telegram,whatsapp,discord,slack,bluesky,matrix,signal,lark,wechat,dingtalk,twitter,nostr,reddit,irc,qq,bluetooth,lora,quic,tcp,udp,webrtc,webhook,p2p}` | D                                             |
+| Concern              | Crate                                                                                                                                                                                                                                   | Layer                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Identity substrate   | `octo-ident`                                                                                                                                                                                                                            | B                                             |
+| Wallet substrate     | `octo-wallet`                                                                                                                                                                                                                           | B                                             |
+| Mesh peer table      | `octo-mesh`                                                                                                                                                                                                                             | B                                             |
+| Capability substrate | `octo-cap-macaroon`                                                                                                                                                                                                                     | B                                             |
+| Vault substrate      | `octo-vault`                                                                                                                                                                                                                            | B (depends on vault-core Layer A frozen)      |
+| Audit substrate      | `octo-audit`                                                                                                                                                                                                                            | B (depends on audit-core Layer A frozen)      |
+| Settlement substrate | `octo-settlement`                                                                                                                                                                                                                       | B (depends on settlement-core Layer A frozen) |
+| Governance substrate | `octo-governance`                                                                                                                                                                                                                       | B (depends on governance-core Layer A frozen) |
+| Reputation substrate | `octo-reputation`                                                                                                                                                                                                                       | B                                             |
+| Network substrate    | `octo-network`                                                                                                                                                                                                                          | B                                             |
+| Runtime substrate    | `octo-runtime`                                                                                                                                                                                                                          | B                                             |
+| Quota router         | `quota-router-core`                                                                                                                                                                                                                     | B (separate workspace member)                 |
+| CLI dispatcher       | `octo-cli` (binary `octo`)                                                                                                                                                                                                              | C                                             |
+| Quota router CLI     | `quota-router-cli`                                                                                                                                                                                                                      | C                                             |
+| Provider nodes       | `octo-capability-issuer-node`, `octo-identity-resolver-node`, `octo-paid-query`, `octo-reputation-anchor-node`, `octo-wallet-node` (all rlib-only today; per-extension Layer D adapter daemons land in follow-on missions per RFC-0871) | C (deferred)                                  |
+| Transport adapters   | `octo-adapter-{telegram,whatsapp,discord,slack,bluesky,matrix,signal,lark,wechat,dingtalk,twitter,nostr,reddit,irc,qq,bluetooth,lora,quic,tcp,udp,webrtc,webhook,p2p}`                                                                  | D                                             |
 
 ---
 
@@ -1860,11 +1868,12 @@ octo role select operator-main
 # 7. Bind your primary role / NodeClass.
 #    [SUBSTRATE-NEW] `octo role bind --node-class <X>` is NOT wired —
 #    RoleAction has ONLY List + Show + Select. The substrate-faithful
-#    SpecializedNodeRecord binding path is via the network CLI:
+#    SpecializedNodeRecord binding path is the network node bind
+#    dispatch with POSITIONAL <node-id-hex> + --holder-did + --apply
+#    + --confirm-acknowledge. NodeClass is data-on-record (not a CLI flag).
 octo network node bind \
-    --node-id "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$(octo network status --json | jq -r '.local_node_id_hex')" \
     --holder-did "$ACTIVE_DID" \
-    --node-class Operator \
     --apply \
     --confirm --confirm-acknowledge
 
@@ -1921,7 +1930,7 @@ octo identity revoke --reason "operator-offboarding"
 
 **New operator scenario.** Each CipherOcto node role ships as its own per-extension crate. Operators run them as separate processes that register into the Layer B mesh + capability + reputation substrates via the per-extension-crates + registry pattern.
 
-> **Substrate-coverage note:** Only `octo-wallet-node` ships as a `[[bin]]` binary in the current workspace. `octo-identity-resolver-node`, `octo-capability-issuer-node`, `octo-reputation-anchor-node`, and `octo-paid-query` are planned per-extension Layer D crates (per RFC-0871 §Specialized Node Protocol Envelope); they will register into the `SpecializedNodeRecord` substrate via the registry pattern when they ship. The `cargo build --release` invocation below compiles only `octo-wallet-node` today; the others fail with `package not found` until the per-extension crates land.
+> **Substrate-coverage note:** NONE of the 5 specialized-node crates ship as a `[[bin]]` binary in the current workspace. All five are rlib-only / `[lib]`-only with NO `[[bin]]` entry and NO `fn main()` in their `src/` trees (verified by `cat crates/octo-*-node/Cargo.toml | grep "[[bin]]"` returning 0 hits). They are per-extension Layer D adapter libraries that plug NodeEnvelope mesh bindings into their respective Layer B substrates; the operator-facing daemon binaries land in follow-on missions per RFC-0871 §Specialized Node Protocol Envelope. The 4 executable steps below (steps 2-6) are SUBSTRATE-NEW today and redirect to substrate APIs only.
 
 ### Prerequisites
 
@@ -1931,95 +1940,110 @@ octo identity revoke --reason "operator-offboarding"
 
 ### Setup — node selection
 
-| Node binary                   | Role                                                                              | Status                              | When to run                                  |
-| ----------------------------- | --------------------------------------------------------------------------------- | ----------------------------------- | -------------------------------------------- |
-| `octo-wallet-node`            | Wallet-as-specialized-node (RFC-0011 + narrative `wallet-as-specialized-node.md`) | SHIPS (`[[bin]]` in `octo-wallet`)  | Mobile / edge / offline-capable wallet host  |
-| `octo-identity-resolver-node` | DID ↔ endpoint resolution                                                         | SUBSTRATE-NEW (per-extension crate) | Always-on public resolver                    |
-| `octo-capability-issuer-node` | Capability minting (capability marketplace operator)                              | SUBSTRATE-NEW (per-extension crate) | Operators running capability-as-a-service    |
-| `octo-reputation-anchor-node` | Reputation attestation + federation anchor                                        | SUBSTRATE-NEW (per-extension crate) | Always-on witnesses                          |
-| `octo-paid-query`             | Paid query routing (pay-per-query endpoint)                                       | SUBSTRATE-NEW (per-extension crate) | Operators running data / inference endpoints |
+| Node binary                   | Role                                                         | Status                                       | When to run                                  |
+| ----------------------------- | ------------------------------------------------------------ | -------------------------------------------- | -------------------------------------------- |
+| `octo-wallet-node`            | Wallet-as-specialized-node (RFC-0871 §Wallet Node Lifecycle) | RLIB-ONLY (`[lib]` block only, no `[[bin]]`) | Mobile / edge / offline-capable wallet host  |
+| `octo-identity-resolver-node` | DID ↔ endpoint resolution                                    | RLIB-ONLY (`[lib]` block only, no `[[bin]]`) | Always-on public resolver                    |
+| `octo-capability-issuer-node` | Capability minting (capability marketplace operator)         | RLIB-ONLY (`[lib]` block only, no `[[bin]]`) | Operators running capability-as-a-service    |
+| `octo-reputation-anchor-node` | Reputation attestation + federation anchor                   | RLIB-ONLY (`[lib]` block only, no `[[bin]]`) | Always-on witnesses                          |
+| `octo-paid-query`             | Paid query routing (pay-per-query endpoint)                  | RLIB-ONLY (`crate-type = ["rlib"]`)          | Operators running data / inference endpoints |
 
 ```bash
-# 1. Build the wallet-node (the only specialized-node binary that ships today).
-cargo build --release -p octo-wallet --bin octo-wallet-node
-# For the other four binaries, the per-extension Layer D crates land in follow-on
-# missions per RFC-0871 §Specialized Node Protocol Envelope + RFC-0011-q §Substrate-Additions.
+# 1. Build the specialized-node binary (none ship as a `[[bin]]` today).
+#    [SUBSTRATE-NEW] NONE of the 5 specialized-node crates ship as a
+#    `[[bin]]` binary in the current workspace:
+#      - octo-wallet-node            → `[lib]` only (Cargo.toml `[lib]` block;
+#                                      crate-type is the default rlib; no
+#                                      `[[bin]]` entry, no `fn main()` in src/)
+#      - octo-identity-resolver-node → `[lib]` only
+#      - octo-capability-issuer-node → `[lib]` only
+#      - octo-reputation-anchor-node → `[lib]` only
+#      - octo-paid-query             → `crate-type = ["rlib"]` only
+#    The per-extension Layer D adapter binaries (the actual
+#    long-running node processes) land in follow-on missions per
+#    RFC-0871 §Specialized Node Protocol Envelope. The crate libraries
+#    ARE consumed by other crates (the wallet-as-specialized-node
+#    binding layer in `octo_wallet_node`, for example, plugs the
+#    NodeEnvelope mesh into the wallet substrate); the operator-
+#    facing daemon binaries are out of scope for this guide.
+#    Verify with `ls crates/octo-*-node/Cargo.toml`:
+#    grep "[[bin]]" returns 0 hits across all 5.
+echo "specialized-node binary build: SUBSTRATE-NEW; no CLI daemon shipped"
 ```
 
 ### Register — wallet-node (the simplest case)
 
 ```bash
-# 2. Run the wallet-node (separate process; binds to the active identity).
-octo-wallet-node \
-    --octo-home "$OCTO_HOME" \
-    --data-dir "$CIPHEROCTO_DATA_DIR" \
-    --listen tcp://0.0.0.0:9001 \
-    --confirm
-# Process binds a TCP endpoint + emits a NodeEnvelope per RFC-0871.
+# 2. [SUBSTRATE-NEW] `octo-wallet-node` is rlib-only today
+#    (crates/octo-wallet-node/Cargo.toml defines only `[lib]`, no
+#    `[[bin]]` entry, no `fn main()` in src/). The daemon process lands
+#    in the per-extension Layer D adapter follow-on mission per
+#    RFC-0871 §Wallet Node Lifecycle. Substrate wiring already exists
+#    — `octo_wallet_node::bridge_node_envelope_to_wallet_substrate`
+#    plugs NodeEnvelope mesh into the wallet substrate.
+echo "wallet-node daemon: SUBSTRATE-NEW; rlib-only today"
 ```
 
 ### Register — identity-resolver-node
 
 ```bash
-# 3. Run the identity resolver (always-on; subscribes to identity gossip).
-octo-identity-resolver-node \
-    --octo-home "$OCTO_HOME" \
-    --listen tcp://0.0.0.0:9002 \
-    --peer-discovery-mode bootstrap \
-    --confirm
+# 3. [SUBSTRATE-NEW] `octo-identity-resolver-node` is rlib-only today
+#    (no `[[bin]]` entry). Substrate wiring lives in
+#    `crates/octo-identity-resolver-node/src/`. The daemon process
+#    lands in a follow-on per-extension Layer D mission.
+echo "identity-resolver-node daemon: SUBSTRATE-NEW; rlib-only today"
 ```
 
 ### Register — capability-issuer-node
 
 ```bash
-# 4. Run the capability issuer (capability marketplace operator).
-octo-capability-issuer-node \
-    --octo-home "$OCTO_HOME" \
-    --listen tcp://0.0.0.0:9003 \
-    --audit-window-secs-default 86400 \
-    --confirm
+# 4. [SUBSTRATE-NEW] `octo-capability-issuer-node` is rlib-only today.
+#    Phase 3 MVP stub — CAPABILITY_ISSUE + CAPABILITY_REVOKE handlers
+#    in `crates/octo-capability-issuer-node/src/`; full macaroon
+#    substrate lands in mission 0957 Phase 2 follow-on.
+echo "capability-issuer-node daemon: SUBSTRATE-NEW; rlib-only today"
 ```
 
 ### Register — reputation-anchor-node
 
 ```bash
-# 5. Run the reputation anchor (always-on witness).
-octo-reputation-anchor-node \
-    --octo-home "$OCTO_HOME" \
-    --listen tcp://0.0.0.0:9004 \
-    --min-attestor-quorum 3 \
-    --confirm
-# MIN_ATTESTOR_QUORUM default 3; gossipsub topic /dot/reputation/{recorder_did_hex} per RFC-0968 §28.4 amendment 22.
+# 5. [SUBSTRATE-NEW] `octo-reputation-anchor-node` is rlib-only today.
+#    Phase 3 MVP stub — REPUTATION_ANCHOR_QUERY handler only in
+#    `crates/octo-reputation-anchor-node/src/`; full REPUTATION_QUERY /
+#    UPDATE / ANCHOR surface lands in mission 0968a-reputation-
+#    anchoring follow-on.
+echo "reputation-anchor-node daemon: SUBSTRATE-NEW; rlib-only today"
 ```
 
 ### Register — paid-query
 
 ```bash
-# 6. Run the paid query node (pay-per-query endpoint).
-octo-paid-query \
-    --octo-home "$OCTO_HOME" \
-    --listen tcp://0.0.0.0:9005 \
-    --price-octd-micros-per-query 100 \
-    --confirm
+# 6. [SUBSTRATE-NEW] `octo-paid-query` is rlib-only today
+#    (`crate-type = ["rlib"]`). Layer E extension crate per
+#    RFC-0957 §Per-Extension Crate Layout; paid-query caveat bridge
+#    substrate lands in mission 0871e follow-on.
+echo "paid-query daemon: SUBSTRATE-NEW; rlib-only today"
 ```
 
 ### Operate
 
 ```bash
-# 7. Register the running node with the mesh (specialized node protocol envelope per RFC-0871).
-NODE_ID=$(octo-wallet-node --print-node-id)
-# Substrate: NodeBindArgs node_id is POSITIONAL [u8; 32]; --apply + --confirm-acknowledge
-# is the apply gate (default is dry-run per RFC-0011-h §Confirmation Flag).
+# 7. Register the active-identity node binding (the substrate-faithful
+#    SpecializedNodeRecord dispatch). node_id is derived from the
+#    identity's substrate (see `octo network status --json | jq -r
+#    '.local_node_id_hex'`); placeholder below for the per-extension
+#    daemon's runtime-computed NODE_ID:
+NODE_ID="<node-id-hex-runtime-from-active-identity>"
+# Substrate: NodeBindArgs node_id is POSITIONAL [u8; 32]; --apply
+# + --confirm-acknowledge is the apply gate (default is dry-run per
+# RFC-0011-h §Confirmation Flag).
 octo network node bind \
     "$NODE_ID" \
-    --holder-did "did:octo:z<base58btc>" \
+    --holder-did "$ACTIVE_DID" \
     --apply --confirm-acknowledge
 
-# 8. Probe each node via heartbeat.
-for port in 9001 9002 9003 9004 9005; do
-    octo network heartbeat probe "did:octo:z<base58btc>" \
-        --timeout-ms 3000
-done
+# 8. Probe the bound node via heartbeat.
+octo network heartbeat probe "$ACTIVE_DID" --timeout-ms 3000
 ```
 
 ### Verify
@@ -2054,8 +2078,11 @@ octo reputation show --did "did:octo:z<base58btc>" --role builder
 #    ::unbind(&store, node_id)` (per-extension crate pattern; Layer D adapter).
 echo "node unbind: substrate-new; no CLI surface today"
 
-# 13. Kill the node process (SIGTERM).
-pkill -TERM -f "octo-wallet-node|octo-identity-resolver-node|octo-capability-issuer-node|octo-reputation-anchor-node|octo-paid-query"
+# 13. [SUBSTRATE-NEW] No specialized-node daemon process is running
+#    today (none of the 5 crates ship as `[[bin]]` per step 1 above).
+#    When the per-extension Layer D adapter daemons land, kill them with:
+#    pkill -TERM -f "<daemon-name>".
+echo "node daemon teardown: SUBSTRATE-NEW; no daemon running today"
 ```
 
 ---
@@ -2280,7 +2307,11 @@ rm -f "$OCTO_HOME/adapters/matrix.json"
 
 ```bash
 # 1. Stop all `octo` processes (avoids torn writes).
-pkill -TERM -f "octo|octo-wallet-node|octo-identity-resolver-node|octo-capability-issuer-node|octo-reputation-anchor-node|octo-paid-query"
+#    [SUBSTRATE-NEW] The 5 specialized-node daemons are rlib-only today
+#    per §19 step 1 (none ship as `[[bin]]`); this pkill targets the
+#    `octo` CLI only. The specialized-node daemons land in follow-on
+#    per-extension missions (RFC-0871 §Wallet Node Lifecycle).
+pkill -TERM -f "octo"
 sleep 5
 
 # 2. Snapshot the mnemonic + identity export (offline-encrypted).
@@ -2341,7 +2372,11 @@ chmod 0755 /usr/local/bin/cipherocto-backup.sh
 
 ```bash
 # 7. Stop all processes.
-pkill -TERM -f "octo|octo-wallet-node|octo-identity-resolver-node|octo-capability-issuer-node|octo-reputation-anchor-node|octo-paid-query"
+#    [SUBSTRATE-NEW] The 5 specialized-node daemons are rlib-only today
+#    per §19 step 1 (none ship as `[[bin]]`); this pkill targets the
+#    `octo` CLI only. The specialized-node daemons land in follow-on
+#    per-extension missions (RFC-0871 §Wallet Node Lifecycle).
+pkill -TERM -f "octo"
 sleep 5
 
 # 8. Wipe the corrupted home.
@@ -2413,7 +2448,7 @@ find "$OCTO_HOME/backup" -name '*.gpg' -mtime +90 -delete
 
 **New operator scenario.** Substrate migrations ship with each crate that owns persistent state. The vault substrate owns `octo-vault`'s migrations (`pub use migrations::BUILTIN_MIGRATION_CATALOG`); the runtime substrate owns revocation ledger migrations; the reputation substrate owns reputation storage migrations.
 
-> **Substrate-coverage note:** The `octo substrate migrations {list,show,apply,rollback}` CLI surface is NOT wired in the current NetworkAction / VaultAction / RuntimeAction enums. The substrate-faithful path is to invoke each owning crate's migration runner API directly (`octo_storage_core::Database::execute_checked(&sql, dry_run)` + `octo_storage_core::migrations::ensure_tracker_table(&conn, id)`) — there is NO migration-runner binary per crate (the `octo-vault`, `octo-vault-core`, and `octo-reputation` crates ship ZERO migration binaries; only `reputation-parity` exists in `octo-reputation`, gated on the `parity-bin` feature, and it is unrelated to migrations). The substrate exposes `migrations::BUILTIN_MIGRATION_CATALOG` (re-exported at `crates/octo-vault/src/lib.rs:89`) + per-crate `migrations::apply` + `migrations::rollback` API surfaces; invoke these from a small extension binary (per-extension crate pattern; Layer D adapter) until a CLI dispatch lands. The CLI dispatcher surfaces read paths (e.g., `octo vault list`) which delegate to the substrate AFTER migrations have been applied at the substrate layer. Migration events are audited via `octo audit list` with the canonical `subject_did startswith "did:octo:migration:"` filter per §17.0 (NOT `--kind substrate-migration`, which is the operator-shorthand; the AuditListArgs substrate has no `--kind` flag — see §17.0 substrate-shape note).
+> **Substrate-coverage note:** The `octo substrate migrations {list,show,apply,rollback}` CLI surface is NOT wired in the current NetworkAction / VaultAction / RuntimeAction enums. The substrate-faithful path is to invoke each owning crate's migration runner API directly (`octo_storage_core::Database::execute_checked(&sql, dry_run)` + `octo_storage_core::migrations::ensure_tracker_table(&conn, id)`) — there is NO migration-runner binary per crate (the `octo-vault` and `octo-reputation` crates ship ZERO migration binaries; only `reputation-parity` exists in `octo-reputation`, gated on the `parity-bin` feature, and it is unrelated to migrations). The substrate exposes `migrations::BUILTIN_MIGRATION_CATALOG` (re-exported at `crates/octo-vault/src/lib.rs:89`) + per-crate `migrations::apply` + `migrations::rollback` API surfaces; invoke these from a small extension binary (per-extension crate pattern; Layer D adapter) until a CLI dispatch lands. The CLI dispatcher surfaces read paths (e.g., `octo vault list`) which delegate to the substrate AFTER migrations have been applied at the substrate layer. Migration events are audited via `octo audit list` with the canonical `subject_did startswith "did:octo:migration:"` filter per §17.0 (NOT `--kind substrate-migration`, which is the operator-shorthand; the AuditListArgs substrate has no `--kind` flag — see §17.0 substrate-shape note).
 
 ### Prerequisites
 
@@ -2478,7 +2513,7 @@ cargo build --release --workspace
 
 # 7. Discover + apply pending migrations from the new release, per crate.
 #    [SUBSTRATE-NEW] No per-crate migration-runner binary exists (`octo-vault`
-#    and `octo-vault-core` have ZERO `[[bin]]` entries; `octo-reputation` ships
+#    has ZERO `[[bin]]` entries; `octo-reputation` ships
 #    only the flat `reputation-parity` binary, which is unrelated to migrations
 #    and is gated on the `parity-bin` feature). Substrate path: invoke
 #    `octo_storage_core::Database::execute_checked(&sql, dry_run=false)` +
@@ -3132,7 +3167,7 @@ octo --mode dev --allow-write agent run \
 #    caveats expression per crate substrate).
 octo --mode dev --allow-write capability mint \
     --holder "$REMOTE_AGENT_DID" \
-    --caveats '{"type":"amount_max","value":"1.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":3600}}' \
+    --caveats '[{"type":"amount_max","value":"1.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":3600}}]' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 
@@ -3222,7 +3257,7 @@ octo audit show <receipt-id-u64> --json
 #    privacy primitive is Caveat::AmountMax + Caveat::Provider scope filter.
 octo capability mint \
     --holder "$BUYER_DID" \
-    --caveats '{"type":"amount_max","value":"100.000000"},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}}' \
+    --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 # Substrate: Caveat::AmountMax { amount } + Caveat::Provider { peer_ids } +
@@ -3240,7 +3275,7 @@ octo capability mint \
 #    inside the `--caveats` JSON expression.
 octo capability mint \
     --holder "$BUYER_DID" \
-    --caveats '{"type":"amount_max","value":"500.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}' \
+    --caveats '[{"type":"amount_max","value":"500.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}]' \
     --root "<root-cap-id-hex>" \
     --confirm --confirm-acknowledge
 # Substrate: Caveat::AmountMax + Caveat::Permission::VaultMutation +

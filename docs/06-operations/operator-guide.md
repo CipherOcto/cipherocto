@@ -1228,8 +1228,9 @@ octo audit show <receipt-id-u64> --json
 # 5. Cross-check via the network-side audit view.
 octo network authority show
 #    [SUBSTRATE-NEW] `octo network governance tally` is wired per RFC-0011-k
-#    Phase 3; uses positional `<proposal-id-hex>` form:
-octo network governance tally <proposal-id-hex> --json
+#    Phase 3; uses REQUIRED `--proposal-id <u64>` LONG flag (NOT positional) per
+#    GovernanceTallyArgs at crates/octo-cli/src/commands/network.rs:399-406:
+octo network governance tally --proposal-id <proposal-id-u64> --json
 
 # 6. Cross-check via the audit write-path rollup (RFC-0016-a).
 #    [SUBSTRATE-NEW] `octo audit rollup` is NOT wired — AuditAction has ONLY
@@ -1318,7 +1319,14 @@ octo governance snapshot --json
 octo governance snapshot --force-refresh --json  # bypass TTL
 
 # 7. Network-side rotation status (RFC-0011-w paired amendment).
-octo network governance rotation status --json
+#    Substrate-faithful: GovernanceRotationStatusArgs has REQUIRED `--did-codec`
+#    long flag (canonical DID wire form; substrate rejects malformed DIDs via
+#    NetworkInvalidDid per slot 86) per
+#    crates/octo-cli/src/commands/network.rs:385-394. The flag MUST be supplied
+#    or clap rejects the call at parse time.
+octo network governance rotation status \
+    --did-codec "did:octo:0x<104-hex-identity>" \
+    --json
 
 # 8. Coordinator state (RFC-0855p-b mission coordinator lifecycle).
 octo network coordinator show --json
@@ -1825,7 +1833,7 @@ Fix: increase `--timeout-ms` (default 5000); check the peer's `--trust-level` + 
 
 Cause: `--filter` out of range.
 
-Fix: pass `--filter all` | `above-score:<0-100>` | `below-score:<0-100>`.
+Fix: pass `--filter all` (default), or `--filter above-score --threshold <0-100>` / `--filter below-score --threshold <0-100>`. The threshold lives in a SEPARATE required `--threshold <u32>` long flag (clap value_enum parses only bare-word variants, no colon syntax) per `ReputationListArgs` at `crates/octo-cli/src/commands/network.rs:807-833`.
 
 ### Clippy / build warnings
 

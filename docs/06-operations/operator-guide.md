@@ -313,8 +313,9 @@ octo whoami
 #    Identity creation happens via the `octo-wallet` substrate API
 #    (`mint_identity(InMemorySigner)`) — out of CLI scope. For dev/testing,
 #    invoke `octo-wallet init` (the one and only `[[bin]]` in the octo-wallet
-#    crate is named `octo-wallet`, with subcommands `init`, `derive-cap`,
-#    `vault`; see crates/octo-wallet/src/bin/octo-wallet.rs:162):
+#    crate is named `octo-wallet`, with 4 subcommands `init`, `derive-cap`,
+#    `vault`, `ask` per crates/octo-wallet/src/bin/octo-wallet.rs:33-67; the
+#    `ask` subcommand ships RFC-0959 marketplace CLI via AskOp):
 octo-wallet init \
     --node-type operator \
     --seed-out /var/lib/cipherocto/operator.seed
@@ -1335,7 +1336,12 @@ octo network governance rotation status \
     --json
 
 # 8. Coordinator state (RFC-0855p-b mission coordinator lifecycle).
-octo network coordinator show --json
+#    Substrate-faithful: CoordinatorShowArgs.coordinator_id is a REQUIRED
+#    POSITIONAL 32-byte hex field with `#[arg(value_parser = parse_64_char_hex_32byte)]`
+#    (no Option / no default) per crates/octo-cli/src/commands/network.rs:425-432.
+#    Zero-digest is rejected at parse time (pastejacking defense). clap rejects
+#    the call at parse time if `<coordinator-id-hex>` is missing.
+octo network coordinator show <coordinator-id-hex> --json
 ```
 
 ### Tear down

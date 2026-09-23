@@ -214,8 +214,15 @@ ls -la "$OCTO_HOME"
 #    Substrate-faithful: BootstrapArgs has only --json per
 #    crates/octo-cli/src/commands/network.rs. There is NO --mode flag.
 #    Persist a bootstrap transport mode via:
-#      octo network mode set --bootstrap-mode default --confirm --confirm-acknowledge
-#    (NetworkModeAction has Show + Set per the same source.)
+#      octo network mode set \
+#          --bootstrap-mode <default|named|gossip> \
+#          --listen-addr <ip:port> \
+#          --target-peers <N> \
+#          --confirm --confirm-acknowledge
+#    (ModeSetArgs requires all three flags per the same source:1383; the
+#    prior RFC-0011-h guidance that listed only --bootstrap-mode was a
+#    documentation bug — the substrate rejects the call without
+#    --listen-addr and --target-peers.)
 octo network bootstrap --json
 ```
 
@@ -454,7 +461,10 @@ octo network topology render --format dot --depth 5
 
 # 9. Quota router health (cross-region routing requires multiple healthy peers).
 octo network router status
-octo network router peers --peer-node-id-hex <peer-node-id-hex>
+#    Substrate-faithful: RouterPeersArgs is POSITIONAL <peer_node_id> per
+#    crates/octo-cli/src/commands/network.rs:709-724 (NOT a --peer-node-id-hex
+#    flag).
+octo network router peers <peer-node-id-hex>
 ```
 
 ### Tear down
@@ -877,9 +887,13 @@ octo agent list --json | jq --arg a "<agent-id-uuid>" \
     '.agents[] | select(.agent_id == $a) | {agent_id, state, manifest_hash}'
 
 # 6. Run a task via the agent.
+#    Substrate-faithful: AgentAction::Run takes --agent-id + --detach +
+#    --reason + --token-file per crates/octo-cli/src/commands/agent.rs.
+#    There is NO --input flag — input bytes ride on the attached
+#    capability's caveat chain or via --token-file on a detached run.
 octo agent run \
     --agent-id <agent-id-uuid> \
-    --input /tmp/sample-contract.pdf \
+    --reason "contract review" \
     --json
 
 # 7. Publish to marketplace (the marketplace substrate is part of agent runtime).
@@ -907,7 +921,7 @@ octo agent list --json | \
 #    path. The marketplace hire / billing handshake is deferred.
 octo agent run \
     --agent-id <agent-id-uuid> \
-    --input /tmp/sample-contract.pdf \
+    --reason "contract review" \
     --json
 ```
 
@@ -1019,23 +1033,32 @@ octo capability list --json | \
 ```bash
 # 6. Buyer redeems the capability by attaching the agent to the vault (substrate: octo_runtime::attach).
 # The capability is presented at attach time; octo_runtime::verify_full runs the caveat chain.
+#    Substrate-faithful: AgentAction::Attach takes --agent-id + --since + --token-file
+#    per crates/octo-cli/src/commands/agent.rs:144-164. There is NO --capability-id
+#    flag — the capability is supplied via the token file at --token-file (which the
+#    CLI dispatcher hands to octo_runtime::verify_full). Caveat chain validation
+#    (including vault-binding and the --mode / --allow-write analogues) is enforced
+#    INSIDE the capability payload, not via CLI flags. Fails-closed on unknown
+#    caveat per octo_cap_macaroon::verify_full.
+#    [SUBSTRATE-NEW] octo_runtime::attach is in-memory only; the
+#    detached-revocation envelope lives at --token-file. Persistence across CLI
+#    exits is opt-in via --detach (see AgentAction::RevokeAttach).
 octo agent attach \
     --agent-id "$AGENT_ID" \
-    --capability-id <cap-id-hex> \
-    --mode dev \
-    --allow-write
-# Substrate: octo_cap_macaroon::verify_full + octo_runtime::attach. Fails-closed on unknown caveat.
+    --token-file <path-to-capability-token> \
+    --since <unix-epoch-seconds>
 
 # 7. Agent spends against the vault (reservations substrate per RFC-0965).
 #    Substrate-faithful: AgentAction::Run shape is --agent-id + --detach +
 #    --reason + --token-file per crates/octo-cli/src/commands/agent.rs (NO
 #    --vault-id flag). Vault spending authority is granted via the attached
-#    capability (see step 6 --capability-id above; the caveat chain encodes
-#    vault-binding). If persistence across the CLI exit is needed, add
-#    --detach (which makes --token-file available for cross-process re-entry).
+#    capability token (see step 6 --token-file above; the caveat chain
+#    encodes vault-binding). If persistence across the CLI exit is needed,
+#    add --detach (which makes --token-file available for cross-process
+#    re-entry).
 octo agent run \
     --agent-id "$AGENT_ID" \
-    --input /tmp/task.json \
+    --reason "spend against vault" \
     --json
 ```
 
@@ -1405,7 +1428,9 @@ EOF
 #    `.peers[].peer_did_hex`), filtered by the active operator's DID.
 
 # 7. Inspect network-side node record (RFC-0871 specialized node protocol).
-octo network node show --node-id-hex <node-id-hex>
+#    Substrate-faithful: NodeShowArgs is POSITIONAL <node_id> per
+#    crates/octo-cli/src/commands/network.rs:738-753 (NOT a --node-id-hex flag).
+octo network node show <node-id-hex>
 
 # 8. Bind the holder DID to the node record (positional node_id_hex
 #    + --holder-did + --apply + --confirm-acknowledge per NodeBindArgs

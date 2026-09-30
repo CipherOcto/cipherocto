@@ -126,7 +126,7 @@ impl Compose {
             },
             file: docker_dir().join(file_name),
         };
-        stack.run_ok(&["build"], "build the node image");
+        build_node_image_once();
         // `--wait` blocks until every service's healthcheck passes.
         // The timeout stops a broken image from hanging the suite
         // forever; without it a failing test is indistinguishable from
@@ -293,6 +293,48 @@ fn ensure_docker_available() {
         "`docker compose version` failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Build the node image exactly once per process, under a project name
+/// that is deliberately NOT the scenario's.
+///
+/// This saves time, not disk, and the distinction is measured rather
+/// than assumed. Every service in both compose files names the same
+/// fixed tag and every scenario builds from the same context and the
+/// same Dockerfile, so the fifteen builds were fourteen redundant ones:
+/// each re-stats the context, re-sends it to the builder, and
+/// re-resolves. BuildKit's cache is content-addressed and global, so
+/// those fourteen were already hitting — running the old
+/// build-per-scenario pattern fifteen times costs 3.526 GB of cache,
+/// exactly what the single build costs. The redundancy was real; the
+/// disk cost was not.
+///
+/// The build runs under its own project name because the tag is
+/// explicit: compose writes `octo-e2e-l4:local` no matter which
+/// project built it, so a scenario's own `up` finds the image already
+/// present and does not rebuild. Isolation is unaffected — the project
+/// name is what separates the networks, volumes, and container names,
+/// and that is still unique per scenario.
+fn build_node_image_once() {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let out = Command::new("docker")
+            .arg("compose")
+            .arg("-p")
+            .arg("octo-e2e-l4-image")
+            .arg("-f")
+            .arg(docker_dir().join("compose-2node.yaml"))
+            .arg("build")
+            .output()
+            .expect("failed to spawn `docker compose build`");
+        assert!(
+            out.status.success(),
+            "could not build the node image: `docker compose build` exited {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    });
 }
 
 /// The endpoint string recorded for one peer, read back out of the

@@ -28,6 +28,38 @@ The first invocation builds the node image, which is a full release build of
 change under `crates/` or the escaped root crates invalidates the compile
 layer.
 
+**The suite builds the image once per process, not once per scenario.**
+This is a time saving, not a disk one, and the difference is measured:
+BuildKit's cache is content-addressed and global, so the fourteen
+redundant per-scenario builds were already hitting. Running the old
+build-per-scenario pattern fifteen times costs 3.526 GB of build cache —
+exactly what a single build costs. The redundancy was real; the disk
+cost was not.
+
+What the build runs under does not matter for the tag, because the tag is
+explicit: compose writes `octo-e2e-l4:local` no matter which project built
+it, so a scenario's own `up` finds the image already present and does not
+rebuild. Isolation is unaffected, because the project name is what
+separates the networks, volumes, and container names, and that is still
+unique per scenario.
+
+### Disk cost, measured
+
+A full run of this suite costs about **3.5 GB of BuildKit cache**, and
+BuildKit never garbage-collects. The cost therefore accumulates **per
+distinct source state the suite is run against**, not per scenario and not
+per build. During the round that measured this, a commit chain that
+re-ran the suite against each commit left roughly 87 GB behind and filled
+a 916 GB disk.
+
+So: re-running this suite against unchanged source is close to free, and
+re-running it against every commit of a long chain is what fills the disk.
+
+The suite deliberately does **not** run `docker builder prune`. That would
+be a shared-resource side effect on the developer's machine, discarding
+the cache for every docker build on the host. If you reclaim the disk by
+hand, that is the tradeoff you are making.
+
 ## Building the image by hand
 
 Only needed when debugging a build failure. The context is the workspace root

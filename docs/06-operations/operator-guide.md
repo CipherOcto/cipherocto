@@ -1831,7 +1831,7 @@ Each §18–§32 scenario follows a target 6-phase structure — the contractual
 
 The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register → Operate → Verify → Tear down`. Two scenarios legitimately invert the order — the deviation is intentional and substrate-faithful, not a doc bug:
 
-- **§32 Disaster recovery:** inverts Register/Setup. Pre-disaster state capture (`identity list --json`, `vault list --json`, `mesh peer list --json` snapshots written to `$OCTO_HOME/pre-recovery-*.json`) MUST happen BEFORE the `$OCTO_HOME` wipe in Setup, because the snapshot itself becomes the post-recovery Verify target. Log order: Register → Setup → Operate → Verify → Tear down.
+- **§32 Disaster recovery:** inverts Register/Setup. Pre-disaster state capture (`identity list --json`, `vault list --json`, `mesh peer list --json` snapshots) MUST happen BEFORE the `$OCTO_HOME` wipe in Setup, because the snapshot itself becomes the post-recovery Verify target. The snapshots go in `$OCTO_BACKUP_DIR`, **not** `$OCTO_HOME` — the wipe in Setup would otherwise destroy the very thing Verify diffs against. Log order: Register → Setup → Operate → Verify → Tear down.
 - **(reserved for future documented inversions)**
 
 **Substrate-coverage caveat:** Many §18–§32 commands reference substrate paths and feature flags that are pending RFC amendments. Each scenario carries an inline `substrate-coverage:` note where the substrate is incomplete; follow the inline note rather than copying the command verbatim until the substrate ships.
@@ -2446,6 +2446,45 @@ rm -f "$OCTO_HOME/adapters/matrix.json"
 - An existing operator install (see §18).
 - Encrypted offline storage for the mnemonic file.
 
+### READ THIS BEFORE RUNNING ANYTHING IN §22
+
+**Backups must not live inside `$OCTO_HOME`.**
+
+The restore procedure in this section begins by wiping `$OCTO_HOME`. A
+snapshot stored under `$OCTO_HOME/backup/` is therefore destroyed by the
+very step that is supposed to recover from it, and the extract that
+follows fails with `No such file or directory` — leaving the operator with
+neither the corrupted state nor the backup. This is not a theoretical
+ordering concern; it is what the commands below do when run in the order
+printed.
+
+The same applies to any archive created with `tar -czf ... "$OCTO_HOME"`.
+Such an archive stores **absolute** member paths with the leading `/`
+stripped, so `tar -xzf ... -C /` writes back to the _original_ absolute
+path. Restoring onto a rebuilt host, or into a new home location, puts
+the files somewhere the operator is not looking and the new home stays
+empty.
+
+Both problems are fixed by two changes, applied to every step below:
+
+1. **`$OCTO_BACKUP_DIR` is outside `$OCTO_HOME`** (default
+   `$HOME/.octo-backup`). Backups survive a wipe of the home.
+2. **Snapshots are created with `-C "$OCTO_HOME" .`**, so member names are
+   relative. The restore then extracts with `-C "$OCTO_HOME"` and
+   lands the files wherever the home currently is, with nothing written
+   outside it.
+
+3. **The home is emptied, not removed.** `rm -rf "$OCTO_HOME"` fails with
+   `Device or resource busy` whenever the home is a mount point, which it
+   is in every containerized or volume-backed deployment. Under `set -e`
+   that aborts the recovery at the one step it exists to perform. Use
+   `find "$OCTO_HOME" -mindepth 1 -delete`.
+
+```bash
+export OCTO_BACKUP_DIR="$HOME/.octo-backup"
+mkdir -p "$OCTO_BACKUP_DIR"
+```
+
 ### Setup — backup
 
 ```bash
@@ -2467,29 +2506,39 @@ sleep 5
 #    (see §4 step 2a), so this step cannot succeed until the wallet store
 #    lands.
 cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
-   "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc"
+   "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc"
 
 # 3. Snapshot $OCTO_HOME (mesh peer table + adapter configs).
-tar -czf "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz" \
-    --exclude='backup/*.enc' \
-    --exclude='data/*.stoolap' \
-    "$OCTO_HOME"
+#    `-C "$OCTO_HOME" .` is what makes the snapshot relocatable: member
+#    names are stored relative to the home, so the restore can place them
+#    wherever the home now is. `tar -czf ... "$OCTO_HOME"` would store
+#    absolute paths instead and only ever restore to the original host
+#    layout. `--exclude='./backup'` keeps the backup dir out of its own
+#    archive; `backup/` is outside the home now, so this only guards a
+#    legacy in-home backup.
+tar -czf "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz" \
+    --exclude='./backup' \
+    --exclude='./data/*.stoolap' \
+    -C "$OCTO_HOME" .
 
 # 4. Snapshot the Stoolap ledger (if enabled per §20).
-tar -czf "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz" \
-    "$CIPHEROCTO_DATA_DIR"
+tar -czf "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz" \
+    -C "$(dirname "$CIPHEROCTO_DATA_DIR")" "$(basename "$CIPHEROCTO_DATA_DIR")"
 
 # 5. Encrypt the snapshots (operator's choice of tool — gpg, age, etc.).
 gpg --symmetric --cipher-algo AES256 \
-    "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz"
+    "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz"
 gpg --symmetric --cipher-algo AES256 \
-    "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz"
+    "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz"
 ```
 
 ### Register — backup schedule
 
 ```bash
 # 6. Schedule daily backups via cron.
+#    Note OCTO_BACKUP_DIR is deliberately NOT under OCTO_HOME: a cron
+#    job that writes backups into the directory the restore wipes is a
+#    job that manufactures the exact failure recovery is for.
 cat > /etc/cron.daily/cipherocto-backup <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -2502,15 +2551,19 @@ cat > /usr/local/bin/cipherocto-backup.sh <<'EOF'
 #!/bin/bash
 set -euo pipefail
 export OCTO_HOME="$HOME/.octo"
+export OCTO_BACKUP_DIR="$HOME/.octo-backup"
 export CIPHEROCTO_DATA_DIR="$OCTO_HOME/data"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "$OCTO_HOME/backup"
-tar -czf "$OCTO_HOME/backup/$TS.home.tar.gz" \
-    --exclude='backup/*.enc' --exclude='backup/*.gpg' --exclude='data/*.stoolap' \
-    "$OCTO_HOME"
-tar -czf "$OCTO_HOME/backup/$TS.ledger.tar.gz" "$CIPHEROCTO_DATA_DIR"
+mkdir -p "$OCTO_BACKUP_DIR"
+# Relative member names, so a restore can target whatever path the home
+# occupies on the recovering host. See the section preamble.
+tar -czf "$OCTO_BACKUP_DIR/$TS.home.tar.gz" \
+    --exclude='./backup' --exclude='./data/*.stoolap' \
+    -C "$OCTO_HOME" .
+tar -czf "$OCTO_BACKUP_DIR/$TS.ledger.tar.gz" \
+    -C "$(dirname "$CIPHEROCTO_DATA_DIR")" "$(basename "$CIPHEROCTO_DATA_DIR")"
 # Retain last 30 days.
-find "$OCTO_HOME/backup" -name '*.tar.gz' -mtime +30 -delete
+find "$OCTO_BACKUP_DIR" -name '*.tar.gz' -mtime +30 -delete
 EOF
 chmod 0755 /usr/local/bin/cipherocto-backup.sh
 ```
@@ -2527,14 +2580,24 @@ pkill -TERM -f "octo"
 sleep 5
 
 # 8. Wipe the corrupted home.
-rm -rf "$OCTO_HOME"
+#     Empty the directory, do not remove it. `$OCTO_HOME` is a mount
+#     point in any containerized or volume-backed deployment, and
+#     `rm -rf "$OCTO_HOME"` fails there with `Device or resource busy`.
+#     Under `set -e` that aborts the procedure at the one step it exists
+#     to perform, and the archive that was just taken is the only copy
+#     of the state being discarded.
+find "$OCTO_HOME" -mindepth 1 -delete
 
-# 9. Recreate the home directory.
+# 9. Ensure the home directory exists with owner-only permissions.
 mkdir -p "$OCTO_HOME" "$CIPHEROCTO_DATA_DIR"
 chmod 0700 "$OCTO_HOME"
 
-# 10. Extract the snapshot.
-tar -xzf "$OCTO_HOME/backup/<timestamp>.home.tar.gz" -C /
+# 10. Extract the snapshot into the rebuilt home.
+#     `-C "$OCTO_HOME"` is safe now only because step 3 wrote relative
+#     member names. With an archive made by `tar -czf ... "$OCTO_HOME"`,
+#     the `-C /` that this step used to carry would restore to the
+#     original absolute path and leave the rebuilt home empty.
+tar -xzf "$OCTO_BACKUP_DIR/<timestamp>.home.tar.gz" -C "$OCTO_HOME"
 
 # 11. Re-import the mnemonic (re-derives the identity keys + wallet).
 #     [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
@@ -2556,7 +2619,7 @@ tar -xzf "$OCTO_HOME/backup/<timestamp>.home.tar.gz" -C /
 
 ```bash
 # 12. Extract the ledger snapshot.
-tar -xzf "$OCTO_HOME/backup/<timestamp>.ledger.tar.gz" -C /
+tar -xzf "$OCTO_BACKUP_DIR/<timestamp>.ledger.tar.gz" -C "$CIPHEROCTO_DATA_DIR"
 
 # 13. Verify the ledger integrity (substrate: octo_storage_core::Database::execute_checked
 #     + tracker::ensure_tracker_table; NOT `Database::verify_schema`, which is the
@@ -2571,14 +2634,26 @@ octo audit list --limit 1 --json
 
 ```bash
 # 14. Confirm whoami resolves.
+#     CAVEAT, verified against the binary: this exits 2 with "no active
+#     identity" on the current substrate, because `WalletStore::open()`
+#     returns an empty store. The wallet store landing is what unblocks
+#     it; see the caveat at §4 step 2a.
 octo whoami
 
 # 15. Confirm the mesh peer table restored.
+#     This is the step that actually proves the restore worked: the peer
+#     table is the one part of the home that is neither derivable from a
+#     mnemonic nor readable back from the ledger.
 octo mesh peer list --json
 
-# 16. Confirm the ledger restored (revocations + reputation persist across processes).
+# 16. Confirm the identities were re-derived.
 #    Substrate-faithful: IdentityAction::Show takes optional positional <did>;
 #    defaults to the ACTIVE identity. No --label flag.
+#    This is an identity check, not a ledger check. The ledger
+#    verification is step 13 (`octo audit list --limit 1 --json`) —
+#    revocations and reputation persisting across processes is what that
+#    command shows, and running this one in its place reports on
+#    identities while appearing to confirm the ledger.
 OCTO_AUDIT=1 octo identity show --json
 ```
 
@@ -2586,9 +2661,9 @@ OCTO_AUDIT=1 octo identity show --json
 
 ```bash
 # 17. Clean up old backups.
-find "$OCTO_HOME/backup" -name '*.tar.gz' -mtime +90 -delete
-find "$OCTO_HOME/backup" -name '*.enc' -mtime +90 -delete
-find "$OCTO_HOME/backup" -name '*.gpg' -mtime +90 -delete
+find "$OCTO_BACKUP_DIR" -name '*.tar.gz' -mtime +90 -delete
+find "$OCTO_BACKUP_DIR" -name '*.enc' -mtime +90 -delete
+find "$OCTO_BACKUP_DIR" -name '*.gpg' -mtime +90 -delete
 ```
 
 ---
@@ -3615,14 +3690,24 @@ done
 
 ### Register — pre-recovery attestation snapshot
 
+> **The snapshot must NOT be written inside `$OCTO_HOME`.** Step 2 wipes
+> the home, and a snapshot under it is destroyed by the wipe — so the
+> verify step at the end of this section would have nothing to diff
+> against. Write to `$OCTO_BACKUP_DIR` (see the preamble in §22), which
+> is outside the home.
+
 ```bash
 # 1. Capture the current pre-recovery state for comparison.
 #    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
 #    ONLY Show | Rotate | Revoke. Workaround: snapshot the wallet directory
-#    layout (each identity is at $OCTO_HOME/identity/<did>/):
-tar -czf "$OCTO_HOME/pre-recovery-identities.tar.gz" "$OCTO_HOME/identity/"
-octo vault list --json > "$OCTO_HOME/pre-recovery-vaults.json"
-octo mesh peer list --json > "$OCTO_HOME/pre-recovery-peers.json"
+#    layout (each identity is at $OCTO_HOME/identity/<did>/).
+#    `-C "$OCTO_HOME" .` keeps member names relative so the archive is
+#    comparable across a rebuild; see the §22 preamble.
+export OCTO_BACKUP_DIR="$HOME/.octo-backup"
+mkdir -p "$OCTO_BACKUP_DIR"
+tar -czf "$OCTO_BACKUP_DIR/pre-recovery-identities.tar.gz" -C "$OCTO_HOME" ./identity/
+octo vault list --json > "$OCTO_BACKUP_DIR/pre-recovery-vaults.json"
+octo mesh peer list --json > "$OCTO_BACKUP_DIR/pre-recovery-peers.json"
 # Substrate: read-only enumeration via the substrate ports; no mutation.
 # This snapshot lets you diff post-recovery state for audit-grade verification.
 ```
@@ -3631,7 +3716,10 @@ octo mesh peer list --json > "$OCTO_HOME/pre-recovery-peers.json"
 
 ```bash
 # 2. Wipe the corrupted $OCTO_HOME.
-rm -rf "$OCTO_HOME"
+#    Empty it, do not remove it — see the §22 preamble. `rm -rf` on a
+#    mount point fails with `Device or resource busy`, which under
+#    `set -e` aborts the recovery at the step meant to perform it.
+find "$OCTO_HOME" -mindepth 1 -delete
 mkdir -p "$OCTO_HOME" "$CIPHEROCTO_DATA_DIR"
 chmod 0700 "$OCTO_HOME"
 
@@ -3751,13 +3839,13 @@ octo mesh peer list --json
 #    therefore never matches, and `VAULTS_OK` / `PEERS_OK` can never be
 #    printed even when the recovered state is identical. Compare the
 #    `payload` object, which is the actual state and is stable:
-diff "$OCTO_HOME/pre-recovery-identities.tar.gz" \
-    <(tar -czf - "$OCTO_HOME/identity/") && \
+diff "$OCTO_BACKUP_DIR/pre-recovery-identities.tar.gz" \
+    <(tar -czf - -C "$OCTO_HOME" ./identity/) && \
     echo "IDENTITIES_OK"
-diff <(jq -S '.payload' "$OCTO_HOME/pre-recovery-vaults.json") \
+diff <(jq -S '.payload' "$OCTO_BACKUP_DIR/pre-recovery-vaults.json") \
     <(octo vault list --json | jq -S '.payload') && \
     echo "VAULTS_OK"
-diff <(jq -S '.payload' "$OCTO_HOME/pre-recovery-peers.json") \
+diff <(jq -S '.payload' "$OCTO_BACKUP_DIR/pre-recovery-peers.json") \
     <(octo mesh peer list --json | jq -S '.payload') && \
     echo "PEERS_OK"
 ```
@@ -3772,10 +3860,14 @@ diff <(jq -S '.payload' "$OCTO_HOME/pre-recovery-peers.json") \
 #     Brace expansion does not happen inside double quotes, so the pattern
 #     below is one literal filename, matches nothing, and `-f` silences the
 #     error — leaving the operator's vault and peer state in plaintext
-#     snapshots under $OCTO_HOME indefinitely. Expand first, then quote:
-rm -f "$OCTO_HOME"/pre-recovery-identities.tar.gz \
-      "$OCTO_HOME"/pre-recovery-vaults.json \
-      "$OCTO_HOME"/pre-recovery-peers.json
+#     snapshots indefinitely. Expand first, then quote. Note the snapshots
+#     live in $OCTO_BACKUP_DIR, not $OCTO_HOME: a snapshot under the home
+#     is already gone by the time this step runs, so the "cleanup" would
+#     have had nothing to remove and the plaintext would have been
+#     destroyed by the wipe rather than by this line.
+rm -f "$OCTO_BACKUP_DIR"/pre-recovery-identities.tar.gz \
+      "$OCTO_BACKUP_DIR"/pre-recovery-vaults.json \
+      "$OCTO_BACKUP_DIR"/pre-recovery-peers.json
 ```
 
 ---
@@ -3867,7 +3959,7 @@ Requirements:
 
 ### §33.5 What the container suite asserts
 
-Thirteen scenarios, each of which fails if the corresponding property of
+Fifteen scenarios, each of which fails if the corresponding property of
 the mesh does not hold:
 
 - a fresh node answers reads without creating a peer table;
@@ -3883,12 +3975,24 @@ the mesh does not hold:
 - the endpoint scheme allowlist is enforced per node;
 - teardown leaves no volume or network behind;
 - the fixtures are present and the build context resolves;
-- the trust-level filter accepts its full value space.
+- the trust-level filter accepts its full value space;
+- wiping a node's home and restoring the §22 snapshot brings back a peer
+  table whose recorded endpoint is dialable again;
+- restoring one node's peer table onto another leaves the source node
+  unchanged, so a restore does not merge the two nodes.
 
 The reachability and partition scenarios are the ones worth watching.
 They are the only assertions in the guide's coverage that cross a
 network boundary, and they are what distinguish a peer table that
 records addresses from one that merely stores them.
+
+The two restore scenarios are the reason the suite runs in containers
+rather than in temp directories. Both perform a destructive wipe of a
+node's home, and both assert on the _result_ — a table that resolves to
+a live peer, a source node that is still isolated — rather than on a
+file being present. They are what caught the §22 and §32 procedure
+storing its own backup inside the directory it wipes; see those
+sections' preambles.
 
 ### §33.6 Interpreting a failure
 

@@ -924,7 +924,7 @@ pub fn dispatch(action: &CapabilityAction, cli: &Octo) -> Result<(), OctoCliErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_cap_macaroon::Dqa;
+    use octo_cap_macaroon::{Dqa, PermissionKind};
 
     fn caveat_json(c: &Caveat) -> String {
         serde_json::to_string(c).expect("caveat serializes")
@@ -1362,5 +1362,95 @@ mod tests {
             caveats,
         )
         .expect("fixture token mints")
+    }
+
+    // ---- Caveat-encoding contract pinned for the operator guide -----------
+    //
+    // The `--caveats` INPUT form (derived serde) and the CANONICAL form
+    // (`Caveat::canonical_ser`, the HMAC input) are different encodings.
+    // An earlier revision of the operator guide wrote the canonical shapes
+    // into `--caveats`; all seven mint/attenuate expressions were rejected
+    // at exit 7. These tests pin both directions so the guide's encoders
+    // keep working and the asymmetry is not "discovered" again by an
+    // operator.
+
+    /// A decimal-string budget — what the guide used to tell operators to
+    /// write. `Dqa` carries no string serde; the wire form is 16 raw bytes.
+    #[test]
+    fn guide_amount_max_rejects_decimal_string() {
+        let e = parse_caveats(r#"[{"type":"amount_max","value":"1.000000"}]"#)
+            .expect_err("decimal string must be rejected");
+        assert_eq!(e.exit_code(), 7, "{e}");
+    }
+
+    /// A hex vault id — the other rejected form. `Caveat::Vault([u8; 32])`
+    /// takes the 32-byte array, the same wire form as `VaultId` in every
+    /// envelope.
+    #[test]
+    fn guide_vault_caveat_rejects_hex_string() {
+        let hex = "aa".repeat(32);
+        let e = parse_caveats(&format!(r#"[{{"type":"vault","value":"{hex}"}}]"#))
+            .expect_err("hex vault id must be rejected");
+        assert_eq!(e.exit_code(), 7, "{e}");
+    }
+
+    /// There is no free-form `scope` payload on the permission caveat.
+    /// `Permission(PermissionKind)` is a unit-variant enum.
+    #[test]
+    fn guide_permission_caveat_rejects_scope_object() {
+        let e = parse_caveats(r#"[{"type":"permission","value":{"scope":"vault.transfer"}}]"#)
+            .expect_err("scope object must be rejected");
+        assert_eq!(e.exit_code(), 7, "{e}");
+    }
+
+    /// The exact 16 bytes the guide's `dqa16` jq helper emits for
+    /// 1.000000 (mantissa 1000000, scale 6): 8 bytes big-endian, then the
+    /// scale byte, then 7 reserved zeros.
+    #[test]
+    fn guide_dqa16_helper_bytes_round_trip() {
+        let parsed = parse_caveats(
+            r#"[{"type":"amount_max","value":[0,0,0,0,0,15,66,64,6,0,0,0,0,0,0,0]}]"#,
+        )
+        .expect("guide dqa16 output parses");
+        let view = caveat_view(&parsed[0]);
+        assert_eq!(view.kind, CaveatName::AmountMax);
+        assert_eq!(view.body["amount_dqa"], serde_json::json!(1_000_000));
+        assert_eq!(view.body["scale"], serde_json::json!(6));
+    }
+
+    /// The `vault` caveat summary body is the 64-hex id. The guide's
+    /// discovery filter compares it against the hex form of `$VAULT_ID`.
+    #[test]
+    fn guide_vault_caveat_view_body_is_hex() {
+        let parsed =
+            parse_caveats(r#"[{"type":"vault","value":[170,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,187]}]"#)
+                .expect("byte-array vault id parses");
+        let view = caveat_view(&parsed[0]);
+        assert_eq!(view.kind, CaveatName::Vault);
+        assert_eq!(
+            view.body,
+            serde_json::json!(format!("aa{}", "00".repeat(30) + "bb"))
+        );
+    }
+
+    /// The canonical form does NOT round-trip back through `--caveats`.
+    /// `canonical_ser` is the HMAC input: it renders `Vault` as hex,
+    /// `AmountMax` as a bare number, and `Permission` as the full info
+    /// string — none of which the derived input form accepts. Pinned so
+    /// the asymmetry stays a documented property rather than an operator
+    /// surprise.
+    #[test]
+    fn guide_canonical_form_is_not_reparseable() {
+        for c in [
+            Caveat::Vault([0xaa; 32]),
+            Caveat::AmountMax(Dqa::new(1_000_000, 6).expect("dqa")),
+            Caveat::Permission(PermissionKind::VaultMutation),
+        ] {
+            let canonical = String::from_utf8(c.canonical_ser()).expect("canonical utf8");
+            assert!(
+                parse_caveats(&canonical).is_err(),
+                "canonical form must not reparse: {canonical}"
+            );
+        }
     }
 }

@@ -105,6 +105,17 @@ these once at the start of a shell session, and the later scenarios pick
 them up:
 
 ```bash
+# PRECONDITION — run this only once the node has an active identity.
+# On a node without one, every command below fails and writes its error
+# envelope to STDERR, so the command substitution captures the EMPTY
+# STRING and jq still exits 0. You would not find out until a later
+# scenario passed an empty --vault-id-hex. The install check below
+# (--version, --help) passes on such a node, so it will not catch this
+# for you. §4 step 2a is where the identity is created.
+if ! octo --json whoami >/dev/null 2>&1; then
+    echo "no active identity — finish the node onboarding section first" >&2
+fi
+
 # Identity values the CLI can hand you.
 ACTIVE_DID="$(octo --json whoami | jq -r '.payload.did')"
 VOTER_DID="$ACTIVE_DID"
@@ -140,6 +151,57 @@ REMOTE_AGENT_DID="did:octo:z<43-44-char-base58btc-remote-agent>"
 # of ids you captured at `octo agent create` time. Teardown reads this file.
 AGENT_ID_LEDGER="$OCTO_HOME/agent-ids.txt"
 
+# The one audit filter that can work. Use it instead of hand-written jq.
+#
+# Why this exists: an earlier revision of this guide filtered the audit
+# ledger on invented DID prefixes — `did:octo:cap:`, `did:octo:vault:`,
+# `did:octo:rep:` and so on. None of those prefixes is minted anywhere in
+# the substrate; identities are `did:octo:z<base58>` or
+# `did:octo:0x<hex>`. Those filters returned `[]` and exited 0, so every
+# "verify this was audited" step in the guide passed while proving nothing.
+# There is also no event-kind field on a receipt to filter on instead.
+#
+# So: filter on a DID you actually hold, and treat an empty result as a
+# FAILURE. `jq -e` plus `error()` is what makes that true — a bare filter
+# prints `[]` and succeeds, which is the whole trap.
+audit_receipts() {   # $1 = the exact DID, $2 = minimum count (default 1)
+    octo audit list --limit 100 --json | jq -e \
+        --arg d "$1" --argjson min "${2:-1}" \
+        '[.payload.receipts[] | select(.subject_did == $d)]
+         | if length >= $min then .
+           else error("no audit receipt for " + $d + " (min " + ($min|tostring) + ")")
+           end'
+}
+
+# --- Capability-caveat encoders -------------------------------------------
+# `--caveats` does NOT take the values the prose around it implies. Every one
+# of the seven mint/attenuate expressions in an earlier revision of this guide
+# was rejected by the real binary at exit 7. Three encodings bite:
+#
+#   amount_max  A 16-element JSON array: 8 bytes BIG-endian i64 mantissa,
+#               then the scale byte, then 7 reserved zero bytes. The decimal
+#               string "1.000000" is rejected.
+#   vault       A 32-element array of decimal bytes — the same wire form as
+#               `vault_id` in every envelope. The 64-hex string is rejected.
+#   permission  One of five PermissionKind strings. There is NO free-form
+#               `scope` payload; a scope is expressed with the typed caveats
+#               (`vault`, `audience`, `provider`, `model`, ...).
+#
+# dqa16 <mantissa> <scale> -> the `amount_max` array. jq numbers are doubles,
+# so the mantissa must stay under 2^53 — far above any realistic budget.
+dqa16() {
+    jq -cn --argjson v "$1" --argjson s "$2" '
+      [ ((($v/72057594037927936)|floor)%256), ((($v/281474976710656)|floor)%256),
+        ((($v/1099511627776)|floor)%256),  ((($v/4294967296)|floor)%256),
+        ((($v/16777216)|floor)%256),      ((($v/65536)|floor)%256),
+        ((($v/256)|floor)%256),          ($v%256),
+        $s, 0,0,0,0,0,0,0 ]'
+}
+
+# The `vault` caveat value for $VAULT_ID, taken straight from `vault list` so
+# the 32 bytes never round-trip through hex by hand.
+VAULT_CAVEAT="$(octo vault list --json | jq -c '.payload.vaults[0].vault_id')"
+
 # Deliberately NOT assigned here: $MNEMONIC_PHRASE, your identity mnemonic.
 # Never put it in this file, in a script, or on a command line — read it
 # from your secret store at the moment of use (see the CI section).
@@ -150,6 +212,15 @@ empty string, and most commands will accept `--holder-did ""` or
 `--asset ""` at the argument layer and fail later, further from the
 mistake. Set them up front.
 
+The same trap catches the derivations above. A command that fails prints
+its envelope to stderr and exits non-zero, but a **command substitution
+does not inherit that exit status** — it just captures whatever stdout
+held, which is nothing. So a failed `octo whoami` yields `ACTIVE_DID=""`
+and a _successful_ pipeline, and the empty string is indistinguishable
+from a valid value until something downstream chokes on it. That is why
+the block opens with an explicit precondition check rather than trusting
+the assignments to report their own failure.
+
 ### Verify the install
 
 ```bash
@@ -157,7 +228,7 @@ octo --version
 octo --help
 ```
 
-Expected: `Octo 0.1.0` and a top-level clap usage block listing every top-level command.
+Expected: `octo 0.1.0` and a top-level clap usage block listing every top-level command.
 
 ---
 
@@ -593,9 +664,10 @@ octo mesh peer remove <peer-did> \
 ### Setup
 
 ```bash
-# 1. Reserve a target DID + asset / scope.
+# 1. Reserve a target DID. There is no free-form scope string in the caveat
+#    substrate — see the caveat-encoder note in the shared-value block above.
+#    A vault scope is the typed `vault` caveat, carried as 32 decimal bytes.
 TARGET_DID="did:octo:z<43-44-char-base58btc-target>"
-SCOPE="vault.transfer.<vault-id-hex>"
 ```
 
 ### Register
@@ -615,15 +687,26 @@ SCOPE="vault.transfer.<vault-id-hex>"
 #    for root-capability mint (the parent is the holder's identity); pass
 #    --root for child-attenuation minting.
 #    Scope + audit-window are encoded INSIDE the caveats JSON expression.
+#    `permission` takes a PermissionKind, NOT an object. `vault` takes 32
+#    decimal bytes, NOT a hex string. Both rejected forms are listed above.
 octo --mode dev --allow-write capability mint \
     --holder "$TARGET_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":3600}},
-        {"type":"permission","value":{"scope":"'"$SCOPE"'"}}
+        {"type":"permission","value":"vault_mutation"},
+        {"type":"vault","value":'"$VAULT_CAVEAT"'}
     ]'
 ```
 
 The `AuditWindow { duration_secs }` caveat attaches the audit window. The substrate enforces the `set_subsumes` attenuation rule: parent `p_dur` subsumes child `c_dur` iff `c_dur >= p_dur`. Non-zero parent cannot subsume zero child (downgrade disallowed; widening disallowed).
+
+Reading it back is a different shape again: `octo capability list --json`
+projects each caveat to `{"kind": <short tag>, "body": <canonical value>}` —
+not to the `{"type": ..., "value": ...}` form you supply. For `vault` the
+`body` is the 64-hex id; for `permission` it is the full HMAC info string
+(`cipherocto/cap/v1/permission/vault_mutation`); for `amount_max` it is
+augmented to `{"amount_dqa", "scale", "value"}`. The two forms do **not**
+round-trip: feeding a canonical `body` back into `--caveats` exits 7.
 
 ### Operate
 
@@ -634,7 +717,7 @@ The `AuditWindow { duration_secs }` caveat attaches the audit window. The substr
 #    or --confirm-acknowledge fields; dispatch-side confirmation via
 #    require_confirm + require_acknowledge).
 octo --mode human --allow-write capability attenuate <cap-id-hex> \
-    --caveats '[{"type":"amount_max","value":"1.000000"}]' \
+    --caveats '[{"type":"amount_max","value":'"$(dqa16 1000000 6)"'}]' \
     --confirm --confirm-acknowledge
 
 # 4. Verify the capability at the receiver.
@@ -669,7 +752,7 @@ octo capability list --json \
         '.payload.capabilities[] | select(.cap_id == $c)'
 
 # 7. Cross-check via audit trail (capability mint is an auditable event).
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+audit_receipts "$TARGET_DID"
 ```
 
 ### Tear down
@@ -758,10 +841,21 @@ octo vault list --json
 #    per crates/octo-cli/src/commands/vault.rs (NO --chain-id, NO --asset-id,
 #    NO --vault-id flags; chain + asset are derived from the vault record).
 octo vault balance "$VAULT_ID" --json
-# Returns VaultBalanceProjection { chain_id, vault_id, asset_id, projected_balance: Dqa,
+# Returns .payload = { record: { chain_id, vault_id, asset_id, projected_balance,
 #                                 projected_at_unix_seconds, registry_snapshot_epoch,
-#                                 source_kind: ProjectionSource }
-# ProjectionSource = Cache | FreshLogScan | EpochRebuild (non_exhaustive enum).
+#                                 source_kind_u8 },
+#                      cache_hit, projection_source_u8, warnings, history }.
+#
+# Three corrections against the shape an earlier revision named:
+# - The record is under `.payload.record`, not at the payload root. The
+#   substrate `VaultBalanceProjection` has no Serialize impl; the CLI ships
+#   a DTO mirror, `VaultBalanceRecord`, and wraps it in `VaultBalanceOutput`.
+# - `projected_balance` is the 16-byte BE DqaEncoding — a 16-element array of
+#   decimal bytes, exactly the form the `dqa16` helper above inverts. It is
+#   NOT a number. To compare it against a budget, convert the same way.
+# - The projection source is an INTEGER discriminant, `source_kind_u8`, not a
+#   tagged enum. `projection_source_u8` repeats it at the payload root and
+#   `cache_hit` gives the same signal as a boolean.
 
 # 6. Initiate a transfer (substrate: initiate_transfer).
 # Pre-flight checks (CLI-side, NOT substrate): chain-affinity, balance-sufficient-source,
@@ -803,8 +897,7 @@ octo vault balance "$DEST_VAULT_ID" --json
 #    / --limit / --json per crates/octo-cli/src/commands/audit.rs:63-130).
 #    AuditListOutput envelope is `.payload.receipts[]` with `subject_did` (NOT `kind`).
 #    Substrate-faithful filter for vault-transfer events:
-octo audit list --limit 10 --json | \
-    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault-transfer:"))]'
+audit_receipts "$ACTIVE_DID"
 octo audit show <receipt-id-u64>
 ```
 
@@ -925,7 +1018,7 @@ $QUOTA_ROUTER_BIN reputation-show \
 $QUOTA_ROUTER_BIN balance
 
 # 8. Audit trail (quota-marketplace buy/sell events).
-octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:quota:"))]'
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -1062,7 +1155,7 @@ octo agent run \
 
 ```bash
 # 10. Audit trail (every execution emits an audit event).
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
+audit_receipts "$ACTIVE_DID"
 # `audit show` takes the receipt id POSITIONALLY (there is no --receipt-id flag).
 octo audit show <receipt-id-u64>
 
@@ -1130,11 +1223,18 @@ octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
     --caveats '[
         {"type":"audit_window","value":{"duration_secs":'"$AUDIT_WINDOW_SECS"'}},
-        {"type":"permission","value":{"scope":"agent.spend.vault='"$VAULT_ID"'"}}
+        {"type":"permission","value":"vault_mutation"},
+        {"type":"vault","value":'"$VAULT_CAVEAT"'}
     ]'
 
-# Returns: { capability_id: <cap-id-hex>, caveats: [{ kind: AuditWindow, duration_secs: <n> }, ...] }
+# Returns: { capability_id: <cap-id-hex>, caveats: [{ kind: AuditWindow, body: <n> }, ...] }
 ```
+
+There is no `scope` string in the caveat substrate. The `vault` caveat
+carries the scope, as 32 decimal bytes, and `permission` names the operation
+class. Passing the earlier `{"scope": ...}` object exits 7 with
+`unknown variant 'scope', expected one of native_token_transfer,
+erc20_token_transfer, contract_call, reservation, vault_mutation`.
 
 ### Publish + discover + acquire
 
@@ -1149,10 +1249,15 @@ octo --mode dev --allow-write capability mint \
 
 # 4. Buyer discovers the listing.
 #    [SUBSTRATE-NEW] `octo capability search` is NOT wired. Substrate-faithful
-#    alternative: enumerate via `octo capability list --json` (envelope
-#    shape: .payload.capabilities[]) and jq-filter on the Caveat::Permission scope:
-octo capability list --json | \
-    jq '[.payload.capabilities[] | select(.caveats[]? | .type == "permission" and .value.scope | contains("'"$VAULT_ID"'")))]'
+#    alternative: enumerate via `octo capability list --json` and jq-filter on
+#    the `vault` caveat. Note the two field names: the list envelope projects
+#    each caveat to `{"kind", "body"}` — there is no `.type`, and the payload
+#    is `.body`, not `.value`. The `vault` body is the 64-hex id, so it
+#    compares directly against $VAULT_ID from the shared-value block.
+octo capability list --json | jq --arg v "$VAULT_ID" '
+    [ .payload.capabilities[]
+      | select(any(.caveats[]?;
+                   .kind == "vault" and (.body | ascii_downcase) == ($v | ascii_downcase))) ]'
 
 # 5. Buyer acquires the listing (capability is transferred to the buyer's
 #    holder).
@@ -1203,12 +1308,9 @@ octo agent run \
 # 8. Capability audit trail.
 #    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (see §17.0 substrate-shape
 #    note). Substrate-faithful jq-filter (envelope `.payload.receipts[]` + `subject_did`):
-octo audit list --limit 1 --json | \
-    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:mint:"))]'
-octo audit list --limit 1 --json | \
-    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:acquire:"))]'
-octo audit list --limit 1 --json | \
-    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:redeem:"))]'
+audit_receipts "$BUYER_DID"
+audit_receipts "$BUYER_DID"
+audit_receipts "$BUYER_DID"
 
 # 9. Vault balance post-spend (should reflect the reservation).
 #    Substrate-faithful: positional <vault-id> (no --vault-id flag).
@@ -1297,7 +1399,7 @@ octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
 
 ```bash
 # 7. Audit trail (attestations + votes are auditable).
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+audit_receipts "$ACTIVE_DID"
 
 # 8. Cross-check via the trust-graph render (peers with high reputation have higher trust edges).
 octo network trust-graph render --format ascii --depth 3
@@ -1334,10 +1436,10 @@ octo audit list --limit 100 --json
 
 ```bash
 # 2. (Optional) Filter by event kind.
-octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'
-octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
-octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
-octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+audit_receipts "$ACTIVE_DID"
+audit_receipts "$ACTIVE_DID"
+audit_receipts "$ACTIVE_DID"
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Operate
@@ -1607,7 +1709,7 @@ octo network heartbeat probe did:octo:z<43-44-char-base58btc> --timeout-ms 5000
 
 # 10. Reputation + audit trail for provider revenue.
 octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:provider:"))]'
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -1853,37 +1955,54 @@ The substrate `AuditEventKind` enum has variants `Insert | Revoke | Sync | Agent
 # Substrate-faithful event-kind filter:
 #    AuditListOutput has `.payload.receipts[]` + `.payload.count_returned` (NOT `.events[]`).
 #    Each ReceiptSummaryOutput exposes `subject_did` + `capability_root`.
-octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:<event-kind-tag>"))'
+audit_receipts "$ACTIVE_DID"
 ```
 
 §18-§32 below references the substrate-faithful jq-filter form directly. The shorthand `--kind <X>` is NOT a real flag on `AuditListArgs` (per `crates/octo-cli/src/commands/audit.rs:66-127`) and would fail clap with "unexpected argument"; the substrate-faithful translation table follows:
 
-| Operator intent (shorthand)         | Substrate-faithful jq filter (on `AuditListOutput.payload.receipts[]`) |
-| ----------------------------------- | ---------------------------------------------------------------------- |
-| `--kind capability-mint`            | `select(.subject_did                                                   | startswith("did:octo:cap:"))`         |
-| `--kind vault-transfer`             | `select(.subject_did                                                   | startswith("did:octo:vault:"))`       |
-| `--kind reputation-attest`          | `select(.subject_did                                                   | startswith("did:octo:rep:"))`         |
-| `--kind bridge-propagation`         | `select(.subject_did                                                   | startswith("did:octo:bridge:"))`      |
-| `--kind substrate-migration`        | `select(.subject_did                                                   | startswith("did:octo:migrate:"))`     |
-| `--kind reasoning-trace`            | `select(.subject_did                                                   | startswith("did:octo:agent:"))`       |
-| `--kind reputation-federation-join` | `select(.subject_did                                                   | startswith("did:octo:federation:"))`  |
-| `--kind reputation-quorum-reached`  | `select(.subject_did                                                   | startswith("did:octo:quorum:"))`      |
-| `--kind bootstrap-evidence`         | `select(.subject_did                                                   | startswith("did:octo:bootstrap:"))`   |
-| `--kind slash-defence`              | `select(.subject_did                                                   | startswith("did:octo:slash:"))`       |
-| `--kind adapter-event`              | `select(.subject_did                                                   | startswith("did:octo:adapter:"))`     |
-| `--kind governance-vote`            | `select(.subject_did                                                   | startswith("did:octo:gov:"))`         |
-| `--kind quota-marketplace-trade`    | `select(.subject_did                                                   | startswith("did:octo:quota:"))`       |
-| `--kind agent-execution`            | `select(.subject_did                                                   | startswith("did:octo:agent:"))`       |
-| `--kind capability-acquire`         | `select(.subject_did                                                   | startswith("did:octo:cap:acquire:"))` |
-| `--kind capability-redeem`          | `select(.subject_did                                                   | startswith("did:octo:cap:redeem:"))`  |
-| `--kind provider-earning`           | `select(.subject_did                                                   | startswith("did:octo:provider:"))`    |
-| `--kind revocation`                 | `select(.subject_did                                                   | startswith("did:octo:revoke:"))`      |
+> **Read this before you use any filter in this table.** An earlier revision
+> of this guide answered "how do I filter the audit log by event kind" with a
+> table of `select(.subject_did | startswith("did:octo:cap:"))`-style
+> filters over invented DID prefixes. **None of those prefixes is minted
+> anywhere in the substrate.** The only `did:octo:<tag>:` forms in code are
+> `did:octo:subgroup:` (a governance input _rejection_ check) and
+> `did:octo:peer:` / `did:octo:operator:` (test fixtures). Real identities
+> are `did:octo:z<base58>` or `did:octo:0x<hex>` per RFC-0010. Every one of
+> those filters returns `[]` and exits 0 forever — a check that cannot fail
+> is worse than no check, because it reads as a passed verification.
+>
+> There is also no event-kind field to filter on. `AuditEventKind` exists in
+> the audit core but the CLI never projects it; a receipt summary carries
+> exactly these fields, and only these:
+> `receipt_id`, `ask_id`, `model`, `cost_dqa`, `capability_root`,
+> `subject_did`, `executed_at_unix`, `status`.
+>
+> So the honest translation of the operator shorthand is:
 
-> **Note:** the table cells above are substrate-faithful projections against
-> `AuditListOutput.payload.receipts[]` (which carries `subject_did` + `capability_root`,
-> NOT `kind`). The `kind` taxonomy is preserved as operator-facing terminology
-> to anchor operators familiar with the prior shorthand — the actual substrate
-> filter keys on the canonical `subject_did` wire form per RFC-0010.
+| Operator intent (shorthand)     | What the substrate can actually filter on                                                                 |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| settled / failed outcomes       | `.status` — one of `unknown`, `ok`, `partial`, `reject`                                                   |
+| everything under one capability | `.capability_root` — 64 hex chars; you need the root you minted, then `select(.capability_root == $root)` |
+| everything for one identity     | `.subject_did` — filter the exact DID you hold; there is no category prefix for it                        |
+| a time window                   | `.executed_at_unix` — compare against a numeric epoch, not a prefix                                       |
+| spend / model attribution       | `.cost_dqa`, `.model`                                                                                     |
+| correlating two records         | `.ask_id` (BLAKE3 digest), `.receipt_id` (decimal u64)                                                    |
+
+Worked example — every ingredient is a real field:
+
+```bash
+# Settlements that did not fully succeed, for one capability root.
+octo audit list --limit 100 --json | jq --arg root "<capability-root-hex>" '
+    [.payload.receipts[]
+     | select(.capability_root == $root)
+     | select(.status != "ok")
+     | {receipt_id, status, cost_dqa, executed_at_unix}]'
+```
+
+> If you need a durable per-kind audit trail, it has to be captured at the
+> producer: `slash-bridge propagate` writes no audit record at all, so
+> nothing downstream of `octo audit list` can reconstruct one (see the
+> bridge propagation section).
 
 ### §17.1 Operational depth — common 6-phase pattern across §18–§32
 
@@ -1985,7 +2104,7 @@ Fix: check the Stoolap adapter health; rebuild from the source-of-truth if the L
 
 Cause: chain rejection, IO error, or substrate validation failure.
 
-Fix: check `octo audit list --limit 1 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'` for the failure reason; replay with `--dry-run` to isolate substrate vs. chain-adapter.
+audit_receipts "$ACTIVE_DID"
 
 ### `EnvelopeMeta::None`
 
@@ -2394,7 +2513,7 @@ ls -la "$CIPHEROCTO_DATA_DIR/"
 # Expected: revocation.stoolap + per-crate ledger files (reputation.stoolap, vault.stoolap).
 
 # 10. Audit trail proves cross-process propagation worked.
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:revoke:"))]'
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -2510,7 +2629,7 @@ octo network heartbeat probe did:octo:z<43-44-char-base58btc-whatsapp-adapter> -
 octo network heartbeat probe did:octo:z<43-44-char-base58btc-matrix-adapter> --timeout-ms 5000
 
 # 12. Audit trail — every adapter event is auditable.
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -2578,15 +2697,34 @@ mkdir -p "$OCTO_BACKUP_DIR"
 ### Setup — backup
 
 ```bash
-# 1. Stop all `octo` processes (avoids torn writes).
-#    [SUBSTRATE-NEW] The 5 specialized-node daemons are rlib-only today
-#    per §19 step 1 (none ship as `[[bin]]`); this pkill targets the
-#    `octo` CLI only. The specialized-node daemons land in follow-on
-#    per-extension missions (RFC-0871 §Wallet Node Lifecycle).
-pkill -TERM -f "octo"
-sleep 5
+# 1. Nothing to stop.
+#    `octo` is a one-shot dispatcher — no `serve`, no daemon, no listening
+#    socket (see §33) — so there is no long-lived process to interrupt and
+#    no torn write to avoid. The 5 specialized-node daemons are rlib-only
+#    per §19 step 1; none ships as a `[[bin]]`.
+#
+#    DO NOT substitute `pkill -TERM -f "octo"`. `-f` matches an UNANCHORED
+#    regex against the whole command line, so that line also matches any
+#    process whose arguments merely CONTAIN "octo" — a build of this very
+#    repository, a `docker compose` run, a path like /opt/octo-marker,
+#    or an unrelated service. On a checkout named cipherocto it matches
+#    the `cargo build` that produced the binary you are about to back up.
+#    When a daemon does ship, signal it by its exact name, as §19 does:
+#        pkill -TERM -f "<daemon-name>"
+sleep 1
 
-# 2. Snapshot the mnemonic + identity export (offline-encrypted).
+# 2. Take ONE timestamp and reuse it for every file in this backup.
+#    Each step below used to call `date` again for its own filename. Steps
+#    that write and steps that then read those filenames back are separated
+#    by more than a second under load, so `gpg` ended up asking for a path
+#    that did not exist, the encryption step failed, and the PLAINTEXT
+#    archives were left sitting in the backup dir beside a backup that
+#    looked complete. On an idle machine all four calls land in the same
+#    second and the bug never shows — which is why it matters that it is
+#    not left this way. This is the same shape the scheduled job uses.
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+
+# 3. Snapshot the mnemonic + identity export (offline-encrypted).
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
 #    has ONLY Show | Rotate | Revoke. Mnemonic export is via the wallet substrate
 #    API directly. Workaround: copy the encrypted mnemonic file from
@@ -2596,9 +2734,9 @@ sleep 5
 #    (see §4 step 2a), so this step cannot succeed until the wallet store
 #    lands.
 cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
-   "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc"
+   "$OCTO_BACKUP_DIR/$TS.mnemonic.enc"
 
-# 3. Snapshot $OCTO_HOME (mesh peer table + adapter configs).
+# 4. Snapshot $OCTO_HOME (mesh peer table + adapter configs).
 #    `-C "$OCTO_HOME" .` is what makes the snapshot relocatable: member
 #    names are stored relative to the home, so the restore can place them
 #    wherever the home now is. `tar -czf ... "$OCTO_HOME"` would store
@@ -2606,20 +2744,26 @@ cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.en
 #    layout. `--exclude='./backup'` keeps the backup dir out of its own
 #    archive; `backup/` is outside the home now, so this only guards a
 #    legacy in-home backup.
-tar -czf "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz" \
+tar -czf "$OCTO_BACKUP_DIR/$TS.home.tar.gz" \
     --exclude='./backup' \
     --exclude='./data/*.stoolap' \
     -C "$OCTO_HOME" .
 
-# 4. Snapshot the Stoolap ledger (if enabled per §20).
-tar -czf "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz" \
+# 5. Snapshot the Stoolap ledger (if enabled per §20).
+#    Member names are stored RELATIVE to the ledger's parent (`data/...`),
+#    which is why the restore in the disaster-recovery section extracts
+#    with `-C "$(dirname "$CIPHEROCTO_DATA_DIR")"` and not with `-C /`.
+tar -czf "$OCTO_BACKUP_DIR/$TS.ledger.tar.gz" \
     -C "$(dirname "$CIPHEROCTO_DATA_DIR")" "$(basename "$CIPHEROCTO_DATA_DIR")"
 
-# 5. Encrypt the snapshots (operator's choice of tool — gpg, age, etc.).
+# 6. Encrypt the snapshots (operator's choice of tool — gpg, age, etc.).
+#    Encrypt by the name you just wrote. `gpg` leaves the plaintext input in
+#    place and writes `<name>.gpg` beside it, so delete the plaintext once
+#    the .gpg exists and its size is non-zero.
 gpg --symmetric --cipher-algo AES256 \
-    "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).home.tar.gz"
+    "$OCTO_BACKUP_DIR/$TS.home.tar.gz"
 gpg --symmetric --cipher-algo AES256 \
-    "$OCTO_BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ).ledger.tar.gz"
+    "$OCTO_BACKUP_DIR/$TS.ledger.tar.gz"
 ```
 
 ### Register — backup schedule
@@ -2661,13 +2805,19 @@ chmod 0755 /usr/local/bin/cipherocto-backup.sh
 ### Operate — restore wallet home
 
 ```bash
-# 7. Stop all processes.
-#    [SUBSTRATE-NEW] The 5 specialized-node daemons are rlib-only today
-#    per §19 step 1 (none ship as `[[bin]]`); this pkill targets the
-#    `octo` CLI only. The specialized-node daemons land in follow-on
-#    per-extension missions (RFC-0871 §Wallet Node Lifecycle).
-pkill -TERM -f "octo"
-sleep 5
+# 7. Nothing to stop.
+#    `octo` is a one-shot dispatcher with no `serve`, no daemon and no
+#    listening socket (§33), so there is no long-lived process to signal
+#    before the home is wiped. The 5 specialized-node daemons are
+#    rlib-only per §19 step 1.
+#
+#    DO NOT substitute `pkill -TERM -f "octo"`. `-f` matches an UNANCHORED
+#    regex against the whole command line, so it also kills every process
+#    whose arguments merely CONTAIN "octo" — including any editor, build,
+#    or unrelated service with that substring in its path.
+#    When a daemon does ship, signal it by exact name, as §19 does:
+#        pkill -TERM -f "<daemon-name>"
+sleep 1
 
 # 8. Wipe the corrupted home.
 #     Empty the directory, do not remove it. `$OCTO_HOME` is a mount
@@ -2854,7 +3004,7 @@ octo reputation show --json --role builder
 #    substrate layer.
 
 # 10. Audit trail for migration events.
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:migrate:"))]'
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -2961,14 +3111,29 @@ octo network envelope forward <envelope-id-hex> \
 ```bash
 # 6. Confirm the bridge relay reached the destination.
 octo network slash-bridge list --json
-# BridgeReceipt canonical fields:
-#   { slash_envelope_id: [u8; 32],
-#     propagated_to: BTreeSet<[u8; 32]>,
-#     propagated_at_epoch: u64 }
-# (NOT propagated_at_unix / target_peer_id_hex — those names are pre-substrate-faithful).
+# The payload is { slashes: [...], total: N }. Each row in `slashes` is a
+# projection with exactly three fields:
+#   slash_envelope_id_hex   64 lowercase hex chars
+#   bridge_metadata         object, extension-defined, deterministic key order
+#   bridged_at_epoch        epoch when the slash was bridged
+# Do NOT read propagated_to / propagated_at_epoch here: those belong to the
+# receipt of `slash-bridge propagate`, a different command whose payload
+# nests one under `receipt` (slash_envelope_id_hex, propagated_to_hex,
+# propagated_at_epoch).
 
-# 7. Audit trail (bridge events are auditable).
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:bridge:"))]'
+# 7. Audit trail: there isn't one, and no filter will conjure it.
+#    `slash-bridge propagate` does not write to the audit ledger — the only
+#    record it produces is the receipt it returns, which is why step 6 lists
+#    bridged slashes rather than receipts. Two earlier revisions of this
+#    guide told you to filter `octo audit list` on a
+#    `did:octo:bridge:` subject; that prefix is not minted anywhere in the
+#    substrate, and `subject_did` on a real receipt holds a DID anyway, so
+#    such a filter returns [] and exits 0 forever — a check that cannot
+#    fail. If you need a durable propagation record, capture the receipt
+#    from the propagate step to your own log:
+#        octo network slash-bridge propagate <slash-id-hex> --json | tee -a bridge.log
+#    and read it back later with the same jq depth:
+#        jq -s 'map(.payload.receipt)' bridge.log
 ```
 
 ### Tear down
@@ -3027,7 +3192,7 @@ octo governance snapshot --json | jq '.payload.open_proposals[] | select(.propos
 #    Substrate-faithful alternative: bind a voter capability with
 #    Caveat::AmountMax + Caveat::AuditWindow (RFC-0011-e §Caveats).
 octo --mode dev --allow-write capability mint \
-    --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
+    --caveats '[{"type":"amount_max","value":'"$(dqa16 100000000 6)"'},{"type":"audit_window","value":{"duration_secs":86400}}]' \
     --holder "$VOTER_DID" \
     --root <root-cap-id-hex>
 # Substrate: CapabilityAction::Mint per RFC-0011-e §Subcommand Taxonomy.
@@ -3112,7 +3277,7 @@ octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 ```bash
 # 1. [SUBSTRATE-NEW] `octo reputation federation list` is not yet wired.
 #    Federation membership is discoverable via the audit substrate:
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:federation:"))]'
+audit_receipts "$ACTIVE_DID"
 # Substrate: octo_audit::AuditEvent { kind: reputation-federation-join, ... }.
 
 # 2. [SUBSTRATE-NEW] `octo reputation federation show` is not yet wired.
@@ -3176,7 +3341,7 @@ octo governance attest "did:octo:z<43-44-char-base58btc>" "route-quality:uptime-
 # 7. [SUBSTRATE-NEW] `octo reputation quorum show` is not yet wired.
 #    Substrate-faithful alternative: quorum status is read via the audit
 #    substrate:
-octo audit list --limit 10 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:quorum:"))]'
+audit_receipts "$ACTIVE_DID"
 # Substrate: octo_audit::AuditEvent { kind: reputation-quorum-reached, ... }
 # Threshold: MIN_ATTESTOR_QUORUM (default 3) per RFC-0968 §Quorum.
 ```
@@ -3188,7 +3353,7 @@ octo audit list --limit 10 --json | jq '[.payload.receipts[] | select(.subject_d
 octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
-octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -3341,8 +3506,8 @@ chmod 0755 .git/hooks/pre-commit
 
 ```bash
 # 5. Confirm the CI run produced an audit trail.
-octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
-octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:gov:"))]'
+audit_receipts "$ACTIVE_DID"
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Tear down
@@ -3375,7 +3540,14 @@ octo network slash list --json
 
 # 2. Inspect a specific slash envelope.
 octo network slash show <slash-id-hex> --json
-# Returns: { sub_code, target_did, yes_count, total_count, signed_preimage_hash, ... }
+# The payload is a single key, `envelope`, which is null for an unknown id.
+# When present, the detail record carries exactly six fields:
+#   slash_id, slash_reason, slash_reason_data,
+#   target_peer_redacted, cast_at, domain_id
+# There is no `sub_code`, `yes_count`, `total_count` or
+# `signed_preimage_hash` field. Note `target_peer_redacted`, not
+# `target_did`: the substrate emits the target peer's first 8 and last 4
+# characters only, by design — this command will not give you a target DID.
 # Substrate: NetworkSlashAction::Show.
 ```
 
@@ -3383,7 +3555,7 @@ octo network slash show <slash-id-hex> --json
 
 ```bash
 # 3. Collect counter-evidence (audit trail + mesh records).
-octo audit list --limit 100 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:bootstrap:"))]' > defence-evidence.json
+audit_receipts "$ACTIVE_DID"
 octo network envelope inspect <evidence-id-hex> --json >> defence-evidence.json
 ```
 
@@ -3414,7 +3586,7 @@ octo network slash show <slash-id-hex> --json
 # (substrate-new per §28 header note above).
 
 # 6. Audit trail.
-octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:slash:"))]'
+audit_receipts "$ACTIVE_DID"
 
 # 7. (If ratified + governance appeal desired) Vote on the appeal proposal.
 #    [SUBSTRATE-NEW] `octo governance appeal` is not yet wired in GovernanceAction
@@ -3446,7 +3618,7 @@ octo governance vote <appeal-proposal-id-hex> reject \
 
 **Narrative cross-ref:** `hybrid-ai-blockchain-runtime.md` (the dual-local-+-chain execution path). Operators can run inference locally with verifiable proofs, or route to a paid remote agent with cryptographic attestation.
 
-> **Substrate-coverage note:** The current `AgentAction` enum has variants `Create | Run | List | Destroy | Attach | RevokeAttach` only (per RFC-0011-c §Substrate-Additions). `agent search` and `agent verify-trace` are not yet wired to the CLI dispatcher; mesh discovery is via `octo mesh peer list` and reasoning-trace verification is via the audit substrate (`octo audit list --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'` per §17.0). `octo agent run` accepts `--detach --reason --token-file` only (NOT `--input`, `--emit-reasoning-trace`, `--output-trace`) per the substrate-faithful RunArgs shape.
+audit_receipts "$ACTIVE_DID"
 
 ### Prerequisites
 
@@ -3490,7 +3662,8 @@ octo --mode dev --allow-write agent run \
 # Returns: { receipt_id, subject_did, capability_root, router_sig_bytes, timestamp_unix, status }
 # (ReceiptRecordOutput per AuditShowOutput; signature bytes are redacted).
 # The reasoning-trace artefact is recorded in the audit substrate
-# (filter on subject_did prefix `did:octo:agent:` per §17.0 jq-filter table).
+# (filter on the DID you actually used — see the `audit_receipts` helper in §0;
+#  there is no `did:octo:agent:` subject in the substrate).
 ```
 
 ### Register — remote paid inference
@@ -3503,7 +3676,7 @@ octo --mode dev --allow-write agent run \
 #    caveats expression per crate substrate).
 octo --mode dev --allow-write capability mint \
     --holder "$REMOTE_AGENT_DID" \
-    --caveats '[{"type":"amount_max","value":"1.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":3600}}]' \
+    --caveats '[{"type":"amount_max","value":'"$(dqa16 1000000 6)"'},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":'"$VAULT_CAVEAT"'},{"type":"audit_window","value":{"duration_secs":3600}}]' \
     --root "<root-cap-id-hex>"
 
 # 4. Route the request to the remote agent.
@@ -3525,14 +3698,16 @@ octo --mode dev --allow-write agent run \
 ```bash
 # 5. Confirm the local run produced an audit trail entry (reasoning trace).
 #    Per §17.0: there is NO `--kind` flag on `octo audit list`; use jq filter.
-#    Substrate-faithful: AuditListOutput has `.payload.receipts[]`; filter by subject_did
-#    prefix (agent runs tag subject_did as `did:octo:agent:<agent-id>`):
-octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:")) | {receipt_id, subject_did, capability_root}'
+#    Substrate-faithful: AuditListOutput has `.payload.receipts[]`, and the
+#    helper already fails loudly when nothing matches. Agent runs do NOT
+#    tag a `did:octo:agent:` subject — that prefix does not exist.
+audit_receipts "$ACTIVE_DID" | jq '[.[] | {receipt_id, subject_did, capability_root}]'
 
 # 6. Confirm the remote payment was reserved against the vault.
 #    Substrate-faithful: AuditListOutput has `.payload.receipts[]` (NOT `.events[]`).
-#    Filter on capability_root (vault transfers carry the vault cap root).
-octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:vault"))'
+#    For a vault-scoped check, filter on capability_root rather than on a
+#    subject prefix — vault transfers carry the vault cap root.
+audit_receipts "$ACTIVE_DID"
 ```
 
 ### Verify
@@ -3597,7 +3772,7 @@ octo audit show <receipt-id-u64> --json
 #    privacy primitive is Caveat::AmountMax + Caveat::Provider scope filter.
 octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
-    --caveats '[{"type":"amount_max","value":"100.000000"},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}}]' \
+    --caveats '[{"type":"amount_max","value":'"$(dqa16 100000000 6)"'},{"type":"provider","value":["<provider-peer-id-hex>"]},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":'"$VAULT_CAVEAT"'},{"type":"audit_window","value":{"duration_secs":86400}}]' \
     --root "<root-cap-id-hex>"
 # Substrate: Caveat::AmountMax { amount } + Caveat::Provider { peer_ids } +
 # Caveat::Permission + Caveat::Vault + Caveat::AuditWindow. Use provider narrowing
@@ -3614,7 +3789,7 @@ octo --mode dev --allow-write capability mint \
 #    inside the `--caveats` JSON expression.
 octo --mode dev --allow-write capability mint \
     --holder "$BUYER_DID" \
-    --caveats '[{"type":"amount_max","value":"500.000000"},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":"<vault-id-hex>"},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}]' \
+    --caveats '[{"type":"amount_max","value":'"$(dqa16 500000000 6)"'},{"type":"permission","value":"vault_mutation"},{"type":"vault","value":'"$VAULT_CAVEAT"'},{"type":"audit_window","value":{"duration_secs":86400}},{"type":"sharded","value":{"shard_id":0}}]' \
     --root "<root-cap-id-hex>"
 # Substrate: Caveat::AmountMax + Caveat::Permission::VaultMutation +
 # Caveat::Vault + Caveat::AuditWindow per RFC-0011-e §Substrate-Additions +
@@ -3654,7 +3829,7 @@ octo capability list --json | jq --arg c "<cap-id-hex>" \
     '.payload.capabilities[] | select(.cap_id == $c) | {cap_id, root_id, caveats}'
 
 # 5. Audit trail (encrypted events are auditable as ciphertexts only).
-octo audit list --limit 1 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+audit_receipts "$ACTIVE_DID"
 #    [SUBSTRATE-NEW] `--filter-holder-did` is NOT wired on AuditListArgs
 #    (substrate flags are --since / --until / --capability-root / --model /
 #    --router-id / --status / --include-reject / --limit). Use
@@ -3848,15 +4023,31 @@ octo whoami
 # 5. Verify the ledger integrity (substrate: octo_storage_core::Database::execute_checked
 #    + tracker::ensure_tracker_table).
 octo audit list --limit 1 --json
-# Returns: { rows_returned: 0, error: ... } if corrupted. The CLI wraps
-# Database::execute_checked with the schema-tracker invariant.
+# payload.count_returned is 0 if corrupted. The field is `count_returned`
+# and it sits under `.payload` — there is no `rows_returned` field in any
+# envelope, and a top-level `.rows_returned` read yields `null` at exit 0
+# (see §A.2). The CLI wraps Database::execute_checked with the
+# schema-tracker invariant.
 
 # 6. Restore from backup (see §22 step 12-13).
-tar -xzf "$OCTO_HOME/backup/<timestamp>.ledger.tar.gz" -C /
+#    Two things must be right here, and both were wrong in earlier
+#    revisions of this guide.
+#
+#    (a) SOURCE. The archive lives in $OCTO_BACKUP_DIR, which is outside
+#        the home. Reading it from $OCTO_HOME/backup/ looks plausible but
+#        step 2 just emptied the home, so the source is already gone.
+#    (b) DESTINATION. The ledger archive is written with
+#        `-C "$(dirname $CIPHEROCTO_DATA_DIR)" "$(basename ...)`, so its
+#        member names are RELATIVE (data/...). `-C /` therefore writes to
+#        /data — not to the node's ledger directory. Restore relative to
+#        the ledger's PARENT, exactly as the home archive is restored
+#        relative to the home.
+tar -xzf "$OCTO_BACKUP_DIR/<timestamp>.ledger.tar.gz" \
+    -C "$(dirname "$CIPHEROCTO_DATA_DIR")"
 
 # 7. Re-verify.
 octo audit list --limit 1 --json
-# Expected: { rows_returned: N } — schema tracker reports healthy.
+# Expected: payload.count_returned > 0 — schema tracker reports healthy.
 ```
 
 ### Setup — lost mesh peer table

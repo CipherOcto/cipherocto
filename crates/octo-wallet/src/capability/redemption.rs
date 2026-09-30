@@ -35,6 +35,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use octo_determin::{dqa_cmp, Dqa};
 use octo_policy::{is_subgraph, PolicyObject, PolicySurface};
 use thiserror::Error;
 
@@ -172,14 +173,26 @@ pub fn redeem_capability(
 pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
     let mut allowed_models: Option<HashSet<String>> = None;
     let mut allowed_providers: Option<HashSet<String>> = None;
-    let mut max_total_spend: Option<u128> = None;
-    let mut per_axis_caps: Vec<(String, u128)> = Vec::new();
+    let mut max_total_spend: Option<Dqa> = None;
+    let mut per_axis_caps: Vec<(String, Dqa)> = Vec::new();
 
     for caveat in &cap.macaroon.caveats {
         match caveat {
+            // The budget is carried through as a `Dqa`, not narrowed to its
+            // bare numerator. Two `AmountMax` caveats on one capability are
+            // intersected here, and that intersection is only correct if the
+            // scale survives: `1 @ scale 0` is a *tighter* cap than
+            // `1_000_000 @ scale 6`, but a bare-numerator `min` picks the
+            // other one. Comparing with `dqa_cmp` is what makes the smaller
+            // quantity win regardless of how each side was written.
             Caveat::AmountMax(amount) => {
-                let amount_u128 = u128::try_from(amount.value).unwrap_or(0);
-                max_total_spend = Some(max_total_spend.map_or(amount_u128, |m| m.min(amount_u128)));
+                max_total_spend = Some(max_total_spend.map_or(*amount, |m| {
+                    if dqa_cmp(m, *amount) <= 0 {
+                        m
+                    } else {
+                        *amount
+                    }
+                }));
             }
             Caveat::Model(m) => {
                 allowed_models
@@ -192,10 +205,7 @@ pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
                     .extend(p.iter().cloned());
             }
             Caveat::PerAxisMax(p) => {
-                per_axis_caps.push((
-                    p.axis.clone(),
-                    u128::try_from(p.max_per_1k.value).unwrap_or(0),
-                ));
+                per_axis_caps.push((p.axis.clone(), p.max_per_1k));
             }
             _ => {}
         }

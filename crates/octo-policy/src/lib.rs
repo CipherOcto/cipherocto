@@ -84,7 +84,99 @@ pub use policy_registry::PolicyRegistryError;
 use std::collections::{HashMap, HashSet};
 
 use cipherocto_encoding::Constraint;
+use octo_cap_macaroon::dqa_serde::{dqa_from_bytes, dqa_to_bytes};
+use octo_determin::{dqa_cmp, Dqa};
 use serde::{Deserialize, Serialize};
+
+/// Wire width of the `DqaEncoding` (RFC-0105) — value 8B BE + scale 1B + 7
+/// reserved.
+const DQA_WIRE_BYTES: usize = 16;
+
+/// `DqaError` carries no `Display` impl, so serde's `custom` cannot take it
+/// directly. Format via `Debug` with a fixed prefix.
+fn dqa_wire_err(e: octo_determin::DqaError) -> String {
+    format!("invalid DqaEncoding: {e:?}")
+}
+
+/// Serde adapters putting [`Dqa`] on the 16-byte `DqaEncoding` wire form.
+///
+/// `Dqa` deliberately carries no `Serialize` impl: it derives `Eq` but
+/// *not* `Ord`, because its structural equality (`1 @ scale 0` == `1000 @
+/// scale 3`) and its numeric ordering must not be conflated. Ordering goes
+/// through `dqa_cmp`. These adapters let the surface round-trip without
+/// re-introducing that hazard.
+///
+/// `Option<Dqa>` on the 16-byte wire form.
+mod dqa_wire_option {
+    use super::{dqa_from_bytes, dqa_to_bytes, dqa_wire_err, Dqa, DQA_WIRE_BYTES};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    // `&Option<Dqa>` is serde's calling convention for a `#[serde(with)]`
+    // module on an `Option` field — it hands the field's own reference to
+    // `serialize`. The lint's `Option<&Dqa>` suggestion would not compile
+    // against the derive, so the shape is fixed rather than chosen.
+    #[allow(clippy::ref_option)]
+    pub fn serialize<S: Serializer>(d: &Option<Dqa>, s: S) -> Result<S::Ok, S::Error> {
+        // The payload is serialized bare, NOT wrapped in a 1-tuple. In JSON a
+        // tuple is itself an array, so a 1-element wrapper is
+        // indistinguishable from the 16-byte payload and would read back as
+        // a truncated byte array. `null` versus a 16-element array is the
+        // only unambiguous encoding.
+        match d {
+            Some(v) => dqa_to_bytes(v).serialize(s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Dqa>, D::Error> {
+        let raw = Option::<[u8; DQA_WIRE_BYTES]>::deserialize(d)?;
+        raw.map(|bytes| dqa_from_bytes(&bytes).map_err(dqa_wire_err))
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// `Vec<(AxisId, Dqa)>` with each amount on the same 16-byte wire form.
+mod dqa_wire_pairs {
+    use super::{dqa_from_bytes, dqa_to_bytes, dqa_wire_err, Dqa, DQA_WIRE_BYTES};
+    use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serializer};
+
+    type Pairs = Vec<(String, Dqa)>;
+
+    pub fn serialize<S: Serializer>(v: &Pairs, s: S) -> Result<S::Ok, S::Error> {
+        let mut seq = s.serialize_seq(Some(v.len()))?;
+        for (axis, cap) in v {
+            seq.serialize_element(&(axis, dqa_to_bytes(cap)))?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Pairs, D::Error> {
+        let raw = Vec::<(String, [u8; DQA_WIRE_BYTES])>::deserialize(d)?;
+        raw.into_iter()
+            .map(|(axis, bytes)| {
+                dqa_from_bytes(&bytes)
+                    .map_err(dqa_wire_err)
+                    .map(|cap| (axis, cap))
+                    .map_err(serde::de::Error::custom)
+            })
+            .collect()
+    }
+}
+
+/// Scale-aware minimum: returns whichever of `a` / `b` is the smaller
+/// *quantity*, not the smaller numerator.
+///
+/// `dqa_cmp` returns `i8` rather than an `Ordering` so it cannot be fed to
+/// `min()` by accident — a bare `min` here is the defect this whole change
+/// exists to close.
+fn dqa_min(a: Dqa, b: Dqa) -> Dqa {
+    if dqa_cmp(a, b) <= 0 {
+        a
+    } else {
+        b
+    }
+}
 
 /// Protocol version tag for `PolicyObject` (RFC-0967 §2).
 pub const POLICY_VERSION_TAG: u8 = 1;
@@ -148,8 +240,15 @@ pub type AuditRef = [u8; 32];
 pub struct PolicySurface {
     pub allowed_models: Option<HashSet<String>>,
     pub allowed_providers: Option<HashSet<String>>,
-    pub per_axis_caps: Vec<(AxisId, u128)>,
-    pub max_total_spend: Option<u128>,
+    /// Per-axis caps. Scale-carrying quantities (RFC-0105 `Dqa`), because a
+    /// cap is an *amount*: `1 @ scale 3` and `1000 @ scale 0` are the same
+    /// cap. Ordering these as bare integers lets a child that is 10^6 times
+    /// the parent pass the containment check in `is_subgraph`.
+    #[serde(with = "dqa_wire_pairs")]
+    pub per_axis_caps: Vec<(AxisId, Dqa)>,
+    /// Total spend ceiling, same reasoning as `per_axis_caps`.
+    #[serde(with = "dqa_wire_option")]
+    pub max_total_spend: Option<Dqa>,
     pub audit_window_secs: u64,
     pub allowed_destinations: Option<HashSet<String>>,
 }
@@ -561,18 +660,19 @@ fn intersect_surfaces(a: &PolicySurface, b: &PolicySurface) -> Result<PolicySurf
         (None, None) => None,
     };
     let max_total_spend = match (a.max_total_spend, b.max_total_spend) {
-        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), Some(b)) => Some(dqa_min(a, b)),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
     };
     // Per-axis caps: intersection requires the SAME axis to appear in both,
-    // and the cap is min(a, b). Asymmetric axes: drop the missing one.
+    // and the cap is the smaller *quantity* of the two. Asymmetric axes:
+    // drop the missing one.
     let axes: HashSet<&AxisId> = a.per_axis_caps.iter().map(|(k, _)| k).collect();
     let mut per_axis_caps = Vec::new();
     for (axis, cap_a) in &a.per_axis_caps {
         if let Some((_, cap_b)) = b.per_axis_caps.iter().find(|(k, _)| k == axis) {
-            per_axis_caps.push((axis.clone(), (*cap_a).min(*cap_b)));
+            per_axis_caps.push((axis.clone(), dqa_min(*cap_a, *cap_b)));
         }
     }
     let _ = axes; // silence unused warning
@@ -613,14 +713,14 @@ pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool {
     }
     if let Some(pt) = parent.surface.max_total_spend {
         if let Some(ct) = child.surface.max_total_spend {
-            if ct > pt {
+            if dqa_cmp(ct, pt) > 0 {
                 return false;
             }
         }
     }
     for (axis, cap_c) in &child.surface.per_axis_caps {
         if let Some((_, cap_p)) = parent.surface.per_axis_caps.iter().find(|(k, _)| k == axis) {
-            if cap_c > cap_p {
+            if dqa_cmp(*cap_c, *cap_p) > 0 {
                 return false;
             }
         } else {
@@ -747,7 +847,24 @@ pub fn is_subgraph_graph(
 mod tests {
     use super::*;
 
-    fn surface(max_total: Option<u128>, models: &[&str]) -> PolicySurface {
+    /// Scale-0 amount shorthand for the surface helper below.
+    fn dqa(value: i64, scale: u8) -> Dqa {
+        Dqa::new(value, scale).expect("valid Dqa")
+    }
+
+    /// Surface carrying a single per-axis cap, no total and no models.
+    fn surface_with_axis(cap: Dqa, axis: AxisId) -> PolicySurface {
+        PolicySurface {
+            allowed_models: None,
+            allowed_providers: None,
+            per_axis_caps: vec![(axis, cap)],
+            max_total_spend: None,
+            audit_window_secs: 0,
+            allowed_destinations: None,
+        }
+    }
+
+    fn surface(max_total: Option<Dqa>, models: &[&str]) -> PolicySurface {
         let allowed_models = if models.is_empty() {
             None
         } else {
@@ -765,7 +882,7 @@ mod tests {
 
     #[test]
     fn policy_id_stable_for_same_surface() {
-        let s = surface(Some(1000), &["gpt-4"]);
+        let s = surface(Some(dqa(1000, 0)), &["gpt-4"]);
         let p1 = PolicyObject::mint_surface(s.clone(), [0u8; 32], 1_000_000);
         let p2 = PolicyObject::mint_surface(s, [0u8; 32], 1_000_000);
         assert_eq!(p1.policy_id, p2.policy_id);
@@ -802,7 +919,11 @@ mod tests {
 
     #[test]
     fn update_increments_version_preserves_id() {
-        let p1 = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let p1 = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let p2 = p1.update(PolicyGraph::default(), [0u8; 32], 2_000_000);
         assert_eq!(p1.policy_id, p2.policy_id);
         assert_eq!(p1.version_seq, 1);
@@ -813,9 +934,16 @@ mod tests {
 
     #[test]
     fn intersect_disjoint_models_fails() {
-        let pa = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let pb =
-            PolicyObject::mint_surface(surface(Some(1000), &["claude-3"]), [0u8; 32], 1_000_000);
+        let pa = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let pb = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["claude-3"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let err = intersect(&pa, &pb).unwrap_err();
         assert_eq!(err, PolicyError::EmptyIntersection);
     }
@@ -823,12 +951,12 @@ mod tests {
     #[test]
     fn intersect_overlapping_models_succeeds() {
         let pa = PolicyObject::mint_surface(
-            surface(Some(1000), &["gpt-4", "claude-3"]),
+            surface(Some(dqa(1000, 0)), &["gpt-4", "claude-3"]),
             [0u8; 32],
             1_000_000,
         );
         let pb = PolicyObject::mint_surface(
-            surface(Some(1000), &["gpt-4", "cohere"]),
+            surface(Some(dqa(1000, 0)), &["gpt-4", "cohere"]),
             [0u8; 32],
             1_000_000,
         );
@@ -841,15 +969,141 @@ mod tests {
 
     #[test]
     fn intersect_takes_min_total_spend() {
-        let pa = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let pb = PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let pa = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let pb = PolicyObject::mint_surface(
+            surface(Some(dqa(500, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let child = intersect(&pa, &pb).unwrap();
-        assert_eq!(child.surface.max_total_spend, Some(500));
+        assert_eq!(child.surface.max_total_spend, Some(dqa(500, 0)));
+    }
+
+    #[test]
+    fn intersect_takes_the_smaller_quantity_not_the_smaller_numerator() {
+        // pa caps at 5.0 (`5 @ scale 0`, numerator 5); pb caps at 0.1
+        // (`10 @ scale 2`, numerator 10).
+        //
+        // A bare-numerator min picks 5 — a cap fifty times *looser* than
+        // either parent. The quantity min is 0.1.
+        let pa =
+            PolicyObject::mint_surface(surface(Some(dqa(5, 0)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let pb =
+            PolicyObject::mint_surface(surface(Some(dqa(10, 2)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child = intersect(&pa, &pb).unwrap();
+        assert_eq!(child.surface.max_total_spend, Some(dqa(10, 2)));
+    }
+
+    #[test]
+    fn subgraph_accepts_child_within_parent_across_scales() {
+        // Child 0.1 (`10 @ scale 2`) inside parent 5.0 (`5 @ scale 0`).
+        // Numerator 10 > 5, so a scale-blind check rejects a capability that
+        // actually fits — failing closed here, but still wrong.
+        let parent =
+            PolicyObject::mint_surface(surface(Some(dqa(5, 0)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child =
+            PolicyObject::mint_surface(surface(Some(dqa(10, 2)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        assert!(is_subgraph(&child, &parent));
+    }
+
+    #[test]
+    fn subgraph_rejects_child_above_parent_across_scales() {
+        // The security direction: child 5.0 (`5 @ scale 0`) against parent
+        // 0.1 (`10 @ scale 2`). Numerator 5 > 10 is false, so a
+        // scale-blind check waves a 50x-too-large cap through.
+        let parent =
+            PolicyObject::mint_surface(surface(Some(dqa(10, 2)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child =
+            PolicyObject::mint_surface(surface(Some(dqa(5, 0)), &["gpt-4"]), [0u8; 32], 1_000_000);
+        assert!(!is_subgraph(&child, &parent));
+    }
+
+    #[test]
+    fn subgraph_ignores_scale_when_quantities_are_equal() {
+        // `1_000 @ scale 0` and `1_000_000 @ scale 3` are both 1000, so the
+        // child is contained. A bare-numerator check would compare
+        // 1_000_000 > 1_000 and reject — failing closed on a cap that fits.
+        let parent = PolicyObject::mint_surface(
+            surface(Some(dqa(1_000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child = PolicyObject::mint_surface(
+            surface(Some(dqa(1_000_000, 3)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        assert!(
+            is_subgraph(&child, &parent),
+            "equal quantities are contained"
+        );
+    }
+
+    #[test]
+    fn per_axis_caps_intersect_by_quantity_across_scales() {
+        // Same discriminating shape as `max_total_spend`, on the per-axis
+        // path: `50 @ scale 0` = 50.0 vs `100 @ scale 2` = 1.0. A bare min
+        // picks numerator 50, i.e. 50.0 — fifty times too loose.
+        let axis = "input_tokens".to_owned();
+        let pa = PolicyObject::mint_surface(
+            surface_with_axis(dqa(50, 0), axis.clone()),
+            [0u8; 32],
+            1_000_000,
+        );
+        let pb = PolicyObject::mint_surface(
+            surface_with_axis(dqa(100, 2), axis.clone()),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child = intersect(&pa, &pb).unwrap();
+        assert_eq!(child.surface.per_axis_caps, vec![(axis, dqa(100, 2))]);
+    }
+
+    #[test]
+    fn subgraph_rejects_axis_cap_above_parent_across_scales() {
+        let axis = "input_tokens".to_owned();
+        let parent = PolicyObject::mint_surface(
+            surface_with_axis(dqa(100, 2), axis.clone()),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child =
+            PolicyObject::mint_surface(surface_with_axis(dqa(50, 0), axis), [0u8; 32], 1_000_000);
+        assert!(!is_subgraph(&child, &parent));
+    }
+
+    #[test]
+    fn surface_round_trips_through_json_with_its_scales() {
+        // The surface is Serialize + Deserialize; the amounts must survive
+        // the 16-byte `DqaEncoding` wire form with their value intact. Both
+        // amount fields are exercised, since each has its own adapter.
+        //
+        // The round-trip is economically faithful but not structurally
+        // identical: `DqaEncoding::from_dqa` canonicalizes before encoding,
+        // so `1_000_000 @ scale 3` comes back as `1000 @ scale 0`. That
+        // canonicalization is the point — it is what makes the 16-byte form
+        // injective on economic value, so two spellings of the same amount
+        // cannot produce two different encodings. Assert on the quantity.
+        let axis = "input_tokens".to_owned();
+        let mut s = surface_with_axis(dqa(100, 2), axis.clone());
+        s.max_total_spend = Some(dqa(1_000_000, 3));
+        let json = serde_json::to_string(&s).expect("serialize surface");
+        let back: PolicySurface = serde_json::from_str(&json).expect("deserialize surface");
+
+        let total = back.max_total_spend.expect("total survives");
+        assert_eq!(dqa_cmp(total, dqa(1_000_000, 3)), 0, "total is 1000.0");
+        let (back_axis, back_cap) = &back.per_axis_caps[0];
+        assert_eq!(*back_axis, axis);
+        assert_eq!(dqa_cmp(*back_cap, dqa(100, 2)), 0, "axis cap is 1.0");
     }
 
     #[test]
     fn intersect_same_policy_id_preserves_id() {
-        let sur = surface(Some(1000), &["gpt-4"]);
+        let sur = surface(Some(dqa(1000, 0)), &["gpt-4"]);
         let pa = PolicyObject::mint_surface(sur.clone(), [0u8; 32], 1_000_000);
         let pb = PolicyObject::mint_surface(sur, [0u8; 32], 1_000_000);
         let child = intersect(&pa, &pb).unwrap();
@@ -859,21 +1113,27 @@ mod tests {
     #[test]
     fn subgraph_child_with_subset_models() {
         let parent = PolicyObject::mint_surface(
-            surface(Some(1000), &["gpt-4", "claude-3"]),
+            surface(Some(dqa(1000, 0)), &["gpt-4", "claude-3"]),
             [0u8; 32],
             1_000_000,
         );
-        let child =
-            PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child = PolicyObject::mint_surface(
+            surface(Some(dqa(500, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         assert!(is_subgraph(&child, &parent));
     }
 
     #[test]
     fn subgraph_child_with_superset_models_rejected() {
-        let parent =
-            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let child = PolicyObject::mint_surface(
-            surface(Some(500), &["gpt-4", "claude-3"]),
+            surface(Some(dqa(500, 0)), &["gpt-4", "claude-3"]),
             [0u8; 32],
             1_000_000,
         );
@@ -882,26 +1142,46 @@ mod tests {
 
     #[test]
     fn subgraph_child_with_overlapping_spend() {
-        let parent =
-            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child =
-            PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child = PolicyObject::mint_surface(
+            surface(Some(dqa(500, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         assert!(is_subgraph(&child, &parent));
     }
 
     #[test]
     fn subgraph_child_with_higher_spend_rejected() {
-        let parent =
-            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child =
-            PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child = PolicyObject::mint_surface(
+            surface(Some(dqa(2000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         assert!(!is_subgraph(&child, &parent));
     }
 
     #[test]
     fn intersect_lineage_records_both_parents() {
-        let pa = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let pb = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let pa = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let pb = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let child = intersect(&pa, &pb).unwrap();
         assert_eq!(child.lineage.len(), 2);
         assert!(child
@@ -916,9 +1196,9 @@ mod tests {
 
     #[test]
     fn intersect_audit_window_takes_max() {
-        let mut sa = surface(Some(1000), &["gpt-4"]);
+        let mut sa = surface(Some(dqa(1000, 0)), &["gpt-4"]);
         sa.audit_window_secs = 3600;
-        let mut sb = surface(Some(1000), &["gpt-4"]);
+        let mut sb = surface(Some(dqa(1000, 0)), &["gpt-4"]);
         sb.audit_window_secs = 86400;
         let pa = PolicyObject::mint_surface(sa, [0u8; 32], 1_000_000);
         let pb = PolicyObject::mint_surface(sb, [0u8; 32], 1_000_000);
@@ -930,8 +1210,11 @@ mod tests {
 
     #[test]
     fn policy_object_envelope_has_all_required_fields() {
-        let p =
-            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0xab; 32], 1_700_000_000);
+        let p = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0xab; 32],
+            1_700_000_000,
+        );
         assert_eq!(p.version_tag, POLICY_VERSION_TAG);
         assert_eq!(p.version_seq, 1);
         assert!(p.parent_policy_id.is_none());
@@ -945,14 +1228,26 @@ mod tests {
     fn policy_id_stable_across_timestamps_for_same_content() {
         // Per RFC-0967 §6: policy_id is stable across updates that don't
         // change semantic content. timestamp_unix_ms is metadata.
-        let p1 = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let p2 = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 9_999_999);
+        let p1 = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let p2 = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            9_999_999,
+        );
         assert_eq!(p1.policy_id, p2.policy_id);
     }
 
     #[test]
     fn update_sets_parent_policy_id() {
-        let p1 = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let p1 = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let p2 = p1.update(PolicyGraph::default(), [0u8; 32], 2_000_000);
         assert_eq!(p2.parent_policy_id, Some(p1.policy_id));
         assert_eq!(p2.lineage.len(), 1);
@@ -1352,10 +1647,16 @@ mod tests {
     #[test]
     fn is_subgraph_combined_rejects_on_surface_mismatch() {
         // Combined surface+graph check: failing surface, passing graph ⇒ reject.
-        let parent =
-            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child =
-            PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent = PolicyObject::mint_surface(
+            surface(Some(dqa(1000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child = PolicyObject::mint_surface(
+            surface(Some(dqa(2000, 0)), &["gpt-4"]),
+            [0u8; 32],
+            1_000_000,
+        );
         // Both have empty graphs (passing graph check); surface fails.
         assert!(!is_subgraph(&child, &parent));
     }

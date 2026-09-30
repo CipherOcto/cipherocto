@@ -937,6 +937,7 @@ fn capability_token_stripped_at_egress_boundary() {
 //   W7: shard routing (sm-engine)
 
 use cipherocto_encoding::{decode, encode, Constraint, MAX_ENCODED_SIZE};
+use octo_determin::Dqa;
 use octo_policy::{intersect, is_subgraph, PolicyObject, PolicySurface};
 use quota_router_core::{
     egress::validate_provider_caveats,
@@ -980,7 +981,13 @@ fn wave_integration_w3_constraint_encoding() {
 
 #[test]
 fn wave_integration_w5_policy_intersection() {
-    let surface = |cap, max| PolicySurface {
+    // Caps are scale-carrying quantities (RFC-0105 `Dqa`): `dqa(v, s)` is
+    // v * 10^-s. The two policies are written at different scales on
+    // purpose — pa caps at 1.0 and 10.0, pb at 0.5 and 5.0 — so the
+    // intersection and the subgraph check are only correct if the scale
+    // survives comparison.
+    let dqa = |value: i64, scale: u8| Dqa::new(value, scale).expect("valid Dqa");
+    let surface = |cap: Dqa, max: Dqa| PolicySurface {
         allowed_models: Some(["gpt-4".to_owned()].into_iter().collect()),
         allowed_providers: None,
         per_axis_caps: vec![("input_tokens".to_owned(), cap)],
@@ -988,8 +995,8 @@ fn wave_integration_w5_policy_intersection() {
         audit_window_secs: 3600,
         allowed_destinations: None,
     };
-    let pa = PolicyObject::mint_surface(surface(1_000, 100_000), [0u8; 32], 1_000_000);
-    let pb = PolicyObject::mint_surface(surface(500, 50_000), [0u8; 32], 1_000_000);
+    let pa = PolicyObject::mint_surface(surface(dqa(10, 1), dqa(100, 1)), [0u8; 32], 1_000_000);
+    let pb = PolicyObject::mint_surface(surface(dqa(5, 1), dqa(50, 1)), [0u8; 32], 1_000_000);
     let _ = intersect(&pa, &pb);
     assert!(is_subgraph(&pb, &pa));
 }

@@ -62,7 +62,7 @@ fn build_capability(caveats: &[Caveat]) -> CapabilityToken {
         .expect("mint capability")
 }
 
-fn policy_with_max_total(max: u128) -> PolicyObject {
+fn policy_with_max_total(max: Dqa) -> PolicyObject {
     let surface = PolicySurface {
         allowed_models: None,
         allowed_providers: None,
@@ -99,7 +99,7 @@ fn policy_with_models(models: &[&str]) -> PolicyObject {
 fn redeem_rejects_capability_exceeding_policy() {
     // Policy caps total spend at 100_000; capability claims 1_000_000.
     // is_subgraph should reject (cap_exceeds_policy).
-    let org_policy = policy_with_max_total(100_000);
+    let org_policy = policy_with_max_total(Dqa::new(100_000, 0).unwrap());
     let org_id = org_policy.policy_id;
 
     let cap = build_capability(&[
@@ -128,7 +128,7 @@ fn redeem_rejects_capability_exceeding_policy() {
 fn redeem_accepts_capability_within_policy() {
     // Policy caps total spend at 1_000_000; capability claims 500_000
     // (narrower ⇒ subgraph holds).
-    let org_policy = policy_with_max_total(1_000_000);
+    let org_policy = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
     let org_id = org_policy.policy_id;
 
     let cap = build_capability(&[
@@ -144,6 +144,94 @@ fn redeem_accepts_capability_within_policy() {
     catalog.insert(org_policy);
 
     redeem_capability(&cap, &catalog).expect("within-policy capability should redeem");
+}
+
+#[test]
+fn redeem_rejects_capability_exceeding_policy_across_scales() {
+    // The policy operator authored a cap of 100.0. A cap is a quantity with a
+    // scale, so 100.0 is `100_000 @ scale 3`. The capability claims
+    // `100_000 @ scale 0` = 100,000.0 — a thousand times the policy.
+    //
+    // Note both sides are the same *numerator*, 100_000. A scale-blind
+    // comparison sees 100_000 > 100_000, decides the child fits, and the
+    // capability redeems. Only the scale distinguishes them.
+    let org_policy = policy_with_max_total(Dqa::new(100_000, 3).unwrap());
+    let org_id = org_policy.policy_id;
+
+    let cap = build_capability(&[
+        Caveat::PolicyReference {
+            policy_id: org_id,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        },
+        Caveat::AmountMax(Dqa::new(100_000, 0).unwrap()),
+    ]);
+
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org_policy);
+
+    let err = redeem_capability(&cap, &catalog).unwrap_err();
+    assert_eq!(
+        err,
+        RedemptionError::PolicyNotSuperseded {
+            cap_id: cap.macaroon.id,
+            policy_id: org_id,
+        }
+    );
+}
+
+#[test]
+fn redeem_accepts_capability_within_policy_across_scales() {
+    // The mirror image: same two scales, but the *capability* is the tighter
+    // one. `100 @ scale 1` = 10.0 fits inside the policy's `100_000 @
+    // scale 3` = 100.0, so redemption must succeed. A scale-blind
+    // comparison would also pass this one, so it is here to prove the
+    // fix is not simply "reject everything that spans scales".
+    let org_policy = policy_with_max_total(Dqa::new(100_000, 3).unwrap());
+    let org_id = org_policy.policy_id;
+
+    let cap = build_capability(&[
+        Caveat::PolicyReference {
+            policy_id: org_id,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        },
+        Caveat::AmountMax(Dqa::new(100, 1).unwrap()),
+    ]);
+
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org_policy);
+
+    redeem_capability(&cap, &catalog).expect("10.0 fits inside the policy's 100.0");
+}
+
+#[test]
+fn redeem_applies_the_tighter_of_two_amount_max_caveats_across_scales() {
+    // A capability carrying two `AmountMax` caveats has its spend ceiling
+    // narrowed to the *smaller quantity*. `1_000 @ scale 3` = 1.0 is tighter
+    // than `2 @ scale 0` = 2.0, even though its numerator is five hundred
+    // times larger.
+    //
+    // The narrowing used to take the smaller bare numerator, which picked
+    // 2.0. This policy caps at 1.5, which sits deliberately *between* the
+    // two: redemption succeeds only if the effective ceiling is 1.0.
+    let org_policy = policy_with_max_total(Dqa::new(15, 1).unwrap());
+    let org_id = org_policy.policy_id;
+
+    let cap = build_capability(&[
+        Caveat::PolicyReference {
+            policy_id: org_id,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        },
+        Caveat::AmountMax(Dqa::new(1_000, 3).unwrap()),
+        Caveat::AmountMax(Dqa::new(2, 0).unwrap()),
+    ]);
+
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org_policy);
+
+    redeem_capability(&cap, &catalog).expect("narrowed ceiling 1.0 fits inside the policy's 1.5");
 }
 
 #[test]
@@ -230,7 +318,7 @@ fn redeem_accepts_model_in_policy() {
 
 #[test]
 fn capability_redeem_runs_holder_sig_then_subgraph_check() {
-    let org_policy = policy_with_max_total(100_000);
+    let org_policy = policy_with_max_total(Dqa::new(100_000, 0).unwrap());
     let org_id = org_policy.policy_id;
 
     // Build a capability whose AmountMax exceeds the policy.
@@ -258,7 +346,7 @@ fn capability_redeem_runs_holder_sig_then_subgraph_check() {
 
 #[test]
 fn capability_redeem_accepts_in_policy_capability() {
-    let org_policy = policy_with_max_total(1_000_000);
+    let org_policy = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
     let org_id = org_policy.policy_id;
 
     let cap = build_capability(&[

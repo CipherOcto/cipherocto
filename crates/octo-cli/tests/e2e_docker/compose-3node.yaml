@@ -1,0 +1,91 @@
+# Layer 4 (cross-container) three-node topology for the `octo`
+# multi-node end-to-end suite.
+#
+# Three nodes exist so the suite can assert full-mesh convergence
+# (`a -> b`, `b -> a`, `a -> c`, `c -> a`, `b -> c`, `c -> b`) with
+# every binding living in a different container and a different volume.
+# A two-node topology can express "isolated"; only three can express
+# "each node's view of the mesh differs from its peers', and the
+# difference is exactly the set of bindings made on that node".
+#
+# The project name is supplied by the suite with `docker compose -p`,
+# so the volumes and the network below are namespaced per scenario.
+
+services:
+  node-a:
+    build:
+      context: ../../../../
+      dockerfile: crates/octo-cli/tests/e2e_docker/Dockerfile
+    image: octo-e2e-l4:local
+    environment:
+      OCTO_HOME: /octo/home
+      NO_COLOR: "1"
+      OCTO_FORCE_JSON: "1"
+      CI: ""
+    volumes:
+      - node-a-home:/octo/home
+    networks:
+      octo-mesh:
+        aliases:
+          - node-a
+    healthcheck:
+      test: ["CMD-SHELL", "octo --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+  node-b:
+    build:
+      context: ../../../../
+      dockerfile: crates/octo-cli/tests/e2e_docker/Dockerfile
+    image: octo-e2e-l4:local
+    environment:
+      OCTO_HOME: /octo/home
+      NO_COLOR: "1"
+      OCTO_FORCE_JSON: "1"
+      CI: ""
+    volumes:
+      - node-b-home:/octo/home
+    networks:
+      octo-mesh:
+        aliases:
+          - node-b
+    healthcheck:
+      test: ["CMD-SHELL", "octo --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+  node-c:
+    build:
+      context: ../../../../
+      dockerfile: crates/octo-cli/tests/e2e_docker/Dockerfile
+    image: octo-e2e-l4:local
+    environment:
+      OCTO_HOME: /octo/home
+      NO_COLOR: "1"
+      OCTO_FORCE_JSON: "1"
+      CI: ""
+    volumes:
+      - node-c-home:/octo/home
+    networks:
+      octo-mesh:
+        aliases:
+          - node-c
+    healthcheck:
+      test: ["CMD-SHELL", "octo --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+networks:
+  octo-mesh:
+    driver: bridge
+
+volumes:
+  node-a-home:
+  node-b-home:
+  node-c-home:

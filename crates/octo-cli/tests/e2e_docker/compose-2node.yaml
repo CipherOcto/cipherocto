@@ -1,0 +1,83 @@
+# Layer 4 (cross-container) two-node topology for the `octo` multi-node
+# end-to-end suite.
+#
+# Driven by `e2e_l4_multinode_docker.rs`, which supplies the project
+# name with `docker compose -p <project> ...` so concurrent scenarios
+# never share networks, volumes, or container names. Nothing here
+# hardcodes a project name; that is deliberate.
+#
+# What a "node" is: exactly one `$OCTO_HOME` plus exactly one network
+# namespace on the bridge below. Those two things are the only inputs
+# that distinguish one octo node from another, so isolating them is
+# what makes this a real cross-container test rather than two temp
+# directories.
+#
+# There is no `octo serve` to attach to a network. The service
+# `command` is likewise absent: the entrypoint idles and the suite
+# drives `octo` through `docker compose exec`. See `entrypoint.sh`.
+
+services:
+  node-a:
+    build:
+      context: ../../../../
+      dockerfile: crates/octo-cli/tests/e2e_docker/Dockerfile
+    image: octo-e2e-l4:local
+    environment:
+      OCTO_HOME: /octo/home
+      # Matches the cross-process suite: force the JSON envelope
+      # regardless of TTY so assertions can parse it, and clear `CI`
+      # so an ambient host value cannot pick the mode.
+      NO_COLOR: "1"
+      OCTO_FORCE_JSON: "1"
+      CI: ""
+    volumes:
+      - node-a-home:/octo/home
+    networks:
+      octo-mesh:
+        aliases:
+          - node-a
+    healthcheck:
+      test: ["CMD-SHELL", "octo --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+  node-b:
+    build:
+      context: ../../../../
+      dockerfile: crates/octo-cli/tests/e2e_docker/Dockerfile
+    image: octo-e2e-l4:local
+    environment:
+      OCTO_HOME: /octo/home
+      NO_COLOR: "1"
+      OCTO_FORCE_JSON: "1"
+      CI: ""
+    volumes:
+      - node-b-home:/octo/home
+    networks:
+      octo-mesh:
+        aliases:
+          - node-b
+    healthcheck:
+      test: ["CMD-SHELL", "octo --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+# An explicitly created bridge rather than the implicit `default`
+# network, so `down -v` removes it and so the suite can assert the
+# peer address it records is resolved by a network the scenario owns
+# end to end.
+networks:
+  octo-mesh:
+    driver: bridge
+
+# One volume per node. Separate volumes are what make a node's peer
+# table survive its own `restart` while staying invisible to the other
+# node; `down -v` is the teardown that proves the scenario left
+# nothing behind.
+volumes:
+  node-a-home:
+  node-b-home:

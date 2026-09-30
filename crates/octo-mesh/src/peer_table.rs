@@ -14,6 +14,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -74,15 +75,99 @@ fn load_table(path: &Path) -> Result<PeerTableFile, MeshError> {
     Ok(parsed)
 }
 
-/// Write the peer table atomically: write to `<path>.tmp`, fsync,
-/// rename to final path, set 0700 perms.
+/// Acquire the cross-process advisory lock guarding the peer table.
+///
+/// `add_peer` and `remove_peer` are read-modify-write over the whole
+/// table. Without exclusion, two `octo` processes mutating the same
+/// node home both read the pre-mutation table and the later rename
+/// publishes a table that silently drops the earlier peer's record —
+/// a peer the operator added with a success exit code simply
+/// disappears. The lock makes the whole read-modify-write atomic
+/// across processes.
+///
+/// The lock is an advisory `flock(2)` on a sibling lock file, matching
+/// the spend-ledger lock pattern in `quota-router-storage` (mission
+/// 0862-c3). The OS releases it when the returned `File` is dropped,
+/// including on abnormal process exit, so no stale-lock recovery is
+/// needed.
+fn acquire_table_lock(dir: &Path) -> Result<fs::File, MeshError> {
+    use fs2::FileExt;
+
+    let lock_path = dir.join(".peers.lock");
+    // Reject a pre-existing symlink at the lock path so the lock can
+    // never be taken on an attacker-chosen inode (same TOCTOU defence
+    // as the spend-ledger lock).
+    match fs::symlink_metadata(&lock_path) {
+        Ok(md) if md.file_type().is_symlink() => {
+            return Err(MeshError::Io(format!(
+                "peer table lock path is a symlink: {}",
+                lock_path.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(MeshError::Io(format!("stat {}: {e}", lock_path.display())));
+        }
+    }
+
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| MeshError::Io(format!("open lock {}: {e}", lock_path.display())))?;
+    file.lock_exclusive()
+        .map_err(|e| MeshError::Io(format!("lock {}: {e}", lock_path.display())))?;
+    Ok(file)
+}
+
+/// Run `f` while holding the peer-table advisory lock.
+///
+/// The lock guard is dropped (releasing the `flock`) when `f`
+/// returns, including on the error path.
+fn with_table_lock<T>(
+    dir: &Path,
+    f: impl FnOnce() -> Result<T, MeshError>,
+) -> Result<T, MeshError> {
+    let _guard = acquire_table_lock(dir)?;
+    f()
+}
+
+/// Build a writer-unique temp path alongside `path`.
+///
+/// Concurrent writers on the same peer table must never share a temp
+/// file. A fixed `<path>.tmp` name lets the second `File::create`
+/// truncate the bytes the first writer is still streaming, so one of
+/// the two renames publishes a table missing the other's peer — or
+/// the write fails outright. Qualification by process id plus a
+/// per-process counter makes the name unique both across processes
+/// and across successive writes within one process.
+///
+/// The temp file stays in the same directory as the target so the
+/// rename remains a same-filesystem operation, which is what makes it
+/// atomic. The leading dot keeps it out of the operator's `ls` of the
+/// mesh directory.
+fn unique_tmp_path(path: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let stem = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("peers.toml");
+    path.with_file_name(format!(".{stem}.{}.{seq}.tmp", std::process::id()))
+}
+
+/// Write the peer table atomically: write to a writer-unique temp
+/// file, fsync, rename to final path, set 0700 perms.
 fn write_table_atomic(path: &Path, table: &PeerTableFile) -> Result<(), MeshError> {
     let dir = path.parent().ok_or_else(|| {
         MeshError::Io(format!("peer table has no parent dir: {}", path.display()))
     })?;
     ensure_mesh_dir(dir)?;
 
-    let tmp = path.with_extension("toml.tmp");
+    let tmp = unique_tmp_path(path);
     let serialised =
         toml::to_string_pretty(table).map_err(|e| MeshError::TomlSerialise(e.to_string()))?;
 
@@ -140,35 +225,42 @@ pub fn add_peer(
     validate_peer_did(peer_did)?;
 
     let path = peer_table_path(octo_home);
-    let mut table = load_table(&path)?;
+    let dir = path.parent().ok_or_else(|| {
+        MeshError::Io(format!("peer table has no parent dir: {}", path.display()))
+    })?;
+    ensure_mesh_dir(dir)?;
 
-    // Upsert: replace existing record by `peer_did` (last-writer-wins
-    // for v1.0 — RFC-0011-f §Compatibility "schema_version discipline").
-    let new_record = PeerRecord {
-        peer_did: peer_did.to_string(),
-        endpoint: endpoint.clone(),
-        trust_level: TrustLevel::untrusted(),
-        last_seen_unix: now_unix,
-        capabilities: Vec::new(),
-    };
-    let mut replaced = false;
-    for existing in &mut table.peers {
-        if existing.peer_did == peer_did {
-            *existing = new_record.clone();
-            replaced = true;
-            break;
+    // Hold the advisory lock across the whole read-modify-write so a
+    // concurrent writer on the same node home cannot lose this peer's
+    // record to a last-writer-wins rename.
+    with_table_lock(dir, || {
+        let mut table = load_table(&path)?;
+
+        // Upsert: replace existing record by `peer_did`
+        // (last-writer-wins for v1.0 — RFC-0011-f §Compatibility
+        // "schema_version discipline").
+        let new_record = PeerRecord {
+            peer_did: peer_did.to_string(),
+            endpoint: endpoint.clone(),
+            trust_level: TrustLevel::untrusted(),
+            last_seen_unix: now_unix,
+            capabilities: Vec::new(),
+        };
+        let mut replaced = false;
+        for existing in &mut table.peers {
+            if existing.peer_did == peer_did {
+                *existing = new_record.clone();
+                replaced = true;
+                break;
+            }
         }
-    }
-    if !replaced {
-        table.peers.push(new_record);
-    }
+        if !replaced {
+            table.peers.push(new_record);
+        }
 
-    write_table_atomic(&path, &table)?;
-    // `now_unix` reserved for future "last_modified_unix" audit row
-    // (RFC-0011-f §Implicit Assumptions Audit). Currently unused after
-    // the record is built; suppress the lint explicitly.
-    let _ = now_unix;
-    Ok(())
+        write_table_atomic(&path, &table)?;
+        Ok(())
+    })
 }
 
 /// Remove a peer from the operator's local peer table (idempotent).
@@ -186,18 +278,28 @@ pub fn remove_peer(peer_did: &str, octo_home: &Path, now_unix: i64) -> Result<()
     validate_peer_did(peer_did)?;
 
     let path = peer_table_path(octo_home);
-    let mut table = load_table(&path)?;
+    let dir = path.parent().ok_or_else(|| {
+        MeshError::Io(format!("peer table has no parent dir: {}", path.display()))
+    })?;
+    ensure_mesh_dir(dir)?;
 
-    let before = table.peers.len();
-    table.peers.retain(|p| p.peer_did != peer_did);
-    if table.peers.len() != before {
-        write_table_atomic(&path, &table)?;
-    }
-    // `now_unix` reserved for future audit row (RFC-0011-f §Implicit
-    // Assumptions Audit). The idempotent no-op path intentionally
-    // doesn't write the file when nothing changed.
-    let _ = now_unix;
-    Ok(())
+    // Same lock discipline as `add_peer`: the read that decides
+    // whether anything changed, and the write that publishes the
+    // change, must be one critical section.
+    with_table_lock(dir, || {
+        let mut table = load_table(&path)?;
+
+        let before = table.peers.len();
+        table.peers.retain(|p| p.peer_did != peer_did);
+        if table.peers.len() != before {
+            write_table_atomic(&path, &table)?;
+        }
+        // `now_unix` reserved for future audit row (RFC-0011-f
+        // §Implicit Assumptions Audit). The idempotent no-op path
+        // intentionally doesn't write the file when nothing changed.
+        let _ = now_unix;
+        Ok(())
+    })
 }
 
 /// List peers matching `filter`.

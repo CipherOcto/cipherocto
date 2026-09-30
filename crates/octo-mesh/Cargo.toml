@@ -27,6 +27,17 @@ serde = { version = "1.0", features = ["derive"] }
 schemars = "0.8"
 # Peer-table persistence (`$OCTO_HOME/mesh/peers.toml`).
 toml = "0.8"
+# Cross-process advisory file lock for the peer-table read-modify-write
+# (RFC-0011-f §Substrate `peer add` / `peer remove`). `fs2` provides the
+# flock(2) / LockFileEx wrapper. Two `octo` processes mutating the SAME
+# node home must serialize, otherwise each reads the pre-mutation table
+# and the second rename publishes a table missing the first peer's
+# record — silent loss of an operator's peer bindings.
+#
+# Same crate and same pattern as the spend-ledger lock in
+# `quota-router-storage` (mission 0862-c3), so the mesh substrate does
+# not introduce a parallel locking abstraction.
+fs2 = "0.4"
 # Unix epoch timestamps.
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 # Substrate error type (RFC-0011-f §Error Handling).

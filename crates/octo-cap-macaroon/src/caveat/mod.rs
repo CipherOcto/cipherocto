@@ -764,7 +764,17 @@ impl Caveat {
         // build the JSON value manually. HashSet + Vec<ProviderId> are sorted
         // for determinism (HMAC input stability across orderings).
         let value = match self {
-            Caveat::AmountMax(v) => serde_json::json!({"type": "amount_max", "value": v.value}),
+            // Budget carries the full 16-byte `DqaEncoding` (value 8B BE +
+            // scale 1B + 7 reserved), hex-encoded, per RFC-0011 §Caveat
+            // Catalog ("The canonical form MUST carry `scale`"). Emitting
+            // the bare `i64` would drop the scale, so two budgets 10^6 apart
+            // would produce a byte-identical `capability_id` preimage. The
+            // regression test `canonical_budget_is_injective_on_economic_value`
+            // pins this.
+            Caveat::AmountMax(v) => serde_json::json!({
+                "type": "amount_max",
+                "value": hex::encode(dqa_serde::dqa_to_bytes(v)),
+            }),
             Caveat::PerAxisMax(p) => serde_json::json!({"type": "per_axis_max", "value": p}),
             Caveat::Model(m) => serde_json::json!({"type": "model", "value": m}),
             Caveat::Provider(p) => {
@@ -862,11 +872,18 @@ impl Caveat {
                 serde_json::json!({"type": "sharded", "value": shard_id})
             }
             Caveat::Payment(p) => {
+                // Same 16-byte encoding as `AmountMax`. The substrate
+                // *enforces* scale-binding here — `PaymentCaveat::attenuate`
+                // Gate 3 rejects a budget whose scale differs from the
+                // parent's — so the canonical form must carry the scale too,
+                // or the encoder would discard exactly the invariant the
+                // attenuator defends. Regression test:
+                // `canonical_payment_budget_carries_scale`.
                 serde_json::json!({
                     "type": "payment",
                     "value": {
                         "caveat_name": p.caveat_name,
-                        "budget": p.budget.value,
+                        "budget": hex::encode(dqa_serde::dqa_to_bytes(&p.budget)),
                         "model": p.model,
                         "expires_at_unix_ms": p.expires_at_unix_ms,
                     }
@@ -1121,6 +1138,166 @@ mod tests {
             &parent,
             &[Caveat::AmountMax(Dqa::new(1_500_000_000, 0).unwrap())]
         ));
+    }
+
+    // ---------------------------------------------------------------------
+    // Canonical-encoding scale regression tests.
+    //
+    // `subsumes_amount_max_narrows` above compares every budget at `scale = 0`,
+    // which is why the encoder's dropped `scale` survived: the subsumption
+    // check uses `dqa_cmp` and is correct, so a scale-blind test suite sees
+    // green while the canonical form silently conflates budgets 10^6 apart.
+    // The encoder is the HMAC input for `capability_id`, so conflating them
+    // is an identity collision, not a display bug.
+    //
+    // RFC-0011 §Caveat Catalog: "The canonical form MUST carry `scale` —
+    // without it, a CLI form guessing `scale=0` against a parent `scale=6`
+    // would yield a child worth 1,000,000x the intended amount that still
+    // passes narrowing."
+    // ---------------------------------------------------------------------
+
+    /// Helper: pull the 16-byte `DqaEncoding` payload out of an `amount_max`
+    /// canonical envelope and decode it back to a `Dqa`.
+    fn decode_canonical_budget(canonical: &[u8]) -> Dqa {
+        let v: serde_json::Value = serde_json::from_slice(canonical).expect("canonical is JSON");
+        let hexed = v["value"].as_str().expect("value is a hex string");
+        let bytes = hex::decode(hexed).expect("value is valid hex");
+        assert_eq!(bytes.len(), 16, "DqaEncoding is 16 bytes");
+        dqa_serde::dqa_from_bytes(&bytes).expect("DqaEncoding decodes")
+    }
+
+    /// The two budgets below differ by 10^6 in economic value and share a
+    /// numerator. Before the fix their canonical bytes were byte-identical,
+    /// so both hashed into the same `capability_id`. This is the regression.
+    #[test]
+    fn canonical_budget_is_injective_on_economic_value() {
+        let a = Dqa::new(1_000_000, 0).expect("dqa");
+        let b = Dqa::new(1_000_000, 6).expect("dqa");
+        // Preconditions: same numerator, genuinely different economic value.
+        assert_eq!(a.value, b.value, "numerators match by construction");
+        assert_ne!(
+            dqa_cmp(a, b),
+            0,
+            "economic values must differ, else this test proves nothing"
+        );
+        assert_ne!(
+            Caveat::AmountMax(a).canonical_ser(),
+            Caveat::AmountMax(b).canonical_ser(),
+            "budgets 10^6 apart must not share a canonical preimage"
+        );
+    }
+
+    /// The inverse property: economically IDENTICAL budgets must produce
+    /// byte-identical canonical forms, or the encoding is not canonical.
+    /// `1000 @ scale 3` and `1 @ scale 0` are both 1.0, and
+    /// `DqaEncoding::from_dqa` canonicalizes before encoding, so these
+    /// collapse to the same wire form by design.
+    #[test]
+    fn canonical_budget_is_canonical_for_equivalent_values() {
+        let a = Dqa::new(1_000, 3).expect("dqa");
+        let b = Dqa::new(1, 0).expect("dqa");
+        assert_eq!(
+            dqa_cmp(a, b),
+            0,
+            "precondition: the two budgets are worth the same"
+        );
+        assert_eq!(
+            Caveat::AmountMax(a).canonical_ser(),
+            Caveat::AmountMax(b).canonical_ser(),
+            "economically equal budgets must share a canonical form"
+        );
+    }
+
+    /// The scale must survive the round trip through the canonical form —
+    /// not merely the numerator. Asserting only on the numerator is what let
+    /// the original defect pass review.
+    #[test]
+    fn canonical_budget_round_trips_the_scale() {
+        for (value, scale) in [(1_000_000i64, 6u8), (1_000, 3), (7, 0), (1, 9)] {
+            let dqa = Dqa::new(value, scale).expect("dqa");
+            let back = decode_canonical_budget(&Caveat::AmountMax(dqa).canonical_ser());
+            assert_eq!(
+                dqa_cmp(dqa, back),
+                0,
+                "scale {scale} must survive the canonical round trip"
+            );
+        }
+    }
+
+    /// `Caveat::Payment` carries a budget too, and dropped the same scale.
+    /// This matters more here than the encoder alone suggests, because
+    /// `PaymentCaveat::attenuate` Gate 3 REJECTS a budget whose scale differs
+    /// from the parent's. The substrate enforced the invariant on the way in
+    /// and discarded it on the way out.
+    #[test]
+    fn canonical_payment_budget_carries_scale() {
+        use crate::{AssetId, Epoch, Nonce};
+        let budget = Dqa::new(1_000_000, 6).expect("dqa");
+        let parent = PaymentCaveat::new(
+            AssetId::from_bytes(OCTO_W_ASSET_ID_BYTES),
+            budget,
+            "gpt-4",
+            u64::MAX,
+            Epoch::new(0),
+            Nonce::from_bytes([0u8; 32]),
+        );
+        let child = PaymentCaveat::new(
+            AssetId::from_bytes(OCTO_W_ASSET_ID_BYTES),
+            Dqa::new(5, 0).expect("dqa"),
+            "gpt-4",
+            u64::MAX,
+            Epoch::new(0),
+            Nonce::from_bytes([0u8; 32]),
+        );
+        let pc = Caveat::Payment(parent);
+        assert_ne!(
+            pc.canonical_ser(),
+            Caveat::Payment(child).canonical_ser(),
+            "payment budgets must not share a canonical preimage"
+        );
+        // The payload must decode back to a budget worth the SAME amount.
+        // `DqaEncoding::from_dqa` canonicalizes (strips trailing zeros), so
+        // `1000000 @ 6` encodes as `1 @ 0` — the scale is preserved as
+        // economic value, not as a literal byte. Asserting the raw scale byte
+        // would pin the wrong property.
+        let v: serde_json::Value = serde_json::from_slice(&pc.canonical_ser()).expect("json");
+        let bytes = hex::decode(v["value"]["budget"].as_str().expect("hex str")).expect("hex");
+        assert_eq!(bytes.len(), 16, "payment budget uses the 16-byte encoding");
+        let decoded = dqa_serde::dqa_from_bytes(&bytes).expect("decodes");
+        assert_eq!(
+            dqa_cmp(budget, decoded),
+            0,
+            "payment budget must survive the canonical round trip economically"
+        );
+    }
+
+    /// `subsumes_amount_max_narrows` only ever compares at `scale = 0`. This
+    /// is the cross-scale case the encoder defect actually lived in: the
+    /// subsumption check is scale-aware and correct, so this test passing is
+    /// exactly why the bug looked harmless from the authorization side.
+    #[test]
+    fn subsumes_amount_max_narrows_across_scales() {
+        // parent 1000 @ scale 3 == 1.0
+        let parent = vec![Caveat::AmountMax(Dqa::new(1_000, 3).expect("dqa"))];
+        // child 500 @ scale 3 == 0.5 ⇒ narrowing
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(500, 3).expect("dqa"))]
+        ));
+        // child 1 @ scale 0 == 1.0 ⇒ equal, still subsumes
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(1, 0).expect("dqa"))]
+        ));
+        // child 1000 @ scale 0 == 1000.0 ⇒ WIDENING by 1000x, must reject.
+        // Raw-numerator comparison would wrongly accept this: 1000 <= 1000.
+        assert!(
+            !set_subsumes(
+                &parent,
+                &[Caveat::AmountMax(Dqa::new(1_000, 0).expect("dqa"))]
+            ),
+            "same numerator, 1000x wider — must not pass narrowing"
+        );
     }
 
     #[test]

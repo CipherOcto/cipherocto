@@ -1434,11 +1434,18 @@ mod tests {
     }
 
     /// The canonical form does NOT round-trip back through `--caveats`.
-    /// `canonical_ser` is the HMAC input: it renders `Vault` as hex,
-    /// `AmountMax` as a bare number, and `Permission` as the full info
-    /// string — none of which the derived input form accepts. Pinned so
-    /// the asymmetry stays a documented property rather than an operator
-    /// surprise.
+    /// `canonical_ser` is the HMAC input and renders every binary payload as
+    /// a hex string (`Vault`'s 32-byte id, `AmountMax`'s 16-byte
+    /// `DqaEncoding`), while the derived input form accepts `AmountMax` only
+    /// as a 16-element byte array — `dqa_serde::field` implements `visit_seq`
+    /// and `visit_bytes` but not `visit_str`. `Permission` renders as the full
+    /// info string, which the input form also does not accept.
+    ///
+    /// Note this is a *representation* asymmetry, not a *lossiness* one.
+    /// `AmountMax` now carries the full scale-bearing encoding (RFC-0011
+    /// §Caveat Catalog: "The canonical form MUST carry `scale`"), so nothing
+    /// is lost; only the spelling differs. `guide_dqa16_helper_bytes_round_trip`
+    /// shows the input form parsing the same 16 bytes.
     #[test]
     fn guide_canonical_form_is_not_reparseable() {
         for c in [

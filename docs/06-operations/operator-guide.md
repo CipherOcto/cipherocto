@@ -705,8 +705,14 @@ projects each caveat to `{"kind": <short tag>, "body": <canonical value>}` —
 not to the `{"type": ..., "value": ...}` form you supply. For `vault` the
 `body` is the 64-hex id; for `permission` it is the full HMAC info string
 (`cipherocto/cap/v1/permission/vault_mutation`); for `amount_max` it is
-augmented to `{"amount_dqa", "scale", "value"}`. The two forms do **not**
-round-trip: feeding a canonical `body` back into `--caveats` exits 7.
+augmented to `{"amount_dqa", "scale", "value"}`, where `amount_dqa` and
+`scale` are the decoded budget and `value` is the 32-hex canonical
+`DqaEncoding` — the same 16 bytes the `dqa16` helper above builds, spelled
+as hex. The two forms do **not** round-trip: `--caveats` accepts the budget
+only as a 16-element byte array, so feeding a canonical `body` back into it
+exits 7. Nothing is lost in the difference — `amount_dqa` and `scale` recover
+the exact budget — but the spellings differ, so paste the `dqa16` form rather
+than the read-back `body`.
 
 ### Operate
 

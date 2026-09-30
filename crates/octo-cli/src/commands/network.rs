@@ -1247,7 +1247,8 @@ pub struct EnvelopeInspectArgs {
     /// 32-byte envelope_id as 64 lowercase hex chars.
     /// Validated via `parse_32_byte_hex` pastejacking
     /// defense per Phase 5 RFC-0011-m precedent.
-    pub envelope_id_hex: String,
+    #[arg(value_parser = parse_envelope_id_hex)]
+    pub envelope_id_hex: [u8; 32],
     /// Force JSON envelope output (RFC-0011 §Output Envelope).
     #[arg(long)]
     pub json: bool,
@@ -1264,11 +1265,12 @@ pub struct EnvelopeForwardArgs {
     /// 32-byte envelope_id as 64 lowercase hex chars.
     /// Validated via `parse_32_byte_hex` pastejacking
     /// defense per Phase 5 RFC-0011-m precedent.
-    pub envelope_id_hex: String,
+    #[arg(value_parser = parse_envelope_id_hex)]
+    pub envelope_id_hex: [u8; 32],
     /// 32-byte destination peer_id as 64 lowercase hex chars.
     /// Validated via `parse_32_byte_hex`.
-    #[arg(long)]
-    pub destination_peer_id_hex: String,
+    #[arg(long, value_parser = parse_destination_peer_id_hex)]
+    pub destination_peer_id_hex: [u8; 32],
     /// TTL epochs (time-to-live).
     #[arg(long)]
     pub ttl_epochs: u64,
@@ -2837,6 +2839,22 @@ fn parse_specialized_node_id_hex(s: &str) -> Result<[u8; 32], String> {
     parse_32_byte_hex(s, "node_id").map_err(|e| e.to_string())
 }
 
+/// `parse_32_byte_hex` for `envelope_id` (Phase 13 G16a/G16b).
+/// Symmetric to the three wrappers above per RFC-0011-h
+/// §Pastejacking Defense pattern. Binding this at the clap layer
+/// keeps a malformed id out of the handler, where it previously
+/// surfaced as a confirmation failure carrying a hint that the
+/// operator had already followed.
+fn parse_envelope_id_hex(s: &str) -> Result<[u8; 32], String> {
+    parse_32_byte_hex(s, "envelope_id_hex").map_err(|e| e.to_string())
+}
+
+/// `parse_32_byte_hex` for the `forward` destination peer id
+/// (Phase 13 G16b), same reasoning as `parse_envelope_id_hex`.
+fn parse_destination_peer_id_hex(s: &str) -> Result<[u8; 32], String> {
+    parse_32_byte_hex(s, "destination_peer_id_hex").map_err(|e| e.to_string())
+}
+
 /// Shared preview-payload helper for the rebind-* trio dry-run
 /// path. Returns the dry-run envelope without attempting
 /// substrate dispatch.
@@ -3955,19 +3973,16 @@ fn network_gossip_stats(args: &GossipStatsArgs, cli: &Octo) -> Result<(), OctoCl
 /// for unknown envelopes and the handler echoes
 /// `found: false` per substrate-faithfulness contract.
 fn network_envelope_inspect(args: &EnvelopeInspectArgs, cli: &Octo) -> Result<(), OctoCliError> {
-    let envelope_id = parse_32_byte_hex(&args.envelope_id_hex, "envelope_id_hex").map_err(|e| {
-        OctoCliError::ConfirmationRequired {
-            command: format!("envelope_id_hex parse failed: {e}"),
-        }
-    })?;
+    let envelope_id = args.envelope_id_hex;
     // Phase 13 substrate-faithful stub: inspector returns None
     // for unknown envelopes (live envelope store OUT OF SCOPE).
     // Handler branches on Some/None per substrate-faithfulness
     // contract — no synthetic projection.
     let insp = octo_network::mon::envelope_inspector::EnvelopeInspector;
+    let envelope_id_hex = hex::encode(envelope_id);
     let payload = match insp.inspect(envelope_id) {
         Some(meta) => NetworkEnvelopeInspectOutput {
-            envelope_id_hex: args.envelope_id_hex.clone(),
+            envelope_id_hex: envelope_id_hex.clone(),
             envelope_kind: meta.envelope_kind.as_str().to_string(),
             creator_did_hex: meta.creator_did_hex,
             creation_epoch: meta.creation_epoch,
@@ -3975,7 +3990,7 @@ fn network_envelope_inspect(args: &EnvelopeInspectArgs, cli: &Octo) -> Result<()
             found: true,
         },
         None => NetworkEnvelopeInspectOutput {
-            envelope_id_hex: args.envelope_id_hex.clone(),
+            envelope_id_hex: envelope_id_hex.clone(),
             envelope_kind: String::new(),
             creator_did_hex: String::new(),
             creation_epoch: 0,
@@ -4006,15 +4021,8 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
                 .to_string(),
         });
     }
-    let envelope_id = parse_32_byte_hex(&args.envelope_id_hex, "envelope_id_hex").map_err(|e| {
-        OctoCliError::ConfirmationRequired {
-            command: format!("envelope_id_hex parse failed: {e}"),
-        }
-    })?;
-    let dest_peer_id = parse_32_byte_hex(&args.destination_peer_id_hex, "destination_peer_id_hex")
-        .map_err(|e| OctoCliError::ConfirmationRequired {
-            command: format!("destination_peer_id_hex parse failed: {e}"),
-        })?;
+    let envelope_id = args.envelope_id_hex;
+    let dest_peer_id = args.destination_peer_id_hex;
     let fe = octo_network::mon::forward_envelope::ForwardEnvelope::build(
         envelope_id,
         dest_peer_id,
@@ -4048,8 +4056,8 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
     let env = OutputEnvelope::new(
         "octo.network.envelope.forward.v1",
         NetworkEnvelopeForwardOutput {
-            source_envelope_id_hex: args.envelope_id_hex.clone(),
-            destination_peer_id_hex: args.destination_peer_id_hex.clone(),
+            source_envelope_id_hex: hex::encode(args.envelope_id_hex),
+            destination_peer_id_hex: hex::encode(args.destination_peer_id_hex),
             ttl_epochs: args.ttl_epochs,
             wire_bytes_hex: hex::encode(&wire_bytes),
             wire_bytes_len: wire_bytes.len(),
@@ -6876,7 +6884,7 @@ mod tests {
             NetworkAction::Envelope { action } => match action {
                 NetworkEnvelopeAction::Inspect(args) => {
                     assert_eq!(
-                        args.envelope_id_hex,
+                        hex::encode(args.envelope_id_hex),
                         "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
                     );
                     assert!(!args.json);
@@ -7157,6 +7165,53 @@ mod tests {
         assert_eq!(parsed2.wire_bytes_len, 80);
         assert_eq!(parsed2.ttl_epochs, 100);
         assert!(!parsed2.dry_run);
+    }
+
+    // tv_net13_10: a malformed envelope id is rejected as an invalid
+    // argument, not reported as a confirmation failure.
+    //
+    // The handler used to parse the id itself and launder the failure
+    // into `ConfirmationRequired`, whose fixed hint tells the operator
+    // to re-run with `--confirm`. Re-running with `--confirm` produced
+    // the identical error, hint included, so the only action the error
+    // offered was one that had already been tried. `envelope inspect`
+    // is a read, so there was no mutation to acknowledge at all.
+    #[test]
+    fn tv_net13_10_malformed_envelope_id_is_an_argument_error() {
+        for (label, argv) in [
+            ("inspect", vec!["test", "envelope", "inspect", "abcd"]),
+            (
+                "forward source",
+                vec!["test", "envelope", "forward", "abcd", "--ttl-epochs", "10"],
+            ),
+            (
+                "forward destination",
+                vec![
+                    "test",
+                    "envelope",
+                    "forward",
+                    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+                    "--destination-peer-id-hex",
+                    "zzzz",
+                    "--ttl-epochs",
+                    "10",
+                ],
+            ),
+        ] {
+            let err = TestPhase10Cli::try_parse_from(argv.clone())
+                .err()
+                .unwrap_or_else(|| panic!("{label}: malformed id must be rejected at parse time"));
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains("invalid value") && rendered.contains("expected 64 hex chars"),
+                "{label}: expected an argument-shape error, got: {rendered}"
+            );
+            assert!(
+                !rendered.contains("--confirm"),
+                "{label}: a malformed id must not be reported as a confirmation failure: \
+                 {rendered}"
+            );
+        }
     }
 
     // tv_net14_1: heartbeat probe default (no --timeout-ms) parses

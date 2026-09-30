@@ -1519,7 +1519,15 @@ octo governance snapshot --chain-id "$CHAIN_ID" --proposal-state active --json \
 # surface — the substrate snapshot projection carries no backing proposal
 # ledger, so the array is hardcoded empty on BOTH the cache-hit and the
 # cache-miss path. This filter therefore returns nothing. The scalar
-# `.payload.open_proposal_count` is likewise always 0. Everything else in
+# `.payload.open_proposal_count` is likewise always 0.
+#
+# The two are NOT independent. `open_proposal_count` and the length of
+# `open_proposals` describe the same fact, and the CLI refuses to render
+# an envelope where they disagree: a mismatch exits 51 with a
+# "internally inconsistent" reason rather than shipping a count that
+# contradicts the list beside it. So an empty array always travels with a
+# zero count, and you will never be told "3 open proposals" by one field
+# while the other shows none. Treat the pair as one value. Everything else in
 # this section is still accurate; only proposal discovery is inert.
 ```
 
@@ -3183,6 +3191,11 @@ octo governance snapshot --json | jq '.payload.open_proposals[] | select(.propos
 # NOTE: `.payload.open_proposals` is the empty array on the v1 surface, so
 # both filters above return nothing until a backing proposal ledger lands.
 # See §13 for the full statement.
+#
+# `.payload.open_proposal_count` and the length of `.payload.open_proposals`
+# are checked against each other before the envelope renders. A disagreement
+# exits 51 with an "internally inconsistent" reason instead of shipping both,
+# so the count can never advertise proposals the array does not contain.
 ```
 
 ### Register — voter capability

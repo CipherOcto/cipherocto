@@ -29,8 +29,8 @@ use clap::Subcommand;
 use octo_governance::{
     attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
     GovernanceError, GovernanceSession, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
-    ProposalFilter, ProposalState as SubstrateProposalState, QuorumProjection, SnapshotView,
-    SystemClock, VoteChoice, VoteReceipt,
+    ProposalFilter, ProposalState as SubstrateProposalState, ProposalSummary, QuorumProjection,
+    SnapshotView, SystemClock, VoteChoice, VoteReceipt,
 };
 use uuid::Uuid;
 
@@ -820,7 +820,40 @@ fn vote_handler(
 /// the envelope payload + renders through the canonical
 /// `OutputEnvelope::render_with_redaction` (which respects
 /// `--json` / `--no-color` and applies the redaction layer).
+///
+/// # The count and the list must agree
+///
+/// The payload carries two fields describing the same fact:
+/// `open_proposal_count` (a substrate-computed `u64`) and
+/// `open_proposals` (the substrate's own `Vec<ProposalSummary>`).
+/// Shipping both without checking them lets the envelope say
+/// `open_proposal_count: 3, open_proposals: []`, and an operator
+/// following the guide's `.payload.open_proposals[]` recipe would
+/// silently see nothing while the count says otherwise.
+///
+/// Today both are hardcoded to zero by the v1 substrate, so they agree
+/// by accident rather than by construction. That is exactly the
+/// condition under which the next wiring introduces a silent
+/// contradiction, so the check lives here, at the boundary that owns
+/// the payload shape. A disagreement is a substrate inconsistency and
+/// fails closed rather than shipping an envelope that lies about its
+/// own contents.
 fn render_snapshot(view: &SnapshotView, cli: &Octo) -> Result<(), OctoCliError> {
+    let open_proposals: Vec<ProposalSummaryOutput> = view
+        .open_proposals
+        .iter()
+        .map(ProposalSummaryOutput::from)
+        .collect();
+    if open_proposals.len() as u64 != view.snapshot.open_proposal_count {
+        return Err(OctoCliError::GovernanceSubstrateError {
+            reason: sanitize_substrate_error(&format!(
+                "snapshot projection is internally inconsistent: \
+                 open_proposal_count is {} but the projection carries {} proposals",
+                view.snapshot.open_proposal_count,
+                open_proposals.len()
+            )),
+        });
+    }
     let snapshot_id_hex: String = view
         .snapshot
         .snapshot_id
@@ -843,7 +876,7 @@ fn render_snapshot(view: &SnapshotView, cli: &Octo) -> Result<(), OctoCliError> 
         open_proposal_count: view.snapshot.open_proposal_count,
         attestation_count: view.attestation_count,
         resolved_at_unix: view.resolved_at_unix,
-        open_proposals: Vec::new(),
+        open_proposals,
     };
     let envelope = OutputEnvelope::new("octo.governance.snapshot.v1", payload);
     envelope
@@ -894,6 +927,31 @@ pub struct SnapshotOutput {
     /// field is wired so v2 backing-ledger wiring does not
     /// change the CLI shape.
     pub open_proposals: Vec<ProposalSummaryOutput>,
+}
+
+/// Project one substrate `ProposalSummary` into the CLI envelope shape.
+///
+/// `proposal_id` is hex-encoded at this boundary per the CLI's
+/// §Hex-Encoding Boundary, matching `snapshot_id` and
+/// `root_manifest_hash` in the same payload. `state` is rendered
+/// through serde rather than `Debug` so the wire form is whatever the
+/// substrate actually serializes, not an assumption that a unit-variant
+/// enum's `Debug` and `Serialize` agree.
+impl From<&ProposalSummary> for ProposalSummaryOutput {
+    fn from(p: &ProposalSummary) -> Self {
+        let state = serde_json::to_value(p.state)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| "Unknown".to_string());
+        Self {
+            proposal_id: p.proposal_id.iter().map(|b| format!("{b:02x}")).collect(),
+            chain_id: p.chain_id.clone(),
+            state,
+            deadline_unix: p.deadline_unix,
+            tally_for_bps: p.tally_for_bps,
+            tally_against_bps: p.tally_against_bps,
+        }
+    }
 }
 
 /// Mirror of substrate `ProposalSummary` for the CLI envelope
@@ -1243,6 +1301,89 @@ mod tests {
         };
         render_snapshot(&view, &cli)
             .expect("render_snapshot must return Ok(()) when envelope writes succeed");
+    }
+
+    /// A `SnapshotView` whose `open_proposal_count` disagrees with the
+    /// length of its own `open_proposals` list. The v1 substrate cannot
+    /// produce this today because it hardcodes both, which is precisely
+    /// why the guard needs a hand-built view to test.
+    fn inconsistent_view(count: u64, list_len: usize) -> SnapshotView {
+        SnapshotView {
+            snapshot: SnapshotRef {
+                snapshot_id: [7u8; 32],
+                filter: ProposalFilter {
+                    states: None,
+                    chain_id: None,
+                },
+                taken_at_unix: 1_700_000_000,
+                expires_at_unix: 1_700_000_060,
+                root_manifest_hash: [0u8; 32],
+                open_proposal_count: count,
+                attestation_count: 0,
+            },
+            open_proposals: (0..list_len)
+                .map(|i| ProposalSummary {
+                    proposal_id: [i as u8; 32],
+                    chain_id: "octo-chain".to_string(),
+                    state: SubstrateProposalState::Voting,
+                    deadline_unix: 1_700_000_030,
+                    tally_for_bps: 6_000,
+                    tally_against_bps: 4_000,
+                })
+                .collect(),
+            attestation_count: 0,
+            resolved_at_unix: 1_700_000_000,
+            remaining_seconds: 60,
+        }
+    }
+
+    #[test]
+    fn render_snapshot_rejects_a_count_that_contradicts_its_own_list() {
+        // The envelope must never ship `open_proposal_count: 3` beside
+        // an empty `open_proposals`, because an operator following the
+        // guide's `.payload.open_proposals[]` recipe would see nothing
+        // while the count says otherwise. Fail closed instead.
+        let mut cli = Octo::try_parse_from(["octo", "governance", "snapshot"])
+            .expect("clap parse minimal snapshot invocation");
+        cli.output.no_color = true;
+        for (count, list_len) in [(3u64, 0usize), (0, 1), (5, 2)] {
+            let err = render_snapshot(&inconsistent_view(count, list_len), &cli)
+                .expect_err("a self-contradicting projection must not render");
+            match err {
+                OctoCliError::GovernanceSubstrateError { reason } => {
+                    assert!(
+                        reason.contains("internally inconsistent"),
+                        "operator needs to learn the projection is broken, not just that it failed: {reason}"
+                    );
+                }
+                other => panic!("expected GovernanceSubstrateError, got {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn render_snapshot_carries_the_projection_list_and_agrees_with_the_count() {
+        // The CLI used to discard the substrate's own list and hardcode
+        // an empty array. Pin that the list now flows through, so the
+        // guard above cannot be satisfied by dropping the data again.
+        let mut cli = Octo::try_parse_from(["octo", "governance", "snapshot"])
+            .expect("clap parse minimal snapshot invocation");
+        cli.output.no_color = true;
+        let view = inconsistent_view(2, 2);
+        let projected: Vec<ProposalSummaryOutput> = view
+            .open_proposals
+            .iter()
+            .map(ProposalSummaryOutput::from)
+            .collect();
+        assert_eq!(projected.len() as u64, view.snapshot.open_proposal_count);
+        // The id is hex at the boundary and the state is the substrate
+        // wire label, not a Debug rendering.
+        assert_eq!(projected[0].proposal_id, "00".repeat(32));
+        assert_eq!(projected[1].proposal_id, "01".repeat(32));
+        assert_eq!(projected[0].state, "Voting");
+        assert_eq!(projected[0].tally_for_bps, 6_000);
+        assert_eq!(projected[0].tally_against_bps, 4_000);
+        render_snapshot(&view, &cli).expect("an agreeing projection must render");
     }
 
     #[test]

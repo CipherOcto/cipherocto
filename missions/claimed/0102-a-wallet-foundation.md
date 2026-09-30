@@ -4,6 +4,24 @@
 
 Claimed (2026-07-20)
 
+**Retro-supersession (2026-09-30, RFC-0011-x):** The identity-store and native-keystore portion of this mission moves to `missions/open/0011-x-s-a-wallet-store-identity.md` (substrate) and `missions/open/0011-x-wallet-store-cli.md` (CLI), per RFC-0011-x §Companion mission YAML pairing. This mission retains everything else. The two must not both claim the same substrate.
+
+The reason is a scope error in this mission's framing, not a change of intent. This mission was written to stand up the wallet foundation including identity-key storage, and it has sat in `claimed/` for over two months with all 7 acceptance-criterion groups unchecked. The unchecked state does not mean the work is undone. Verified against the substrate on 2026-09-30:
+
+| Criterion group                      | Actual state                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Crate structure                      | `crates/octo-wallet/` exists as a workspace member with 15 modules and 13 re-export groups. **Partly open:** `crates/octo-core/src/lib.rs` does not re-export `IdentityKey`, and `crates/octo-core/src/identity.rs` still exists, so the phase-out disposition is not done.                                                                                                                                                        |
+| Identity substrate (RFC-0009)        | `IdentityKey`, `CapabilityKey`, `AudienceId`, `ChannelId`, and `derive_capability_key` all exist and are re-exported from `identity.rs`. **Naming drift:** the ACs name `public_bytes()`, `seed_bytes()`, and `did() -> String`; the substrate provides `public_key_bytes()`, `seed_bytes_for_hkdf()`, and `did() -> Did` (a newtype, not `String`). `CapabilityKey` lives in `identity.rs`, not `capability.rs` as the AC states. |
+| Provider-key vault (RFC-0009 §Vault) | LANDED. `Vault` is Argon2id + AES-256-GCM, 0700 slots dir, with `put` / `get` / `list` and 6 tests.                                                                                                                                                                                                                                                                                                                                |
+| Starkli-compat keystore              | LANDED. `StarkliCompat` in `keystore.rs` with `import` / `export` and 3 tests, including wrong-passphrase rejection.                                                                                                                                                                                                                                                                                                               |
+| CLI binary                           | LANDED. `crates/octo-wallet/src/bin/octo-wallet.rs` prompts via `rpassword` and drives `Vault::open_default`, `put`, and `get`.                                                                                                                                                                                                                                                                                                    |
+| RFC-0102 follow-up amendments        | Not separately tracked here.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Cross-crate compat                   | Open; depends on the `octo-core` disposition above.                                                                                                                                                                                                                                                                                                                                                                                |
+
+The two genuinely open substrate items are the `octo-core` re-export and phase-out, and the identity store. The store is the larger of the two and is what RFC-0011-x addresses.
+
+A note on what the store is **not**: it is not a new cryptographic feature. `Vault` already encrypts on disk with Argon2id and AES-256-GCM, `StarkliCompat` is a second independently tested encrypted keystore, and `IdentityKey` has a complete 41-test lifecycle. What is missing is a wiring layer plus the one thing no primitive supplies — anywhere to put an identity. Nothing in the workspace writes an `IdentityRecord`, so a reader alone would produce an always-empty store.
+
 ## RFC
 
 - RFC-0102 (Numeric): Wallet Cryptography — Stark Curve substrate (ACCEPTED 2026-07-20; KDF PBKDF2 → Argon2id)
@@ -90,21 +108,21 @@ None — first session.
 
 Per BLUEPRINT.md Mission template, the RFC-0009 specification defines the following types; this mission implements them as listed:
 
-| RFC-0009 Type | Implemented By |
-|---------------|----------------|
-| `Identity` struct (with `canonical_ser`) | This mission (in `crates/octo-wallet/src/identity.rs`) |
-| `IdentityKey` newtype | This mission (in `crates/octo-wallet/src/identity.rs`) |
-| `NodeType` enum | This mission (in `crates/octo-wallet/src/node.rs`) |
-| `Vault` struct | This mission (in `crates/octo-wallet/src/vault.rs`) |
-| `EncryptedBlob` struct | This mission (in `crates/octo-wallet/src/vault.rs`) |
-| `DecryptedHandle<'a>` struct | This mission (in `crates/octo-wallet/src/vault.rs`) |
-| `VaultError` enum | This mission (in `crates/octo-wallet/src/vault.rs`) |
-| `CapabilityKey` newtype | This mission (in `crates/octo-wallet/src/capability.rs`) |
-| `derive_capability_key` fn | This mission (in `crates/octo-wallet/src/capability.rs`) |
-| `holder_sign` fn | This mission (in `crates/octo-wallet/src/capability.rs`) |
-| `StarkliCompat` keystore | This mission (in `crates/octo-wallet/src/keystore.rs`) |
-| Full macaroon v1 capability token (Caveat, Discharge, etc.) | **NOT this mission** — RFC-0957 (S02) |
-| Identity ↔ Stark Curve keypair wallet metadata | **NOT this mission** — out of scope; tracked separately |
+| RFC-0009 Type                                               | Implemented By                                           |
+| ----------------------------------------------------------- | -------------------------------------------------------- |
+| `Identity` struct (with `canonical_ser`)                    | This mission (in `crates/octo-wallet/src/identity.rs`)   |
+| `IdentityKey` newtype                                       | This mission (in `crates/octo-wallet/src/identity.rs`)   |
+| `NodeType` enum                                             | This mission (in `crates/octo-wallet/src/node.rs`)       |
+| `Vault` struct                                              | This mission (in `crates/octo-wallet/src/vault.rs`)      |
+| `EncryptedBlob` struct                                      | This mission (in `crates/octo-wallet/src/vault.rs`)      |
+| `DecryptedHandle<'a>` struct                                | This mission (in `crates/octo-wallet/src/vault.rs`)      |
+| `VaultError` enum                                           | This mission (in `crates/octo-wallet/src/vault.rs`)      |
+| `CapabilityKey` newtype                                     | This mission (in `crates/octo-wallet/src/capability.rs`) |
+| `derive_capability_key` fn                                  | This mission (in `crates/octo-wallet/src/capability.rs`) |
+| `holder_sign` fn                                            | This mission (in `crates/octo-wallet/src/capability.rs`) |
+| `StarkliCompat` keystore                                    | This mission (in `crates/octo-wallet/src/keystore.rs`)   |
+| Full macaroon v1 capability token (Caveat, Discharge, etc.) | **NOT this mission** — RFC-0957 (S02)                    |
+| Identity ↔ Stark Curve keypair wallet metadata              | **NOT this mission** — out of scope; tracked separately  |
 
 ## Location
 

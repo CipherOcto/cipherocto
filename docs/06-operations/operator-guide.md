@@ -251,12 +251,20 @@ The peer DID is validated at the dispatch boundary (`is_structurally_valid_did` 
 
 ```bash
 # 4. List the registered peers.
-octo network peers list --json
+#    `octo mesh peer list`, NOT `octo network peers list`. These are two
+#    different stores: `mesh peer` is the local peer table written by
+#    step 3, `network peers` is a read-only cache of *gateway* peers
+#    with no add path on the CLI. The latter stays empty here, so it
+#    reports an empty list immediately after a successful add.
+octo mesh peer list --json
 
 # 5. Inspect a specific peer.
-#    Substrate-faithful: PeersGetArgs uses positional `<gateway_id_hex>`,
-#    NOT `--peer-id-hex` flag.
-octo network peers get <bootstrap-peer-id-hex>
+#    There is no single-peer get on the mesh surface — `mesh peer` has
+#    only list/add/remove, and `list` filters by trust level alone. So
+#    select the peer out of the list. (`octo network peers get` takes a
+#    32-byte *gateway* id, not a peer DID, and exits 79 for an id the
+#    CLI cannot mint, which is why it is not used here.)
+octo mesh peer list --json | jq '.payload.peers[] | select(.peer_did == "<bootstrap-peer-did>")'
 
 # 6. Render the trust graph (proves you have at least 1 trusted peer).
 octo network trust-graph render --format ascii --depth 2
@@ -447,7 +455,7 @@ cargo build -p octo-cli --features revocation-store-stoolap
 
 ```bash
 # 1. Show current peer table.
-octo network peers list --json
+octo mesh peer list --json
 ```
 
 ### Register
@@ -2566,7 +2574,7 @@ octo audit list --limit 1 --json
 octo whoami
 
 # 15. Confirm the mesh peer table restored.
-octo network peers list --json
+octo mesh peer list --json
 
 # 16. Confirm the ledger restored (revocations + reputation persist across processes).
 #    Substrate-faithful: IdentityAction::Show takes optional positional <did>;

@@ -666,3 +666,77 @@ fn l3_node_read_commands_answer_on_a_fresh_node() {
         "the dot format must produce a digraph, got: {render}"
     );
 }
+
+/// Pins the distinction that the operator guide got wrong for three
+/// scenarios: `octo mesh peer` and `octo network peers` read two
+/// different stores, and only the first is the peer table an operator
+/// writes to.
+///
+/// `mesh peer` is the local peer table — add, remove, list.
+/// `network peers` is a read-only cache of *gateway* peers, with no
+/// add path on the CLI, so it stays empty for anything the operator
+/// does from the peer-table surface. An operator who adds a peer,
+/// sees exit 0, and then runs `octo network peers list` is looking at
+/// an empty list and has no reason to think the add failed.
+///
+/// This is asserted rather than left as prose because the two commands
+/// read plausibly similarly and nothing in the CLI output distinguishes
+/// them except the `command` field of the envelope.
+#[test]
+fn l3_mesh_peer_table_and_network_gateway_cache_are_distinct_stores() {
+    let home = new_node_home("stores");
+    let peer = canonical_did(7);
+
+    assert!(
+        peer_add(&home, &peer, "tcp://127.0.0.1:9100").success(),
+        "the add must succeed, or the rest of this test proves nothing"
+    );
+
+    // The store the guide's step 3 writes to.
+    let table = peer_list(&home);
+    assert_eq!(
+        table.payload["total_count"], 1,
+        "the table must hold the peer"
+    );
+    assert_eq!(table.payload["peers"][0]["peer_did"], peer.as_str());
+
+    // The store the guide used to tell the operator to verify with.
+    let gateways = octo_in(&home)
+        .args(["network", "peers", "list", "--json"])
+        .output()
+        .expect("spawn octo network peers list");
+    assert!(
+        gateways.status.success(),
+        "the gateway-cache read must answer: {}",
+        String::from_utf8_lossy(&gateways.stderr)
+    );
+    let gateways = Envelope::parse(&String::from_utf8_lossy(&gateways.stdout));
+    assert_eq!(
+        gateways.payload["count_returned"], 0,
+        "adding to the mesh peer table must not populate the gateway cache"
+    );
+
+    // And the single-peer get is on the gateway surface only, so it
+    // cannot be used to inspect a peer DID at all. A peer DID is not a
+    // 32-byte gateway id, and the lookup misses.
+    let get = octo_in(&home)
+        .args(["network", "peers", "get", &peer, "--json"])
+        .output()
+        .expect("spawn octo network peers get");
+    assert!(
+        !get.status.success(),
+        "`network peers get` must not resolve a peer DID; if it ever does, \
+         the guide can point at it again"
+    );
+
+    // The substrate-faithful way to inspect one peer, now the guide's
+    // step 5, works off the table.
+    let binding = peer_list(&home);
+    let selected = binding.payload["peers"]
+        .as_array()
+        .expect("peers array")
+        .iter()
+        .find(|p| p["peer_did"] == peer.as_str())
+        .expect("the added peer must be selectable out of the table");
+    assert_eq!(selected["endpoint"], "tcp://127.0.0.1:9100");
+}

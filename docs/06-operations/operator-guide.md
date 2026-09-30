@@ -275,7 +275,7 @@ octo network trust-graph render --format ascii --depth 2
 
 ```bash
 # 7. Probe peer reachability via heartbeat.
-octo network heartbeat probe did:octo:0x<104-hex> \
+octo network heartbeat probe did:octo:z<43-44-char-base58btc> \
     --timeout-ms 5000
 
 # 8. Inspect gossip state.
@@ -370,7 +370,7 @@ octo --mode dev --allow-write role select operator-main
 
 # 4. Confirm whoami now resolves.
 octo whoami
-# Expected: { "did": "did:octo:0x<104-hex>", "label": "operator-main", ... }
+# Expected: { "did": "did:octo:z<43-44-char-base58btc>", "label": "operator-main", ... }
 
 # 5. Rotate the active identity's key (production: HSM-mediated).
 #    Substrate-faithful: IdentityAction::Rotate {} has NO fields (no --label,
@@ -485,10 +485,10 @@ octo network trust-graph render --format dot --depth 3 > trust.dot
 # Use graphviz to visualise: dot -Tpng trust.dot -o trust.png
 
 # 5. Inspect a peer's trust score (via reputation substrate).
-octo reputation show --did did:octo:0x<104-hex> --role builder
+octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
 
 # 6. Probe liveness.
-octo network heartbeat probe did:octo:0x<104-hex> \
+octo network heartbeat probe did:octo:z<43-44-char-base58btc> \
     --timeout-ms 5000
 
 # 7. Inspect gossip + envelope state.
@@ -536,7 +536,7 @@ octo mesh peer remove <peer-did> \
 
 ```bash
 # 1. Reserve a target DID + asset / scope.
-TARGET_DID="did:octo:0x<104-hex-target>"
+TARGET_DID="did:octo:z<43-44-char-base58btc-target>"
 SCOPE="vault.transfer.<vault-id-hex>"
 ```
 
@@ -846,16 +846,17 @@ $QUOTA_ROUTER_BIN list --prompts 1000 --price 1
 ```bash
 # 6. Discover a marketplace seller's reputation (the substrate-faithful
 #    discovery surface). Reads the persisted RFC-0968 aggregate for a
-#    peer DID in canonical CipherOcto wire form `did:octo:0x<104-hex>` (104 hex chars after `0x`,
-#    matching `crates/octo-network/src/dc/admin_attest.rs:226` + :338 + :343 + :641 which
-#    reject any DID not matching the canonical `did:octo:0x<hex>` shape with the substrate-side
-#    error `operator_did is not a canonical did:octo:0x<hex> form`).
+#    peer DID in canonical CipherOcto wire form `did:octo:z<base58btc of 32 bytes>`
+#    (43-44 chars after the `z` marker; 53-54 chars total). This is the same
+#    form `octo identity show` emits and the same form `octo mesh peer add`
+#    accepts. See Appendix A §Two DID wire forms for why the repo also
+#    contains a `did:octo:0x<64-hex>` form and why an operator must not use it.
 #    [SUBSTRATE-NEW] `quota-router-cli` does NOT have a `market search`
 #    / `market buy` / `market delist` subcommand today — discovery, buy,
 #    and delist surfaces land in the marketplace Layer D adapter crate
 #    (per-extension crate pattern; out of scope for this operator guide).
 $QUOTA_ROUTER_BIN reputation-show \
-    --did did:octo:0x<104-hex-quota-seller> \
+    --did did:octo:z<43-44-char-base58btc-quota-seller> \
     --backend memory
 ```
 
@@ -900,7 +901,7 @@ cat > /tmp/legal-analyzer.json <<'EOF'
 {
   "name": "Legal Contract Analyzer",
   "version": "1.2.0",
-  "developer": "did:octo:0x<104-hex-developer>",
+  "developer": "did:octo:z<43-44-char-base58btc-developer>",
   "capabilities": ["contract_review", "risk_assessment", "compliance_check"],
   "pricing": {
     "per_execution_octd_micros": 10000
@@ -997,7 +998,7 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 octo audit show --receipt-id <receipt-id-u64>
 
 # 11. Reputation snapshot (the developer earned +X from your execution).
-octo reputation show --did did:octo:0x<104-hex-developer> --role builder
+octo reputation show --did did:octo:z<43-44-char-base58btc-developer> --role builder
 ```
 
 ### Tear down
@@ -1039,7 +1040,7 @@ octo agent destroy --agent-id <agent-id-uuid> --confirm --confirm-acknowledge
 
 ```bash
 # 1. Resolve the buyer DID + vault ID + audit window.
-BUYER_DID="did:octo:0x<104-hex-buyer>"
+BUYER_DID="did:octo:z<43-44-char-base58btc-buyer>"
 VAULT_ID="<vault-id-hex>"
 AGENT_ID="<agent-id-uuid>"
 AUDIT_WINDOW_SECS=86400  # 1 day
@@ -1192,7 +1193,7 @@ octo reputation show --json --role builder
 #    <kind_ref>` per RFC-0011-g §7.4. Attestations are positive signals only;
 #    slashing is a separate substrate flow (§28).
 octo governance attest \
-    "did:octo:0x<104-hex>" \
+    "did:octo:z<43-44-char-base58btc>" \
     "route-quality:reliable-routing" \
     --evidence-path /tmp/route-quality-evidence.json \
     --snapshot-id-hex "<snapshot-id-hex>" \
@@ -1217,7 +1218,7 @@ octo governance vote \
 octo network reputation list --filter above-score --threshold 50 --json
 
 # 5. Inspect a specific peer's reputation.
-octo reputation show --did did:octo:0x<104-hex> --role builder
+octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
 
 # 6. Check the reputation substrate for storage adapter wiring.
 # octo-reputation ships InMemoryReputationStore (default) + StoolapReputationStore (Layer D).
@@ -1364,7 +1365,7 @@ octo governance vote \
 #    `evidence_hash_hex` renders as `--evidence-hash-hex`); NO
 #    `--proposal-id`, `--score`, or `--reason` flags exist.
 octo governance attest \
-    "did:octo:0x<104-hex-proposer>" \
+    "did:octo:z<43-44-char-base58btc-proposer>" \
     "proposal-quality:well-specified" \
     --evidence-path /tmp/attestation-evidence.json \
     --confirm --confirm-acknowledge
@@ -1390,7 +1391,7 @@ octo governance snapshot --force-refresh --json  # bypass TTL
 #    crates/octo-cli/src/commands/network.rs:385-394. The flag MUST be supplied
 #    or clap rejects the call at parse time.
 octo network governance rotation status \
-    --did-codec "did:octo:0x<104-hex-identity>" \
+    --did-codec "did:octo:z<43-44-char-base58btc-identity>" \
     --json
 
 # 8. Coordinator state (RFC-0855p-b mission coordinator lifecycle).
@@ -1515,11 +1516,11 @@ octo network node show <node-id-hex>
 # 8. Bind the holder DID to the node record (positional node_id_hex
 #    + --holder-did + --apply + --confirm-acknowledge per NodeBindArgs
 #    at crates/octo-cli/src/commands/network.rs:761-789).
-#    Note: --holder-did takes the CLI projection form `did:octo:0x<104-hex>`
+#    Note: --holder-did takes the CLI projection form `did:octo:z<43-44-char-base58btc>`
 #    (which IS the canonical CipherOcto wire form per
 #    `crates/octo-network/src/dc/admin_attest.rs:226, 338, 343, 641`).
 octo network node bind <node-id-hex> \
-    --holder-did did:octo:0x<104-hex> \
+    --holder-did did:octo:z<43-44-char-base58btc> \
     --apply --confirm-acknowledge
 ```
 
@@ -1527,10 +1528,10 @@ octo network node bind <node-id-hex> \
 
 ```bash
 # 9. Health probes via heartbeat.
-octo network heartbeat probe did:octo:0x<104-hex> --timeout-ms 5000
+octo network heartbeat probe did:octo:z<43-44-char-base58btc> --timeout-ms 5000
 
 # 10. Reputation + audit trail for provider revenue.
-octo reputation show --did did:octo:0x<104-hex> --role builder
+octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
 octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:provider:"))]'
 ```
 
@@ -2198,7 +2199,7 @@ octo network topology render --format dot --depth 3
 # 11. Reputation snapshot for the node.
 #    Substrate: ReputationAction::Show requires --role; --did is optional
 #    (defaults to active identity). cf. RFC-0011-b §Roles and Authorities.
-octo reputation show --did "did:octo:0x<104-hex>" --role builder
+octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 ```
 
 ### Tear down
@@ -2415,9 +2416,9 @@ octo network bootstrap
 
 ```bash
 # 11. Probe each adapter reachability.
-octo network heartbeat probe did:octo:0x<104-hex-telegram-adapter> --timeout-ms 5000
-octo network heartbeat probe did:octo:0x<104-hex-whatsapp-adapter> --timeout-ms 5000
-octo network heartbeat probe did:octo:0x<104-hex-matrix-adapter> --timeout-ms 5000
+octo network heartbeat probe did:octo:z<43-44-char-base58btc-telegram-adapter> --timeout-ms 5000
+octo network heartbeat probe did:octo:z<43-44-char-base58btc-whatsapp-adapter> --timeout-ms 5000
+octo network heartbeat probe did:octo:z<43-44-char-base58btc-matrix-adapter> --timeout-ms 5000
 
 # 12. Audit trail — every adapter event is auditable.
 octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
@@ -2981,7 +2982,7 @@ octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.recei
 octo vault balance "$VAULT_ID" --json
 
 # 8. Reputation updated for verifier accuracy.
-octo reputation show --did "did:octo:0x<104-hex>" --role builder
+octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 ```
 
 ### Tear down
@@ -3053,7 +3054,7 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 #    Substrate-faithful alternative: signals are submitted via the
 #    `octo governance attest` CLI (the wired attestation surface per
 #    RFC-0011-g §7.4 + RFC-0011-h §Substrate-Additions G8):
-octo governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
+octo governance attest "did:octo:z<43-44-char-base58btc>" "route-quality:uptime-30d" \
     --evidence-path /tmp/uptime-evidence.json \
     --snapshot-id-hex <snapshot-id-hex> \
     --confirm --confirm-acknowledge
@@ -3083,7 +3084,7 @@ octo audit list --limit 10 --json | jq '[.receipts[] | select(.subject_did | sta
 
 ```bash
 # 8. Confirm the local record matches the federation record.
-octo reputation show --did "did:octo:0x<104-hex>" --role builder
+octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
 octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
@@ -3172,7 +3173,7 @@ jobs:
           ./target/release/octo --mode dev --allow-write role select ci-operator
           # Substrate-faithful: attestation is GovernanceAction::Attest (RFC-0011-g §7.4);
           # positional `<subject_did> <kind_ref>` + --evidence-path + --snapshot-id-hex.
-          ./target/release/octo --mode ci --allow-write governance attest "did:octo:0x<104-hex>" "route-quality:uptime-30d" \
+          ./target/release/octo --mode ci --allow-write governance attest "did:octo:z<43-44-char-base58btc>" "route-quality:uptime-30d" \
               --evidence-path /tmp/uptime-evidence.json \
               --snapshot-id-hex <snapshot-id-hex> \
               --confirm --confirm-acknowledge
@@ -3197,7 +3198,7 @@ jobs:
 #    <kind_ref>` (NOT `octo network attest` which is phantom — NetworkAction
 #    has no Attest variant per `crates/octo-cli/src/commands/network.rs`).
 octo --mode ci --allow-write governance attest \
-    "did:octo:0x<104-hex>" \
+    "did:octo:z<43-44-char-base58btc>" \
     "route-quality:uptime-30d" \
     --evidence-path /tmp/uptime-evidence.json \
     --snapshot-id-hex <snapshot-id-hex> \
@@ -3616,11 +3617,11 @@ octo identity show --json   # show the active identity
 #    crates/octo-cli/src/commands/identity.rs:575-589 — --mode dev REQUIRED.
 octo --mode dev --allow-write role select org-main
 octo whoami
-# Expected: did:octo:0x<104-hex-org-main-did>
+# Expected: did:octo:z<43-44-char-base58btc-org-main-did>
 
 octo --mode dev --allow-write role select personal
 octo whoami
-# Expected: did:octo:0x<104-hex-personal-did>
+# Expected: did:octo:z<43-44-char-base58btc-personal-did>
 
 # 4. Verify the active identity persists across invocations.
 octo whoami
@@ -3737,7 +3738,7 @@ chmod 0700 "$OCTO_HOME"
 
 # 4. Confirm the DID matches the pre-disaster DID (mnemonic determinism).
 octo whoami
-# Expected: same did:octo:0x<104-hex> as before the disaster.
+# Expected: same did:octo:z<43-44-char-base58btc> as before the disaster.
 ```
 
 ### Setup — corrupted ledger
@@ -3785,7 +3786,7 @@ octo mesh peer list --json
 #    not in canonical form are SKIPPED (logged) rather than minted.
 for peer in $(cat "$OCTO_HOME/backup/peer-list.txt"); do
     octo mesh peer add \
-        "did:octo:0x<104-hex-${peer}>" \
+        "did:octo:z<43-44-char-base58btc-${peer}>" \
         --endpoint "tcp://<peer-host>:<peer-port>"
 done
 # Substrate: PeerAction::Add (RFC-0011-h §Subcommand Taxonomy F-Mesh).
@@ -4038,6 +4039,36 @@ behind for the next one to trip over.
 | `CI=true`                       | env    | Auto-switch to Ci mode (unless `--confirm` set).                |
 | `$OCTO_HOME`                    | env    | Wallet / mesh home (default `~/.octo`).                         |
 | `$CIPHEROCTO_DATA_DIR`          | env    | Stoolap ledger root (default `$OCTO_HOME/data`).                |
+
+### A.1 Two DID wire forms
+
+The repository contains two different DID encodings. They are not
+interchangeable, and using the wrong one fails closed with exit code 4
+rather than degrading, so a wrong DID stops a scenario instead of quietly
+doing the wrong thing.
+
+| Form                      | Shape                                       | Length        | Used by                                     |
+| ------------------------- | ------------------------------------------- | ------------- | ------------------------------------------- |
+| **Canonical**             | `did:octo:z<base58btc of 32 bytes>`         | 43–44 payload | everything an operator touches              |
+| **Macaroon / DC interim** | `did:octo:0x<64 lowercase hex of a pubkey>` | 64 payload    | the distributed-coordinator capability path |
+
+An operator only ever needs the canonical form. Concretely, that means:
+
+- `octo identity show` emits the canonical form. Take the `did` from that
+  envelope rather than composing one by hand.
+- `octo mesh peer add`, `octo reputation show --did`, and the other DID-
+  taking surfaces parse through the canonical codec. A DID of any other
+  shape is rejected with exit 4.
+- The legacy `did:octo:b<52 chars>` base32 form is past its deprecation
+  window and is also rejected with exit 4.
+
+The interim `0x` form exists in the coordinator capability crate, whose
+own source describes it as superseded by the canonical codec once the
+typed codec landed. It is a raw public key, whereas the canonical form is
+a domain-separated hash, so the same operator can hold a valid `z` DID
+and an invalid `0x` DID at the same time. Reading the coordinator crate
+is the most likely way to end up with the wrong one, which is why this
+entry exists.
 
 ---
 

@@ -740,3 +740,123 @@ fn l3_mesh_peer_table_and_network_gateway_cache_are_distinct_stores() {
         .expect("the added peer must be selectable out of the table");
     assert_eq!(selected["endpoint"], "tcp://127.0.0.1:9100");
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: only the canonical DID wire form is accepted, and the shapes
+// the repository also contains are rejected rather than degraded
+// ---------------------------------------------------------------------------
+
+/// Which DID strings an operator may actually hand the CLI.
+///
+/// The repository contains two DID encodings. `octo-ident` mints
+/// `did:octo:z<base58btc of 32 bytes>`, and that is the only form an
+/// operator surface accepts. `octo-cap-macaroon` separately parses
+/// `did:octo:0x<64 lowercase hex>` — a raw public key, used by the
+/// distributed-coordinator capability path and described in its own
+/// source as superseded once the typed codec landed. A third form,
+/// `did:octo:b<52 base32>`, is past its deprecation window.
+///
+/// All three look plausible, and a guide or a runbook that reaches for
+/// the wrong one produces a command that cannot ever succeed. This
+/// scenario pins the accept/reject boundary so the shapes cannot be
+/// confused again, and asserts that a rejected add leaves nothing
+/// behind.
+#[test]
+fn l3_only_the_canonical_did_wire_form_is_accepted() {
+    let home = new_node_home("didform");
+
+    // The canonical form is accepted and round-trips byte-for-byte.
+    let peer = canonical_did(31);
+    assert!(
+        peer.starts_with("did:octo:z"),
+        "the minted DID must be in the canonical form, got {peer}"
+    );
+    assert!(
+        (43..=44).contains(&(peer.len() - 10)),
+        "canonical payload must be 43-44 chars, got {}",
+        peer.len() - 10
+    );
+    assert!(
+        peer_add(&home, &peer, "tcp://127.0.0.1:9200").success(),
+        "the canonical form must be accepted"
+    );
+    let table = peer_list(&home);
+    assert_eq!(
+        table.payload["peers"][0]["peer_did"],
+        peer.as_str(),
+        "the accepted DID must round-trip unchanged"
+    );
+
+    // The coordinator-crate form is rejected, not coerced. Both the
+    // length that crate actually parses and the longer length the
+    // operator guide used to print are covered — a DID-shaped string
+    // is rejected for its shape, not merely for its length.
+    for (label, macaroon) in [
+        ("32-byte payload", format!("did:octo:0x{}", "ab".repeat(32))),
+        (
+            "52-byte payload as the guide used to print",
+            format!("did:octo:0x{}", "ab".repeat(52)),
+        ),
+    ] {
+        let rejected = octo_in(&home)
+            .args(CI_WRITE)
+            .args([
+                "--allow-write",
+                "mesh",
+                "peer",
+                "add",
+                &macaroon,
+                "--endpoint",
+                "tcp://127.0.0.1:9201",
+                "--confirm",
+                "--confirm-acknowledge",
+            ])
+            .output()
+            .expect("spawn octo mesh peer add");
+        assert_eq!(
+            rejected.status.code(),
+            Some(4),
+            "the 0x form ({label}) must fail closed with exit 4, got {:?}: {}",
+            rejected.status.code(),
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+    }
+
+    // So is the deprecated base32 form.
+    let legacy = format!("did:octo:b{}", "z".repeat(52));
+    let rejected = octo_in(&home)
+        .args(CI_WRITE)
+        .args([
+            "--allow-write",
+            "mesh",
+            "peer",
+            "add",
+            &legacy,
+            "--endpoint",
+            "tcp://127.0.0.1:9202",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .output()
+        .expect("spawn octo mesh peer add");
+    assert_eq!(
+        rejected.status.code(),
+        Some(4),
+        "the base32 form must fail closed with exit 4, got {:?}",
+        rejected.status.code()
+    );
+
+    // Two rejected adds must not have left anything behind — a
+    // fail-closed add that still wrote a row would let an operator
+    // believe a peer is bound when it is not dialable.
+    let after = peer_list(&home);
+    assert_eq!(
+        after.payload["total_count"], 1,
+        "rejected adds must not write a peer row"
+    );
+    assert_eq!(
+        after.payload["peers"][0]["peer_did"],
+        peer.as_str(),
+        "the only peer must be the one that was accepted"
+    );
+}

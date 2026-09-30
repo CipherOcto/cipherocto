@@ -47,11 +47,12 @@
 §30 [Scenario: privacy-preserving operations (blinded caveats, encrypted routing)](#30-privacy-preserving-operations)
 §31 [Scenario: multi-tenant / multi-identity operations](#31-multi-tenant--multi-identity-operations)
 §32 [Scenario: disaster recovery (lost identity, corrupted home, ledger corruption)](#32-disaster-recovery)
+§33 [Multi-node verification harness](#33-multi-node-verification-harness)
 
 **Reference appendices:**
 
 Appendix A — [Operator flags reference](#appendix-a--operator-flags-reference)
-Appendix B — [Memory cross-references](#appendix-b--memory-cross-references)
+Appendix B — [Engineering conventions](#appendix-b--engineering-conventions)
 
 ---
 
@@ -92,7 +93,7 @@ The CLI resolves home the same way the wallet substrate does (env override → `
 | `$CIPHEROCTO_DATA_DIR` | Stoolap ledger root (default `$OCTO_HOME/data`).                             |
 | `$OCTO_FORCE_JSON`     | Force JSON envelope output regardless of TTY.                                |
 | `$NO_COLOR`            | Disable ANSI colour in pretty output.                                        |
-| `OCTO_AUDIT=1`         | Auto-switch to **Auditor** (read-only) mode.                                 |
+| `OCTO_AUDIT=1`         | Force **Auditor** (read-only) mode. Overrides an explicit `--mode`.          |
 | `CI=true`              | Auto-switch to **Ci** mode unless `--confirm` / `--confirm-acknowledge` set. |
 
 ### Verify the install
@@ -118,6 +119,8 @@ Expected: `Octo 0.1.0` and a top-level clap usage block listing every top-level 
 | **Auditor**         | Read-only inspection                                               | **NO**          | n/a — writes are hard-denied             |
 
 Auto-detect: `OCTO_AUDIT=1` → Auditor; `CI=true` → Ci (unless `--confirm` / `--confirm-acknowledge` explicitly set, which signals Human intent and suppresses the override).
+
+The two switches are not symmetric, and the difference is deliberate. `CI=true` is a _hint_ about the environment, so an explicit confirmation flag — which only a human at a terminal produces — suppresses it. `OCTO_AUDIT=1` is a _read-only enforcement_ setting, so it is checked first and nothing overrides it, including an explicit `--mode human --allow-write`. A fleet-wide audit setting that any caller can defeat by also passing `--mode ci` is not an enforcement setting. To write while it is set, unset it.
 
 ### Confirmation gate matrix
 
@@ -315,7 +318,18 @@ octo whoami
 #    invoke `octo-wallet init` (the one and only `[[bin]]` in the octo-wallet
 #    crate is named `octo-wallet`, with 4 subcommands `init`, `derive-cap`,
 #    `vault`, `ask` per crates/octo-wallet/src/bin/octo-wallet.rs:33-67; the
-#    `ask` subcommand ships RFC-0959 marketplace CLI via AskOp):
+#    `ask` subcommand ships RFC-0959 marketplace CLI via AskOp).
+#
+#    READ THIS BEFORE RELYING ON IT. `octo-wallet init` is a seed-material
+#    generator, not an identity registration. It writes a 32-byte seed to the
+#    `--seed-out` path and prints the derived public key; it does not write
+#    anything the CLI's identity resolution reads. On the current substrate
+#    `WalletStore::open()` returns an empty store, so `octo whoami` still exits
+#    2 with "no active identity" immediately after this command, and steps that
+#    address `$OCTO_HOME/identity/<did>/` (see §10 step 8, §20 step 2) have no
+#    directory to read. Every identity-gated command downstream of this step is
+#    blocked until the wallet store is implemented; treat this as
+#    seed-generation for the eventual HSM handoff, not as a usable login.
 octo-wallet init \
     --node-type self-host \
     --seed-out /var/lib/cipherocto/operator.seed
@@ -1569,8 +1583,12 @@ done
 # 5. Remove all mesh peers.
 #    [SUBSTRATE-NEW] `octo network peers remove` is NOT wired. PeersAction
 #    is List + Get only. Substrate-faithful path is `octo mesh peer remove`
-#    iterated against the mesh `octo mesh peer list --json` output:
-for peer_did in $(octo mesh peer list --json | jq -r '.peers[].peer_did'); do
+#    iterated against the mesh `octo mesh peer list --json` output.
+#    The peer array lives under the envelope's `payload` key, not at the top
+#    level. Addressing `.peers` makes jq fail on null, the command
+#    substitution yields nothing, and this teardown removes zero peers while
+#    scrolling a jq error past the operator:
+for peer_did in $(octo mesh peer list --json | jq -r '.payload.peers[].peer_did'); do
     octo mesh peer remove "$peer_did" \
         --confirm --confirm-acknowledge
 done
@@ -1814,7 +1832,7 @@ The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register �
 
 Cause: `octo whoami` resolved no identity in the wallet.
 
-Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. The substrate-faithful wallet binary exposes 4 subcommands: `Init | DeriveCap | Vault | Ask` per `crates/octo-wallet/src/bin/octo-wallet.rs:34-66` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `Ask` subcommand ships RFC-0959 marketplace CLI per `AskOp::Publish { ... }` (sub-modes publish). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
+Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. **Caveat, verified against the binary: this command generates seed material and does not register an identity with the CLI, so the error persists and the commands below stay blocked.** `WalletStore::open()` returns an empty store on the current substrate, so `octo whoami` still exits 2 with "no active identity" after this runs. The substrate-faithful wallet binary exposes 4 subcommands: `Init | DeriveCap | Vault | Ask` per `crates/octo-wallet/src/bin/octo-wallet.rs:34-66` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `Ask` subcommand ships RFC-0959 marketplace CLI per `AskOp::Publish { ... }` (sub-modes publish). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
 
 ### `OctoCliError::ConfirmationRequired { command }`
 
@@ -1892,13 +1910,13 @@ Fix: pass `--filter all` (default), or `--filter above-score --threshold <0-100>
 
 Cause: new code introduced warnings.
 
-Fix: per [[feedback_clippy_zero_warnings]] — zero warnings on every crate touched. `cargo clippy --all-targets --all-features -- -D warnings` (note: `octo-cli` uses `--all-targets -- -D warnings`, NOT `--all-features` per [[quota-router-core feature mutex]]).
+Fix: zero warnings on every crate touched. `cargo clippy --all-targets --all-features -- -D warnings` (note: `octo-cli` uses `--all-targets -- -D warnings`, NOT `--all-features`, because `octo-cli` pulls in `quota-router-core`, whose feature flags are mutually exclusive by construction and take `--features full` instead).
 
 ### Commit message hygiene
 
 Cause: commit body uses `;` / `&&` / backticks / `$()` / `git push`.
 
-Fix: per [[no-backtick-in-commit-messages]] — use `-F <file>`. NEVER push without explicit user instruction (per [[feedback_initiation_user_only]] + [[git-workflow]]).
+Fix: write the message to a file and use `git commit -F <file>`, so shell quoting cannot corrupt the body. NEVER push without explicit user instruction — the repository owner runs every command that writes to a remote.
 
 ---
 
@@ -1948,6 +1966,10 @@ octo whoami
 #    wallet binary (Init subcommand — see `crates/octo-wallet/src/bin/octo-wallet.rs:34`,
 #    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
 #    Workaround for dev mode:
+#    CAVEAT (verified against the binary): `octo-wallet init` writes seed
+#    material only and registers nothing with the CLI's identity resolution.
+#    `octo whoami` still exits 2 afterwards, so the `role select` on the next
+#    line has no identity to select. See §4 step 2a.
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/operator-main.seed"
 # Subsequent identity switches: `octo --mode dev --allow-write role select operator-main`
 # (positional `<role_id>` per RoleAction::Select substrate shape; --mode dev
@@ -1979,8 +2001,14 @@ octo network node bind \
 # 8. Backup the mnemonic + identity keys (offline; encrypted at rest).
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
 #    has ONLY Show | Rotate | Revoke. Workaround: copy the wallet's encrypted
-#    mnemonic directly from the substrate path:
-cp "$OCTO_HOME/identity/$(octo whoami | jq -r .did)/mnemonic.enc" \
+#    mnemonic directly from the substrate path.
+#    Two things to know: the DID is at `.payload.did` in the envelope, not at
+#    the top level, so the projection needs `--json` and the `payload` path;
+#    and on the current substrate `octo whoami` exits 2 with "no active
+#    identity" (see §4 step 2a), which leaves the substitution empty and
+#    collapses this path to `$OCTO_HOME/identity//mnemonic.enc`. This step
+#    cannot succeed until the wallet store lands.
+cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
    "$OCTO_HOME/keys/operator-main.mnemonic.enc"
 chmod 0600 "$OCTO_HOME/keys/operator-main.mnemonic.enc"
 # Store the encrypted mnemonic file on offline media (per §22).
@@ -2194,9 +2222,9 @@ echo "node daemon teardown: SUBSTRATE-NEW; no daemon running today"
 
 **New operator scenario.** Replaces the in-memory default store with the Stoolap-backed Layer D adapter so cross-process state propagates correctly. Cross-cuts the revocation ledger (RFC-0011-c §F.7.5), reputation store, and vault storage.
 
-> **HARD RED LINE** per [[stoolap-general-purpose-db]]: the Stoolap fork MUST NEVER host cipherocto business schema. Stoolap is the **persistence substrate** for revocation + reputation + vault event logs; the cipherocto business types live in Layer A/B substrates.
+> **HARD RED LINE**: the Stoolap fork MUST NEVER host cipherocto business schema. Stoolap is the **persistence substrate** for revocation + reputation + vault event logs; the cipherocto business types live in Layer A/B substrates.
 
-> **HARD PIN** per [[feedback_stoolap_persistence]]: fork at `feat/blockchain-sql`; pin commit `527e8eb`. Never consume the upstream `crates.io` `stoolap` crate.
+> **HARD PIN**: consume the CipherOcto fork at `feat/blockchain-sql`; pin commit `527e8eb`. Never consume the upstream `crates.io` `stoolap` crate.
 
 ### Prerequisites
 
@@ -2425,8 +2453,12 @@ sleep 5
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
 #    has ONLY Show | Rotate | Revoke. Mnemonic export is via the wallet substrate
 #    API directly. Workaround: copy the encrypted mnemonic file from
-#    $OCTO_HOME/identity/<did>/mnemonic.enc after the wallet mints it:
-cp "$OCTO_HOME/identity/$(octo whoami | jq -r .did)/mnemonic.enc" \
+#    $OCTO_HOME/identity/<did>/mnemonic.enc after the wallet mints it.
+#    The DID comes from `.payload.did` of the `--json` envelope; on the
+#    current substrate `octo whoami` exits 2 with "no active identity"
+#    (see §4 step 2a), so this step cannot succeed until the wallet store
+#    lands.
+cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
    "$OCTO_HOME/backup/$(date -u +%Y%m%dT%H%M%SZ).mnemonic.enc"
 
 # 3. Snapshot $OCTO_HOME (mesh peer table + adapter configs).
@@ -3093,7 +3125,7 @@ octo --mode ci --allow-write governance attest \
 ### Register — pre-commit guard
 
 ```bash
-# 4. Add the cite validator + format check to pre-commit (per [[validate-cites.sh-outer-timeout]]).
+# 4. Add the cite validator + format check to pre-commit.
 cat > .git/hooks/pre-commit <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -3111,7 +3143,7 @@ chmod 0755 .git/hooks/pre-commit
 ```bash
 # 4a. Operate: the CI workflow has already executed (Setup + Register are pre-conditions
 #     applied to the workspace; the workflow itself is the Operate phase). Role select
-#     is performed inline per job per [[feedback-initiation-user-only]] (CI runs
+#     is performed inline per job (CI runs
 #     autonomously; --allow-write is the CI mode gate per RFC-0011-h §Mode Gating).
 #     Substrate-faithful: RoleAction::Select takes positional `<role_id>` slug.
 #     TWO substrate gates apply: dispatch-side require_confirm +
@@ -3473,6 +3505,10 @@ octo audit list --limit 100 --json \
 #    wallet binary (Init subcommand — see `crates/octo-wallet/src/bin/octo-wallet.rs:34`,
 #    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
 #    Workaround for dev mode:
+#    CAVEAT (verified against the binary): both `init` calls below write seed
+#    material only and register nothing with the CLI's identity resolution, so
+#    the `role select` commands that follow have no identity to select. See
+#    §4 step 2a.
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/org-main.seed"
 octo-wallet init --node-type self-host --seed-out "$OCTO_HOME/identity/personal.seed"
 # Subsequent identity switches: `octo --mode dev --allow-write role select org-main`
@@ -3700,13 +3736,21 @@ octo mesh peer list --json
 
 # 15. Diff the post-recovery state against the pre-recovery snapshot.
 #    [SUBSTRATE-NEW] `octo identity list` is NOT wired — diff against the
-#    pre-recovery wallet directory snapshot instead:
+#    pre-recovery wallet directory snapshot instead.
+#
+#    Every envelope carries `executed_at_unix`, which differs between any two
+#    invocations taken more than a second apart. Diffing whole envelopes
+#    therefore never matches, and `VAULTS_OK` / `PEERS_OK` can never be
+#    printed even when the recovered state is identical. Compare the
+#    `payload` object, which is the actual state and is stable:
 diff "$OCTO_HOME/pre-recovery-identities.tar.gz" \
     <(tar -czf - "$OCTO_HOME/identity/") && \
     echo "IDENTITIES_OK"
-diff "$OCTO_HOME/pre-recovery-vaults.json" <(octo vault list --json) && \
+diff <(jq -S '.payload' "$OCTO_HOME/pre-recovery-vaults.json") \
+    <(octo vault list --json | jq -S '.payload') && \
     echo "VAULTS_OK"
-diff "$OCTO_HOME/pre-recovery-peers.json" <(octo mesh peer list --json) && \
+diff <(jq -S '.payload' "$OCTO_HOME/pre-recovery-peers.json") \
+    <(octo mesh peer list --json | jq -S '.payload') && \
     echo "PEERS_OK"
 ```
 
@@ -3717,52 +3761,248 @@ diff "$OCTO_HOME/pre-recovery-peers.json" <(octo mesh peer list --json) && \
 # See §22 step 6 for the cron job.
 
 # 17. Clean up the pre-recovery snapshots once verified.
-rm -f "$OCTO_HOME/pre-recovery-{identities,vaults,peers}.json"
+#     Brace expansion does not happen inside double quotes, so the pattern
+#     below is one literal filename, matches nothing, and `-f` silences the
+#     error — leaving the operator's vault and peer state in plaintext
+#     snapshots under $OCTO_HOME indefinitely. Expand first, then quote:
+rm -f "$OCTO_HOME"/pre-recovery-identities.tar.gz \
+      "$OCTO_HOME"/pre-recovery-vaults.json \
+      "$OCTO_HOME"/pre-recovery-peers.json
 ```
+
+---
+
+## §33 Multi-node verification harness
+
+Every scenario in this guide assumes a single node — one `$OCTO_HOME`
+that you operate. The two suites described here run the same operations
+across several nodes at once, and they are the evidence behind the
+multi-node claims in §5, §15, and §22.
+
+### §33.1 What a "node" actually is
+
+This matters, because it determines what an isolated test can and cannot
+prove. A node is exactly two things:
+
+1. one `$OCTO_HOME` — the directory holding identities, vaults, and the
+   mesh peer table; and
+2. one network namespace, under a name you can put into an endpoint.
+
+Those are the _only_ inputs that distinguish one octo node from another.
+No daemon, no service name, no PID. Isolate those two and you have a
+node; leave them shared and you have one node wearing two hats, which
+will pass tests that should fail.
+
+Two consequences follow, and both are load-bearing for reading the
+results honestly:
+
+- **`octo` is a one-shot dispatcher.** There is no `octo serve`, no
+  daemon mode, and no process that holds the mesh open. A node's
+  "liveness" is not something a test can observe, because there is
+  nothing to observe.
+- **`octo` opens no listening socket.** A recorded `tcp://` endpoint is
+  a claim the peer table makes about where a peer can be reached. The
+  suites verify the claim by connecting to it from a _different_ node —
+  not by asking `octo` whether it is true.
+
+If you are looking for a mesh process to attach a probe to, there isn't
+one. What you can do is run a listener on the target and check that the
+address the peer table recorded is the address that answers.
+
+### §33.2 Isolation levels
+
+The suites are organised by how much of the machine they actually
+separate.
+
+| Level | Suites                             | What is separated                                               | Runtime |
+| ----- | ---------------------------------- | --------------------------------------------------------------- | ------- |
+| L3    | `tests/e2e_l3_multinode.rs`        | One process per node, sharing a filesystem                      | seconds |
+| L4    | `tests/e2e_l4_multinode_docker.rs` | One container per node, separate volumes and network namespaces | minutes |
+
+L3 runs as part of the normal test pass. L4 is `#[ignore]`d, because it
+needs a running docker engine with compose v2 and a release build of the
+CLI; it is opt-in and slow by design.
+
+### §33.3 Running the cross-process suite
+
+No setup — it needs only a build:
+
+```bash
+cargo test -p octo-cli --test e2e_l3_multinode
+```
+
+### §33.4 Running the container suite
+
+The L4 suite builds a node image from the workspace and drives several
+containers on a compose bridge. The first run compiles the CLI inside
+the image, so budget several minutes; later runs reuse the image.
+
+```bash
+cargo test -p octo-cli --test e2e_l4_multinode_docker -- --ignored --test-threads=1
+```
+
+`--test-threads=1` is not optional politeness. Each scenario creates its
+own compose project, network, and volumes, and those are deliberately not
+shared. But every scenario also builds the same image tag, so scenarios
+run concurrently race to produce and consume one tag — a pass that
+serialises cleanly becomes a flaky one under load for reasons that have
+nothing to do with the mesh.
+
+Requirements:
+
+- a running docker engine with compose v2 on `PATH`;
+- a compiler on the same minor version as `rust-toolchain.toml`. The
+  image pins the `rust:1.96-slim` base for exactly this reason, so the
+  container cannot drift onto a different compiler than CI uses. The
+  pin is `1.96.0`; the base tag tracks the minor, so a CI move to
+  `1.97` needs a one-line change in the Dockerfile's `FROM`.
+
+### §33.5 What the container suite asserts
+
+Thirteen scenarios, each of which fails if the corresponding property of
+the mesh does not hold:
+
+- a fresh node answers reads without creating a peer table;
+- a binding is visible only on the node that made it;
+- a peer table survives a container restart but not a teardown;
+- a node with no identity reports that, rather than inventing one;
+- the audit switch denies writes even when write mode is explicitly on,
+  and its absence is what permits them;
+- a recorded TCP endpoint is reachable from the node that recorded it;
+- stopping the peer container breaks that endpoint, and restarting
+  restores it;
+- a three-node topology converges on six directed bindings;
+- the endpoint scheme allowlist is enforced per node;
+- teardown leaves no volume or network behind;
+- the fixtures are present and the build context resolves;
+- the trust-level filter accepts its full value space.
+
+The reachability and partition scenarios are the ones worth watching.
+They are the only assertions in the guide's coverage that cross a
+network boundary, and they are what distinguish a peer table that
+records addresses from one that merely stores them.
+
+### §33.6 Interpreting a failure
+
+Read the failing scenario as a claim about the substrate, not about the
+guide, until the evidence says otherwise. The two failure classes that
+have actually occurred:
+
+- **A harness bug** — the message names a path, a context, or a compose
+  project. Docker reports a wrong build context as a bare
+  `lstat <path>: no such file or directory` naming the _resolved_
+  directory, not the mistake, so a context that is one level too deep
+  reads like a missing directory rather than a depth error. The fixture
+  scenario resolves the context out of the compose file and fails with
+  the resolved path named.
+- **A substrate or guide bug** — the assertion held and the behaviour
+  did not. These are the findings worth keeping. Fix whichever side is
+  actually wrong, and re-run: the guide and the tests are meant to
+  challenge each other, so a test that cannot fail is not evidence and a
+  guide never verified against the binary is a claim.
+
+Every scenario that brings up a stack tears its project down on drop,
+including on panic, so a failed run does not leave containers or volumes
+behind for the next one to trip over.
 
 ---
 
 ## Appendix A — Operator flags reference
 
-| Flag                            | Scope  | Effect                                                       |
-| ------------------------------- | ------ | ------------------------------------------------------------ |
-| `--mode {human,ci,auditor,dev}` | global | Operator mode (default: human).                              |
-| `--dev`                         | global | Shortcut for `--mode dev` (InMemorySigner opt-in).           |
-| `--allow-write`                 | global | Permit mutating operations in Ci/Dev mode.                   |
-| `--confirm`                     | global | Confirm a mutating operation (Human mode).                   |
-| `--confirm-acknowledge`         | global | Authority delegation acknowledgement (pastejacking defense). |
-| `--dry-run`                     | global | Preview the effect of a mutation without applying it.        |
-| `--stdin-secret`                | global | Permit reading a secret from stdin.                          |
-| `--json`                        | global | Force JSON envelope output.                                  |
-| `--no-color`                    | global | Disable ANSI colour.                                         |
-| `$OCTO_FORCE_JSON`              | env    | Same as `--json`.                                            |
-| `$NO_COLOR`                     | env    | Same as `--no-color`.                                        |
-| `OCTO_AUDIT=1`                  | env    | Auto-switch to Auditor mode (read-only).                     |
-| `CI=true`                       | env    | Auto-switch to Ci mode (unless `--confirm` set).             |
-| `$OCTO_HOME`                    | env    | Wallet / mesh home (default `~/.octo`).                      |
-| `$CIPHEROCTO_DATA_DIR`          | env    | Stoolap ledger root (default `$OCTO_HOME/data`).             |
+| Flag                            | Scope  | Effect                                                          |
+| ------------------------------- | ------ | --------------------------------------------------------------- |
+| `--mode {human,ci,auditor,dev}` | global | Operator mode (default: human).                                 |
+| `--dev`                         | global | Shortcut for `--mode dev` (InMemorySigner opt-in).              |
+| `--allow-write`                 | global | Permit mutating operations in Ci/Dev mode.                      |
+| `--confirm`                     | global | Confirm a mutating operation (Human mode).                      |
+| `--confirm-acknowledge`         | global | Authority delegation acknowledgement (pastejacking defense).    |
+| `--dry-run`                     | global | Preview the effect of a mutation without applying it.           |
+| `--stdin-secret`                | global | Permit reading a secret from stdin.                             |
+| `--json`                        | global | Force JSON envelope output.                                     |
+| `--no-color`                    | global | Disable ANSI colour.                                            |
+| `$OCTO_FORCE_JSON`              | env    | Same as `--json`.                                               |
+| `$NO_COLOR`                     | env    | Same as `--no-color`.                                           |
+| `OCTO_AUDIT=1`                  | env    | Force Auditor mode (read-only); overrides an explicit `--mode`. |
+| `CI=true`                       | env    | Auto-switch to Ci mode (unless `--confirm` set).                |
+| `$OCTO_HOME`                    | env    | Wallet / mesh home (default `~/.octo`).                         |
+| `$CIPHEROCTO_DATA_DIR`          | env    | Stoolap ledger root (default `$OCTO_HOME/data`).                |
 
 ---
 
-## Appendix B — Memory cross-references
+## Appendix B — Engineering conventions
 
-- [[cipherocto-design-principles]] — Layer A/B stability; per-extension crate + registry pattern; extension over enumeration
-- [[no-line-refs-anywhere]] — §section_name / symbol form
-- [[no-backtick-in-commit-messages]] — commit body hygiene
-- [[cargo-fmt-workflow]] — `cargo fmt --all` before commit
-- [[feedback_clippy_zero_warnings]] — zero warnings on every crate touched
-- [[feedback_initiation_user_only]] — user owns push
-- [[git-workflow]] — commits free; push + remote writes need explicit user instruction
-- [[no-phantom-mission-pointers]] — mission YAML paired with every RFC amendment
-- [[memory-is-never-status-ground-truth]] — closure cards are NOT status evidence
-- [[docs-audits-scratchpad]] — closure audit lives in `docs/audits/`, gitignored
-- [[docs-plans-scratchpad]] — closure plans live in `docs/plans/`, gitignored
-- [[quota-router-core feature mutex]] — `--features full`, never `--all-features`
-- [[validate_cites.sh outer timeout]] — wrap in `timeout 30 ...` / `timeout 180 ...`
-- [[Mode gate ≠ interface]] — HTTP proxy + Python SDK exist in ALL modes
-- [[Substrate-faithfulness verification]] — verify reviewer substrate claims against actual code
-- [[stoolap-general-purpose-db]] — Stoolap fork MUST NEVER host cipherocto business schema
-- [[stoolap-fork persistence]] — CipherOcto fork at `feat/blockchain-sql`; pin `527e8eb`
-- [[Phase 1-6 closure cards in MEMORY.md]] — RFC-0011-i + -j + -k + -l + -m + -n baseline
-- [[Phase 5 RFC-0011-m Closed]] — 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed)
-- [[Phase 6 RFC-0011-n Closed]] — 0 NEW OctoCliError variants precedent; slot 89 REUSE pattern
+These are the repository-wide conventions an operator or contributor will
+trip over while working through this guide. They are stated here from
+first principles rather than pointed at elsewhere, so the list stands on
+its own.
+
+**Reference and citation form**
+
+- Prose references another part of the documentation by section name or by
+  symbol, never by file and line number. `file:line` references go stale the
+  moment the file is edited, and a reader who follows one lands on code
+  that no longer says what the sentence claimed. Source code itself is
+  exempt: a code comment or a test may name a line, because it lives in
+  the same commit as the code it describes.
+- RFCs are cited by bare number — `RFC-0011-h`, never
+  `RFC-0011-h (Accepted v63)`. Status and version belong in the RFC's own
+  Status header and version history table. Restating them inline creates
+  a second place to update and a second place to get wrong.
+- A closure card, review note, or planning document is **not** evidence
+  that work landed. The evidence is the code and the tests. When this
+  guide makes a claim about current state, it is grounded in something
+  that can be re-run.
+
+**Repository layout**
+
+- `docs/audits/` and `docs/plans/` are scratchpads. Both are gitignored.
+  Canonical state belongs in the RFC version history, the mission YAMLs,
+  and the code. A closure document in a scratchpad is a record that a
+  review happened, not a substitute for the change it describes.
+- Every RFC amendment is paired with a mission YAML that actually exists.
+  A pointer to a mission that was never written is worse than no pointer,
+  because it reads as coverage.
+
+**Build and test**
+
+- Run `cargo fmt --all` before committing.
+- `cargo clippy --all-targets --all-features -- -D warnings` must be
+  silent on every crate a change touches. Suppress a lint only with a
+  written justification next to the attribute.
+- `crates/quota-router-core` has a feature mutex: build it with
+  `--features full`, never `--all-features`. The flags are mutually
+  exclusive by construction.
+- `scripts/validate_cites.sh` must be wrapped in an external `timeout`
+  (`timeout 30` for a single file, `timeout 180` for a full run). It has
+  no internal deadline and will otherwise hang a CI job.
+- Build Stoolap through the CipherOcto fork at `feat/blockchain-sql`,
+  pinned at `527e8eb`. Never against upstream Stoolap and never against
+  raw SQLite — the fork is what carries the `blockchain-sql` dialect.
+- The Stoolap fork is a general-purpose database. It must never host
+  CipherOcto business schema. Domain tables belong in the crates that own
+  the domain.
+
+**Architecture**
+
+- The HTTP proxy and the Python SDK are interfaces, not mode-gated
+  surfaces. They are present in every mode. A mode restricts what an
+  operator may _do_, not which front-ends exist.
+- Layer A (crypto primitives, canonical encoding, semantic policies) is
+  frozen and changes only by semver-major. Layer B is additive. Type
+  surfaces with an open extension space use a typed discriminator plus a
+  raw escape hatch, never a central enum, because a central enum makes
+  every future type a cross-crate edit.
+- Substrate claims are verified against the code before they are acted on,
+  in either direction. A reviewer's claim that a flag or subcommand
+  exists is checked with a real invocation, not read off the source.
+  This is what catches both real defects and plausible-sounding wrong
+  findings before either reaches the guide.
+
+**Git**
+
+- Commits are free. Anything that writes to a remote — `git push`,
+  `gh pr`, `gh issue`, `gh release`, branch switches, hard resets — is
+  the repository owner's to run, per explicit instruction.
+- Commit messages carry no backticks, `;`, `&&`, or `$()`. Write the
+  message to a file and use `git commit -F <file>`; shell interpolation
+  in a commit body is how quoting bugs get committed.

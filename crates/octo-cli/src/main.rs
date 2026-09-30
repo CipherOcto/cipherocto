@@ -78,17 +78,22 @@ fn main() {
     // carve-out does not affect real CI pipelines. The Auditor override
     // still fires unconditionally — read-only semantics must not be
     // silently bypassable by a stray confirmation flag.
-    if matches!(cli.mode.mode, OperatorMode::Human) {
+    if std::env::var_os("OCTO_AUDIT")
+        .filter(|v| v == "1")
+        .is_some()
+    {
+        // `OCTO_AUDIT=1` is a read-only enforcement switch, so it
+        // wins over an explicit `--mode` as well as over the clap
+        // default. Honouring it only in the Human arm (the previous
+        // shape) let any caller that also passed `--mode ci`
+        // silently defeat a fleet-wide audit setting — the exact
+        // "silently bypassable read-only semantics" outcome the
+        // carve-out above was written to prevent.
+        cli.mode.mode = OperatorMode::Auditor;
+    } else if matches!(cli.mode.mode, OperatorMode::Human) {
         let human_mode_explicit = cli.mode.confirm || cli.mode.confirm_acknowledge;
-        if !human_mode_explicit {
-            if std::env::var_os("OCTO_AUDIT")
-                .filter(|v| v == "1")
-                .is_some()
-            {
-                cli.mode.mode = OperatorMode::Auditor;
-            } else if std::env::var_os("CI").filter(|v| v == "true").is_some() {
-                cli.mode.mode = OperatorMode::Ci;
-            }
+        if !human_mode_explicit && std::env::var_os("CI").filter(|v| v == "true").is_some() {
+            cli.mode.mode = OperatorMode::Ci;
         }
     }
 

@@ -2840,4 +2840,51 @@ mod tests {
             }
         }
     }
+
+    /// An agent id is NOT recoverable from any `octo agent` envelope.
+    /// `AgentSummaryEnvelope.agent_id` is a `RedactedIdentifier`, whose
+    /// `Serialize` impl emits the constant `[REDACTED:key]` for every
+    /// row. The operator guide's teardown loop used to read agent ids
+    /// out of `agent list` and feed them back to `agent destroy`; that
+    /// loop can only ever produce `[REDACTED:key]`, which fails closed
+    /// with `agent not found`. Pin the redaction so the guide's
+    /// ledger-driven teardown path stays the documented one.
+    #[test]
+    fn tv_agent_3_agent_id_is_redacted_in_every_envelope() {
+        use super::list::AgentSummaryEnvelope;
+        use crate::redact::RedactedIdentifier;
+        let id = RedactedIdentifier::new("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+        let rendered = serde_json::to_string(&id).expect("serialize RedactedIdentifier");
+        assert_eq!(
+            rendered, "\"[REDACTED:key]\"",
+            "agent ids must never reach the JSON envelope verbatim"
+        );
+        // A jq filter of the guide's former shape yields this constant
+        // for every row, so two distinct agents are indistinguishable.
+        let a: serde_json::Value = serde_json::to_value(AgentSummaryEnvelope {
+            agent_id: RedactedIdentifier::new("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
+            holder_did: RedactedIdentifier::new("did:octo:zAAA"),
+            state: "Running".to_string(),
+            label: Some("alpha".to_string()),
+            registered_at_unix: 1,
+            manifest_digest: "ab".repeat(32),
+        })
+        .expect("agent summary to value");
+        let b: serde_json::Value = serde_json::to_value(AgentSummaryEnvelope {
+            agent_id: RedactedIdentifier::new("99999999-9999-9999-9999-999999999999"),
+            holder_did: RedactedIdentifier::new("did:octo:zBBB"),
+            state: "Running".to_string(),
+            label: Some("beta".to_string()),
+            registered_at_unix: 1,
+            manifest_digest: "cd".repeat(32),
+        })
+        .expect("agent summary to value");
+        assert_eq!(
+            a["agent_id"], b["agent_id"],
+            "two distinct agents must project identically, which is why no \
+             client-side id filter is possible"
+        );
+        assert_eq!(a["label"], serde_json::json!("alpha"));
+        assert_eq!(a["manifest_digest"], serde_json::json!("ab".repeat(32)));
+    }
 }

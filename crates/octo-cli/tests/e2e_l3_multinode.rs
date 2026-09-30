@@ -24,6 +24,7 @@ use common::{
 };
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -858,5 +859,235 @@ fn l3_only_the_canonical_did_wire_form_is_accepted() {
         after.payload["peers"][0]["peer_did"],
         peer.as_str(),
         "the only peer must be the one that was accepted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario: the two distinct jq failure shapes a wrong envelope depth produces
+// ---------------------------------------------------------------------------
+
+/// Every operator pipeline in the guide projects out of the envelope's
+/// `payload`. Reading a field at the top level instead produces one of
+/// **two different failure shapes**, and they are not interchangeable:
+///
+/// * an **array** read (`[.receipts[] | ...]`) makes jq fail hard —
+///   `Cannot iterate over null`, exit 5;
+/// * a **scalar** read (`jq '.count_returned'`) does not fail at all —
+///   jq prints the string `null` and exits 0.
+///
+/// The scalar shape is the dangerous one: a recovery or teardown script
+/// that checks an exit code will believe it succeeded. This scenario
+/// drives the real `jq` against a real envelope so both shapes stay
+/// pinned, and asserts the deep form is the one that works.
+#[test]
+fn l3_wrong_envelope_depth_fails_in_two_distinct_ways() {
+    let jq = match std::process::Command::new("jq").arg("--version").output() {
+        Ok(o) if o.status.success() => PathBuf::from("jq"),
+        _ => {
+            eprintln!(
+                "skipping: jq is not installed; the guide requires it, so this is \
+                      an environment gap rather than a guide defect"
+            );
+            return;
+        }
+    };
+
+    let home = new_node_home("l3-depth");
+    let out = octo_in(&home)
+        .args(["audit", "list", "--limit", "5", "--json"])
+        .output()
+        .expect("spawn octo audit list");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "audit list must succeed on a fresh node, got {:?}",
+        out.status
+    );
+    let envelope = Envelope::parse(&stdout);
+    assert_eq!(envelope.command, "octo.audit.list.v1");
+
+    // Pipe the same real envelope through a jq filter and capture both
+    // the exit code and what the operator would have seen.
+    let run_jq = |filter: &str| -> (Option<i32>, String) {
+        use std::io::Write;
+        let mut child = std::process::Command::new(&jq)
+            .arg(filter)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn jq");
+        child
+            .stdin
+            .as_mut()
+            .expect("jq stdin")
+            .write_all(stdout.as_bytes())
+            .expect("write envelope to jq");
+        let done = child.wait_with_output().expect("jq output");
+        (
+            done.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&done.stdout),
+                String::from_utf8_lossy(&done.stderr)
+            ),
+        )
+    };
+
+    // 1. The guide's array idiom, deep: works.
+    let (deep_code, deep_out) = run_jq("[.payload.receipts[] | select(.subject_did)]");
+    assert_eq!(
+        deep_code,
+        Some(0),
+        "deep array filter must succeed: {deep_out}"
+    );
+    assert_eq!(
+        deep_out.trim(),
+        "[]",
+        "a fresh node has no receipts: {deep_out}"
+    );
+
+    // 2. The same idiom one level too shallow: hard failure.
+    let (shallow_code, shallow_out) = run_jq("[.receipts[] | select(.subject_did)]");
+    assert_eq!(
+        shallow_code,
+        Some(5),
+        "a shallow array read must fail hard, not silently: {shallow_out}"
+    );
+    assert!(
+        shallow_out.contains("Cannot iterate over null"),
+        "the array failure mode must stay the documented one: {shallow_out}"
+    );
+
+    // 3. The scalar idiom: this is the trap. A shallow scalar read
+    //    exits 0 and hands the operator the string "null".
+    let (scalar_bad_code, scalar_bad_out) = run_jq(".count_returned");
+    assert_eq!(
+        scalar_bad_code,
+        Some(0),
+        "a shallow scalar read does NOT fail — that is the whole hazard: {scalar_bad_out}"
+    );
+    assert_eq!(
+        scalar_bad_out.trim(),
+        "null",
+        "a shallow scalar read yields the literal string null: {scalar_bad_out}"
+    );
+
+    // 4. The correct scalar read yields the real value.
+    let (scalar_good_code, scalar_good_out) = run_jq(".payload.count_returned");
+    assert_eq!(
+        scalar_good_code,
+        Some(0),
+        "deep scalar filter: {scalar_good_out}"
+    );
+    assert_eq!(
+        scalar_good_out.trim(),
+        "0",
+        "the deep scalar read must return the real count: {scalar_good_out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario: the guide's vault-id hex conversion, end to end through jq
+// ---------------------------------------------------------------------------
+
+/// `VaultId` serializes as 32 decimal bytes, while every vault-taking
+/// flag wants 64 hex chars, so the guide has to convert. The
+/// conversion is a long jq program, which is exactly the kind of text
+/// that rots silently: it keeps exiting 0 while producing a string the
+/// argument parser rejects. Run the guide's exact filter against an
+/// envelope shaped like a real `vault list` and assert the output is a
+/// 64-char hex string — and that dropping the conversion is visible.
+///
+/// The serialization half of this is pinned in the library by
+/// `tv_vault_6_vault_id_is_a_byte_array_not_a_hex_string`; this
+/// scenario pins the operator-facing text.
+#[test]
+fn l3_the_guides_vault_id_hex_conversion_produces_64_hex_chars() {
+    let jq = match std::process::Command::new("jq").arg("--version").output() {
+        Ok(o) if o.status.success() => PathBuf::from("jq"),
+        _ => {
+            eprintln!("skipping: jq is not installed");
+            return;
+        }
+    };
+
+    // Shaped exactly as `octo vault list --json` renders one row: a
+    // 32-element decimal byte array, per the derived Serialize.
+    let byte = 0xabu8;
+    let row: Vec<String> = vec![byte.to_string(); 32];
+    let envelope = format!(
+        r#"{{"command":"octo.vault.list.v1","executed_at_unix":1,"payload":{{"vaults":[{{"vault_id":[{}],"asset_symbol":"OCTO","balance_projected":"0"}}],"next_cursor":null,"resolved_at_unix":1}},"redacted":false,"schema_version":4}}"#,
+        row.join(",")
+    );
+
+    // The guide's filter, verbatim.
+    const GUIDE_FILTER: &str = r#"
+        def hx: . as $n
+            | ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n/16|floor]
+            + ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n%16];
+        .payload.vaults[0].vault_id | map(hx) | join("")"#;
+
+    let run = |filter: &str| -> (Option<i32>, String) {
+        use std::io::Write;
+        let mut child = std::process::Command::new(&jq)
+            .arg("-r")
+            .arg(filter)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn jq");
+        child
+            .stdin
+            .as_mut()
+            .expect("jq stdin")
+            .write_all(envelope.as_bytes())
+            .expect("write envelope");
+        let done = child.wait_with_output().expect("jq output");
+        (
+            done.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&done.stdout),
+                String::from_utf8_lossy(&done.stderr)
+            ),
+        )
+    };
+
+    let (code, out) = run(GUIDE_FILTER);
+    assert_eq!(code, Some(0), "the guide's filter must succeed: {out}");
+    let hex = out.trim();
+    assert_eq!(
+        hex.len(),
+        64,
+        "the guide's filter must yield 64 hex chars, got {hex:?}"
+    );
+    assert!(
+        hex.chars().all(|c| c.is_ascii_hexdigit()),
+        "every character must be a hex digit, got {hex:?}"
+    );
+    assert_eq!(
+        hex,
+        "ab".repeat(32),
+        "the bytes must survive the conversion"
+    );
+
+    // Negative control: the naive form the conversion exists to replace
+    // yields something the argument parser can never accept.
+    let (naive_code, naive_out) = run(".payload.vaults[0].vault_id");
+    assert_eq!(
+        naive_code,
+        Some(0),
+        "the naive form still exits 0: {naive_out}"
+    );
+    let naive = naive_out.trim();
+    assert_ne!(
+        naive, hex,
+        "the naive form must differ from the converted form"
+    );
+    assert!(
+        naive.starts_with('[') && !naive.chars().all(|c| c.is_ascii_hexdigit()),
+        "the naive form is a byte array, not hex: {naive:?}"
     );
 }

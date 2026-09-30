@@ -96,6 +96,60 @@ The CLI resolves home the same way the wallet substrate does (env override → `
 | `OCTO_AUDIT=1`         | Force **Auditor** (read-only) mode. Overrides an explicit `--mode`.          |
 | `CI=true`              | Auto-switch to **Ci** mode unless `--confirm` / `--confirm-acknowledge` set. |
 
+### Shared placeholder values
+
+Scenarios below refer to values in two forms. An angle-bracket
+placeholder such as `<vault-id-hex>` is a stand-in you replace by hand. A
+shell variable such as `$VAULT_ID` must be **assigned** before use — copy
+these once at the start of a shell session, and the later scenarios pick
+them up:
+
+```bash
+# Identity values the CLI can hand you.
+ACTIVE_DID="$(octo --json whoami | jq -r '.payload.did')"
+VOTER_DID="$ACTIVE_DID"
+
+# Vault values. `vault list` returns real ids (unlike agent ids, which are
+# redacted — see §A.3), so derive them rather than guessing.
+#
+# NOTE the hex conversion: `VaultId` is a 32-byte newtype with a derived
+# Serialize, so the envelope carries `vault_id` as a JSON ARRAY OF 32
+# DECIMAL BYTES, not as a hex string. Every vault-taking flag wants the
+# 64-hex form, so you must convert:
+VAULT_ID="$(octo vault list --json | jq -r '
+    def hx: . as $n
+        | ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n/16|floor]
+        + ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n%16];
+    .payload.vaults[0].vault_id | map(hx) | join("")')"
+SOURCE_VAULT_ID="$VAULT_ID"
+DEST_VAULT_ID="$VAULT_ID"
+SRC_VAULT_ID="$VAULT_ID"
+ASSET_SYMBOL="octo"
+
+# Capability values.
+VOTER_CAP_ID="$(octo capability list --json | jq -r '.payload.capabilities[0].cap_id')"
+
+# Values only you can supply — no command derives these.
+CHAIN_ID="cipherocto-mainnet"
+DEST_CHAIN_ID="$CHAIN_ID"
+NEW_DID="did:octo:z<43-44-char-base58btc-new-identity>"
+REMOTE_AGENT_ID="<remote-agent-id-uuid>"
+REMOTE_AGENT_DID="did:octo:z<43-44-char-base58btc-remote-agent>"
+
+# Agent ids are redacted in every envelope (§A.3), so keep your own ledger
+# of ids you captured at `octo agent create` time. Teardown reads this file.
+AGENT_ID_LEDGER="$OCTO_HOME/agent-ids.txt"
+
+# Deliberately NOT assigned here: $MNEMONIC_PHRASE, your identity mnemonic.
+# Never put it in this file, in a script, or on a command line — read it
+# from your secret store at the moment of use (see the CI section).
+```
+
+A variable with no assignment is not a harmless no-op: it expands to the
+empty string, and most commands will accept `--holder-did ""` or
+`--asset ""` at the argument layer and fail later, further from the
+mistake. Set them up front.
+
 ### Verify the install
 
 ```bash
@@ -399,10 +453,14 @@ octo --mode dev --allow-write identity rotate
 #    exclusive) + --confirm-acknowledge (required for --apply) + --json.
 #    There is NO --node-id flag and NO --node-class flag on NodeBindArgs;
 #    NodeClass is data-on-record per §14 substrate-coverage note, not a
-#    CLI flag. node_id is derived from `octo network status --json | jq
-#    '.local_node_id_hex'`.
+#    CLI flag.
+#    node_id is an operator-supplied 64-hex value. NO CLI command derives
+#    it: `NetworkStatusOutput` carries no node-id field, so there is no
+#    `octo network status --json` path to read one from. Supply it from
+#    the node's own provisioning record.
+NODE_ID="<node-id-hex>"
 octo network node bind \
-    "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$NODE_ID" \
     --holder-did "$NEW_DID" \
     --apply \
     --confirm --confirm-acknowledge
@@ -587,14 +645,14 @@ octo --mode human --allow-write capability attenuate <cap-id-hex> \
 #    `octo_cap_macaroon::verify_full` (RFC-0957 §3.5 verification
 #    pipeline; out of CLI scope). For an ad-hoc CLI-side check, read
 #    back via `octo capability list --json` (envelope shape:
-#    `.capabilities[]`, not `.[]`) and validate the caveats against
+#    `.payload.capabilities[]`, not `.[]`) and validate the caveats against
 #    the substrate's Caveat enum (27 variants; see §30 substrate-
 #    coverage note).
 
 # 5. List active capabilities issued by this operator.
 #    Substrate-faithful: envelope shape `CapabilityListOutput` has
-#    `.capabilities[]` (NOT `.[]`).
-octo capability list --json | jq '.capabilities[] | {cap_id, root_id, caveats}'
+#    `.payload.capabilities[]` (NOT `.[]`).
+octo capability list --json | jq '.payload.capabilities[] | {cap_id, root_id, caveats}'
 ```
 
 ### Verify
@@ -608,10 +666,10 @@ octo capability list --json | jq '.capabilities[] | {cap_id, root_id, caveats}'
 #    root_id / caveat). Workaround:
 octo capability list --json \
     | jq --arg c "<cap-id-hex>" \
-        '.capabilities[] | select(.cap_id == $c)'
+        '.payload.capabilities[] | select(.cap_id == $c)'
 
 # 7. Cross-check via audit trail (capability mint is an auditable event).
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
 ```
 
 ### Tear down
@@ -743,10 +801,10 @@ octo vault balance "$DEST_VAULT_ID" --json
 #    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (only --since / --until
 #    / --capability-root / --model / --router-id / --status / --include-reject
 #    / --limit / --json per crates/octo-cli/src/commands/audit.rs:63-130).
-#    AuditListOutput envelope is `.receipts[]` with `subject_did` (NOT `kind`).
+#    AuditListOutput envelope is `.payload.receipts[]` with `subject_did` (NOT `kind`).
 #    Substrate-faithful filter for vault-transfer events:
 octo audit list --limit 10 --json | \
-    jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault-transfer:"))]'
+    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault-transfer:"))]'
 octo audit show <receipt-id-u64>
 ```
 
@@ -867,7 +925,7 @@ $QUOTA_ROUTER_BIN reputation-show \
 $QUOTA_ROUTER_BIN balance
 
 # 8. Audit trail (quota-marketplace buy/sell events).
-octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:quota:"))]'
+octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:quota:"))]'
 ```
 
 ### Tear down
@@ -945,11 +1003,16 @@ octo --mode dev --allow-write agent attach \
 #    [SUBSTRATE-NEW] `octo agent state` is NOT wired — AgentAction has
 #    ONLY Create + List + Run + Destroy + Attach + RevokeAttach per
 #    crates/octo-cli/src/commands/agent.rs:49. State is read via
-#    `octo agent list --json` (envelope shape: `.agents[]`) filtered by
-#    `agent_id` (state is exposed in the AgentSummaryEnvelope projection
-#    via `state: AgentState`, parsed from the `agent_state` JSON field).
-octo agent list --json | jq --arg a "<agent-id-uuid>" \
-    '.agents[] | select(.agent_id == $a) | {agent_id, state, manifest_hash}'
+#    `octo agent list --json` (envelope shape: `.payload.agents[]`).
+#    IMPORTANT: `AgentSummaryEnvelope.agent_id` is a `RedactedIdentifier`,
+#    which serializes to the CONSTANT string `[REDACTED:key]` for every row.
+#    You cannot select an agent by id from this envelope, and you cannot
+#    recover a usable id from it. The row fields that DO carry real values
+#    are `state` and `registered_at_unix`; the digest field is named
+#    `manifest_digest` (NOT `manifest_hash`).
+#    So read state per-row, and track agent ids in the operator's own
+#    provisioning record:
+octo agent list --json | jq '.payload.agents[] | {state, registered_at_unix, manifest_digest}'
 
 # 6. Run a task via the agent.
 #    Substrate-faithful: AgentAction::Run takes --agent-id + --detach +
@@ -974,10 +1037,15 @@ octo agent run \
 ```bash
 # 8. Search the marketplace for an agent.
 #    [SUBSTRATE-NEW] `octo agent search` is NOT wired (see step 7 note).
-#    Workaround: filter `octo agent list --json` via jq on capability
-#    metadata since agents are discoverable via `list` only.
+#    Workaround: filter `octo agent list --json` via jq since agents are
+#    discoverable via `list` only.
+#    CAVEAT: the v1 `AgentSummaryEnvelope` has NO `capabilities` field
+#    (its fields are agent_id, holder_did, state, label,
+#    registered_at_unix, manifest_digest), so an agent cannot be filtered
+#    by advertised capability on this surface. The only client-side filter
+#    available is by `label`:
 octo agent list --json | \
-    jq '[.[] | select(.capabilities[]? == "contract_review")] | .[].id'
+    jq '.payload.agents[] | select((.label // "") | test("contract_review"))'
 
 # 9. Hire the agent (spend OCTO-D; settlement substrate emits a receipt).
 #    [SUBSTRATE-NEW] `octo agent hire` is NOT wired. Workaround: invoke
@@ -994,8 +1062,9 @@ octo agent run \
 
 ```bash
 # 10. Audit trail (every execution emits an audit event).
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
-octo audit show --receipt-id <receipt-id-u64>
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
+# `audit show` takes the receipt id POSITIONALLY (there is no --receipt-id flag).
+octo audit show <receipt-id-u64>
 
 # 11. Reputation snapshot (the developer earned +X from your execution).
 octo reputation show --did did:octo:z<43-44-char-base58btc-developer> --role builder
@@ -1076,14 +1145,14 @@ octo --mode dev --allow-write capability mint \
 #    crates/octo-cli/src/commands/capability.rs:87. Capability marketplace
 #    is a per-extension Layer D adapter (out of scope for the core
 #    substrate). Until that lands, capability discovery is via
-#    `octo capability list --json` (envelope shape: .capabilities[]).
+#    `octo capability list --json` (envelope shape: .payload.capabilities[]).
 
 # 4. Buyer discovers the listing.
 #    [SUBSTRATE-NEW] `octo capability search` is NOT wired. Substrate-faithful
 #    alternative: enumerate via `octo capability list --json` (envelope
-#    shape: .capabilities[]) and jq-filter on the Caveat::Permission scope:
+#    shape: .payload.capabilities[]) and jq-filter on the Caveat::Permission scope:
 octo capability list --json | \
-    jq '[.capabilities[] | select(.caveats[]? | .type == "permission" and .value.scope | contains("'"$VAULT_ID"'")))]'
+    jq '[.payload.capabilities[] | select(.caveats[]? | .type == "permission" and .value.scope | contains("'"$VAULT_ID"'")))]'
 
 # 5. Buyer acquires the listing (capability is transferred to the buyer's
 #    holder).
@@ -1133,13 +1202,13 @@ octo agent run \
 ```bash
 # 8. Capability audit trail.
 #    [SUBSTRATE-NEW] AuditListArgs has NO `--kind` flag (see §17.0 substrate-shape
-#    note). Substrate-faithful jq-filter (envelope `.receipts[]` + `subject_did`):
+#    note). Substrate-faithful jq-filter (envelope `.payload.receipts[]` + `subject_did`):
 octo audit list --limit 1 --json | \
-    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:mint:"))]'
+    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:mint:"))]'
 octo audit list --limit 1 --json | \
-    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:acquire:"))]'
+    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:acquire:"))]'
 octo audit list --limit 1 --json | \
-    jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:redeem:"))]'
+    jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:redeem:"))]'
 
 # 9. Vault balance post-spend (should reflect the reservation).
 #    Substrate-faithful: positional <vault-id> (no --vault-id flag).
@@ -1228,7 +1297,7 @@ octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
 
 ```bash
 # 7. Audit trail (attestations + votes are auditable).
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
 
 # 8. Cross-check via the trust-graph render (peers with high reputation have higher trust edges).
 octo network trust-graph render --format ascii --depth 3
@@ -1265,10 +1334,10 @@ octo audit list --limit 100 --json
 
 ```bash
 # 2. (Optional) Filter by event kind.
-octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'
-octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
-octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
-octo audit list --limit 20 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'
+octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'
+octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+octo audit list --limit 20 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
 ```
 
 ### Operate
@@ -1343,7 +1412,13 @@ octo governance snapshot --json
 #    snapshot the governance substrate, then filter the proposal in jq.
 PROPOSAL_ID_HEX="<proposal-id-hex>"
 octo governance snapshot --chain-id "$CHAIN_ID" --proposal-state active --json \
-    | jq --arg id "$PROPOSAL_ID_HEX" '.proposals[] | select(.id_hex == $id)'
+    | jq --arg id "$PROPOSAL_ID_HEX" '.payload.open_proposals[] | select(.proposal_id == $id)'
+# NOTE: `.payload.open_proposals` is ALWAYS the empty array on the v1
+# surface — the substrate snapshot projection carries no backing proposal
+# ledger, so the array is hardcoded empty on BOTH the cache-hit and the
+# cache-miss path. This filter therefore returns nothing. The scalar
+# `.payload.open_proposal_count` is likewise always 0. Everything else in
+# this section is still accurate; only proposal discovery is inert.
 ```
 
 ### Operate
@@ -1374,7 +1449,7 @@ octo governance attest \
 #    `octo governance snapshot --proposal-state <X>` (positional projection)
 #    + `--chain-id` for chain filter; there is NO `network governance tally`
 #    subcommand (NetworkAction has no governance tally variant).
-octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposal-id-hex>")'
+octo governance snapshot --json | jq '.payload.open_proposals[] | select(.proposal_id == "<proposal-id-hex>")'
 ```
 
 ### Verify
@@ -1445,7 +1520,7 @@ octo network coordinator show <coordinator-id-hex> --json
 #    with POSITIONAL <node-id-hex> + --holder-did + --apply
 #    + --confirm-acknowledge. NodeClass is data-on-record (not a CLI flag).
 octo network node bind \
-    "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$NODE_ID" \
     --holder-did "$ACTIVE_DID" \
     --apply \
     --confirm --confirm-acknowledge
@@ -1532,7 +1607,7 @@ octo network heartbeat probe did:octo:z<43-44-char-base58btc> --timeout-ms 5000
 
 # 10. Reputation + audit trail for provider revenue.
 octo reputation show --did did:octo:z<43-44-char-base58btc> --role builder
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:provider:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:provider:"))]'
 ```
 
 ### Tear down
@@ -1556,15 +1631,24 @@ End-to-end shutdown. Mirrors the reverse of §3-§14 to leave the operator envir
 # 1. Unpublish all agents.
 #    [SUBSTRATE-NEW] `octo agent unpublish` is NOT wired in AgentAction (Create |
 #    List | Run | Attach | Destroy | RevokeAttach). Unpublish is substrate-side:
-#    iterate agent list and call destroy (terminal lifecycle):
-octo agent list --json | jq -r '.agents[].agent_id' | while read -r agent_id; do
+#    call destroy per agent (terminal lifecycle).
+#    There is NO CLI way to enumerate usable agent ids:
+#    `AgentSummaryEnvelope.agent_id` is a `RedactedIdentifier`, so
+#    `octo agent list --json` emits the constant `[REDACTED:key]` for every
+#    row. Iterating it and feeding it back to destroy fails closed with
+#    exit 42 (`agent not found`) on the first row. Keep the agent ids in
+#    the operator's own provisioning record and tear down from that:
+while read -r agent_id; do
+    [ -z "$agent_id" ] && continue
     octo agent destroy --agent-id "$agent_id" --reason "tear-down" --confirm --confirm-acknowledge
-done
+done < "$AGENT_ID_LEDGER"
+# where AGENT_ID_LEDGER is a newline-separated file of agent ids recorded
+# at `octo agent create` time. Confirm what you are about to tear down:
+#   jq -R . "$AGENT_ID_LEDGER" | head
 
 # 2. Destroy all agents.
-for agent_id in $(octo agent list --json | jq -r '.agents[].agent_id'); do
-    octo agent destroy --agent-id "$agent_id" --reason "tear-down" --confirm --confirm-acknowledge
-done
+#    Same ledger-driven path as step 1 -- do NOT re-derive ids from
+#    `octo agent list --json`, which redacts them.
 
 # 3. Revoke all capabilities.
 #    [SUBSTRATE-NEW] `octo capability revoke` is NOT wired — CapabilityAction has
@@ -1573,7 +1657,7 @@ done
 #    `crates/octo-cap-macaroon/Cargo.toml`). Capability revocation is substrate-side
 #    (`octo_cap_macaroon::CapabilityStore::revoke`). Until a substrate binary ships,
 #    write a small extension crate (per-extension crate pattern; Layer D adapter)
-#    that walks `octo capability list --json | jq -r '.capabilities[].cap_id'` and
+#    that walks `octo capability list --json | jq -r '.payload.capabilities[].cap_id'` and
 #    invokes the substrate revoke API per cap_id. The CLI `octo capability list`
 #    read path remains available for verification after each revoke.
 
@@ -1585,7 +1669,13 @@ done
 #    the holder identity (Section 4 step 9) which freezes all vaults bound
 #    to that identity via the holder-DID linkage. See §7 step 10 for the
 #    same SUBSTRATE-NEW note.
-for vault_id in $(octo vault list --json | jq -r '.vaults[].vault_id'); do
+#    `vault_id` needs the hex conversion described in §0 (the envelope
+#    carries it as 32 decimal bytes, not hex).
+for vault_id in $(octo vault list --json | jq -r '
+        def hx: . as $n
+            | ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n/16|floor]
+            + ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$n%16];
+        .payload.vaults[].vault_id | map(hx) | join("")'); do
     echo "vault $vault_id: substrate-new; revoke holder identity or halt vault daemon"
 done
 
@@ -1761,36 +1851,36 @@ The substrate `AuditEventKind` enum has variants `Insert | Revoke | Sync | Agent
 
 ```bash
 # Substrate-faithful event-kind filter:
-#    AuditListOutput has `.receipts[]` + `.count_returned` (NOT `.events[]`).
+#    AuditListOutput has `.payload.receipts[]` + `.payload.count_returned` (NOT `.events[]`).
 #    Each ReceiptSummaryOutput exposes `subject_did` + `capability_root`.
-octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:<event-kind-tag>"))'
+octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:<event-kind-tag>"))'
 ```
 
 §18-§32 below references the substrate-faithful jq-filter form directly. The shorthand `--kind <X>` is NOT a real flag on `AuditListArgs` (per `crates/octo-cli/src/commands/audit.rs:66-127`) and would fail clap with "unexpected argument"; the substrate-faithful translation table follows:
 
-| Operator intent (shorthand)         | Substrate-faithful jq filter (on `AuditListOutput.receipts[]`) |
-| ----------------------------------- | -------------------------------------------------------------- |
-| `--kind capability-mint`            | `select(.subject_did                                           | startswith("did:octo:cap:"))`         |
-| `--kind vault-transfer`             | `select(.subject_did                                           | startswith("did:octo:vault:"))`       |
-| `--kind reputation-attest`          | `select(.subject_did                                           | startswith("did:octo:rep:"))`         |
-| `--kind bridge-propagation`         | `select(.subject_did                                           | startswith("did:octo:bridge:"))`      |
-| `--kind substrate-migration`        | `select(.subject_did                                           | startswith("did:octo:migrate:"))`     |
-| `--kind reasoning-trace`            | `select(.subject_did                                           | startswith("did:octo:agent:"))`       |
-| `--kind reputation-federation-join` | `select(.subject_did                                           | startswith("did:octo:federation:"))`  |
-| `--kind reputation-quorum-reached`  | `select(.subject_did                                           | startswith("did:octo:quorum:"))`      |
-| `--kind bootstrap-evidence`         | `select(.subject_did                                           | startswith("did:octo:bootstrap:"))`   |
-| `--kind slash-defence`              | `select(.subject_did                                           | startswith("did:octo:slash:"))`       |
-| `--kind adapter-event`              | `select(.subject_did                                           | startswith("did:octo:adapter:"))`     |
-| `--kind governance-vote`            | `select(.subject_did                                           | startswith("did:octo:gov:"))`         |
-| `--kind quota-marketplace-trade`    | `select(.subject_did                                           | startswith("did:octo:quota:"))`       |
-| `--kind agent-execution`            | `select(.subject_did                                           | startswith("did:octo:agent:"))`       |
-| `--kind capability-acquire`         | `select(.subject_did                                           | startswith("did:octo:cap:acquire:"))` |
-| `--kind capability-redeem`          | `select(.subject_did                                           | startswith("did:octo:cap:redeem:"))`  |
-| `--kind provider-earning`           | `select(.subject_did                                           | startswith("did:octo:provider:"))`    |
-| `--kind revocation`                 | `select(.subject_did                                           | startswith("did:octo:revoke:"))`      |
+| Operator intent (shorthand)         | Substrate-faithful jq filter (on `AuditListOutput.payload.receipts[]`) |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `--kind capability-mint`            | `select(.subject_did                                                   | startswith("did:octo:cap:"))`         |
+| `--kind vault-transfer`             | `select(.subject_did                                                   | startswith("did:octo:vault:"))`       |
+| `--kind reputation-attest`          | `select(.subject_did                                                   | startswith("did:octo:rep:"))`         |
+| `--kind bridge-propagation`         | `select(.subject_did                                                   | startswith("did:octo:bridge:"))`      |
+| `--kind substrate-migration`        | `select(.subject_did                                                   | startswith("did:octo:migrate:"))`     |
+| `--kind reasoning-trace`            | `select(.subject_did                                                   | startswith("did:octo:agent:"))`       |
+| `--kind reputation-federation-join` | `select(.subject_did                                                   | startswith("did:octo:federation:"))`  |
+| `--kind reputation-quorum-reached`  | `select(.subject_did                                                   | startswith("did:octo:quorum:"))`      |
+| `--kind bootstrap-evidence`         | `select(.subject_did                                                   | startswith("did:octo:bootstrap:"))`   |
+| `--kind slash-defence`              | `select(.subject_did                                                   | startswith("did:octo:slash:"))`       |
+| `--kind adapter-event`              | `select(.subject_did                                                   | startswith("did:octo:adapter:"))`     |
+| `--kind governance-vote`            | `select(.subject_did                                                   | startswith("did:octo:gov:"))`         |
+| `--kind quota-marketplace-trade`    | `select(.subject_did                                                   | startswith("did:octo:quota:"))`       |
+| `--kind agent-execution`            | `select(.subject_did                                                   | startswith("did:octo:agent:"))`       |
+| `--kind capability-acquire`         | `select(.subject_did                                                   | startswith("did:octo:cap:acquire:"))` |
+| `--kind capability-redeem`          | `select(.subject_did                                                   | startswith("did:octo:cap:redeem:"))`  |
+| `--kind provider-earning`           | `select(.subject_did                                                   | startswith("did:octo:provider:"))`    |
+| `--kind revocation`                 | `select(.subject_did                                                   | startswith("did:octo:revoke:"))`      |
 
 > **Note:** the table cells above are substrate-faithful projections against
-> `AuditListOutput.receipts[]` (which carries `subject_did` + `capability_root`,
+> `AuditListOutput.payload.receipts[]` (which carries `subject_did` + `capability_root`,
 > NOT `kind`). The `kind` taxonomy is preserved as operator-facing terminology
 > to anchor operators familiar with the prior shorthand — the actual substrate
 > filter keys on the canonical `subject_did` wire form per RFC-0010.
@@ -1895,7 +1985,7 @@ Fix: check the Stoolap adapter health; rebuild from the source-of-truth if the L
 
 Cause: chain rejection, IO error, or substrate validation failure.
 
-Fix: check `octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'` for the failure reason; replay with `--dry-run` to isolate substrate vs. chain-adapter.
+Fix: check `octo audit list --limit 1 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:vault:"))]'` for the failure reason; replay with `--dry-run` to isolate substrate vs. chain-adapter.
 
 ### `EnvelopeMeta::None`
 
@@ -2002,7 +2092,7 @@ octo --mode dev --allow-write role select operator-main
 #    dispatch with POSITIONAL <node-id-hex> + --holder-did + --apply
 #    + --confirm-acknowledge. NodeClass is data-on-record (not a CLI flag).
 octo network node bind \
-    "$(octo network status --json | jq -r '.local_node_id_hex')" \
+    "$NODE_ID" \
     --holder-did "$ACTIVE_DID" \
     --apply \
     --confirm --confirm-acknowledge
@@ -2042,8 +2132,8 @@ Run each in order; they are orthogonal but the order matters for state propagati
 ```bash
 # 16. Run the full smoke test from §3-§15 in sequence.
 # Each scenario leaves an audit trail; verify the rollup.
-#    Substrate-faithful: AuditListOutput has `.count_returned`.
-octo audit list --limit 200 --json | jq '.count_returned'
+#    Substrate-faithful: AuditListOutput has `.payload.count_returned`.
+octo audit list --limit 200 --json | jq '.payload.count_returned'
 # Expected: >= the number of mutations you performed.
 
 # 17. Confirm the substrate cache + federation subscriptions are warm.
@@ -2169,11 +2259,10 @@ echo "paid-query daemon: SUBSTRATE-NEW; rlib-only today"
 
 ```bash
 # 7. Register the active-identity node binding (the substrate-faithful
-#    SpecializedNodeRecord dispatch). node_id is derived from the
-#    identity's substrate (see `octo network status --json | jq -r
-#    '.local_node_id_hex'`); placeholder below for the per-extension
-#    daemon's runtime-computed NODE_ID:
-NODE_ID="<node-id-hex-runtime-from-active-identity>"
+#    SpecializedNodeRecord dispatch). node_id is NOT derivable from any
+#    octo surface — `NetworkStatusOutput` has no node-id field. It must come
+#    from the node's own provisioning record; placeholder below:
+NODE_ID="<node-id-hex>"
 # Substrate: NodeBindArgs node_id is POSITIONAL [u8; 32]; --apply
 # + --confirm-acknowledge is the apply gate (default is dry-run per
 # RFC-0011-h §Confirmation Flag).
@@ -2305,7 +2394,7 @@ ls -la "$CIPHEROCTO_DATA_DIR/"
 # Expected: revocation.stoolap + per-crate ledger files (reputation.stoolap, vault.stoolap).
 
 # 10. Audit trail proves cross-process propagation worked.
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:revoke:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:revoke:"))]'
 ```
 
 ### Tear down
@@ -2421,7 +2510,7 @@ octo network heartbeat probe did:octo:z<43-44-char-base58btc-whatsapp-adapter> -
 octo network heartbeat probe did:octo:z<43-44-char-base58btc-matrix-adapter> --timeout-ms 5000
 
 # 12. Audit trail — every adapter event is auditable.
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:adapter:"))]'
 ```
 
 ### Tear down
@@ -2765,7 +2854,7 @@ octo reputation show --json --role builder
 #    substrate layer.
 
 # 10. Audit trail for migration events.
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:migrate:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:migrate:"))]'
 ```
 
 ### Tear down
@@ -2879,7 +2968,7 @@ octo network slash-bridge list --json
 # (NOT propagated_at_unix / target_peer_id_hex — those names are pre-substrate-faithful).
 
 # 7. Audit trail (bridge events are auditable).
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:bridge:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:bridge:"))]'
 ```
 
 ### Tear down
@@ -2906,17 +2995,29 @@ octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | sta
 ### Setup
 
 ```bash
-# 1. Discover open verification market proposals.
+# 1. Discover open proposals.
 #    Substrate-faithful path: governance proposals are surfaced via Snapshot,
 #    not via a `verification markets list` CLI variant.
-octo governance snapshot --json | jq '.proposals[] | select(.kind == "verification-market")'
+#    There is NO `kind` field on the substrate proposal summary, so a
+#    verification market cannot be distinguished from any other proposal
+#    client-side. The only discriminator the summary carries is `chain_id`,
+#    so scope the snapshot server-side with `--chain-id` and read the rows
+#    unfiltered.
+octo governance snapshot --chain-id "$CHAIN_ID" --json | jq '.payload.open_proposals[]'
 
-# 2. Inspect a specific market proposal — substrate-faithful path:
-#    the Snapshot surface returns ALL proposals (no `--proposal-id` flag);
-#    filter client-side via jq.
-octo governance snapshot --json | jq '.proposals[] | select(.id_hex == "<proposal-id-hex>")'
-# Returns: { id_hex, kind, market_id_hex, outcome_options, bond_required_dqa,
-#           closes_at_epoch, current_tally: { yes_weight_bps, no_weight_bps } }
+# 2. Inspect a specific proposal — substrate-faithful path:
+#    the Snapshot surface has no `--proposal-id` flag; filter client-side
+#    via jq on the summary's real `proposal_id` field.
+octo governance snapshot --json | jq '.payload.open_proposals[] | select(.proposal_id == "<proposal-id-hex>")'
+# Each row has exactly these fields:
+#   { proposal_id, chain_id, state, deadline_unix,
+#     tally_for_bps, tally_against_bps }
+# There is NO `kind`, `market_id_hex`, `outcome_options`, `bond_required_dqa`,
+# `closes_at_epoch`, or `current_tally` field. Bond size, outcome options and
+# market identity have no representation in the v1 proposal summary.
+# NOTE: `.payload.open_proposals` is the empty array on the v1 surface, so
+# both filters above return nothing until a backing proposal ledger lands.
+# See §13 for the full statement.
 ```
 
 ### Register — voter capability
@@ -2976,7 +3077,7 @@ octo governance vote <proposal-id-hex> reject \
 #    typed by AuditListArgs discriminant
 #    discriminant (substrate has only Insert | Revoke | Sync | AgentTransition);
 #    use the audit event id returned by the vote receipt.
-octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.receipts[] | select((.receipt_id | tonumber) == ($id | tonumber))'
+octo audit list --limit 100 --json | jq --arg id "<vote-receipt-id-u64>" '.payload.receipts[] | select((.receipt_id | tonumber) == ($id | tonumber))'
 
 # 7. Vault balance reflects any bond return (or slash via §28).
 octo vault balance "$VAULT_ID" --json
@@ -3011,7 +3112,7 @@ octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 ```bash
 # 1. [SUBSTRATE-NEW] `octo reputation federation list` is not yet wired.
 #    Federation membership is discoverable via the audit substrate:
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:federation:"))]'
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:federation:"))]'
 # Substrate: octo_audit::AuditEvent { kind: reputation-federation-join, ... }.
 
 # 2. [SUBSTRATE-NEW] `octo reputation federation show` is not yet wired.
@@ -3075,7 +3176,7 @@ octo governance attest "did:octo:z<43-44-char-base58btc>" "route-quality:uptime-
 # 7. [SUBSTRATE-NEW] `octo reputation quorum show` is not yet wired.
 #    Substrate-faithful alternative: quorum status is read via the audit
 #    substrate:
-octo audit list --limit 10 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:quorum:"))]'
+octo audit list --limit 10 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:quorum:"))]'
 # Substrate: octo_audit::AuditEvent { kind: reputation-quorum-reached, ... }
 # Threshold: MIN_ATTESTOR_QUORUM (default 3) per RFC-0968 §Quorum.
 ```
@@ -3087,7 +3188,7 @@ octo audit list --limit 10 --json | jq '[.receipts[] | select(.subject_did | sta
 octo reputation show --did "did:octo:z<43-44-char-base58btc>" --role builder
 
 # 9. Audit trail (every signal + attestation is auditable).
-octo audit list --limit 50 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
+octo audit list --limit 50 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]' --json
 ```
 
 ### Tear down
@@ -3240,8 +3341,8 @@ chmod 0755 .git/hooks/pre-commit
 
 ```bash
 # 5. Confirm the CI run produced an audit trail.
-octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
-octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:gov:"))]'
+octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:rep:"))]'
+octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:gov:"))]'
 ```
 
 ### Tear down
@@ -3282,7 +3383,7 @@ octo network slash show <slash-id-hex> --json
 
 ```bash
 # 3. Collect counter-evidence (audit trail + mesh records).
-octo audit list --limit 100 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:bootstrap:"))]' > defence-evidence.json
+octo audit list --limit 100 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:bootstrap:"))]' > defence-evidence.json
 octo network envelope inspect <evidence-id-hex> --json >> defence-evidence.json
 ```
 
@@ -3313,7 +3414,7 @@ octo network slash show <slash-id-hex> --json
 # (substrate-new per §28 header note above).
 
 # 6. Audit trail.
-octo audit list --limit 5 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:slash:"))]'
+octo audit list --limit 5 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:slash:"))]'
 
 # 7. (If ratified + governance appeal desired) Vote on the appeal proposal.
 #    [SUBSTRATE-NEW] `octo governance appeal` is not yet wired in GovernanceAction
@@ -3345,7 +3446,7 @@ octo governance vote <appeal-proposal-id-hex> reject \
 
 **Narrative cross-ref:** `hybrid-ai-blockchain-runtime.md` (the dual-local-+-chain execution path). Operators can run inference locally with verifiable proofs, or route to a paid remote agent with cryptographic attestation.
 
-> **Substrate-coverage note:** The current `AgentAction` enum has variants `Create | Run | List | Destroy | Attach | RevokeAttach` only (per RFC-0011-c §Substrate-Additions). `agent search` and `agent verify-trace` are not yet wired to the CLI dispatcher; mesh discovery is via `octo mesh peer list` and reasoning-trace verification is via the audit substrate (`octo audit list --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'` per §17.0). `octo agent run` accepts `--detach --reason --token-file` only (NOT `--input`, `--emit-reasoning-trace`, `--output-trace`) per the substrate-faithful RunArgs shape.
+> **Substrate-coverage note:** The current `AgentAction` enum has variants `Create | Run | List | Destroy | Attach | RevokeAttach` only (per RFC-0011-c §Substrate-Additions). `agent search` and `agent verify-trace` are not yet wired to the CLI dispatcher; mesh discovery is via `octo mesh peer list` and reasoning-trace verification is via the audit substrate (`octo audit list --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:"))]'` per §17.0). `octo agent run` accepts `--detach --reason --token-file` only (NOT `--input`, `--emit-reasoning-trace`, `--output-trace`) per the substrate-faithful RunArgs shape.
 
 ### Prerequisites
 
@@ -3424,14 +3525,14 @@ octo --mode dev --allow-write agent run \
 ```bash
 # 5. Confirm the local run produced an audit trail entry (reasoning trace).
 #    Per §17.0: there is NO `--kind` flag on `octo audit list`; use jq filter.
-#    Substrate-faithful: AuditListOutput has `.receipts[]`; filter by subject_did
+#    Substrate-faithful: AuditListOutput has `.payload.receipts[]`; filter by subject_did
 #    prefix (agent runs tag subject_did as `did:octo:agent:<agent-id>`):
-octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:agent:")) | {receipt_id, subject_did, capability_root}'
+octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:agent:")) | {receipt_id, subject_did, capability_root}'
 
 # 6. Confirm the remote payment was reserved against the vault.
-#    Substrate-faithful: AuditListOutput has `.receipts[]` (NOT `.events[]`).
+#    Substrate-faithful: AuditListOutput has `.payload.receipts[]` (NOT `.events[]`).
 #    Filter on capability_root (vault transfers carry the vault cap root).
-octo audit list --limit 100 --json | jq '.receipts[] | select(.subject_did | startswith("did:octo:vault"))'
+octo audit list --limit 100 --json | jq '.payload.receipts[] | select(.subject_did | startswith("did:octo:vault"))'
 ```
 
 ### Verify
@@ -3550,16 +3651,16 @@ quota-router-cli route \
 #    `crates/octo-cap-macaroon/Cargo.toml`. Workaround: query the holder via
 #    the wired `octo capability list` CLI and jq-filter by `cap_id`:
 octo capability list --json | jq --arg c "<cap-id-hex>" \
-    '.capabilities[] | select(.cap_id == $c) | {cap_id, root_id, caveats}'
+    '.payload.capabilities[] | select(.cap_id == $c) | {cap_id, root_id, caveats}'
 
 # 5. Audit trail (encrypted events are auditable as ciphertexts only).
-octo audit list --limit 1 --json | jq '[.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
+octo audit list --limit 1 --json | jq '[.payload.receipts[] | select(.subject_did | startswith("did:octo:cap:"))]'
 #    [SUBSTRATE-NEW] `--filter-holder-did` is NOT wired on AuditListArgs
 #    (substrate flags are --since / --until / --capability-root / --model /
 #    --router-id / --status / --include-reject / --limit). Use
 #    the §17.0 jq-filter pattern (subject_did startswith canonical prefix):
 octo audit list --limit 100 --json \
-    | jq --arg d "$BUYER_DID" '.receipts[] | select(.subject_did == $d)'
+    | jq --arg d "$BUYER_DID" '.payload.receipts[] | select(.subject_did == $d)'
 ```
 
 ### Tear down
@@ -3656,7 +3757,7 @@ wait
 # 6. Confirm the audit trail records which identity performed each action.
 #    Substrate-faithful: AuditListOutput has `receipts[]` + `count_returned`,
 #    NOT `events[]`. Each ReceiptSummaryOutput carries subject_did + capability_root.
-octo audit list --limit 50 --json | jq '.receipts[] | {subject_did, capability_root}'
+octo audit list --limit 50 --json | jq '.payload.receipts[] | {subject_did, capability_root}'
 ```
 
 ### Tear down
@@ -3822,8 +3923,8 @@ echo "gossip refresh: not yet wired in CLI; relying on next gossip cycle"
 
 ```bash
 # 12. Confirm the audit trail is intact.
-#    Substrate-faithful: AuditListOutput has `.receipts[]` + `.count_returned`.
-octo audit list --limit 100 --json | jq '.count_returned'
+#    Substrate-faithful: AuditListOutput has `.payload.receipts[]` + `.payload.count_returned`.
+octo audit list --limit 100 --json | jq '.payload.count_returned'
 
 # 13. Confirm the vault state matches the backup.
 octo vault list --json
@@ -4069,6 +4170,51 @@ a domain-separated hash, so the same operator can hold a valid `z` DID
 and an invalid `0x` DID at the same time. Reading the coordinator crate
 is the most likely way to end up with the wrong one, which is why this
 entry exists.
+
+### A.2 Reading the JSON envelope: two silent-failure shapes
+
+Every `--json` command emits an `OutputEnvelope`. The command's own data
+lives under the `payload` key — the envelope is a plain struct with named
+fields (`schema_version`, `command`, `executed_at_unix`, `redacted`,
+`payload`) and does **not** flatten its payload upward. So a projection
+reaches data as `.payload.<field>`, never as `.<field>`.
+
+Getting that depth wrong fails in one of two very different ways, and
+which one you get depends on the _kind_ of field you read:
+
+| You read                                                                        | Wrong depth                    | What the operator sees |
+| ------------------------------------------------------------------------------- | ------------------------------ | ---------------------- |
+| an **array** — `[.payload.receipts[] \| …]` written as `[.receipts[] \| …]`     | `jq: Cannot iterate over null` | **exit 5**, loudly     |
+| a **scalar** — `jq '.payload.count_returned'` written as `jq '.count_returned'` | the literal string `null`      | **exit 0, silently**   |
+
+The scalar case is the one that matters. A script that checks exit codes
+will report success while working with the string `null`. Prefer the
+array form for assertions, and compare against an expected value rather
+than trusting a zero exit.
+
+Both shapes are pinned by the cross-process suite, which runs the real
+`jq` against a real envelope. See §33.
+
+### A.3 Fields the envelopes deliberately redact
+
+Some envelope fields are typed `RedactedIdentifier`, whose `Serialize`
+impl emits the constant string `[REDACTED:key]` for **every row** rather
+than the underlying value. Two rows differing only in a redacted field
+project identically, so no client-side filter on that field can work.
+
+The one that bites in practice is the agent id. `octo agent list --json`
+emits `[REDACTED:key]` as the `agent_id` of every agent, which means:
+
+- you cannot select an agent by id out of `agent list`;
+- you cannot feed ids harvested from `agent list` back into
+  `octo agent destroy` — the command fails closed with exit 42
+  (`agent not found`) on the first row, and its hint points back at the
+  very list that produced the placeholder;
+- the real values in that envelope are `state`, `label`,
+  `registered_at_unix`, and `manifest_digest`.
+
+Record agent ids in your own provisioning ledger at `octo agent create`
+time and tear down from that. Do not re-derive them.
 
 ---
 

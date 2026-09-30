@@ -2074,3 +2074,39 @@ mod tests {
         assert!(json.contains("[REDACTED:4chars]"), "{json}");
     }
 }
+
+/// `VaultId` is a 32-byte newtype with a **derived** `Serialize`, so
+/// serde renders it as a JSON array of 32 decimal bytes — not as a hex
+/// string. Every vault-taking flag wants the 64-hex form
+/// (`parse_vault_id_hex`), so an operator who copies `vault_id` straight
+/// out of the envelope gets a bracketed byte list that the argument
+/// parser rejects. Pin the wire form so the guide's hex-conversion jq
+/// stays necessary, and so nobody "simplifies" it away.
+#[test]
+fn tv_vault_6_vault_id_is_a_byte_array_not_a_hex_string() {
+    use octo_cap_macaroon::substrate::VaultId;
+
+    let rendered = serde_json::to_string(&VaultId([0xab; 32])).expect("serialize VaultId");
+    assert_eq!(
+        rendered,
+        format!("[{}]", vec!["171"; 32].join(",")),
+        "vault_id must stay a decimal byte array in the envelope: {rendered}"
+    );
+    assert!(
+        !rendered.contains('"'),
+        "if this ever becomes a string the guide's hex-conversion jq must be \
+         revisited: {rendered}"
+    );
+
+    // The 64-hex form the CLI actually accepts round-trips back to the
+    // same bytes, which is the conversion the guide has to perform.
+    let hex: String = (0..32).map(|_| "ab".to_string()).collect();
+    let parsed = parse_vault_id_hex(&hex).expect("parse 64-hex vault id");
+    assert_eq!(parsed.as_bytes(), &[0xab; 32]);
+
+    // The envelope form is NOT acceptable input.
+    assert!(
+        parse_vault_id_hex(&rendered).is_err(),
+        "the envelope byte array must not be accepted as a vault id argument"
+    );
+}

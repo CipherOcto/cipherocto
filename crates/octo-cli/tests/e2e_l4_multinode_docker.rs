@@ -968,3 +968,233 @@ fn l4_trust_level_filter_reads_the_urn_value_space() {
         "filtering must not mutate the table"
     );
 }
+
+/// The operator guide's disaster-recovery procedure, run verbatim
+/// inside a node container: snapshot the home, wipe it, restore it, and
+/// check the peer table is back.
+///
+/// This exists because the guide's procedure had the property that
+/// running it destroyed the artifact it was restoring from. The backup
+/// was written under `$OCTO_HOME/backup/`, and the restore step began
+/// with `rm -rf "$OCTO_HOME"`, so the extract that followed failed on a
+/// file the wipe had already deleted. A test that only checks the peer
+/// table is populated would have passed; this one performs the wipe.
+///
+/// The cross-node part is what makes it worth a container: the restore
+/// has to produce a peer table whose recorded endpoint is *dialable
+/// again*, which means the restored address is resolved by the compose
+/// bridge and not merely present in a file.
+#[test]
+#[ignore = "requires a running docker engine and compose v2"]
+fn l4_wipe_and_restore_recovers_a_dialable_peer_table() {
+    ensure_docker_available();
+    let stack = Compose::start("restore", "compose-2node.yaml");
+
+    stack.sh_detached(Node::B, &listener_script());
+    assert!(
+        wait_for_reachability(
+            &stack,
+            Node::B,
+            "127.0.0.1",
+            &PROBE_PORT.to_string(),
+            Duration::from_secs(30)
+        ),
+        "the listener never came up on {}",
+        Node::B.service()
+    );
+
+    let peer = canonical_did(66);
+    assert!(stack
+        .peer_add(Node::A, &peer, &Node::B.dialable())
+        .status
+        .success());
+    assert_eq!(
+        endpoint_of(&stack.peer_list(Node::A), &peer),
+        Node::B.dialable()
+    );
+
+    // §22 Setup. The backup directory is outside the home, and the
+    // archive is built with relative member names, so it survives the
+    // wipe and can land in whatever path the home now occupies.
+    let backup = stack.sh(
+        Node::A,
+        r#"
+        set -eu
+        export OCTO_BACKUP_DIR=/octo/backup-outside
+        rm -rf "$OCTO_BACKUP_DIR"
+        mkdir -p "$OCTO_BACKUP_DIR"
+        tar -czf "$OCTO_BACKUP_DIR/home.tar.gz" \
+            --exclude='./backup' --exclude='./data/*.stoolap' \
+            -C "$OCTO_HOME" .
+        "#,
+    );
+    assert!(
+        backup.status.success(),
+        "the snapshot step failed: {}",
+        String::from_utf8_lossy(&backup.stderr)
+    );
+
+    // §22 Operate: wipe, recreate, extract.
+    //
+    // The wipe empties the home rather than removing it. `$OCTO_HOME` is
+    // a volume mount point in any containerized deployment, and
+    // `rm -rf` on a mount point fails with `Device or resource busy` —
+    // so the guide's `rm -rf "$OCTO_HOME"` aborts the whole procedure
+    // under `set -e` at exactly the moment the operator needs it to
+    // work. Emptying the directory achieves the same thing and works in
+    // both cases.
+    let restore = stack.sh(
+        Node::A,
+        r#"
+        set -eu
+        export OCTO_BACKUP_DIR=/octo/backup-outside
+        find "$OCTO_HOME" -mindepth 1 -delete
+        chmod 0700 "$OCTO_HOME"
+        tar -xzf "$OCTO_BACKUP_DIR/home.tar.gz" -C "$OCTO_HOME"
+        "#,
+    );
+    assert!(
+        restore.status.success(),
+        "the restore step failed: {}",
+        String::from_utf8_lossy(&restore.stderr)
+    );
+
+    // The peer table is back, with the endpoint the operator recorded.
+    let listed = stack.peer_list(Node::A);
+    assert_eq!(
+        listed.payload["total_count"], 1,
+        "the restored home must hold the peer that was there before the wipe"
+    );
+    let recorded = endpoint_of(&listed, &peer);
+    assert_eq!(recorded, Node::B.dialable());
+
+    // And the restored record still resolves to a live peer, which is
+    // the part a file-presence assertion would miss.
+    let (host, port) = split_tcp(&recorded);
+    let probe = stack.sh(Node::A, &format!("nc -z -w 3 {host} {port}"));
+    assert!(
+        probe.status.success(),
+        "the restored endpoint {} must be dialable again after recovery; probe stderr: {}",
+        recorded,
+        String::from_utf8_lossy(&probe.stderr)
+    );
+
+    // The backup directory is outside the home, so the wipe could not
+    // have taken the archive with it. This is the assertion that fails
+    // against the pre-fix procedure.
+    let survivor = stack.sh(
+        Node::A,
+        "test -f /octo/backup-outside/home.tar.gz && echo SURVIVED",
+    );
+    assert!(
+        String::from_utf8_lossy(&survivor.stdout).contains("SURVIVED"),
+        "the archive must live outside $OCTO_HOME, or the wipe destroys the only copy"
+    );
+}
+
+/// The guide says a mesh peer table is rebuildable from network gossip.
+/// There is no gossip refresh on the CLI, so the only way to move a
+/// peer table between nodes is to snapshot it and restore it — which
+/// makes the cross-node case the one operators actually need.
+///
+/// It also has to preserve isolation. A restored table on node B must
+/// not become visible to node A, or "restoring a backup" silently
+/// merges two nodes into one.
+#[test]
+#[ignore = "requires a running docker engine and compose v2"]
+fn l4_restoring_one_nodes_peer_table_onto_another_does_not_break_isolation() {
+    ensure_docker_available();
+    let stack = Compose::start("xnode", "compose-2node.yaml");
+
+    let peer = canonical_did(67);
+    assert!(stack
+        .peer_add(Node::A, &peer, &Node::B.dialable())
+        .status
+        .success());
+    assert_eq!(stack.peer_list(Node::A).payload["total_count"], 1);
+    assert_eq!(
+        stack.peer_list(Node::B).payload["total_count"],
+        0,
+        "{} must start with an empty table",
+        Node::B.service()
+    );
+
+    // Export A's table from inside A, with relative member names so it
+    // can be extracted into B's home.
+    let dump = stack.sh(
+        Node::A,
+        r#"
+        set -eu
+        rm -rf /octo/exports && mkdir -p /octo/exports
+        tar -czf /octo/exports/from-a.tar.gz -C "$OCTO_HOME" ./mesh
+        "#,
+    );
+    assert!(
+        dump.status.success(),
+        "node A could not export its peer table: {}",
+        String::from_utf8_lossy(&dump.stderr)
+    );
+
+    // Move A's archive into B. `compose cp` is addressed by service
+    // rather than by container name, so this does not depend on compose's
+    // `{project}-{service}-{index}` naming — and it is how an operator
+    // actually transfers a backup between machines.
+    let copied = stack
+        .base(&[
+            "cp",
+            "node-a:/octo/exports/from-a.tar.gz",
+            "/tmp/from-a.tar.gz",
+        ])
+        .output()
+        .expect("docker compose cp out of node-a");
+    assert!(
+        copied.status.success(),
+        "node A's table could not be copied off: {}",
+        String::from_utf8_lossy(&copied.stderr)
+    );
+    let copied = stack
+        .base(&[
+            "cp",
+            "/tmp/from-a.tar.gz",
+            "node-b:/octo/incoming-from-a.tar.gz",
+        ])
+        .output()
+        .expect("docker compose cp into node-b");
+    assert!(
+        copied.status.success(),
+        "the archive could not be moved from {} to {}: {}",
+        Node::A.service(),
+        Node::B.service(),
+        String::from_utf8_lossy(&copied.stderr)
+    );
+
+    let applied = stack.sh(
+        Node::B,
+        r#"
+        set -eu
+        tar -xzf /octo/incoming-from-a.tar.gz -C "$OCTO_HOME"
+        "#,
+    );
+    assert!(
+        applied.status.success(),
+        "node B could not restore node A's table: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    // B now holds A's peer, and the endpoint it names is B's own dialable
+    // address, resolved on the shared bridge.
+    let listed = stack.peer_list(Node::B);
+    assert_eq!(
+        listed.payload["total_count"], 1,
+        "the restored table must be readable on the node it was restored onto"
+    );
+    assert_eq!(endpoint_of(&listed, &peer), Node::B.dialable());
+
+    // And A is unchanged: a restore is a local write, not a gossip
+    // event. If this ever changes, the two nodes have silently merged.
+    assert_eq!(
+        stack.peer_list(Node::A).payload["total_count"],
+        1,
+        "node A must still hold exactly its own peer"
+    );
+}

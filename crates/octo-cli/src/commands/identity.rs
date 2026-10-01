@@ -72,10 +72,10 @@ pub enum IdentityAction {
     /// `--label <label>` REQUIRED, `--passphrase-file <path>`
     /// REQUIRED (passphrase must clear the substrate floor at both
     /// `register` and `unlock` per mission 0011-x-s-a-wallet-store-identity
-    /// §AC-28), `--activate` flag (default true on a fresh store,
-    /// false otherwise), `--seed-file <path>` optional (random
+    /// §AC-28), `--activate` flag (default true; effective only on a
+    /// wallet with no active identity), `--seed-file <path>` optional (random
     /// CSPRNG when absent). Confirmation gate applies per
-    /// `require_confirm`. Exit codes: 0 / 2 / 4 / 5 / 11 / 64.
+    /// `require_confirm`. Exit codes: 0 / 2 / 5 / 6 / 64 / 92.
     Register {
         /// Operator-chosen label for the new identity.
         #[arg(long)]
@@ -84,11 +84,15 @@ pub enum IdentityAction {
         /// (passphrase is length-floor gated at the substrate).
         #[arg(long, value_name = "PATH")]
         passphrase_file: std::path::PathBuf,
-        /// Promote the new identity to `Active` immediately. Default
-        /// true on a fresh store, false when an active identity
-        /// already exists (a fresh store activates the first
-        /// identity; subsequent registrations stay `Designated`
-        /// until explicitly selected).
+        /// Promote the new identity to `Active` immediately. The flag
+        /// defaults to true, but promotion only takes effect on a
+        /// wallet with no active identity: the substrate sets the
+        /// active pointer only when it is currently unset, so a
+        /// second `register --activate` leaves the first identity
+        /// active and the new one `Designated`. Use
+        /// `octo identity select` to move the pointer. The
+        /// `active_now` field of the output envelope reports what the
+        /// store actually holds, not what this flag asked for.
         #[arg(long, default_value_t = true)]
         activate: bool,
         /// Optional path to a file containing a 32-byte seed (raw or
@@ -623,9 +627,16 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
 /// §AC-9 + §AC-10.
 pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     if reason.trim().is_empty() {
-        return Err(OctoCliError::Internal(
-            "revocation reason must be non-empty".to_string(),
-        ));
+        // Operator input, not a substrate fault. This is the same
+        // class as `WalletError::ReasonTooLong` and
+        // `ReasonContainsControlChars`, which the R4 sweep routed to
+        // `InvalidReason` at exit 2; this sibling guard was left on
+        // `Internal`, so a typo produced "unexpected substrate error"
+        // at exit 64. `ClapParse`, `WeakPassphrase` and `InvalidReason`
+        // all follow the exit-2 convention.
+        return Err(OctoCliError::InvalidReason {
+            detail: "revocation reason must be non-empty".to_string(),
+        });
     }
     require_confirm(cli, "identity revoke")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
@@ -698,7 +709,16 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
 /// `--passphrase-file` path; the substrate enforces
 /// `MIN_PASSPHRASE_CHARS` floor at register time (mission §AC-28).
 ///
-/// Exit codes: 0 / 2 / 6 / 43 / 64.
+/// Exit codes: 0 / 2 / 5 / 6 / 64 / 92, derived from the arms
+/// `From<WalletError>` actually provides for the variants
+/// `WalletStore::register` can return: `WeakPassphrase` to 2,
+/// `Hsm` to 5, a duplicate-DID `AlreadyRevoked` to 6,
+/// `VaultSlotNotFound` / `VaultDecryptionFailed` to `WalletLocked`
+/// at 92, and everything else to `Internal` at 64. The previous
+/// lists here and on the clap variant disagreed with each other and
+/// with the code: one offered 4 and 11 (unreachable from this path)
+/// and the other 43 (no lifecycle refusal is reachable here), and
+/// both omitted 92.
 pub fn register(
     label: &str,
     passphrase_file: &std::path::Path,
@@ -720,7 +740,10 @@ pub fn register(
             .unwrap_or_else(|| "csprng".to_string()),
     );
     // Read passphrase file contents. Empty / missing file → substrate
-    // floor check rejects with `WeakPassphrase` at exit 94 / slot 2.
+    // floor check rejects with `WeakPassphrase` at slot 94, exit 2.
+    // Only a file that EXISTS but is empty reaches that check; a
+    // missing path fails one line below at `read_to_string` and
+    // surfaces as `Internal` at exit 64, not as `WeakPassphrase`.
     // Wrap the passphrase in `Zeroizing<String>` so the bytes are
     // scrubbed when the variable drops at the end of the handler
     // (mission AC-24: passphrase must NOT survive into the heap
@@ -732,7 +755,7 @@ pub fn register(
                 "passphrase file read: {e}"
             )))
         })?);
-    if !cli.mode.dry_run {
+    let register_facts = if !cli.mode.dry_run {
         // Substrate-side construction. In dev mode (mirrors rotate
         // successor pattern at L334) the seed is the hardcoded stub;
         // otherwise CSPRNG via `IdentityKey::generate` or a
@@ -808,24 +831,51 @@ pub fn register(
         };
         let now = chrono::Utc::now().timestamp().max(0);
         let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-        store
+        let key_pubkey = key.public_key_bytes();
+        // The substrate mints the DID and returns it. The previous
+        // revision discarded the return with `?` and emitted
+        // `did: String::new()`, so a successful register reported an
+        // empty DID for an identity that was on disk.
+        let did = store
             .register(key, &passphrase, activate, now)
             .map_err(OctoCliError::from)?;
-    }
-    // Surface a 32-byte-shaped `RegisteredAt` envelope. Pin `did` to
-    // empty when `--dry-run` (substrate did not mint a record) so
-    // the operator sees the schema-corrected payload either way.
+        // `pubkey_hex` is recoverable from the record rather than from
+        // `key`, which `register` consumed by value.
+        let record = store.identity_record(&did).map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "post-register record read: {e}"
+            )))
+        })?;
+        let lifecycle_now = record.lifecycle;
+        let active_did_now: Option<String> = store.active_did().map(|d| d.0.clone());
+        // `active_now` is the substrate's post-condition, not the flag
+        // that was passed. `register` promotes the new record only when
+        // the wallet had no active identity, so echoing `activate` told
+        // the operator the pointer had moved when on a populated wallet
+        // it had not. Read the pointer back instead.
+        let active_now = active_did_now.as_deref() == Some(did.0.as_str());
+        (
+            did.0,
+            hex::encode(key_pubkey),
+            format!("{lifecycle_now:?}"),
+            active_now,
+        )
+    } else {
+        // No substrate call ran, so there is no DID, no record and no
+        // pointer to read. A preview says so with empty values rather
+        // than fabricating them; the envelope is emitted through
+        // `OutputEnvelope::redacted`, which marks it
+        // non-authoritative.
+        (String::new(), String::new(), String::new(), false)
+    };
+    let (did, pubkey_hex, lifecycle_state, active_now) = register_facts;
     let output = IdentityRegisterOutput {
-        did: String::new(),
-        pubkey_hex: String::new(),
+        did,
+        pubkey_hex,
         label: label.to_string(),
-        lifecycle_state: if activate {
-            "Active".to_string()
-        } else {
-            "Designated".to_string()
-        },
+        lifecycle_state,
         registered_at: chrono::Utc::now(),
-        active_now: activate,
+        active_now,
     };
     let env = if cli.mode.dry_run {
         OutputEnvelope::redacted("octo.identity.register.v1", output)
@@ -882,6 +932,14 @@ pub fn select(did: &str, cli: &Octo) -> Result<(), OctoCliError> {
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })?;
         lifecycle_state = format!("{:?}", record.lifecycle);
+    }
+    // A dry-run performed no read, so there is no label to report. The
+    // empty string is not a member of the documented `Designated` /
+    // `Active` / `Rotating` / `Revoked` set, so say so explicitly
+    // rather than emitting a value a consumer would have to special-
+    // case. `previous_active_did` is left null for the same reason.
+    if cli.mode.dry_run {
+        lifecycle_state = "<not-read: dry-run>".to_string();
     }
     let output = IdentitySelectOutput {
         did: parsed.0,
@@ -959,7 +1017,7 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
     require_confirm(cli, "identity rotate-complete")?;
     // Pastejacking defense.
     eprintln!("would rotate-complete: in_flight_rotation=present");
-    if !cli.mode.dry_run {
+    let rotate_facts = if !cli.mode.dry_run {
         // §AC-7: open the store, then unlock with the
         // passphrase. The seed buffer is zeroized by the
         // substrate after the key is rehydrated into
@@ -973,13 +1031,27 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
             .unlock(passphrase.as_str(), seed_buf.as_mut())
             .map_err(OctoCliError::from)?;
         let now = chrono::Utc::now().timestamp().max(0) as u64;
+        // The predecessor DID is live on the handle before
+        // `complete_rotation` retires it. The previous revision read
+        // neither DID and emitted `String::new()` for both, so a
+        // completed rotation - after which the successor is the active
+        // identity - told the operator nothing about which DID is now
+        // active.
+        let old_did = unlocked.did().0.clone();
         unlocked
             .complete_rotation(now)
             .map_err(OctoCliError::from)?;
-    }
+        // `complete_rotation` promotes the successor, so the store's
+        // active pointer is the new DID after the call.
+        let new_did = store.active_did().map(|d| d.0.clone()).unwrap_or_default();
+        (new_did, old_did)
+    } else {
+        (String::new(), String::new())
+    };
+    let (new_did, old_did) = rotate_facts;
     let output = IdentityRotateCompleteOutput {
-        new_did: String::new(),
-        old_did: String::new(),
+        new_did,
+        old_did,
         completed_at: chrono::Utc::now(),
     };
     let env = if cli.mode.dry_run {
@@ -1015,21 +1087,38 @@ pub fn rotate_abort(
     // Pastejacking defense.
     eprintln!(
         "would rotate-abort: in_flight_rotation=present, reason={}",
-        reason.unwrap_or("<none>")
+        reason
+            .map(|r| redact_string(r).into_owned())
+            .unwrap_or_else(|| "<none>".to_string())
     );
-    if !cli.mode.dry_run {
+    let abort_facts = if !cli.mode.dry_run {
         let passphrase = acquire_passphrase(cli, "identity rotate-abort", passphrase_stdin)?;
         let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
         let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
         let mut unlocked = store
             .unlock(passphrase.as_str(), seed_buf.as_mut())
             .map_err(OctoCliError::from)?;
+        // `abort_rotation` restores THIS handle's record to `Active`
+        // and removes the successor, so the restored DID is the
+        // handle's own. The previous revision emitted
+        // `restored_did: String::new()` while the handler's own doc
+        // comment promised the restored DID was echoed.
+        let restored_did = unlocked.did().0.clone();
         unlocked.abort_rotation().map_err(OctoCliError::from)?;
-    }
+        restored_did
+    } else {
+        String::new()
+    };
     let output = IdentityRotateAbortOutput {
-        restored_did: String::new(),
+        restored_did: abort_facts,
         aborted_at: chrono::Utc::now(),
-        reason: reason.map(|s| s.to_string()),
+        // The reason is operator-supplied free text on a mutating
+        // command. The sibling `revoke` handler runs it through
+        // `redact_string` on both the stderr echo and the envelope;
+        // this path did neither, so a token pasted into `--reason`
+        // landed verbatim in the terminal and in any log capturing
+        // the envelope. Two doc comments claimed it was sanitized.
+        reason: reason.map(|r| redact_string(r).into_owned()),
     };
     let env = if cli.mode.dry_run {
         OutputEnvelope::redacted("octo.identity.rotate-abort.v1", output)
@@ -1360,6 +1449,32 @@ mod tests {
         &src[from..to]
     }
 
+    /// `fn_body` with every line comment removed.
+    ///
+    /// A negative source assertion (`!body.contains("did: String::new()")`)
+    /// is only meaningful against CODE. The register handler carries a
+    /// comment quoting the exact form it no longer emits, so a raw
+    /// slice made the vector report a false defect on the fix. A
+    /// positive assertion has the opposite failure — a needle quoted
+    /// in prose would make it pass vacuously — so both directions want
+    /// comments gone.
+    ///
+    /// Line-oriented rather than a real lexer: a `//` preceded by a
+    /// quote on the same line is left alone, so a `//` inside a string
+    /// literal cannot truncate the rest of that line. Any residual risk
+    /// is fail-toward-visible (an assertion fires) rather than
+    /// fail-toward-green.
+    fn fn_body_code(src: &str, start: &str, end: &str) -> String {
+        fn_body(src, start, end)
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) if !line[..at].contains('"') => line[..at].trim_end(),
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// The production source of this file, with every test-module line
     /// removed.
     ///
@@ -1662,16 +1777,148 @@ mod tests {
         );
     }
 
-    /// CORR-19: empty reason must be rejected.
+    /// tv_x_c_39 - R5 findings 1, 2, 3, 4. Four output envelopes in
+    /// this file reported placeholder or empty values on the
+    /// COMMITTED path, where the substrate had just written real ones
+    /// to disk. Each asserted the value it should never contain, so a
+    /// regression to the placeholder form fails.
+    ///
+    /// `register` is the worst of the four: the substrate mints the
+    /// DID and RETURNS it, and the handler discarded the return with
+    /// `?`, so `octo identity register` exited 0 having told the
+    /// operator its new identity had no DID.
+    #[test]
+    fn tv_x_c_39_no_committed_envelope_reports_a_placeholder_did() {
+        let src = production_src();
+
+        // Every leg below asserts the DATA FLOW, not a literal. The
+        // first draft used negative spelling checks
+        // (`!body.contains("did: String::new())"`), which a reviewer
+        // mutation defeated by keeping the field name and emptying the
+        // source instead: `restored_did: abort_facts` fed by a
+        // committed arm returning `String::new()`. A placeholder can
+        // reach the envelope through any binding, so the only sound
+        // check is that the value the envelope names is derived, on
+        // the committed path, from a substrate read.
+
+        // register: the substrate MINTS the DID and returns it. The
+        // previous revision discarded the return with `?`.
+        let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
+        assert!(
+            reg.contains("let did = store")
+                && reg.contains(".register(key, &passphrase, activate, now)")
+                && reg.contains(
+                    "let (did, pubkey_hex, lifecycle_state, active_now) = register_facts"
+                ),
+            "register must bind the DID the substrate returns and destructure it into the \
+             envelope, not discard it with a bare `?`: {reg}"
+        );
+        assert!(
+            reg.contains("did,") && reg.contains("pubkey_hex,") && reg.contains("active_now,"),
+            "the envelope fields must be shorthand bindings taken from the committed arm, \
+             not literals: {reg}"
+        );
+        assert!(
+            !reg.contains("did: String::new()")
+                && !reg.contains("pubkey_hex: String::new()")
+                && !reg.contains("active_now: activate"),
+            "register must report substrate facts, not empty strings or the flag it was \
+             passed; promotion only happens when the wallet had no active identity: {reg}"
+        );
+        assert!(
+            reg.contains("hex::encode(key_pubkey)"),
+            "pubkey_hex must be the record's public key, hex-encoded: {reg}"
+        );
+        assert!(
+            reg.contains("store.active_did().map(|d| d.0.clone()) == Some(did.0.as_str())")
+                || reg.contains("active_did_now.as_deref() == Some(did.0.as_str())"),
+            "active_now must be the pointer read back from the store, compared to the new \
+             DID - not the activate flag echoed: {reg}"
+        );
+
+        // rotate-complete: the predecessor is retired and the
+        // successor promoted, so BOTH DIDs are knowable.
+        let complete = fn_body_code(src, "pub fn rotate_complete(", "pub fn rotate_abort(");
+        assert!(
+            complete.contains("let old_did = unlocked.did().0.clone()")
+                && complete.contains("let new_did = store.active_did()"),
+            "rotate-complete must read the predecessor from the handle and the successor \
+             from the store pointer: {complete}"
+        );
+        assert!(
+            complete.contains("(new_did, old_did)")
+                && complete.contains("new_did,")
+                && complete.contains("old_did,"),
+            "both envelope fields must be the destructured committed values: {complete}"
+        );
+        assert!(
+            !complete.contains("new_did: String::new()")
+                && !complete.contains("old_did: String::new()"),
+            "rotate-complete must not fall back to empty DIDs: {complete}"
+        );
+
+        // rotate-abort: abort restores THIS handle's record to Active.
+        let abort = fn_body_code(src, "pub fn rotate_abort(", "pub fn is_dev_mode(");
+        // The BINDING alone is not enough: a mutation that keeps
+        // `let restored_did = unlocked.did().0.clone();` and then
+        // returns `String::new()` as the arm's tail is a dead store -
+        // the value is computed and discarded - and passed an
+        // existence check. So the assertion pins the tail: the
+        // abort call, then the binding as the arm's value.
+        assert!(
+            abort.contains(
+                "unlocked.abort_rotation().map_err(OctoCliError::from)?;\n        restored_did\n    } else {"
+            ),
+            "the committed arm must RETURN the restored DID read from the handle, not \
+             compute it into a binding it then discards: {abort}"
+        );
+        assert!(
+            abort.contains("restored_did: abort_facts"),
+            "the envelope field must be the arm's value: {abort}"
+        );
+        assert!(
+            !abort.contains("restored_did: String::new()"),
+            "rotate-abort must not fall back to an empty restored DID: {abort}"
+        );
+        assert!(
+            abort.contains("reason: reason.map(|r| redact_string(r).into_owned())"),
+            "rotate-abort must redact the operator reason before it reaches the \
+             envelope, as the sibling revoke handler does: {abort}"
+        );
+    }
+
+    /// tv_x_c_38 - CORR-19 plus the R5 exit-code correction. An empty
+    /// or whitespace-only reason is operator input, so it must be
+    /// refused as such: `InvalidReason` at exit 2, alongside
+    /// `ClapParse` and `WeakPassphrase`. The previous assertion
+    /// pinned `Internal` at exit 64 - the variant every consuming
+    /// handler's exit-code list documents as "unexpected substrate
+    /// error" - so a typo was reported to the operator as a substrate
+    /// fault. The sibling substrate guards
+    /// (`ReasonContainsControlChars`, `ReasonTooLong`) were
+    /// corrected to the same slot in the previous round; this local
+    /// guard was the last one left on the wrong one.
     #[test]
     fn revoke_rejects_empty_reason() {
         let mut cli = cli_with_mode(OperatorMode::Human);
         cli.mode.confirm = true;
-        let r = revoke("   ", false, &cli);
-        assert!(
-            matches!(r, Err(OctoCliError::Internal(_))),
-            "empty/whitespace reason must be rejected: {r:?}"
-        );
+        for reason in [
+            "", "   ", "	
+",
+        ] {
+            let r = revoke(reason, false, &cli);
+            let e = r.expect_err("a blank reason must be refused");
+            assert_eq!(
+                e.exit_code(),
+                2,
+                "a blank reason is operator input and must exit 2, got {} from {e:?}",
+                e.exit_code()
+            );
+            assert!(
+                matches!(e, OctoCliError::InvalidReason { .. }),
+                "a blank reason must map to InvalidReason, not Internal: {e:?}"
+            );
+        }
     }
 
     // R24: cfg-guard assertion moved to integration test

@@ -1952,6 +1952,8 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
 /// | `WalletError::GracePeriodNotElapsed { .. }`            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::InvalidSuccessorProof`                   | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::InvalidRevocationProof`                  | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::ReasonContainsControlChars(<U+XXXX>)`      | `OctoCliError::InvalidReason { detail }`              | 2    |
+/// | `WalletError::ReasonTooLong(len)`                        | `OctoCliError::InvalidReason { detail }`              | 2    |
 /// | (all other substrate variants)                         | `OctoCliError::Internal(sanitize_substrate_error(...))`| 64   |
 ///
 /// Defense-in-depth scrub pass: every arm that carries a substrate

@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::WalletError;
-use crate::identity::IdentityKey;
-use crate::identity_record::{Did, IdentityRecord};
+use crate::identity::{IdentityKey, ROTATION_GRACE_PERIOD_SECS};
+use crate::identity_record::{Did, IdentityRecord, IdentityRotationEvent};
 use crate::lifecycle::LifecycleState;
 use crate::vault::{validate_slot_id, Vault};
 
@@ -650,32 +650,60 @@ impl WalletStore {
         } else {
             None
         };
-        let rotation_started_at = if matches!(record.lifecycle, LifecycleState::Rotating) {
-            // AC-33: reconstruct from the newest event in the
-            // record's own rotation history. AC-32: this is the
-            // exact field `complete_rotation` reads through
-            // `.expect(...)`; without it the next `complete_rotation`
-            // panics with exit 101. `tv_x_40` exercises this.
+        // The newest event describes the rotation in flight. Both the
+        // start time AND the successor come from it: `begin_rotation`
+        // holds both on the in-memory key, and the CLI runs
+        // `rotate` and `rotate-complete` as two separate processes, so
+        // without this the successor linkage is gone and
+        // `complete_rotation` refuses with `NotRotating` even though
+        // the lifecycle says `Rotating`.
+        let in_flight = if matches!(record.lifecycle, LifecycleState::Rotating) {
             record
                 .rotation_history
                 .iter()
-                .map(|e| {
-                    #[allow(clippy::cast_sign_loss)]
-                    let ts = e.started_at_unix.cast_unsigned();
-                    ts
-                })
-                .max()
+                .max_by_key(|e| e.started_at_unix)
+                .cloned()
         } else {
             None
         };
+        // AC-32: `rotation_started_at_unix_secs` is the exact field
+        // `complete_rotation` reads through `.expect(...)`; without
+        // it the call panics with exit 101. `tv_x_49` exercises it
+        // across a reopen, which is how the CLI actually runs.
+        let rotation_started_at = in_flight.as_ref().map(|e| {
+            #[allow(clippy::cast_sign_loss)]
+            e.started_at_unix.cast_unsigned()
+        });
+        let successor_did = in_flight.as_ref().map(|e| e.successor_did.clone());
 
-        let key = IdentityKey::from_seed_with_lifecycle(
+        let mut key = IdentityKey::from_seed_with_lifecycle(
             seed_arr,
             record.lifecycle,
             activated_at,
             revoked_at,
             rotation_started_at,
         )?;
+
+        // Re-attach the successor from its vault-sealed seed. The
+        // seed was written by `begin_rotation`'s seal step, so it is
+        // on disk; the DID is the index key the seal step also wrote.
+        if let Some(succ_did) = successor_did.as_ref() {
+            let succ_record = self
+                .index
+                .record(succ_did)
+                .map_err(|_| WalletError::IdentityNotFound(succ_did.clone()))?;
+            let succ_slot = seed_slot_slug_by_pubkey(succ_record.pubkey_bytes);
+            let mut succ_seed = Vec::new();
+            self.vault.get(&succ_slot, passphrase, &mut succ_seed)?;
+            if succ_seed.len() < 32 {
+                succ_seed.fill(0);
+                return Err(WalletError::VaultDecryptionFailed);
+            }
+            let mut succ_arr = [0u8; 32];
+            succ_arr.copy_from_slice(&succ_seed[..32]);
+            succ_seed.fill(0);
+            key.rehydrate_successor(IdentityKey::from_seed(succ_arr))?;
+        }
 
         // 6. Return the handle. The handle holds the unique key
         //    (mission AC-39); clones of `IdentityKey` keep the
@@ -685,7 +713,7 @@ impl WalletStore {
             store: self,
             key,
             did: active_did,
-            rotation_successor_did: None,
+            rotation_successor_did: successor_did,
         })
     }
 }
@@ -811,10 +839,30 @@ impl UnlockedWallet<'_> {
             .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()))
             .unwrap_or_else(|i| i);
         self.store.index.records.insert(pos, successor_record);
+        let successor_did_for_event = successor_did.clone();
         self.rotation_successor_did = Some(successor_did);
         // Refresh the record snapshot in the index to reflect the
         // new Rotating lifecycle.
         self.persist_active_record()?;
+        // PERSIST THE ROTATION EVENT. The predecessor's start time
+        // and successor DID both live on the in-memory key, and the
+        // CLI runs `rotate` and `rotate-complete` as two separate
+        // processes. Without this write, `store.json` carries only
+        // the `Rotating` lifecycle, `unlock` reconstructs
+        // `rotation_started_at` from an EMPTY `rotation_history` and
+        // hands `complete_rotation` a `None`, and the `.expect` in
+        // `IdentityKey::complete_rotation` panics - exit 101, no
+        // envelope, on the only path the CLI can take. The same
+        // omission stranded `rotation_successor_did`, so a
+        // cross-process complete never promoted the successor.
+        let predecessor_did = self.did.clone();
+        self.append_rotation_event(
+            predecessor_did.as_str(),
+            now_unix,
+            now_unix.saturating_add(ROTATION_GRACE_PERIOD_SECS),
+            successor_did_for_event,
+            proof,
+        )?;
         Ok(proof)
     }
 
@@ -929,6 +977,50 @@ impl UnlockedWallet<'_> {
         self.key.sign(msg)
     }
 
+    /// Append an `IdentityRotationEvent` to the predecessor's
+    /// persisted record and rewrite the index atomically.
+    ///
+    /// This is the ONLY cross-process carrier for a rotation in
+    /// flight. `unlock` reconstructs `rotation_started_at_unix_secs`
+    /// from the newest event here, and `complete_rotation` reads that
+    /// field through `.expect(...)`; the successor DID is recovered
+    /// the same way. Both are in-memory on the `IdentityKey`, so a
+    /// rotation that did not reach this function is unrecoverable
+    /// across a process boundary.
+    fn append_rotation_event(
+        &mut self,
+        predecessor: &str,
+        started_at: u64,
+        grace_expires_at: u64,
+        successor: Did,
+        signature_proof: [u8; 64],
+    ) -> Result<(), WalletError> {
+        let pos = self
+            .store
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(predecessor))
+            .map_err(|_| WalletError::IdentityNotFound(Did::from(predecessor)))?;
+        // The rotation id is the signature's first 32 bytes: unique
+        // per (predecessor, successor) pair because `begin_rotation`
+        // signs `b"rotate" || successor_pubkey` with the
+        // predecessor's key, and deterministic for a given pair.
+        let mut rotation_id = [0u8; 32];
+        rotation_id.copy_from_slice(&signature_proof[..32]);
+        let mut record = self.store.index.records[pos].clone();
+        record.rotation_history.push(IdentityRotationEvent {
+            rotation_id,
+            #[allow(clippy::cast_possible_wrap)]
+            started_at_unix: started_at.cast_signed(),
+            #[allow(clippy::cast_possible_wrap)]
+            grace_expires_at_unix: grace_expires_at.cast_signed(),
+            successor_did: successor,
+            signature_proof,
+        });
+        self.store.index.records[pos] = record;
+        write_index_atomically(&self.store.root, &self.store.index)
+    }
+
     /// Refresh the persisted record for the active DID to match
     /// the in-memory `IdentityKey`. Called after every state
     /// transition so `store.json` mirrors the live key.
@@ -1005,12 +1097,17 @@ fn read_home_fallback() -> PathBuf {
 /// §AC-29). Reaches `validate_slot_id` to assert the rule on every
 /// derivation rather than trust the format.
 ///
-/// Not yet called — Phase 3's unlock / register-write seed-sealing
-/// step will reach it. Reserved here so the slug rule has one home
-/// when Phase 3 lands.
-#[allow(dead_code)]
 pub(crate) fn seed_slot_slug(key: &crate::identity::IdentityKey) -> String {
-    let slug = format!("identity-{}", hex::encode(key.public_key_bytes()));
+    seed_slot_slug_by_pubkey(key.public_key_bytes())
+}
+
+/// The same rule as [`seed_slot_slug`], keyed on the raw public-key
+/// bytes so a caller that has only a persisted `IdentityRecord` (the
+/// rehydrate path in `unlock`, which has no `IdentityKey` yet) derives
+/// the same slot name the seal step wrote. Two spellings of one rule
+/// would orphan every slot on reopen.
+pub(crate) fn seed_slot_slug_by_pubkey(pubkey_bytes: [u8; 32]) -> String {
+    let slug = format!("identity-{}", hex::encode(pubkey_bytes));
     // Assert the slug passes validate_slot_id. The slug is derived
     // from hex-encoded pubkey bytes (a 73-character ASCII string) so
     // the assertion is deterministic and cannot fail at runtime, but
@@ -2128,6 +2225,76 @@ mod tests {
         assert!(
             result.is_ok(),
             "complete_rotation on a 5-arg-rehydrated Rotating key must not panic, got {result:?}"
+        );
+    }
+
+    /// tv_x_49 - CROSS-PROCESS rotate-complete must not panic.
+    ///
+    /// `tv_x_40` reuses ONE `UnlockedWallet` for begin and complete, so
+    /// `rotation_started_at_unix_secs` is still in memory. The CLI runs
+    /// `octo identity rotate` and `octo identity rotate-complete` as two
+    /// separate processes, so the only carrier is `store.json`.
+    ///
+    /// The reconstruction in `unlock` reads the start time from
+    /// `record.rotation_history`, but nothing ever PUSHED an event
+    /// there: `begin_rotation` sets the timestamp on the in-memory key
+    /// and `persist_active_record` writes only `lifecycle` and
+    /// `deprecated`. The history is `Vec::new()` at both construction
+    /// sites, so the reconstruction is `None` on every real run and
+    /// `complete_rotation` hits its `.expect(...)` - exit 101, a panic
+    /// with no envelope, on the only path the CLI can take. The
+    /// `GracePeriodNotElapsed` path that exit 43 documents was
+    /// unreachable.
+    #[test]
+    fn tv_x_49_rotate_complete_survives_a_store_reopen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0xABu8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let successor = IdentityKey::from_seed([0xACu8; 32]);
+        let successor_did = successor.did().0.clone();
+        let proof = handle
+            .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        drop(handle);
+        drop(store);
+
+        // Reopen, exactly as a second `octo identity` process would.
+        let mut store = WalletStore::open_at(dir.path()).expect("reopen");
+        let mut seed_out = Vec::new();
+        let did = store
+            .active_did()
+            .expect("reopened store has an active DID")
+            .clone();
+        let persisted = store.identity_record(&did).expect("record").clone();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock after reopen");
+        assert!(
+            !persisted.rotation_history.is_empty(),
+            "begin_rotation must persist a rotation event, or the start time is lost \
+             across processes and complete_rotation panics"
+        );
+        assert_eq!(
+            persisted.rotation_history[0].successor_did.0, successor_did,
+            "the persisted event must name the successor the operator rotated to"
+        );
+        assert_eq!(
+            persisted.rotation_history[0].signature_proof, proof,
+            "the persisted event must carry the proof begin_rotation returned"
+        );
+        // Past the 24h grace, so this is the Ok path rather than the
+        // exit-43 refusal.
+        let result = handle.complete_rotation(1_700_000_010 + 86_400 + 10);
+        assert!(
+            result.is_ok(),
+            "complete_rotation after a reopen must succeed, got {result:?}"
         );
     }
 }

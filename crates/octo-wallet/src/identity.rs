@@ -370,6 +370,33 @@ impl IdentityKey {
         Ok(proof)
     }
 
+    /// Re-attach a successor key to a key that is already in the
+    /// `Rotating` lifecycle, without re-running the transition.
+    ///
+    /// `begin_rotation` caches the successor in memory only, so a
+    /// second process that rehydrates the predecessor from disk has
+    /// no successor linkage and `complete_rotation` refuses with
+    /// `NotRotating { current_state: Rotating }` — the state says the
+    /// rotation is in flight while the key says it has no successor.
+    /// The store rehydrates the successor from its vault-sealed seed
+    /// and calls this before completing.
+    ///
+    /// Returns `WalletError::SelfRotation` if `successor` is this
+    /// key, refusing the same pairing `begin_rotation` refuses.
+    pub fn rehydrate_successor(&mut self, successor: IdentityKey) -> Result<(), WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if !matches!(self.lifecycle, LifecycleState::Rotating) {
+            return Err(WalletError::NotRotating {
+                current_state: self.lifecycle,
+            });
+        }
+        if successor.public_key_bytes() == self.public_key_bytes() {
+            return Err(WalletError::SelfRotation);
+        }
+        self.successor_key = Some(Box::new(successor));
+        Ok(())
+    }
+
     /// RFC-0009 §Lifecycle row 3: `Rotating → Active` (after grace).
     ///
     /// Completes the rotation: verifies the stored `successor_proof` against

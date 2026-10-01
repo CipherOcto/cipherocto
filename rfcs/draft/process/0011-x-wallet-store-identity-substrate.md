@@ -1261,22 +1261,22 @@ Phases 1 through 3 are the substrate mission; phase 4 is the CLI mission. Substr
 
 ## Key Files to Modify
 
-| File                                                                  | Layer | Change                                                                                                   |
-| --------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------- |
-| `crates/octo-wallet/src/identity_store.rs`                            | B     | NEW — the store, the index, the unlock, the write path, `active_seed_slot_present`, the orphan scan      |
-| `crates/octo-wallet/src/identity_record.rs`                           | B     | `IdentityRecord` gains `deprecated`; `lookup_identity_record` and its single call site are swept         |
-| `crates/octo-wallet/src/identity.rs`                                  | B     | `IdentityKey::from_seed_with_lifecycle`, `pub(crate)`; `complete_rotation` stops `expect`ing             |
-| `crates/octo-wallet/src/vault.rs`                                     | B     | `validate_slot_id` promoted from module-private to `pub(crate)` — the store composes it                  |
-| `crates/octo-wallet/src/error.rs`                                     | B     | `Locked`, `IdentityNotFound`, `WeakPassphrase`                                                           |
-| `crates/octo-wallet/src/lib.rs`                                       | B     | Module declaration and re-exports                                                                        |
-| `crates/octo-wallet/Cargo.toml`                                       | B     | **Unchanged.** `Vault::default_dir()` already uses `directories`; this store reuses it and adds no crate |
-| `crates/octo-wallet/src/cli_fns.rs`                                   | B     | Wrappers take the unlocked handle; the sentinel lives here                                               |
-| `crates/octo-cli/src/error.rs`                                        | C     | Slot 92 `WalletLocked` and slot 93 `IdentityTransitionRefused`, translation arms, exit arms              |
-| `crates/octo-cli/src/lib.rs`                                          | C     | Three `IdentityAction` variants plus two `rotate` subcommands                                            |
-| `crates/octo-cli/src/commands/identity.rs`                            | C     | Handlers, output envelopes, unlock threading, `RotateComplete` and `RotateAbort` arms                    |
-| `crates/octo-cli/src/commands/{governance,vault,agent,capability}.rs` | C     | Unlock threading at the remaining call sites                                                             |
-| `crates/octo-cli/Cargo.toml`                                          | C     | `rpassword` added, with a rationale comment — absent today                                               |
-| `docs/06-operations/operator-guide.md`                                | docs  | Eleven wall claims across seven locations replaced                                                       |
+| File                                                                  | Layer | Change                                                                                                        |
+| --------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-wallet/src/identity_store.rs`                            | B     | NEW — the store, the index, the unlock, the write path, `active_seed_slot_present`, the orphan scan           |
+| `crates/octo-wallet/src/identity_record.rs`                           | B     | `IdentityRecord` gains `deprecated`; `lookup_identity_record` and its single call site are swept              |
+| `crates/octo-wallet/src/identity.rs`                                  | B     | `IdentityKey::from_seed_with_lifecycle`, `pub(crate)`; `complete_rotation` stops `expect`ing                  |
+| `crates/octo-wallet/src/vault.rs`                                     | B     | `validate_slot_id` promoted from module-private to `pub(crate)` — the store composes it                       |
+| `crates/octo-wallet/src/error.rs`                                     | B     | `Locked`, `IdentityNotFound`, `WeakPassphrase`                                                                |
+| `crates/octo-wallet/src/lib.rs`                                       | B     | Module declaration and re-exports                                                                             |
+| `crates/octo-wallet/Cargo.toml`                                       | B     | **Unchanged.** `Vault::default_dir()` already uses `directories`; this store reuses it and adds no crate      |
+| `crates/octo-wallet/src/cli_fns.rs`                                   | B     | Wrappers take the unlocked handle; the sentinel lives here                                                    |
+| `crates/octo-cli/src/error.rs`                                        | C     | Slots 92 `WalletLocked`, 93 `IdentityTransitionRefused`, and 94 `WeakPassphrase`, translation arms, exit arms |
+| `crates/octo-cli/src/lib.rs`                                          | C     | Three `IdentityAction` variants plus two `rotate` subcommands                                                 |
+| `crates/octo-cli/src/commands/identity.rs`                            | C     | Handlers, output envelopes, unlock threading, `RotateComplete` and `RotateAbort` arms                         |
+| `crates/octo-cli/src/commands/{governance,vault,agent,capability}.rs` | C     | Unlock threading at the remaining call sites                                                                  |
+| `crates/octo-cli/Cargo.toml`                                          | C     | `rpassword` added, with a rationale comment — absent today                                                    |
+| `docs/06-operations/operator-guide.md`                                | docs  | Eleven wall claims across seven locations replaced                                                            |
 
 Two rows in that table are corrections rather than additions, and both were caught by
 reading the file rather than the plan.
@@ -1400,12 +1400,25 @@ Layer A is untouched. The store selects an existing Layer B primitive, adds no c
 
 ### C. Slot arithmetic summary
 
-| Slot   | Variant                       | State                                             |
-| ------ | ----------------------------- | ------------------------------------------------- |
-| 2      | `NoActiveIdentity`            | LANDED, reused                                    |
-| 4      | `IdentityNotFound`            | LANDED, reused by `WalletError::IdentityNotFound` |
-| 91     | `NetworkKeyRotationUnknownId` | LANDED (highest existing)                         |
-| **92** | **`WalletLocked`**            | **NEW in this RFC**                               |
-| 93–99  | —                             | Remain free                                       |
+| Slot   | Variant                         | State                                             |
+| ------ | ------------------------------- | ------------------------------------------------- |
+| 2      | `NoActiveIdentity`              | LANDED, reused                                    |
+| 4      | `IdentityNotFound`              | LANDED, reused by `WalletError::IdentityNotFound` |
+| 91     | `NetworkKeyRotationUnknownId`   | LANDED (highest existing)                         |
+| **92** | **`WalletLocked`**              | **NEW in this RFC**                               |
+| **93** | **`IdentityTransitionRefused`** | **NEW in this RFC**                               |
+| **94** | **`WeakPassphrase`**            | **NEW in this RFC**                               |
+| 95–99  | —                               | Remain free                                       |
+
+**This table mints three slots, not one.** An earlier revision listed 92 as the
+only new variant and marked 93 through 99 free, which contradicted §Error
+variants (Layer C) in four places — the opening paragraph that names all three,
+the section that spends 93, the section that spends 94, and the closing
+arithmetic — and contradicted the companion-mission pairing table below, which
+correctly says "slots 92, 93, and 94 with their translation arms". The same
+revision omitted 94 from the `octo-cli/src/error.rs` row in §Key Files to Modify
+while naming all three Layer B variants on the `octo-wallet/src/error.rs` row
+beside it. Both are corrected. Five of the eight slots in the reserved 92–99 band
+remain free.
 
 `WalletError::IdentityNotFound` deliberately spends **no** slot: the parent RFC's `octo identity show` exit table already reserves exit 4 for "no such identity", and minting a parallel slot for a case the parent already names would be a duplicate vocabulary.

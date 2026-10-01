@@ -767,7 +767,22 @@ RFC-0102 and RFC-0009 receive cross-references only. The store introduces no new
 
 **`register` never demotes.** A re-registered `Active` record keeps `Active`. The table's only edge out of `Active` that `register` can cause is none. An earlier revision of this section left `Active` → `Designated` unspecified: the normative table had no row for it, the diagram's only edge out of `Designated` pointed at `Active`, and two acceptance criteria in the substrate mission required the demotion — AC-11's "the lifecycle is updated in place" and AC-12's "`Designated` and leaves any existing `active_did` untouched when `activate` is false". The result was a live signing identity killed by an ordinary command: `register --activate` once, then re-run the same command later to add a second identity without `--activate`, and `register` wrote `Designated` over a working `Active` record while leaving `active_did` pointing at it. The next `unlock` then refused it with `NotActive { current_state: Designated }` at exit 2 — a dead signing identity, with no error at the moment of the demotion, no diagnostic, and no rollback. The rule is now explicit and single-sourced: **`register` writes `Designated` only for a DID with no record. On an existing record it changes nothing except, when `activate` is true, the `Designated` → `Active` edge and the active pointer.** `tv_x_6` and `tv_x_9` both assert the record's lifecycle, not only the pointer, because the pointer was never the thing at risk.
 
-**`Rotating` → `Revoked` is a real edge, not an omission.** `LifecycleState::can_transition_to` admits it — its match arms are `(Active | Rotating, Revoked)` — and `IdentityKey::revoke` refuses only `Designated`, carrying a `debug_assert` that names `Active → Revoked` **or** `Rotating → Revoked`. An identity revoked mid-rotation is therefore a reachable substrate state, and an earlier revision of this table gave the implementer no row and no cell to put a policy in, which is the exact drift the paragraph below this table describes. The store records what the machine reports. The successor record is **orphaned** — present in the index, never sealed, and no longer reachable through any transition, because its predecessor is terminal. `active_seed_slot_present()` is the detector for the general form of this state, and the orphan is named here rather than left for an implementer to discover.
+**`Rotating` → `Revoked` is a real edge, not an omission.** `LifecycleState::can_transition_to` admits it — one of that function's match arms is `(Active | Rotating, Revoked)` — and `IdentityKey::revoke` refuses only `Designated`, carrying a `debug_assert` that names `Active → Revoked` **or** `Rotating → Revoked`. An identity revoked mid-rotation is therefore a reachable substrate state, and an earlier revision of this table gave the implementer no row and no cell to put a policy in, which is the exact drift the paragraph below this table describes. The store records what the machine reports. The successor record is **orphaned** — present in the index, never sealed, and no longer reachable through any transition, because its predecessor is terminal. `active_seed_slot_present()` is the detector for the general form of this state, and the orphan is named here rather than left for an implementer to discover.
+
+**The table renders five of the six pairs that function admits, and the sixth is
+worth naming.** `can_transition_to` has three match arms, not one: besides the
+pair this section quotes it also admits `Designated` → `Active` and `Rotating` →
+`Active`, both of which have rows here, and in the same second arm it admits
+`Designated` → `Rotating`, which does not. That pair is unreachable today —
+`IdentityKey::begin_rotation` refuses any state other than `Active`, and a test
+pins the refusal — so the table is right to omit it. It is named here because this
+section holds the transition function up as its own authority, and an authority
+that grants a pair the normative table declines to render is a disagreement
+between the two, whatever the current caller-side guard happens to be. If a future
+substrate method routes through `can_transition_to` without the `!= Active` check,
+the table and the machine diverge for real. An earlier revision of this paragraph
+quoted a single arm as though it were the whole of the function, which is why the
+omission was invisible: the quotation and the gap were the same sentence.
 
 **The successor's slot is sealed by `begin_rotation`, not left to a later step.** `begin_rotation` in the substrate takes no passphrase and `IdentityKey::complete_rotation` discards the successor key in memory (`successor_key = None`). An earlier revision of this section specified the transition with no sealing step and no completion surface, and following it produced a store whose `active_did` named an identity that could never be unlocked: `unlock` step 2 returns `VaultSlotNotFound` for a record with no slot, the CLI maps that to exit 92 with the message "wallet store is locked, unlock with a passphrase to continue", and per A8 there is no delete path, so the successor record is permanent. The RFC's own words call that a retry loop against an unrecoverable store. `begin_rotation` therefore takes the passphrase that seals the successor — the same seal-versus-unlock split as `register`, expressed as a signature rather than as prose — and `abort_rotation` seals nothing at all, which is what makes "no successor record appended" observable rather than merely intended.
 
@@ -790,9 +805,18 @@ stateDiagram-v2
     Rotating --> Active: complete_rotation
     Rotating --> Active: abort_rotation
     Active --> Revoked: revoke
+    Rotating --> Revoked: revoke mid-rotation
     Revoked --> Revoked: register refused
     Revoked --> [*]
 ```
+
+**The diagram was missing the edge the paragraph above it is about.** The prose
+insists at length that `Rotating` → `Revoked` is a real edge and not an
+omission, and the diagram that follows drew `revoke` arriving only from `Active`.
+The table had the row throughout; the diagram did not. A reader who takes the
+diagram for the state machine — and §Version History records that lesson about
+this exact section — would have implemented a machine in which an identity revoked
+mid-rotation cannot be revoked. The edge is drawn now.
 
 Every transition above, with the properties the role table requires:
 

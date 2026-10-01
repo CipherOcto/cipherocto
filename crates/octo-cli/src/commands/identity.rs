@@ -2230,7 +2230,7 @@ mod tests {
     /// `OCTO_HOME` and checks the wallet the substrate actually
     /// wrote. There is no string for a mutation to reword.
     #[test]
-    fn tv_x_c_40_register_envelope_describes_the_persisted_record() {
+    fn tv_x_c_40_register_persists_what_the_envelope_claims() {
         let _guard = OCTO_HOME_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -2366,12 +2366,16 @@ mod tests {
         assert_eq!(
             during.lifecycle,
             octo_wallet::LifecycleState::Rotating,
-            "a completed `rotate` must leave the predecessor Rotating on disk"
+            "begin_rotation must leave the predecessor Rotating on disk. This vector drives \
+             the SUBSTRATE call the handler makes - it never invokes the rotate handler - so \
+             the message names the substrate, not the handler"
         );
         assert_eq!(
             during.rotation_history.len(),
             1,
-            "the rotation event must be persisted for the next process"
+            "begin_rotation must persist the rotation event, so the next PROCESS can find it - \
+             the CLI runs rotate and rotate-abort as two OS processes and store.json is the \
+             only carrier"
         );
         let successor_did = during.rotation_history[0].successor_did.clone();
 
@@ -2391,7 +2395,7 @@ mod tests {
             assert_eq!(
                 unlocked.did().0,
                 predecessor.0,
-                "the handle must be the predecessor the rotate left Rotating"
+                "unlock must hand back the predecessor that begin_rotation left Rotating"
             );
             unlocked.abort_rotation().expect("abort_rotation");
         }
@@ -3040,9 +3044,21 @@ mod tests {
             .find("std::fs::read_to_string(passphrase_file)")
             .expect("read site");
         let zeroize_site = body.find("zeroize::Zeroizing::new(").expect("zeroize site");
+        // DIRECTION, not proximity. The previous assertion was a
+        // +/-200 byte window with no ordering test, so the
+        // follow-the-read form
+        //     let plain = read_to_string(...)?;
+        //     let wrapped = Zeroizing::new(plain);
+        // satisfied it while leaving an unzeroized `String` on the
+        // heap. The wrap must OPEN AT OR BEFORE the read: a
+        // `Zeroizing::new(read_to_string(...)?)` sites the
+        // constructor first, a follow-the-read form sites it second,
+        // and only the second is wrong.
         assert!(
-            zeroize_site <= read_site + 200,
-            "Zeroizing wrap must enclose the passphrase read, not follow it: {body}"
+            zeroize_site <= read_site,
+            "the Zeroizing wrap must OPEN AT OR BEFORE the passphrase read, not follow it - \
+             a `let plain = read(...); Zeroizing::new(plain)` leaves the plaintext on the \
+             heap: {body}"
         );
     }
 
@@ -3058,17 +3074,38 @@ mod tests {
         let slice = &src[start..];
         let end = slice.find("pub fn select(").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
+        // These three were three INDEPENDENT substring checks, so
+        // the vector stayed green when the check was neutered with
+        // `if false && mode & 0o077 != 0 {` - the substrings
+        // survived, the refusal did not. What has to be proven is
+        // that they form ONE live guard: the mode read feeding a
+        // condition that actually tests the mask.
+        let mode_at = body
+            .find("let mode = seed_meta.permissions().mode();")
+            .unwrap_or_else(|| {
+                panic!(
+                    "register must stat the seed file and read its mode per AC-25 \
+                         obligation 2: {body}"
+                )
+            });
+        let guard_at = body[mode_at..]
+            .find("if mode & 0o077 != 0 {")
+            .unwrap_or_else(|| {
+                panic!(
+                    "the mode read must feed a LIVE guard on the 0o077 mask - three \
+                         independent substrings do not make a refusal, and `if false && ...` \
+                         satisfies all of them: {body}"
+                )
+            });
+        let guard = &body[mode_at + guard_at..];
         assert!(
-            body.contains("seed_meta.permissions().mode()"),
-            "register must stat the seed file and read its mode per AC-25 obligation 2: {body}"
+            guard.contains("group- or world-readable"),
+            "the refusal INSIDE the guard must name the mode violation, so an operator can \
+             tell a permissions problem from a read problem: {guard}"
         );
         assert!(
-            body.contains("0o077"),
-            "register must check group/world bits are zero (0o077 mask): {body}"
-        );
-        assert!(
-            body.contains("group- or world-readable"),
-            "register refusal message must name the mode violation: {body}"
+            guard.find("return Err(").is_some(),
+            "the guard must actually return, not log: {guard}"
         );
     }
 
@@ -3096,10 +3133,23 @@ mod tests {
             rotate_complete_block.contains("passphrase_stdin: bool"),
             "RotateComplete variant must carry passphrase_stdin field per AC-9: {rotate_complete_block}"
         );
+        // The flag check was whole-block `contains("#[arg(long)]")`,
+        // which ANY field in the block satisfies. Scope it to the
+        // attribute immediately above `passphrase_stdin`, so a
+        // sibling field's flag cannot stand in for this one's.
+        let pc_field = rotate_complete_block
+            .find("passphrase_stdin: bool")
+            .expect("passphrase_stdin field");
+        let pc_field = rotate_complete_block[..pc_field]
+            .rfind("#[arg(")
+            .expect("passphrase_stdin carries a clap attribute");
+        let pc_attr = &rotate_complete_block[pc_field..];
         assert!(
-            rotate_complete_block.contains("passphrase_stdin: bool")
-                && rotate_complete_block.contains("#[arg(long)]"),
-            "RotateComplete must bind passphrase_stdin to --passphrase-stdin long flag: {rotate_complete_block}"
+            pc_attr.contains("long")
+                && pc_attr.contains('\n')
+                && pc_attr[..pc_attr.find("passphrase_stdin").unwrap_or(0)].contains("long"),
+            "the clap attribute IMMEDIATELY above passphrase_stdin must declare `long` - a \
+             block-wide #[arg(long)] anywhere is satisfied by a sibling field: {pc_attr}"
         );
 
         let start = src
@@ -3111,6 +3161,20 @@ mod tests {
         assert!(
             rotate_abort_block.contains("passphrase_stdin: bool"),
             "RotateAbort variant must carry passphrase_stdin field per AC-9: {rotate_abort_block}"
+        );
+        // The abort half checked only the field and never the flag -
+        // the same defect one arm up, half-fixed.
+        let pa_field = rotate_abort_block
+            .find("passphrase_stdin: bool")
+            .expect("passphrase_stdin field");
+        let pa_field = rotate_abort_block[..pa_field]
+            .rfind("#[arg(")
+            .expect("passphrase_stdin carries a clap attribute");
+        let pa_attr = &rotate_abort_block[pa_field..];
+        assert!(
+            pa_attr[..pa_attr.find("passphrase_stdin").unwrap_or(0)].contains("long"),
+            "the clap attribute IMMEDIATELY above passphrase_stdin must declare `long`: \
+             {pa_attr}"
         );
     }
 
@@ -3158,48 +3222,49 @@ mod tests {
 
     /// tv_x_c_34 — AC-10 passphrase stdin terminator handling.
     ///
-    /// The trim was computed in two steps, testing `ends_with('\r')` on
-    /// the *untruncated* string after `\n` had already been counted.
-    /// For CRLF input the string still ends in `\n`, so the carriage
-    /// return survived and the passphrase became `"secret\r"`. The
-    /// operator then got `WalletLocked` — indistinguishable from a
-    /// wrong passphrase.
+    /// The trim was computed in two steps, testing `ends_with(chr)` on
+    /// the *untruncated* string after the newline had already been
+    /// counted. For CRLF input the string still ends in a newline, so
+    /// the carriage return survived and the passphrase gained a
+    /// trailing CR. The operator then got `WalletLocked` —
+    /// indistinguishable from a wrong passphrase.
     ///
-    /// Asserted against `trim_end_matches` directly rather than by
-    /// piping into stdin, because a piped-stdin test would depend on
-    /// the test harness's file descriptors, which is the environment
-    /// sensitivity that made `tv_x_c_33` flaky.
+    /// The first twelve lines of this vector looped over string
+    /// literals it declared itself and asserted stdlib behaviour on
+    /// them. No CipherOcto change can affect that loop, so it was
+    /// twelve lines of green regardless of the production code. It is
+    /// deleted.
+    ///
+    /// The scan also used `fn_body`, which does not strip line
+    /// comments, so a mutation that deleted the call and left the
+    /// token in a trailing comment passed; and a mutation narrowing
+    /// the character set to just the CR reintroduced the exact bug the
+    /// vector exists to catch, undetectably. This uses
+    /// `fn_body_code` and pins the BOTH-character set as a single
+    /// literal.
     #[test]
     fn tv_x_c_34_stdin_passphrase_strips_crlf() {
-        for (input, expected) in [
-            ("secret\n", "secret"),
-            ("secret\r\n", "secret"),
-            ("secret", "secret"),
-            ("\r\n", ""),
-            ("a\r\n\r\n", "a"),
-        ] {
-            assert_eq!(
-                input.trim_end_matches(['\r', '\n']),
-                expected,
-                "CRLF/LF trimming must not leave a carriage return in the passphrase"
-            );
-        }
-
-        // And the production path must use that helper rather than
-        // hand-rolled length arithmetic, which is where the bug lived.
         let src = production_src();
-        let body = fn_body(
+        let body = fn_body_code(
             src,
             "pub(crate) fn acquire_passphrase(",
             "pub fn require_confirm(",
         );
+
+        // The exact call, with BOTH terminators. Two separate
+        // `contains` conjuncts would each be satisfied by a
+        // half-correct set, and a narrowing to one character is the
+        // whole bug.
         assert!(
-            body.contains("trim_end_matches"),
-            "acquire_passphrase must strip CR and LF with trim_end_matches, not a two-step length computation: {body}"
+            body.contains("trim_end_matches(['\\r', '\\n'])"),
+            "acquire_passphrase must strip CR and LF in one call - \
+             trim_end_matches(['\\r', '\\n']) - not a two-step length computation and not a \
+             single-character set: {body}"
         );
         assert!(
             !body.contains("ends_with('\\r')"),
-            "acquire_passphrase must not test for a carriage return against the untruncated string: {body}"
+            "acquire_passphrase must not test for a carriage return against the untruncated \
+             string: {body}"
         );
     }
 

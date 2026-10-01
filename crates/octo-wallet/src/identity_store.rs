@@ -1586,9 +1586,33 @@ mod tests {
             orphans.iter().any(|s| s == "identity-orphan.vault"),
             "orphan slot must be reported by orphan_slots(), got {orphans:?}"
         );
-        // The orphan is NOT in the index: only one record, the
-        // originally registered one.
-        assert_eq!(store.list_records().len(), 1);
+        // The orphan is NOT adopted into the index.
+        //
+        // The previous spelling asserted this on the SAME live store,
+        // and it could not fail: `orphan_slots` takes `&self` so it
+        // cannot mutate the index, and the orphan file was created
+        // AFTER `open_at` with no write or reload between, so the
+        // adoption path the assertion names - reconciliation at open,
+        // or at reload - never executed. It was an existence check
+        // dressed as a negative control.
+        //
+        // Reopening runs `open_at` over a store directory that now
+        // contains the orphan, so a reconciler that invented a
+        // record for the ciphertext would show up here.
+        let reopened = WalletStore::open_at(dir.path()).expect("reopen over the orphan");
+        assert_eq!(
+            reopened.list_records().len(),
+            1,
+            "reopening over an orphan slot must not adopt it into the index - the store would \
+             invent a record for ciphertext that no index entry names"
+        );
+        // And the orphan is still REPORTED after the reopen, not
+        // quietly absorbed.
+        let orphans_after = reopened.orphan_slots();
+        assert!(
+            orphans_after.iter().any(|s| s == "identity-orphan.vault"),
+            "the orphan must still be reported after reopen, got {orphans_after:?}"
+        );
     }
 
     /// `tv_x_47` (mission §AC-29): the generated slug passes
@@ -1604,6 +1628,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let key = IdentityKey::from_seed([0x47u8; 32]);
+        let expected_slug = seed_slot_slug_by_pubkey(key.public_key_bytes());
         let _did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -1629,6 +1654,54 @@ mod tests {
         );
         // Slug is 73 chars + ".vault" (6 chars) = 79 chars total.
         assert_eq!(name.len(), 79);
+
+        // Actually CALL the validator. The vector was named
+        // `..._and_passes_validator` while asserting nothing of the
+        // kind: deleting the production
+        // `validate_slot_id(&slug).expect(...)` from
+        // `seed_slot_slug_by_pubkey` left all 41 store vectors
+        // green. §AC-29 gives that call a stated purpose - a future
+        // slug-format change should surface here rather than at
+        // `register` time - and no vector in either file was
+        // checking it. Deriving the slug from the stem and running it
+        // through the real validator makes the name true.
+        let slug = name.strip_suffix(".vault").expect("stem is the slug");
+        assert_eq!(
+            slug, expected_slug,
+            "the on-disk stem must be the slug the seal site derives, or the format the \
+             validator is guarding has already drifted from what is written: {slug}"
+        );
+        validate_slot_id(slug).expect("the slug the store writes must pass the validator");
+
+        // And the production call the above mirrors must EXIST. It is
+        // a pure positive assertion on a call site, so the only
+        // instrument is a source scan - but scoped to the function
+        // body with comments stripped, so a doc comment describing
+        // the call cannot satisfy it. Deleting
+        // `validate_slot_id(&slug).expect(...)` from
+        // `seed_slot_slug_by_pubkey` left all 41 store vectors green
+        // before this was added, which is why §AC-29's stated purpose
+        // ("a future change to the slug format would surface here")
+        // was verified by nothing.
+        let src = include_str!("identity_store.rs");
+        let start = src
+            .find("pub(crate) fn seed_slot_slug_by_pubkey(")
+            .expect("seed_slot_slug_by_pubkey present");
+        let body = &src[start..start + 1200];
+        let body: String = body
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) if !line[..at].contains('"') => line[..at].trim_end(),
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("validate_slot_id(&slug)"),
+            "seed_slot_slug_by_pubkey must run the slug through validate_slot_id at the \
+             seal site, so a future slug-format change surfaces here rather than at register \
+             time: {body}"
+        );
     }
 
     /// `tv_x_3` / `tv_x_4` (mission §AC-5): mode enforcement on the

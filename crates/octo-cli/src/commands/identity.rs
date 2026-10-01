@@ -19,7 +19,8 @@ use serde::Serialize;
 use octo_cap_macaroon::signer::{CapabilitySigner, CapabilitySignerError};
 
 use crate::commands::role::SignerHandle;
-use crate::error::{map_hsm_error, sanitize_substrate_error, OctoCliError};
+use crate::error::sanitize_substrate_error;
+use crate::error::OctoCliError;
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
 use crate::redact::{redact_string, RedactedHex};
@@ -38,12 +39,29 @@ pub enum IdentityAction {
         did: Option<String>,
     },
     /// Begin a key rotation.
-    Rotate {},
+    Rotate {
+        /// Read the wallet passphrase from stdin (one line,
+        /// trailing newline trimmed). Bypasses the interactive
+        /// TTY prompt for CI / scripted callers. Required when
+        /// stdin is not a TTY (mission 0011-x-wallet-store-cli
+        /// §AC-10). Used by the signing-site migration to
+        /// `UnlockedWallet::begin_rotation`.
+        #[arg(long)]
+        passphrase_stdin: bool,
+    },
     /// Revoke the active identity.
     Revoke {
         /// Revocation reason recorded in the identity log.
         #[arg(long)]
         reason: String,
+        /// Read the wallet passphrase from stdin (one line,
+        /// trailing newline trimmed). Bypasses the interactive
+        /// TTY prompt for CI / scripted callers. Required when
+        /// stdin is not a TTY (mission 0011-x-wallet-store-cli
+        /// §AC-10). Used by the signing-site migration to
+        /// `UnlockedWallet::revoke`.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// Register a new identity in the local wallet (RFC-0011-x
     /// §Subcommand Taxonomy). Substrate-faithful wrapper over
@@ -342,6 +360,7 @@ pub(crate) fn map_wallet_open_error(e: octo_wallet::WalletError) -> OctoCliError
 /// eligibility from `lifecycle` (which would leak Layer C → B). The CLI
 /// trusts substrate's `NotActive { current_state }` and translates
 /// `Revoked` / `Rotating` to the matching operator-facing variant.
+#[cfg(test)]
 fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
     match e {
         octo_wallet::WalletError::NotActive {
@@ -351,7 +370,7 @@ fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
             current_state: octo_wallet::LifecycleState::Rotating,
         } => OctoCliError::AlreadyRotating,
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+        octo_wallet::WalletError::Hsm(_) => crate::error::map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     }
 }
@@ -456,11 +475,15 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
         })
 }
 
-/// `octo identity rotate` — initiate a key rotation.
+/// `octo identity rotate --passphrase-stdin` — initiate a key rotation.
 ///
 /// Requires `--confirm` in human mode, `--allow-write` in CI mode (or
-/// `--dry-run` for preview).
-pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
+/// `--dry-run` for preview). The handler migrates to
+/// `UnlockedWallet::begin_rotation` per mission §AC-7 (signing-site
+/// migration); the predecessor's seed is held only by the unlocked
+/// handle's lifetime. Passphrase acquisition via `acquire_passphrase`
+/// per §AC-9 + §AC-10.
+pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity rotate")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
 
@@ -481,7 +504,6 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
         "would rotate: old_did={}, new_did_placeholder=pending, grace=24h",
         old_did.0
     );
-    let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
 
     // Successor stub (R1 review CORR-16 / SEC-04): substrate (Layer B)
     // is still a stub at this RFC stage. `IdentityKey::from_seed` is the
@@ -508,12 +530,22 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
     let proof = if cli.mode.dry_run {
         [0u8; 64]
     } else {
-        // Per R1 review CORR-01 / SEC-12: `NotActive` is NOT an HSM
-        // failure — translate by `current_state` at the CLI boundary.
-        // The substrate returns `NotActive` for every non-`Active`
-        // lifecycle; we trust the substrate and translate accordingly
-        // (LAYER-04).
-        octo_wallet::begin_rotation(&mut key, successor, now).map_err(map_not_active_error)?
+        // §AC-7 signing-site migration: open the store, then
+        // unlock with the passphrase to mint an `UnlockedWallet`
+        // handle. The handle's `begin_rotation(successor,
+        // passphrase, now)` is the substrate-faithful signing
+        // path; the predecessor's seed lifetime is exactly the
+        // handle's lifetime, and the substrate uses the
+        // passphrase to seal the successor's slot.
+        let passphrase = acquire_passphrase(cli, "identity rotate", passphrase_stdin)?;
+        let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let mut unlocked = store
+            .unlock(passphrase.as_str(), seed_buf.as_mut())
+            .map_err(OctoCliError::from)?;
+        unlocked
+            .begin_rotation(successor, passphrase.as_str(), now)
+            .map_err(OctoCliError::from)?
     };
     let grace_expires_at = DateTime::<Utc>::from_timestamp(now as i64 + 86_400, 0)
         .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
@@ -534,12 +566,17 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
         })
 }
 
-/// `octo identity revoke --reason <str>` — burn the active identity.
+/// `octo identity revoke --reason <str> --passphrase-stdin` —
+/// burn the active identity.
 ///
 /// `reason` is REQUIRED (clap enforces) AND must be non-empty (R1 review
-/// CORR-19). Absent → clap exit 2 usage error; empty → `Internal` (exit 64,
-//  rejected by post-clap validation).
-pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
+/// CORR-19). Absent → clap exit 2 usage error; empty → `Internal` (exit
+/// 64, rejected by post-clap validation). The handler migrates to
+/// `UnlockedWallet::revoke` per mission §AC-7 (signing-site migration);
+/// the predecessor's seed is held only by the unlocked handle's
+/// lifetime. Passphrase acquisition via `acquire_passphrase` per
+/// §AC-9 + §AC-10.
+pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     if reason.trim().is_empty() {
         return Err(OctoCliError::Internal(
             "revocation reason must be non-empty".to_string(),
@@ -562,16 +599,21 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
         did.0,
         redact_string(reason)
     );
-    let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
 
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     if !cli.mode.dry_run {
-        // Per R1 review CORR-02 / SEC-12 / LAYER-04: `NotActive` is not an
-        // HSM failure; translate by `current_state` at the CLI boundary.
-        // Substrate's `revoke` is idempotent from `Revoked`, so the
-        // previous pre-check `if lifecycle == Revoked → AlreadyRevoked`
-        // was incorrect (substrate returns Ok); trust substrate here.
-        octo_wallet::revoke(&mut key, now).map_err(map_not_active_error)?;
+        // §AC-7 signing-site migration: open the store, then
+        // unlock with the passphrase to mint an `UnlockedWallet`
+        // handle. The handle's `revoke(now)` is the
+        // substrate-faithful signing path; the predecessor's seed
+        // lifetime is exactly the handle's lifetime.
+        let passphrase = acquire_passphrase(cli, "identity revoke", passphrase_stdin)?;
+        let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let mut unlocked = store
+            .unlock(passphrase.as_str(), seed_buf.as_mut())
+            .map_err(OctoCliError::from)?;
+        unlocked.revoke(now).map_err(OctoCliError::from)?;
     }
     let revoked_at = DateTime::<Utc>::from_timestamp(now as i64, 0)
         .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
@@ -1131,13 +1173,19 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError> {
     match action {
         IdentityAction::Show { did } => show(did.as_deref(), cli),
-        IdentityAction::Rotate { .. } => {
+        IdentityAction::Rotate {
+            passphrase_stdin, ..
+        } => {
             require_confirm(cli, "identity rotate")?;
-            rotate(cli)
+            rotate(*passphrase_stdin, cli)
         }
-        IdentityAction::Revoke { reason, .. } => {
+        IdentityAction::Revoke {
+            reason,
+            passphrase_stdin,
+            ..
+        } => {
             require_confirm(cli, "identity revoke")?;
-            revoke(reason, cli)
+            revoke(reason, *passphrase_stdin, cli)
         }
         IdentityAction::Register {
             label,
@@ -1464,7 +1512,7 @@ mod tests {
     fn revoke_rejects_empty_reason() {
         let mut cli = cli_with_mode(OperatorMode::Human);
         cli.mode.confirm = true;
-        let r = revoke("   ", &cli);
+        let r = revoke("   ", false, &cli);
         assert!(
             matches!(r, Err(OctoCliError::Internal(_))),
             "empty/whitespace reason must be rejected: {r:?}"

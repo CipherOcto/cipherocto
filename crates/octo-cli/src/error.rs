@@ -3,6 +3,13 @@
 use std::io::Write;
 use thiserror::Error;
 
+// Substrate floor constant re-exported from `octo_wallet::error` via
+// `pub use crate::identity_store::MIN_PASSPHRASE_CHARS`. Brought
+// into scope so the `thiserror` `#[error]` template below can
+// reference it without a path qualifier (thiserror format strings
+// only support identifier captures, not `crate::Const` paths).
+use octo_wallet::error::MIN_PASSPHRASE_CHARS;
+
 /// Categorical band of known keys in the verifier's `KeySet`
 /// per RFC-0011-h §Redaction Layer (3 bands; avoids leaking
 /// exact verifier `KeySet` cardinality).
@@ -915,6 +922,59 @@ pub enum OctoCliError {
         /// echoed in operator-facing render.
         known_keys_band: KnownKeysBand,
     },
+
+    /// `WalletStore` is locked — the identity seed requires
+    /// `WalletStore::unlock(passphrase)` to access (mission
+    /// 0011-x-s-a-wallet-store-identity §AC-6, paired-acceptance
+    /// bridge from `WalletError::Locked`). Unit variant; the
+    /// substrate carries the no-payload `Locked` form so the
+    /// CLI envelope mirrors it 1:1. Exit 92 per the wallet-store
+    /// amendment-chain slot allocation (NOT shared with any
+    /// existing slot — the wallet-store surface is its own
+    /// amendment chain, distinct from agent amendment chain
+    /// slots 39-52 and mesh amendment chain slots 17-30).
+    #[error("wallet store is locked; unlock with a passphrase to access the identity key")]
+    WalletLocked,
+
+    /// Identity lifecycle transition was refused at the
+    /// substrate (RFC-0011-x §Lifecycle Requirements). Mapped
+    /// from the family of `WalletError` lifecycle refusal
+    /// variants — `NotActive { .. }`,
+    /// `RotationInProgress`, `NotRotating { .. }`, `SelfRotation`,
+    /// `GracePeriodNotElapsed { .. }`, `InvalidSuccessorProof`,
+    /// `InvalidRevocationProof` — via the `From<WalletError>`
+    /// envelope. The substrate's `Display` impl is rendered
+    /// verbatim into `reason` so the operator gets the canonical
+    /// substrate-shape failure message without a CLI-side
+    /// re-translation layer. Exit 43 per RFC-0011-x §Error
+    /// Handling (shared with `AlreadyInTransition` /
+    /// `InvalidStateTransition` per amendment-chain
+    /// shared-slot pattern — both are state-machine write-path
+    /// errors operator-unambiguous within their respective
+    /// command surfaces; the render layer distinguishes the
+    /// payloads).
+    #[error("identity transition refused: {reason}")]
+    IdentityTransitionRefused {
+        /// Substrate `Display`-rendered reason string (sanitized
+        /// via `sanitize_substrate_error` before the CLI
+        /// envelope carries it).
+        reason: String,
+    },
+
+    /// Supplied passphrase is below the enforced floor (mission
+    /// 0011-x-s-a-wallet-store-identity §AC-28). Mapped from
+    /// `WalletError::WeakPassphrase` at the dispatch boundary.
+    /// Unit variant; the substrate carries the no-payload form
+    /// and the `Display` impl interpolates
+    /// `MIN_PASSPHRASE_CHARS` so the operator-visible message
+    /// stays locked to the threshold the check compares against.
+    /// Exit 2 per clap arg-parse convention (operator-input
+    /// validation failures share exit 2 across the CLI surface;
+    /// the render layer distinguishes the `WeakPassphrase`
+    /// payload from `ClapParse` / `NoActiveIdentity` /
+    /// `ConfirmationRequired`).
+    #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
+    WeakPassphrase,
 }
 
 impl OctoCliError {
@@ -1083,6 +1143,22 @@ impl OctoCliError {
             // `AttachError::UnknownKeyId` translation path (future
             // amendment per RFC-0011-w §Future Work F1).
             Self::NetworkKeyRotationUnknownId { .. } => 91,
+            // RFC-0011-x §Error Handling: wallet-store amendment
+            // chain slots 92/93/94. Slot 92 = `WalletLocked`
+            // (paired with `WalletError::Locked` per
+            // `0011-x-s-a-wallet-store-identity` §AC-6). Slot 93 =
+            // `IdentityTransitionRefused` (paired with the
+            // `WalletError` lifecycle-refusal family). Slot 94 =
+            // `WeakPassphrase` shares exit 2 with `ClapParse` /
+            // `NoActiveIdentity` / `ConfirmationRequired` /
+            // `AuditorDenied` / `InvalidRoleSlug` /
+            // `NoAnchorVerifyInMode` / `InvalidProposalState` per
+            // the established operator-input validation failure
+            // shared-slot pattern (render layer distinguishes
+            // the payloads).
+            Self::WalletLocked => 92,
+            Self::IdentityTransitionRefused { .. } => 43,
+            Self::WeakPassphrase => 2,
         }
     }
 
@@ -1362,6 +1438,22 @@ impl OctoCliError {
             }
             Self::NetworkKeyRotationUnknownId { .. } => {
                 "rotate the holder signing key per RFC-0011-c §F.5.1 paired-acceptance bridge: re-issue the holder signing key, register the new key_id in the verifier KeySet, and re-sign the attach token".to_string()
+            }
+            // RFC-0011-x §Error Handling: wallet-store amendment
+            // chain slots 92/93/94 hints — paired with the
+            // substrate `WalletError` envelope so the operator
+            // gets an actionable remediation per failure class.
+            Self::WalletLocked => {
+                "unlock the wallet with `octo identity unlock --passphrase-file <path>` (or interactive passphrase prompt) to access the identity seed; signing operations require the unlocked state (RFC-0011-x §Lifecycle Requirements)".to_string()
+            }
+            Self::IdentityTransitionRefused { .. } => {
+                "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements); verify the active identity's state machine position (`octo identity list`) and resolve any in-flight rotation before retrying (`octo identity rotate complete` or `octo identity rotate abort`)".to_string()
+            }
+            Self::WeakPassphrase => {
+                format!(
+                    "the passphrase is below the {}-character floor enforced at both `register` and `unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28); supply a longer passphrase",
+                    octo_wallet::error::MIN_PASSPHRASE_CHARS
+                )
             }
         };
         Some(h)
@@ -1755,6 +1847,80 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
     hex::encode(key_id.to_be_bytes())
 }
 
+/// RFC-0011-x §Error Handling: `octo_wallet::WalletError` →
+/// `OctoCliError` per-variant mapping. Substrate-faithful mirror
+/// per [[cipherocto-design-principles]] §Extension over
+/// enumeration; `#[non_exhaustive]` on `WalletError` keeps the
+/// match additive-safe — future substrate variants collapse to
+/// the wildcard arm and surface as `Internal(reason)` exit 64.
+///
+/// Per-variant mapping:
+///
+/// | Substrate variant                                       | CLI variant                                            | Exit |
+/// | ------------------------------------------------------ | ------------------------------------------------------ | ---- |
+/// | `WalletError::Locked`                                  | `OctoCliError::WalletLocked`                           | 92   |
+/// | `WalletError::IdentityNotFound(did)`                   | `OctoCliError::IdentityNotFound(did.to_string())`      | 4    |
+/// | `WalletError::WeakPassphrase`                          | `OctoCliError::WeakPassphrase`                         | 2    |
+/// | `WalletError::AlreadyRevoked`                          | `OctoCliError::AlreadyRevoked`                         | 6    |
+/// | `WalletError::NotActive { .. }`                        | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::RotationInProgress`                      | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::NotRotating { .. }`                      | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::SelfRotation`                            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::GracePeriodNotElapsed { .. }`            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::InvalidSuccessorProof`                   | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::InvalidRevocationProof`                  | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | (all other substrate variants)                         | `OctoCliError::Internal(sanitize_substrate_error(...))`| 64   |
+///
+/// Defense-in-depth scrub pass: the `IdentityTransitionRefused`
+/// payload routes through `sanitize_substrate_error` before
+/// reaching the CLI envelope so an accidental substrate leak
+/// (path / SQL marker / crate path prefix) collapses to the
+/// `<substrate-error>` / `<substrate-path>` markers at the CLI
+/// boundary. Matches the established `From<octo_audit::AuditError>`
+/// / `From<octo_runtime::AttachError>` precedent at this layer.
+impl From<octo_wallet::WalletError> for OctoCliError {
+    fn from(e: octo_wallet::WalletError) -> Self {
+        match e {
+            octo_wallet::WalletError::Locked => Self::WalletLocked,
+            // IdentityNotFound carries a typed `Did` payload per
+            // the substrate `WalletError` shape — the CLI
+            // `IdentityNotFound(String)` slot already exists at
+            // exit 4 (no new slot allocation, per mission AC-7).
+            // The DID is rendered as the canonical string form
+            // via `Did::to_string()` so the operator sees the
+            // RFC-0010 canonical wire format.
+            octo_wallet::WalletError::IdentityNotFound(did) => {
+                Self::IdentityNotFound(did.to_string())
+            }
+            octo_wallet::WalletError::WeakPassphrase => Self::WeakPassphrase,
+            octo_wallet::WalletError::AlreadyRevoked => Self::AlreadyRevoked,
+            // Lifecycle refusal family — every member carries the
+            // substrate's `Display` message as the CLI payload.
+            // The substrate owns the canonical distinction; the
+            // CLI envelope collapses them into one typed variant
+            // (per RFC-0011-x §Error Handling amendment-chain
+            // shared-slot pattern; operator-unambiguous within the
+            // identity command surface).
+            octo_wallet::WalletError::NotActive { .. }
+            | octo_wallet::WalletError::RotationInProgress
+            | octo_wallet::WalletError::NotRotating { .. }
+            | octo_wallet::WalletError::SelfRotation
+            | octo_wallet::WalletError::GracePeriodNotElapsed { .. }
+            | octo_wallet::WalletError::InvalidSuccessorProof
+            | octo_wallet::WalletError::InvalidRevocationProof => Self::IdentityTransitionRefused {
+                reason: sanitize_substrate_error(&e.to_string()),
+            },
+            // Additive-safe wildcard per `#[non_exhaustive]` on
+            // `WalletError`. Future substrate variants collapse
+            // to `Internal(reason)` exit 64 — same pattern as
+            // the audit / attach `From` impls above.
+            _ => Self::Internal(sanitize_substrate_error(&format!(
+                "wallet substrate error: {e}"
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2089,6 +2255,25 @@ mod tests {
                 },
                 38,
             ),
+            // RFC-0011-x §Error Handling: wallet-store amendment
+            // chain slots 92/93/94. The 3 new variants land at
+            // the end of the `OctoCliError` enum after the slot 91
+            // rotation activation. Exit 92 = WalletLocked, exit
+            // 43 = IdentityTransitionRefused (shared with agent
+            // amendment chain write-path slots per the established
+            // shared-slot pattern), exit 2 = WeakPassphrase
+            // (shared with clap parse / NoActiveIdentity /
+            // ConfirmationRequired / AuditorDenied per the
+            // operator-input validation failure shared-slot
+            // pattern).
+            (OctoCliError::WalletLocked, 92),
+            (
+                OctoCliError::IdentityTransitionRefused {
+                    reason: "identity not active (state: Designated)".to_string(),
+                },
+                43,
+            ),
+            (OctoCliError::WeakPassphrase, 2),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");

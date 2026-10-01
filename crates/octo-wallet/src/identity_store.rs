@@ -1141,7 +1141,9 @@ mod tests {
         // Reload and re-read; the timestamp is byte-stable.
         let mut store2 = WalletStore::open_at(dir.path()).expect("open_at reload");
         store2.reload().expect("reload");
-        let record2 = store2.identity_record(&did).expect("identity_record reload");
+        let record2 = store2
+            .identity_record(&did)
+            .expect("identity_record reload");
         assert_eq!(record2.registered_at_unix, 1_700_000_000);
     }
 
@@ -1162,7 +1164,10 @@ mod tests {
             .register(key_b, "correct-horse-battery-staple", false, 1_700_000_001)
             .expect("register b");
         let active = store.active_did().expect("active_did set");
-        assert_eq!(active, &did_a, "active pointer must stay on the first identity");
+        assert_eq!(
+            active, &did_a,
+            "active pointer must stay on the first identity"
+        );
     }
 
     /// `tv_x_12` (mission §AC-12): `register(activate = true)` on a
@@ -1223,7 +1228,12 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let key = IdentityKey::from_seed([0x35u8; 32]);
         let did = store
-            .register(key.clone(), "correct-horse-battery-staple", false, 1_700_000_000)
+            .register(
+                key.clone(),
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_000,
+            )
             .expect("first register");
         // Second register with the same key (and therefore same DID)
         // is refused with `AlreadyRevoked`. The vault slot is NOT
@@ -1253,14 +1263,16 @@ mod tests {
         let _did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
-        assert!(store.active_seed_slot_present(), "slot present after register");
+        assert!(
+            store.active_seed_slot_present(),
+            "slot present after register"
+        );
         // Locate the slot file and delete it out from under the store.
         let entries = std::fs::read_dir(dir.path().join("seed")).expect("read seed dir");
         let mut deleted_count = 0;
         for entry in entries.flatten() {
             let p = entry.path();
-            if p
-                .extension()
+            if p.extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("vault"))
             {
                 std::fs::remove_file(&p).expect("remove slot");
@@ -1502,10 +1514,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().join("wallet");
         std::fs::create_dir(&root).expect("create dir");
-        std::fs::set_permissions(&root, PermissionsExt::from_mode(0o755))
-            .expect("set permissive");
+        std::fs::set_permissions(&root, PermissionsExt::from_mode(0o755)).expect("set permissive");
         let _store = WalletStore::open_at(&root).expect("open_at");
-        let mode = std::fs::metadata(&root).expect("metadata").permissions().mode() & 0o777;
+        let mode = std::fs::metadata(&root)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(
             mode, 0o700,
             "pre-existing root must be 0o700 after open, got {mode:o}"
@@ -1611,11 +1626,7 @@ mod tests {
         // No stray temp files left behind.
         let mut temp_count = 0;
         for entry in std::fs::read_dir(dir.path()).expect("read dir").flatten() {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .contains(".tmp")
-            {
+            if entry.file_name().to_string_lossy().contains(".tmp") {
                 temp_count += 1;
             }
         }
@@ -1656,7 +1667,10 @@ mod tests {
         let did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
-        let pubkey = store.identity_record(&did).expect("identity_record").pubkey_bytes;
+        let pubkey = store
+            .identity_record(&did)
+            .expect("identity_record")
+            .pubkey_bytes;
         let mut seed_out = Vec::new();
         let handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
@@ -1722,14 +1736,21 @@ mod tests {
             .expect("register");
         // Delete the slot file.
         let seed_dir = dir.path().join("seed");
-        for entry in std::fs::read_dir(&seed_dir).expect("read seed dir").flatten() {
+        for entry in std::fs::read_dir(&seed_dir)
+            .expect("read seed dir")
+            .flatten()
+        {
             let p = entry.path();
-            if p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("vault")) {
+            if p.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("vault"))
+            {
                 std::fs::remove_file(&p).expect("remove slot");
             }
         }
         let mut seed_out = Vec::new();
-        let err = store.unlock("correct-horse-battery-staple", &mut seed_out).unwrap_err();
+        let err = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .unwrap_err();
         assert!(
             matches!(err, WalletError::VaultSlotNotFound(_)),
             "missing slot must yield VaultSlotNotFound, got {err:?}"
@@ -1758,7 +1779,10 @@ mod tests {
         let did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
-        let recorded = store.identity_record(&did).expect("identity_record").pubkey_bytes;
+        let recorded = store
+            .identity_record(&did)
+            .expect("identity_record")
+            .pubkey_bytes;
         let mut seed_out = Vec::new();
         let pubkey = {
             let handle = store
@@ -1828,7 +1852,10 @@ mod tests {
             .expect("unlock");
         let first = handle.active_identity();
         let second = handle.active_identity();
-        assert!(std::ptr::eq(first, second), "identity key must be unique per handle");
+        assert!(
+            std::ptr::eq(first, second),
+            "identity key must be unique per handle"
+        );
     }
 
     /// `tv_x_39` (mission §AC-15): `lookup_identity_record`
@@ -1950,11 +1977,11 @@ mod tests {
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
         // Pre-poison the buffer with a known sentinel so the
-            // zeroize is observable (the vault writes into the
-            // buffer; an empty buffer would be trivially
-            // "zeroized" because it is empty, which is the
-            // vacuous-test shape the mission YAML warns
-            // against).
+        // zeroize is observable (the vault writes into the
+        // buffer; an empty buffer would be trivially
+        // "zeroized" because it is empty, which is the
+        // vacuous-test shape the mission YAML warns
+        // against).
         let mut seed_out = vec![0xAAu8; 64];
         let _handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)

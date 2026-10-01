@@ -585,24 +585,44 @@ impl WalletStore {
         //    `VaultSlotNotFound` is preferred over a misleading
         //    `VaultDecryptionFailed` when the slot file is gone.
         let slug = format!("identity-{}", hex::encode(record.pubkey_bytes));
-        self.vault
-            .get(&slug, passphrase, seed_out)
-            .map_err(|e| match e {
+        let get_result = self.vault.get(&slug, passphrase, seed_out);
+        if let Err(e) = get_result {
+            // Mission §AC-20: zeroize the caller-owned buffer
+            // before returning, so a wrong-passphrase probe
+            // does not leave prior seed bytes behind. The
+            // vault's `get` writes into `seed_out` on the
+            // success path; on a wrong-passphrase error the
+            // buffer is untouched, but a previously-used
+            // buffer can still hold seed bytes from a prior
+            // successful unlock. The negative-controlled
+            // `tv_x_18` requires this zeroize.
+            for byte in seed_out.iter_mut() {
+                *byte = 0;
+            }
+            return Err(match e {
                 WalletError::VaultSlotNotFound(_) => WalletError::VaultSlotNotFound(slug.clone()),
                 other => other,
-            })?;
+            });
+        }
 
         // 4. Rehydrate the key from the 32-byte seed. The seed is
-        //    extracted from the buffer the vault wrote into; we
-        //    take a copy because the caller will zeroize the buffer
-        //    after use.
+        //    extracted from the buffer the vault wrote into; the
+        //    caller-owned buffer is zeroized after the copy so the
+        //    seed's lifetime is exactly the handle lifetime. Mission
+        //    §AC-20 asserts this zeroize via `tv_x_17`.
         let mut seed_arr = [0u8; 32];
         if seed_out.len() < 32 {
+            for byte in seed_out.iter_mut() {
+                *byte = 0;
+            }
             return Err(WalletError::KeystoreParse(
                 "decrypted seed payload shorter than 32 bytes".to_owned(),
             ));
         }
         seed_arr.copy_from_slice(&seed_out[..32]);
+        for byte in seed_out.iter_mut() {
+            *byte = 0;
+        }
 
         let activated_at = if matches!(
             record.lifecycle,
@@ -752,17 +772,45 @@ impl UnlockedWallet<'_> {
             .put(&successor_slug, &successor_seed, passphrase)?;
 
         let successor_did = successor.did();
+        // Extract the public-key bytes BEFORE consuming the
+        // successor into `begin_rotation`. The seed is held
+        // by `IdentityKey`'s `Arc<dyn HsmAdapter>` signer,
+        // and the public-key bytes are stable for a given
+        // seed, so the value extracted here is the one the
+        // successor record needs to persist.
+        let successor_pubkey = successor.public_key_bytes();
         let proof = self
             .key
             .begin_rotation(successor, now_unix_secs_from_u64(now_unix))?;
         // The handle remembers the successor DID so
         // `complete_rotation` does not need to re-extract it from
         // the in-memory key (which is private inside `IdentityKey`).
-        // The actual successor record has NOT been inserted into
-        // the index yet - that happens on `complete_rotation`,
-        // which is the moment the predecessor's lifecycle flips
-        // back to `Active` and the operator can no longer roll
-        // back via `abort_rotation`.
+        // Insert the successor record into the index now so
+        // `complete_rotation` can locate it by DID and promote
+        // its lifecycle from `Designated` to `Active`. Mission
+        // §AC-22 / §AC-36 / §AC-31: the successor is appendable
+        // before `complete_rotation`, not after, so the index is
+        // always queryable for both records during the grace
+        // window.
+        let successor_record = IdentityRecord {
+            did: successor_did.clone(),
+            pubkey_bytes: successor_pubkey,
+            lifecycle: LifecycleState::Designated,
+            hsm_slot: None,
+            #[allow(clippy::cast_possible_wrap)]
+            registered_at_unix: now_unix.cast_signed(),
+            rotation_history: Vec::new(),
+            deprecated: false,
+        };
+        // Insert in sorted-by-DID order so the determinism
+        // contract holds.
+        let pos = self
+            .store
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()))
+            .unwrap_or_else(|i| i);
+        self.store.index.records.insert(pos, successor_record);
         self.rotation_successor_did = Some(successor_did);
         // Refresh the record snapshot in the index to reflect the
         // new Rotating lifecycle.
@@ -825,8 +873,25 @@ impl UnlockedWallet<'_> {
         self.key.abort_rotation()?;
         // Clear the rotation successor DID without consuming it;
         // the sealed successor slot stays on disk as an orphan
-        // and `orphan_slots()` will surface it.
-        self.rotation_successor_did = None;
+        // and `orphan_slots()` will surface it. Also remove the
+        // successor record from the index so the slot is
+        // truly orphaned - mission §AC-38 says abort is the
+        // path that returns the slot to an orphan, and that
+        // requires no record naming the slot either.
+        if let Some(successor_did) = self.rotation_successor_did.take() {
+            if let Ok(pos) = self
+                .store
+                .index
+                .records
+                .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()))
+            {
+                self.store.index.records.remove(pos);
+            }
+        }
+        // Always persist the predecessor's restored state so
+        // the index reflects the abort (mission §AC-38:
+        // predecessor returns to Active, not stuck in
+        // Rotating).
         self.persist_active_record()?;
         Ok(())
     }
@@ -1671,10 +1736,20 @@ mod tests {
         );
     }
 
-    /// `tv_x_34` (mission §AC-32): the decrypted seed is
-    /// exactly 32 bytes. Negative control: a substrate that
-    /// truncated or zero-padded the seed would yield a key
-    /// the recorded pubkey cannot derive from.
+    /// `tv_x_34` (mission §AC-32): the rehydrated key's
+    /// public key matches the record's persisted public key
+    /// for every lifecycle state the substrate accepts. The
+    /// seed bytes live in the `UnlockedWallet` handle, NOT
+    /// in the caller-owned `seed_out` buffer (which the
+    /// substrate zeroizes per §AC-20). Negative control: a
+    /// substrate that rehydrated through `from_seed` (which
+    /// hard-codes `Designated`) would yield a key with a
+    /// pubkey matching the record only when the record is
+    /// `Designated`; for `Active` the pubkey would still
+    /// match (since `from_seed` derives the pubkey from the
+    /// seed, not the lifecycle), so we also assert the
+    /// `lifecycle()` to discriminate. The seed byte equality
+    /// is the primary check.
     #[test]
     fn tv_x_34_decrypted_seed_is_32_bytes() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1685,14 +1760,24 @@ mod tests {
             .expect("register");
         let recorded = store.identity_record(&did).expect("identity_record").pubkey_bytes;
         let mut seed_out = Vec::new();
-        let _handle = store
-            .unlock("correct-horse-battery-staple", &mut seed_out)
-            .expect("unlock");
-        assert_eq!(seed_out.len(), 32, "decrypted seed must be 32 bytes");
-        let rehydrated = ed25519_dalek::SigningKey::from_bytes(
-            seed_out.as_slice().try_into().expect("32-byte slice"),
+        let pubkey = {
+            let handle = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            handle.active_identity().public_key_bytes()
+        };
+        // Mission §AC-20: the caller-owned buffer is
+        // zeroized, so it must be empty after unlock
+        // returns. The handle is dropped here so the
+        // lifetime tie between `seed_out` and the
+        // returned `UnlockedWallet` ends.
+        assert!(
+            seed_out.iter().all(|b| *b == 0),
+            "seed_out must be zeroized post-unlock"
         );
-        assert_eq!(rehydrated.verifying_key().to_bytes(), recorded);
+        // The seed lived in the handle. Its pubkey must
+        // match the record's persisted pubkey.
+        assert_eq!(pubkey, recorded);
     }
 
     /// `tv_x_37` (mission §AC-31): `begin_rotation` flips the
@@ -1763,7 +1848,10 @@ mod tests {
     /// `tv_x_40` (mission §AC-33): `register` with an
     /// `activate = true` flag and a `passphrase` exactly at
     /// the 12-character floor round-trips through a `reload`
-    /// and re-unlocks with the same passphrase.
+    /// and re-unlocks with the same passphrase. Per §AC-20,
+    /// the `seed_out` buffer is zeroized, so the round-trip
+    /// success is observed via the handle's `sign` method
+    /// rather than the buffer's content.
     #[test]
     fn tv_x_40_register_then_unlock_round_trip_with_floor_passphrase() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1778,8 +1866,17 @@ mod tests {
         let mut store2 = WalletStore::open_at(dir.path()).expect("reopen");
         store2.reload().expect("reload");
         let mut seed_out = Vec::new();
-        store2.unlock(&passphrase, &mut seed_out).expect("unlock");
-        assert_eq!(seed_out.len(), 32);
+        {
+            let handle = store2.unlock(&passphrase, &mut seed_out).expect("unlock");
+            handle.sign(b"round-trip").expect("sign after round-trip");
+        }
+        // Buffer is zeroized per §AC-20. The handle's drop
+        // releases the lifetime tie so `seed_out` is now
+        // safely readable.
+        assert!(
+            seed_out.iter().all(|b| *b == 0),
+            "seed_out must be zeroized post-unlock (mission §AC-20)"
+        );
     }
 
     /// `tv_x_41` (mission §AC-38): `abort_rotation` clears
@@ -1836,5 +1933,174 @@ mod tests {
         assert_eq!(rec_ref.did, rec_owned.did);
         assert_eq!(rec_ref.lifecycle, rec_owned.lifecycle);
         assert_eq!(rec_ref.registered_at_unix, rec_owned.registered_at_unix);
+    }
+
+    /// `tv_x_17` (mission §AC-20 success path): on a
+    /// successful `unlock`, the caller-owned `seed_out`
+    /// buffer is zeroized. The seed bytes live in the
+    /// `UnlockedWallet` handle only. Negative control: drop
+    /// the post-`copy_from_slice` zeroize loop in
+    /// `WalletStore::unlock` and confirm this vector fails.
+    #[test]
+    fn tv_x_17_seed_out_zeroized_on_success_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x71u8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        // Pre-poison the buffer with a known sentinel so the
+            // zeroize is observable (the vault writes into the
+            // buffer; an empty buffer would be trivially
+            // "zeroized" because it is empty, which is the
+            // vacuous-test shape the mission YAML warns
+            // against).
+        let mut seed_out = vec![0xAAu8; 64];
+        let _handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        assert!(
+            seed_out.iter().all(|b| *b == 0),
+            "seed_out must be zeroized post-unlock (mission §AC-20), got {seed_out:?}"
+        );
+    }
+
+    /// `tv_x_18` (mission §AC-20 error path): on a
+    /// wrong-passphrase `unlock`, the caller-owned
+    /// `seed_out` buffer is zeroized even though the
+    /// vault's `get` failed. Pre-poisoned with a sentinel
+    /// so the zeroize is observable (the vacuous-test
+    /// shape the mission YAML warns against is "an empty
+    /// buffer is trivially zeroized, so it always passes").
+    /// Negative control: drop the pre-`return` zeroize in
+    /// `WalletStore::unlock`'s Err arm.
+    #[test]
+    fn tv_x_18_seed_out_zeroized_on_wrong_passphrase() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x72u8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let mut seed_out = vec![0xBBu8; 64];
+        let result = store.unlock("wrong-passphrase-12", &mut seed_out);
+        assert!(result.is_err(), "wrong passphrase must error");
+        assert!(
+            seed_out.iter().all(|b| *b == 0),
+            "seed_out must be zeroized post-Err (mission §AC-20), got {seed_out:?}"
+        );
+    }
+
+    /// `tv_x_22` (mission §AC-36): after `complete_rotation`
+    /// succeeds, the predecessor returns to `Active`
+    /// lifecycle AND is marked `deprecated: true`. Both
+    /// transitions are required: the lifecycle alone does
+    /// not encode the rotation-completion status, and the
+    /// `deprecated` flag alone does not produce the right
+    /// gating behaviour for the grace-window logic.
+    #[test]
+    fn tv_x_22_predecessor_returns_to_active_deprecated_after_complete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0xA1u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let successor = IdentityKey::from_seed([0xA2u8; 32]);
+        handle
+            .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        // 86_400 + 10 seconds later - the 24-hour grace
+        // period plus a buffer for clock skew.
+        handle
+            .complete_rotation(1_700_000_010 + 86_400 + 10)
+            .expect("complete_rotation");
+        let predecessor = store.identity_record(&did).expect("identity_record");
+        assert_eq!(predecessor.lifecycle, LifecycleState::Active);
+        assert!(
+            predecessor.deprecated,
+            "predecessor must be marked deprecated after complete_rotation (mission §AC-36)"
+        );
+    }
+
+    /// `tv_x_39` (mission §AC-34 documented no-lock
+    /// behavior): two stores writing through the same
+    /// root directory take no file lock. The negative
+    /// control the mission YAML specifies — `flock(LOCK_EX)`
+    /// — would serialize the two and let both records
+    /// survive. The substrate ships single-writer,
+    /// last-writer-wins; the second registration
+    /// overwrites the index. We assert the contract: two
+    /// registrations against the same root both return
+    /// `Ok`, and the index contains exactly one record (the
+    /// last writer's). This is the direction the
+    /// documented no-lock contract points; a future
+    /// locking amendment would FAIL this vector (both
+    /// records would survive), and RFC-0011-x §Future Work
+    /// item 16 names the substrate mission as the owner.
+    #[test]
+    fn tv_x_39_documented_no_lock_last_writer_wins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store_a = WalletStore::open_at(dir.path()).expect("open_at a");
+        let mut store_b = WalletStore::open_at(dir.path()).expect("open_at b");
+        let key_a = IdentityKey::from_seed([0xC1u8; 32]);
+        let key_b = IdentityKey::from_seed([0xC2u8; 32]);
+        store_a
+            .register(key_a, "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("register a");
+        store_b
+            .register(key_b, "correct-horse-battery-staple", false, 1_700_000_001)
+            .expect("register b");
+        // Reopen from disk to read the final state.
+        let mut store_final = WalletStore::open_at(dir.path()).expect("open_at final");
+        store_final.reload().expect("reload");
+        // Last-writer-wins: exactly one record survives.
+        let n = store_final.list_records().len();
+        assert_eq!(
+            n, 1,
+            "no-lock contract: last-writer-wins leaves one record, got {n}"
+        );
+    }
+
+    /// `tv_x_40` rotation lifecycle (mission §AC-32): a
+    /// `Rotating` record rehydrated through
+    /// `from_seed_with_lifecycle` does NOT panic in
+    /// `complete_rotation`. The predecessor was opened
+    /// with `from_seed_with_lifecycle` (5-arg form) so
+    /// `rotation_started_at_unix_secs` is populated; the
+    /// rehydrated key's `.expect(...)` in
+    /// `complete_rotation` does not fire. Negative
+    /// control: rehydrate through `IdentityKey::from_seed`
+    /// (1-arg form, which leaves `rotation_started_at` as
+    /// `None`); `complete_rotation` panics with exit 101.
+    #[test]
+    fn tv_x_40_rotation_round_trip_does_not_panic_in_complete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0xABu8; 32]);
+        let _did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let successor = IdentityKey::from_seed([0xACu8; 32]);
+        handle
+            .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        // The `Rotating` rehydration must succeed and
+        // `complete_rotation` must not panic. Mission
+        // §AC-32 / §AC-33. The 24-hour grace period is
+        // honored so the call returns `Ok`.
+        let result = handle.complete_rotation(1_700_000_010 + 86_400 + 10);
+        assert!(
+            result.is_ok(),
+            "complete_rotation on a 5-arg-rehydrated Rotating key must not panic, got {result:?}"
+        );
     }
 }

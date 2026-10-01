@@ -856,18 +856,40 @@ No Class B operation appears. The only place non-determinism could plausibly ent
 
 ## Performance Targets
 
-| Metric         | Target                                                  | Notes                                                                                                                             |
-| -------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `open()`       | < 5 ms on a warm page cache                             | Reads one JSON file. No decryption, no network, **and no lock — see §Concurrency**                                                |
-| `unlock()`     | Dominated by Argon2id, not by this code                 | The store's own contribution is one `Vault::get` plus one `IdentityKey::from_seed`; see §Future Work for the Argon2id cost review |
-| Metadata reads | < 1 ms                                                  | `active_did`, `list_records`, `identity_record` are `store.json` reads with no key path                                           |
-| Store size     | O(records) in `store.json`; 32 bytes per encrypted seed | Linear and small. A store with a thousand identities is a few hundred KB of JSON                                                  |
+| Metric         | Target                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `open()`       | < 5 ms on a warm page cache                             | Reads one JSON file. No decryption, no network, **and no lock — see §Concurrency**. It also performs the 0700 correction when it finds a permissive existing mode, which is a filesystem write and the Class C row of §RFC-0008 Execution Class Mapping, so the target is the read path and the correction is a single mode change on a path that is otherwise silent |
+| `unlock()`     | Dominated by Argon2id, not by this code                 | The store's own contribution is one `Vault::get` plus one `IdentityKey::from_seed`; see §Future Work for the Argon2id cost review                                                                                                                                                                                                                                     |
+| Metadata reads | < 1 ms                                                  | `active_did`, `list_records`, `identity_record` are `store.json` reads with no key path                                                                                                                                                                                                                                                                               |
+| Store size     | O(records) in `store.json`; 32 bytes per encrypted seed | Linear and small. A store with a thousand identities is a few hundred KB of JSON                                                                                                                                                                                                                                                                                      |
 
 The Argon2id figure is deliberately not stated here. Naming a millisecond number for it would be inventing a target against parameters this RFC does not set — the cost review is deferred per §Future Work, and a target stated before the parameter is settled is a number nobody checked.
 
+**The `open()` row described a read-only operation, and the class table says
+otherwise.** It read "Reads one JSON file. No decryption, no network, and no
+lock" — and `open` also performs the 0700 correction, which is a filesystem
+write. §RFC-0008 Execution Class Mapping gives that write its own row precisely
+because it is not the read, and the two rows had ended up describing different
+operations under one name. The contradiction arrived with a fix rather than
+before one: the class table did not separate the correction until round 26 of
+this review added the row, and this row was not revisited when it did. Adding a
+fact to one section makes the sections that summarise the same operation wrong,
+which is the cost of a fix that does not sweep for its own consequences.
+
 ## Concurrency
 
-**The store takes no lock, and this section exists because an earlier revision implied it did.** The `open()` row above used to read "no lock contention beyond the process", which asserts a lock. `Vault` takes none — there is no `flock`, no `fcntl`, and no `fs2`/`FileExt` anywhere in the crate, and the wallet foundation mission already records that its own `flock(LOCK_EX)` criterion was never built. `WalletStore` holds a `Vault` plus an in-memory index and rewrites `store.json` whole on every mutation. The words _concurrent_, _two process_, and _lock_ appeared in no version of this document before now.
+**The store takes no lock, and this section exists because an earlier revision implied it did.** The `open()` row above used to read "no lock contention beyond the process", which asserts a lock. `Vault` takes none — there is no `flock`, no `fcntl`, and no `fs2`/`FileExt` anywhere in the crate, and the wallet foundation mission already records that its own `flock(LOCK_EX)` criterion was never built. `WalletStore` holds a `Vault` plus an in-memory index and rewrites `store.json` whole on every mutation. No earlier version of this document described a concurrency model, and the two words that name one — _concurrent_ and _two process_ — appeared in no version before this section, which a search of the document's own history settles rather than asserts.
+
+An earlier revision made the stronger claim that the words _concurrent_, _two process_,
+**and _lock_** all appeared in no version before now, and the third of those is
+false by the evidence in the sentence above it: the `open()` row it quotes read
+"no lock contention beyond the process", so the word was in the document, once,
+in the performance section, in a revision that predates this one. The claim was
+about the model rather than the vocabulary, and stating it as vocabulary made it
+checkable — and wrong. A sentence that denies a word while quoting an earlier
+sentence containing it is the cheapest kind of defect to find and the easiest to
+write, which is the argument for checking prose claims about a document's own
+history against that history rather than against the paragraph next to them.
 
 **The model is single-writer, last-writer-wins, and the loss is named rather than discovered.** Two processes that both `open()` read the same index and both write their own version of the whole file. The second write wins and the first process's record is gone from the only place it existed:
 

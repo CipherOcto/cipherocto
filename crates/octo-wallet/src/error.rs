@@ -92,6 +92,31 @@ pub enum WalletError {
     #[error("identity not rotating (current state: {current_state:?})")]
     NotRotating { current_state: LifecycleState },
 
+    /// `unlock()` rehydrating a record in the `Rotating` lifecycle
+    /// whose `rotation_history` is empty, so the rotation's start
+    /// time and successor are unrecoverable.
+    ///
+    /// `complete_rotation` reads the start time through an
+    /// `.expect(...)`, so completing such a rotation would panic -
+    /// exit 101, no envelope. `rotate-abort` still works on the
+    /// rehydrated key, so this is a recoverable state and the
+    /// operator is told to take the abort path.
+    #[error(
+        "rotation start state is missing from the wallet record; abort the in-flight rotation"
+    )]
+    RotationEventMissing,
+
+    /// The successor key rehydrated from a vault slot does not
+    /// derive the DID the rotation event names, so the index's
+    /// `pubkey_bytes` and its `did` disagree.
+    ///
+    /// Completing the rotation would promote the named DID to active
+    /// while every signature it makes is under a different key. `Did`
+    /// is derived from the public key, so the mismatch is exact and
+    /// detectable rather than a judgement call.
+    #[error("successor key does not derive the DID recorded for it ({did})")]
+    SuccessorKeyMismatch { did: Did },
+
     /// `begin_rotation()` invoked with `successor.public_key_bytes() ==
     /// self.public_key_bytes()` (cannot rotate to self).
     #[error("cannot rotate identity to itself (successor pubkey matches current)")]

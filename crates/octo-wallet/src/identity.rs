@@ -214,6 +214,20 @@ impl IdentityKey {
         self.lifecycle
     }
 
+    /// Restore the deprecation flag a completed rotation set.
+    ///
+    /// The flag is the only record that this key was retired by a
+    /// rotation rather than never used. `from_seed_with_lifecycle`
+    /// cannot take it as an argument without changing a five-argument
+    /// constructor that every other caller depends on, and
+    /// `persist_active_record` writes the in-memory value straight
+    /// back over the persisted one - so a key that did not restore it
+    /// here reported the predecessor as un-retired AND erased the
+    /// true flag from disk on its next transition.
+    pub fn set_deprecated(&mut self, deprecated: bool) {
+        self.deprecated = deprecated;
+    }
+
     /// `Some(unix_secs)` after the first successful `activate()`; `None` for
     /// a `Designated` (never-activated) identity.
     #[must_use]

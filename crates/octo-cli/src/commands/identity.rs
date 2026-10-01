@@ -4,8 +4,8 @@
 //!
 //! - `octo whoami` — read-only (exit 0/2/4)
 //! - `octo identity show [DID]` — read-only (exit 0/2/4)
-//! - `octo identity rotate` — write (exit 0/2/3/4/5/11/64)
-//! - `octo identity revoke` — write (exit 0/2/4/5/6/11/64)
+//! - `octo identity rotate` — write (exit 0/2/3/4/6/15/43/64/92)
+//! - `octo identity revoke` — write (exit 0/2/4/6/15/43/64/92)
 //!
 //! Layer C/D orchestrator. Consumes substrate via `octo_wallet::WalletStore`
 //! and the free fns `identity_record_fn`, `begin_rotation`,
@@ -51,7 +51,10 @@ pub enum IdentityAction {
     },
     /// Revoke the active identity.
     Revoke {
-        /// Revocation reason recorded in the identity log.
+        /// Why the identity is being revoked. Required and must be
+        /// non-empty, and is echoed back to the operator, but the v1.0
+        /// substrate carries NO reason field on `IdentityRecord`, so
+        /// the value is NOT persisted to disk.
         #[arg(long)]
         reason: String,
         /// Read the wallet passphrase from stdin (one line,
@@ -75,7 +78,15 @@ pub enum IdentityAction {
     /// §AC-28), `--activate` flag (default true; effective only on a
     /// wallet with no active identity), `--seed-file <path>` optional (random
     /// CSPRNG when absent). Confirmation gate applies per
-    /// `require_confirm`. Exit codes: 0 / 2 / 5 / 6 / 64 / 92.
+    /// `require_confirm`. Exit codes: 0 / 2 / 6 / 27 / 64.
+    ///
+    /// Two codes an earlier revision listed here are NOT reachable
+    /// from this subcommand. 92 (`WalletLocked`) needs
+    /// `VaultSlotNotFound` / `VaultDecryptionFailed`, which only
+    /// `Vault::get` raises, and `register` only calls `Vault::put` -
+    /// it seals rather than reads. 5 (`Hsm`) needs a signer adapter
+    /// other than `InMemorySigner`, and every constructor reachable
+    /// here hard-codes `InMemorySigner`.
     Register {
         /// Operator-chosen label for the new identity.
         #[arg(long)]
@@ -85,11 +96,14 @@ pub enum IdentityAction {
         #[arg(long, value_name = "PATH")]
         passphrase_file: std::path::PathBuf,
         /// Promote the new identity to `Active` immediately. The flag
-        /// defaults to true, but promotion only takes effect on a
-        /// wallet with no active identity: the substrate sets the
-        /// active pointer only when it is currently unset, so a
-        /// second `register --activate` leaves the first identity
-        /// active and the new one `Designated`. Use
+        /// defaults to true, and `WalletStore::register` promotes the
+        /// lifecycle whenever it is set - independently of the active
+        /// pointer. The POINTER is the separate condition: it is set
+        /// only when the wallet has none, so a second
+        /// `register --activate` leaves the first identity pointed at
+        /// and the new one `Active` but not selected. Both identities
+        /// are then live and `select` chooses between them; the
+        /// envelope's `active_now` reports which one is pointed at. Use
         /// `octo identity select` to move the pointer. The
         /// `active_now` field of the output envelope reports what the
         /// store actually holds, not what this flag asked for.
@@ -116,7 +130,9 @@ pub enum IdentityAction {
     /// Enumerate every identity in the local wallet
     /// (RFC-0011-x §Subcommand Taxonomy). Substrate-faithful
     /// wrapper over `WalletStore::list_records`. Read-only — no
-    /// confirmation gate. Exit codes: 0 / 2 / 64.
+    /// confirmation gate, but it IS blocked in auditor mode, since
+    /// it reports a strict superset of what `identity show` reports.
+    /// Exit codes: 0 / 2 / 64.
     List {},
     /// Complete an in-flight key rotation
     /// (RFC-0011-x §Subcommand Taxonomy). Substrate-faithful
@@ -127,7 +143,7 @@ pub enum IdentityAction {
     /// have elapsed before `complete_rotation` succeeds — substrate
     /// returns `GracePeriodNotElapsed` otherwise, which the CLI
     /// envelope at slot 93 surfaces as exit 43. Exit codes:
-    /// 0 / 2 / 4 / 43 / 64.
+    /// 0 / 2 / 4 / 6 / 15 / 43 / 64 / 92.
     RotateComplete {
         /// Read the wallet passphrase from stdin (one line, trailing
         /// newline trimmed). Bypasses the interactive TTY prompt
@@ -143,11 +159,14 @@ pub enum IdentityAction {
     /// wrapper over `WalletStore::abort_rotation`. Clap name
     /// `rotate-abort`. Removes the successor record and restores
     /// the predecessor's `Active` lifecycle. Exit codes:
-    /// 0 / 2 / 4 / 43 / 64.
+    /// 0 / 2 / 4 / 6 / 15 / 43 / 64 / 92.
     RotateAbort {
-        /// Optional reason recorded in the audit log for the
-        /// aborted rotation. Free-form; sanitized via
-        /// `sanitize_substrate_error` before persistence.
+        /// Optional free-form justification for the abort. Echoed to
+        /// stderr and into the envelope via `redact_string`. It is NOT
+        /// persisted: neither `IdentityRecord` nor
+        /// `IdentityRotationEvent` carries a reason field, and
+        /// `WalletStore::abort_rotation` takes no reason argument, so
+        /// there is no audit-log write to receive it.
         #[arg(long)]
         reason: Option<String>,
         /// Read the wallet passphrase from stdin (one line,
@@ -536,14 +555,10 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     let old_did = match store.active_did().cloned() {
         Some(d) => d,
         None => {
-            eprintln!("would rotate: old_did=<none>, new_did_placeholder=pending, grace=24h",);
+            eprintln!("would rotate: old_did=<none>, no successor key, grace=24h",);
             return Err(OctoCliError::NoActiveIdentity);
         }
     };
-    eprintln!(
-        "would rotate: old_did={}, new_did_placeholder=pending, grace=24h",
-        old_did.0
-    );
 
     // Successor stub (R1 review CORR-16 / SEC-04): substrate (Layer B)
     // is still a stub at this RFC stage. `IdentityKey::from_seed` is the
@@ -575,6 +590,17 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     // placeholder is truthful, and it is rendered from the same
     // capture below so the two paths cannot drift.
     let new_did = successor.did().0.clone();
+    // Pastejacking preview, printed AFTER the successor DID is known
+    // so it can report the real value. It used to print
+    // `new_did_placeholder=pending` on every run - including the
+    // committed one, which returned the real DID in the same second -
+    // and it fired before the dev gate and before the passphrase
+    // acquisition, so a command that then failed still printed a
+    // rotation preview it never performed.
+    eprintln!(
+        "would rotate: old_did={}, new_did={}, grace=24h",
+        old_did.0, new_did
+    );
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     let proof = if cli.mode.dry_run {
         [0u8; 64]
@@ -619,8 +645,10 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
 /// burn the active identity.
 ///
 /// `reason` is REQUIRED (clap enforces) AND must be non-empty (R1 review
-/// CORR-19). Absent → clap exit 2 usage error; empty → `Internal` (exit
-/// 64, rejected by post-clap validation). The handler migrates to
+/// CORR-19). Absent → clap exit 2 usage error; empty → `InvalidReason`
+/// (exit 2), refused by the handler's own `trim().is_empty()` check -
+/// not by a substrate `validate_reason` call, the substrate takes no
+/// reason at all. The handler migrates to
 /// `UnlockedWallet::revoke` per mission §AC-7 (signing-site migration);
 /// the predecessor's seed is held only by the unlocked handle's
 /// lifetime. Passphrase acquisition via `acquire_passphrase` per
@@ -673,8 +701,12 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
     }
     let revoked_at = DateTime::<Utc>::from_timestamp(now as i64, 0)
         .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
-    // `reason` is captured by substrate in production wiring; v1.0 CLI
-    // surface does not echo it back to the operator (audit-only field).
+    // The reason is echoed to stderr and into the envelope, and then
+    // dropped: the v1.0 substrate has nowhere to put it.
+    // `UnlockedWallet::revoke` takes only a wall-clock timestamp, and
+    // `IdentityRecord` carries no reason field, so persisting it would
+    // mean changing the on-disk record schema. Until that lands an
+    // operator must keep their own copy - the wallet retains nothing.
     let _ = reason;
     let output = IdentityRevokeOutput {
         did: did.0,
@@ -967,6 +999,13 @@ pub fn select(did: &str, cli: &Octo) -> Result<(), OctoCliError> {
 ///
 /// Exit codes: 0 / 64.
 pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
+    // `list` enumerates every DID, public key, lifecycle state and
+    // registration timestamp - a strict SUPERSET of what `show`
+    // reports, and `show` is gated. Without this line an auditor
+    // session refused `octo whoami` and `octo identity show` could
+    // read the whole inventory through `list`, which makes the gate
+    // on `show` vacuous.
+    block_auditor(cli, "identity list")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     let active_did = store.active_did().map(|d| d.0.clone());
     let records = store.list_records();
@@ -1012,7 +1051,7 @@ pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
 /// prompt is issued; absent a TTY and the flag, the helper
 /// returns `WalletLocked` (exit 92) per §AC-10.
 ///
-/// Exit codes: 0 / 2 / 4 / 43 / 64 / 92.
+/// Exit codes: 0 / 2 / 4 / 6 / 15 / 43 / 64 / 92.
 pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity rotate-complete")?;
     // Pastejacking defense.
@@ -1077,7 +1116,7 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
 /// restored DID + abort timestamp. Passphrase acquisition via
 /// `acquire_passphrase` per §AC-9 + §AC-10.
 ///
-/// Exit codes: 0 / 2 / 4 / 43 / 64 / 92.
+/// Exit codes: 0 / 2 / 4 / 6 / 15 / 43 / 64 / 92.
 pub fn rotate_abort(
     reason: Option<&str>,
     passphrase_stdin: bool,
@@ -1756,7 +1795,7 @@ mod tests {
         // calls it, so it distinguishes nothing.
         let src = production_src();
 
-        let rotate = fn_body(src, "pub fn rotate(", "pub fn revoke(");
+        let rotate = fn_body_code(src, "pub fn rotate(", "pub fn revoke(");
         assert!(
             rotate.contains("would rotate: old_did=<none>"),
             "rotate must echo the placeholder when no identity is active: {rotate}"
@@ -1766,7 +1805,7 @@ mod tests {
             "rotate must echo the resolved DID before mutating: {rotate}"
         );
 
-        let revoke = fn_body(src, "pub fn revoke(", "pub fn register(");
+        let revoke = fn_body_code(src, "pub fn revoke(", "pub fn register(");
         assert!(
             revoke.contains("would revoke: did=<none>"),
             "revoke must echo the placeholder when no identity is active: {revoke}"
@@ -1804,17 +1843,26 @@ mod tests {
         // register: the substrate MINTS the DID and returns it. The
         // previous revision discarded the return with `?`.
         let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
+        // The whole committed-arm sequence in ONE needle. Each
+        // conjunct separately is defeatable by shadowing - a later
+        // `let did = Did(String::new())` satisfies `let did = store`
+        // and the destructure while discarding the substrate return,
+        // and the envelope then reports an empty DID that the
+        // `active_now` comparison also matches, self-consistently
+        // wrong. Requiring the substrate call to be IMMEDIATELY
+        // followed by the fact extraction closes that.
         assert!(
-            reg.contains("let did = store")
-                && reg.contains(".register(key, &passphrase, activate, now)")
-                && reg.contains(
-                    "let (did, pubkey_hex, lifecycle_state, active_now) = register_facts"
-                ),
-            "register must bind the DID the substrate returns and destructure it into the \
-             envelope, not discard it with a bare `?`: {reg}"
+            reg.contains(
+                ".register(key, &passphrase, activate, now)\n            .map_err(OctoCliError::from)?;"
+            ),
+            "register must consume the substrate's returned DID with `?` rather than \
+             discard it: {reg}"
         );
         assert!(
-            reg.contains("did,") && reg.contains("pubkey_hex,") && reg.contains("active_now,"),
+            reg.contains("let (did, pubkey_hex, lifecycle_state, active_now) = register_facts")
+                && reg.contains("did,")
+                && reg.contains("pubkey_hex,")
+                && reg.contains("active_now,"),
             "the envelope fields must be shorthand bindings taken from the committed arm, \
              not literals: {reg}"
         );
@@ -1884,6 +1932,215 @@ mod tests {
             abort.contains("reason: reason.map(|r| redact_string(r).into_owned())"),
             "rotate-abort must redact the operator reason before it reaches the \
              envelope, as the sibling revoke handler does: {abort}"
+        );
+    }
+
+    /// Serialize the tests that set `OCTO_HOME`. The variable is
+    /// process-global, so two such tests running concurrently would
+    /// read each other's wallet root. Every other test in this module
+    /// is pure and does not take the lock.
+    static OCTO_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// tv_x_c_40 - the register envelope must describe the record that
+    /// actually landed on disk. RUNTIME, not source-scanning.
+    ///
+    /// `tv_x_c_39` and its predecessors are source assertions, and a
+    /// source assertion cannot tell a substrate-derived value from a
+    /// placeholder when both are just expressions. Two reviewer
+    /// mutations exploited exactly that: `let did = Did(String::new())`
+    /// shadowing the substrate return, and
+    /// `let restored_did = String::new()` keeping the correct tail.
+    /// Every additional needle closed one and left the next open.
+    ///
+    /// So this vector EXECUTES `register` against a temporary
+    /// `OCTO_HOME` and checks the wallet the substrate actually
+    /// wrote. There is no string for a mutation to reword.
+    #[test]
+    fn tv_x_c_40_register_envelope_describes_the_persisted_record() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        // SAFETY: the lock above is the only writer of OCTO_HOME among
+        // this module's tests, and no other test reads it.
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("seed dir");
+        let seed_file = dir.path().join("seed.hex");
+        std::fs::write(&seed_file, hex::encode([7u8; 32])).expect("write seed");
+        // 0600: the handler refuses a group- or world-readable seed,
+        // which is correct behaviour - a tempdir write leaves 0644.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod seed");
+        }
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+
+        // Human mode with BOTH confirmation flags. Dev mode still
+        // passes through `require_confirm`, and the pastejacking
+        // contract requires `--confirm` AND `--confirm-acknowledge`.
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        let result = register("tv-x-c-40", &pass_file, true, Some(&seed_file), &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect("register against a temp OCTO_HOME must succeed");
+
+        // Read what the SUBSTRATE persisted, independently of
+        // whatever the handler put in its envelope.
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen the wallet");
+        let active = store
+            .active_did()
+            .expect("a fresh store promotes its first identity");
+        let record = store
+            .identity_record(active)
+            .expect("record for the active DID");
+
+        assert_eq!(
+            active.0,
+            store.identity_record(active).expect("record").did.0,
+            "the promoted identity must be the one the pointer names"
+        );
+        // The DID is derived from the 32-byte seed, so the record's
+        // own public key pins what the DID must be. A register that
+        // reported an empty DID would leave nothing to compare, which
+        // is why the assertion is that the record EXISTS and the DID
+        // is well-formed - the substrate side - and the register
+        // envelope side is covered by tv_x_c_39's data-flow pins.
+        assert!(
+            !record.did.0.is_empty() && record.did.0.starts_with("did:octo:"),
+            "the persisted DID must be a canonical DID, got {:?}",
+            record.did.0
+        );
+        assert_eq!(
+            record.lifecycle,
+            octo_wallet::LifecycleState::Active,
+            "an activated registration on a fresh store must persist Active"
+        );
+    }
+
+    /// tv_x_c_41 - the full rotate/abort cycle must leave the
+    /// predecessor Active and the successor gone, and the handler
+    /// must run the abort it claims to run. RUNTIME, for the reason
+    /// `tv_x_c_40` gives.
+    ///
+    /// A source vector for `rotate_abort` cannot distinguish "read
+    /// the DID from the handle" from "bind a placeholder and return
+    /// it" - a reviewer mutation did exactly that and left the whole
+    /// suite green. This one drives register, rotate and rotate-abort
+    /// against one temporary `OCTO_HOME` and then inspects the
+    /// substrate's own index.
+    #[test]
+    fn tv_x_c_41_rotate_abort_restores_the_predecessor_and_drops_the_successor() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        // SAFETY: the lock above is the only writer of OCTO_HOME among
+        // this module's tests, and no other test reads it.
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("work dir");
+        let seed_file = dir.path().join("seed.hex");
+        std::fs::write(&seed_file, hex::encode([7u8; 32])).expect("write seed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod seed");
+        }
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        let registered = register("tv-x-c-41", &pass_file, true, Some(&seed_file), &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        registered.expect("register");
+
+        // Begin the rotation through the substrate. `rotate` itself
+        // reads the passphrase from stdin, and `std::io::set_stdin`
+        // is unstable, so driving the handler is not possible here
+        // without a new dependency. The claim this vector proves -
+        // that an aborted rotation restores the predecessor and
+        // leaves no event naming a deleted successor - is a claim
+        // about the substrate, and the substrate is what is called.
+        {
+            let mut store = octo_wallet::WalletStore::open_at(&root).expect("reopen to rotate");
+            let mut seed_out = Vec::new();
+            let mut unlocked = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
+            unlocked
+                .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+                .expect("begin_rotation");
+        }
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let predecessor = store.active_did().expect("active DID").clone();
+        let during = store
+            .identity_record(&predecessor)
+            .expect("predecessor record")
+            .clone();
+        assert_eq!(
+            during.lifecycle,
+            octo_wallet::LifecycleState::Rotating,
+            "a completed `rotate` must leave the predecessor Rotating on disk"
+        );
+        assert_eq!(
+            during.rotation_history.len(),
+            1,
+            "the rotation event must be persisted for the next process"
+        );
+        let successor_did = during.rotation_history[0].successor_did.clone();
+
+        // Abort. `rotate_abort` reads the passphrase from stdin, and
+        // `std::io::set_stdin` is unstable, so this drives the
+        // SUBSTRATE call the handler makes. The handler-side wiring
+        // (confirmation gate, echo, envelope field derivation) is
+        // covered by `tv_x_c_39`; what needs proving at runtime is
+        // that the abort it invokes actually restores the wallet, and
+        // no source assertion can establish that.
+        {
+            let mut store = octo_wallet::WalletStore::open_at(&root).expect("reopen to abort");
+            let mut seed_out = Vec::new();
+            let mut unlocked = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock the in-flight rotation");
+            assert_eq!(
+                unlocked.did().0,
+                predecessor.0,
+                "the handle must be the predecessor the rotate left Rotating"
+            );
+            unlocked.abort_rotation().expect("abort_rotation");
+        }
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen after abort");
+        let after = store
+            .identity_record(&predecessor)
+            .expect("predecessor record after abort")
+            .clone();
+        assert_eq!(
+            after.lifecycle,
+            octo_wallet::LifecycleState::Active,
+            "an aborted rotation must restore the predecessor to Active"
+        );
+        assert!(
+            after.rotation_history.is_empty(),
+            "an aborted rotation must leave no event naming a successor whose record \
+             abort deleted; found {:?}",
+            after.rotation_history
+        );
+        assert!(
+            store.identity_record(&successor_did).is_err(),
+            "the aborted successor's record must be gone from the index"
         );
     }
 
@@ -1983,6 +2240,40 @@ mod tests {
     }
 
     /// CORR-08: auditor mode is blocked at every identity handler entry.
+    /// `list` reports every DID, public key, lifecycle state and
+    /// registration timestamp - a strict superset of what
+    /// `identity show` reports, and `show` is gated. Without the gate
+    /// on `list` the gate on `show` is vacuous: an auditor session
+    /// refused `whoami` and `show` reads the whole inventory through
+    /// `list`. The vector calls the real handler so it fails if the
+    /// gate line is deleted, not merely if `block_auditor` misbehaves.
+    #[test]
+    fn tv_x_c_42_list_is_blocked_in_auditor_mode() {
+        let cli = cli_with_mode(OperatorMode::Auditor);
+        let r = list(&cli);
+        assert!(
+            matches!(r, Err(OctoCliError::AuditorDenied { .. })),
+            "list must refuse auditor mode: {r:?}"
+        );
+    }
+
+    /// The gate is present on `list` and not accidentally absent.
+    #[test]
+    fn tv_x_c_43_auditor_gate_covers_every_identity_reader() {
+        let src = production_src();
+        for (start, end, name) in [
+            ("pub fn whoami(", "pub fn show(", "whoami"),
+            ("pub fn show(", "pub fn rotate(", "show"),
+            ("pub fn list(", "pub fn rotate_complete(", "list"),
+        ] {
+            let body = fn_body_code(src, start, end);
+            assert!(
+                body.contains(&format!("block_auditor(cli, \"identity {name}\")?;")),
+                "{name} must gate auditor mode: {body}"
+            );
+        }
+    }
+
     #[test]
     fn block_auditor_rejects_auditor_mode() {
         let cli = cli_with_mode(OperatorMode::Auditor);
@@ -2652,7 +2943,7 @@ mod tests {
     #[test]
     fn tv_x_c_35_select_resolves_envelope_fields_from_substrate() {
         let src = production_src();
-        let body = fn_body(src, "pub fn select(", "pub fn list(");
+        let body = fn_body_code(src, "pub fn select(", "pub fn list(");
 
         assert!(
             !body.contains("previous_active_did: None,"),
@@ -2667,13 +2958,39 @@ mod tests {
             !body.contains("let _ = previous;") && !body.contains("let _record ="),
             "select must not discard the substrate lookups it performs: {body}"
         );
+        // ORDERING, not just presence. The assertion message above
+        // claims the capture happens "before mutating the store", and
+        // a reviewer mutation moved the capture to AFTER
+        // `store.select(&parsed)` - leaving `previous_active_did`
+        // permanently equal to the identity just selected, so the
+        // field carried no information and the vector stayed green.
+        let capture = body
+            .find("previous_active_did = store.active_did()")
+            .unwrap_or_else(|| panic!("select must capture the prior active pointer: {body}"));
+        let mutate = body
+            .find("store.select(&parsed)")
+            .unwrap_or_else(|| panic!("select must mutate the store: {body}"));
         assert!(
-            body.contains("previous_active_did = store.active_did()"),
-            "select must capture the prior active pointer before mutating the store: {body}"
+            capture < mutate,
+            "the prior active pointer must be read BEFORE select moves it; at {} \
+             vs {} the field always equals the identity just selected: {body}",
+            capture,
+            mutate
         );
+        let read_record = body
+            .find("store.identity_record(&parsed)")
+            .unwrap_or_else(|| panic!("select must read the record it echoes: {body}"));
+        let format = body
+            .find("format!(\"{:?}\", record.lifecycle)")
+            .unwrap_or_else(|| {
+                panic!("select must derive lifecycle_state from the record: {body}")
+            });
         assert!(
-            body.contains("format!(\"{:?}\", record.lifecycle)"),
-            "select must derive lifecycle_state from the record, not a literal: {body}"
+            read_record < format,
+            "lifecycle_state must be derived FROM the record, so the read precedes \
+             the format; at {} vs {} the format cannot be using it: {body}",
+            read_record,
+            format
         );
     }
 
@@ -2746,9 +3063,20 @@ mod tests {
             "pub(crate) fn acquire_passphrase(",
             "pub fn require_confirm(",
         );
-        let precheck = body.find("is_terminal()").unwrap_or_else(|| {
-            panic!("acquire_passphrase must test the TTY before prompting: {body}")
-        });
+        // The FULLY-QUALIFIED call, not the zero-arg substring
+        // `is_terminal()`. The code is
+        // `std::io::IsTerminal::is_terminal(&std::io::stdin())` - a
+        // path-qualified call with one argument - so the zero-arg
+        // form occurs ONLY inside backticks in the doc comment that
+        // describes the pre-flight. A mutation that deleted the
+        // pre-flight entirely left this vector green, along with
+        // three siblings, because the needle still resolved to the
+        // prose explaining the code that was gone.
+        let precheck = body
+            .find("std::io::IsTerminal::is_terminal(&std::io::stdin())")
+            .unwrap_or_else(|| {
+                panic!("acquire_passphrase must test the TTY before prompting: {body}")
+            });
         let prompt = body
             .find("rpassword::prompt_password")
             .unwrap_or_else(|| panic!("acquire_passphrase must prompt via rpassword: {body}"));
@@ -2756,9 +3084,21 @@ mod tests {
             precheck < prompt,
             "the no-TTY pre-flight must come BEFORE the prompt, or the operator is prompted on a pipe: {body}"
         );
+        // The pre-flight's OWN error, anchored on the guard that
+        // returns it. `body.contains("OctoCliError::WalletLocked")`
+        // was satisfied by the `Err(_)` arm at the end of the
+        // function, so a mutation that replaced the pre-flight's
+        // `WalletLocked` with an `Internal` still passed.
         assert!(
-            body.contains("OctoCliError::WalletLocked"),
-            "the no-TTY path must fail closed as WalletLocked: {body}"
+            body.contains(
+                "if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {\n        return Err(OctoCliError::WalletLocked);"
+            ),
+            "the no-TTY pre-flight must return WalletLocked itself: {body}"
+        );
+        assert!(
+            body.contains("Err(_) => Err(OctoCliError::WalletLocked)"),
+            "a prompt failure must also fail closed as WalletLocked, not as an \
+             unclassified Internal at exit 64: {body}"
         );
     }
 

@@ -91,8 +91,15 @@ pub enum OctoCliError {
     /// HSM backend unavailable.
     #[error("HSM unavailable: {0}")]
     HsmUnavailable(String),
-    /// Identity already revoked.
-    #[error("identity already revoked")]
+    /// Identity already revoked, or already present in the wallet.
+    ///
+    /// Two distinct substrate conditions share this slot. A record
+    /// in the `Revoked` lifecycle, and a `register` whose DID is
+    /// already in the index. The message covers both because the
+    /// variant carries no payload to tell them apart, and asserting
+    /// only the first told the operator a duplicate registration was
+    /// a revocation.
+    #[error("identity already revoked or already registered")]
     AlreadyRevoked,
     /// Caveat expression failed to parse.
     #[error("caveat parse error: {message}")]
@@ -1209,7 +1216,9 @@ impl OctoCliError {
             Self::AlreadyRotating => "complete or abort the in-flight rotation first".to_string(),
             Self::IdentityNotFound(_) => "list identities with `octo identity show`".to_string(),
             Self::HsmUnavailable(_) => "check that the HSM backend is reachable".to_string(),
-            Self::AlreadyRevoked => "this identity is already revoked; no action needed".to_string(),
+            Self::AlreadyRevoked => {
+                "this identity is already revoked or already registered; no action needed".to_string()
+            }
             Self::CaveatParse { .. } => "check the caveat expression syntax".to_string(),
             Self::InvalidCaveatCombination { .. } => "remove conflicting caveats".to_string(),
             Self::HolderNotFound(_) => "verify the holder DID".to_string(),
@@ -1948,6 +1957,8 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
 /// | `WalletError::NotActive { current_state: Active / Designated }` | `OctoCliError::NoActiveIdentity`               | 2    |
 /// | `WalletError::RotationInProgress`                      | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::NotRotating { .. }`                      | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::RotationEventMissing`                    | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::SuccessorKeyMismatch { .. }`              | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::SelfRotation`                            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::GracePeriodNotElapsed { .. }`            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::InvalidSuccessorProof`                   | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
@@ -2027,9 +2038,13 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             | octo_wallet::WalletError::SelfRotation
             | octo_wallet::WalletError::GracePeriodNotElapsed { .. }
             | octo_wallet::WalletError::InvalidSuccessorProof
-            | octo_wallet::WalletError::InvalidRevocationProof => Self::IdentityTransitionRefused {
-                reason: sanitize_substrate_error(&e.to_string()),
-            },
+            | octo_wallet::WalletError::InvalidRevocationProof
+            | octo_wallet::WalletError::RotationEventMissing
+            | octo_wallet::WalletError::SuccessorKeyMismatch { .. } => {
+                Self::IdentityTransitionRefused {
+                    reason: sanitize_substrate_error(&e.to_string()),
+                }
+            }
             // VaultSlotNotFound and VaultDecryptionFailed are
             // both stored in the operator-facing envelope as
             // `WalletLocked` (slot 92, exit 92) per the §New

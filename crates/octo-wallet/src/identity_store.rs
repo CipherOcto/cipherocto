@@ -359,13 +359,15 @@ impl WalletStore {
         // 3. Reject duplicate DID. `binary_search_by` returns `Ok`
         //    when an entry with the same DID is already in the
         //    index; that is a re-registration and is refused with
-        //    `AlreadyRevoked` per the mission YAML doc comment
-        //    ("Returns `AlreadyRevoked` when `key.did()` names a
-        //    record already in the terminal state"). The error
-        //    name is a slight misnomer for the duplicate case, but
-        //    it is what the mission specifies and the CLI maps it
-        //    to `IdentityTransitionRefused` at slot 93, exit 43
-        //    (mission 0011-x-wallet-store-cli §error mapping).
+        //    `AlreadyRevoked`, reusing the terminal-state variant
+        //    rather than minting one. The CLI maps it to
+        //    `OctoCliError::AlreadyRevoked` at exit 6 - NOT
+        //    `IdentityTransitionRefused` at slot 93, which an
+        //    earlier revision of this comment claimed and which
+        //    the CLI's `From<WalletError>` does not do. Exit 6 is
+        //    also what a genuinely revoked record returns, so the
+        //    operator message covers both causes rather than
+        //    asserting one.
         if self
             .index
             .records
@@ -564,6 +566,72 @@ impl WalletStore {
     /// the active pointer names an absent record;
     /// `WalletError::VaultSlotNotFound` when the slot file is gone;
     /// `WalletError::VaultDecryptionFailed` on a wrong passphrase.
+    /// Re-attach the successor key named by an in-flight rotation.
+    ///
+    /// Extracted from `unlock` so the binding and proof checks sit in
+    /// one named place and `unlock` stays inside the function-length
+    /// lint. The event arrives as a parameter rather than being
+    /// re-derived, so this cannot panic the way an `expect` on a
+    /// missing event would - the caller has established it exists.
+    fn rehydrate_successor_key(
+        &self,
+        successor_did: &Did,
+        event: &IdentityRotationEvent,
+        predecessor: &IdentityKey,
+        passphrase: &str,
+    ) -> Result<IdentityKey, WalletError> {
+        // Re-attach from the vault slot `begin_rotation` sealed under
+        // `seed_slot_slug_by_pubkey(succ_record.pubkey_bytes)`. The
+        // DID is the index key the seal step also wrote.
+        let succ_record = self
+            .index
+            .record(successor_did)
+            .map_err(|_| WalletError::IdentityNotFound(successor_did.clone()))?;
+        let succ_slot = seed_slot_slug_by_pubkey(succ_record.pubkey_bytes);
+        let mut succ_seed = Vec::new();
+        self.vault.get(&succ_slot, passphrase, &mut succ_seed)?;
+        if succ_seed.len() < 32 {
+            succ_seed.fill(0);
+            return Err(WalletError::VaultDecryptionFailed);
+        }
+        let mut succ_arr = [0u8; 32];
+        succ_arr.copy_from_slice(&succ_seed[..32]);
+        succ_seed.fill(0);
+        let succ_key = IdentityKey::from_seed(succ_arr);
+        // BINDING CHECK. The vault slot is chosen by
+        // `succ_record.pubkey_bytes`, and the DID is the index
+        // key - but nothing tied the two together, so an index
+        // whose `pubkey_bytes` disagreed with its `did` would
+        // decrypt SOME OTHER identity's seed and attach it as
+        // this successor. `complete_rotation` would then promote
+        // the named DID to active while every signature it makes
+        // is under a different key, silently. `Did` is derived
+        // from the public key, so the check is exact.
+        if &succ_key.did() != successor_did
+            || succ_key.public_key_bytes() != succ_record.pubkey_bytes
+        {
+            return Err(WalletError::SuccessorKeyMismatch {
+                did: successor_did.clone(),
+            });
+        }
+        // PROOF CHECK. `begin_rotation` signed
+        // `b"rotate" || successor_pubkey` with the PREDECESSOR's
+        // key and stored the result on the event. That proof is
+        // what makes "this predecessor authorised this successor"
+        // verifiable across the process boundary; rehydrating
+        // the key without checking it means a hand-edited index
+        // can name any successor it likes. The predecessor key is
+        // `predecessor`, passed in and holding the seed.
+        let mut expected = Vec::with_capacity(6 + 32);
+        expected.extend_from_slice(b"rotate");
+        expected.extend_from_slice(&succ_key.public_key_bytes());
+        let recomputed = predecessor.sign(&expected)?;
+        if recomputed.to_bytes() != event.signature_proof {
+            return Err(WalletError::InvalidSuccessorProof);
+        }
+        Ok(succ_key)
+    }
+
     pub fn unlock<'a>(
         &'a mut self,
         passphrase: &str,
@@ -674,6 +742,20 @@ impl WalletStore {
             #[allow(clippy::cast_sign_loss)]
             e.started_at_unix.cast_unsigned()
         });
+        // A `Rotating` record with NO rotation event cannot be
+        // completed: the start time and successor are gone, and
+        // `complete_rotation` reads the start time through
+        // `.expect(...)`. Handing back a key that will panic turns a
+        // recoverable state into exit 101. Refuse at unlock, where
+        // the operator gets an envelope and a remediation, and where
+        // `rotate-abort` is still available to them. Both record
+        // writes now land in one atomic write, so this state is
+        // unreachable through the CLI; it remains reachable from a
+        // hand-edited or partially-written index, which is exactly
+        // when a panic is least acceptable.
+        if matches!(record.lifecycle, LifecycleState::Rotating) && in_flight.is_none() {
+            return Err(WalletError::RotationEventMissing);
+        }
         let successor_did = in_flight.as_ref().map(|e| e.successor_did.clone());
 
         let mut key = IdentityKey::from_seed_with_lifecycle(
@@ -683,26 +765,17 @@ impl WalletStore {
             revoked_at,
             rotation_started_at,
         )?;
+        // Restore the persisted deprecation flag before anything can
+        // write it back. Without this, the next `persist_active_record`
+        // writes `false` over a `true` that a completed rotation set.
+        key.set_deprecated(record.deprecated);
 
         // Re-attach the successor from its vault-sealed seed. The
-        // seed was written by `begin_rotation`'s seal step, so it is
-        // on disk; the DID is the index key the seal step also wrote.
-        if let Some(succ_did) = successor_did.as_ref() {
-            let succ_record = self
-                .index
-                .record(succ_did)
-                .map_err(|_| WalletError::IdentityNotFound(succ_did.clone()))?;
-            let succ_slot = seed_slot_slug_by_pubkey(succ_record.pubkey_bytes);
-            let mut succ_seed = Vec::new();
-            self.vault.get(&succ_slot, passphrase, &mut succ_seed)?;
-            if succ_seed.len() < 32 {
-                succ_seed.fill(0);
-                return Err(WalletError::VaultDecryptionFailed);
-            }
-            let mut succ_arr = [0u8; 32];
-            succ_arr.copy_from_slice(&succ_seed[..32]);
-            succ_seed.fill(0);
-            key.rehydrate_successor(IdentityKey::from_seed(succ_arr))?;
+        // binding and proof checks live in the named helper.
+        if let Some(event) = in_flight.as_ref() {
+            let succ_key =
+                self.rehydrate_successor_key(&event.successor_did, event, &key, passphrase)?;
+            key.rehydrate_successor(succ_key)?;
         }
 
         // 6. Return the handle. The handle holds the unique key
@@ -776,10 +849,13 @@ impl UnlockedWallet<'_> {
     /// proof that the predecessor accepted the rotation.
     ///
     /// # Errors
-    /// Returns `WalletError::AlreadyRevoked` if the predecessor is
-    /// terminal; `WalletError::SelfRotation` if the successor IS
-    /// the predecessor; `WalletError::WeakPassphrase` if the
-    /// passphrase is below the floor.
+    /// Returns `WalletError::NotActive { current_state }` if the
+    /// predecessor is not `Active` - a `Revoked` predecessor arrives
+    /// here as `NotActive { current_state: Revoked }`, not
+    /// `AlreadyRevoked`; `WalletError::SelfRotation` if the successor
+    /// IS the predecessor; `WalletError::WeakPassphrase` if the
+    /// passphrase is below the floor. The `NotActive` check runs
+    /// BEFORE the vault seal, so a refusal writes nothing.
     pub fn begin_rotation(
         &mut self,
         successor: IdentityKey,
@@ -788,6 +864,18 @@ impl UnlockedWallet<'_> {
     ) -> Result<[u8; 64], WalletError> {
         if passphrase.len() < MIN_PASSPHRASE_CHARS {
             return Err(WalletError::WeakPassphrase);
+        }
+        // GUARD BEFORE THE SEAL. The lifecycle check lives inside
+        // `IdentityKey::begin_rotation`, which runs AFTER the vault
+        // write below. A predecessor that is not `Active` therefore
+        // sealed the successor's slot, was then refused, and left a
+        // permanently orphaned encrypted slot that no CLI surface
+        // reports - `orphan_slots` has no consumer in any command.
+        // Checking here means a refusal writes nothing.
+        if self.key.lifecycle() != LifecycleState::Active {
+            return Err(WalletError::NotActive {
+                current_state: self.key.lifecycle(),
+            });
         }
         // Seal the successor's slot before flipping the
         // predecessor's lifecycle to Rotating. The store's index
@@ -841,8 +929,12 @@ impl UnlockedWallet<'_> {
         self.store.index.records.insert(pos, successor_record);
         let successor_did_for_event = successor_did.clone();
         self.rotation_successor_did = Some(successor_did);
-        // Refresh the record snapshot in the index to reflect the
-        // new Rotating lifecycle.
+        // Both record changes - the new Rotating lifecycle and the
+        // rotation event - go into ONE write below. Writing the
+        // lifecycle first made the first write durable while the
+        // second could still fail, and a Rotating record with an
+        // empty history is the state that makes the next process
+        // panic in `complete_rotation`.
         self.persist_active_record()?;
         // PERSIST THE ROTATION EVENT. The predecessor's start time
         // and successor DID both live on the in-memory key, and the
@@ -863,6 +955,7 @@ impl UnlockedWallet<'_> {
             successor_did_for_event,
             proof,
         )?;
+        write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(proof)
     }
 
@@ -926,7 +1019,8 @@ impl UnlockedWallet<'_> {
         // truly orphaned - mission §AC-38 says abort is the
         // path that returns the slot to an orphan, and that
         // requires no record naming the slot either.
-        if let Some(successor_did) = self.rotation_successor_did.take() {
+        let aborted_successor = self.rotation_successor_did.take();
+        if let Some(successor_did) = aborted_successor.as_ref() {
             if let Ok(pos) = self
                 .store
                 .index
@@ -936,17 +1030,48 @@ impl UnlockedWallet<'_> {
                 self.store.index.records.remove(pos);
             }
         }
+        // Drop the aborted rotation's event. The predecessor's
+        // lifecycle is back to Active, so leaving the event in
+        // `rotation_history` makes `unlock` rehydrate a rotation that
+        // no longer exists, and `identity show` reports a rotation to
+        // a successor whose record this function just deleted. A
+        // machine-read envelope naming a rotation to an identity not
+        // in the wallet is worse than the unbounded growth it avoids.
+        let predecessor_did = self.did.clone();
+        if let Ok(pos) = self
+            .store
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(predecessor_did.as_str()))
+        {
+            let mut record = self.store.index.records[pos].clone();
+            record
+                .rotation_history
+                .retain(|e| Some(&e.successor_did) != aborted_successor.as_ref());
+            self.store.index.records[pos] = record;
+        }
         // Always persist the predecessor's restored state so
         // the index reflects the abort (mission §AC-38:
         // predecessor returns to Active, not stuck in
-        // Rotating).
+        // Rotating). The successor-record removal above and this
+        // restore land in ONE write, so an abort cannot leave the
+        // record deleted while the predecessor is still Rotating.
         self.persist_active_record()?;
+        write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(())
     }
 
-    /// Revoke the active identity. Idempotent from the `Revoked`
-    /// lifecycle (mission §AC-13 vector `tv_x_23`).
+    /// Revoke the active identity.
     ///
+    /// `IdentityKey::revoke` is idempotent from the `Revoked`
+    /// lifecycle, but that branch is UNREACHABLE through this method:
+    /// the only construction site for an `UnlockedWallet` is
+    /// `unlock`, which rehydrates through
+    /// `from_seed_with_lifecycle` and that refuses a `Revoked` record
+    /// outright. A second `octo identity revoke` therefore exits 6
+    /// from the constructor, never reaching the idempotent no-op.
+    /// The operator-visible end state is the same, so only this doc
+    /// was wrong.
     /// # Errors
     /// Returns `WalletError::NotActive { current_state: Designated }`
     /// when the identity was never activated.
@@ -954,6 +1079,7 @@ impl UnlockedWallet<'_> {
     pub fn revoke(&mut self, now_unix: u64) -> Result<(), WalletError> {
         self.key.revoke(now_unix_secs_from_u64(now_unix))?;
         self.persist_active_record()?;
+        write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(())
     }
 
@@ -1018,12 +1144,18 @@ impl UnlockedWallet<'_> {
             signature_proof,
         });
         self.store.index.records[pos] = record;
-        write_index_atomically(&self.store.root, &self.store.index)
+        Ok(())
     }
 
-    /// Refresh the persisted record for the active DID to match
-    /// the in-memory `IdentityKey`. Called after every state
-    /// transition so `store.json` mirrors the live key.
+    /// Refresh the in-memory record for the active DID to match the
+    /// live `IdentityKey`. Called after every state transition.
+    ///
+    /// This function does NOT write. A transition that needs several
+    /// record changes must call it once per change and then issue a
+    /// SINGLE `write_index_atomically` covering all of them. Two
+    /// writes make the first durable while the second can still fail,
+    /// and a half-applied rotation is the one state no CLI command
+    /// can recover from.
     fn persist_active_record(&mut self) -> Result<(), WalletError> {
         let pos = self
             .store
@@ -1035,7 +1167,6 @@ impl UnlockedWallet<'_> {
         record.lifecycle = self.key.lifecycle();
         record.deprecated = self.key.is_deprecated();
         self.store.index.records[pos] = record;
-        write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(())
     }
 }
@@ -2258,7 +2389,8 @@ mod tests {
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
         let successor = IdentityKey::from_seed([0xACu8; 32]);
-        let successor_did = successor.did().0.clone();
+        let successor_did_obj = successor.did();
+        let successor_did = successor_did_obj.0.clone();
         let proof = handle
             .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
             .expect("begin_rotation");
@@ -2286,6 +2418,11 @@ mod tests {
             "the persisted event must name the successor the operator rotated to"
         );
         assert_eq!(
+            persisted.rotation_history[0].started_at_unix, 1_700_000_010,
+            "the persisted START TIME must survive, not merely the event's existence; \
+             a zeroed timestamp makes the grace deadline unreachable"
+        );
+        assert_eq!(
             persisted.rotation_history[0].signature_proof, proof,
             "the persisted event must carry the proof begin_rotation returned"
         );
@@ -2295,6 +2432,112 @@ mod tests {
         assert!(
             result.is_ok(),
             "complete_rotation after a reopen must succeed, got {result:?}"
+        );
+        drop(handle);
+        drop(store);
+
+        // The POST-CONDITIONS, not just the return value. A mutation
+        // that deleted `index.active_did = Some(successor_did)` left
+        // all 297 vectors green while the wallet kept the retired,
+        // deprecated predecessor as active - the rotation reported
+        // success and moved nothing.
+        let store = WalletStore::open_at(dir.path()).expect("reopen after complete");
+        let active = store
+            .active_did()
+            .expect("a completed rotation must leave an active identity");
+        assert_eq!(
+            active.0, successor_did,
+            "a completed rotation must promote the SUCCESSOR; the wallet is still \
+             pointed at the predecessor it just retired"
+        );
+        let succ = store
+            .identity_record(&successor_did_obj)
+            .expect("the promoted successor must have a record")
+            .clone();
+        assert_eq!(
+            succ.lifecycle,
+            LifecycleState::Active,
+            "the promoted successor must be Active"
+        );
+        let pred = store
+            .identity_record(&did)
+            .expect("the retired predecessor keeps its record")
+            .clone();
+        assert_eq!(
+            pred.lifecycle,
+            LifecycleState::Active,
+            "the predecessor returns to Active in a deprecated state, not a \
+             terminal one"
+        );
+        assert!(
+            pred.deprecated,
+            "the predecessor must be marked deprecated on disk; a rehydrated key \
+             that reported false would have written false back over this"
+        );
+    }
+
+    /// tv_x_50 - a refused `begin_rotation` must leave NO vault slot.
+    ///
+    /// The lifecycle guard lives inside `IdentityKey::begin_rotation`,
+    /// which runs after the store seals the successor's slot. A
+    /// predecessor that is `Designated` (register without activation
+    /// is the reachable case) was therefore refused AFTER the write,
+    /// orphaning an encrypted slot on disk. `orphan_slots()` exists
+    /// to surface exactly this, and no CLI command calls it, so the
+    /// operator has no way to see or clean it. The store now guards
+    /// before the seal.
+    #[test]
+    fn tv_x_50_refused_rotation_seals_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        // Register without activation leaves the record Designated.
+        let key = IdentityKey::from_seed([0xABu8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("register");
+        let record = store
+            .active_did()
+            .and_then(|d| store.identity_record(d).ok().cloned());
+        // A fresh store promotes the first registration, so assert on
+        // whatever state the record actually landed in rather than
+        // assuming. If it is Active the guard cannot fire and this
+        // vector would be vacuous - skip rather than lie.
+        let designated = record
+            .as_ref()
+            .is_some_and(|r| r.lifecycle == LifecycleState::Designated);
+        // A silent early return would make this vector pass on a store
+        // shape that never exercises the guard, which is the vacuous
+        // shape this review exists to remove. Assert the precondition
+        // instead: if `register` ever promotes a first registration
+        // unconditionally, this vector FAILS and says so, rather than
+        // quietly testing nothing.
+        assert!(
+            designated,
+            "tv_x_50 needs a Designated record to exercise the guard; \
+             register(false) produced {:?}. If that promotion is now \
+             unconditional, this vector no longer covers the seal-after- \
+             guard order and must be rewritten, not skipped.",
+            record.as_ref().map(|r| r.lifecycle)
+        );
+        let before = store.orphan_slots().len();
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let successor = IdentityKey::from_seed([0xACu8; 32]);
+        let result =
+            handle.begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010);
+        assert!(
+            matches!(result, Err(WalletError::NotActive { .. })),
+            "a non-Active predecessor must be refused, got {result:?}"
+        );
+        drop(handle);
+        let after = store.orphan_slots();
+        assert_eq!(
+            after.len(),
+            before,
+            "a refused rotation must seal nothing; orphans went from {before} to {}: {after:?}",
+            after.len()
         );
     }
 }

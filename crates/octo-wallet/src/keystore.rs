@@ -386,34 +386,43 @@ mod tests {
     ///
     /// The earlier form passed vacuously when the `starkli` CLI was not on
     /// PATH, which is the failure mode m102 §Starkli-compat keystore box 7
-    /// records. The test is now `#[ignore]`-gated so a default `cargo test`
+    /// records. The test is `#[ignore]`-gated so a default `cargo test`
     /// does not run it; running `cargo test -- --ignored starkli_cross_impl`
     /// invokes the external `starkli` CLI to round-trip an exported file
-    /// through the upstream tool. If `starkli` is absent, the test is
-    /// SKIPPED via the early return; the SKIPPED report is a test outcome
-    /// that does not collapse into PASS, so the vacuous-pass failure mode is
-    /// closed. Operators with `starkli` installed get a real interop
-    /// check; operators without it get a SKIPPED rather than a misleading
-    /// PASS.
+    /// through the upstream tool. If `starkli` is absent, the test now
+    /// fails-closed via `panic!` (Rust's test harness has no SKIPPED
+    /// outcome, so an early `return` would be reported as PASS — the
+    /// exact vacuous-pass failure mode the criterion names). The
+    /// `#[ignore]` gate means the panic only fires when an operator
+    /// explicitly opts in via `cargo test -- --ignored`; default CI runs
+    /// never see this test. The fix-closed posture is the
+    /// substrate-faithful answer for environments without the upstream
+    /// tool: they cannot pass the cross-impl check without the tool
+    /// present.
     #[test]
     #[ignore = "requires `starkli` CLI on PATH; run via cargo test -- --ignored"]
     fn starkli_cross_impl_roundtrip() {
-        // Probe PATH for the upstream CLI. A missing CLI must short-circuit
-        // before any assertion fires, so the run reports SKIPPED, not PASS.
-        let starkli_path = match std::process::Command::new("starkli")
+        // Probe PATH for the upstream CLI. A missing CLI must fail the
+        // test, not pass it via early-return. Rust's `#[test]` framework
+        // reports an early `return` as PASS, which is the vacuous-pass
+        // failure mode the criterion names; `panic!` produces FAIL.
+        let starkli_present = match std::process::Command::new("starkli")
             .arg("--version")
             .output()
         {
-            Ok(out) if out.status.success() => "starkli",
-            Ok(_) | Err(_) => {
-                eprintln!(
-                    "SKIPPED: `starkli` CLI not on PATH (or exited non-zero on \
-                     --version). Install starkli v0.3+ and re-run with \
-                     `cargo test -- --ignored starkli_cross_impl`."
-                );
-                return;
-            }
+            Ok(out) if out.status.success() => true,
+            Ok(_) | Err(_) => false,
         };
+        if !starkli_present {
+            panic!(
+                "starkli_cross_impl_roundtrip requires the `starkli` CLI on PATH; \
+                 install starkli v0.3+ and re-run with \
+                 `cargo test -- --ignored starkli_cross_impl`. Rust's test \
+                 harness has no SKIPPED outcome, so this test fails-closed \
+                 rather than silently passing when the upstream tool is absent."
+            );
+        }
+        let starkli_path = "starkli";
 
         // 1. Generate a key and export via the substrate's chacha20-poly1305
         //    envelope.

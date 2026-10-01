@@ -1894,6 +1894,31 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             }
             octo_wallet::WalletError::WeakPassphrase => Self::WeakPassphrase,
             octo_wallet::WalletError::AlreadyRevoked => Self::AlreadyRevoked,
+            // NotActive carries a `current_state` discriminator per
+            // substrate shape — each terminal state reuses an existing
+            // CLI variant + exit so the operator sees the canonical
+            // substrate shape failure message. The discriminator is
+            // honored here because the YAML translation table maps
+            // each variant to a distinct existing slot (Revoked → 6
+            // AlreadyRevoked, Rotating → 3 AlreadyRotating, other → 2
+            // NoActiveIdentity). Collapsing all three into a single
+            // IdentityTransitionRefused (exit 43) would have made the
+            // select-on-revoked path exit 43 instead of 6, which is the
+            // exact A17 adversary the §6 wall exists to answer.
+            octo_wallet::WalletError::NotActive {
+                current_state: octo_wallet::LifecycleState::Revoked,
+            } => Self::AlreadyRevoked,
+            octo_wallet::WalletError::NotActive {
+                current_state: octo_wallet::LifecycleState::Rotating,
+            } => Self::AlreadyRotating,
+            octo_wallet::WalletError::NotActive { .. } => Self::NoActiveIdentity,
+            // Hsm wraps the substrate's typed HsmError; the CLI
+            // envelope surfaces the sanitized reason as
+            // `HsmUnavailable` (exit 5) per the §New error variants
+            // mapping table.
+            octo_wallet::WalletError::Hsm(reason) => {
+                Self::HsmUnavailable(sanitize_substrate_error(&reason.to_string()))
+            }
             // Lifecycle refusal family — every member carries the
             // substrate's `Display` message as the CLI payload.
             // The substrate owns the canonical distinction; the
@@ -1901,8 +1926,7 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             // (per RFC-0011-x §Error Handling amendment-chain
             // shared-slot pattern; operator-unambiguous within the
             // identity command surface).
-            octo_wallet::WalletError::NotActive { .. }
-            | octo_wallet::WalletError::RotationInProgress
+            octo_wallet::WalletError::RotationInProgress
             | octo_wallet::WalletError::NotRotating { .. }
             | octo_wallet::WalletError::SelfRotation
             | octo_wallet::WalletError::GracePeriodNotElapsed { .. }
@@ -1910,6 +1934,14 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             | octo_wallet::WalletError::InvalidRevocationProof => Self::IdentityTransitionRefused {
                 reason: sanitize_substrate_error(&e.to_string()),
             },
+            // VaultSlotNotFound and VaultDecryptionFailed are
+            // both stored in the operator-facing envelope as
+            // `WalletLocked` (slot 92, exit 92) per the §New
+            // error variants translation table — a missing slot
+            // or a wrong passphrase is operator-equivalent to a
+            // locked store from the operator's side.
+            octo_wallet::WalletError::VaultSlotNotFound(_) => Self::WalletLocked,
+            octo_wallet::WalletError::VaultDecryptionFailed => Self::WalletLocked,
             // Additive-safe wildcard per `#[non_exhaustive]` on
             // `WalletError`. Future substrate variants collapse
             // to `Internal(reason)` exit 64 — same pattern as
@@ -2811,12 +2843,17 @@ mod tests {
         assert_eq!(OctoCliError::NoOctoHome.exit_code(), 27);
     }
 
-    /// tv_x_44 — the five `WalletError` lifecycle refusals all map to
+    /// tv_x_44 — the six `WalletError` lifecycle refusals all map to
     /// `OctoCliError::IdentityTransitionRefused { reason }` at slot 93
     /// with exit 43. The substrate owns the canonical distinction;
     /// the CLI envelope collapses them into one typed variant.
+    /// `NotActive { current_state }` is a separate family and maps to
+    /// `AlreadyRevoked` (exit 6), `AlreadyRotating` (exit 3), or
+    /// `NoActiveIdentity` (exit 2) per the §New error variants translation
+    /// table — the field discriminator is honored here. Asserted by
+    /// `tv_x_44b_not_active_field_discriminator_respected`.
     #[test]
-    fn tv_x_44_five_lifecycle_refusals_map_to_slot_93_exit_43() {
+    fn tv_x_44_six_lifecycle_refusals_map_to_slot_93_exit_43() {
         let cases: Vec<octo_wallet::WalletError> = vec![
             octo_wallet::WalletError::RotationInProgress,
             octo_wallet::WalletError::SelfRotation,
@@ -2828,6 +2865,7 @@ mod tests {
                 current_state: octo_wallet::LifecycleState::Active,
             },
             octo_wallet::WalletError::InvalidSuccessorProof,
+            octo_wallet::WalletError::InvalidRevocationProof,
         ];
         for substrate_err in cases {
             let substrate_dbg = format!("{:?}", substrate_err);
@@ -2849,6 +2887,106 @@ mod tests {
                 "IdentityTransitionRefused is exit 43 (shared with the agent amendment chain write-path slots)"
             );
         }
+    }
+
+    /// tv_x_44b — the `NotActive { current_state }` field discriminator
+    /// is honored at the CLI boundary. `Revoked` reuses the existing
+    /// `AlreadyRevoked` slot (exit 6) so `select` on a terminal record
+    /// surfaces the canonical substrate-shape failure; `Rotating` reuses
+    /// `AlreadyRotating` (exit 3); the bare arm falls through to
+    /// `NoActiveIdentity` (exit 2). Collapsing all three into
+    /// `IdentityTransitionRefused` (exit 43) would have made the
+    /// select-on-revoked path exit 43 — the exact A17 adversary the
+    /// §6 wall exists to answer.
+    #[test]
+    fn tv_x_44b_not_active_field_discriminator_respected() {
+        // Revoked -> AlreadyRevoked (exit 6)
+        let e: OctoCliError = octo_wallet::WalletError::NotActive {
+            current_state: octo_wallet::LifecycleState::Revoked,
+        }
+        .into();
+        assert!(
+            matches!(e, OctoCliError::AlreadyRevoked),
+            "NotActive {{ current_state: Revoked }} must map to AlreadyRevoked (exit 6), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 6);
+        // Rotating -> AlreadyRotating (exit 3)
+        let e: OctoCliError = octo_wallet::WalletError::NotActive {
+            current_state: octo_wallet::LifecycleState::Rotating,
+        }
+        .into();
+        assert!(
+            matches!(e, OctoCliError::AlreadyRotating),
+            "NotActive {{ current_state: Rotating }} must map to AlreadyRotating (exit 3), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 3);
+        // Other (Active / bare) -> NoActiveIdentity (exit 2)
+        let e: OctoCliError = octo_wallet::WalletError::NotActive {
+            current_state: octo_wallet::LifecycleState::Active,
+        }
+        .into();
+        assert!(
+            matches!(e, OctoCliError::NoActiveIdentity),
+            "NotActive {{ current_state: Active }} must map to NoActiveIdentity (exit 2), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 2);
+        let e: OctoCliError = octo_wallet::WalletError::NotActive {
+            current_state: octo_wallet::LifecycleState::Designated,
+        }
+        .into();
+        assert!(
+            matches!(e, OctoCliError::NoActiveIdentity),
+            "NotActive {{ current_state: Designated }} must map to NoActiveIdentity (exit 2), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 2);
+    }
+
+    /// `Hsm(HsmError)` transport failure maps to `HsmUnavailable` (slot 5)
+    /// per the §New error variants translation table. The substrate
+    /// carries the typed `HsmError` payload; the CLI envelope renders the
+    /// sanitized reason.
+    #[test]
+    fn tv_x_44c_hsm_maps_to_hsm_unavailable() {
+        // Build a representative HsmError. Substrate `HsmError` is a
+        // typed enum; we exercise one variant that is reachable in
+        // production (transport backend unreachable).
+        let substrate_err = octo_wallet::WalletError::Hsm(
+            octo_wallet::hsm::HsmError::NotConnected("hsm transport down".to_string()),
+        );
+        let e: OctoCliError = substrate_err.into();
+        match &e {
+            OctoCliError::HsmUnavailable(reason) => {
+                assert!(
+                    !reason.is_empty(),
+                    "HsmUnavailable must carry a non-empty reason: {e:?}"
+                );
+            }
+            other => panic!(
+                "Hsm must map to HsmUnavailable, got: {other:?}"
+            ),
+        }
+        assert_eq!(e.exit_code(), 5);
+    }
+
+    /// `VaultSlotNotFound(String)` and `VaultDecryptionFailed` map to
+    /// `WalletLocked` (slot 92, exit 92) per the §New error variants
+    /// translation table — a missing slot or a wrong passphrase is
+    /// operator-equivalent to a locked store from the operator's side.
+    #[test]
+    fn tv_x_44d_vault_slot_maps_to_wallet_locked() {
+        let e: OctoCliError =
+            octo_wallet::WalletError::VaultSlotNotFound("missing-slot".to_string()).into();
+        assert!(
+            matches!(e, OctoCliError::WalletLocked),
+            "VaultSlotNotFound must map to WalletLocked (exit 92), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 92);
+        let e: OctoCliError = octo_wallet::WalletError::VaultDecryptionFailed.into();
+        assert!(
+            matches!(e, OctoCliError::WalletLocked),
+            "VaultDecryptionFailed must map to WalletLocked (exit 92), got: {e:?}"
+        );
+        assert_eq!(e.exit_code(), 92);
     }
 
     /// tv_x_48 — `WalletError::WeakPassphrase` maps to

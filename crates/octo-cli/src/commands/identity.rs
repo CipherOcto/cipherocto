@@ -1898,17 +1898,6 @@ mod tests {
         );
     }
 
-    /// tv_x_c_12 — `rotate_complete` handler must delegate to
-    /// `octo_wallet::complete_rotation` (substrate-faithful wrapper).
-    #[test]
-    fn tv_x_c_12_rotate_complete_delegates_to_octo_wallet() {
-        let src = include_str!("identity.rs");
-        assert!(
-            src.contains("octo_wallet::complete_rotation(&mut key, now)"),
-            "rotate_complete must call octo_wallet::complete_rotation: {src}"
-        );
-    }
-
     /// tv_x_c_13 — `rotate_complete` must call `require_confirm` BEFORE
     /// the substrate mutation (handler-side gate discipline per R12.5 /
     /// R13.5 lessons).
@@ -1974,17 +1963,6 @@ mod tests {
         assert!(
             src.contains("would rotate-abort:"),
             "rotate_abort handler missing canonical-payload echo: {src}"
-        );
-    }
-
-    /// tv_x_c_16 — `rotate_abort` handler must delegate to
-    /// `octo_wallet::abort_rotation` (substrate-faithful wrapper).
-    #[test]
-    fn tv_x_c_16_rotate_abort_delegates_to_octo_wallet() {
-        let src = include_str!("identity.rs");
-        assert!(
-            src.contains("octo_wallet::abort_rotation(&mut key)"),
-            "rotate_abort must call octo_wallet::abort_rotation: {src}"
         );
     }
 
@@ -2257,6 +2235,64 @@ mod tests {
         assert!(
             !body.contains("octo_wallet::abort_rotation("),
             "rotate_abort must NOT keep the free-fn path per AC-7 migration: {body}"
+        );
+    }
+
+    /// tv_x_c_31 — `rotate` handler must migrate to UnlockedWallet via
+    /// `store.unlock(...)` then `unlocked.begin_rotation(successor, ...)`
+    /// per AC-7 (Phase 6.3). The earlier tv_x_c_12 + tv_x_c_16 vectors
+    /// (deleted in R1.5 as vacuous) tested the old free-fn path; the
+    /// mirror for the bare rotate handler was never added.
+    #[test]
+    fn tv_x_c_31_rotate_uses_unlocked_wallet_migration() {
+        let src = include_str!("identity.rs");
+        let start = src
+            .find("pub fn rotate(")
+            .expect("rotate fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn rotate_complete(").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+            "rotate must migrate to UnlockedWallet via store.unlock per AC-7: {body}"
+        );
+        assert!(
+            body.contains(".begin_rotation(successor, passphrase.as_str(), now)"),
+            "rotate must call UnlockedWallet::begin_rotation per AC-7: {body}"
+        );
+        assert!(
+            !body.contains("octo_wallet::begin_rotation("),
+            "rotate must NOT keep the free-fn path per AC-7 migration: {body}"
+        );
+    }
+
+    /// tv_x_c_32 — `revoke` handler must migrate to UnlockedWallet via
+    /// `store.unlock(...)` then `unlocked.revoke(now)` per AC-7
+    /// (Phase 6.3). Mirror of tv_x_c_31 for the revoke call site; the
+    /// earlier R1.5 deletion of tv_x_c_12/16 left this call site
+    /// unmigrated-tested, and the gap was raised in R3 finding 4.
+    #[test]
+    fn tv_x_c_32_revoke_uses_unlocked_wallet_migration() {
+        let src = include_str!("identity.rs");
+        let start = src
+            .find("pub fn revoke(")
+            .expect("revoke fn present");
+        let slice = &src[start..];
+        let end = slice
+            .find("fn revoke_rejects_empty_reason")
+            .unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+            "revoke must migrate to UnlockedWallet via store.unlock per AC-7: {body}"
+        );
+        assert!(
+            body.contains("unlocked.revoke(now)"),
+            "revoke must call UnlockedWallet::revoke per AC-7: {body}"
+        );
+        assert!(
+            !body.contains("octo_wallet::revoke("),
+            "revoke must NOT keep the free-fn path per AC-7 migration: {body}"
         );
     }
 }

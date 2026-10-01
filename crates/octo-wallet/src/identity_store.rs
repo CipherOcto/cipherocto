@@ -470,6 +470,31 @@ impl WalletStore {
                 current_state: LifecycleState::Revoked,
             });
         }
+        // Two rotation guards, both BEFORE the write. `select` moves
+        // the active pointer, and the active pointer is the only
+        // thing that makes a record reachable by `rotate-complete`,
+        // `rotate-abort` and `revoke` - so moving it off an in-flight
+        // rotation strands that rotation with no CLI route back, and
+        // moving it ONTO a mid-rotation record hands the pointer to
+        // an identity whose own transition is already under way.
+        // Either way the wallet ends up in a state where the
+        // remediation the CLI suggests cannot run.
+        if matches!(record.lifecycle, LifecycleState::Rotating) {
+            return Err(WalletError::NotActive {
+                current_state: LifecycleState::Rotating,
+            });
+        }
+        if let Some(current) = self.index.active_did.as_ref() {
+            if current != did {
+                if let Ok(in_flight) = self.index.record(current) {
+                    if matches!(in_flight.lifecycle, LifecycleState::Rotating) {
+                        return Err(WalletError::NotActive {
+                            current_state: LifecycleState::Rotating,
+                        });
+                    }
+                }
+            }
+        }
         self.index.active_did = Some(did.clone());
         write_index_atomically(&self.root, &self.index)?;
         Ok(())
@@ -588,15 +613,15 @@ impl WalletStore {
             .record(successor_did)
             .map_err(|_| WalletError::IdentityNotFound(successor_did.clone()))?;
         let succ_slot = seed_slot_slug_by_pubkey(succ_record.pubkey_bytes);
-        let mut succ_seed = Vec::new();
+        let mut succ_seed = zeroize::Zeroizing::new(Vec::new());
         self.vault.get(&succ_slot, passphrase, &mut succ_seed)?;
         if succ_seed.len() < 32 {
-            succ_seed.fill(0);
             return Err(WalletError::VaultDecryptionFailed);
         }
         let mut succ_arr = [0u8; 32];
         succ_arr.copy_from_slice(&succ_seed[..32]);
-        succ_seed.fill(0);
+        // `Zeroizing` wipes the buffer on drop, so both the short-read
+        // return above and this one leave nothing behind.
         let succ_key = IdentityKey::from_seed(succ_arr);
         // BINDING CHECK. The vault slot is chosen by
         // `succ_record.pubkey_bytes`, and the DID is the index
@@ -1075,8 +1100,26 @@ impl UnlockedWallet<'_> {
     /// # Errors
     /// Returns `WalletError::NotActive { current_state: Designated }`
     /// when the identity was never activated.
+    /// Returns `WalletError::NotActive { current_state: Rotating }`
+    /// when a rotation is in flight. Revoking mid-rotation made the
+    /// rotation permanently unreachable: `unlock` rehydrates through
+    /// `from_seed_with_lifecycle`, which refuses a `Revoked` record,
+    /// so once the predecessor is revoked there is no handle with
+    /// which to run `complete_rotation` or `abort_rotation` - both
+    /// exit 6 from the constructor. The successor record was left in
+    /// the index forever with no CLI route to remove it. Aborting
+    /// first is the recovery, and it has to happen before the
+    /// revocation, not after.
     #[allow(clippy::needless_pass_by_value)]
     pub fn revoke(&mut self, now_unix: u64) -> Result<(), WalletError> {
+        // GUARD BEFORE ANY WRITE. `key.revoke` flips the lifecycle in
+        // memory and `persist_active_record` writes it, so this must
+        // run first or the refusal has already landed on disk.
+        if self.key.lifecycle() == LifecycleState::Rotating {
+            return Err(WalletError::NotActive {
+                current_state: LifecycleState::Rotating,
+            });
+        }
         self.key.revoke(now_unix_secs_from_u64(now_unix))?;
         self.persist_active_record()?;
         write_index_atomically(&self.store.root, &self.store.index)?;
@@ -2376,6 +2419,175 @@ mod tests {
     /// with no envelope, on the only path the CLI can take. The
     /// `GracePeriodNotElapsed` path that exit 43 documents was
     /// unreachable.
+    /// `select` must not move the pointer off an identity with a
+    /// rotation in flight. Doing so stranded the rotation: the active
+    /// pointer is the only thing that makes a record reachable by
+    /// `rotate-complete` and `rotate-abort`, so after the move both
+    /// refused and the CLI's own remediation could not run.
+    #[test]
+    fn tv_x_51_select_refuses_to_strand_an_in_flight_rotation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xB0u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register");
+        let bystander = IdentityKey::from_seed([0xB1u8; 32]);
+        let bystander_did = bystander.did().clone();
+        store
+            .register(
+                bystander,
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_001,
+            )
+            .expect("register bystander");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(
+                IdentityKey::from_seed([0xB2u8; 32]),
+                "correct-horse-battery-staple",
+                1_700_000_010,
+            )
+            .expect("begin_rotation");
+        drop(handle);
+        let rotating_did = store
+            .index
+            .records
+            .iter()
+            .find(|r| matches!(r.lifecycle, LifecycleState::Rotating))
+            .expect("rotating record present")
+            .did
+            .clone();
+
+        let err = store
+            .select(&bystander_did)
+            .expect_err("select must refuse to strand an in-flight rotation");
+        assert!(
+            matches!(
+                err,
+                WalletError::NotActive {
+                    current_state: LifecycleState::Rotating
+                }
+            ),
+            "expected NotActive/Rotating, got {err:?}"
+        );
+        assert_eq!(
+            store.active_did().expect("pointer survives"),
+            &rotating_did,
+            "the refused select must not have moved the pointer"
+        );
+    }
+
+    /// `select` must also refuse to move the pointer ONTO a record
+    /// whose own transition is already under way.
+    #[test]
+    fn tv_x_52_select_refuses_to_point_at_a_rotating_record() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xB3u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register");
+        let successor = IdentityKey::from_seed([0xB4u8; 32]);
+        let successor_did = successor.did().clone();
+        store
+            .register(
+                successor,
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_001,
+            )
+            .expect("register successor");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(
+                IdentityKey::from_seed([0xB5u8; 32]),
+                "correct-horse-battery-staple",
+                1_700_000_010,
+            )
+            .expect("begin_rotation");
+        drop(handle);
+
+        let err = store
+            .select(&successor_did)
+            .expect_err("select must refuse a Rotating target");
+        assert!(
+            matches!(
+                err,
+                WalletError::NotActive {
+                    current_state: LifecycleState::Rotating
+                }
+            ),
+            "expected NotActive/Rotating, got {err:?}"
+        );
+    }
+
+    /// `revoke` must refuse while a rotation is in flight. Revoking
+    /// mid-rotation made the rotation permanently unreachable:
+    /// `unlock` rehydrates through `from_seed_with_lifecycle`, which
+    /// refuses a `Revoked` record, so both `rotate-complete` and
+    /// `rotate-abort` exited 6 from the constructor and the successor
+    /// record stayed in the index with no CLI route to remove it.
+    #[test]
+    fn tv_x_53_revoke_refuses_while_a_rotation_is_in_flight() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xB6u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(
+                IdentityKey::from_seed([0xB7u8; 32]),
+                "correct-horse-battery-staple",
+                1_700_000_010,
+            )
+            .expect("begin_rotation");
+        let err = handle
+            .revoke(1_700_000_020)
+            .expect_err("revoke must refuse mid-rotation");
+        assert!(
+            matches!(
+                err,
+                WalletError::NotActive {
+                    current_state: LifecycleState::Rotating
+                }
+            ),
+            "expected NotActive/Rotating, got {err:?}"
+        );
+        // The refusal wrote nothing: the record is still Rotating and
+        // therefore still abortable, which is the whole point.
+        drop(handle);
+        let did = store.active_did().expect("active").clone();
+        assert!(
+            store.identity_record(&did).expect("record").lifecycle == LifecycleState::Rotating,
+            "a refused revoke must not have persisted Revoked"
+        );
+    }
+
     #[test]
     fn tv_x_49_rotate_complete_survives_a_store_reopen() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -78,10 +78,15 @@ pub struct OperatorModeFlags {
     /// exit-code contract is owned by one helper rather than scattered
     /// across every call site.
     ///
-    /// The flag is currently unused: no command reads stdin in this
-    /// RFC's command surface. The gate helper in `error.rs` is wired
-    /// so that the first stdin reader can drop in one line and inherit
-    /// the refusal semantics for free.
+    /// Refuse to read secret material from a pipe without this flag.
+    ///
+    /// This claim was stale: the flag IS read. `acquire_passphrase`
+    /// refuses a non-terminal stdin at exit 15 unless it is passed,
+    /// and the four passphrase-taking identity subcommands
+    /// (`rotate`, `revoke`, `rotate-complete`, `rotate-abort`) all
+    /// route through it. The refusal exists because a secret on a
+    /// pipe can end up in a shell history, a process listing, or a CI
+    /// log.
     #[arg(long, global = true)]
     pub allow_stdin_secret: bool,
 }

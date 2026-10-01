@@ -983,6 +983,24 @@ pub enum OctoCliError {
     #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
     WeakPassphrase,
 
+    /// An operation the surface deliberately restricts to dev mode was
+    /// attempted elsewhere.
+    ///
+    /// The variant exists because these refusals were reported as
+    /// `Internal` at exit 64, whose hint tells the operator to re-run
+    /// with `RUST_LOG=debug` and report the diagnostic. That is
+    /// advice for an unexpected fault; this is a deliberate gate with
+    /// a one-flag remedy, and sending an operator to a bug report
+    /// because they omitted `--mode dev` is a false escalation.
+    /// Exit 2 per the same operator-input-validation convention
+    /// `WeakPassphrase` and `InvalidReason` follow.
+    #[error("dev-mode-only operation refused: {detail}")]
+    DevModeRequired {
+        /// The refusal and its remedy, rendered so the operator sees
+        /// the exact flag to add rather than a diagnostic request.
+        detail: String,
+    },
+
     /// Operator-supplied `--reason` was rejected by the substrate
     /// `validate_reason` guard before any state transition ran
     /// (RFC-0015 §6.2.5). Mapped from
@@ -1194,6 +1212,7 @@ impl OctoCliError {
             Self::IdentityTransitionRefused { .. } => 43,
             Self::WeakPassphrase => 2,
             Self::InvalidReason { .. } => 2,
+            Self::DevModeRequired { .. } => 2,
         }
     }
 
@@ -1206,7 +1225,14 @@ impl OctoCliError {
     pub fn hint(&self) -> Option<String> {
         let h: String = match self {
             Self::ClapParse(_) => "run `octo --help` for usage".to_string(),
-            Self::NoActiveIdentity => "create or select an identity before running this command".to_string(),
+            // Carries two distinct substrate conditions, so the hint
+            // has to cover both. `NotActive` reaches here for a
+            // `Designated` record as well as for a wallet with no
+            // pointer at all, and the previous hint only mentioned
+            // the second - it told an operator whose wallet already
+            // had a selected identity to create or select one, which
+            // they had already done.
+            Self::NoActiveIdentity => "no ACTIVE identity: either the wallet has no active pointer (create or select one with `octo identity register` / `octo identity select --did <did>`), or the active record is `Designated` rather than `Active` and must be promoted - see `octo identity list` for the current lifecycle of every record".to_string(),
             Self::ConfirmationRequired { .. } => {
                 "re-run with `--confirm` to acknowledge the mutation".to_string()
             }
@@ -1484,8 +1510,9 @@ impl OctoCliError {
                 "unlock the wallet with `octo identity unlock --passphrase-file <path>` (or interactive passphrase prompt) to access the identity seed; signing operations require the unlocked state (RFC-0011-x §Lifecycle Requirements)".to_string()
             }
             Self::IdentityTransitionRefused { .. } => {
-                "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements); verify the active identity's state machine position (`octo identity list`) and resolve any in-flight rotation before retrying (`octo identity rotate complete` or `octo identity rotate abort`)".to_string()
+                "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements); verify the active identity's state machine position (`octo identity list`) and resolve any in-flight rotation before retrying - if the active identity is not the predecessor, `octo identity select --did <predecessor>` first, then `octo identity rotate-complete` or `octo identity rotate-abort`".to_string()
             }
+            Self::DevModeRequired { detail } => detail.to_string(),
             Self::WeakPassphrase => {
                 format!(
                     "the passphrase is below the {}-character floor enforced at both `register` and `unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28); supply a longer passphrase",

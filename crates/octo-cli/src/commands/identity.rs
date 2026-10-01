@@ -107,7 +107,19 @@ pub enum IdentityAction {
         /// `octo identity select` to move the pointer. The
         /// `active_now` field of the output envelope reports what the
         /// store actually holds, not what this flag asked for.
-        #[arg(long, default_value_t = true)]
+        // Set rather than clap's default SetTrue for a bool long:
+        // SetTrue accepts only bare --activate and rejects
+        // --activate=false, which left no way to register a
+        // Designated record even though Designated is a state select
+        // accepts and whoami, show and list all report.
+        // default_missing_value keeps bare --activate meaning true.
+        #[arg(
+            long,
+            action = clap::ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true"
+        )]
         activate: bool,
         /// Optional path to a file containing a 32-byte seed (raw or
         /// 64-char lowercase hex). When absent, the substrate
@@ -793,6 +805,26 @@ pub fn register(
         // otherwise CSPRNG via `IdentityKey::generate` or a
         // deterministic replay from `--seed-file` when present.
         let key = if let Some(seed_path) = seed_file {
+            // A seed FILE is a raw private key read off disk, and it
+            // is the weaker posture of the two paths - the CSPRNG
+            // branch below mints a fresh key in memory and has
+            // nothing to leak. The gate used to be on the CSPRNG
+            // branch instead, which left production with exactly one
+            // route and made it the unsafe one: register with no flags
+            // was refused outside dev mode, while supplying a seed
+            // file imported a raw key in any mode. The gate belongs
+            // on the import, not the mint.
+            #[cfg(not(test))]
+            {
+                if !is_dev_mode(cli) {
+                    return Err(OctoCliError::DevModeRequired {
+                        detail: "importing a raw seed file is refused outside dev mode; omit \
+                                 --seed-file to have the wallet mint a fresh CSPRNG identity, \
+                                 or re-run with --mode dev for deterministic replay"
+                            .to_string(),
+                    });
+                }
+            }
             // AC-25 obligation 2: refuse a seed file that is
             // group- or world-readable. A permissive mode is
             // treated as a compromise already, not as a warning
@@ -819,6 +851,22 @@ pub fn register(
                 OctoCliError::Internal(sanitize_substrate_error(&format!("seed file read: {e}")))
             })?;
             let seed_arr: [u8; 32] = if bytes.len() == 32 {
+                // A 32-byte file that is entirely hex characters is
+                // almost certainly a pasted 32-char hex seed that lost
+                // its leading zero. Reading it as 32 raw bytes
+                // silently mints a DIFFERENT identity than the
+                // operator intended and reports success, which is the
+                // worst available failure mode for a seed. Refuse
+                // with the two spellings rather than guess.
+                if bytes.iter().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(OctoCliError::Internal(
+                        "seed file is 32 bytes of hex characters; refusing to read it as 32 \
+                         raw bytes because that would mint a different identity than the hex \
+                         you supplied. Write the 64-char hex form, or write the 32 raw bytes \
+                         exactly as the key file holds them"
+                            .to_string(),
+                    ));
+                }
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
                 arr
@@ -847,14 +895,11 @@ pub fn register(
             };
             octo_wallet::IdentityKey::from_seed(seed_arr)
         } else {
-            #[cfg(not(test))]
-            {
-                if !is_dev_mode(cli) {
-                    return Err(OctoCliError::Internal(
-                        "CSPRNG-derived identity refused outside dev mode; use --mode dev or supply --seed-file for deterministic replay".to_string()
-                    ));
-                }
-            }
+            // No dev-mode gate. Minting a fresh CSPRNG identity is
+            // the SAFE path - the key never touches disk before the
+            // vault seals it - and gating it left a production
+            // operator with no supported way to create an identity.
+            // The confirmation gate above is what this path needs.
             octo_wallet::IdentityKey::generate().map_err(|e| {
                 OctoCliError::Internal(sanitize_substrate_error(&format!(
                     "identity key generate: {e}"
@@ -891,6 +936,7 @@ pub fn register(
             hex::encode(key_pubkey),
             format!("{lifecycle_now:?}"),
             active_now,
+            record.registered_at_unix,
         )
     } else {
         // No substrate call ran, so there is no DID, no record and no
@@ -898,15 +944,21 @@ pub fn register(
         // than fabricating them; the envelope is emitted through
         // `OutputEnvelope::redacted`, which marks it
         // non-authoritative.
-        (String::new(), String::new(), String::new(), false)
+        (String::new(), String::new(), String::new(), false, 0)
     };
-    let (did, pubkey_hex, lifecycle_state, active_now) = register_facts;
+    let (did, pubkey_hex, lifecycle_state, active_now, registered_at_unix) = register_facts;
     let output = IdentityRegisterOutput {
         did,
         pubkey_hex,
         label: label.to_string(),
         lifecycle_state,
-        registered_at: chrono::Utc::now(),
+        // The substrate stamped `registered_at_unix` on the record
+        // it just wrote. A second `Utc::now()` here re-reads the
+        // clock and drifts from the persisted value, so the envelope
+        // and `store.json` disagree on when the identity was
+        // registered.
+        registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0)
+            .unwrap_or_else(chrono::Utc::now),
         active_now,
     };
     let env = if cli.mode.dry_run {
@@ -1083,15 +1135,22 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
         // `complete_rotation` promotes the successor, so the store's
         // active pointer is the new DID after the call.
         let new_did = store.active_did().map(|d| d.0.clone()).unwrap_or_default();
-        (new_did, old_did)
+        (new_did, old_did, now)
     } else {
-        (String::new(), String::new())
+        (String::new(), String::new(), 0)
     };
-    let (new_did, old_did) = rotate_facts;
+    let (new_did, old_did, completed_at_unix) = rotate_facts;
     let output = IdentityRotateCompleteOutput {
         new_did,
         old_did,
-        completed_at: chrono::Utc::now(),
+        // `now` is the value handed to `complete_rotation`, so the
+        // envelope and the persisted record agree. Re-reading
+        // `Utc::now()` here drifted by however long the unlock took.
+        completed_at: chrono::DateTime::from_timestamp(
+            i64::try_from(completed_at_unix).unwrap_or(i64::MAX),
+            0,
+        )
+        .unwrap_or_else(chrono::Utc::now),
     };
     let env = if cli.mode.dry_run {
         OutputEnvelope::redacted("octo.identity.rotate-complete.v1", output)
@@ -1143,14 +1202,20 @@ pub fn rotate_abort(
         // `restored_did: String::new()` while the handler's own doc
         // comment promised the restored DID was echoed.
         let restored_did = unlocked.did().0.clone();
+        let aborted_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
         unlocked.abort_rotation().map_err(OctoCliError::from)?;
-        restored_did
+        (restored_did, aborted_at_unix)
     } else {
-        String::new()
+        (String::new(), 0)
     };
+    let (restored_did, aborted_at_unix) = abort_facts;
     let output = IdentityRotateAbortOutput {
-        restored_did: abort_facts,
-        aborted_at: chrono::Utc::now(),
+        restored_did,
+        aborted_at: chrono::DateTime::from_timestamp(
+            i64::try_from(aborted_at_unix).unwrap_or(i64::MAX),
+            0,
+        )
+        .unwrap_or_else(chrono::Utc::now),
         // The reason is operator-supplied free text on a mutating
         // command. The sibling `revoke` handler runs it through
         // `redact_string` on both the stderr echo and the envelope;
@@ -1826,6 +1891,176 @@ mod tests {
     /// DID and RETURNS it, and the handler discarded the return with
     /// `?`, so `octo identity register` exited 0 having told the
     /// operator its new identity had no DID.
+    /// C1 - the dev-mode gate must be on the seed-file IMPORT, not on
+    /// the CSPRNG mint.
+    ///
+    /// The gate was inverted. It sat on the CSPRNG branch, so
+    /// `octo identity register` with no flags - the one route a
+    /// production operator should have - was refused outside dev mode,
+    /// while `--seed-file`, which reads a RAW private key off disk,
+    /// was ungated. The surface that survived the gate was the weaker
+    /// of the two.
+    ///
+    /// The first draft of this vector counted gate sites and compared
+    /// their offsets, and it PASSED a mutation that moved the gate from
+    /// the import branch onto the mint: the moved gate still sits
+    /// before `IdentityKey::generate()`, so every offset check was
+    /// satisfied. Offsets do not identify a BRANCH. This version
+    /// splits the handler at the `} else {` that opens the CSPRNG arm
+    /// and asks which side of it the gate is on - the only question
+    /// the mutation actually changes.
+    #[test]
+    fn tv_x_c_44_the_dev_gate_is_on_the_seed_import_not_the_mint() {
+        let src = production_src();
+        let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
+
+        // Split the handler into the seed-file arm and the CSPRNG arm.
+        let branch_at = reg
+            .find("} else {")
+            .expect("register branches between a seed file and the CSPRNG");
+        let (import_arm, mint_arm) = reg.split_at(branch_at);
+
+        assert!(
+            import_arm.contains("if let Some(seed_path) = seed_file"),
+            "the first arm must be the seed-file import: {import_arm}"
+        );
+        assert!(
+            mint_arm.contains("IdentityKey::generate()"),
+            "the second arm must be the CSPRNG mint: {mint_arm}"
+        );
+
+        // The gate is on the import, INSIDE the arm that uses
+        // `seed_path` and before the arm's first `seed_path` use - a
+        // gate after the read would be checking a file already read.
+        let import_gate = import_arm
+            .find("is_dev_mode(cli)")
+            .unwrap_or_else(|| panic!("the seed-file import must be gated: {import_arm}"));
+        let first_seed_use = import_arm
+            .find("seed_path")
+            .unwrap_or_else(|| panic!("the import arm must read seed_path: {import_arm}"));
+        assert!(
+            first_seed_use < import_gate,
+            "the gate must precede the seed file's first use: {import_arm}"
+        );
+        assert!(
+            import_arm.contains("DevModeRequired"),
+            "the gate must refuse with a named variant carrying the remedy: {import_arm}"
+        );
+
+        // The mint is UNGATED. This is the conjunct the inversion
+        // actually broke, and the one no offset check can see.
+        assert!(
+            !mint_arm.contains("is_dev_mode(cli)"),
+            "the CSPRNG mint must not be gated - minting a fresh key in memory is the SAFE path \
+             and gating it leaves a production operator with no supported way to create an \
+             identity, while the raw-key import stays open: {mint_arm}"
+        );
+    }
+
+    /// L14 - `--activate` must accept the explicit `false` form.
+    ///
+    /// clap's derive default for a `bool` is `SetTrue`, which accepts a
+    /// bare `--activate` and REJECTS `--activate=false` as a usage
+    /// error. Designated is a state `select` accepts and `whoami`,
+    /// `show` and `list` all report, so the flag that registers a
+    /// Designated record was not expressible.
+    ///
+    /// Both needles are searched inside a SLICE of the clap struct
+    /// rather than the whole file. A whole-file `contains` is
+    /// self-referential: this vector's own literal contains
+    /// `action = clap::ArgAction::Set`, so it matched itself and the
+    /// vector was green before the fix was written. The first
+    /// draft shipped that way and the mutation below confirms the
+    /// slicing is load-bearing.
+    #[test]
+    fn tv_x_c_45_activate_accepts_the_explicit_false_form() {
+        let src = production_src();
+
+        // Bound the clap attribute block for `activate` itself. The
+        // delimiters are the field and its own doc block, so a needle
+        // elsewhere in the file - including in this test - cannot
+        // satisfy the assertion.
+        // Start at the ATTRIBUTE, not the field - the `#[arg(...)]`
+        // block sits above the field, so slicing from the field
+        // excluded the very text the vector asserts on.
+        let field_at = src
+            .find("\n        activate: bool,")
+            .expect("the activate field is present");
+        let field_at = src[..field_at]
+            .rfind("\n        #[arg(")
+            .expect("activate carries a clap attribute");
+        let slice_end = src[field_at..]
+            .find("seed_file:")
+            .map(|i| field_at + i)
+            .expect("a sibling field follows activate");
+        // Strip line comments before searching. The clap block
+        // carries a `//` comment explaining WHY SetTrue is wrong, and
+        // the negative control below looks for the token `SetTrue` -
+        // so without the strip the vector fails on its own
+        // explanatory prose, which is the doc-comment-satisfaction
+        // shape in a negative control.
+        let activate_block: String = src[field_at..slice_end]
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) if !line[..at].contains('"') => line[..at].trim_end(),
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let activate_block = activate_block.as_str();
+
+        assert!(
+            activate_block.contains("action = clap::ArgAction::Set,"),
+            "the --activate bool long must use ArgAction::Set, or clap's SetTrue rejects \
+             `--activate=false` as a usage error and Designated is unreachable: {activate_block}"
+        );
+        assert!(
+            activate_block.contains("default_missing_value = \"true\""),
+            "a bare --activate must still mean true after switching to ArgAction::Set: \
+             {activate_block}"
+        );
+        assert!(
+            activate_block.contains("num_args = 0..=1"),
+            "ArgAction::Set with no num_args would make `--activate` itself require a value: \
+             {activate_block}"
+        );
+
+        // The negative control, and the one the mutation targets.
+        assert!(
+            !activate_block.contains("SetTrue"),
+            "ArgAction::SetTrue is the spelling that breaks Designated: {activate_block}"
+        );
+    }
+
+    /// L10 - a 32-byte seed file that is all hex characters is a
+    /// 32-char hex seed that lost its leading zero. Read as 32 raw
+    /// bytes it silently mints a DIFFERENT identity than the operator
+    /// intended and reports success, which is the worst available
+    /// failure mode for a seed. The refusal names both spellings.
+    #[test]
+    fn tv_x_c_46_a_hex_shaped_seed_file_is_refused_rather_than_guessed() {
+        let src = production_src();
+        let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
+
+        // Inside the register handler, not the whole file - the
+        // whole-file spelling of this assertion matched its own
+        // literal.
+        assert!(
+            reg.contains("is_ascii_hexdigit"),
+            "the 32-byte branch must detect a hex-shaped payload: {reg}"
+        );
+        assert!(
+            reg.contains("refusing to read it as 32"),
+            "the refusal must name the ambiguity so the operator picks a spelling, not a guess: \
+             {reg}"
+        );
+        assert!(
+            !reg.contains("if bytes.len() == 32 {\n                let mut arr"),
+            "the 32-byte arm must open with the hex-shape check, not fall straight through to \
+             the copy: {reg}"
+        );
+    }
+
     #[test]
     fn tv_x_c_39_no_committed_envelope_reports_a_placeholder_did() {
         let src = production_src();
@@ -1859,8 +2094,10 @@ mod tests {
              discard it: {reg}"
         );
         assert!(
-            reg.contains("let (did, pubkey_hex, lifecycle_state, active_now) = register_facts")
-                && reg.contains("did,")
+            reg.contains(
+                "let (did, pubkey_hex, lifecycle_state, active_now, registered_at_unix) = \
+                 register_facts"
+            ) && reg.contains("did,")
                 && reg.contains("pubkey_hex,")
                 && reg.contains("active_now,"),
             "the envelope fields must be shorthand bindings taken from the committed arm, \
@@ -1873,15 +2110,36 @@ mod tests {
             "register must report substrate facts, not empty strings or the flag it was \
              passed; promotion only happens when the wallet had no active identity: {reg}"
         );
+        // The `hex::encode(...)` conjunct alone is provenance-BLIND:
+        // it is satisfied by any identifier, so replacing the binding
+        // `let key_pubkey = key.public_key_bytes();` with a constant
+        // leaves the envelope reporting 64 zeros and the vector green
+        // across the whole module. Pin the binding's source too.
         assert!(
-            reg.contains("hex::encode(key_pubkey)"),
-            "pubkey_hex must be the record's public key, hex-encoded: {reg}"
+            reg.contains("let key_pubkey = key.public_key_bytes();")
+                && reg.contains("hex::encode(key_pubkey)"),
+            "pubkey_hex must be the record's public key read off the key, hex-encoded - \
+             pinning only the `hex::encode` conjunct lets a constant through: {reg}"
         );
         assert!(
             reg.contains("store.active_did().map(|d| d.0.clone()) == Some(did.0.as_str())")
                 || reg.contains("active_did_now.as_deref() == Some(did.0.as_str())"),
             "active_now must be the pointer read back from the store, compared to the new \
              DID - not the activate flag echoed: {reg}"
+        );
+
+        // F5: the envelope timestamps. Re-reading `Utc::now()` in the
+        // envelope drifts from the value the substrate persisted, so
+        // the envelope and `store.json` disagree on when. Each field
+        // must be built from the substrate's own stamp, and the
+        // spelling-bound negative control is what makes the conjunct
+        // above falsifiable.
+        assert!(
+            reg.contains("registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0)")
+                && reg.contains("record.registered_at_unix,")
+                && !reg.contains("registered_at: chrono::Utc::now()"),
+            "registered_at must be derived from the substrate's own registered_at_unix - a \
+             second `Utc::now()` drifts from the persisted value: {reg}"
         );
 
         // rotate-complete: the predecessor is retired and the
@@ -1894,7 +2152,7 @@ mod tests {
              from the store pointer: {complete}"
         );
         assert!(
-            complete.contains("(new_did, old_did)")
+            complete.contains("(new_did, old_did, now)")
                 && complete.contains("new_did,")
                 && complete.contains("old_did,"),
             "both envelope fields must be the destructured committed values: {complete}"
@@ -1903,6 +2161,14 @@ mod tests {
             !complete.contains("new_did: String::new()")
                 && !complete.contains("old_did: String::new()"),
             "rotate-complete must not fall back to empty DIDs: {complete}"
+        );
+        assert!(
+            complete.contains("completed_at: chrono::DateTime::from_timestamp(")
+                && complete.contains("i64::try_from(completed_at_unix)")
+                && complete.contains("(new_did, old_did, now)")
+                && !complete.contains("completed_at: chrono::Utc::now()"),
+            "completed_at must be the `now` handed to complete_rotation, not a second clock \
+             read that drifts by however long the unlock took: {complete}"
         );
 
         // rotate-abort: abort restores THIS handle's record to Active.
@@ -1915,14 +2181,22 @@ mod tests {
         // abort call, then the binding as the arm's value.
         assert!(
             abort.contains(
-                "unlocked.abort_rotation().map_err(OctoCliError::from)?;\n        restored_did\n    } else {"
+                "unlocked.abort_rotation().map_err(OctoCliError::from)?;\n        \
+                 (restored_did, aborted_at_unix)\n    } else {"
             ),
             "the committed arm must RETURN the restored DID read from the handle, not \
              compute it into a binding it then discards: {abort}"
         );
         assert!(
-            abort.contains("restored_did: abort_facts"),
+            abort.contains("let (restored_did, aborted_at_unix) = abort_facts")
+                && abort.contains("restored_did,"),
             "the envelope field must be the arm's value: {abort}"
+        );
+        assert!(
+            abort.contains("aborted_at: chrono::DateTime::from_timestamp(")
+                && abort.contains("i64::try_from(aborted_at_unix)")
+                && !abort.contains("aborted_at: chrono::Utc::now()"),
+            "aborted_at must be built from the captured stamp, not a second clock read: {abort}"
         );
         assert!(
             !abort.contains("restored_did: String::new()"),

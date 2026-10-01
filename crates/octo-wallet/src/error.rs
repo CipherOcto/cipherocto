@@ -98,11 +98,20 @@ pub enum WalletError {
     ///
     /// `complete_rotation` reads the start time through an
     /// `.expect(...)`, so completing such a rotation would panic -
-    /// exit 101, no envelope. `rotate-abort` still works on the
-    /// rehydrated key, so this is a recoverable state and the
-    /// operator is told to take the abort path.
+    /// exit 101, no envelope. This is raised BY `unlock`, which
+    /// every key-taking path routes through, so the previous
+    /// remediation ("abort the in-flight rotation") named
+    /// `rotate-abort` - a command that acquires its handle from
+    /// this same `unlock` and therefore exits with this same error.
+    /// The advice was unreachable. The real repair is off the CLI:
+    /// edit `store.json` to set the record's lifecycle back to
+    /// `Active`, or restore the rotation event that `unlock` is
+    /// looking for.
     #[error(
-        "rotation start state is missing from the wallet record; abort the in-flight rotation"
+        "rotation start state is missing from the wallet record; this cannot be repaired \
+         from the CLI, because every key-taking command acquires its handle through the same \
+         check. Edit store.json: set the record's lifecycle back to Active, or restore the \
+         rotation event the record should carry"
     )]
     RotationEventMissing,
 

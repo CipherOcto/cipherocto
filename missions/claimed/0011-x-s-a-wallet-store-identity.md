@@ -15,7 +15,7 @@ depends_on: []
 
 ## Status
 
-Open (2026-09-30) — Substrate companion to RFC-0011-x. Layer B (`octo-wallet`). The paired CLI mission `0011-x-wallet-store-cli` waits for this mission to land per the substrate-first ordering invariant.
+Claimed (2026-10-01) — Substrate companion to RFC-0011-x. Layer B (`octo-wallet`). RFC-0011-x was promoted Draft → Accepted at `next 16a3368f`; the RFC gate is therefore met and the substrate-first ordering invariant now allows the substrate to land. The paired CLI mission `0011-x-wallet-store-cli` waits for this mission's substrate to land before it claims, per the substrate-first ordering invariant. Phase 1 lands the mission claim plus three new `WalletError` variants (`Locked`, `IdentityNotFound(Did)`, `WeakPassphrase`) per the mission's AC-6; Phases 2-3 land the on-disk store, the unlock split, the lifecycle persistence, the `IdentityKey::from_seed_with_lifecycle` rehydration path, and the forty-two substrate test vectors. Claimant: @cipherocto.
 
 ## RFC
 

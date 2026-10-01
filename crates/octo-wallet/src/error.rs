@@ -5,7 +5,16 @@ use uuid::Uuid;
 
 use crate::agent::AgentState;
 use crate::hsm::HsmError;
+use crate::identity_record::Did;
 use crate::lifecycle::LifecycleState;
+
+/// Minimum passphrase length enforced at both `WalletStore::register` and
+/// `WalletStore::unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28).
+/// Phase 1 declares the constant in `error.rs` so the `WeakPassphrase`
+/// `Display` message can interpolate it; Phase 2's `identity_store.rs`
+/// reads the same constant for the floor check, so the sentence an
+/// operator reads cannot drift from the number that produced it.
+pub const MIN_PASSPHRASE_CHARS: usize = 12;
 
 /// Top-level error for `octo-wallet`.
 ///
@@ -218,4 +227,31 @@ pub enum WalletError {
     /// per RFC-0015-a §6.3 + RFC-0016-a §6.7 slot allocation.
     #[error("audit substrate unavailable: {0}")]
     AuditUnavailable(String),
+
+    // ----- WalletStore errors (mission 0011-x-s-a-wallet-store-identity §AC-6) -----
+    /// The store is locked. `WalletStore::open` is metadata-only; the
+    /// identity seed requires `WalletStore::unlock(passphrase)`. CLI
+    /// exit code = 92 per `OctoCliError::WalletLocked` mapping at
+    /// slot 92.
+    #[error("wallet store is locked; unlock with a passphrase to access the identity key")]
+    Locked,
+
+    /// No record for this DID in the store index. Mints **no
+    /// `OctoCliError` slot** — it maps to the existing
+    /// `OctoCliError::IdentityNotFound(String)` at exit 4, so the
+    /// CLI's slot table is unchanged for this variant (mission
+    /// 0011-x-s-a-wallet-store-identity §AC-7). The first
+    /// `Did`-typed payload in `WalletError`.
+    #[error("no identity record for {0}")]
+    IdentityNotFound(Did),
+
+    /// A supplied passphrase is below the enforced floor. Carries no
+    /// detail of the passphrase itself, and none of the store's
+    /// contents. The `Display` message interpolates
+    /// `MIN_PASSPHRASE_CHARS` so the sentence an operator reads
+    /// cannot drift from the threshold the check compares against
+    /// (mission 0011-x-s-a-wallet-store-identity §AC-28). CLI exit
+    /// code = 2 per `OctoCliError::WeakPassphrase` mapping at slot 94.
+    #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
+    WeakPassphrase,
 }

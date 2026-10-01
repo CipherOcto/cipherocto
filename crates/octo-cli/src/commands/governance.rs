@@ -97,7 +97,7 @@ fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliErro
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let active_key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
@@ -599,7 +599,7 @@ fn attest_handler(
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let identity = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let identity = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
@@ -760,7 +760,7 @@ fn vote_handler(
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let identity = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let identity = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),

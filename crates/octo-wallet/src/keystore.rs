@@ -413,15 +413,14 @@ mod tests {
             Ok(out) if out.status.success() => true,
             Ok(_) | Err(_) => false,
         };
-        if !starkli_present {
-            panic!(
-                "starkli_cross_impl_roundtrip requires the `starkli` CLI on PATH; \
-                 install starkli v0.3+ and re-run with \
-                 `cargo test -- --ignored starkli_cross_impl`. Rust's test \
-                 harness has no SKIPPED outcome, so this test fails-closed \
-                 rather than silently passing when the upstream tool is absent."
-            );
-        }
+        assert!(
+            starkli_present,
+            "starkli_cross_impl_roundtrip requires the `starkli` CLI on PATH; \
+             install starkli v0.3+ and re-run with \
+             `cargo test -- --ignored starkli_cross_impl`. Rust's test \
+             harness has no SKIPPED outcome, so this test fails-closed \
+             rather than silently passing when the upstream tool is absent."
+        );
         let starkli_path = "starkli";
 
         // 1. Generate a key and export via the substrate's chacha20-poly1305

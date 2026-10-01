@@ -8,7 +8,7 @@
 //! - `octo identity revoke` — write (exit 0/2/4/5/6/11/64)
 //!
 //! Layer C/D orchestrator. Consumes substrate via `octo_wallet::WalletStore`
-//! and the free fns `active_identity`, `identity_record_fn`, `begin_rotation`,
+//! and the free fns `identity_record_fn`, `begin_rotation`,
 //! and `revoke`. `signature_proof` is rendered through the `RedactedHex`
 //! wrapper.
 
@@ -404,7 +404,7 @@ fn block_auditor(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 pub fn whoami(cli: &Octo) -> Result<(), OctoCliError> {
     block_auditor(cli, "identity whoami")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-    let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     })?;
@@ -442,7 +442,8 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     let did = match did_arg {
         Some(s) => octo_wallet::Did(s.to_string()),
-        None => octo_wallet::active_identity(&store)
+        None => store
+            .try_active_identity()
             .map_err(|_| OctoCliError::NoActiveIdentity)?
             .did(),
     };
@@ -493,7 +494,7 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     // confirm the DID + grace window matches what they intend. Fires
     // BEFORE `active_identity()` so the echo always emits, even when
     // no identity is active (the placeholder makes the absence explicit).
-    let old_did = match octo_wallet::active_identity(&store) {
+    let old_did = match store.try_active_identity() {
         Ok(k) => k.did(),
         Err(_) => {
             eprintln!("would rotate: old_did=<none>, new_did_placeholder=pending, grace=24h",);
@@ -587,7 +588,7 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
     // Pastejacking defense (R1 review CORR-12): echo BEFORE resolving
     // active identity so the operator sees the canonical payload even
     // when no identity is active.
-    let did = match octo_wallet::active_identity(&store) {
+    let did = match store.try_active_identity() {
         Ok(k) => k.did(),
         Err(_) => {
             eprintln!("would revoke: did=<none>, reason={}", redact_string(reason));
@@ -2246,9 +2247,7 @@ mod tests {
     #[test]
     fn tv_x_c_31_rotate_uses_unlocked_wallet_migration() {
         let src = include_str!("identity.rs");
-        let start = src
-            .find("pub fn rotate(")
-            .expect("rotate fn present");
+        let start = src.find("pub fn rotate(").expect("rotate fn present");
         let slice = &src[start..];
         let end = slice.find("pub fn rotate_complete(").unwrap_or(slice.len());
         let body = &slice[..end];
@@ -2274,9 +2273,7 @@ mod tests {
     #[test]
     fn tv_x_c_32_revoke_uses_unlocked_wallet_migration() {
         let src = include_str!("identity.rs");
-        let start = src
-            .find("pub fn revoke(")
-            .expect("revoke fn present");
+        let start = src.find("pub fn revoke(").expect("revoke fn present");
         let slice = &src[start..];
         let end = slice
             .find("fn revoke_rejects_empty_reason")

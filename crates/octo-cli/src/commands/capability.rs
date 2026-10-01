@@ -211,7 +211,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
     let filters = parse_filters(filters)?;
     let store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-    let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => map_capability_internal(other),
     })?;
@@ -344,7 +344,7 @@ pub fn mint(
         {
             let store = octo_wallet::WalletStore::open()
                 .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-            let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+            let key = store.try_active_identity().map_err(|e| match e {
                 octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
                 other => map_capability_internal(other),
             })?;
@@ -375,7 +375,7 @@ pub fn mint(
         // `--dev`. R20 Lens-4 F2.
         let store = octo_wallet::WalletStore::open()
             .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-        let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+        let key = store.try_active_identity().map_err(|e| match e {
             octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
             other => map_capability_internal(other),
         })?;
@@ -448,7 +448,7 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
 
     let store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-    let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => map_capability_internal(other),
     })?;

@@ -2961,9 +2961,7 @@ mod tests {
                     "HsmUnavailable must carry a non-empty reason: {e:?}"
                 );
             }
-            other => panic!(
-                "Hsm must map to HsmUnavailable, got: {other:?}"
-            ),
+            other => panic!("Hsm must map to HsmUnavailable, got: {other:?}"),
         }
         assert_eq!(e.exit_code(), 5);
     }

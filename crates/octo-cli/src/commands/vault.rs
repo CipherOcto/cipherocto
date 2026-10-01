@@ -872,7 +872,7 @@ fn active_owner_did() -> Result<String, OctoCliError> {
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store: {e}")))
     })?;
-    let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+    let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     })?;

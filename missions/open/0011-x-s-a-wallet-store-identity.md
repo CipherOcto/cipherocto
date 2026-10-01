@@ -1,5 +1,15 @@
 # 0011-x-s-a-wallet-store-identity — Substrate additions for the `WalletStore` identity store
 
+<!-- Machine-readable ordering per BLUEPRINT §Mission Dependency Model. The prose
+     under §Dependencies states the same three gates; this block is the field an
+     agent reads to decide what to claim first. Empty on the substrate side
+     deliberately: nothing mission-side precedes the substrate, and the two gates
+     that do apply (RFC-0011-x Accepted, supersession of 0102-a) are RFC and
+     document gates rather than other missions.
+-->
+
+depends_on: []
+
 ## Status
 
 Open (2026-09-30) — Substrate companion to RFC-0011-x. Layer B (`octo-wallet`). The paired CLI mission `0011-x-wallet-store-cli` waits for this mission to land per the substrate-first ordering invariant.
@@ -14,7 +24,7 @@ Turns `WalletStore` from a zero-sized struct into a real on-disk identity store,
 
 The encrypted primitives this needs already exist and are already tested in `octo-wallet`: `Vault` (Argon2id + AES-256-GCM, 0700 slots dir, `put` / `get` / `list`), `IdentityKey` (generate, `from_seed`, `activate`, `begin_rotation`, `complete_rotation`, `abort_rotation`, `revoke`), and `IdentityRecord` / `IdentityRotationEvent` (serde-complete, no writer). **No new cryptography is introduced and no new dependency is required at all** — not even a non-cryptographic one. `Vault::default_dir()` already resolves the home directory through `directories`, and the store reuses that call rather than adding a second home crate (RFC-0011-x §Home resolution).
 
-What does not exist is the layer that ties them together: a DID-indexed record set, an active-DID pointer, a home resolver, and any code that writes either. The parent RFC's `[ADD]` contract is satisfied in signature and violated in behaviour, and the operator guide documents the consequence in **nine claims across seven locations**, enumerated by anchor sentence in the companion CLI mission's AC-19.
+What does not exist is the layer that ties them together: a DID-indexed record set, an active-DID pointer, a home resolver, and any code that writes either. The parent RFC's `[ADD]` contract is satisfied in signature and violated in behaviour, and the operator guide documents the consequence in **nine claims across seven locations**, enumerated by anchor sentence in the companion CLI mission's AC-26.
 
 Scope note: this mission covers the store, the unlock, and the write-path. The CLI surface, the 13 call-site migrations, the three `OctoCliError` variants at slots 92, 93, and 94, and the guide update belong to `0011-x-wallet-store-cli`.
 
@@ -309,13 +319,13 @@ Ten vectors carry a security or durability property and each is negative-control
 - [ ] **AC-16:** The store never reads a clock — the timestamp that lands in `store.json` is the caller-supplied `now_unix` verbatim. Asserted by `tv_x_5`, which registers with two distinct `now_unix` values and checks that only the supplied one is persisted
 - [ ] **AC-17:** `cli_fns::active_identity` (the free function) is `#[deprecated]` with its parent-RFC signature unchanged, and always returns `Err(WalletError::Locked)`. `WalletStore::try_active_identity` returns `Err(WalletError::Locked)` and carries no deprecation attribute
 - [ ] **AC-18:** `cli_fns` wrappers — named individually, since no vector reaches them today — accept the `UnlockedWallet` handle and forward to the unlocked surface. They take `&mut UnlockedWallet<'_>`, not a shared borrow, because every method they forward to takes `&mut self`
-- [ ] **AC-19:** `tv_x_1` through `tv_x_19`, `tv_x_21` through `tv_x_28`, and `tv_x_31` through `tv_x_47` all pass — the **44** substrate-owned vectors, each with the negative control named in §Test Vectors
+- [ ] **AC-19:** `tv_x_1` through `tv_x_19`, `tv_x_21` through `tv_x_28`, `tv_x_31` through `tv_x_42`, and `tv_x_45` through `tv_x_47` all pass — the **42** substrate-owned vectors, each with the negative control named in §Test Vectors
 - [ ] **AC-20:** `tv_x_17` and `tv_x_18` are negative-controlled individually — removing the zeroize call makes each fail
 - [ ] **AC-21:** `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean
 - [ ] **AC-22:** `cargo test -p octo-wallet --lib` green
 - [ ] **AC-23:** `cargo fmt --check -p octo-wallet` clean
 - [ ] **AC-24:** Layer discipline preserved — Layer B only, zero Layer A change
-- [ ] **AC-25:** A full guide-executor run confirms the guide wall statements are now false (informational, and **not a criterion** — a guide-executor does not exist and this mission landing makes none of them false, since the guide update is the CLI mission's. There are **nine claims across seven locations**, not seven statements; enumerated by anchor sentence in that mission's AC-19)
+- [ ] **AC-25:** A full guide-executor run confirms the guide wall statements are now false (informational, and **not a criterion** — a guide-executor does not exist and this mission landing makes none of them false, since the guide update is the CLI mission's. There are **nine claims across seven locations**, not seven statements; enumerated by anchor sentence in that mission's AC-26)
 - [ ] **AC-26:** The two guards that keep a revoked record terminal are both present: `register` on a revoked DID returns `AlreadyRevoked` and leaves `store.json` byte-identical, and `select` on a revoked DID returns `NotActive { current_state: Revoked }`. A11 retains the seed slot, so without the first guard an operator re-registers the same seed and gets a working identity back from a record that was meant to be terminal; the second closes the same bypass by a different door
 - [ ] **AC-27:** The test exercising the deprecated `cli_fns::active_identity` free function carries an explicit `#[allow(deprecated)]`. Without it `tv_x_31` cannot be written, and without that attribute AC-21's clippy gate fails on this mission's own sentinel test
 - [ ] **AC-28:** The 12-character passphrase floor is enforced as a **hard `WalletError::WeakPassphrase` at both** `unlock` and `register`, and at no other point. The wallet foundation mission `0102-a` wrote the criterion in 2026-07 and filed it at `init`, which never receives a passphrase, so it was unenforceable where it sat; RFC-0011-x §Future Work item 7 carries it here, at the real enforcement point. **An earlier revision of this criterion made it a non-blocking warning at `register` and a hard error at `unlock`, on the theory that a floor at `register` would strand a returning operator with a weak existing passphrase. The split is withdrawn**: a floor at `unlock` is the same lockout arriving one command later with no escape hatch, and RFC-0011-x §Compatibility establishes that no pre-existing identity stores exist to strand. See §Notes
@@ -337,7 +347,7 @@ Hard sequencing:
 
 1. **RFC-0011-x must be Accepted** before this mission's substrate lands. It is **Draft** today, so this gate is live and unmet, and the mission does not claim otherwise.
 2. **This mission must land BEFORE `0011-x-wallet-store-cli`** — the CLI cannot thread an unlock through call sites until `unlock` exists.
-3. **This mission supersedes the identity-store portion of `0102-a-wallet-foundation`**, which has been `claimed/` since 2026-07-20 with every acceptance criterion unchecked while several of the substrate items it describes are already landed. See §Notes.
+3. **This mission supersedes the identity-store portion of `0102-a-wallet-foundation` — proposed, not yet in effect.** `0102-a` has been `claimed/` since 2026-07-20 with every acceptance criterion unchecked while several of the substrate items it describes are already landed. The supersession does **not** take effect until RFC-0011-x is `Accepted`, because BLUEPRINT requires an approved RFC before a mission carries scope; until then the identity store is claimed by `0102-a` _and_ specified here, and the overlap is deliberate and temporary. The supersession covers the **identity-store portion only**: `0102-a`'s seven unchecked `StarkliCompat` boxes under its own §Starkli-compat keystore have no receiver here, because this mission reuses `StarkliCompat` unchanged and forbids changing it. See §Notes.
 
 Required RFCs, per BLUEPRINT §Dependency Validation Rules rule 2 — every "Requires" entry on RFC-0011-x is a prerequisite here:
 
@@ -372,7 +382,7 @@ Every type RFC-0011-x specifies, and which mission implements it. Nothing is una
 | `IdentityAction::{Register, Select, List, RotateComplete, RotateAbort}` | C     | `0011-x-wallet-store-cli`                                                                                                                                                                                                                                                                                                              |
 | `OctoCliError::WalletLocked` (slot 92)                                  | C     | `0011-x-wallet-store-cli`                                                                                                                                                                                                                                                                                                              |
 | `OctoCliError::IdentityTransitionRefused` (slot 93)                     | C     | `0011-x-wallet-store-cli` — five `WalletError` rotation refusals that today fall into the generic `Internal` arm                                                                                                                                                                                                                       |
-| `OctoCliError::WeakPassphrase` (slot 94)                                | C     | `0011-x-wallet-store-cli` — the character floor reaching a named variant at **exit 2**, and no existing exit-2 variant reused, because all six render a sentence about roles, agents, anchors, proposals, confirmation, or a parse error                                                                                               |     |
+| `OctoCliError::WeakPassphrase` (slot 94)                                | C     | `0011-x-wallet-store-cli` — the character floor reaching a named variant at **exit 2**, and no existing exit-2 variant reused, because all **seven** render a sentence about roles, agents, anchors, proposals, confirmation, or a parse error                                                                                         |
 | An authenticated store envelope                                         | A/B   | **Not implemented by either mission** — RFC-0011-x §Future Work item 1. Listed so it is visibly unaccounted-for rather than silently absent                                                                                                                                                                                            |
 | `flock(LOCK_EX)` on the index                                           | B     | **Not implemented by either mission** — RFC-0011-x §Future Work item 16, substrate mission as owner, follow-on amendment. `tv_x_39` pins the no-lock behaviour this mission ships                                                                                                                                                      |
 

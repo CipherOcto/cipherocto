@@ -132,6 +132,7 @@ The mapping, complete:
 | `WeakPassphrase` — below the floor           | `WeakPassphrase` (slot 94, **new**)            | 2    |
 | `NotActive { current_state }`                | **reused**: `NoActiveIdentity`                 | 2    |
 | `NotActive { current_state: Revoked }`       | **reused**: `AlreadyRevoked`                   | 6    |
+| `AlreadyRevoked`                             | **reused**: `AlreadyRevoked`                   | 6    |
 | `NotActive { current_state: Rotating }`      | **reused**: `AlreadyRotating`                  | 3    |
 | `IdentityNotFound`                           | **reused**: `IdentityNotFound(String)`         | 4    |
 | `Hsm(_)`                                     | **reused**: `HsmUnavailable`                   | 5    |

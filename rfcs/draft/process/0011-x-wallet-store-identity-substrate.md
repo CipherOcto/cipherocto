@@ -264,7 +264,7 @@ impl WalletStore {
     /// writes one index field and no key material.
     ///
     /// Returns `WalletError::NotActive { current_state: Revoked }` when
-    /// `did` names a revoked record. See M7/A17.
+    /// `did` names a revoked record. See A17.
     pub fn select(&mut self, did: &Did) -> Result<(), WalletError>;
 }
 ```

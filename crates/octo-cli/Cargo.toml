@@ -160,6 +160,16 @@ schemars = { version = "0.8", features = ["chrono"] }
 # the Drop impl wipes them deterministically.
 zeroize = { version = "1", features = ["derive"] }
 
+# === Passphrase acquisition (RFC-0011-x + mission 0011-x-wallet-store-cli §AC-9) ===
+# rpassword handles the TTY prompt for interactive passphrase entry
+# (the operator's `--passphrase-stdin` path uses stdin directly so
+# rpassword is bypassed). Layer C dependency — `rpassword` lives in
+# `crates/octo-wallet/Cargo.toml` for the `octo-wallet` binary; the
+# CLI mission adds the same dep here per the standing dependency-
+# rationale convention. No passphrase flag exists on any subcommand
+# (mission §AC-9 second clause) — the secret NEVER enters argv.
+rpassword = "7"
+
 [dev-dependencies]
 assert_cmd = "2.0"        # CLI binary invocation
 predicates = "3.1"         # stdout/stderr assertions

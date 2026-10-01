@@ -106,7 +106,16 @@ pub enum IdentityAction {
     /// returns `GracePeriodNotElapsed` otherwise, which the CLI
     /// envelope at slot 93 surfaces as exit 43. Exit codes:
     /// 0 / 2 / 4 / 43 / 64.
-    RotateComplete {},
+    RotateComplete {
+        /// Read the wallet passphrase from stdin (one line, trailing
+        /// newline trimmed). Bypasses the interactive TTY prompt
+        /// for CI / scripted callers. Required when stdin is not a
+        /// TTY (mission 0011-x-wallet-store-cli §AC-10). The
+        /// passphrase is wiped from the buffer at the read site
+        /// via `Zeroizing` (mission §AC-24).
+        #[arg(long)]
+        passphrase_stdin: bool,
+    },
     /// Abort an in-flight key rotation
     /// (RFC-0011-x §Subcommand Taxonomy). Substrate-faithful
     /// wrapper over `WalletStore::abort_rotation`. Clap name
@@ -119,6 +128,13 @@ pub enum IdentityAction {
         /// `sanitize_substrate_error` before persistence.
         #[arg(long)]
         reason: Option<String>,
+        /// Read the wallet passphrase from stdin (one line,
+        /// trailing newline trimmed). Bypasses the interactive
+        /// TTY prompt for CI / scripted callers. Required when
+        /// stdin is not a TTY (mission 0011-x-wallet-store-cli
+        /// §AC-10).
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
 }
 
@@ -818,24 +834,47 @@ pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
         })
 }
 
-/// `octo identity rotate-complete` — finalize an in-flight rotation.
+/// `octo identity rotate-complete --passphrase-stdin` —
+/// finalize an in-flight rotation.
 ///
 /// Phase 5 substrate-faithful wrapper over
-/// `WalletStore::complete_rotation`. The 24h grace period must have
-/// elapsed since `begin_rotation`; substrate returns
-/// `GracePeriodNotElapsed` otherwise, which the CLI surfaces at
-/// slot 93 / exit 43.
+/// `WalletStore::complete_rotation` reached through the
+/// `UnlockedWallet` handle (mission §AC-7: signing operations
+/// must migrate from `WalletStore::active_identity` /
+/// `complete_rotation(&mut key, ...)` to
+/// `WalletStore::unlock(...)` so the key material is held only
+/// by the unlocked handle and zeroized on drop). The 24h grace
+/// period must have elapsed since `begin_rotation`; substrate
+/// returns `GracePeriodNotElapsed` otherwise, which the CLI
+/// surfaces at slot 93 / exit 43. The passphrase is acquired via
+/// `acquire_passphrase` (mission §AC-9 + §AC-10):
+/// `--passphrase-stdin` reads one line from stdin with
+/// `--allow-stdin-secret`; absent the flag, an interactive TTY
+/// prompt is issued; absent a TTY and the flag, the helper
+/// returns `WalletLocked` (exit 92) per §AC-10.
 ///
-/// Exit codes: 0 / 2 / 4 / 43 / 64.
-pub fn rotate_complete(cli: &Octo) -> Result<(), OctoCliError> {
+/// Exit codes: 0 / 2 / 4 / 43 / 64 / 92.
+pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity rotate-complete")?;
     // Pastejacking defense.
     eprintln!("would rotate-complete: in_flight_rotation=present");
     if !cli.mode.dry_run {
-        let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-        let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
+        // §AC-7: open the store, then unlock with the
+        // passphrase. The seed buffer is zeroized by the
+        // substrate after the key is rehydrated into
+        // `UnlockedWallet`, so the seed never survives past
+        // the handle's lifetime. The handle holds a unique
+        // `IdentityKey` (not a clone) per mission §AC-39.
+        let passphrase = acquire_passphrase(cli, "identity rotate-complete", passphrase_stdin)?;
+        let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let mut unlocked = store
+            .unlock(passphrase.as_str(), seed_buf.as_mut())
+            .map_err(OctoCliError::from)?;
         let now = chrono::Utc::now().timestamp().max(0) as u64;
-        octo_wallet::complete_rotation(&mut key, now).map_err(OctoCliError::from)?;
+        unlocked
+            .complete_rotation(now)
+            .map_err(OctoCliError::from)?;
     }
     let output = IdentityRotateCompleteOutput {
         new_did: String::new(),
@@ -853,17 +892,24 @@ pub fn rotate_complete(cli: &Octo) -> Result<(), OctoCliError> {
         })
 }
 
-/// `octo identity rotate-abort --reason [<STR>]` — abort an
-/// in-flight rotation.
+/// `octo identity rotate-abort --reason [<STR>] --passphrase-stdin`
+/// — abort an in-flight rotation.
 ///
 /// Phase 5 substrate-faithful wrapper over
-/// `WalletStore::abort_rotation`. Removes the successor record
-/// (mission §AC-38) and restores the predecessor to `Active`. The
+/// `WalletStore::abort_rotation` reached through the
+/// `UnlockedWallet` handle (mission §AC-7: same migration as
+/// `rotate_complete`). Removes the successor record (mission
+/// §AC-38) and restores the predecessor to `Active`. The
 /// substrate surfaces the success path silently; CLI echoes the
-/// restored DID + abort timestamp.
+/// restored DID + abort timestamp. Passphrase acquisition via
+/// `acquire_passphrase` per §AC-9 + §AC-10.
 ///
-/// Exit codes: 0 / 2 / 4 / 43 / 64.
-pub fn rotate_abort(reason: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
+/// Exit codes: 0 / 2 / 4 / 43 / 64 / 92.
+pub fn rotate_abort(
+    reason: Option<&str>,
+    passphrase_stdin: bool,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity rotate-abort")?;
     // Pastejacking defense.
     eprintln!(
@@ -871,9 +917,13 @@ pub fn rotate_abort(reason: Option<&str>, cli: &Octo) -> Result<(), OctoCliError
         reason.unwrap_or("<none>")
     );
     if !cli.mode.dry_run {
-        let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-        let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
-        octo_wallet::abort_rotation(&mut key).map_err(OctoCliError::from)?;
+        let passphrase = acquire_passphrase(cli, "identity rotate-abort", passphrase_stdin)?;
+        let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let mut unlocked = store
+            .unlock(passphrase.as_str(), seed_buf.as_mut())
+            .map_err(OctoCliError::from)?;
+        unlocked.abort_rotation().map_err(OctoCliError::from)?;
     }
     let output = IdentityRotateAbortOutput {
         restored_did: String::new(),
@@ -912,6 +962,75 @@ pub fn rotate_abort(reason: Option<&str>, cli: &Octo) -> Result<(), OctoCliError
 pub fn is_dev_mode(cli: &Octo) -> bool {
     cli.mode.mode == OperatorMode::Dev || cli.mode.dev
 }
+
+/// Acquire the wallet passphrase for a signing operation.
+///
+/// Honors mission 0011-x-wallet-store-cli §AC-9 + §AC-10:
+/// - When `--passphrase-stdin` is passed, the helper enforces the
+///   `ensure_stdin_secret_allowed` gate (which requires
+///   `--allow-stdin-secret`; refuse on default builds so a stray
+///   pipe does not silently consume a secret), reads one line from
+///   stdin, trims the trailing newline, and wraps the result in
+///   `Zeroizing<String>` so the bytes are scrubbed on drop.
+/// - When `--passphrase-stdin` is NOT passed, the helper falls back
+///   to `rpassword::prompt_password` for interactive entry. The
+///   prompt only works on a TTY; if stdin is not a TTY AND the
+///   operator did not pass `--passphrase-stdin`, the helper returns
+///   `WalletLocked` (exit 92) per §AC-10 — a wallet signing
+///   command without a passphrase and without a TTY is the
+///   §AC-10 fail-closed posture.
+///
+/// Both paths land in `Zeroizing<String>` so the bytes are wiped
+/// when the binding drops at the end of the handler (mission
+/// §AC-24 — the same obligation register satisfies at the
+/// `--passphrase-file` site).
+pub(crate) fn acquire_passphrase(
+    cli: &Octo,
+    command: &str,
+    passphrase_stdin: bool,
+) -> Result<zeroize::Zeroizing<String>, OctoCliError> {
+    if passphrase_stdin {
+        // Gate per [[feedback_initiation_user_only]] + the
+        // `ensure_stdin_secret_allowed` helper at `error.rs`.
+        // Operators MUST pass `--allow-stdin-secret` alongside
+        // `--passphrase-stdin` so the default-build refusal
+        // (exit 15) does not silently consume a piped secret
+        // in a non-interactive script.
+        crate::error::ensure_stdin_secret_allowed(cli.mode.allow_stdin_secret)?;
+        let mut line = zeroize::Zeroizing::new(String::new());
+        std::io::stdin().read_line(&mut line).map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "passphrase stdin read: {e}"
+            )))
+        })?;
+        // Trim trailing newline (the read includes it). The
+        // wrapper zeros the bytes on drop so the secret is not
+        // left in heap memory after the handler returns. The
+        // length is read once so we don't have two simultaneous
+        // borrows of the same `Zeroizing<String>`.
+        let trimmed_len = line
+            .len()
+            .saturating_sub(if line.ends_with('\n') { 1 } else { 0 });
+        let trimmed_len = trimmed_len.saturating_sub(if line.ends_with('\r') && trimmed_len > 0 {
+            1
+        } else {
+            0
+        });
+        line.truncate(trimmed_len);
+        return Ok(line);
+    }
+    // Interactive prompt. The `rpassword` crate handles the TTY
+    // detection for us: when stdin is not a TTY the prompt
+    // surface errors with an io::ErrorKind::NotConnected-style
+    // signal; we translate that into WalletLocked (exit 92) per
+    // §AC-10. The error path is operator-readable so an
+    // automation caller knows to pass --passphrase-stdin.
+    match rpassword::prompt_password(format!("{command} passphrase: ")) {
+        Ok(p) => Ok(zeroize::Zeroizing::new(p)),
+        Err(_) => Err(OctoCliError::WalletLocked),
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 /// Confirmation gate — enforce mode + flag combinations for mutating
@@ -1028,8 +1147,14 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
         } => register(label, passphrase_file, *activate, seed_file.as_deref(), cli),
         IdentityAction::Select { did } => select(did, cli),
         IdentityAction::List { .. } => list(cli),
-        IdentityAction::RotateComplete { .. } => rotate_complete(cli),
-        IdentityAction::RotateAbort { reason, .. } => rotate_abort(reason.as_deref(), cli),
+        IdentityAction::RotateComplete {
+            passphrase_stdin, ..
+        } => rotate_complete(*passphrase_stdin, cli),
+        IdentityAction::RotateAbort {
+            reason,
+            passphrase_stdin,
+            ..
+        } => rotate_abort(reason.as_deref(), *passphrase_stdin, cli),
     }
 }
 
@@ -1755,8 +1880,15 @@ mod tests {
         let require_pos = body
             .find("require_confirm(cli, \"identity rotate-complete\")")
             .expect("require_confirm substring present");
+        // Belt and braces: handler-side confirm gate MUST come
+        // before the unlock call (which would prompt for the
+        // passphrase or read stdin). After AC-7 the
+        // `rotate_complete` handler delegates to
+        // `UnlockedWallet::complete_rotation` rather than the
+        // free `octo_wallet::complete_rotation`; the substring
+        // assertion looks for the new path.
         let mutation_pos = body
-            .find("octo_wallet::complete_rotation")
+            .find(".complete_rotation(now)")
             .expect("substrate mutation present");
         assert!(
             require_pos < mutation_pos,
@@ -1833,9 +1965,9 @@ mod tests {
             "IdentityAction::List {",
             "list(cli)",
             "IdentityAction::RotateComplete {",
-            "rotate_complete(cli)",
+            "rotate_complete(*passphrase_stdin, cli)",
             "IdentityAction::RotateAbort {",
-            "rotate_abort(reason.as_deref()",
+            "rotate_abort(reason.as_deref(), *passphrase_stdin, cli)",
         ] {
             assert!(
                 body.contains(needle),
@@ -1944,6 +2076,139 @@ mod tests {
         assert!(
             body.contains("group- or world-readable"),
             "register refusal message must name the mode violation: {body}"
+        );
+    }
+
+    /// tv_x_c_27 — AC-9 `--passphrase-stdin` flag on
+    /// `rotate-complete` + `rotate-abort`. The clap variants must
+    /// declare the flag so an automation caller can opt out of
+    /// the interactive TTY prompt per mission
+    /// 0011-x-wallet-store-cli §AC-9 first clause. Source-presence
+    /// pins the variant declaration; a regression that drops the
+    /// flag becomes a substring failure rather than a silent
+    /// hydration of `--allow-stdin-secret` with no read site.
+    #[test]
+    fn tv_x_c_27_rotate_complete_abort_declare_passphrase_stdin_flag() {
+        let src = include_str!("identity.rs");
+        // The two clap variants must each carry a
+        // `passphrase_stdin: bool` field with a `--passphrase-stdin`
+        // long flag.
+        let start = src
+            .find("RotateComplete {")
+            .expect("RotateComplete variant present");
+        let slice = &src[start..];
+        let end = slice.find("RotateAbort {").unwrap_or(slice.len());
+        let rotate_complete_block = &slice[..end];
+        assert!(
+            rotate_complete_block.contains("passphrase_stdin: bool"),
+            "RotateComplete variant must carry passphrase_stdin field per AC-9: {rotate_complete_block}"
+        );
+        assert!(
+            rotate_complete_block.contains("passphrase_stdin: bool")
+                && rotate_complete_block.contains("#[arg(long)]"),
+            "RotateComplete must bind passphrase_stdin to --passphrase-stdin long flag: {rotate_complete_block}"
+        );
+
+        let start = src
+            .find("RotateAbort {")
+            .expect("RotateAbort variant present");
+        let slice = &src[start..];
+        let end = slice.find("}").unwrap_or(slice.len());
+        let rotate_abort_block = &slice[..end];
+        assert!(
+            rotate_abort_block.contains("passphrase_stdin: bool"),
+            "RotateAbort variant must carry passphrase_stdin field per AC-9: {rotate_abort_block}"
+        );
+    }
+
+    /// tv_x_c_28 — AC-10 no-TTY pre-flight. The
+    /// `acquire_passphrase` helper must fail closed with
+    /// `WalletLocked` (exit 92) when the interactive prompt is
+    /// unreachable (no `--passphrase-stdin` AND no TTY). Source-
+    /// presence pins the failure mode + exit-code assignment so
+    /// a regression that falls through to a different error
+    /// (e.g. a panic or a `StdinSecretRefused` exit 15) becomes
+    /// a substring failure rather than a silent terminal hang.
+    #[test]
+    fn tv_x_c_28_acquire_passphrase_returns_wallet_locked_on_no_tty() {
+        let src = include_str!("identity.rs");
+        // The helper must reference the rpassword prompt as the
+        // interactive path AND must collapse the prompt failure
+        // to `OctoCliError::WalletLocked` so the §AC-10 exit 92
+        // contract holds. A regression that drops the WalletLocked
+        // translation falls through to whatever rpassword returns
+        // (typically an io::Error with exit 64 Internal), which
+        // does NOT match the mission contract.
+        assert!(
+            src.contains("rpassword::prompt_password"),
+            "acquire_passphrase must use rpassword::prompt_password for interactive entry: {src}"
+        );
+        assert!(
+            src.contains("OctoCliError::WalletLocked"),
+            "acquire_passphrase must fail closed with WalletLocked per AC-10: {src}"
+        );
+    }
+
+    /// tv_x_c_29 — AC-7 partial. The `rotate_complete` handler
+    /// must migrate from `octo_wallet::complete_rotation(&mut
+    /// key, ...)` (free fn) to `store.unlock(...)` →
+    /// `unlocked.complete_rotation(...)` (UnlockedWallet method).
+    /// The free fn is the metadata-only path; the unlocked path
+    /// is the signing path per the §AC-7 split. Source-presence
+    /// pins both: (a) `store.unlock(` call appears in the
+    /// `rotate_complete` body, AND (b) `octo_wallet::complete_rotation`
+    /// is NOT used (a regression that adds the free fn alongside
+    /// the unlocked path leaves the metadata-only mutation
+    /// reachable, which is the over-classification §AC-7 warns
+    /// against).
+    #[test]
+    fn tv_x_c_29_rotate_complete_uses_unlocked_wallet_migration() {
+        let src = include_str!("identity.rs");
+        let start = src
+            .find("pub fn rotate_complete(")
+            .expect("rotate_complete fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn rotate_abort").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+            "rotate_complete must migrate to UnlockedWallet via store.unlock per AC-7: {body}"
+        );
+        assert!(
+            body.contains(".complete_rotation(now)"),
+            "rotate_complete must call UnlockedWallet::complete_rotation per AC-7: {body}"
+        );
+        assert!(
+            !body.contains("octo_wallet::complete_rotation("),
+            "rotate_complete must NOT keep the free-fn path per AC-7 migration: {body}"
+        );
+    }
+
+    /// tv_x_c_30 — AC-7 partial (rotate-abort mirror of tv_x_c_29).
+    /// The `rotate_abort` handler must likewise migrate to
+    /// `UnlockedWallet::abort_rotation` so the seed is held by
+    /// the handle's lifetime, not by the long-lived free-fn
+    /// `IdentityKey` clone.
+    #[test]
+    fn tv_x_c_30_rotate_abort_uses_unlocked_wallet_migration() {
+        let src = include_str!("identity.rs");
+        let start = src
+            .find("pub fn rotate_abort(")
+            .expect("rotate_abort fn present");
+        let slice = &src[start..];
+        let end = slice.find("// ---").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+            "rotate_abort must migrate to UnlockedWallet via store.unlock per AC-7: {body}"
+        );
+        assert!(
+            body.contains("unlocked.abort_rotation()"),
+            "rotate_abort must call UnlockedWallet::abort_rotation per AC-7: {body}"
+        );
+        assert!(
+            !body.contains("octo_wallet::abort_rotation("),
+            "rotate_abort must NOT keep the free-fn path per AC-7 migration: {body}"
         );
     }
 }

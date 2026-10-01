@@ -413,11 +413,11 @@ A14.
 revoked case is the exception to idempotence, not a contradiction of it: one record, one
 slot slug, and the record keeps its terminal state.
 
-Every one of those outcomes is a named `WalletError` variant, and every one of them needs a **named** translation arm in the CLI. A `unlock` call site that matches `Err(_) => OctoCliError::Internal(..)` is the failure mode this paragraph exists to prevent: a wrong passphrase would surface as a generic internal error, the operator would see a bug report rather than "try again", and the guide's exit-code table — which distinguishes 2 from 92 for exactly this reason — would be describing a code path the code does not have. The arms are `NotActive` → exit 2, `VaultSlotNotFound` and `VaultDecryptionFailed` → exit 92, `WeakPassphrase` → exit 2, and the five lifecycle refusals tabulated in §Error variant (Layer C) → exit 43. A catch-all arm may follow them, but it may not replace them.
+Every one of those outcomes is a named `WalletError` variant, and every one of them needs a **named** translation arm in the CLI. A `unlock` call site that matches `Err(_) => OctoCliError::Internal(..)` is the failure mode this paragraph exists to prevent: a wrong passphrase would surface as a generic internal error, the operator would see a bug report rather than "try again", and the guide's exit-code table — which distinguishes 2 from 92 for exactly this reason — would be describing a code path the code does not have. The arms are `NotActive { current_state }` → exit 2, `NotActive { current_state: Revoked }` → exit 6, `VaultSlotNotFound` and `VaultDecryptionFailed` → exit 92, `WeakPassphrase` → exit 2, and the five lifecycle refusals tabulated in §Error variant (Layer C) → exit 43. A catch-all arm may follow them, but it may not replace them.
 
 **`Config` is deliberately absent from that list**, and its absence is the one place in this section where a named arm would be worse than none. An earlier revision of this paragraph included it, mapping to exit 27; §Home resolution step 4 records the measurement and the reason the arm was removed. The short form: exit 27 is produced upstream by `octo-cli/src/home.rs::resolve` before the store is ever opened, and `Config` is a catch-all whose **fifteen** crypto and serialisation sites are not home errors. A catch-all may follow the named arms; `Config` is one of the things it is for.
 
-Two of those arms are not interchangeable, and collapsing them is the mistake the list exists to prevent. `NotActive` means the store is fine and the _state_ forbids signing — a revoked identity, or a record that was registered without `--activate`. It is exit 2, and the operator's remedy is a different command, not a different passphrase. `VaultDecryptionFailed` means the passphrase is wrong. `VaultSlotNotFound` means there is no slot at all: a truncated ciphertext, a flipped byte, a partially restored file, and a typo are one indistinguishable outcome, because AES-GCM authentication failure is authentication failure. That is a real usability gap rather than a defect — the store genuinely cannot tell them apart without an authenticity tag covering the whole slot — and it is recorded in §Future Work with the recovery guidance that belongs alongside it. A _deleted_ slot additionally reports "the wallet store is locked, unlock with a passphrase to continue", which invites a retry loop against a store that is unrecoverable. The honest fix is a distinct `WalletError` variant plus operator-facing guidance, not a message change, and it is not bundled into a wiring change.
+Two of those arms are not interchangeable, and collapsing them is the mistake the list exists to prevent. `NotActive` means the store is fine and the _state_ forbids signing — a revoked identity, or a record that was registered without `--activate`. The operator's remedy is a different command, not a different passphrase, and the two states are not even reported the same way: a record registered without `--activate` is `Designated` and exits 2, while a revoked record is `Revoked` and exits 6, because the translation table reuses the revoked-refusal code for that arm and reuses the no-active-identity code for the bare one. An earlier revision of this paragraph said the whole family is exit 2, which is true of one arm and false of the other, and it is corrected here because it is the paragraph a reader is most likely to hold in mind when writing the match. `VaultDecryptionFailed` means the passphrase is wrong. `VaultSlotNotFound` means there is no slot at all: a truncated ciphertext, a flipped byte, a partially restored file, and a typo are one indistinguishable outcome, because AES-GCM authentication failure is authentication failure. That is a real usability gap rather than a defect — the store genuinely cannot tell them apart without an authenticity tag covering the whole slot — and it is recorded in §Future Work with the recovery guidance that belongs alongside it. A _deleted_ slot additionally reports "the wallet store is locked, unlock with a passphrase to continue", which invites a retry loop against a store that is unrecoverable. The honest fix is a distinct `WalletError` variant plus operator-facing guidance, not a message change, and it is not bundled into a wiring change.
 
 `activate` is a parameter of `register` rather than a separate call so that a record can never be written in `Active` state without an explicit `IdentityKey::activate` transition having occurred. Registering without the flag stores `Designated` on a **new** record and clears the active pointer; registering with it stores `Active` and sets the active pointer. On an **existing** record the lifecycle is left alone either way — see §Lifecycle Requirements, "register never demotes", which is a Round 3 correction and the reason this sentence names "new".
 
@@ -646,7 +646,7 @@ occur.
 | Subcommand                                                                    | Substrate                           | Passphrase                     | Exit codes                        |
 | ----------------------------------------------------------------------------- | ----------------------------------- | ------------------------------ | --------------------------------- |
 | `octo identity register --seed-file <path> [--activate] [--passphrase-stdin]` | `WalletStore::register`             | **seal** — encrypts a new slot | 0, 2, 6, 27, 43, 92, 64           |
-| `octo identity select <did>`                                                  | `WalletStore::select`               | none                           | 0, 2, 4, 64                       |
+| `octo identity select <did>`                                                  | `WalletStore::select`               | none                           | 0, 2, 4, 6, 64                    |
 | `octo identity list [--json]`                                                 | `WalletStore::list_records`         | none                           | 0, 27, 64                         |
 | `octo whoami` (existing)                                                      | `UnlockedWallet::active_identity`   | **unlock**                     | 0, 2, 27, 43, 92, 64              |
 | `octo identity show [<did>]` (existing)                                       | `WalletStore::identity_record`      | none                           | 0, 2, 4, 27, 64                   |
@@ -654,6 +654,8 @@ occur.
 | `octo identity rotate complete` (new)                                         | `UnlockedWallet::complete_rotation` | **unlock**                     | 0, 2, 4, 27, 43, 92, 64           |
 | `octo identity rotate abort` (new)                                            | `UnlockedWallet::abort_rotation`    | **unlock**                     | 0, 2, 4, 27, 43, 92, 64           |
 | `octo identity revoke --reason <text>` (existing)                             | `UnlockedWallet::revoke`            | **unlock**                     | 0, 2, 4, 27, 43, 92, 64           |
+
+The 6 on `select` is the one cell in this table that its own surrounding prose contradicted, and it is recorded here so the next reader does not remove it again. `select` on a revoked record returns `NotActive { current_state: Revoked }`, which the translation table reuses as `OctoCliError::AlreadyRevoked` at exit 6, the same exit `register` reaches through a different substrate variant. The row previously read `0, 2, 4, 64`, omitting the 6, and the prose was split rather than uniformly wrong: one site said 6 occurs on `select` and four said 2, because the arms list and the not-interchangeable paragraph both taught that the whole `NotActive` family is exit 2, which is true of the bare arm and false of the revoked one. The substrate mission's AC-26 asserted the `NotActive` return and its vector asserted the `select` reachability, so the path was specified and the table was the only artifact that did not carry it. An implementer building from the table would have shipped `select` with no `AlreadyRevoked` arm, and the missing arm is on the guard that keeps a terminal record unselectable — the A17 adversary this amendment exists to answer. The 6 was added to `select` in both copies of this table, the four prose sites were corrected to discriminate, and the two copies of the table remain byte-identical.
 
 Every row carries **27** (`NoOctoHome`) because every `octo` command routes through
 `octo-cli/src/home.rs::resolve` before it opens anything, and that resolver fails
@@ -698,10 +700,18 @@ an **optional** `<did>` — the substrate field is `Show { did: Option<String> }
 clap renders `[DID]` — and a table showing it as required would ship an invocation that
 cannot parse. `octo identity revoke` takes a **required** `--reason <text>`, so a row
 showing it with no argument at all would ship an invocation that cannot parse. And
-`select` carries exit 2 because it rejects a `Revoked` record (A17) through the
+`select` carries exit 6 because it rejects a `Revoked` record (A17) through the
 `NotActive` arm rather than through `IdentityNotFound`: the record is present and
 readable, it is the state that forbids it, and conflating the two would send the
 operator looking for a DID that is sitting in their own index.
+
+The `NotActive` family does not share an exit code, and this row is where that
+matters most. The arm is discriminated on the recorded state, so
+`NotActive { current_state: Revoked }` routes to the revoked-refusal code at exit
+6 while `NotActive { current_state }` on its own routes to the no-active-identity
+code at exit 2. An implementation that matched on the variant and picked one
+target would send a revoked-record refusal out at 2, which is the code that
+already means "nothing is selected here".
 
 `register` takes a seed **file** rather than generating in-process. The guide's existing onboarding step already writes a 0600 seed file via `octo-wallet init --seed-out`, and composing with that step means the guide gains one command rather than a rewritten section. Generating in-process is available by passing the freshly generated seed through the same path.
 
@@ -888,7 +898,7 @@ This is a stated limitation, not a design claim. `flock(LOCK_EX)` on the store r
 | **Revoked seed re-registered as a fresh identity**  | **High** — terminal state bypassed with one command           | `register` returns `AlreadyRevoked` and writes nothing. See A14 and `tv_x_35`                                                              |
 | **Prompt not gated on a terminal**                  | **High** — the passphrase is echoed into a log                | Explicit `isatty` gate, now owned by an AC and a vector. See A15                                                                           |
 | **Plaintext seed in swappable memory**              | Medium — hibernation, swap, and crash dumps yield the key     | **Open.** No `mlock` in the workspace. The disk-and-backup scope is stated explicitly. See A16                                             |
-| **`select` re-points at a revoked record**          | Medium — non-prompting, no rollback needed                    | `select` refuses a `Revoked` target at exit 2. See A17 and `tv_x_36`                                                                       |
+| **`select` re-points at a revoked record**          | Medium — non-prompting, no rollback needed                    | `select` refuses a `Revoked` target at exit 6. See A17 and `tv_x_36`                                                                       |
 
 ## Adversary Analysis
 
@@ -1028,7 +1038,7 @@ The argument for the unlock split is that it buys "confidentiality that survives
 
 `select` is a non-prompting command by design (§Lifecycle Requirements). Nothing in an earlier revision of the specification gave it a lifecycle precondition, so `octo identity select <revoked-did>` would move `active_did` onto a `Revoked` record whose seed slot is retained on disk. No substitution, no rollback, no passphrase, no tamper — it is not A2, not A4, and not A1, and no adversary entry covered it.
 
-`select` now refuses a `Revoked` target with `WalletError::NotActive { current_state: Revoked }` at exit 2. It still permits `Designated`, because that is a legitimately registered record that simply has not been activated, and refusing it would be a worse lie than reporting it honestly at unlock time. Covered by `tv_x_36`.
+`select` now refuses a `Revoked` target with `WalletError::NotActive { current_state: Revoked }` at exit 6. It still permits `Designated`, because that is a legitimately registered record that simply has not been activated, and refusing it would be a worse lie than reporting it honestly at unlock time. Covered by `tv_x_36`.
 
 ## Companion mission YAML pairing
 

@@ -618,17 +618,45 @@ pub fn register(
     );
     // Read passphrase file contents. Empty / missing file → substrate
     // floor check rejects with `WeakPassphrase` at exit 94 / slot 2.
-    let passphrase = std::fs::read_to_string(passphrase_file).map_err(|e| {
-        OctoCliError::Internal(sanitize_substrate_error(&format!(
-            "passphrase file read: {e}"
-        )))
-    })?;
+    // Wrap the passphrase in `Zeroizing<String>` so the bytes are
+    // scrubbed when the variable drops at the end of the handler
+    // (mission AC-24: passphrase must NOT survive into the heap
+    // after the seal). The substrate's `register` takes `&str` so
+    // the wrapper derefs cleanly.
+    let passphrase =
+        zeroize::Zeroizing::new(std::fs::read_to_string(passphrase_file).map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "passphrase file read: {e}"
+            )))
+        })?);
     if !cli.mode.dry_run {
         // Substrate-side construction. In dev mode (mirrors rotate
         // successor pattern at L334) the seed is the hardcoded stub;
         // otherwise CSPRNG via `IdentityKey::generate` or a
         // deterministic replay from `--seed-file` when present.
         let key = if let Some(seed_path) = seed_file {
+            // AC-25 obligation 2: refuse a seed file that is
+            // group- or world-readable. A permissive mode is
+            // treated as a compromise already, not as a warning
+            // after the fact — the file is written 0600 by
+            // `octo-wallet init` and a 0640 seed has the same
+            // posture §Adversary Analysis A9 takes for the store
+            // root, applied to the file that holds the identity
+            // itself.
+            let seed_meta = std::fs::metadata(seed_path).map_err(|e| {
+                OctoCliError::Internal(sanitize_substrate_error(&format!("seed file stat: {e}")))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = seed_meta.permissions().mode();
+                if mode & 0o077 != 0 {
+                    return Err(OctoCliError::Internal(format!(
+                        "seed file mode {:04o} is group- or world-readable; expected 0600 (or stricter); treat the seed as compromised and re-run `octo-wallet init --seed-out`",
+                        mode & 0o7777
+                    )));
+                }
+            }
             let bytes = std::fs::read(seed_path).map_err(|e| {
                 OctoCliError::Internal(sanitize_substrate_error(&format!("seed file read: {e}")))
             })?;
@@ -1854,6 +1882,68 @@ mod tests {
         assert!(
             body.contains("IdentityNotFound(parsed.0.clone())"),
             "select must surface substrate IdentityNotFound at the existing slot-4 variant: {body}"
+        );
+    }
+
+    /// tv_x_c_25 — AC-24 passphrase zeroize on `register`. The
+    /// `register` handler must wrap the passphrase String in
+    /// `zeroize::Zeroizing` so the bytes are scrubbed when the
+    /// handler returns. Source-presence pins the wrapper at the
+    /// read-site so a regression that drops the wrapper (and lets
+    /// the passphrase survive into the heap) becomes a substring
+    /// failure rather than a silent hygiene miss.
+    #[test]
+    fn tv_x_c_25_register_wraps_passphrase_in_zeroizing() {
+        let src = include_str!("identity.rs");
+        let start = src.find("pub fn register(").expect("register fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn select(").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains("zeroize::Zeroizing::new("),
+            "register must wrap passphrase in zeroize::Zeroizing::new per AC-24: {body}"
+        );
+        assert!(
+            body.contains("std::fs::read_to_string(passphrase_file)"),
+            "register must read passphrase from the file: {body}"
+        );
+        // Belt-and-braces: a Plain `String` binding for the
+        // passphrase inside `register` would defeat the wrapper —
+        // the only String binding must be inside the Zeroizing::new
+        // constructor.
+        let read_site = body
+            .find("std::fs::read_to_string(passphrase_file)")
+            .expect("read site");
+        let zeroize_site = body.find("zeroize::Zeroizing::new(").expect("zeroize site");
+        assert!(
+            zeroize_site <= read_site + 200,
+            "Zeroizing wrap must enclose the passphrase read, not follow it: {body}"
+        );
+    }
+
+    /// tv_x_c_26 — AC-25 `--seed-file` 0600 mode check. A seed file
+    /// that is group- or world-readable is a compromise already —
+    /// the handler must refuse it with the mode printed. Source
+    /// presence pins the Unix-only mode check so a regression that
+    /// reads the file unconditionally becomes a substring failure.
+    #[test]
+    fn tv_x_c_26_register_seed_file_mode_check_refuses_permissive_modes() {
+        let src = include_str!("identity.rs");
+        let start = src.find("pub fn register(").expect("register fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn select(").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains("seed_meta.permissions().mode()"),
+            "register must stat the seed file and read its mode per AC-25 obligation 2: {body}"
+        );
+        assert!(
+            body.contains("0o077"),
+            "register must check group/world bits are zero (0o077 mask): {body}"
+        );
+        assert!(
+            body.contains("group- or world-readable"),
+            "register refusal message must name the mode violation: {body}"
         );
     }
 }

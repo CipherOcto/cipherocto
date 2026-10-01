@@ -71,6 +71,31 @@ pub fn revoke(key: &mut IdentityKey, now_unix_secs: u64) -> Result<(), WalletErr
     key.revoke(now_unix_secs)
 }
 
+/// Complete an in-flight rotation. Thin wrapper around
+/// `IdentityKey::complete_rotation`.
+///
+/// # Errors
+/// Returns `WalletError::NotRotating` if `key` is not in `Rotating`
+/// lifecycle; `WalletError::GracePeriodNotElapsed` if the 24h grace
+/// window has not yet elapsed since `begin_rotation`; substrate
+/// `IdentityKey::complete_rotation` itself surfaces the canonical
+/// lifecycle refusal family.
+pub fn complete_rotation(key: &mut IdentityKey, now_unix_secs: u64) -> Result<(), WalletError> {
+    key.complete_rotation(now_unix_secs)
+}
+
+/// Abort an in-flight rotation. Thin wrapper around
+/// `IdentityKey::abort_rotation`. Idempotent: when `key` is not in
+/// `Rotating` lifecycle the substrate returns `NotRotating`; CLI
+/// envelopes this at slot 93 / exit 43.
+///
+/// # Errors
+/// Returns `WalletError::NotRotating` if `key` is not in `Rotating`
+/// lifecycle.
+pub fn abort_rotation(key: &mut IdentityKey) -> Result<(), WalletError> {
+    key.abort_rotation()
+}
+
 /// Register a new agent — RFC-0011-c §9.10 `register_agent`.
 ///
 /// Phase 1 (this module): deterministic, in-memory registration.

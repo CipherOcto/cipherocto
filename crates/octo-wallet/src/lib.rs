@@ -35,7 +35,8 @@ pub use agent::{
     InMemoryAgentRegistry, TransitionReceipt,
 };
 pub use cli_fns::{
-    active_identity, begin_rotation, identity_record as identity_record_fn, register_agent, revoke,
+    abort_rotation, active_identity, begin_rotation, complete_rotation,
+    identity_record as identity_record_fn, register_agent, revoke,
 };
 pub use error::WalletError;
 // Re-export the Layer A `ed25519-dalek` crate at the wallet boundary

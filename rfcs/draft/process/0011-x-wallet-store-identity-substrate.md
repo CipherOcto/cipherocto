@@ -1104,26 +1104,54 @@ outside the project can check.
 | 8   | Every `octo` invocation runs on one machine as one operator              | §Concurrency                                   | Two overlapping invocations lose a record silently. **Not** recoverable — there is no journal and no delete path, so the loss is invisible and permanent.                                                                                                                               | **ACCEPTED RISK** — single-writer last-writer-wins is stated, not assumed. `tv_x_39` pins it. Rationale: `octo` has no daemon, so the race is the operator's own shell. **Deadline: the `flock` amendment in §Future Work item 16, or 2027-03-31, whichever is sooner.**                                                      |
 | 9   | No `octo` build is older than this amendment at the same store path      | §Store layout, `open`, `store.json` versioning | An older binary reads a `store.json` it does not understand, or writes one the newer binary cannot parse. Recoverable by restoring a backup, if there is one.                                                                                                                           | Partly mitigated. `tv_x_32` rejects an unknown `version` rather than parsing best-effort, so the failure is loud. The no-backup part is **ACCEPTED RISK**. **Deadline: the authenticated-envelope amendment (§Future Work item 1), which also gives the index a MAC to version. Otherwise 2027-03-31.**                       |
 
-Six of the nine are **ACCEPTED RISK** and each carries a deadline. That is a high
-proportion and it is stated rather than spread thin: an audit that lists nine
-assumptions and marks none of them as accepted is not an audit, it is a list. The
-common shape is that four of the six need a wire-format or a platform change that
-belongs in its own amendment, and the two that do not — row 7's clock and row 8's
-concurrency — are owned by layers that already made the decision and are not this
-document's to revisit.
+Five of the nine are **ACCEPTED RISK** — rows 4, 5, 7, 8 and 9 — and each of those
+five carries a deadline. That is a high proportion and it is stated rather than
+spread thin: an audit that lists nine assumptions and marks none of them as
+accepted is not an audit, it is a list. The common shape is that four of the five
+need a change that belongs in its own amendment — rows 5 and 9 are wire-format,
+because both resolve to the authenticated envelope in §Future Work item 1, row 8
+is a platform change because its fix is the file lock in item 16, and row 4 is a
+crypto-parameter change because re-tuning Argon2id for the identity seed is not
+this amendment's to do. The one that does not is row 7's clock, which is owned by
+a layer that already took the decision and is not this document's to revisit.
+
+**This paragraph was a count and a breakdown at once, and both were wrong.** The
+count said six where the table carries five. The breakdown was worse, because it
+could not be made to work at any total: it placed row 8 in the group of
+assumptions that do _not_ need a platform change, in the same sentence that
+identifies row 8's fix as a file lock. Two clauses of one sentence disagreed, and
+no total would have reconciled them.
 
 ### Roles outside the coverage table
 
-§Roles and Authorities names the platform operator, the local user, the same-uid
-process, and a physical attacker. Three more are actors the design does not address,
-and per BLUEPRINT §Role/Authority Coverage Table an unstated out-of-scope role is
-itself an implicit assumption:
+The design's actor set is spread across two sections, and the split matters because
+they cover different things. §Roles and Authorities carries the operator, the
+store-side handles, and the same-user process. The **local user outside the
+operator's account** is not there — it is adversary A1 and it has its own row in
+the threat table, because it is a different uid than the operator, which the
+same-user process row explicitly is not. A **physical attacker** is in neither
+section: no coverage-table row, no threat-table row, no adversary entry. That is
+not a role the design already covers, so per BLUEPRINT §Role/Authority Coverage
+Table it is recorded here rather than left implicit. Four actors the design does
+not address are listed:
 
-| Actor                                            | Why out of scope                                                                                                                                                                             | Transfer                                                                                                                |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| A **remote** party                               | Nothing in the store is network-reachable. `octo` has no daemon and no listening socket, and `WalletStore` opens a local path. There is no remote attacker to reason about.                  | The network threat model belongs to whatever adapter exposes an identity, not to a local file store.                    |
-| A **second operator** sharing the machine        | The store is single-operator by construction: one root, one index, one active pointer, no per-operator scoping. Two human operators on one account are one operator.                         | Multi-user key custody is a different product decision. A vault with per-tenant directories is the shape it would take. |
-| A **forensic reader** of a retired machine image | After the operator's account is retired the index is readable — A10. The design accepts this rather than adding an at-rest envelope for a file that A2 already concedes a same-uid attacker. | Full-disk encryption is the control that closes it, and it is a platform concern rather than an application one.        |
+| Actor                                                            | Why out of scope                                                                                                                                                                                                                                                                                                                                       | Transfer                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A **remote** party                                               | Nothing in the store is network-reachable. `octo` has no daemon and no listening socket, and `WalletStore` opens a local path. There is no remote attacker to reason about.                                                                                                                                                                            | The network threat model belongs to whatever adapter exposes an identity, not to a local file store.                                                                                                                        |
+| A **second operator** sharing the machine                        | The store is single-operator by construction: one root, one index, one active pointer, no per-operator scoping. Two human operators on one account are one operator.                                                                                                                                                                                   | Multi-user key custody is a different product decision. A vault with per-tenant directories is the shape it would take.                                                                                                     |
+| A **forensic reader** of a retired machine image                 | After the operator's account is retired the index is readable — A10. The design accepts this rather than adding an at-rest envelope for a file that A2 already concedes a same-uid attacker.                                                                                                                                                           | Full-disk encryption is the control that closes it, and it is a platform concern rather than an application one.                                                                                                            |
+| A **physical attacker** with the disk or the powered-off machine | No adversary entry covers seizure or offline attack on the hardware, and the threat table's offline-theft row is scoped to a copied disk under the 0700 and 0600 guarantees the design already sets. Seizure of the live machine also defeats the assumption table's row 8, because an operator who is not running the command is not a single writer. | The Argon2id cost parameters in row 4 and the at-rest work in item 1 both reduce the loss. Neither is a substitute for full-disk encryption and TPM-sealed storage, which are the platform controls that actually close it. |
+
+**This table was one actor short of its own stated rule.** The sentence above it
+listed a physical attacker among the roles the design _does_ cover, so the actor
+had a claimed home and no row here. The phrase appears nowhere else in this
+document: the only other line mentioning the physical is the out-of-scope
+_custody_ of the seed file before registration, which is an operator obligation
+and not an adversary. §Threat table's offline-theft row is a mitigation, not a
+role, and it is scoped to a copied disk rather than to the machine. An earlier
+revision also folded the local user into §Roles and Authorities, which lists a
+same-user process instead — a different uid, and the one the design defends
+against.
 
 ## Test Vectors
 

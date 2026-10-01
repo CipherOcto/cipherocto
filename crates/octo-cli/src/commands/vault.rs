@@ -877,11 +877,13 @@ fn active_owner_did() -> Result<String, OctoCliError> {
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store: {e}")))
     })?;
-    let key = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-    })?;
-    Ok(key.did().0)
+    // Metadata read: the active DID is a store index field, not a key.
+    // `try_active_identity` is the signing primitive and returns
+    // `Locked` unconditionally under the unlock split.
+    store
+        .active_did()
+        .map(|d| d.0.clone())
+        .ok_or(OctoCliError::NoActiveIdentity)
 }
 
 // ---------------------------------------------------------------------------

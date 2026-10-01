@@ -102,12 +102,14 @@ fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliErro
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let active_key = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-    })?;
-    Ok(active_key.did())
+    // Metadata read: the active DID is a store index field. The
+    // signing primitive `try_active_identity` returns `Locked`
+    // unconditionally under the unlock split, so routing a DID-only
+    // helper through it could only ever produce exit 64.
+    store
+        .active_did()
+        .cloned()
+        .ok_or(OctoCliError::NoActiveIdentity)
 }
 
 /// CLI-facing governance subcommand enum (Layer C; delegates to

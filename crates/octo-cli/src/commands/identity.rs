@@ -415,19 +415,32 @@ fn block_auditor(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 
 /// `octo whoami` — surface the active identity record.
 ///
+/// Every field in `WhoamiOutput` — DID, public key, lifecycle, HSM slot,
+/// registration time — lives in the `IdentityRecord`, which the store
+/// serves **without a passphrase**. This is therefore a metadata
+/// command, not a signing one: prompting an operator for a secret to
+/// print a public key would be over-classification, the exact failure
+/// mode RFC-0011-x §Unlock split warns about.
+///
+/// The active DID is read through `WalletStore::active_did` rather than
+/// `try_active_identity`. The latter is the *signing* primitive: under
+/// the unlock split it returns `Err(WalletError::Locked)`
+/// unconditionally, so a metadata command routed through it could only
+/// ever exit 64. `active_did` returns `None` when no identity is
+/// active, which is the condition exit 2 is actually for.
+///
 /// Exit codes:
 /// - 0: success
-/// - 2: no active identity (substrate `WalletError::NotActive`)
+/// - 2: no active identity
 /// - 64: unexpected substrate error (wallet store open failure, lookup
 ///   failure, etc.)
 pub fn whoami(cli: &Octo) -> Result<(), OctoCliError> {
     block_auditor(cli, "identity whoami")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-    let key = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-    })?;
-    let did = key.did();
+    let did = store
+        .active_did()
+        .cloned()
+        .ok_or(OctoCliError::NoActiveIdentity)?;
     // Per R1 review CORR-04: record lookup failure is INTERNAL (exit 64),
     // not `IdentityNotFound` (exit 4). The active identity was just
     // resolved successfully; failing to read its own record is a
@@ -461,10 +474,13 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     let did = match did_arg {
         Some(s) => octo_wallet::Did(s.to_string()),
+        // Metadata read: the active DID is a store index field, not a
+        // key. `try_active_identity` is the signing primitive and
+        // returns `Locked` unconditionally under the unlock split.
         None => store
-            .try_active_identity()
-            .map_err(|_| OctoCliError::NoActiveIdentity)?
-            .did(),
+            .active_did()
+            .cloned()
+            .ok_or(OctoCliError::NoActiveIdentity)?,
     };
     let record = octo_wallet::identity_record_fn(&store, &did)
         .map_err(|_| OctoCliError::IdentityNotFound(did.0.clone()))?;
@@ -513,9 +529,9 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     // confirm the DID + grace window matches what they intend. Fires
     // BEFORE `active_identity()` so the echo always emits, even when
     // no identity is active (the placeholder makes the absence explicit).
-    let old_did = match store.try_active_identity() {
-        Ok(k) => k.did(),
-        Err(_) => {
+    let old_did = match store.active_did().cloned() {
+        Some(d) => d,
+        None => {
             eprintln!("would rotate: old_did=<none>, new_did_placeholder=pending, grace=24h",);
             return Err(OctoCliError::NoActiveIdentity);
         }
@@ -607,9 +623,9 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
     // Pastejacking defense (R1 review CORR-12): echo BEFORE resolving
     // active identity so the operator sees the canonical payload even
     // when no identity is active.
-    let did = match store.try_active_identity() {
-        Ok(k) => k.did(),
-        Err(_) => {
+    let did = match store.active_did().cloned() {
+        Some(d) => d,
+        None => {
             eprintln!("would revoke: did=<none>, reason={}", redact_string(reason));
             return Err(OctoCliError::NoActiveIdentity);
         }
@@ -1065,28 +1081,41 @@ pub(crate) fn acquire_passphrase(
                 "passphrase stdin read: {e}"
             )))
         })?;
-        // Trim trailing newline (the read includes it). The
-        // wrapper zeros the bytes on drop so the secret is not
-        // left in heap memory after the handler returns. The
-        // length is read once so we don't have two simultaneous
-        // borrows of the same `Zeroizing<String>`.
-        let trimmed_len = line
-            .len()
-            .saturating_sub(if line.ends_with('\n') { 1 } else { 0 });
-        let trimmed_len = trimmed_len.saturating_sub(if line.ends_with('\r') && trimmed_len > 0 {
-            1
-        } else {
-            0
-        });
+        // Strip the line terminator. The wrapper zeros the bytes on
+        // drop so the secret is not left in heap memory after the
+        // handler returns.
+        //
+        // A previous form computed the trimmed length in two steps,
+        // testing for a carriage return on the *untruncated* string
+        // after the `\n` had already been accounted for. For CRLF
+        // input the still-untruncated value ends in `\n`, so the `\r`
+        // test was false and the carriage return survived: `"secret\r\n"`
+        // yielded the passphrase `"secret\r"`. `store.unlock` then
+        // failed and the operator saw `WalletLocked` — indistinguishable
+        // from a genuinely wrong passphrase, with no hint that the input
+        // had been mangled. `trim_end_matches` strips any run of `\r`
+        // and `\n` in one pass and cannot read a stale suffix.
+        let trimmed_len = line.trim_end_matches(['\r', '\n']).len();
         line.truncate(trimmed_len);
         return Ok(line);
     }
-    // Interactive prompt. The `rpassword` crate handles the TTY
-    // detection for us: when stdin is not a TTY the prompt
-    // surface errors with an io::ErrorKind::NotConnected-style
-    // signal; we translate that into WalletLocked (exit 92) per
-    // §AC-10. The error path is operator-readable so an
-    // automation caller knows to pass --passphrase-stdin.
+    // Interactive prompt. **Pre-flight first** (AC-10): when stdin is
+    // not a terminal there is nobody to answer the prompt, and an
+    // unattended `cron` job or CI step would block forever on an
+    // invisible read. Refusing before the prompt is honest; timing out
+    // mid-prompt would leave a half-entered passphrase on a terminal
+    // the operator cannot see.
+    //
+    // This check used to be delegated implicitly to `rpassword`, which
+    // reaches for the controlling TTY and so only fails closed when
+    // the *process* has no TTY — not when *stdin* has none. Under
+    // `script`, `ssh -t`, or a CI runner that allocates a pty, stdin
+    // can be a pipe while a TTY still exists, and the prompt would
+    // block. The explicit `is_terminal()` test is on stdin and is the
+    // condition the operator actually controls.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Err(OctoCliError::WalletLocked);
+    }
     match rpassword::prompt_password(format!("{command} passphrase: ")) {
         Ok(p) => Ok(zeroize::Zeroizing::new(p)),
         Err(_) => Err(OctoCliError::WalletLocked),
@@ -1285,6 +1314,28 @@ impl CapabilitySigner for DevSigner {
 mod tests {
     use super::*;
     use crate::flags::OperatorModeFlags;
+
+    /// Slice the production source to one function body, failing closed
+    /// at BOTH ends.
+    ///
+    /// A `find(...).expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module")` end-bound silently degrades
+    /// to "the rest of the file" when the marker is renamed, and the
+    /// rest of the file is `mod tests` — which is exactly the
+    /// self-reference `production_src` exists to eliminate. The
+    /// needles would then match the vector's own literals and the
+    /// vector would go green with the handler gutted. `expect` on both
+    /// markers turns that into a loud failure instead.
+    fn fn_body<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
+        let from = src
+            .find(start)
+            .unwrap_or_else(|| panic!("start marker not found in production source: {start}"));
+        assert!(
+            src[from..].contains(end),
+            "end marker {end:?} not found after {start:?} — the two markers are out of order or the function was renamed"
+        );
+        let to = from + src[from..].find(end).expect("checked above");
+        &src[from..to]
+    }
 
     /// The production source of this file, with every test-module line
     /// removed.
@@ -1556,18 +1607,35 @@ mod tests {
         // integration: tests/identity.rs `tv_id_rotate_emits_stderr_echo`.)
         // This unit test pins the helper contract — the source must call
         // eprintln for rotate.
-        let src = include_str!("identity.rs");
+        // An earlier revision scanned the whole file for `eprintln!`,
+        // `would rotate: old_did=`, and `would revoke: did=`. All three
+        // strings are literals in this vector's own `assert!` calls, so
+        // the assertions were satisfied by the vector itself and
+        // deleting every echo left it green.
+        //
+        // Each handler is now sliced to its own body, and the bare
+        // `eprintln!` needle is dropped: every handler in the file
+        // calls it, so it distinguishes nothing.
+        let src = production_src();
+
+        let rotate = fn_body(src, "pub fn rotate(", "pub fn revoke(");
         assert!(
-            src.contains("eprintln!"),
-            "rotate/revoke handlers must eprintln the canonical payload before mutation"
+            rotate.contains("would rotate: old_did=<none>"),
+            "rotate must echo the placeholder when no identity is active: {rotate}"
         );
         assert!(
-            src.contains("would rotate: old_did="),
-            "rotate handler missing canonical-payload echo"
+            rotate.contains("would rotate: old_did={}"),
+            "rotate must echo the resolved DID before mutating: {rotate}"
+        );
+
+        let revoke = fn_body(src, "pub fn revoke(", "pub fn register(");
+        assert!(
+            revoke.contains("would revoke: did=<none>"),
+            "revoke must echo the placeholder when no identity is active: {revoke}"
         );
         assert!(
-            src.contains("would revoke: did="),
-            "revoke handler missing canonical-payload echo"
+            revoke.contains("would revoke: did={}"),
+            "revoke must echo the resolved DID before mutating: {revoke}"
         );
     }
 
@@ -1921,7 +1989,7 @@ mod tests {
         // body of `list` is short and bounded by the next `pub fn` or
         // `fn` declaration.
         let slice = &src[start..];
-        let end = slice.find("pub fn rotate_complete").unwrap_or(slice.len());
+        let end = slice.find("pub fn rotate_complete").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             !body.contains("require_confirm"),
@@ -1972,7 +2040,7 @@ mod tests {
             .find("pub fn rotate_complete(")
             .expect("rotate_complete fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn rotate_abort").unwrap_or(slice.len());
+        let end = slice.find("pub fn rotate_abort").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains("require_confirm(cli, \"identity rotate-complete\")"),
@@ -2045,7 +2113,7 @@ mod tests {
         // Bound the dispatch body by the function's closing brace;
         // `dispatch` ends at the first `\n}` line that follows an
         // arm body.
-        let end = slice.find("\n}\n").unwrap_or(slice.len());
+        let end = slice.find("\n}\n").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         for needle in [
             "IdentityAction::Register {",
@@ -2085,7 +2153,7 @@ mod tests {
         let src = include_str!("identity.rs");
         let start = src.find("pub fn select(").expect("select fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn list(").unwrap_or(slice.len());
+        let end = slice.find("pub fn list(").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains("store.select(&parsed)"),
@@ -2119,7 +2187,7 @@ mod tests {
         let src = include_str!("identity.rs");
         let start = src.find("pub fn register(").expect("register fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn select(").unwrap_or(slice.len());
+        let end = slice.find("pub fn select(").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains("zeroize::Zeroizing::new("),
@@ -2153,7 +2221,7 @@ mod tests {
         let src = include_str!("identity.rs");
         let start = src.find("pub fn register(").expect("register fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn select(").unwrap_or(slice.len());
+        let end = slice.find("pub fn select(").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains("seed_meta.permissions().mode()"),
@@ -2187,7 +2255,7 @@ mod tests {
             .find("RotateComplete {")
             .expect("RotateComplete variant present");
         let slice = &src[start..];
-        let end = slice.find("RotateAbort {").unwrap_or(slice.len());
+        let end = slice.find("RotateAbort {").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let rotate_complete_block = &slice[..end];
         assert!(
             rotate_complete_block.contains("passphrase_stdin: bool"),
@@ -2203,7 +2271,7 @@ mod tests {
             .find("RotateAbort {")
             .expect("RotateAbort variant present");
         let slice = &src[start..];
-        let end = slice.find("}").unwrap_or(slice.len());
+        let end = slice.find("}").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let rotate_abort_block = &slice[..end];
         assert!(
             rotate_abort_block.contains("passphrase_stdin: bool"),
@@ -2241,7 +2309,7 @@ mod tests {
             .find("pub(crate) fn acquire_passphrase(")
             .expect("acquire_passphrase fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn require_confirm(").unwrap_or(slice.len());
+        let end = slice.find("pub fn require_confirm(").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains("rpassword::prompt_password"),
@@ -2250,6 +2318,53 @@ mod tests {
         assert!(
             body.contains("OctoCliError::WalletLocked"),
             "acquire_passphrase must fail closed with WalletLocked per AC-10: {body}"
+        );
+    }
+
+    /// tv_x_c_34 — AC-10 passphrase stdin terminator handling.
+    ///
+    /// The trim was computed in two steps, testing `ends_with('\r')` on
+    /// the *untruncated* string after `\n` had already been counted.
+    /// For CRLF input the string still ends in `\n`, so the carriage
+    /// return survived and the passphrase became `"secret\r"`. The
+    /// operator then got `WalletLocked` — indistinguishable from a
+    /// wrong passphrase.
+    ///
+    /// Asserted against `trim_end_matches` directly rather than by
+    /// piping into stdin, because a piped-stdin test would depend on
+    /// the test harness's file descriptors, which is the environment
+    /// sensitivity that made `tv_x_c_33` flaky.
+    #[test]
+    fn tv_x_c_34_stdin_passphrase_strips_crlf() {
+        for (input, expected) in [
+            ("secret\n", "secret"),
+            ("secret\r\n", "secret"),
+            ("secret", "secret"),
+            ("\r\n", ""),
+            ("a\r\n\r\n", "a"),
+        ] {
+            assert_eq!(
+                input.trim_end_matches(['\r', '\n']),
+                expected,
+                "CRLF/LF trimming must not leave a carriage return in the passphrase"
+            );
+        }
+
+        // And the production path must use that helper rather than
+        // hand-rolled length arithmetic, which is where the bug lived.
+        let src = production_src();
+        let body = fn_body(
+            src,
+            "pub(crate) fn acquire_passphrase(",
+            "pub fn require_confirm(",
+        );
+        assert!(
+            body.contains("trim_end_matches"),
+            "acquire_passphrase must strip CR and LF with trim_end_matches, not a two-step length computation: {body}"
+        );
+        assert!(
+            !body.contains("ends_with('\\r')"),
+            "acquire_passphrase must not test for a carriage return against the untruncated string: {body}"
         );
     }
 
@@ -2264,39 +2379,81 @@ mod tests {
     /// process. The property that actually matters is that the call
     /// **returns**, and it can only be shown by running it.
     ///
-    /// The bound is the assertion. The call is moved to a worker
-    /// thread and joined through a channel with a timeout, so a
-    /// regression that blocks surfaces as a test failure rather than
-    /// as a suite that never finishes — a wrapper that reported
-    /// success on timeout would assert the opposite of what it
-    /// claims. Both halves are required: the call must complete
-    /// *and* the value it produces must be `WalletLocked` at exit 92.
+    /// AC-10's "fails closed before prompting" is a **production**
+    /// obligation, so the vector pins the pre-check in the production
+    /// body and pins its position relative to the prompt.
+    ///
+    /// An earlier revision of this vector instead *ran*
+    /// `acquire_passphrase` and bounded it with a five-second channel
+    /// timeout. That measured the test environment, not the code:
+    /// `cargo test` hands the test binary whatever stdin the developer
+    /// has, so under an interactive terminal the call reached
+    /// `rpassword`, wrote a live prompt into the operator's shell, and
+    /// the vector failed after five seconds with a leaked worker thread
+    /// — while CI, which has no TTY, stayed green. Reproduced twice
+    /// independently before it was removed.
+    ///
+    /// The run-time half is kept as a separate, honestly-scoped vector
+    /// below rather than folded in here.
     #[test]
-    fn tv_x_c_33_no_tty_preflight_returns_within_bound() {
+    fn tv_x_c_33_no_tty_preflight_precedes_the_prompt() {
+        let src = production_src();
+        let body = fn_body(
+            src,
+            "pub(crate) fn acquire_passphrase(",
+            "pub fn require_confirm(",
+        );
+        let precheck = body.find("is_terminal()").unwrap_or_else(|| {
+            panic!("acquire_passphrase must test the TTY before prompting: {body}")
+        });
+        let prompt = body
+            .find("rpassword::prompt_password")
+            .unwrap_or_else(|| panic!("acquire_passphrase must prompt via rpassword: {body}"));
+        assert!(
+            precheck < prompt,
+            "the no-TTY pre-flight must come BEFORE the prompt, or the operator is prompted on a pipe: {body}"
+        );
+        assert!(
+            body.contains("OctoCliError::WalletLocked"),
+            "the no-TTY path must fail closed as WalletLocked: {body}"
+        );
+    }
+
+    /// The bounded-runtime half of the old `tv_x_c_33`, kept separate
+    /// because it is genuinely environment-scoped. It runs **only**
+    /// when stdin is a terminal-free pipe — the case the property is
+    /// about — and says so when it does not run, rather than failing on
+    /// a developer's terminal or silently passing.
+    ///
+    /// `CI` environments have no TTY, so this executes on the runner.
+    #[test]
+    fn tv_x_c_33b_no_tty_prompt_returns_within_bound_when_stdin_is_not_a_tty() {
         const BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            eprintln!(
+                "SKIPPED: stdin is a terminal, so this vector's precondition (a non-TTY \
+                 stdin) does not hold. Running it here would prompt the developer. \
+                 Covered on any non-TTY runner, including CI."
+            );
+            return;
+        }
         let cli = cli_with_mode(OperatorMode::Ci);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            // `passphrase_stdin = false` and a test harness stdin that
-            // is never a TTY: the exact shape of the unattended run.
             let outcome = super::acquire_passphrase(&cli, "rotate complete", false)
-                .map(|_| String::from("<passphrase acquired>"))
-                .map_err(|e| e.to_string());
+                .map_err(|e| (format!("{e}"), e.exit_code()))
+                .map(|_| (String::from("<passphrase>"), 0));
             let _ = tx.send(outcome);
         });
         let outcome = rx
             .recv_timeout(BOUND)
             .expect("acquire_passphrase must not block on a TTY-less stdin");
-        match outcome {
-            Err(rendered) => assert!(
-                rendered.to_lowercase().contains("locked")
-                    || rendered.to_lowercase().contains("tty"),
-                "no-TTY failure must tell the operator the store could not be unlocked, got: {rendered}"
-            ),
-            Ok(acquired) => panic!(
-                "no-TTY stdin must not yield a passphrase, got one: {acquired}"
-            ),
-        }
+        let (rendered, exit_code) = outcome
+            .expect_err("a non-TTY stdin that never delivers a byte must not yield a passphrase");
+        assert_eq!(
+            exit_code, 92,
+            "the no-TTY pre-flight must fail closed as WalletLocked at exit 92: {rendered}"
+        );
     }
 
     /// tv_x_c_29 — AC-7 partial. The `rotate_complete` handler
@@ -2318,7 +2475,7 @@ mod tests {
             .find("pub fn rotate_complete(")
             .expect("rotate_complete fn present");
         let slice = &src[start..];
-        let end = slice.find("pub fn rotate_abort").unwrap_or(slice.len());
+        let end = slice.find("pub fn rotate_abort").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
@@ -2346,7 +2503,7 @@ mod tests {
             .find("pub fn rotate_abort(")
             .expect("rotate_abort fn present");
         let slice = &src[start..];
-        let end = slice.find("// ---").unwrap_or(slice.len());
+        let end = slice.find("// ---").expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
         let body = &slice[..end];
         assert!(
             body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
@@ -2370,10 +2527,12 @@ mod tests {
     #[test]
     fn tv_x_c_31_rotate_uses_unlocked_wallet_migration() {
         let src = include_str!("identity.rs");
-        let start = src.find("pub fn rotate(").expect("rotate fn present");
-        let slice = &src[start..];
-        let end = slice.find("pub fn rotate_complete(").unwrap_or(slice.len());
-        let body = &slice[..end];
+        // Bounded by `revoke`, the next handler. The earlier bound was
+        // `rotate_complete`, which sits AFTER `revoke`, so the slice
+        // spanned two handlers and `revoke`'s own `.unlock(...)` call
+        // satisfied this vector's assertion — deleting rotate's unlock
+        // left it green.
+        let body = fn_body(src, "pub fn rotate(", "pub fn revoke(");
         assert!(
             body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
             "rotate must migrate to UnlockedWallet via store.unlock per AC-7: {body}"
@@ -2396,12 +2555,12 @@ mod tests {
     #[test]
     fn tv_x_c_32_revoke_uses_unlocked_wallet_migration() {
         let src = include_str!("identity.rs");
-        let start = src.find("pub fn revoke(").expect("revoke fn present");
-        let slice = &src[start..];
-        let end = slice
-            .find("fn revoke_rejects_empty_reason")
-            .unwrap_or(slice.len());
-        let body = &slice[..end];
+        // Bounded by `register`, the next handler. The earlier bound was
+        // `fn revoke_rejects_empty_reason`, a symbol in this test module
+        // at ~1576 — past `mod tests`, so the slice ran from `revoke`
+        // through the rest of production code and 290 lines of test
+        // module.
+        let body = fn_body(src, "pub fn revoke(", "pub fn register(");
         assert!(
             body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
             "revoke must migrate to UnlockedWallet via store.unlock per AC-7: {body}"

@@ -245,8 +245,22 @@ pub(crate) mod common {
     /// `WalletError` variant added to the substrate only needs one
     /// match arm updated. The DID projection is the only
     /// call-site-specific concern here.
+    ///
+    /// This is a **metadata** read and does not route through
+    /// `resolve_active_identity_key`. That helper returns the signing
+    /// primitive `WalletStore::try_active_identity`, which under the
+    /// unlock split yields `Err(WalletError::Locked)` unconditionally —
+    /// so a projection over it could only ever produce exit 64 for the
+    /// five handlers that only need a DID. The active DID is a store
+    /// index field and needs no passphrase.
     pub(crate) fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliError> {
-        Ok(resolve_active_identity_key()?.did())
+        let store = octo_wallet::WalletStore::open().map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+        })?;
+        store
+            .active_did()
+            .cloned()
+            .ok_or(OctoCliError::NoActiveIdentity)
     }
 
     /// Parse an operator-supplied `--agent-id <UUID>` hex string into

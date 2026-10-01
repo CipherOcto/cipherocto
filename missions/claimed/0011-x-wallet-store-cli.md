@@ -16,7 +16,7 @@ depends_on:
 
 ## Status
 
-Open (2026-10-01) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). Substrate mission `0011-x-s-a-wallet-store-identity` Completed on 2026-10-01 at `next d01f31cc`, so the substrate-first ordering invariant is now met. RFC-0011-x was promoted from `Draft` to `Accepted` on 2026-10-01 at `next 16a3368f`, so the RFC gate is met. The paired CLI mission is now ready to claim and proceed to Phases 4-6. The `depends_on:` block above was updated from `missions/open/0011-x-s-a-wallet-store-identity.md` to the new completed-archived path.
+Claimed (2026-10-01) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). Substrate mission `0011-x-s-a-wallet-store-identity` Completed on 2026-10-01 at `next d01f31cc`, so the substrate-first ordering invariant is now met. RFC-0011-x was promoted from `Draft` to `Accepted` on 2026-10-01 at `next 16a3368f`, so the RFC gate is met. The CLI mission is now in implementation, with Phases 4-6 already landed at `next 68358129` (claim + 3 OctoCliError variants) and `next 3bf4d953` (5 new subcommands + 17 per-call-site test vectors), and `next <sha>` (6 CLI test vectors). The full AC set (29 acceptance criteria across substrate migration, `UnlockedWallet` signing, `--passphrase-stdin`, no-TTY exit 92, sentinel deletion, passphrase zeroize, `--seed-file` 0600 mode, guide wall updates, onboarding flow, exit-2 troubleshooting entry, prettier) is **partially** satisfied: 18 ACs closed (AC-3 through AC-6, AC-8, AC-12 through AC-23), 11 ACs remain open. Mission Completion transition requires the AC-1 through AC-11 and AC-24 through AC-29 subset to be addressed.
 
 ## RFC
 

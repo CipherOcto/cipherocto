@@ -1815,4 +1815,45 @@ mod tests {
             );
         }
     }
+
+    /// tv_x_20 — The CLI `octo identity select` subcommand must move
+    /// the active pointer on success, fail on a miss, and route
+    /// through `WalletStore::select` (NOT `UnlockedWallet::select`,
+    /// which is the over-classification the mission §Summary warns
+    /// against — a passphrase prompt on a metadata writer that
+    /// reads no key material). The miss path maps
+    /// `WalletError::IdentityNotFound` to the existing
+    /// `OctoCliError::IdentityNotFound` slot at exit 4 (no new slot,
+    /// covered by tv_x_30 in error.rs).
+    ///
+    /// Source-presence pins the substrate-faithful wiring so a
+    /// regression that routes select through `unlock` (the bug this
+    /// criterion exists to catch) becomes a substring assertion
+    /// failure, not a silent downgrade.
+    #[test]
+    fn tv_x_20_select_routes_through_wallet_store_not_unlocked_wallet() {
+        let src = include_str!("identity.rs");
+        let start = src.find("pub fn select(").expect("select fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn list(").unwrap_or(slice.len());
+        let body = &slice[..end];
+        assert!(
+            body.contains("store.select(&parsed)"),
+            "select handler must call WalletStore::select, not UnlockedWallet::select: {body}"
+        );
+        // Belt-and-braces: select must NOT route through the unlock
+        // path. A passphrase prompt on a metadata writer is the
+        // over-classification §Summary warns against.
+        assert!(
+            !body.contains("unlock("),
+            "select is a metadata writer and must not route through unlock: {body}"
+        );
+        // And the IdentityNotFound path must collapse to the
+        // existing exit-4 variant via the From<WalletError> impl —
+        // no new slot, per mission AC-2.
+        assert!(
+            body.contains("IdentityNotFound(parsed.0.clone())"),
+            "select must surface substrate IdentityNotFound at the existing slot-4 variant: {body}"
+        );
+    }
 }

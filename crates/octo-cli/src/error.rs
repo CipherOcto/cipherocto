@@ -2719,4 +2719,171 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // RFC-0011-x §Test Vectors — the six CLI-observable vectors owned by
+    // the CLI mission (mission 0011-x-wallet-store-cli §Test Vectors):
+    // tv_x_20, tv_x_29, tv_x_30, tv_x_43, tv_x_44, tv_x_48. These pin
+    // the `From<octo_wallet::WalletError> for OctoCliError` translation
+    // table and the related exit-code assignments at the unit-test layer
+    // so substrate-faithfulness, exit-code sharing, and slot-94 floor
+    // rendering all stay visible.
+    // -----------------------------------------------------------------------
+
+    /// tv_x_29 — `WalletError::Locked` maps to `OctoCliError::WalletLocked`
+    /// at slot 92 with exit 92. No payload — the substrate carries the
+    /// no-payload `Locked` form and the CLI mirrors it 1:1.
+    #[test]
+    fn tv_x_29_locked_maps_to_wallet_locked_slot_92() {
+        let e: OctoCliError = octo_wallet::WalletError::Locked.into();
+        assert!(
+            matches!(e, OctoCliError::WalletLocked),
+            "WalletError::Locked must map to OctoCliError::WalletLocked, got: {e:?}"
+        );
+        assert_eq!(
+            e.exit_code(),
+            92,
+            "WalletLocked is the exit-92 slot per the wallet-store amendment chain"
+        );
+    }
+
+    /// tv_x_30 — `WalletError::IdentityNotFound(did)` maps to the
+    /// **existing** `OctoCliError::IdentityNotFound(String)` at exit 4.
+    /// **No new slot minted** — the parent RFC reserved exit 4 for the
+    /// "no such identity" case and the variant already exists in the
+    /// CLI enum from RFC-0011-b days.
+    #[test]
+    fn tv_x_30_identity_not_found_maps_to_exit_4_no_new_slot() {
+        let did = octo_wallet::Did("did:octo:0xaa".to_string());
+        let e: OctoCliError = octo_wallet::WalletError::IdentityNotFound(did).into();
+        match &e {
+            OctoCliError::IdentityNotFound(s) => {
+                assert_eq!(s, "did:octo:0xaa", "DID must round-trip via Did::to_string");
+            }
+            other => panic!(
+                "WalletError::IdentityNotFound must map to the existing IdentityNotFound variant, got: {other:?}"
+            ),
+        }
+        assert_eq!(
+            e.exit_code(),
+            4,
+            "exit 4 was reserved for IdentityNotFound by RFC-0011-b; no new slot is minted"
+        );
+    }
+
+    /// tv_x_43 — `WalletError::Config` has **no** translation arm. The
+    /// 27 (`NoOctoHome`) is produced upstream by
+    /// `home::resolve` before any command opens the store, and a
+    /// `Config` → 27 mapping would tell the operator to set
+    /// `$OCTO_HOME` for a full-disk or Argon2-hash failure. The
+    /// obligation here is to write nothing — the wildcard arm routes
+    /// `Config` to `Internal(reason)` at exit 64.
+    #[test]
+    fn tv_x_43_config_has_no_arm_exit_27_comes_from_home_resolve() {
+        let e: OctoCliError =
+            octo_wallet::WalletError::Config("Argon2id hash mismatch on vault".into()).into();
+        match &e {
+            OctoCliError::Internal(reason) => {
+                // Defense-in-depth scrub: no $OCTO_HOME / $HOME in the
+                // rendered text. The mapping arm never gets a chance to
+                // emit those, because the arm does not exist.
+                assert!(
+                    !reason.contains("$OCTO_HOME"),
+                    "Config must NOT carry $OCTO_HOME in rendered text: {reason}"
+                );
+                assert!(
+                    !reason.contains("$HOME"),
+                    "Config must NOT carry $HOME in rendered text: {reason}"
+                );
+                // And exit 64 — the catch-all, not the 27 reserved by
+                // `home::resolve`.
+                assert!(
+                    e.exit_code() == 64,
+                    "Config falls through to Internal at exit 64 (not 27): {e:?}"
+                );
+            }
+            other => panic!(
+                "Config must fall through to Internal at exit 64 (no dedicated arm); got: {other:?}"
+            ),
+        }
+        // Belt-and-braces — assert NoOctoHome stays at exit 27
+        // (the slot owned by home::resolve, NOT by Config).
+        assert_eq!(OctoCliError::NoOctoHome.exit_code(), 27);
+    }
+
+    /// tv_x_44 — the five `WalletError` lifecycle refusals all map to
+    /// `OctoCliError::IdentityTransitionRefused { reason }` at slot 93
+    /// with exit 43. The substrate owns the canonical distinction;
+    /// the CLI envelope collapses them into one typed variant.
+    #[test]
+    fn tv_x_44_five_lifecycle_refusals_map_to_slot_93_exit_43() {
+        let cases: Vec<octo_wallet::WalletError> = vec![
+            octo_wallet::WalletError::RotationInProgress,
+            octo_wallet::WalletError::SelfRotation,
+            octo_wallet::WalletError::GracePeriodNotElapsed {
+                elapsed_secs: 0,
+                required_secs: 86_400,
+            },
+            octo_wallet::WalletError::NotRotating {
+                current_state: octo_wallet::LifecycleState::Active,
+            },
+            octo_wallet::WalletError::InvalidSuccessorProof,
+        ];
+        for substrate_err in cases {
+            let substrate_dbg = format!("{:?}", substrate_err);
+            let e: OctoCliError = substrate_err.into();
+            match &e {
+                OctoCliError::IdentityTransitionRefused { reason } => {
+                    assert!(
+                        !reason.is_empty(),
+                        "IdentityTransitionRefused must carry a non-empty reason: {e:?}"
+                    );
+                }
+                other => panic!(
+                    "lifecycle refusal must map to IdentityTransitionRefused, got: {other:?} from substrate {substrate_dbg}"
+                ),
+            }
+            assert_eq!(
+                e.exit_code(),
+                43,
+                "IdentityTransitionRefused is exit 43 (shared with the agent amendment chain write-path slots)"
+            );
+        }
+    }
+
+    /// tv_x_48 — `WalletError::WeakPassphrase` maps to
+    /// `OctoCliError::WeakPassphrase` at slot 94 with exit 2. The
+    /// rendered message names the `MIN_PASSPHRASE_CHARS` floor, so the
+    /// operator sees the threshold the check compares against — never
+    /// a fragment of the supplied passphrase.
+    #[test]
+    fn tv_x_48_weak_passphrase_maps_to_slot_94_exit_2_with_floor_message() {
+        let e: OctoCliError = octo_wallet::WalletError::WeakPassphrase.into();
+        assert!(
+            matches!(e, OctoCliError::WeakPassphrase),
+            "WalletError::WeakPassphrase must map to OctoCliError::WeakPassphrase, got: {e:?}"
+        );
+        assert_eq!(
+            e.exit_code(),
+            2,
+            "WeakPassphrase is the slot-94 variant at exit 2 (operator-input validation family)"
+        );
+        let msg = e.user_message();
+        let floor = octo_wallet::error::MIN_PASSPHRASE_CHARS;
+        assert!(
+            msg.contains(&floor.to_string()),
+            "rendered message must name the MIN_PASSPHRASE_CHARS floor ({floor}): {msg}"
+        );
+        assert!(
+            msg.contains("floor"),
+            "rendered message must mention the floor: {msg}"
+        );
+        // Belt-and-braces — the rendered text must NOT carry any
+        // supplied passphrase fragment, because the substrate carries
+        // the no-payload form and the CLI envelope mirrors that.
+        assert!(
+            !msg.contains("passphrase="),
+            "rendered message must not echo a supplied passphrase fragment: {msg}"
+        );
+    }
 }

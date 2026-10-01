@@ -1353,25 +1353,25 @@ Phases 1 through 3 are the substrate mission; phase 4 is the CLI mission. Substr
 
 ## Key Files to Modify
 
-| File                                                                  | Layer | Change                                                                                                        |
-| --------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------- |
-| `crates/octo-wallet/src/identity_store.rs`                            | B     | NEW — the store, the index, the unlock, the write path, `active_seed_slot_present`, the orphan scan           |
-| `crates/octo-wallet/src/identity_record.rs`                           | B     | `IdentityRecord` gains `deprecated`; `lookup_identity_record` and its single call site are swept              |
-| `crates/octo-wallet/src/identity.rs`                                  | B     | `IdentityKey::from_seed_with_lifecycle`, `pub(crate)`; `complete_rotation` stops `expect`ing                  |
-| `crates/octo-wallet/src/vault.rs`                                     | B     | `validate_slot_id` promoted from module-private to `pub(crate)` — the store composes it                       |
-| `crates/octo-wallet/src/error.rs`                                     | B     | `Locked`, `IdentityNotFound`, `WeakPassphrase`                                                                |
-| `crates/octo-wallet/src/lib.rs`                                       | B     | Module declaration and re-exports                                                                             |
-| `crates/octo-wallet/Cargo.toml`                                       | B     | **Unchanged.** `Vault::default_dir()` already uses `directories`; this store reuses it and adds no crate      |
-| `crates/octo-wallet/src/cli_fns.rs`                                   | B     | Wrappers take the unlocked handle; the sentinel lives here                                                    |
-| `crates/octo-cli/src/error.rs`                                        | C     | Slots 92 `WalletLocked`, 93 `IdentityTransitionRefused`, and 94 `WeakPassphrase`, translation arms, exit arms |
-| `crates/octo-cli/src/lib.rs`                                          | C     | Three `IdentityAction` variants plus two `rotate` subcommands                                                 |
-| `crates/octo-cli/src/commands/identity.rs`                            | C     | Handlers, output envelopes, unlock threading, `RotateComplete` and `RotateAbort` arms                         |
-| `crates/octo-cli/src/commands/{governance,vault,agent,capability}.rs` | C     | Unlock threading at the remaining call sites                                                                  |
-| `crates/octo-cli/Cargo.toml`                                          | C     | `rpassword` added, with a rationale comment — absent today                                                    |
-| `docs/06-operations/operator-guide.md`                                | docs  | Eleven wall claims across seven locations replaced                                                            |
+| File                                                                  | Layer | Change                                                                                                                                                                                                   |
+| --------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-wallet/src/identity_store.rs`                            | B     | NEW — the store, the index, the unlock, the write path, `active_seed_slot_present`, the orphan scan                                                                                                      |
+| `crates/octo-wallet/src/identity_record.rs`                           | B     | `IdentityRecord` gains `deprecated`; `lookup_identity_record` and its single call site are swept                                                                                                         |
+| `crates/octo-wallet/src/identity.rs`                                  | B     | `IdentityKey::from_seed_with_lifecycle`, `pub(crate)`; `complete_rotation` stops `expect`ing                                                                                                             |
+| `crates/octo-wallet/src/vault.rs`                                     | B     | `validate_slot_id` promoted from module-private to `pub(crate)` — the store composes it                                                                                                                  |
+| `crates/octo-wallet/src/error.rs`                                     | B     | `Locked`, `IdentityNotFound`, `WeakPassphrase`                                                                                                                                                           |
+| `crates/octo-wallet/src/lib.rs`                                       | B     | Module declaration and re-exports                                                                                                                                                                        |
+| `crates/octo-wallet/Cargo.toml`                                       | B     | **Unchanged.** `Vault::default_dir()` already uses `directories`; this store reuses it and adds no crate                                                                                                 |
+| `crates/octo-wallet/src/cli_fns.rs`                                   | B     | Wrappers take the unlocked handle; the sentinel lives here                                                                                                                                               |
+| `crates/octo-cli/src/error.rs`                                        | C     | Slots 92 `WalletLocked`, 93 `IdentityTransitionRefused`, and 94 `WeakPassphrase`, translation arms, exit arms                                                                                            |
+| `crates/octo-cli/src/lib.rs`                                          | C     | **Unchanged.** The `Identity` arm of `Commands` embeds `IdentityAction` as a subcommand field, and that field's type is the whole of the coupling — adding variants to the enum does not touch the field |
+| `crates/octo-cli/src/commands/identity.rs`                            | C     | The `IdentityAction` enum: three new variants plus the two `rotate` subcommands. Then handlers, output envelopes, unlock threading, and the `RotateComplete` and `RotateAbort` dispatch arms             |
+| `crates/octo-cli/src/commands/{governance,vault,agent,capability}.rs` | C     | Unlock threading at the remaining call sites                                                                                                                                                             |
+| `crates/octo-cli/Cargo.toml`                                          | C     | `rpassword` added, with a rationale comment — absent today                                                                                                                                               |
+| `docs/06-operations/operator-guide.md`                                | docs  | Eleven wall claims across seven locations replaced                                                                                                                                                       |
 
-Two rows in that table are corrections rather than additions, and both were caught by
-reading the file rather than the plan.
+Three rows in that table are corrections rather than additions, and all three were caught
+by reading the file rather than the plan.
 
 `Cargo.toml` for `octo-wallet` is **unchanged**. An earlier revision of this table listed
 `dirs` as added, in the same section that warns about two home-directory crates in one
@@ -1385,6 +1385,20 @@ needs `ProjectDirs`; and the write-ordering sequence in §Write ordering is desc
 "the same sequence `Vault::put` already uses", which is a claim about a file no row
 named. A file that is read by every design decision in this RFC and appears in no table
 is a hole a reader fills by guessing.
+
+`octo-cli/src/lib.rs` is also **unchanged**, and its earlier row was not merely redundant
+— it was work assigned to a file that cannot do it. The row read "three `IdentityAction`
+variants plus two `rotate` subcommands", which is the `IdentityAction` enum, and the enum
+is declared in `commands/identity.rs` along with the match that dispatches it. `lib.rs`
+names the type exactly twice: once importing it, once using it as the field type of the
+`Identity` arm. Neither occurrence changes when a variant is added, because the arm
+embeds the whole subcommand rather than listing its members. So the table had split one
+file's change across two rows and handed one of them work the file does not have. The
+enum work has moved onto the `commands/identity.rs` row, which previously described only
+the handler side. The general form of the error is the one the other two rows share: a
+file got into this table because something in the design _mentions_ it, and the mention
+was read as a change site. A table of files to modify is a list of files whose bytes
+differ at the end, and a type named in a field position is not one of them.
 
 ## Future Work
 

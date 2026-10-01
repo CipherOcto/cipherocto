@@ -1,11 +1,14 @@
 # 0011-x-s-a-wallet-store-identity — Substrate additions for the `WalletStore` identity store
 
-<!-- Machine-readable ordering per BLUEPRINT §Mission Dependency Model. The prose
+<!-- Machine-readable ordering per BLUEPRINT §Mission Lifecycle. The prose
      under §Dependencies states the same three gates; this block is the field an
      agent reads to decide what to claim first. Empty on the substrate side
      deliberately: nothing mission-side precedes the substrate, and the two gates
      that do apply (RFC-0011-x Accepted, supersession of 0102-a) are RFC and
      document gates rather than other missions.
+     An earlier revision cited "§Mission Dependency Model", which names no
+     section: that string is a bold run-in label inside the Mission template, not
+     a heading, so it resolves to nothing.
 -->
 
 depends_on: []

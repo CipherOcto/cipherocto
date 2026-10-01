@@ -152,6 +152,7 @@ Medium-High (new crate, dual substrate, vault crypto, CLI, RFC additions)
 
 - `docs/plans/2026-07-19-identity-master-plan.md` § 0 BLUEPRINT Workflow Gate
 - `docs/plans/2026-07-19-session-01-wallet-foundation.md` § 0 BLUEPRINT Workflow Gate + § 3 Steps 1-8
+- Both plan paths are untracked and gitignored — `.gitignore` excludes `/docs/plans/`, and `git ls-files docs/plans/` returns nothing — so a reader holding only the repository cannot open either one. The section names in this section and in the Plan line above were verified in a working tree that has the plans, and that verification does not travel with the file. Each bullet names its own plan because the two carry an identically worded § 0 heading, so the heading alone does not say which plan is meant.
 - RFC-0009 (Process: Identity Management) — mission's primary spec authority
 - RFC-0102 (Numeric: Wallet Cryptography) — sibling spec authority
 - Existing scaffolding: `crates/octo-wallet/Cargo.toml` + `crates/octo-wallet/src/lib.rs` (preview per user direction 2026-07-19; finalized with stub modules in this mission)

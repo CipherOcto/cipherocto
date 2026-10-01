@@ -491,7 +491,7 @@ IdentityNotFound(Did),
 use crate::identity_record::Did;
 ```
 
-The type is **local to this crate**, not imported from the identity crate: `octo-wallet` defines `Did` itself in `crates/octo-wallet/src/identity_record.rs`, and `role_nonce.rs` and `agent.rs` already import it by that path. Naming the external crate here would be wrong twice over — it would name a different `Did` from `octo-ident`, and it would add a dependency edge the crate does not need for this variant, against the §Stable Abstractions direction that Layer B depends on the primitives it already owns.
+The type is **local to this crate**, not imported from the identity crate: `octo-wallet` defines `Did` itself in `crates/octo-wallet/src/identity_record.rs`, and `role_nonce.rs` and `agent.rs` already import it by that path. Naming the external crate here would be wrong twice over — it would name a different `Did` from `octo-ident`, and it would add a dependency edge the crate does not need for this variant, against the Stable Abstractions Principle that Layer B depends on the primitives it already owns. An earlier revision cited that principle as "§Stable Abstractions direction", which names neither a section nor the principle: CLAUDE.md has no such heading, the word "direction" appears nowhere in it, and the principle is carried as the second numbered item under §Core engineering principles.
 
 The typed payload is the point and it is not free: `IdentityNotFound(String)` would format the same way, and the RFC specifies `Did` so that the DID is rendered through its canonical form rather than through whatever a caller happened to pass, and so that a future canonical-form change is a change in one place instead of at every construction site.
 
@@ -1196,8 +1196,11 @@ listed a physical attacker among the roles the design _does_ cover, so the actor
 had a claimed home and no row here. The phrase appears nowhere else in this
 document: the only other line mentioning the physical is the out-of-scope
 _custody_ of the seed file before registration, which is an operator obligation
-and not an adversary. §Threat table's offline-theft row is a mitigation, not a
-role, and it is scoped to a copied disk rather than to the machine. An earlier
+and not an adversary. The offline-theft row in §Adversarial Review is a
+mitigation, not a role, and it is scoped to a copied disk rather than to the
+machine. An earlier revision cited "§Threat table's offline-theft row", which
+names a table row rather than a section, so it resolves to nothing a reader can
+follow; the row it meant is the one §Adversarial Review holds. An earlier
 revision also folded the local user into §Roles and Authorities, which lists a
 same-user process instead — a different uid, and the one the design defends
 against.

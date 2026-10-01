@@ -1,10 +1,13 @@
 # 0011-x-wallet-store-cli — `octo identity` registration surface and the unlock migration
 
-<!-- Machine-readable ordering per BLUEPRINT §Mission Dependency Model. This is the
+<!-- Machine-readable ordering per BLUEPRINT §Mission Lifecycle. This is the
      gate that keeps the CLI mission from being claimed before the substrate it
      calls: `unlock`, `UnlockedWallet`, and the `WalletError` variants do not exist
      until the substrate mission lands. The prose under §Dependencies item 1 says
      the same thing; this block is the field an agent reads.
+     An earlier revision cited "§Mission Dependency Model", which names no
+     section: that string is a bold run-in label inside the Mission template, not
+     a heading, so it resolves to nothing.
 -->
 
 depends_on:

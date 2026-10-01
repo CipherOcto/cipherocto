@@ -53,6 +53,20 @@ The classification sweep is the first acceptance criterion and it is not a forma
 | `octo identity rotate abort` (new)                                            | `UnlockedWallet::abort_rotation`    | **unlock**                     | 0, 2, 4, 27, 43, 92, 64           |
 | `octo identity revoke --reason <text>` (existing)                             | `UnlockedWallet::revoke`            | **unlock**                     | 0, 2, 4, 27, 43, 92, 64           |
 
+**The passphrase column is derived from the receiver, not from the need, and the rule is stated
+here because the two are not the same axis.** A method on `WalletStore` takes no passphrase. A
+method on `UnlockedWallet` requires one, because `UnlockedWallet`'s fields are private and the
+specified API offers no constructor that takes an already-decrypted key — the only way to hold
+one is to have called `unlock`. This matters most for `complete_rotation` and `abort_rotation`,
+which is where the two axes visibly part company. `abort_rotation` seals nothing, appends no
+successor record, and takes no passphrase of its own, so a reader applying this mission's own
+§Summary principle — metadata readers need no passphrase, and over-classifying puts a prompt on
+a command that does not need one — would classify both as prompt-free and be wrong. They prompt
+because they are reached through the handle, not because they read key material. An implementer
+adding a method to either receiver should classify from the receiver, and can check the
+classification by asking whether the method could be called without an `UnlockedWallet` in hand
+— if it could, it does not prompt.
+
 **This table is the single source of truth for exit codes, and it lives in RFC-0011-x §CLI dispatch.** It is restated here for the reader who opens only this file, and a divergence between the two is itself a defect. An earlier revision of this table carried `0, 2, 64` for `register`, `0, 4, 64` for `select`, and `0, 2, 4, 92, 64` for `revoke` — three rows each missing codes the RFC assigned — and the failure mode is specific: **a mission that is silent about a code is read as a mission that says the code cannot occur.** An implementer working from this file alone would have shipped three handlers with no `NoOctoHome` arm, no `AlreadyRevoked` arm, and no `InvalidStateTransition` arm on a path that can reach all three.
 
 The four universal codes, and why every row carries them: **27** (`NoOctoHome`) because every `octo` command routes through `octo-cli/src/home.rs::resolve` before it opens anything, and that resolver fails closed on an empty `OCTO_HOME` and on a missing `HOME` — the 27 is produced **upstream of the store**, not by it. **64** because every row has a generic arm. **43** on every row that touches a lifecycle transition. **92** on every row that needs the identity key, plus `register` because a seal can fail on an unwritable or corrupt vault, which is a locked store from the operator's side.

@@ -225,9 +225,18 @@ mod tests {
         //    would have removed the capability rather than renaming it.
         //    Checked against the substrate's public surface so the test
         //    fails if `try_active_identity` is ever deleted alongside.
+        //    Scanned with the test module truncated, like legs 1 and 2
+        //    above: an untruncated `include_str!` over a file that
+        //    carries this test contains its own needle literals, so a
+        //    `contains` check over the whole file asserts against
+        //    itself.
         let store_src = include_str!("identity_store.rs");
+        let store_end = store_src
+            .find("\n#[cfg(test)]\n")
+            .expect("identity_store test-module boundary present");
+        let store_production = &store_src[..store_end];
         assert!(
-            store_src.contains("pub fn try_active_identity"),
+            store_production.contains("pub fn try_active_identity"),
             "WalletStore::try_active_identity must survive the cli_fns deletion"
         );
     }

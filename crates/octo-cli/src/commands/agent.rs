@@ -307,6 +307,21 @@ pub(crate) mod common {
                 OctoCliError::ForbiddenHolderMismatch
             }
             octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+            // Operator-input rejection by the substrate `validate_reason`
+            // guard, before any state transition ran. Without these arms
+            // the catch-all below blamed the substrate (exit 64,
+            // documented as "unexpected substrate error") for a value
+            // the operator typed. The payload is the substrate's own
+            // non-echoing rendering: `<U+XXXX>` for a control character,
+            // the byte length for the over-length form.
+            octo_wallet::WalletError::ReasonContainsControlChars(code_point) => {
+                OctoCliError::InvalidReason {
+                    detail: format!("contains control character {code_point}"),
+                }
+            }
+            octo_wallet::WalletError::ReasonTooLong(len) => OctoCliError::InvalidReason {
+                detail: format!("is {len} bytes, over the 256-byte cap"),
+            },
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         }
     }

@@ -562,6 +562,15 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
         }
     }
     let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
+    // Capture the successor DID BEFORE `begin_rotation` consumes
+    // `successor`. The envelope used to hard-code
+    // `new_did: "did:octo:pending"` on every path including the
+    // committed one, so a real rotation reported a placeholder to
+    // the operator while the store had already recorded the
+    // successor. A `--dry-run` preview is the only case where the
+    // placeholder is truthful, and it is rendered from the same
+    // capture below so the two paths cannot drift.
+    let new_did = successor.did().0.clone();
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     let proof = if cli.mode.dry_run {
         [0u8; 64]
@@ -586,7 +595,7 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     let grace_expires_at = DateTime::<Utc>::from_timestamp(now as i64 + 86_400, 0)
         .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
     let output = IdentityRotateOutput {
-        new_did: "did:octo:pending".to_string(),
+        new_did,
         old_did: old_did.0,
         grace_expires_at,
         signature_proof: RedactedHex(proof.to_vec()),
@@ -834,36 +843,50 @@ pub fn register(
 ///
 /// Phase 5 substrate-faithful wrapper over `WalletStore::select`.
 /// Returns `IdentityNotFound` (exit 4) on a missing DID;
-/// `IdentityTransitionRefused` (exit 43) when the target is in
-/// the `Revoked` lifecycle state (substrate refuses per
-/// RFC-0011-x §Lifecycle Requirements).
+/// `AlreadyRevoked` (exit 6) when the target is in the `Revoked`
+/// lifecycle state (the substrate refuses per RFC-0011-x
+/// §Lifecycle Requirements, surfacing `NotActive {
+/// current_state: Revoked }`, which the `From<WalletError>`
+/// translation table routes to `AlreadyRevoked`).
 ///
-/// Exit codes: 0 / 2 / 4 / 43 / 64.
+/// Exit codes: 0 / 2 / 4 / 6 / 64.
 pub fn select(did: &str, cli: &Octo) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity select")?;
     // Pastejacking defense: echo the canonical payload BEFORE any
     // substrate mutation.
     eprintln!("would select: did={did}");
     let parsed = octo_wallet::Did(did.to_string());
+    // Both envelope fields are resolved from the substrate, never
+    // hard-coded. The previous revision computed `previous` and
+    // `record` inside the `!dry_run` arm, discarded both with `let
+    // _`, and then emitted `previous_active_did: None` and
+    // `lifecycle_state: "Active"` unconditionally — so the envelope
+    // claimed there had been no active identity (wrong whenever a
+    // second select ran) and that the record was Active (wrong for
+    // a Designated or Revoked record). `select` only moves the
+    // active pointer; it does not transition lifecycle, so the
+    // label has to come from the record itself.
+    let mut previous_active_did = None;
+    let mut lifecycle_state = String::new();
     if !cli.mode.dry_run {
         let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
         // Capture the previous active pointer for the output envelope
         // BEFORE mutating the store.
-        let previous = store.active_did().map(|d| d.0.clone());
+        previous_active_did = store.active_did().map(|d| d.0.clone());
         store.select(&parsed).map_err(OctoCliError::from)?;
         // Look up the just-selected record for the lifecycle label.
-        let _record = store.identity_record(&parsed).map_err(|e| match e {
+        let record = store.identity_record(&parsed).map_err(|e| match e {
             octo_wallet::WalletError::IdentityNotFound(_) => {
                 OctoCliError::IdentityNotFound(parsed.0.clone())
             }
             other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
         })?;
-        let _ = previous;
+        lifecycle_state = format!("{:?}", record.lifecycle);
     }
     let output = IdentitySelectOutput {
         did: parsed.0,
-        previous_active_did: None,
-        lifecycle_state: "Active".to_string(),
+        previous_active_did,
+        lifecycle_state,
     };
     let env = if cli.mode.dry_run {
         OutputEnvelope::redacted("octo.identity.select.v1", output)
@@ -2365,6 +2388,79 @@ mod tests {
         assert!(
             !body.contains("ends_with('\\r')"),
             "acquire_passphrase must not test for a carriage return against the untruncated string: {body}"
+        );
+    }
+
+    /// tv_x_c_35 - F-5. `identity select` must resolve both envelope
+    /// fields from the substrate. The previous revision computed
+    /// `previous` and `record`, discarded both with `let _`, and
+    /// emitted `previous_active_did: None` and
+    /// `lifecycle_state: "Active".to_string()` unconditionally, so a
+    /// second `select` reported "no previous identity" and a
+    /// Revoked record reported "Active".
+    ///
+    /// `select` only moves the active pointer; it does not transition
+    /// lifecycle, which is exactly why a hard-coded "Active" is
+    /// wrong rather than merely stale.
+    #[test]
+    fn tv_x_c_35_select_resolves_envelope_fields_from_substrate() {
+        let src = production_src();
+        let body = fn_body(src, "pub fn select(", "pub fn list(");
+
+        assert!(
+            !body.contains("previous_active_did: None,"),
+            "select must not hard-code a null previous_active_did: {body}"
+        );
+        assert!(
+            !body.contains("lifecycle_state: \"Active\".to_string()"),
+            "select must not hard-code the lifecycle label; it is read from the \
+             record the substrate returns: {body}"
+        );
+        assert!(
+            !body.contains("let _ = previous;") && !body.contains("let _record ="),
+            "select must not discard the substrate lookups it performs: {body}"
+        );
+        assert!(
+            body.contains("previous_active_did = store.active_did()"),
+            "select must capture the prior active pointer before mutating the store: {body}"
+        );
+        assert!(
+            body.contains("format!(\"{:?}\", record.lifecycle)"),
+            "select must derive lifecycle_state from the record, not a literal: {body}"
+        );
+    }
+
+    /// tv_x_c_36 - F-7. `identity rotate` must report the real
+    /// successor DID on the committed path. It used to emit
+    /// `new_did: "did:octo:pending"` unconditionally, so a rotation
+    /// that had already been written to the store still reported a
+    /// placeholder to the operator.
+    ///
+    /// The capture must precede `begin_rotation`, which consumes
+    /// `successor` by value - hence the ordering assertion, not just
+    /// the presence of the string.
+    #[test]
+    fn tv_x_c_36_rotate_reports_the_real_successor_did() {
+        let src = production_src();
+        let body = fn_body(src, "pub fn rotate(", "pub fn revoke(");
+
+        assert!(
+            !body.contains("new_did: \"did:octo:pending\".to_string()"),
+            "rotate must not emit the pending placeholder as its new_did: {body}"
+        );
+        let capture = body
+            .find("let new_did = successor.did()")
+            .expect("rotate must capture the successor DID before begin_rotation consumes it");
+        let consumed = body
+            .find("begin_rotation(")
+            .expect("rotate must call begin_rotation");
+        assert!(
+            capture < consumed,
+            "the successor DID must be captured before begin_rotation consumes it: {body}"
+        );
+        assert!(
+            body.contains("new_did,"),
+            "the IdentityRotateOutput must carry the captured DID: {body}"
         );
     }
 

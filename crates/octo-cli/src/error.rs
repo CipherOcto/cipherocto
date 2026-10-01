@@ -975,6 +975,33 @@ pub enum OctoCliError {
     /// `ConfirmationRequired`).
     #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
     WeakPassphrase,
+
+    /// Operator-supplied `--reason` was rejected by the substrate
+    /// `validate_reason` guard before any state transition ran
+    /// (RFC-0015 §6.2.5). Mapped from
+    /// `WalletError::ReasonContainsControlChars` and
+    /// `WalletError::ReasonTooLong` at the agent dispatch boundary.
+    ///
+    /// The variant exists because the previous mapping fell through
+    /// `map_transition_wallet_error`'s catch-all to
+    /// `Internal` at exit 64, which the `agent destroy` exit-code
+    /// list documents as "unexpected substrate error". That blames
+    /// the substrate for a value the operator typed. Exit 2 per the
+    /// same operator-input-validation convention `WeakPassphrase`
+    /// and `ClapParse` follow.
+    ///
+    /// `detail` carries a rendered, non-attacker-echoing summary —
+    /// the offending code point in `<U+XXXX>` notation for the
+    /// control-character form, the byte length for the
+    /// over-length form. The raw offending bytes are never
+    /// interpolated, per the substrate's own `validate_reason`
+    /// contract.
+    #[error("invalid --reason value: {detail}")]
+    InvalidReason {
+        /// Sanitized one-line description of why the reason was
+        /// refused. Never the raw operator input.
+        detail: String,
+    },
 }
 
 impl OctoCliError {
@@ -1159,6 +1186,7 @@ impl OctoCliError {
             Self::WalletLocked => 92,
             Self::IdentityTransitionRefused { .. } => 43,
             Self::WeakPassphrase => 2,
+            Self::InvalidReason { .. } => 2,
         }
     }
 
@@ -1455,6 +1483,11 @@ impl OctoCliError {
                     octo_wallet::error::MIN_PASSPHRASE_CHARS
                 )
             }
+            Self::InvalidReason { detail } => {
+                format!(
+                    "the substrate `validate_reason` guard refused the supplied `--reason` ({detail}) per RFC-0015 §6.2.5; reasons must be at most 256 bytes and free of control characters (U+0000-U+001F, U+007F), and the transition did not run"
+                )
+            }
         };
         Some(h)
     }
@@ -1470,7 +1503,6 @@ impl OctoCliError {
     /// ```
     pub fn render(&self, force_json: bool) -> ! {
         let code = self.exit_code();
-        let msg = self.user_message();
         let stderr = std::io::stderr();
         let mut w = stderr.lock();
         if force_json {
@@ -1482,31 +1514,77 @@ impl OctoCliError {
             }
             let body = serde_json::json!({
                 "schema_version": crate::output::OutputEnvelope::<()>::SCHEMA_VERSION,
-                "error": msg,
+                "error": self.user_message(),
                 "caused_by": sources,
                 "hint": self.hint(),
                 "exit_code": code,
             });
             let _ = writeln!(w, "{body}");
         } else {
-            let _ = writeln!(w, "error: {msg}");
-            let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
-            while let Some(s) = src {
-                let _ = writeln!(
-                    w,
-                    "  caused by: {}",
-                    sanitize_substrate_error(&s.to_string())
-                );
-                src = s.source();
-            }
-            if let Some(hint) = self.hint() {
-                let _ = writeln!(w, "  hint: {hint}");
-            }
-            let _ = writeln!(w, "  exit code: {code}");
+            let _ = write!(w, "{}", self.render_block());
         }
         let _ = w.flush();
         std::process::exit(code)
     }
+
+    /// Build the human-readable stderr block [`Self::render`] emits on
+    /// the non-JSON branch.
+    ///
+    /// Split out so the four-line shape has a testable surface.
+    /// `render` returns `!` and calls `process::exit`, so a vector
+    /// can only call it in a subprocess that kills the test runner.
+    /// Before this split, the two vectors that nominally covered the
+    /// shape could only assert that the format strings *mention*
+    /// `caused by` and `exit code` — and in fact one of them defined
+    /// its own private `Wrapper` / `Inner` error types, walked its
+    /// own `#[source]` chain with its own loop, and asserted against
+    /// those locals, proving nothing about production. `render` writes
+    /// this block verbatim, so the strings have one source of truth.
+    ///
+    /// The line order is the envelope contract: the message, then
+    /// zero or more `caused by:` frames in `source()` order, then the
+    /// hint if the variant has one, then the exit code last so it is
+    /// the final line a script can scrape.
+    #[must_use]
+    pub fn render_block(&self) -> String {
+        let code = self.exit_code();
+        let mut out = prefixed_lines("error: ", &self.user_message());
+        let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
+        while let Some(s) = src {
+            out.push_str(&prefixed_lines(
+                "  caused by: ",
+                &sanitize_substrate_error(&s.to_string()),
+            ));
+            src = s.source();
+        }
+        if let Some(hint) = self.hint() {
+            out.push_str(&prefixed_lines("  hint: ", &hint));
+        }
+        out.push_str(&format!("  exit code: {code}\n"));
+        out
+    }
+}
+
+/// Emit `text` with `first_prefix` on its opening line and
+/// `continuation` on every line after it, each newline-terminated.
+///
+/// A `Display` impl need not be single-line. `clap::Error`, for one,
+/// renders the argument name, the usage line, and a help pointer as
+/// separate lines. Prefixing only the first would emit the remainder
+/// unindented and unlabelled, so those lines are visually
+/// indistinguishable from the lines `render_block` emits itself and a
+/// reader cannot tell where the frame ends. Prefixing every line keeps
+/// the frame boundary visible; the continuation prefix is two spaces
+/// less than the opening one, which reads as a hanging indent.
+fn prefixed_lines(first_prefix: &str, text: &str) -> String {
+    let continuation = " ".repeat(first_prefix.len().saturating_sub(2));
+    let mut out = String::with_capacity(text.len() + first_prefix.len() * 2);
+    for (i, line) in text.split('\n').enumerate() {
+        out.push_str(if i == 0 { first_prefix } else { &continuation });
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Gate helper that any future stdin reader calls before consuming pipe data.
@@ -1876,16 +1954,23 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
 /// | `WalletError::InvalidRevocationProof`                  | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | (all other substrate variants)                         | `OctoCliError::Internal(sanitize_substrate_error(...))`| 64   |
 ///
-/// Defense-in-depth scrub pass: every payload-bearing arm routes
-/// through `sanitize_substrate_error` before reaching the CLI
-/// envelope, so an accidental substrate leak (path / SQL marker /
-/// crate path prefix) collapses to the `<substrate-error>` /
-/// `<substrate-path>` markers at the CLI boundary. That is the
-/// `IdentityTransitionRefused` arms, the `HsmUnavailable` arm, and
-/// the wildcard `Internal` arm — the three arms in this table that
-/// carry a substrate string. The remaining arms carry no substrate
-/// text at all, so there is nothing for the scrub to catch. Matches
-/// the established `From<octo_audit::AuditError>` /
+/// Defense-in-depth scrub pass: every arm that carries a substrate
+/// string routes it through `sanitize_substrate_error` before it
+/// reaches the CLI envelope, so an accidental substrate leak (path /
+/// SQL marker / crate path prefix) collapses to the
+/// `<substrate-error>` / `<substrate-path>` markers at the CLI
+/// boundary. Those arms are the `IdentityTransitionRefused` group,
+/// the `HsmUnavailable` arm, the `InvalidReason` arms, and the
+/// wildcard `Internal` arm.
+///
+/// The arms are enumerated by property ("carries a substrate
+/// string"), not by a hand-maintained count: an earlier revision of
+/// this paragraph said "the three arms in this table" and went stale
+/// the moment the `InvalidReason` arms landed, so the prose asserted
+/// a set the code no longer matched. A count here is a claim about
+/// code that no reviewer re-derives. The remaining arms carry no
+/// substrate text at all, so there is nothing for the scrub to catch.
+/// Matches the established `From<octo_audit::AuditError>` /
 /// `From<octo_runtime::AttachError>` precedent at this layer.
 impl From<octo_wallet::WalletError> for OctoCliError {
     fn from(e: octo_wallet::WalletError) -> Self {
@@ -1951,6 +2036,26 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             // locked store from the operator's side.
             octo_wallet::WalletError::VaultSlotNotFound(_) => Self::WalletLocked,
             octo_wallet::WalletError::VaultDecryptionFailed => Self::WalletLocked,
+            // Defense in depth: the agent dispatch boundary
+            // (`map_transition_wallet_error`) is the reachable path
+            // for these two, but the same substrate variants can
+            // arrive here from any other `WalletError`-consuming
+            // handler. Without the arms they would collapse to
+            // `Internal` at exit 64 and blame the substrate for an
+            // operator-supplied `--reason`. The substrate renders
+            // the offending control character in `<U+XXXX>`
+            // notation, never the raw bytes, so the payload is safe
+            // to carry verbatim.
+            octo_wallet::WalletError::ReasonContainsControlChars(code_point) => {
+                Self::InvalidReason {
+                    detail: sanitize_substrate_error(&format!(
+                        "contains control character {code_point}"
+                    )),
+                }
+            }
+            octo_wallet::WalletError::ReasonTooLong(len) => Self::InvalidReason {
+                detail: sanitize_substrate_error(&format!("is {len} bytes, over the 256-byte cap")),
+            },
             // Additive-safe wildcard per `#[non_exhaustive]` on
             // `WalletError`. Future substrate variants collapse
             // to `Internal(reason)` exit 64 — same pattern as
@@ -1965,7 +2070,6 @@ impl From<octo_wallet::WalletError> for OctoCliError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use thiserror::Error;
 
     // R1 MED C13 — cap_substrate_payload boundary tests.
     #[test]
@@ -2032,46 +2136,66 @@ mod tests {
         assert!(!msg.contains("SQL:"), "{msg}");
     }
 
+    /// tv_err3 - the production `render_block` really walks a
+    /// `std::error::Error::source()` chain and emits one
+    /// `caused by:` line per frame.
+    ///
+    /// The previous revision of this vector declared its own private
+    /// `Wrapper` / `Inner` `#[derive(Error)]` types inside the test
+    /// body, walked THAT chain with a locally written `while let`
+    /// loop, and asserted that its own local `Display` strings
+    /// appeared in its own local `Vec`. Production `render` was
+    /// invoked exactly once, and only to check that a string the
+    /// test had just formatted into the error survived a copy. The
+    /// vector could not fail for any change to the render path -
+    /// the precise defect class this review round exists to close.
+    ///
+    /// `ClapParse(#[from] clap::Error)` is the only variant carrying
+    /// a `#[source]`, and a `clap::Error` does have its own source,
+    /// so it is the one production path that exercises the walk. The
+    /// assertions below read `render_block` - the same string
+    /// `render` writes - and count the frames.
     #[test]
     fn tv_err3_source_chain_rendered() {
-        // Build a chained-error wrapper that exposes a `#[source]` chain so
-        // `std::error::Error::source()` walks more than one frame.
-        #[derive(Error, Debug)]
-        #[error("top-level: {0}")]
-        struct Wrapper(#[source] Inner);
-
-        #[derive(Error, Debug)]
-        #[error("inner cause")]
-        struct Inner;
-
-        let inner = Inner;
-        let chain = Wrapper(inner);
-        // Render through OctoCliError::Internal so the sanitizer runs and we
-        // exercise the `caused by:` walk. The wrapped text doesn't contain
-        // any substrate markers so the message passes through verbatim.
-        let cli_err = OctoCliError::Internal(format!("{chain}"));
-        // Force the JSON branch off — we test the multi-line text branch by
-        // asserting that the rendered format strings reference `caused by`
-        // and `exit code` tokens and that source() walks both frames.
-        let mut lines: Vec<String> = Vec::new();
-        let mut src: Option<&dyn std::error::Error> =
-            Some(&Wrapper(Inner) as &dyn std::error::Error);
-        while let Some(s) = src {
-            lines.push(format!("  caused by: {s}"));
-            src = s.source();
-        }
+        // A real clap parse failure, not a hand-built stand-in.
+        let parse = clap::Command::new("probe")
+            .arg(clap::Arg::new("required").required(true))
+            .try_get_matches_from(["probe"]);
+        let clap_err = parse.expect_err("a missing required arg must not parse");
+        let e: OctoCliError = clap_err.into();
         assert!(
-            lines.iter().any(|l| l.contains("top-level")),
-            "wrapper not walked: {lines:?}"
+            matches!(e, OctoCliError::ClapParse(_)),
+            "a clap parse failure must become OctoCliError::ClapParse: {e:?}"
+        );
+
+        let block = e.render_block();
+        assert!(
+            block.starts_with("error: "),
+            "the block must open with the error line: {block}"
         );
         assert!(
-            lines.iter().any(|l| l.contains("inner cause")),
-            "inner cause not walked: {lines:?}"
+            block.contains("\n  caused by: "),
+            "render_block must emit a caused-by line for the clap source: {block}"
         );
-        // Sanity check the cli error renders a stable `user_message`.
-        assert!(cli_err.user_message().contains("top-level"));
+        // The scrub applies to the source frames exactly as it does
+        // to the top-level message, so a substrate-shaped source
+        // string cannot leak through the walk.
+        let frames = block
+            .lines()
+            .filter(|l| l.trim_start().starts_with("caused by:"))
+            .count();
+        assert!(
+            frames >= 1,
+            "expected at least one source frame from clap::Error, got: {block}"
+        );
+        assert!(
+            block.trim_end().ends_with("exit code: 2"),
+            "the exit code must be the final line: {block}"
+        );
     }
 
+    /// tv_err3b - unchanged: the stdin-secret refusal message names
+    /// the override flag and the pipe.
     #[test]
     fn tv_err3b_stdin_secret_refused_message_text() {
         let e = OctoCliError::StdinSecretRefused;
@@ -2097,12 +2221,92 @@ mod tests {
 
     #[test]
     fn tv_err3d_render_emits_four_lines() {
+        // The block is three lines for a source-less error and four
+        // once a `caused by:` frame is present, so assert both shapes
+        // against `render_block` - the exact string `render` writes.
+        // The previous revision asserted only `hint().is_some()` and
+        // `exit_code() == 4`: two facts about the accessors, neither
+        // about what the operator sees, and the doc comment conceded
+        // it could not capture stderr. `render_block` makes that
+        // concession unnecessary.
         let e = OctoCliError::IdentityNotFound("alice".into());
-        // We can't easily capture stderr from a !-returning fn without
-        // spawning a process, so we just verify the formatting inputs
-        // are coherent: hint present, code matches.
-        assert!(e.hint().is_some());
-        assert_eq!(e.exit_code(), 4);
+        let block = e.render_block();
+        let lines: Vec<&str> = block.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "a source-less error renders message + hint + exit code, got {}: {block}",
+            lines.len()
+        );
+        assert!(lines[0].starts_with("error: "), "line 0: {block}");
+        assert!(
+            lines[1].starts_with("  hint: "),
+            "line 1 must be the hint: {block}"
+        );
+        assert_eq!(lines[2], "  exit code: 4", "last line: {block}");
+
+        // Every variant carries a hint - `hint()` is total, so the
+        // hint-less branch in `render_block` is unreachable from the
+        // current enum. It is kept because `#[non_exhaustive]` admits
+        // future variants; a vector cannot pin a branch that has no
+        // input, and asserting one would be another vector that
+        // cannot fail.
+
+        // Four lines is the maximal shape: a variant with a source
+        // frame and a hint. `ClapParse` carries both.
+        let parse = clap::Command::new("probe")
+            .arg(clap::Arg::new("required").required(true))
+            .try_get_matches_from(["probe"]);
+        let with_source: OctoCliError = parse.expect_err("missing required arg").into();
+        let four: Vec<String> = with_source
+            .render_block()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            four.len() >= 4,
+            "a source-bearing error must add a caused-by frame: {four:?}"
+        );
+        // Every emitted line belongs to a labelled field. This is
+        // the assertion the old code shape could not make: a
+        // multi-line Display used to emit its continuation lines
+        // unindented, so they were indistinguishable from lines
+        // render_block emits itself.
+        for (i, line) in four.iter().enumerate() {
+            let labelled = ["error: ", "  caused by: ", "  hint: ", "  exit code: "]
+                .iter()
+                .any(|p| line.starts_with(p));
+            assert!(
+                labelled || line.starts_with("  "),
+                "line {i} must open with a field label or hang under one, found                  a bare line: {line:?} in {four:?}"
+            );
+        }
+        assert_eq!(
+            four.iter()
+                .filter(|l| l.starts_with("  caused by: "))
+                .count(),
+            1,
+            "exactly one caused-by frame must be labelled: {four:?}"
+        );
+        let frame_start = four
+            .iter()
+            .position(|l| l.starts_with("  caused by: "))
+            .expect("a labelled caused-by frame");
+        let hint_at = four
+            .iter()
+            .position(|l| l.starts_with("  hint: "))
+            .expect("the hint is the field before the exit code");
+        assert!(
+            frame_start < hint_at,
+            "the caused-by frame must sit between the message and the hint: {four:?}"
+        );
+        // The frame's continuation lines carry the hanging indent,
+        // not the opening label, so the frame boundary stays legible.
+        assert!(
+            four[frame_start + 1].starts_with("           ")
+                && !four[frame_start + 1].contains("caused by:"),
+            "frame continuation lines must hang under the label: {four:?}"
+        );
     }
 
     #[test]
@@ -2994,6 +3198,49 @@ mod tests {
             "VaultDecryptionFailed must map to WalletLocked (exit 92), got: {e:?}"
         );
         assert_eq!(e.exit_code(), 92);
+    }
+
+    /// tv_x_c_37 - F-3. `WalletError::ReasonContainsControlChars` and
+    /// `WalletError::ReasonTooLong` are operator-input rejections by
+    /// the substrate `validate_reason` guard, raised BEFORE any state
+    /// transition runs. Both previously fell through to the
+    /// `#[non_exhaustive]` wildcard and rendered as `Internal` at
+    /// exit 64, which every consuming handler's exit-code list
+    /// documents as "unexpected substrate error" - blaming the
+    /// substrate for a value the operator typed. Exit 2 is the
+    /// operator-input family (`ClapParse`, `WeakPassphrase`).
+    ///
+    /// The assertions check the exit code AND that the result is not
+    /// `Internal`, so a future re-widening of the wildcard fails
+    /// rather than silently restoring the mislabelled exit 64.
+    #[test]
+    fn tv_x_c_37_reason_rejections_map_to_invalid_reason_exit_2() {
+        for (substrate, label) in [
+            (
+                octo_wallet::WalletError::ReasonContainsControlChars("<U+001B>".to_string()),
+                "control-character reason",
+            ),
+            (
+                octo_wallet::WalletError::ReasonTooLong(300),
+                "over-length reason",
+            ),
+        ] {
+            let e: OctoCliError = substrate.into();
+            assert_eq!(
+                e.exit_code(),
+                2,
+                "{label} must exit 2 (operator input), got {} from {e:?}",
+                e.exit_code()
+            );
+            assert!(
+                matches!(e, OctoCliError::InvalidReason { .. }),
+                "{label} must map to OctoCliError::InvalidReason, not Internal: {e:?}"
+            );
+            assert!(
+                !matches!(e, OctoCliError::Internal(_)),
+                "{label} must not be reported as a substrate failure: {e:?}"
+            );
+        }
     }
 
     /// tv_x_48 — `WalletError::WeakPassphrase` maps to

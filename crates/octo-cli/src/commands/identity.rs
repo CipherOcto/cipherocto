@@ -1286,6 +1286,50 @@ mod tests {
     use super::*;
     use crate::flags::OperatorModeFlags;
 
+    /// The production source of this file, with every test-module line
+    /// removed.
+    ///
+    /// A source-query vector that runs `include_str!("identity.rs")` over
+    /// the **whole** file and asserts `src.contains(needle)` is asserting
+    /// against itself: the needle is a string literal inside the vector's
+    /// own `assert!`, so it is present in the scanned text whether or not
+    /// the handler calls the substrate. Deleting the handler call leaves
+    /// such a vector green. That defect removed `tv_x_c_12` and
+    /// `tv_x_c_16` at the R1.5 fix-sweep; the same shape survived in six
+    /// siblings, which this helper exists to close.
+    ///
+    /// Truncating at the `mod tests` boundary keeps every real handler
+    /// body (the last one, `dispatch`, precedes it) and drops every test
+    /// literal, so a needle now matches only where the handler wrote it.
+    /// A second assertion in `production_src_isolated` keeps the
+    /// truncation honest: if the boundary is ever removed, the helper
+    /// panics rather than silently reintroducing the self-reference.
+    fn production_src() -> &'static str {
+        let src = include_str!("identity.rs");
+        let end = src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("test module boundary present in identity.rs");
+        &src[..end]
+    }
+
+    /// Guards `production_src` itself. Without this, a refactor that
+    /// renames or removes the `mod tests` header would make
+    /// `production_src` return the whole file again and every
+    /// source-query vector would silently revert to asserting against
+    /// its own `assert!` literal.
+    #[test]
+    fn production_src_isolated() {
+        let src = production_src();
+        assert!(
+            !src.contains("mod tests {"),
+            "production_src leaked the test module back into scope"
+        );
+        assert!(
+            src.contains("pub fn dispatch("),
+            "production_src must retain the handler bodies: {src}"
+        );
+    }
+
     /// Build a minimal `Octo` for unit tests — only the fields under test
     /// are populated; everything else is default.
     fn cli_with_mode(mode: OperatorMode) -> Octo {
@@ -1746,7 +1790,7 @@ mod tests {
     /// payload BEFORE any substrate mutation (pastejacking defense).
     #[test]
     fn tv_x_c_2_register_emits_canonical_payload_eprintln() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains("would register: label={"),
             "register handler missing canonical-payload echo: {src}"
@@ -1758,7 +1802,7 @@ mod tests {
     /// mission 0011-x-wallet-store-cli §CLI dispatch wiring).
     #[test]
     fn tv_x_c_3_register_calls_wallet_store_register() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains(".register(key, &passphrase, activate, now)"),
             "register handler must delegate to WalletStore::register: {src}"
@@ -1791,7 +1835,7 @@ mod tests {
     /// payload BEFORE any substrate mutation.
     #[test]
     fn tv_x_c_5_select_emits_canonical_payload_eprintln() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains("would select: did={did}"),
             "select handler missing canonical-payload echo: {src}"
@@ -1802,7 +1846,7 @@ mod tests {
     /// the substrate boundary.
     #[test]
     fn tv_x_c_6_select_calls_wallet_store_select() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains("store.select(&parsed)"),
             "select handler must delegate to WalletStore::select: {src}"
@@ -1911,7 +1955,7 @@ mod tests {
     /// canonical payload BEFORE any substrate mutation.
     #[test]
     fn tv_x_c_11_rotate_complete_emits_canonical_payload_eprintln() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains("would rotate-complete:"),
             "rotate_complete handler missing canonical-payload echo: {src}"
@@ -1979,7 +2023,7 @@ mod tests {
     /// payload BEFORE any substrate mutation.
     #[test]
     fn tv_x_c_15_rotate_abort_emits_canonical_payload_eprintln() {
-        let src = include_str!("identity.rs");
+        let src = production_src();
         assert!(
             src.contains("would rotate-abort:"),
             "rotate_abort handler missing canonical-payload echo: {src}"
@@ -2185,14 +2229,74 @@ mod tests {
         // translation falls through to whatever rpassword returns
         // (typically an io::Error with exit 64 Internal), which
         // does NOT match the mission contract.
+        //
+        // The scan is bounded to the `acquire_passphrase` **body**, not
+        // the whole file. An earlier revision scanned the whole file and
+        // was satisfied by the helper's own doc comment, which names
+        // both `rpassword::prompt_password` and `WalletLocked` while
+        // describing what the body should do — so deleting the prompt
+        // call left the vector green. The doc comment is a
+        // restatement of the contract, not the contract.
+        let start = src
+            .find("pub(crate) fn acquire_passphrase(")
+            .expect("acquire_passphrase fn present");
+        let slice = &src[start..];
+        let end = slice.find("pub fn require_confirm(").unwrap_or(slice.len());
+        let body = &slice[..end];
         assert!(
-            src.contains("rpassword::prompt_password"),
-            "acquire_passphrase must use rpassword::prompt_password for interactive entry: {src}"
+            body.contains("rpassword::prompt_password"),
+            "acquire_passphrase must use rpassword::prompt_password for interactive entry: {body}"
         );
         assert!(
-            src.contains("OctoCliError::WalletLocked"),
-            "acquire_passphrase must fail closed with WalletLocked per AC-10: {src}"
+            body.contains("OctoCliError::WalletLocked"),
+            "acquire_passphrase must fail closed with WalletLocked per AC-10: {body}"
         );
+    }
+
+    /// tv_x_c_33 — AC-13 bounded runtime. The no-TTY pre-flight is
+    /// the last thing standing between an unattended `cron` job or CI
+    /// step and a process that blocks forever on an invisible prompt.
+    ///
+    /// `tv_x_c_28` proves the pre-flight's *shape* by reading the
+    /// `acquire_passphrase` body. That is not the same claim: a
+    /// regression that kept the `WalletLocked` arm but moved the
+    /// prompt ahead of it would leave `tv_x_c_28` green and hang the
+    /// process. The property that actually matters is that the call
+    /// **returns**, and it can only be shown by running it.
+    ///
+    /// The bound is the assertion. The call is moved to a worker
+    /// thread and joined through a channel with a timeout, so a
+    /// regression that blocks surfaces as a test failure rather than
+    /// as a suite that never finishes — a wrapper that reported
+    /// success on timeout would assert the opposite of what it
+    /// claims. Both halves are required: the call must complete
+    /// *and* the value it produces must be `WalletLocked` at exit 92.
+    #[test]
+    fn tv_x_c_33_no_tty_preflight_returns_within_bound() {
+        const BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+        let cli = cli_with_mode(OperatorMode::Ci);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // `passphrase_stdin = false` and a test harness stdin that
+            // is never a TTY: the exact shape of the unattended run.
+            let outcome = super::acquire_passphrase(&cli, "rotate complete", false)
+                .map(|_| String::from("<passphrase acquired>"))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(outcome);
+        });
+        let outcome = rx
+            .recv_timeout(BOUND)
+            .expect("acquire_passphrase must not block on a TTY-less stdin");
+        match outcome {
+            Err(rendered) => assert!(
+                rendered.to_lowercase().contains("locked")
+                    || rendered.to_lowercase().contains("tty"),
+                "no-TTY failure must tell the operator the store could not be unlocked, got: {rendered}"
+            ),
+            Ok(acquired) => panic!(
+                "no-TTY stdin must not yield a passphrase, got one: {acquired}"
+            ),
+        }
     }
 
     /// tv_x_c_29 — AC-7 partial. The `rotate_complete` handler

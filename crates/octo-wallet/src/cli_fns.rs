@@ -177,34 +177,58 @@ mod tests {
     //! from the substrate's `lib.rs` re-exports so a re-add surfaces at
     //! compile time rather than as a silent re-introduction.
 
-    /// The `active_identity` re-export from `cli_fns` must not exist in
-    /// the substrate's public surface after the AC-11 migration.
-    /// Verified by `trybuild`-style compile-fail: `octo_wallet::active_identity`
-    /// is referenced and the reference fails to resolve, so the test
-    /// only compiles when the symbol is absent. We assert the absence
-    /// via a function-pointer type lookup at runtime instead, which is
-    /// portable across the `cargo test` harness without an external
-    /// `trybuild` crate dependency.
+    /// The `active_identity` free function must not exist in `cli_fns`
+    /// and must not be re-exported from the crate root, after the AC-11
+    /// migration.
+    ///
+    /// An earlier revision of this vector asserted only that
+    /// `std::module_path!()` started with `octo_wallet::cli_fns`, which
+    /// is a compile-time constant that is true wherever the test is
+    /// placed. It therefore could not fail: it asserted the module path
+    /// and not the symbol. The checks below read the two source files
+    /// that decide whether the symbol is reachable — the crate root's
+    /// re-export list and this module's own declarations — and
+    /// deliberately scan each file with the test module **truncated**,
+    /// for the same reason `octo-cli's` `production_src` exists: an
+    /// unbounded `include_str!` over `cli_fns.rs` contains this very
+    /// test's needle literals, so a `contains` check over the whole file
+    /// asserts against itself.
     #[test]
     fn tv_x_c_45_active_identity_is_not_re_exported() {
-        // The crate root's `pub use cli_fns::{...}` list no longer
-        // contains `active_identity`. We verify by checking that the
-        // symbol is not reachable via the `octo_wallet::active_identity`
-        // path — which is a hard error if a caller reintroduces it.
-        // The portable runtime check below asserts the symbol is
-        // absent from the `cli_fns` module's `pub` items.
-        let cli_fns_path = std::module_path!();
-        // `module_path!()` resolves to `octo_wallet::cli_fns::tests`,
-        // confirming we are inside the module whose exports we are
-        // auditing. The actual symbol-presence check is the absence of
-        // the `pub fn active_identity` declaration: if a future commit
-        // reintroduces it, `cargo doc` and downstream `use
-        // octo_wallet::active_identity;` calls fail at compile time,
-        // and this test's existence flags the regression in the same
-        // commit (via the test name in the failure message).
+        // 1. This module must not declare `pub fn active_identity`.
+        //    Truncate at the test module so the needle literal below is
+        //    not itself in the scanned text.
+        let cli_fns_src = include_str!("cli_fns.rs");
+        let end = cli_fns_src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("cli_fns test module boundary present");
+        let production = &cli_fns_src[..end];
         assert!(
-            cli_fns_path.starts_with("octo_wallet::cli_fns"),
-            "test relocated away from the audited module: {cli_fns_path}"
+            !production.contains("fn active_identity"),
+            "cli_fns must not declare an active_identity free function: {production}"
+        );
+
+        // 2. The crate root must not re-export it. The re-export list is
+        //    the `pub use cli_fns::{...}` statement.
+        let lib_src = include_str!("lib.rs");
+        let reexport = lib_src
+            .split("pub use cli_fns::")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("cli_fns re-export list present in lib.rs");
+        assert!(
+            !reexport.contains("active_identity"),
+            "lib.rs must not re-export active_identity from cli_fns: {reexport}"
+        );
+
+        // 3. The canonical replacement must still exist, or the deletion
+        //    would have removed the capability rather than renaming it.
+        //    Checked against the substrate's public surface so the test
+        //    fails if `try_active_identity` is ever deleted alongside.
+        let store_src = include_str!("identity_store.rs");
+        assert!(
+            store_src.contains("pub fn try_active_identity"),
+            "WalletStore::try_active_identity must survive the cli_fns deletion"
         );
     }
 }

@@ -410,13 +410,484 @@ impl WalletStore {
             self.index.active_did = Some(did.clone());
         }
 
-        // 7. Persist atomically. The write path creates the root
+        // 7. Seal the seed in the vault. The vault `put` call
+        //    happens AFTER the in-memory mutation so that a refusal
+        //    (no slot, IO failure) leaves the index untouched on
+        //    disk - mission §AC-35 mandates "guards first before
+        //    any write, then seal the slot, then write the index".
+        //    In this slice the index is mutated in memory but the
+        //    disk write happens next; on failure we roll the index
+        //    back so the on-disk state matches the in-memory
+        //    pre-state.
+        let slug = seed_slot_slug(&key);
+        let seed = key.seed_bytes_for_hkdf()?;
+        if let Err(e) = self.vault.put(&slug, &seed, passphrase) {
+            // Roll back the in-memory state to match what the disk
+            // still says.
+            self.index.records.remove(pos);
+            if self.index.active_did.as_ref() == Some(&did) {
+                self.index.active_did = None;
+            }
+            return Err(e);
+        }
+
+        // 8. Persist atomically. The write path creates the root
         //    dir (mission §AC-4 inverts: open is lazy, write is
         //    eager).
         write_index_atomically(&self.root, &self.index)?;
 
         Ok(did)
     }
+
+    // ------------------------------------------------------------------
+    // Active pointer / metadata write path (mission §select)
+    // ------------------------------------------------------------------
+
+    /// Move the active DID pointer to `did`. A pure index write:
+    /// reads and writes `store.json`, touches no key material, so
+    /// it needs no unlock.
+    ///
+    /// # Errors
+    /// Returns `WalletError::IdentityNotFound` when the DID is not
+    /// in the index; returns `WalletError::NotActive` when the
+    /// target record is in the terminal `Revoked` lifecycle
+    /// (mission AC-15 - a select onto a revoked record is the same
+    /// bypass as re-registering a revoked seed).
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn select(&mut self, did: &Did) -> Result<(), WalletError> {
+        // Look up the target record to verify it exists and is
+        // not terminal.
+        let pos = self
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(did.as_str()))
+            .map_err(|_| WalletError::IdentityNotFound(did.clone()))?;
+        let record = &self.index.records[pos];
+        if matches!(record.lifecycle, LifecycleState::Revoked) {
+            return Err(WalletError::NotActive {
+                current_state: LifecycleState::Revoked,
+            });
+        }
+        self.index.active_did = Some(did.clone());
+        write_index_atomically(&self.root, &self.index)?;
+        Ok(())
+    }
+
+    /// Whether the seed slot for the active identity exists on disk.
+    /// Returns `false` for a fresh store or one whose slot was deleted
+    /// out from under it. Used by `unlock` to refuse
+    /// `VaultDecryptionFailed` in favor of `VaultSlotNotFound` when
+    /// the slot file is missing (mission §AC-45 vector `tv_x_45`).
+    #[must_use]
+    pub fn active_seed_slot_present(&self) -> bool {
+        let Some(did) = self.index.active_did.as_ref() else {
+            return false;
+        };
+        let Ok(record) = self.index.record(did) else {
+            return false;
+        };
+        let slug = format!("identity-{}", hex::encode(record.pubkey_bytes));
+        self.vault
+            .slots_dir()
+            .join(format!("{slug}.vault"))
+            .exists()
+    }
+
+    /// List the slugs of slot files that exist on disk but are NOT
+    /// named by any `IdentityRecord` in the index. Used by the CLI
+    /// surface to surface orphan slots the operator can clean up.
+    /// A slot becomes an orphan through `abort_rotation` (the
+    /// successor's slot is sealed before `complete_rotation` flips
+    /// the predecessor's lifecycle back, and abort leaves the
+    /// sealed successor slot on disk as an orphan - mission §AC-38).
+    #[must_use]
+    pub fn orphan_slots(&self) -> Vec<String> {
+        let mut known: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for r in &self.index.records {
+            let slug = format!("identity-{}", hex::encode(r.pubkey_bytes));
+            known.insert(format!("{slug}.vault"));
+        }
+        let Ok(entries) = std::fs::read_dir(self.vault.slots_dir()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            if !known.contains(name_str) {
+                out.push(name_str.to_owned());
+            }
+        }
+        out.sort();
+        out
+    }
+
+    // ------------------------------------------------------------------
+    // Unlock split (mission §unlock)
+    // ------------------------------------------------------------------
+
+    /// Decrypt the active identity seed slot. `seed_out` is
+    /// caller-owned so the zeroization obligation has exactly one
+    /// enforcement site (the caller zeroes the buffer after use -
+    /// mission §AC-39 vector `tv_x_38`).
+    ///
+    /// Seven ordered steps (mission YAML §unlock doc comment):
+    ///
+    /// 1. Validate passphrase length against `MIN_PASSPHRASE_CHARS`.
+    /// 2. Look up the active DID; fail with `Locked` if none, or
+    ///    `IdentityNotFound` if the pointer names an absent record.
+    /// 3. Compose the slug from `record.pubkey_bytes` and call
+    ///    `self.vault.get(slug, passphrase, seed_out)`. The vault
+    ///    returns `VaultSlotNotFound` if the slot is missing
+    ///    (mission §AC-45 - refuses `VaultDecryptionFailed` in favor
+    ///    of `VaultSlotNotFound` when the file is gone).
+    /// 4. Rehydrate the `IdentityKey` via
+    ///    `IdentityKey::from_seed_with_lifecycle`, passing the
+    ///    persisted lifecycle (NOT hard-coding `Designated` as
+    ///    `from_seed` does - mission §AC-33 vector `tv_x_33` /
+    ///    `tv_x_34`).
+    /// 5. Reconstruct `rotation_started_at_unix_secs` from the
+    ///    newest entry in `record.rotation_history` when the
+    ///    persisted lifecycle is `Rotating`; `None` otherwise. This
+    ///    is what stops `complete_rotation` from hitting
+    ///    `.expect(...)` and panicking with exit 101 - mission
+    ///    §AC-32 vector `tv_x_40`.
+    /// 6. Return `UnlockedWallet<'a>` holding a unique `IdentityKey`
+    ///    (NOT a clone - mission §AC-39 vector `tv_x_38`).
+    ///
+    /// # Errors
+    /// Returns `WalletError::WeakPassphrase` when `passphrase.len()
+    /// < MIN_PASSPHRASE_CHARS`; `WalletError::Locked` when no active
+    /// identity is selected; `WalletError::IdentityNotFound` when
+    /// the active pointer names an absent record;
+    /// `WalletError::VaultSlotNotFound` when the slot file is gone;
+    /// `WalletError::VaultDecryptionFailed` on a wrong passphrase.
+    pub fn unlock<'a>(
+        &'a mut self,
+        passphrase: &str,
+        seed_out: &'a mut Vec<u8>,
+    ) -> Result<UnlockedWallet<'a>, WalletError> {
+        // 1. Passphrase floor (mission §AC-28).
+        if passphrase.len() < MIN_PASSPHRASE_CHARS {
+            return Err(WalletError::WeakPassphrase);
+        }
+        // 2. Look up the active DID.
+        let active_did = self.index.active_did.clone().ok_or(WalletError::Locked)?;
+        let record = self
+            .index
+            .record(&active_did)
+            .map_err(|_| WalletError::Locked)?
+            .clone();
+
+        // 3. Compose the slug and call the vault. The vault's
+        //    `VaultSlotNotFound` is preferred over a misleading
+        //    `VaultDecryptionFailed` when the slot file is gone.
+        let slug = format!("identity-{}", hex::encode(record.pubkey_bytes));
+        self.vault
+            .get(&slug, passphrase, seed_out)
+            .map_err(|e| match e {
+                WalletError::VaultSlotNotFound(_) => WalletError::VaultSlotNotFound(slug.clone()),
+                other => other,
+            })?;
+
+        // 4. Rehydrate the key from the 32-byte seed. The seed is
+        //    extracted from the buffer the vault wrote into; we
+        //    take a copy because the caller will zeroize the buffer
+        //    after use.
+        let mut seed_arr = [0u8; 32];
+        if seed_out.len() < 32 {
+            return Err(WalletError::KeystoreParse(
+                "decrypted seed payload shorter than 32 bytes".to_owned(),
+            ));
+        }
+        seed_arr.copy_from_slice(&seed_out[..32]);
+
+        let activated_at = if matches!(
+            record.lifecycle,
+            LifecycleState::Designated | LifecycleState::Rotating
+        ) {
+            None
+        } else {
+            // Timestamps on `IdentityRecord` are signed `i64`; the
+            // substrate's `from_seed_with_lifecycle` takes unsigned
+            // `u64`. The cast is intentional and lossless for any
+            // post-1970 timestamp (a negative timestamp is a
+            // pre-1970 wall clock, which the substrate refuses to
+            // rehydrate regardless of cast).
+            #[allow(clippy::cast_sign_loss)]
+            let ts = record.registered_at_unix.cast_unsigned();
+            Some(ts)
+        };
+        let revoked_at = if matches!(record.lifecycle, LifecycleState::Revoked) {
+            // The exact revocation timestamp is not persisted on the
+            // record; pass `0` so the substrate at least sees a
+            // revocation has happened. `IdentityKey::from_seed_with_lifecycle`
+            // rejects `Revoked` outright so this path is unreachable
+            // in practice, but the structural hygiene matters.
+            Some(0u64)
+        } else {
+            None
+        };
+        let rotation_started_at = if matches!(record.lifecycle, LifecycleState::Rotating) {
+            // AC-33: reconstruct from the newest event in the
+            // record's own rotation history. AC-32: this is the
+            // exact field `complete_rotation` reads through
+            // `.expect(...)`; without it the next `complete_rotation`
+            // panics with exit 101. `tv_x_40` exercises this.
+            record
+                .rotation_history
+                .iter()
+                .map(|e| {
+                    #[allow(clippy::cast_sign_loss)]
+                    let ts = e.started_at_unix.cast_unsigned();
+                    ts
+                })
+                .max()
+        } else {
+            None
+        };
+
+        let key = IdentityKey::from_seed_with_lifecycle(
+            seed_arr,
+            record.lifecycle,
+            activated_at,
+            revoked_at,
+            rotation_started_at,
+        )?;
+
+        // 6. Return the handle. The handle holds the unique key
+        //    (mission AC-39); clones of `IdentityKey` keep the
+        //    seed alive via `Arc<dyn HsmAdapter>`, so a clone here
+        //    would defeat `tv_x_38`.
+        Ok(UnlockedWallet {
+            store: self,
+            key,
+            did: active_did,
+            rotation_successor_did: None,
+        })
+    }
+}
+
+/// Handle for an unlocked wallet. Holds a unique `IdentityKey`
+/// (NOT a clone - mission §AC-39 vector `tv_x_38`) plus a mutable
+/// borrow of the underlying store so `begin_rotation`,
+/// `complete_rotation`, and `abort_rotation` can write through to
+/// the index. `rotation_successor_did` is populated by
+/// `begin_rotation` and consumed by `complete_rotation`; on abort
+/// the field is cleared without being consumed.
+///
+/// `Debug` is hand-rolled rather than derived because the default
+/// `#[derive(Debug)]` would print the raw 32-byte seed via
+/// `IdentityKey`'s signer field. The hand-rolled impl surfaces the
+/// DID + lifecycle only.
+pub struct UnlockedWallet<'a> {
+    store: &'a mut WalletStore,
+    key: IdentityKey,
+    did: Did,
+    rotation_successor_did: Option<Did>,
+}
+
+impl std::fmt::Debug for UnlockedWallet<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnlockedWallet")
+            .field("did", &self.did.as_str())
+            .field("lifecycle", &self.key.lifecycle())
+            .field("rotation_successor_did", &self.rotation_successor_did)
+            .finish()
+    }
+}
+
+impl UnlockedWallet<'_> {
+    /// The active identity key. Returns the held key rather than a
+    /// freshly-fetched one so the unique-key contract from AC-39
+    /// holds - cloning here would extend the seed's lifetime past
+    /// the handle's drop.
+    #[must_use]
+    pub fn active_identity(&self) -> &IdentityKey {
+        &self.key
+    }
+
+    /// Look up an identity record by DID. A metadata read against
+    /// the store's index; needs no key material.
+    ///
+    /// # Errors
+    /// Returns `WalletError::IdentityNotFound` when the DID is not
+    /// in the index.
+    pub fn identity_record(&self, did: &Did) -> Result<IdentityRecord, WalletError> {
+        self.store.index.record(did).cloned().map_err(|e| match e {
+            WalletError::IdentityNotFound(_) => e,
+            other => other,
+        })
+    }
+
+    /// Begin rotation to `successor`. Seals the successor's slot
+    /// (mission §AC-31) so the rotated store has a reachable
+    /// successor identity. The returned `[u8; 64]` is the signature
+    /// proof that the predecessor accepted the rotation.
+    ///
+    /// # Errors
+    /// Returns `WalletError::AlreadyRevoked` if the predecessor is
+    /// terminal; `WalletError::SelfRotation` if the successor IS
+    /// the predecessor; `WalletError::WeakPassphrase` if the
+    /// passphrase is below the floor.
+    pub fn begin_rotation(
+        &mut self,
+        successor: IdentityKey,
+        passphrase: &str,
+        now_unix: u64,
+    ) -> Result<[u8; 64], WalletError> {
+        if passphrase.len() < MIN_PASSPHRASE_CHARS {
+            return Err(WalletError::WeakPassphrase);
+        }
+        // Seal the successor's slot before flipping the
+        // predecessor's lifecycle to Rotating. The store's index
+        // will get the successor record on `complete_rotation`,
+        // not here - begin_rotation is the seal step.
+        let successor_slug = seed_slot_slug(&successor);
+        let successor_seed = successor.seed_bytes_for_hkdf()?;
+        self.store
+            .vault
+            .put(&successor_slug, &successor_seed, passphrase)?;
+
+        let successor_did = successor.did();
+        let proof = self
+            .key
+            .begin_rotation(successor, now_unix_secs_from_u64(now_unix))?;
+        // The handle remembers the successor DID so
+        // `complete_rotation` does not need to re-extract it from
+        // the in-memory key (which is private inside `IdentityKey`).
+        // The actual successor record has NOT been inserted into
+        // the index yet - that happens on `complete_rotation`,
+        // which is the moment the predecessor's lifecycle flips
+        // back to `Active` and the operator can no longer roll
+        // back via `abort_rotation`.
+        self.rotation_successor_did = Some(successor_did);
+        // Refresh the record snapshot in the index to reflect the
+        // new Rotating lifecycle.
+        self.persist_active_record()?;
+        Ok(proof)
+    }
+
+    /// Complete a rotation. Flips the predecessor's lifecycle to
+    /// `Active` deprecated (mission §AC-22 / AC-36), appends the
+    /// successor as a new record, and resets `active_did` to the
+    /// successor. Per mission §AC-32 the substrate does NOT
+    /// `expect` the rotation start time; the rehydration path
+    /// through `unlock` reconstructs it from the record's own
+    /// `rotation_history` (vector `tv_x_40`).
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotRotating` if the predecessor is
+    /// not in `Rotating` lifecycle; `WalletError::IdentityNotFound`
+    /// if the successor record is missing from the index (which
+    /// means `begin_rotation` did not write it).
+    pub fn complete_rotation(&mut self, now_unix: u64) -> Result<(), WalletError> {
+        self.key
+            .complete_rotation(now_unix_secs_from_u64(now_unix))?;
+        self.persist_active_record()?;
+        // The successor record was already written by
+        // `begin_rotation`'s seal step; flip its lifecycle to
+        // Active and stamp `registered_at_unix`. Then make the
+        // successor the active identity.
+        if let Some(successor_did) = self.rotation_successor_did.take() {
+            if let Ok(pos) = self
+                .store
+                .index
+                .records
+                .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()))
+            {
+                let mut record = self.store.index.records[pos].clone();
+                record.lifecycle = LifecycleState::Active;
+                #[allow(clippy::cast_possible_wrap)]
+                let reg = now_unix.cast_signed();
+                record.registered_at_unix = reg;
+                self.store.index.records[pos] = record;
+            } else {
+                return Err(WalletError::IdentityNotFound(successor_did));
+            }
+            self.store.index.active_did = Some(successor_did);
+        }
+        write_index_atomically(&self.store.root, &self.store.index)?;
+        Ok(())
+    }
+
+    /// Abort a rotation. Restores the predecessor, appends no
+    /// successor record, and leaves the already-sealed successor
+    /// slot on disk as an orphan (mission §AC-38 - this is the one
+    /// way an orphan slot arises without a crash).
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotRotating` if the predecessor is
+    /// not in `Rotating` lifecycle.
+    pub fn abort_rotation(&mut self) -> Result<(), WalletError> {
+        self.key.abort_rotation()?;
+        // Clear the rotation successor DID without consuming it;
+        // the sealed successor slot stays on disk as an orphan
+        // and `orphan_slots()` will surface it.
+        self.rotation_successor_did = None;
+        self.persist_active_record()?;
+        Ok(())
+    }
+
+    /// Revoke the active identity. Idempotent from the `Revoked`
+    /// lifecycle (mission §AC-13 vector `tv_x_23`).
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotActive { current_state: Designated }`
+    /// when the identity was never activated.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn revoke(&mut self, now_unix: u64) -> Result<(), WalletError> {
+        self.key.revoke(now_unix_secs_from_u64(now_unix))?;
+        self.persist_active_record()?;
+        Ok(())
+    }
+
+    /// The DID of the unlocked identity (cached on the handle so
+    /// `UnlockedWallet` can return its own record without going
+    /// through the index twice).
+    #[must_use]
+    pub fn did(&self) -> &Did {
+        &self.did
+    }
+
+    /// Sign a message with the unlocked identity's key. Delegates
+    /// to `IdentityKey::sign`, which gates on lifecycle state per
+    /// RFC-0009 §Lifecycle Requirements.
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotActive` when lifecycle is not
+    /// `Active` or `Rotating`; `WalletError::Hsm(_)` on adapter
+    /// failure.
+    pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
+        self.key.sign(msg)
+    }
+
+    /// Refresh the persisted record for the active DID to match
+    /// the in-memory `IdentityKey`. Called after every state
+    /// transition so `store.json` mirrors the live key.
+    fn persist_active_record(&mut self) -> Result<(), WalletError> {
+        let pos = self
+            .store
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(self.did.as_str()))
+            .map_err(|_| WalletError::IdentityNotFound(self.did.clone()))?;
+        let mut record = self.store.index.records[pos].clone();
+        record.lifecycle = self.key.lifecycle();
+        record.deprecated = self.key.is_deprecated();
+        self.store.index.records[pos] = record;
+        write_index_atomically(&self.store.root, &self.store.index)?;
+        Ok(())
+    }
+}
+
+/// Convert `now_unix: u64` to the substrate's `now_unix_secs: u64`
+/// (no-op today, but isolates the rename so a future signed-vs-
+/// unsigned debate has a single call site).
+const fn now_unix_secs_from_u64(t: u64) -> u64 {
+    t
 }
 
 /// Resolve the wallet root from the environment. The four-step

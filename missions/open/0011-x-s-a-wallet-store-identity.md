@@ -208,8 +208,14 @@ WeakPassphrase,
 `error.rs` gains exactly one import, shown above. `Did` is local to this crate — defined in
 `identity_record.rs` and already imported by that path in `role_nonce.rs` and `agent.rs` — so
 the variant needs no new dependency edge, and this is the **first** `Did`-typed payload in
-`WalletError`; the existing thirty-three carry `String`, `Uuid`, `AgentState`,
-`LifecycleState`, and `std::io::Error`.
+`WalletError`; the existing thirty-three carry six payload types — `String` at fifteen sites,
+`Uuid` at three, `LifecycleState` at two, `usize` at two, `HsmError` once, and `std::io::Error`
+once — with the remaining nine unit-like, and two further types appear only as struct fields
+rather than as a variant's payload: `AgentState` in the transition variant and `u64` in the
+grace-period variant. An earlier revision of this sentence named five types (`String`, `Uuid`,
+`AgentState`, `LifecycleState`, and `std::io::Error`) as though exhaustive, which omitted
+`usize` and `HsmError` and mixed the field-only `AgentState` in with the payload types; the
+substrate carries the payload types named here, not the earlier five.
 
 `MIN_PASSPHRASE_CHARS` is **declared by this mission**, in `identity_store.rs`, at `12` — the
 value the wallet foundation mission's criterion named in 2026-07 and never implemented. It is

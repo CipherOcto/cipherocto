@@ -227,7 +227,7 @@ A generic `Config(String)` is not an acceptable substitute — the operator woul
 configuration bug rather than a policy decision, and the CLI's translation table has no
 arm for a policy refusal.
 
-Reused, not added: `VaultDecryptionFailed` (bad passphrase), `VaultSlotNotFound` (missing slot), `NotActive { current_state }` (no active identity), `AlreadyRevoked`, `RotationInProgress`, `NotRotating`, `SelfRotation`, `GracePeriodNotElapsed` — all already returned by the `IdentityKey` state machine.
+Reused, not added: `VaultDecryptionFailed` (bad passphrase), `VaultSlotNotFound` (missing slot), `NotActive { current_state }` (no active identity), `AlreadyRevoked`, `RotationInProgress`, `NotRotating`, `SelfRotation`, `GracePeriodNotElapsed`, `InvalidSuccessorProof` — all already returned by the `IdentityKey` state machine. Nine in total, and AC-20 names five of them as the lifecycle refusals that spend slot 93.
 
 `IdentityNotFound` is worth singling out, because its name is not invented here. The doc comment on the existing `WalletStore::lookup_identity_record` already says the stub's `NotActive` is a placeholder and that the real implementation "will use a dedicated `IdentityNotFound` variant in a follow-on". This mission is that follow-on, and the variant is named identically. The name was therefore chosen to match what the substrate has been asking for, which is the cheap way to keep a stub's stated intent and its eventual replacement in agreement. `Locked` and `WeakPassphrase` have no such anticipation and are genuinely new.
 

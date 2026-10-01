@@ -453,16 +453,15 @@ octo whoami
 #    `vault`, `ask` per crates/octo-wallet/src/bin/octo-wallet.rs:33-67; the
 #    `ask` subcommand ships RFC-0959 marketplace CLI via AskOp).
 #
-#    READ THIS BEFORE RELYING ON IT. `octo-wallet init` is a seed-material
-#    generator, not an identity registration. It writes a 32-byte seed to the
-#    `--seed-out` path and prints the derived public key; it does not write
-#    anything the CLI's identity resolution reads. On the current substrate
-#    `WalletStore::open()` returns an empty store, so `octo whoami` still exits
-#    2 with "no active identity" immediately after this command, and steps that
-#    address `$OCTO_HOME/identity/<did>/` (see §10 step 8, §20 step 2) have no
-#    directory to read. Every identity-gated command downstream of this step is
-#    blocked until the wallet store is implemented; treat this as
-#    seed-generation for the eventual HSM handoff, not as a usable login.
+#    `octo-wallet init` is a seed-material generator. It writes a 32-byte seed
+#    to the `--seed-out` path and prints the derived public key. The CLI
+#    identity register step below is what makes the seed usable for `octo
+#    whoami`. Steps that address `$OCTO_HOME/identity/<did>/` (see §10 step 8,
+#    §20 step 2) read the persisted WalletStore from
+#    `$OCTO_HOME/wallet/store.json` (RFC-0011-x §Home resolution). Every
+#    identity-gated command downstream of this step is unlocked by the
+#    register + select pair below; run them in that order before any gated
+#    command.
 octo-wallet init \
     --node-type self-host \
     --seed-out /var/lib/cipherocto/operator.seed
@@ -2064,7 +2063,15 @@ The canonical 6-phase order in §17.1 is `Prerequisites → Setup → Register �
 
 Cause: `octo whoami` resolved no identity in the wallet.
 
-Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600) — see §4 step 2a for the production HSM path. **Caveat, verified against the binary: this command generates seed material and does not register an identity with the CLI, so the error persists and the commands below stay blocked.** `WalletStore::open()` returns an empty store on the current substrate, so `octo whoami` still exits 2 with "no active identity" after this runs. The substrate-faithful wallet binary exposes 4 subcommands: `Init | DeriveCap | Vault | Ask` per `crates/octo-wallet/src/bin/octo-wallet.rs:34-66` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `Ask` subcommand ships RFC-0959 marketplace CLI per `AskOp::Publish { ... }` (sub-modes publish). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
+Fix: `octo-wallet init --node-type <NodeType> --seed-out $OCTO_HOME/identity/<label>.seed` (writes a 32-byte identity seed file with mode 0600), then `octo identity register --label <label> --seed-file $OCTO_HOME/identity/<label>.seed` (the CLI register step that persists the identity to the on-disk WalletStore at `$OCTO_HOME/wallet/store.json` per RFC-0011-x §Home resolution), then `octo identity select --did <did>` (the substrate-level switch — RoleAction::Select in `crates/octo-cli/src/commands/role.rs:180` takes positional `<role_id>` slug). Run all three in that order before any gated command. **Caveat, verified against the binary: `octo-wallet init` writes the seed file but does not register with the CLI — `octo identity register` is the substrate-faithful registration step; `octo identity select` is what unblocks `octo whoami`.** All three commands are present in the binary (RFC-0011-x Phase 5 substrate mission 0011-x-wallet-store-cli). The `WalletStore::open()` call persists identities to the substrate's on-disk store; `octo whoami` exits 2 with "no active identity" only when no identity has been registered AND selected. The substrate-faithful wallet binary exposes 4 subcommands: `Init | DeriveCap | Vault | Ask` per `crates/octo-wallet/src/bin/octo-wallet.rs:34-66` (no `dev-mint-identity` binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for `octo-wallet`). The `Ask` subcommand ships RFC-0959 marketplace CLI per `AskOp::Publish { ... }` (sub-modes publish). The `<NodeType>` value is a `clap::ValueEnum` (`CliNodeType` at `crates/octo-wallet/src/bin/octo-wallet.rs:69`); clap renders the variants `Wholesale | SelfHost | Hybrid` as `wholesale | self-host | hybrid` (kebab-case; the binary's doc-comment header confirms the spelling).
+
+**Exit 2 has TWO causes** — if the chain above ran but `octo whoami` still exits 2, see `OctoCliError::WeakPassphrase` below (the passphrase floor raises exit 2 from a different code path). A reader refused for a twelve-character passphrase who is sent to re-provision an already-registered identity is being sent to fix the wrong problem.
+
+### `OctoCliError::WeakPassphrase`
+
+Cause: the operator's passphrase is below the substrate floor of 12 characters (`MIN_PASSPHRASE_CHARS` at `crates/octo-wallet/src/error.rs` per RFC-0011-x §Detailed Design). This is the second exit-2 cause. The error fires from the unlock path on any signing subcommand (`octo identity rotate-complete`, `rotate-abort`, `rotate`, `revoke`); register validates the passphrase at the registration call site so the floor is reported before persistence. This is NOT a "no identity" problem — re-provisioning the identity will NOT help. The reader is sent to fix the wrong problem if they reach for `octo identity register` instead of lengthening the passphrase.
+
+Fix: pass a passphrase of at least 12 characters. The substrate floor is enforced uniformly on register + unlock so the same input is rejected at both sites; the operator sees the same exit code from either call. For `--passphrase-stdin` the floor is applied to the trimmed stdin line; for the interactive rpassword prompt the floor applies to the typed string.
 
 ### `OctoCliError::ConfirmationRequired { command }`
 
@@ -2192,21 +2199,28 @@ octo whoami
 ### Register
 
 ```bash
-# 5. Create your operator identity (dev path; production uses HSM via §4 step 2a).
-#    [SUBSTRATE-NEW] `octo identity create` is NOT wired — IdentityAction has
-#    ONLY Show | Rotate | Revoke. Identity creation is via the substrate-level
-#    wallet binary (Init subcommand — see `crates/octo-wallet/src/bin/octo-wallet.rs:34`,
-#    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
-#    Workaround for dev mode:
-#    CAVEAT (verified against the binary): `octo-wallet init` writes seed
-#    material only and registers nothing with the CLI's identity resolution.
-#    `octo whoami` still exits 2 afterwards, so the `role select` on the next
-#    line has no identity to select. See §4 step 2a.
+# 5a. Generate the seed file (writes a 32-byte seed to the `--seed-out`
+#     path with mode 0600; the seed is what the register step wraps).
+#    `octo-wallet init` is a seed-material generator, NOT an identity
+#    registration — step 5b is what persists the identity to the CLI.
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/operator-main.seed"
-# Subsequent identity switches: `octo --mode dev --allow-write role select operator-main`
-# (positional `<role_id>` per RoleAction::Select substrate shape; --mode dev
-# REQUIRED per active_signer_for_did at
-# crates/octo-cli/src/commands/identity.rs:575-589).
+
+# 5b. Register the seed file with the CLI (RFC-0011-x Phase 5 substrate
+#     mission 0011-x-wallet-store-cli). The register subcommand mints the
+#     IdentityRecord from the seed, persists it to the on-disk WalletStore
+#     at `$OCTO_HOME/wallet/store.json`, and prints the deterministic DID.
+#     Passphrase must be ≥ 12 characters (substrate floor; AC-48 / exit 2
+#     contract). The seed buffer is wrapped in Zeroizing on read; the
+#     passphrase binding is wiped when the handler drops.
+octo identity register \
+    --label operator-main \
+    --seed-file "$OCTO_HOME/identity/operator-main.seed"
+
+# 5c. Select the registered DID as the active pointer (RFC-0011-x §Detailed
+#     Design). Without select, `octo whoami` exits 2 with "no active
+#     identity" even when an identity is registered — the active pointer
+#     is the substrate-level switch that `role select` reads downstream.
+octo identity select --did "$(octo --json identity list | jq -r '.payload.identities[0].did')"
 
 # 6. Set the active identity (substrate: RoleAction::Select takes positional `<role_id>` slug).
 #    TWO substrate gates apply:
@@ -2236,10 +2250,11 @@ octo network node bind \
 #    mnemonic directly from the substrate path.
 #    Two things to know: the DID is at `.payload.did` in the envelope, not at
 #    the top level, so the projection needs `--json` and the `payload` path;
-#    and on the current substrate `octo whoami` exits 2 with "no active
-#    identity" (see §4 step 2a), which leaves the substitution empty and
-#    collapses this path to `$OCTO_HOME/identity//mnemonic.enc`. This step
-#    cannot succeed until the wallet store lands.
+#    and `octo whoami` exits 2 with "no active identity" until the
+#    register + select pair in §4 step 2a has run (the on-disk WalletStore
+#    persists identities; the active pointer moves via `octo identity
+#    select`). Until then the substitution collapses this path to
+#    `$OCTO_HOME/identity//mnemonic.enc`.
 cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
    "$OCTO_HOME/keys/operator-main.mnemonic.enc"
 chmod 0600 "$OCTO_HOME/keys/operator-main.mnemonic.enc"
@@ -2743,10 +2758,9 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 #    has ONLY Show | Rotate | Revoke. Mnemonic export is via the wallet substrate
 #    API directly. Workaround: copy the encrypted mnemonic file from
 #    $OCTO_HOME/identity/<did>/mnemonic.enc after the wallet mints it.
-#    The DID comes from `.payload.did` of the `--json` envelope; on the
-#    current substrate `octo whoami` exits 2 with "no active identity"
-#    (see §4 step 2a), so this step cannot succeed until the wallet store
-#    lands.
+#    The DID comes from `.payload.did` of the `--json` envelope; `octo
+#    whoami` exits 2 with "no active identity" until the register + select
+#    pair in §4 step 2a has run against the on-disk WalletStore.
 cp "$OCTO_HOME/identity/$(octo --json whoami | jq -r '.payload.did')/mnemonic.enc" \
    "$OCTO_BACKUP_DIR/$TS.mnemonic.enc"
 
@@ -2888,10 +2902,9 @@ octo audit list --limit 1 --json
 
 ```bash
 # 14. Confirm whoami resolves.
-#     CAVEAT, verified against the binary: this exits 2 with "no active
-#     identity" on the current substrate, because `WalletStore::open()`
-#     returns an empty store. The wallet store landing is what unblocks
-#     it; see the caveat at §4 step 2a.
+#     This exits 2 with "no active identity" until the register + select
+#     pair in §4 step 2a has run. The on-disk WalletStore persists
+#     identities; the active pointer moves via `octo identity select`.
 octo whoami
 
 # 15. Confirm the mesh peer table restored.
@@ -3884,10 +3897,10 @@ octo audit list --limit 100 --json \
 #    wallet binary (Init subcommand — see `crates/octo-wallet/src/bin/octo-wallet.rs:34`,
 #    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
 #    Workaround for dev mode:
-#    CAVEAT (verified against the binary): both `init` calls below write seed
-#    material only and register nothing with the CLI's identity resolution, so
-#    the `role select` commands that follow have no identity to select. See
-#    §4 step 2a.
+#    Both `init` calls below write the seed files only. The `octo identity
+#    register --seed-file <seed-file>` and `octo identity select --did <did>`
+#    pair against each label is what makes the `role select` commands below
+#    see an identity. See §4 step 2a for the full walk.
 octo-wallet init --node-type wholesale --seed-out "$OCTO_HOME/identity/org-main.seed"
 octo-wallet init --node-type self-host --seed-out "$OCTO_HOME/identity/personal.seed"
 # Subsequent identity switches: `octo --mode dev --allow-write role select org-main`

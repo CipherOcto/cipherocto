@@ -16,7 +16,7 @@ depends_on:
 
 ## Status
 
-Open (2026-09-30) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). **Blocked on `0011-x-s-a-wallet-store-identity`**, which must land first per the substrate-first ordering invariant: there is no `unlock` to thread until the substrate mission provides one. **Blocked on RFC-0011-x being Accepted**, which it is not: it is **Draft** today, so that gate is live and unmet and the mission does not claim otherwise.
+Open (2026-10-01) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). **Blocked on `0011-x-s-a-wallet-store-identity`**, which must land first per the substrate-first ordering invariant: there is no `unlock` to thread until the substrate mission provides one. RFC-0011-x was promoted from `Draft` to `Accepted` on 2026-10-01 at `next 16a3368f`, so the RFC gate is met; the substrate gate is the only one that remains live and unmet, and the YAML header `depends_on:` block carries the same gate in machine-readable form.
 
 ## RFC
 

@@ -130,6 +130,16 @@ pub struct IdentityRecord {
     /// Rotation history (newest first or insertion order — TBD by consumer).
     /// Distinct from the live `IdentityKey::successor_key` linkage.
     pub rotation_history: Vec<IdentityRotationEvent>,
+    /// True after `complete_rotation()` succeeds so a completed rotation
+    /// is visible in the index rather than inferable (mission
+    /// 0011-x-s-a-wallet-store-identity §AC-36). Additive with a serde
+    /// default of `false`, so a `store.json` written before this field
+    /// existed still parses. Distinct from `Revoked` lifecycle state:
+    /// a deprecated record is still in `Active` lifecycle and can
+    /// still sign during the grace window per RFC-0009 §Lifecycle
+    /// row 3, but the rotation handoff is complete.
+    #[serde(default)]
+    pub deprecated: bool,
 }
 
 /// Identity rotation event (Layer B `[ADD]` — distinct from `RotationEvent`

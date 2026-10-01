@@ -131,6 +131,62 @@ impl IdentityKey {
         }
     }
 
+    /// Rehydrate an `IdentityKey` from a persisted `IdentityRecord` (mission
+    /// 0011-x-s-a-wallet-store-identity §AC-33). Takes **five** parameters
+    /// because four are not enough: `from_seed` hard-codes
+    /// `LifecycleState::Designated` and leaves
+    /// `rotation_started_at_unix_secs` at `None`, so rehydrating through
+    /// it resurrects a `Revoked` identity as a signing key and panics
+    /// inside `complete_rotation` on the next call.
+    ///
+    /// `rotation_started_at` is reconstructed from the newest entry in
+    /// `record.rotation_history` when the persisted lifecycle is
+    /// `Rotating`; `None` otherwise. The `deprecated` field of the
+    /// rehydrated key always starts `false` — the deprecation marker
+    /// is post-`complete_rotation` state that the store persists on
+    /// the `IdentityRecord.deprecated` field (mission §AC-36) and
+    /// reads back via `identity_record`, not via this constructor.
+    /// The `revoked_proof` is intentionally NOT rehydrated — the
+    /// proof is for cross-node gossip, which the store does not
+    /// participate in; only the marker that a revoke has happened
+    /// is rehydrated, via `lifecycle = Revoked` plus
+    /// `revoked_at_unix_secs`, but the substrate refuses to mint a
+    /// signable key from a `Revoked` record (see error contract
+    /// below).
+    ///
+    /// # Errors
+    /// Returns `WalletError::AlreadyRevoked` when `lifecycle == Revoked`
+    /// — the substrate refuses to manufacture a signable key from a
+    /// terminal record even though the underlying primitives would
+    /// permit it. Returning a `Revoked` key here defeats the
+    /// rehydration guarantee AC-32 names.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_seed_with_lifecycle(
+        seed: [u8; 32],
+        lifecycle: crate::lifecycle::LifecycleState,
+        activated_at: Option<u64>,
+        revoked_at: Option<u64>,
+        rotation_started_at: Option<u64>,
+    ) -> Result<Self, WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if lifecycle == LifecycleState::Revoked {
+            return Err(WalletError::AlreadyRevoked);
+        }
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let public_key = sk.verifying_key().to_bytes();
+        Ok(Self {
+            signer: Arc::new(InMemorySigner::new(seed, public_key)),
+            public_key,
+            lifecycle,
+            activated_at_unix_secs: activated_at,
+            revoked_at_unix_secs: revoked_at,
+            revoked_proof: None,
+            successor_key: None,
+            rotation_started_at_unix_secs: rotation_started_at,
+            deprecated: false,
+        })
+    }
+
     /// Construct an `IdentityKey` backed by an arbitrary `HsmAdapter` impl
     /// (e.g. `LedgerSigner`). The public key is sourced from the adapter.
     ///

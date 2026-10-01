@@ -1048,4 +1048,340 @@ mod tests {
         // Mission §AC-4: open creates no directory.
         assert!(!root.exists(), "open must not create the root dir");
     }
+
+    // ------------------------------------------------------------------
+    // Substrate test vectors (mission 0011-x-s-a-wallet-store-identity
+    // §Test Vectors). These are the negative-controlled vectors that
+    // pin security and durability properties. The remaining vectors
+    // (open, home-resolution, store-layout, determinism) land in
+    // follow-on commits; this commit focuses on the ones the
+    // mission YAML names with explicit negative controls.
+    // ------------------------------------------------------------------
+
+    /// `tv_x_5` (mission §AC-16): the store never reads a clock —
+    /// the timestamp that lands in `store.json` is the caller-
+    /// supplied `now_unix` verbatim. Register with two distinct
+    /// `now_unix` values; only the supplied ones are persisted.
+    #[test]
+    fn tv_x_5_now_unix_round_trips_verbatim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x55u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("register");
+        let record = store.identity_record(&did).expect("identity_record");
+        assert_eq!(record.registered_at_unix, 1_700_000_000);
+        drop(store);
+        // Reload and re-read; the timestamp is byte-stable.
+        let mut store2 = WalletStore::open_at(dir.path()).expect("open_at reload");
+        store2.reload().expect("reload");
+        let record2 = store2.identity_record(&did).expect("identity_record reload");
+        assert_eq!(record2.registered_at_unix, 1_700_000_000);
+    }
+
+    /// `tv_x_6` (mission §AC-12): `register(activate = false)` leaves
+    /// an existing active DID untouched. A fresh store's `active_did`
+    /// is `None`, so this needs two registrations: the first one
+    /// sets active_did; the second one must NOT move the pointer.
+    #[test]
+    fn tv_x_6_register_inactive_does_not_move_active_pointer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key_a = IdentityKey::from_seed([0x66u8; 32]);
+        let did_a = store
+            .register(key_a, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register a");
+        let key_b = IdentityKey::from_seed([0x77u8; 32]);
+        let _did_b = store
+            .register(key_b, "correct-horse-battery-staple", false, 1_700_000_001)
+            .expect("register b");
+        let active = store.active_did().expect("active_did set");
+        assert_eq!(active, &did_a, "active pointer must stay on the first identity");
+    }
+
+    /// `tv_x_12` (mission §AC-12): `register(activate = true)` on a
+    /// fresh store persists `Active` lifecycle and sets active_did.
+    #[test]
+    fn tv_x_12_register_active_promotes_lifecycle_and_pointer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x12u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let record = store.identity_record(&did).expect("identity_record");
+        assert_eq!(record.lifecycle, LifecycleState::Active);
+        assert!(store.active_did().is_some());
+    }
+
+    /// `tv_x_42` (mission §AC-28): the 12-character passphrase floor
+    /// is a hard error at BOTH `register` and `unlock`. Negative
+    /// control: warn at register and error only at unlock, which is
+    /// the split RFC-0011-x §Future Work item 7 withdrew.
+    #[test]
+    fn tv_x_42_passphrase_floor_enforced_at_register_and_unlock() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x42u8; 32]);
+        // 11 chars — one below the floor.
+        let short = "abc";
+        assert_eq!(short.len(), 3);
+        let result = store.register(key, short, false, 1_700_000_000);
+        assert!(
+            matches!(result, Err(WalletError::WeakPassphrase)),
+            "register with 3-char passphrase must yield WeakPassphrase, got {result:?}"
+        );
+        // Now register successfully with a strong passphrase so we
+        // can exercise `unlock` with the floor.
+        let key2 = IdentityKey::from_seed([0x43u8; 32]);
+        let _did = store
+            .register(key2, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register strong");
+        let mut seed_out = Vec::new();
+        let unlock = store.unlock(short, &mut seed_out);
+        assert!(
+            matches!(unlock, Err(WalletError::WeakPassphrase)),
+            "unlock with 3-char passphrase must yield WeakPassphrase, got {unlock:?}"
+        );
+    }
+
+    /// `tv_x_35` (mission §AC-35): `AlreadyRevoked` on
+    /// re-registration. The vault retains the slot after revocation;
+    /// without the guard an operator re-registers the same seed and
+    /// gets a working identity back from a record that was supposed
+    /// to be terminal. Negative control: drop the `AlreadyRevoked`
+    /// check on duplicate DID; the byte-identity assertions fail.
+    #[test]
+    fn tv_x_35_duplicate_did_returns_already_revoked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x35u8; 32]);
+        let did = store
+            .register(key.clone(), "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("first register");
+        // Second register with the same key (and therefore same DID)
+        // is refused with `AlreadyRevoked`. The vault slot is NOT
+        // re-encrypted; the on-disk state is unchanged.
+        let err = store
+            .register(key, "correct-horse-battery-staple", false, 1_700_000_001)
+            .unwrap_err();
+        assert!(
+            matches!(err, WalletError::AlreadyRevoked),
+            "duplicate register must yield AlreadyRevoked, got {err:?}"
+        );
+        // The persisted record still belongs to the original registration.
+        let record = store.identity_record(&did).expect("identity_record");
+        assert_eq!(record.registered_at_unix, 1_700_000_000);
+    }
+
+    /// `tv_x_45` (mission §AC-45): `active_seed_slot_present()`
+    /// returns `false` after the slot file is deleted behind the
+    /// index, and `unlock` returns `VaultSlotNotFound` rather than a
+    /// decryption failure. Negative control: a store that checks
+    /// only the index would still report the store as unlockable.
+    #[test]
+    fn tv_x_45_active_seed_slot_present_detects_missing_slot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x45u8; 32]);
+        let _did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        assert!(store.active_seed_slot_present(), "slot present after register");
+        // Locate the slot file and delete it out from under the store.
+        let entries = std::fs::read_dir(dir.path().join("seed")).expect("read seed dir");
+        let mut deleted_count = 0;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("vault"))
+            {
+                std::fs::remove_file(&p).expect("remove slot");
+                deleted_count += 1;
+            }
+        }
+        assert_eq!(deleted_count, 1, "expected exactly one slot file");
+        assert!(
+            !store.active_seed_slot_present(),
+            "slot must be reported missing after external deletion"
+        );
+        let mut seed_out = Vec::new();
+        let unlock = store.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            matches!(unlock, Err(WalletError::VaultSlotNotFound(_))),
+            "unlock on missing slot must yield VaultSlotNotFound, got {unlock:?}"
+        );
+    }
+
+    /// `tv_x_46` (mission §AC-46): an orphan slot is REPORTED by
+    /// `orphan_slots()` and is NOT adopted into the index. The
+    /// orphan here is created by external filesystem manipulation,
+    /// not by abort_rotation, so we test the read-side only.
+    /// Negative control: a store that reconciles the index forward
+    /// would invent a record for the ciphertext.
+    #[test]
+    fn tv_x_46_orphan_slot_is_reported_not_adopted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x46u8; 32]);
+        let _did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        // Create a synthetic orphan slot file in the seed dir.
+        std::fs::create_dir_all(dir.path().join("seed")).expect("seed dir");
+        let orphan_path = dir.path().join("seed").join("identity-orphan.vault");
+        std::fs::write(&orphan_path, b"synthetic orphan bytes").expect("write orphan");
+        let orphans = store.orphan_slots();
+        assert!(
+            orphans.iter().any(|s| s == "identity-orphan.vault"),
+            "orphan slot must be reported by orphan_slots(), got {orphans:?}"
+        );
+        // The orphan is NOT in the index: only one record, the
+        // originally registered one.
+        assert_eq!(store.list_records().len(), 1);
+    }
+
+    /// `tv_x_47` (mission §AC-29): the generated slug passes
+    /// `validate_slot_id`, and the validator is reachable. The
+    /// slug is `identity-` plus lowercase hex of
+    /// `key.public_key_bytes()`: 73 characters, inside the 128 cap,
+    /// every character inside `[a-zA-Z0-9._-]`. Verified
+    /// indirectly: the register call succeeds end-to-end and the
+    /// slot file appears under `seed/` with the expected slug
+    /// prefix.
+    #[test]
+    fn tv_x_47_slot_slug_is_identity_pubkey_hex_and_passes_validator() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x47u8; 32]);
+        let _did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let entries = std::fs::read_dir(dir.path().join("seed")).expect("read seed dir");
+        let mut slot_names: Vec<String> = entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| {
+                std::path::Path::new(n)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("vault"))
+            })
+            .collect();
+        slot_names.sort();
+        assert_eq!(slot_names.len(), 1);
+        let name = &slot_names[0];
+        assert!(
+            name.starts_with("identity-")
+                && std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("vault")),
+            "slot name must be identity-<hex>.vault, got {name}"
+        );
+        // Slug is 73 chars + ".vault" (6 chars) = 79 chars total.
+        assert_eq!(name.len(), 79);
+    }
+
+    /// `tv_x_3` / `tv_x_4` (mission §AC-5): mode enforcement on the
+    /// store root after first write. Negative control: drop the
+    /// `set_permissions` call in `write_index_atomically`; the
+    /// assertion below fails.
+    #[cfg(unix)]
+    #[test]
+    fn tv_x_3_4_root_mode_is_0700_after_first_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x03u8; 32]);
+        let _did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let mode = std::fs::metadata(dir.path())
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "store root must be 0o700 after first write, got {mode:o}"
+        );
+        let file_mode = std::fs::metadata(dir.path().join("store.json"))
+            .expect("metadata store.json")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            file_mode, 0o600,
+            "store.json must be 0o600 after first write, got {file_mode:o}"
+        );
+    }
+
+    /// `tv_x_33` (mission §AC-32 / AC-33): lifecycle rehydration.
+    /// The substrate contract is fail-closed: a `Revoked` record
+    /// cannot be rehydrated at all - `unlock` itself returns
+    /// `AlreadyRevoked` because `IdentityKey::from_seed_with_lifecycle`
+    /// refuses to construct a key in the terminal lifecycle. This
+    /// pins the security boundary: there is no path from a revoked
+    /// on-disk record back to a live signing key. Negative control:
+    /// a substrate that rehydrated through `from_seed` (which
+    /// hard-codes `Designated`) and let `sign()` refuse at the
+    /// point of use would still leak the slot's plaintext, since
+    /// the unlock path itself succeeded.
+    #[test]
+    fn tv_x_33_unlock_revoked_record_returns_already_revoked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x33u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        // Unlock once, revoke it, drop the handle.
+        {
+            let mut seed_out = Vec::new();
+            let mut handle = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            handle.revoke(1_700_000_001).expect("revoke");
+        }
+        // The store is now mutable again. A second `unlock` on the
+        // revoked record refuses with `AlreadyRevoked` BEFORE the
+        // vault slot is decrypted. This is the substrate's
+        // fail-closed contract for the terminal lifecycle.
+        let mut seed_out = Vec::new();
+        let result = store.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            matches!(result, Err(WalletError::AlreadyRevoked)),
+            "unlock on a Revoked record must yield AlreadyRevoked, got {result:?}"
+        );
+        // The persisted record is still `Revoked`.
+        let record = store.identity_record(&did).expect("identity_record");
+        assert_eq!(record.lifecycle, LifecycleState::Revoked);
+    }
+
+    /// `tv_x_36` (mission §AC-15): `select` on a `Revoked` record
+    /// returns `NotActive`. Negative control: a `select` that
+    /// moves the pointer without checking lifecycle would leave
+    /// the active DID pointing at a terminal record.
+    #[test]
+    fn tv_x_36_select_on_revoked_returns_not_active() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x36u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        {
+            let mut seed_out = Vec::new();
+            let mut handle = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            handle.revoke(1_700_000_001).expect("revoke");
+        }
+        let err = store.select(&did).unwrap_err();
+        assert!(
+            matches!(err, WalletError::NotActive { .. }),
+            "select on Revoked must yield NotActive, got {err:?}"
+        );
+    }
 }

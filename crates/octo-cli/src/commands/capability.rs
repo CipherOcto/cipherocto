@@ -17,6 +17,12 @@
 //! caveat variants of its own — adding one requires an RFC-0011 amendment
 //! per mission §Caveat catalog consumed.
 //!
+//! AC-1 inventory: WalletStore::open() site classifications for this file.
+//! Site 1  capability.rs list       metadata  (exit 0/2/16/64)
+//! Site 2  capability.rs mint       signing   (exit 0/2/5/7/8/9/11/12/64)
+//! Site 3  capability.rs attenuate  signing   (exit 0/2/7/8/10/12/64)
+//! Site 4  capability.rs show       metadata  (exit 0/2/4/64)
+//!
 //! `holder_sig` never reaches stdout: it is wrapped in [`RedactedHex`],
 //! which serializes to `[REDACTED:sig]` unconditionally. `body_hash` is a
 //! public digest and is rendered as plain lowercase hex.

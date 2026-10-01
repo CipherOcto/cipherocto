@@ -222,6 +222,11 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
 // Shared helpers — `octo agent` subcommand family
 // ---------------------------------------------------------------------------
 
+// AC-1 inventory: WalletStore::open() site classifications for this file.
+// Site 1  agent.rs shared resolve_active_did  metadata  (DID lookup for
+//         agent create and agent list, both routes resolve the active
+//         identity's DID before any signing)
+
 /// Shared per-handler wallet + active-identity resolution.
 ///
 /// Both `octo agent create` (write path) and `octo agent list` (read

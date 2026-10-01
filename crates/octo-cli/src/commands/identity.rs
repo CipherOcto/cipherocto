@@ -394,6 +394,25 @@ fn block_auditor(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 // Handlers
 // ---------------------------------------------------------------------------
 
+// AC-1 inventory: WalletStore::open() site classifications for this file.
+// Every site below is reachable from a public CLI subcommand or the
+// helper layer the subcommand routes through. The classification
+// distinguishes metadata reads (no key material touched, only the
+// store's index) from signing (the active identity's Ed25519 key is
+// used to sign, derive, or mutate state that requires the key).
+//
+// Site 1  identity.rs whoami              metadata  (exit 0/2/64)
+// Site 2  identity.rs identity show       metadata  (exit 0/2/4/64)
+// Site 3  identity.rs identity register   signing   (exit 0/2/4/5/11/64)
+// Site 4  identity.rs identity register   signing   (activate=true branch)
+// Site 5  identity.rs identity select     metadata  (moves active pointer)
+// Site 6  identity.rs identity select     metadata  (activate-on-select path)
+// Site 7  identity.rs identity rotate     signing   (UnlockedWallet path)
+// Site 8  identity.rs rotate complete     signing   (UnlockedWallet path)
+// Site 9  identity.rs rotate abort        metadata  (reverts state, no key use)
+// Site 10 identity.rs identity revoke     signing   (UnlockedWallet path)
+// Site 11 identity.rs identity revoke     signing   (alt path with explicit did)
+
 /// `octo whoami` — surface the active identity record.
 ///
 /// Exit codes:

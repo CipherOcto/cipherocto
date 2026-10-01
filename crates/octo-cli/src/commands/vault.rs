@@ -868,6 +868,11 @@ fn transfers_path(home: &Path) -> PathBuf {
 // Active-DID resolution — RFC-0011-e §Subcommand Taxonomy + RFC-0009
 // ---------------------------------------------------------------------------
 
+// AC-1 inventory: WalletStore::open() site classifications for this file.
+// Site 1  vault.rs active_owner_did local helper  metadata  (the DID is
+//         used as the owner-of-record marker for vault put/get; no key
+//         material is touched in this helper)
+
 fn active_owner_did() -> Result<String, OctoCliError> {
     let store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store: {e}")))

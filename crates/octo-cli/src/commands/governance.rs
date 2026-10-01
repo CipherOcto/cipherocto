@@ -87,6 +87,11 @@ impl CapabilitySigner for WalletSignerAdapter {
 /// Resolve the active identity DID via the wallet store.
 ///
 /// Mirrors `crate::commands::agent::common::resolve_active_did`
+///
+/// AC-1 inventory: WalletStore::open() site classifications for this file.
+/// Site 1  governance.rs resolve_active_did local helper  metadata
+/// Site 2  governance.rs governance snapshot/vote           signing
+/// Site 3  governance.rs governance tally/dissolve         signing
 /// without depending on the agent module's private `mod common`
 /// helper. The agent-module refactor (lift `mod common` to
 /// `pub(crate) mod common`) is deferred to a follow-on mission;

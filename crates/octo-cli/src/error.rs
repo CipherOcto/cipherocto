@@ -1862,6 +1862,9 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
 /// | `WalletError::IdentityNotFound(did)`                   | `OctoCliError::IdentityNotFound(did.to_string())`      | 4    |
 /// | `WalletError::WeakPassphrase`                          | `OctoCliError::WeakPassphrase`                         | 2    |
 /// | `WalletError::AlreadyRevoked`                          | `OctoCliError::AlreadyRevoked`                         | 6    |
+/// | `WalletError::Hsm(reason)`                             | `OctoCliError::HsmUnavailable`                         | 5    |
+/// | `WalletError::VaultSlotNotFound`                       | `OctoCliError::WalletLocked`                           | 92   |
+/// | `WalletError::VaultDecryptionFailed`                   | `OctoCliError::WalletLocked`                           | 92   |
 /// | `WalletError::NotActive { current_state: Revoked }`   | `OctoCliError::AlreadyRevoked`                         | 6    |
 /// | `WalletError::NotActive { current_state: Rotating }`  | `OctoCliError::AlreadyRotating`                        | 3    |
 /// | `WalletError::NotActive { current_state: Active / Designated }` | `OctoCliError::NoActiveIdentity`               | 2    |

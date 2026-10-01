@@ -243,6 +243,37 @@ impl KeyStoreConfig {
 }
 ```
 
+#### Starkli Keystore Divergence
+
+The cipher in this section is AES-256-GCM, which the production `Vault`
+struct in `crates/octo-wallet/src/vault.rs` honors. The Starkli keystore
+interop path uses a **different** cipher so an exported file can be read by
+the upstream `starkli` CLI without translation. The substrate carries the
+divergence as two parallel primitives:
+
+- `Vault` (production): Argon2id KDF (m=64MiB, t=3, p=4) + AES-256-GCM,
+  written to `<slots_dir>/<slot_id>.vault`. Argon2id replaces the PBKDF2
+  shown above per RFC-0102 amendment (KDF PBKDF2 → Argon2id).
+- `StarkliCompat` (interop): Argon2id + chacha20-poly1305, JSON envelope,
+  written to a path the caller chooses. The chacha20-poly1305 cipher is
+  the one the upstream `starkli` v0.3+ format specifies; matching that format
+  is the only purpose of the `StarkliCompat` keystore, and changing the
+  cipher would break interop with the external tool.
+
+The two keystores do not share the on-disk format. `StarkliCompat::export`
+writes chacha20-poly1305 JSON; `Vault::put` writes AES-256-GCM `.vault`
+files. There is no on-the-fly translation between the two because the
+KDF parameters, the nonce layout, and the AEAD tag format all differ.
+
+Operators moving an identity **into** the production `Vault` start with
+`StarkliCompat::import` to read the upstream file, then re-encrypt with
+`Vault::put` to land it in the production slot directory. Operators
+moving an identity **out of** the production `Vault` (e.g. for migration
+to a starknet contract wallet) start with `Vault::get` to decrypt the
+production slot, then `StarkliCompat::export` to write the upstream
+format. The two surfaces are intentionally disjoint so neither is a
+thin wrapper around the other.
+
 ### Signing Interface
 
 ```rust
@@ -529,6 +560,6 @@ None - new functionality.
 
 ## Version History
 
-| Version | Date       | Change                                                                                |
-|---------|------------|---------------------------------------------------------------------------------------|
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
 | 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

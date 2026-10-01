@@ -12,11 +12,11 @@
 
 depends_on:
 
-- missions/open/0011-x-s-a-wallet-store-identity.md
+- missions/archived/completed/0011-x-s-a-wallet-store-identity.md
 
 ## Status
 
-Open (2026-10-01) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). **Blocked on `0011-x-s-a-wallet-store-identity`**, which must land first per the substrate-first ordering invariant: there is no `unlock` to thread until the substrate mission provides one. RFC-0011-x was promoted from `Draft` to `Accepted` on 2026-10-01 at `next 16a3368f`, so the RFC gate is met; the substrate gate is the only one that remains live and unmet, and the YAML header `depends_on:` block carries the same gate in machine-readable form.
+Open (2026-10-01) — CLI companion to RFC-0011-x. Layer C (`octo-cli`). Substrate mission `0011-x-s-a-wallet-store-identity` Completed on 2026-10-01 at `next d01f31cc`, so the substrate-first ordering invariant is now met. RFC-0011-x was promoted from `Draft` to `Accepted` on 2026-10-01 at `next 16a3368f`, so the RFC gate is met. The paired CLI mission is now ready to claim and proceed to Phases 4-6. The `depends_on:` block above was updated from `missions/open/0011-x-s-a-wallet-store-identity.md` to the new completed-archived path.
 
 ## RFC
 

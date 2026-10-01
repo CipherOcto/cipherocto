@@ -164,54 +164,7 @@ pub struct IdentityRotationEvent {
     pub signature_proof: [u8; 64],
 }
 
-/// Wallet store handle (Layer B `[ADD]` — explicit reference, NO ambient global).
-///
-/// `open()` returns the canonical store; CLI consumes `&WalletStore`
-/// everywhere. The handle is intentionally cheap to clone (currently a
-/// zero-sized type — the real impl will hold a connection / lock).
-#[derive(Debug, Clone, Copy)]
-pub struct WalletStore;
-
-impl WalletStore {
-    /// Open the on-disk wallet store at `$OCTO_HOME/wallet` (0700 perms).
-    /// Returns the canonical handle; fails if the directory does not exist
-    /// or has wrong permissions.
-    ///
-    /// # Errors
-    /// Returns `WalletError::Io` if the directory is missing / unwritable,
-    /// `WalletError::Config` if `$OCTO_HOME` is unset / empty.
-    pub fn open() -> Result<Self, crate::error::WalletError> {
-        // Stub: returns empty store. Real impl reads `$OCTO_HOME/wallet/keystore.json`.
-        Ok(Self)
-    }
-
-    /// Return the active identity (None maps to canonical "no active
-    /// identity" semantics — CLI exit 2).
-    ///
-    /// # Errors
-    /// Returns `WalletError::NotActive` when no identity is currently active.
-    pub fn try_active_identity(
-        &self,
-    ) -> Result<crate::identity::IdentityKey, crate::error::WalletError> {
-        // Stub: returns NotActive. Real impl reads active_did pointer from store.
-        Err(crate::error::WalletError::NotActive {
-            current_state: crate::lifecycle::LifecycleState::Designated,
-        })
-    }
-
-    /// Look up an identity record by DID.
-    ///
-    /// # Errors
-    /// Returns `WalletError::NotActive` when the DID is not registered
-    /// (stub behavior — the real impl will use a dedicated
-    /// `IdentityNotFound` variant in a follow-on).
-    pub fn lookup_identity_record(
-        &self,
-        _did: &Did,
-    ) -> Result<IdentityRecord, crate::error::WalletError> {
-        // Stub: returns NotActive. Real impl walks identity index.
-        Err(crate::error::WalletError::NotActive {
-            current_state: crate::lifecycle::LifecycleState::Designated,
-        })
-    }
-}
+// Wallet store handle lives in `crate::identity_store` (mission
+// 0011-x-s-a-wallet-store-identity). The on-disk substrate and
+// `WalletIndex` are owned by that module; this module only carries
+// the data types (`Did`, `IdentityRecord`, `IdentityRotationEvent`).

@@ -19,6 +19,7 @@ pub mod error;
 pub mod hsm;
 pub mod identity;
 pub mod identity_record;
+pub mod identity_store;
 pub mod key_hierarchy;
 pub mod keystore;
 pub mod lifecycle;
@@ -50,7 +51,8 @@ pub use error::WalletError;
 // through the wallet re-export preserves the layer direction.
 pub use ed25519_dalek;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
-pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent, WalletStore};
+pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent};
+pub use identity_store::{WalletIndex, WalletStore, WALLET_INDEX_VERSION};
 pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
 pub use lifecycle::LifecycleState;
 pub use node::{NodeType, NodeTypeParseError};

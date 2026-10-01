@@ -110,6 +110,48 @@ impl Vault {
         Ok(Self { slots_dir })
     }
 
+    /// Open a vault rooted at `slots_dir` WITHOUT creating the directory.
+    /// Used by `WalletStore::open` per mission 0011-x-s-a-wallet-store-identity
+    /// §AC-4 — the on-disk root must not be created by `open`; the
+    /// directory is created lazily on the first write (which is also
+    /// the moment it receives 0700 permissions). The handle returned
+    /// here can be held across an open that touches no filesystem, and
+    /// any subsequent `put` will create the slots dir on demand via
+    /// `ensure_slots_dir`.
+    #[must_use]
+    pub fn open_lazy(slots_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            slots_dir: slots_dir.into(),
+        }
+    }
+
+    /// Ensure the slots directory exists at 0o700. Called before any
+    /// write into the vault by the store. Returns `Ok(())` if the dir
+    /// already exists at the correct mode; otherwise creates it and
+    /// fixes the mode. A no-op for vaults opened via `Vault::open`
+    /// where the directory was already created at the right mode.
+    ///
+    /// # Errors
+    /// Returns `WalletError::Io` if the directory cannot be created or
+    /// its permissions cannot be set.
+    pub fn ensure_slots_dir(&self) -> Result<(), WalletError> {
+        fs::create_dir_all(&self.slots_dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.slots_dir, fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(())
+    }
+
+    /// Borrow the slots directory path (Layer B `[ADD]` — the store
+    /// needs to know where the vault lives without taking a dependency
+    /// on its layout details).
+    #[must_use]
+    pub fn slots_dir(&self) -> &Path {
+        &self.slots_dir
+    }
+
     /// Default slot directory: `~/.config/cipherocto/vault/`.
     #[must_use]
     pub fn default_dir() -> Option<PathBuf> {
@@ -142,6 +184,12 @@ impl Vault {
         passphrase: &str,
     ) -> Result<(), WalletError> {
         validate_slot_id(slot_id)?;
+        // Ensure the slots directory exists at 0700. Idempotent: a no-op
+        // when called against a vault opened via `Vault::open` (the dir
+        // was already created), and the lazy-create path for vaults
+        // opened via `Vault::open_lazy` (which is what `WalletStore::open`
+        // uses per mission 0011-x-s-a-wallet-store-identity §AC-4).
+        self.ensure_slots_dir()?;
         let mut rng = rand::rng();
 
         // Generate salt (SaltString::generate requires OsRng via argon2 0.5;
@@ -293,7 +341,12 @@ impl Vault {
     }
 }
 
-fn validate_slot_id(slot_id: &str) -> Result<(), WalletError> {
+/// Validate a slot id against the `[a-zA-Z0-9._-]{1,128}` rule. Promoted
+/// to `pub(crate)` so `WalletStore::register` can compose it rather than
+/// re-implement the rule (mission 0011-x-s-a-wallet-store-identity
+/// §AC-29 — a second implementation of the same check is the same
+/// defect as a second home resolver).
+pub(crate) fn validate_slot_id(slot_id: &str) -> Result<(), WalletError> {
     if slot_id.is_empty() || slot_id.len() > 128 {
         return Err(WalletError::InvalidSlotId(slot_id.to_owned()));
     }

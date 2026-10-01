@@ -10,11 +10,12 @@ use crate::lifecycle::LifecycleState;
 
 /// Minimum passphrase length enforced at both `WalletStore::register` and
 /// `WalletStore::unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28).
-/// Phase 1 declares the constant in `error.rs` so the `WeakPassphrase`
-/// `Display` message can interpolate it; Phase 2's `identity_store.rs`
-/// reads the same constant for the floor check, so the sentence an
-/// operator reads cannot drift from the number that produced it.
-pub const MIN_PASSPHRASE_CHARS: usize = 12;
+/// Re-exported from `identity_store` per AC-28 ("the floor is
+/// `pub const MIN_PASSPHRASE_CHARS: usize = 12` declared in
+/// `identity_store.rs`"). The `WeakPassphrase` `#[error]` message below
+/// interpolates this constant, so the sentence an operator reads cannot
+/// drift from the threshold the check compares against.
+pub use crate::identity_store::MIN_PASSPHRASE_CHARS;
 
 /// Top-level error for `octo-wallet`.
 ///

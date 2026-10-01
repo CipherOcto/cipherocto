@@ -12,7 +12,8 @@
 use crate::agent::{registry, AgentManifest, AgentState, CapabilityId};
 use crate::error::WalletError;
 use crate::identity::IdentityKey;
-use crate::identity_record::{Did, IdentityRecord, WalletStore};
+use crate::identity_record::{Did, IdentityRecord};
+use crate::identity_store::WalletStore;
 use crate::lifecycle::LifecycleState;
 use uuid::Uuid;
 

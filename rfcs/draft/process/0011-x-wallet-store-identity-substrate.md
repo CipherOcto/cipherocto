@@ -482,6 +482,16 @@ Locked,
 IdentityNotFound(Did),
 ```
 
+`IdentityNotFound` carries a `Did`, which is the first `Did`-typed payload in `WalletError` — the existing thirty-three variants carry `String`, `Uuid`, `AgentState`, `LifecycleState`, and `std::io::Error`, and none of them a DID. `crates/octo-wallet/src/error.rs` therefore gains one import alongside the three variants:
+
+```rust
+use crate::identity_record::Did;
+```
+
+The type is **local to this crate**, not imported from the identity crate: `octo-wallet` defines `Did` itself in `crates/octo-wallet/src/identity_record.rs`, and `role_nonce.rs` and `agent.rs` already import it by that path. Naming the external crate here would be wrong twice over — it would name a different `Did` from `octo-ident`, and it would add a dependency edge the crate does not need for this variant, against the §Stable Abstractions direction that Layer B depends on the primitives it already owns.
+
+The typed payload is the point and it is not free: `IdentityNotFound(String)` would format the same way, and the RFC specifies `Did` so that the DID is rendered through its canonical form rather than through whatever a caller happened to pass, and so that a future canonical-form change is a change in one place instead of at every construction site.
+
 `Locked` is not reachable from `WalletStore::unlock`, which is the operation that produces an unlocked handle. It is reachable from `WalletStore::active_identity` (the sentinel) and from any `cli_fns` wrapper still forwarding a locked handle.
 
 Reused rather than added: `VaultDecryptionFailed` for a bad passphrase, `VaultSlotNotFound` for a missing slot, `NotActive { current_state }` for a store with no active identity, `AlreadyRevoked`, `RotationInProgress`, `NotRotating`, `SelfRotation`, `GracePeriodNotElapsed` — all of which the existing `IdentityKey` state machine already returns and all of which now propagate to disk instead of dying with the process.
@@ -494,6 +504,19 @@ A **third** new variant is required, and an earlier revision of this section spe
 #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
 WeakPassphrase,
 ```
+
+`MIN_PASSPHRASE_CHARS` is **declared by this amendment**, in `crates/octo-wallet/src/identity_store.rs`, and it is `pub` because the `#[error]` attribute above interpolates it:
+
+```rust
+/// The enforced passphrase length floor. The value is `12`, per the wallet
+/// foundation mission's acceptance criterion, which was written in 2026-07
+/// and never implemented. It is interpolated into `WeakPassphrase`'s `Display`
+/// rather than repeated as a literal, so the message cannot drift from the
+/// check that raises it.
+pub const MIN_PASSPHRASE_CHARS: usize = 12;
+```
+
+Three details of that placement are load-bearing, and each was a hole in an earlier revision of this section, which named the constant in the `#[error]` string and never said where it lived or what it held. **`thiserror` expands the attribute into a `write!` against the error's scope**, so an undeclared or unimported identifier is a compile error rather than a wrong message, and the failure surfaces at the definition of `WalletError` — a file that has nothing to do with passphrase policy — which is a poor place to discover a missing policy constant. Declaring it in `identity_store.rs` puts it beside the check that reads it, and making it `pub` is what lets `error.rs` interpolate it without the two modules depending on each other in the other direction.
 
 It is a hard error at **both** `register` and `unlock`. See §Future Work item 7 and AC-28 in the substrate mission for why the earlier warning-at-`register` split was withdrawn.
 

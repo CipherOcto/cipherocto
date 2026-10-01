@@ -185,6 +185,8 @@ $OCTO_HOME/wallet/            0700
 **Three** additions to `WalletError` in `crates/octo-wallet/src/error.rs` — the count is stated here once and AC-6 is bound to it:
 
 ```rust
+use crate::identity_record::Did;
+
 /// The store is locked. `WalletStore::open` is metadata-only; the identity
 /// seed requires `WalletStore::unlock(passphrase)`.
 #[error("wallet store is locked; unlock with a passphrase to access the identity key")]
@@ -199,6 +201,21 @@ IdentityNotFound(Did),
 #[error("passphrase is below the {MIN_PASSPHRASE_CHARS}-character floor")]
 WeakPassphrase,
 ```
+
+`error.rs` gains exactly one import, shown above. `Did` is local to this crate — defined in
+`identity_record.rs` and already imported by that path in `role_nonce.rs` and `agent.rs` — so
+the variant needs no new dependency edge, and this is the **first** `Did`-typed payload in
+`WalletError`; the existing thirty-three carry `String`, `Uuid`, `AgentState`,
+`LifecycleState`, and `std::io::Error`.
+
+`MIN_PASSPHRASE_CHARS` is **declared by this mission**, in `identity_store.rs`, at `12` — the
+value the wallet foundation mission's criterion named in 2026-07 and never implemented. It is
+`pub` because the `#[error]` attribute interpolates it, and `thiserror` expands that attribute
+into a `write!` against the error's scope, so an undeclared or unimported identifier is a
+compile error at the definition of `WalletError` — a file with no passphrase policy in it. The
+constant lives beside the check that reads it, and the `Display` message interpolates the same
+constant the check compares against, so the sentence an operator reads cannot drift from the
+number that produced it.
 
 `WeakPassphrase` is a hard error at **both** `register` and `unlock`. An earlier revision of
 this section specified two variants and put a **non-blocking warning** at `register`, so
@@ -328,7 +345,7 @@ Ten vectors carry a security or durability property and each is negative-control
 - [ ] **AC-25:** A full guide-executor run confirms the guide wall statements are now false (informational, and **not a criterion** — a guide-executor does not exist and this mission landing makes none of them false, since the guide update is the CLI mission's. There are **nine claims across seven locations**, not seven statements; enumerated by anchor sentence in that mission's AC-26)
 - [ ] **AC-26:** The two guards that keep a revoked record terminal are both present: `register` on a revoked DID returns `AlreadyRevoked` and leaves `store.json` byte-identical, and `select` on a revoked DID returns `NotActive { current_state: Revoked }`. A11 retains the seed slot, so without the first guard an operator re-registers the same seed and gets a working identity back from a record that was meant to be terminal; the second closes the same bypass by a different door
 - [ ] **AC-27:** The test exercising the deprecated `cli_fns::active_identity` free function carries an explicit `#[allow(deprecated)]`. Without it `tv_x_31` cannot be written, and without that attribute AC-21's clippy gate fails on this mission's own sentinel test
-- [ ] **AC-28:** The 12-character passphrase floor is enforced as a **hard `WalletError::WeakPassphrase` at both** `unlock` and `register`, and at no other point. The wallet foundation mission `0102-a` wrote the criterion in 2026-07 and filed it at `init`, which never receives a passphrase, so it was unenforceable where it sat; RFC-0011-x §Future Work item 7 carries it here, at the real enforcement point. **An earlier revision of this criterion made it a non-blocking warning at `register` and a hard error at `unlock`, on the theory that a floor at `register` would strand a returning operator with a weak existing passphrase. The split is withdrawn**: a floor at `unlock` is the same lockout arriving one command later with no escape hatch, and RFC-0011-x §Compatibility establishes that no pre-existing identity stores exist to strand. See §Notes
+- [ ] **AC-28:** The 12-character passphrase floor is enforced as a **hard `WalletError::WeakPassphrase` at both** `unlock` and `register`, and at no other point. The floor is **`pub const MIN_PASSPHRASE_CHARS: usize = 12` declared in `identity_store.rs`**, and the check at both sites compares against that constant rather than a literal — a second copy of the number is the same defect as a second home resolver, and the `#[error]` message interpolates the same constant, so the sentence and the threshold cannot drift apart. Asserted by `tv_x_42`. The wallet foundation mission `0102-a` wrote the criterion in 2026-07 and filed it at `init`, which never receives a passphrase, so it was unenforceable where it sat; RFC-0011-x §Future Work item 7 carries it here, at the real enforcement point. **An earlier revision of this criterion made it a non-blocking warning at `register` and a hard error at `unlock`, on the theory that a floor at `register` would strand a returning operator with a weak existing passphrase. The split is withdrawn**: a floor at `unlock` is the same lockout arriving one command later with no escape hatch, and RFC-0011-x §Compatibility establishes that no pre-existing identity stores exist to strand. See §Notes
 - [ ] **AC-29:** The seed slot's filename is `identity-` + lowercase hex of `key.public_key_bytes()` — 73 characters — and it **passes `validate_slot_id`**. That validator is module-private in `crates/octo-wallet/src/vault.rs` and must be promoted to `pub(crate)`. The store must **not** re-implement the rule: a second implementation of the same check is the same defect as a second home resolver. Asserted by `tv_x_47`. The DOB-derived form is what the earlier revisions specified, and it is rejected: hex-encoding a 73-character DID gives 146 characters, and `validate_slot_id` caps slot ids at 128, so every `register` would fail `InvalidSlotId` and the bootstrap path would be unreachable
 - [ ] **AC-30:** The lifecycle table is implemented for **every** edge, not only the two the parent RFC states. `register` never demotes: `Active → Active` writes no lifecycle change, and a re-registration with `activate = true` leaves an already-`Active` record `Active`. `Rotating → Rotating` is a no-op on the record and a second `begin_rotation` call. `Rotating → Revoked` is a **real** edge — `LifecycleState::can_transition_to` admits `(Active | Rotating, Revoked)` — and it leaves the successor record orphaned, so `revoke` on a `Rotating` identity must still persist both records rather than only the predecessor. The predecessor is `deprecated` and the successor `Designated`
 - [ ] **AC-31:** `begin_rotation` takes a `passphrase` and **seals the successor's slot**, because it appends a successor record whose slot must be reachable. A rotation that writes the record without the slot produces a store whose `active_did` names an identity that can never be unlocked. Asserted by `tv_x_41`

@@ -16,7 +16,7 @@
 //! |-------------------|---------------------|------|
 //! | `data: T`         | `payload: T`        | Renamed. |
 //! | `generated_at: DateTime<Utc>` | `executed_at_unix: u64` | Renamed + retyped. RFC 3339 string → `u64` unix seconds for single-clock determinism. |
-//! | `preview_only: bool` | `redacted: bool` | Renamed — surfaces the `OctoCliRedactor` alteration status. |
+//! | `preview_only: bool` | `redacted: bool` | Renamed. The VALUE still means "preview"; on a preview the renderer skips the redactor, so the name reads as an alteration status it does not carry. See the `redacted` field docs. |
 //! | (none)            | `command: &'static str` | ADDED. Operator-visible command label (e.g., `"octo.agent.create.v1"`). |
 //! | `exit_code: i32`  | (dropped)           | Process exit is OS-emitted, not envelope-carried. |
 //!
@@ -162,8 +162,37 @@ pub struct OutputEnvelope<T> {
     /// Unix seconds at which the command was executed
     /// (RFC-0011-c §9.4 renamed from v1 `generated_at`).
     pub executed_at_unix: u64,
-    /// True when the `OctoCliRedactor` altered the payload
+    /// Whether this envelope is a non-authoritative preview
     /// (RFC-0011-c §9.4 renamed from v1 `preview_only`).
+    ///
+    /// The rename is the source of a trap, so it is spelled out here.
+    /// The v1 field was `preview_only` and its value meant "nothing
+    /// was committed". The v4 field is `redacted` and its NAME reads
+    /// as "the `OctoCliRedactor` altered this payload" - which is not
+    /// what the value means, and never was. A preview is built with
+    /// `redacted: true` so that
+    /// [`OutputEnvelope::render_with_redaction`] SKIPS the redactor
+    /// (a preview shows the operator the substrate's own view, and
+    /// altering the surface under review would defeat its purpose).
+    /// The redactor therefore does not run, and nothing is altered,
+    /// while the field says `true`.
+    ///
+    /// So the value has two readings and a consumer must know which
+    /// one applies:
+    ///
+    /// - `true` on an envelope the handler built as a preview: nothing
+    ///   was committed, and nothing was redacted either.
+    /// - `true` on a live envelope: the redactor ran and altered the
+    ///   payload. The renderer inserts the key itself on that path,
+    ///   from `redactor.apply()`'s own return value.
+    ///
+    /// A consumer that wants "was anything redacted" must not read
+    /// this field on a preview envelope; there the honest answer is
+    /// always no. The alternative - adding a separate preview field -
+    /// is a wire change to a schema-version-4 field that consumers
+    /// already parse, which is a larger break than the ambiguity
+    /// costs, so the field keeps its established meaning and this
+    /// comment carries the precision the name cannot.
     pub redacted: bool,
     /// Command payload (RFC-0011-c §9.4 renamed from v1 `data`).
     pub payload: T,
@@ -187,8 +216,15 @@ impl<T> OutputEnvelope<T> {
         }
     }
 
-    /// Build an envelope marking the payload as redacted by the
-    /// `OctoCliRedactor` (RFC-0011-c §9.4 `redacted: true`).
+    /// Build a PREVIEW envelope, which sets `redacted: true` and
+    /// causes [`OutputEnvelope::render_with_redaction`] to skip the
+    /// redactor (RFC-0011-c §9.4 `redacted: true`).
+    ///
+    /// Note what this does NOT do: it does not mark the payload as
+    /// having been redacted, because the redactor never runs on this
+    /// path. The field carries the v1 `preview_only` meaning under
+    /// its v4 name. See the `redacted` field docs for the two
+    /// readings.
     pub fn redacted(command: &'static str, payload: T) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
@@ -238,6 +274,13 @@ impl<T: Serialize> OutputEnvelope<T> {
     /// value so the JSON output reflects ground truth rather than
     /// the pre-render builder flag.
     ///
+    /// That derivation happens on ONE path only. When the builder
+    /// already set `redacted: true` - a preview - the whole block is
+    /// skipped, the redactor does not run, and the builder's value
+    /// is what gets serialised. So on a preview the output flag is
+    /// NOT ground truth about redaction; it is the preview marker
+    /// surviving unchanged. The `redacted` field docs say so.
+    ///
     /// An empty [`RedactionContext`] is the no-op identity — the
     /// renderer behaves exactly like [`OutputEnvelope::render`].
     pub fn render_with_redaction(
@@ -249,6 +292,30 @@ impl<T: Serialize> OutputEnvelope<T> {
         let stdout = io::stdout();
         let tty = stdout.is_terminal();
         let mut w = stdout.lock();
+        self.render_to(&mut w, force_json, no_color, tty, redactor)
+    }
+
+    /// The render body, over any writer.
+    ///
+    /// This exists so the redaction decision is reachable from a
+    /// test. It was not, and the cost of that was concrete: the
+    /// preview-skip branch could be deleted - or inverted - and the
+    /// suite stayed green, because the only renderer a test could
+    /// reach was `render_pretty`, a test-only wrapper that
+    /// serialises and writes WITHOUT consulting the redactor at all.
+    /// A vector built on it was asserting that a payload survives,
+    /// which is what the wrapper does when the production branch is
+    /// broken. The wrapper is kept for the pretty-path tests and now
+    /// routes here, so there is one implementation of the decision
+    /// rather than two.
+    pub fn render_to<W: Write>(
+        &self,
+        w: &mut W,
+        force_json: bool,
+        no_color: bool,
+        tty: bool,
+        redactor: &RedactionContext,
+    ) -> io::Result<()> {
         let mut value = serde_json::to_value(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         // Mission `0011-c-agent-redaction-envelope` §Scope sub-step 4:
@@ -273,21 +340,22 @@ impl<T: Serialize> OutputEnvelope<T> {
             writeln!(w, "{json}")
         } else {
             let colored = !no_color && tty;
-            write_value(&mut w, &value, 0, colored)?;
+            write_value(w, &value, 0, colored)?;
             writeln!(w)
         }
     }
 
     #[cfg(test)]
     fn render_pretty<W: Write>(&self, w: &mut W, no_color: bool, tty: bool) -> io::Result<()> {
-        // Test-only thin wrapper — the canonical path is
-        // `render_with_redaction`, which inlines the apply + write
-        // logic for both JSON and pretty outputs.
-        let value = serde_json::to_value(self)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let colored = !no_color && tty;
-        write_value(w, &value, 0, colored)?;
-        writeln!(w)
+        // Routes through `render_to` so the redaction decision has
+        // ONE implementation. This used to re-implement the write
+        // half and drop the apply half, which meant a test using it
+        // proved nothing about redaction - it would have passed with
+        // the production branch deleted. The empty context is the
+        // documented no-op identity, so an unaltered envelope renders
+        // identically either way and the pretty-path vectors are
+        // unaffected by the routing.
+        self.render_to(w, false, no_color, tty, &RedactionContext::new())
     }
 }
 
@@ -599,6 +667,84 @@ mod tests {
         assert!(
             json.contains(r#""redacted":false"#),
             "applied envelope MUST advertise redacted=false: {json}",
+        );
+    }
+
+    /// R10: the `redacted` field was documented as "true when the
+    /// `OctoCliRedactor` altered the payload", and the value it
+    /// carries on a preview is `true` while the redactor never runs.
+    ///
+    /// The behaviour is deliberate and correct - a preview shows the
+    /// operator the substrate's own view, so the redactor is skipped
+    /// on exactly that path, and the flag is what triggers the skip.
+    /// The defect was the documentation claiming a meaning the value
+    /// does not carry, which is the class of disagreement that lets a
+    /// consumer build "was anything redacted" on a field that cannot
+    /// answer it. The field docs now state both readings.
+    ///
+    /// These vectors pin the reading so the doc cannot drift back,
+    /// and they are a matched PAIR over the same payload and the same
+    /// redactor. That pairing is the whole design. A vector on the
+    /// preview alone proves nothing: with a no-op context the payload
+    /// survives whether the skip runs or not. A vector on the live
+    /// envelope alone proves the redactor can fire but says nothing
+    /// about previews. Together they show the flag is what decides,
+    /// because the ONLY difference between them is the flag.
+    ///
+    /// The first revision of the preview vector was built on
+    /// `render_pretty`, which is a test-only wrapper. That wrapper
+    /// used to re-implement the write half and drop the apply half
+    /// entirely, so inverting the production branch left it green -
+    /// it was asserting that a payload survives, which is exactly
+    /// what the broken wrapper does. `render_pretty` now routes
+    /// through `render_to`, and these vectors drive `render_to`
+    /// directly so the branch under test is the production one.
+    ///
+    /// --- fixture ---
+    ///
+    /// A payload whose `holder_did` is the redacted key, so the
+    /// redactor WOULD alter it when the holder is the active
+    /// operator.
+    #[derive(Serialize, Debug, Clone)]
+    struct HolderPayload {
+        holder_did: String,
+    }
+
+    fn holder_payload() -> HolderPayload {
+        HolderPayload {
+            holder_did: crate::redact::REDACTED_KEY.to_string(),
+        }
+    }
+
+    /// A context in which the un-redaction fires, so the redactor has
+    /// real work to do and the skip is observable.
+    fn live_redactor() -> RedactionContext {
+        RedactionContext::new()
+            .with_holder_did("did:octo:operator")
+            .with_active_did("did:octo:operator")
+    }
+
+    fn render_json<T: Serialize>(env: &OutputEnvelope<T>) -> String {
+        let mut buf = Vec::new();
+        env.render_to(&mut buf, true, true, false, &live_redactor())
+            .expect("render");
+        String::from_utf8(buf).expect("utf8")
+    }
+
+    #[test]
+    fn a_preview_does_not_apply_the_redactor_that_a_live_envelope_does() {
+        let preview = render_json(&OutputEnvelope::redacted("test.v1", holder_payload()));
+        let live = render_json(&OutputEnvelope::new("test.v1", holder_payload()));
+
+        assert!(
+            preview.contains(crate::redact::REDACTED_KEY),
+            "a preview must NOT be redacted - the operator is reviewing the substrate's own \
+             view and altering it would defeat the point. The payload was modified: {preview}"
+        );
+        assert!(
+            live.contains("did:octo:operator") && !live.contains(crate::redact::REDACTED_KEY),
+            "a live envelope MUST apply the redactor, or the pair proves nothing - both \
+             outcomes would be identical and the flag would be unobservable. Live: {live}"
         );
     }
 }

@@ -97,6 +97,17 @@ pub enum CapabilityAction {
         /// fields: `cap_id`, `root_id`, `caveat`.
         #[arg(long, value_delimiter = ',')]
         filter: Vec<String>,
+        /// Read the wallet passphrase from stdin instead of an interactive
+        /// prompt. Refused unless `--allow-stdin-secret` is also set
+        /// (operator guard against unattended secret reads; exit 15).
+        /// 4c(b) audit migration: the substrate's only legitimate
+        /// pre-signing access path is `WalletStore::unlock(passphrase)`,
+        /// so every capability subcommand takes a passphrase — `list`
+        /// is read-only but the substrate's `list_active` consumes a
+        /// `&dyn CapabilitySigner` for trait consistency, so unlock
+        /// is required even though no signing happens here.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// Mint a new capability.
     Mint {
@@ -109,6 +120,15 @@ pub enum CapabilityAction {
         /// Root capability identifier.
         #[arg(long)]
         root: Option<String>,
+        /// Read the wallet passphrase from stdin instead of an interactive
+        /// prompt. Refused unless `--allow-stdin-secret` is also set
+        /// (operator guard against unattended secret reads; exit 15).
+        /// 4c(b) audit migration: `WalletStore::try_active_identity` was
+        /// demoted to a metadata-only stub returning `Locked`; the
+        /// production signing path now routes through
+        /// `WalletStore::unlock(passphrase)`.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// Attenuate an existing capability.
     Attenuate {
@@ -117,6 +137,15 @@ pub enum CapabilityAction {
         /// Additional caveats to apply.
         #[arg(long)]
         caveats: String,
+        /// Read the wallet passphrase from stdin instead of an interactive
+        /// prompt. Refused unless `--allow-stdin-secret` is also set
+        /// (operator guard against unattended secret reads; exit 15).
+        /// 4c(b) audit migration: `WalletStore::try_active_identity` was
+        /// demoted to a metadata-only stub returning `Locked`; the
+        /// production signing path now routes through
+        /// `WalletStore::unlock(passphrase)`.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
 }
 
@@ -213,24 +242,38 @@ pub struct CapabilityAttenuateOutput {
 /// Read-only, no side effects. Filters are validated before the wallet is
 /// opened so a malformed `--filter` fails fast with `InvalidFilter`
 /// (exit 16) rather than after an identity lookup.
-pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
+///
+/// 4c(b) audit migration: `list` was previously metadata-only and did
+/// not need a passphrase, but the substrate's `list_active` consumes a
+/// `&dyn CapabilitySigner` for trait consistency. After
+/// `WalletStore::try_active_identity` was demoted to a metadata-only
+/// stub returning `Locked` (audit item 4c(a) shipped at R24), the
+/// only legitimate pre-signing access path is
+/// `WalletStore::unlock(passphrase)` — so `list` now takes a
+/// passphrase. The substrate's `list_active` does not actually call
+/// `sign` (it's read-only), but the trait obligation is uniform.
+pub fn list(filters: &[String], passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     let filters = parse_filters(filters)?;
-    let store = octo_wallet::WalletStore::open()
+    let passphrase = super::identity::acquire_passphrase(cli, "capability list", passphrase_stdin)?;
+    let mut store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-    let key = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        // R23: the fall-through DELEGATES to the `From<WalletError>`
-        // translation table instead of re-deriving a mapping here.
-        //
-        // The table already owns `Locked -> WalletLocked` (exit 92);
-        // this arm routed around it and delivered exit 64
-        // ("internal error") for a condition the CLI's own published
-        // table names. A per-call-site re-derivation of a mapping is
-        // the same shape of drift R23 just removed from the payload
-        // cap: a property owned in one place and copied into seven.
-        other => OctoCliError::from(other),
-    })?;
-    let summaries = octo_cap_macaroon::list_active(&key)
+    let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+    let unlocked = store
+        .unlock(passphrase.as_str(), seed_buf.as_mut())
+        .map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            // R23: the fall-through DELEGATES to the `From<WalletError>`
+            // translation table instead of re-deriving a mapping here.
+            //
+            // The table already owns `Locked -> WalletLocked` (exit 92);
+            // this arm routed around it and delivered exit 64
+            // ("internal error") for a condition the CLI's own published
+            // table names. A per-call-site re-derivation of a mapping is
+            // the same shape of drift R23 just removed from the payload
+            // cap: a property owned in one place and copied into seven.
+            other => OctoCliError::from(other),
+        })?;
+    let summaries = octo_cap_macaroon::list_active(unlocked.active_identity())
         .map_err(|e| OctoCliError::Internal(sanitize_mint_error(&e)))?;
     let capabilities: Vec<CapabilitySummaryView> = summaries
         .into_iter()
@@ -269,10 +312,18 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
 /// 5. `--dry-run` short-circuit → exit 0, `redacted: true`
 /// 6. active identity → exit 2
 /// 7. substrate mint → exit 5 / 7 / 8 / 11 / 64
+///
+/// 4c(b) audit migration: the production signing path now takes a
+/// passphrase via `WalletStore::unlock(passphrase)`. The
+/// `#[cfg(test)]` block below remains the only surviving
+/// `try_active_identity` call site (the test stub for
+/// `fixture_token`); it is pinned by `tv_x_c_95`.
+#[cfg_attr(test, allow(unused_variables))]
 pub fn mint(
     caveats_json: &str,
     holder_did: &str,
     root: Option<&str>,
+    passphrase_stdin: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability mint")?;
@@ -390,14 +441,34 @@ pub fn mint(
         // Dev-mode non-test path. The `[0u8; 32]` placeholder signs a
         // known cap_id — explicitly acknowledged by `--mode dev` /
         // `--dev`. R20 Lens-4 F2.
-        let store = octo_wallet::WalletStore::open()
+        //
+        // 4c(b) audit migration: the production signing path now
+        // routes through `WalletStore::unlock(passphrase)` rather than
+        // the metadata-only `try_active_identity` stub. The dev
+        // operator is expected to feed the passphrase via the
+        // standard `acquire_passphrase` helper (interactive prompt
+        // or `--passphrase-stdin` with `--allow-stdin-secret`).
+        let passphrase =
+            super::identity::acquire_passphrase(cli, "capability mint", passphrase_stdin)?;
+        let mut store = octo_wallet::WalletStore::open()
             .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-        let key = store.try_active_identity().map_err(|e| match e {
-            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            other => OctoCliError::from(other),
-        })?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let unlocked = store
+            .unlock(passphrase.as_str(), seed_buf.as_mut())
+            .map_err(|e| match e {
+                octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+                // R23: the fall-through DELEGATES to the
+                // `From<WalletError>` translation table. The
+                // `[("capability.rs", 1)]` shrunken
+                // `tv_x_c_95` contract is the regression net — a
+                // future regression that re-introduces a
+                // `try_active_identity` call in the production
+                // signing path will fail the directory-scan
+                // assertion and is visible to any reviewer.
+                other => OctoCliError::from(other),
+            })?;
         let token: CapabilityToken =
-            octo_cap_macaroon::mint(&[0u8; 32], &key, holder_did, &caveats)
+            octo_cap_macaroon::mint(&[0u8; 32], unlocked.active_identity(), holder_did, &caveats)
                 .map_err(map_mint_error)?;
 
         let output = CapabilityMintOutput {
@@ -422,7 +493,17 @@ pub fn mint(
 /// 5. parent lookup → exit 12
 /// 6. narrowing check → exit 10
 /// 7. substrate attenuate → exit 7 / 8 / 10 / 64
-pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), OctoCliError> {
+///
+/// 4c(b) audit migration: the production signing path now takes a
+/// passphrase via `WalletStore::unlock(passphrase)`. The
+/// `--dry-run` short-circuit at step 4 above still returns BEFORE
+/// the unlock, so previews remain passphrase-free.
+pub fn attenuate(
+    cap_id: &str,
+    caveats_json: &str,
+    passphrase_stdin: bool,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability attenuate")?;
     // R20 Lens-2 F7: `--confirm-acknowledge` is now a global flag on
     // `OperatorModeFlags` (parity with identity rotate/revoke and
@@ -463,25 +544,40 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
     let parent = resolve_parent(cap_id)?;
     check_attenuation(&parent, &caveats)?;
 
-    let store = octo_wallet::WalletStore::open()
+    // 4c(b) audit migration: the production signing path now
+    // routes through `WalletStore::unlock(passphrase)`. The
+    // `[("capability.rs", 1)]` shrunken `tv_x_c_95` contract is
+    // the regression net — a future regression that re-introduces
+    // a `try_active_identity` call in any production path will
+    // fail the directory-scan assertion.
+    let passphrase = super::identity::acquire_passphrase(cli, "capability attenuate", passphrase_stdin)?;
+    let mut store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
-    let key = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        // R23: the fall-through DELEGATES to the `From<WalletError>`
-        // translation table instead of re-deriving a mapping here.
-        //
-        // The table already owns `Locked -> WalletLocked` (exit 92);
-        // this arm routed around it and delivered exit 64
-        // ("internal error") for a condition the CLI's own published
-        // table names. A per-call-site re-derivation of a mapping is
-        // the same shape of drift R23 just removed from the payload
-        // cap: a property owned in one place and copied into seven.
-        other => OctoCliError::from(other),
-    })?;
+    let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+    let unlocked = store
+        .unlock(passphrase.as_str(), seed_buf.as_mut())
+        .map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            // R23: the fall-through DELEGATES to the `From<WalletError>`
+            // translation table instead of re-deriving a mapping here.
+            //
+            // The table already owns `Locked -> WalletLocked` (exit 92);
+            // this arm routed around it and delivered exit 64
+            // ("internal error") for a condition the CLI's own published
+            // table names. A per-call-site re-derivation of a mapping is
+            // the same shape of drift R23 just removed from the payload
+            // cap: a property owned in one place and copied into seven.
+            other => OctoCliError::from(other),
+        })?;
     let catalog = resolve_catalog()?;
 
-    let child = octo_cap_macaroon::attenuate(&parent, &caveats, &key, &catalog)
-        .map_err(map_attenuate_error)?;
+    let child = octo_cap_macaroon::attenuate(
+        &parent,
+        &caveats,
+        unlocked.active_identity(),
+        &catalog,
+    )
+    .map_err(map_attenuate_error)?;
 
     let output = CapabilityAttenuateOutput {
         child_cap_id: hex::encode(child.macaroon.id),
@@ -952,13 +1048,21 @@ fn map_attenuate_error(e: MintError) -> OctoCliError {
 /// Route a `CapabilityAction` to its handler.
 pub fn dispatch(action: &CapabilityAction, cli: &Octo) -> Result<(), OctoCliError> {
     match action {
-        CapabilityAction::List { filter } => list(filter, cli),
+        CapabilityAction::List {
+            filter,
+            passphrase_stdin,
+        } => list(filter, *passphrase_stdin, cli),
         CapabilityAction::Mint {
             caveats,
             holder,
             root,
-        } => mint(caveats, holder, root.as_deref(), cli),
-        CapabilityAction::Attenuate { cap_id, caveats } => attenuate(cap_id, caveats, cli),
+            passphrase_stdin,
+        } => mint(caveats, holder, root.as_deref(), *passphrase_stdin, cli),
+        CapabilityAction::Attenuate {
+            cap_id,
+            caveats,
+            passphrase_stdin,
+        } => attenuate(cap_id, caveats, *passphrase_stdin, cli),
     }
 }
 

@@ -2847,9 +2847,20 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
         // Hand-written, not derived: a list built from the same scan
         // that checks it would constrain nothing (rule 12). These are
-        // the seven sites R23 found, by file.
-        const CONTRACTED: [(&str, usize); 3] =
-            [("capability.rs", 4), ("governance.rs", 2), ("agent.rs", 1)];
+        // the surviving sites, by file. The 4c(b) audit migration
+        // moved the 6 production signing paths off
+        // `try_active_identity` onto `WalletStore::unlock`, leaving
+        // the `#[cfg(test)]` stub at `capability.rs:362` as the only
+        // production-code call site (pinned here as a regression net
+        // for the migration). `governance.rs` and `agent.rs` still
+        // carry the sites from sites 4-6; those are migrated in
+        // audit-4c(b) Phases 2-3 and the contract is tightened
+        // further in the same commits.
+        const CONTRACTED: [(&str, usize); 3] = [
+            ("capability.rs", 1),
+            ("governance.rs", 2),
+            ("agent.rs", 1),
+        ];
 
         // R24: iterate the DIRECTORY and compare the SET, rather than
         // iterating three hard-coded files.

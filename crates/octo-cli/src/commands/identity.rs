@@ -429,8 +429,18 @@ pub struct IdentityRotateAbortOutput {
 /// "re-run with RUST_LOG=debug and report the diagnostic" - a false
 /// escalation for a missing environment variable, and in CI the exit
 /// code is what decides retry versus page. Exit 27
-/// (`NoOctoHome`) exists precisely for this and was unreachable on
-/// these five subcommands, which never call `home::resolve`.
+/// (`NoOctoHome`) exists precisely for this.
+///
+/// These five subcommands never call `home::resolve`, so the CLI's
+/// own home resolution - which is correct, and is covered by its own
+/// vectors - does not protect this path. The substrate resolves the
+/// home independently, and that second resolution is the one on the
+/// line below. It was joining onto the empty-home sentinel rather
+/// than propagating it, so the `Config` this arm matches was
+/// unreachable AND the store was being created relative to the
+/// operator's working directory. The substrate now propagates the
+/// sentinel (`wallet_root_under_home`, vector tv_x_56), which is what
+/// makes this mapping live rather than dead code.
 ///
 /// Everything else from `open` is `Io` or crypto, which is a real
 /// fault and stays at 64.

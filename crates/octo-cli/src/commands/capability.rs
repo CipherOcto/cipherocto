@@ -550,7 +550,8 @@ pub fn attenuate(
     // the regression net — a future regression that re-introduces
     // a `try_active_identity` call in any production path will
     // fail the directory-scan assertion.
-    let passphrase = super::identity::acquire_passphrase(cli, "capability attenuate", passphrase_stdin)?;
+    let passphrase =
+        super::identity::acquire_passphrase(cli, "capability attenuate", passphrase_stdin)?;
     let mut store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
@@ -571,13 +572,9 @@ pub fn attenuate(
         })?;
     let catalog = resolve_catalog()?;
 
-    let child = octo_cap_macaroon::attenuate(
-        &parent,
-        &caveats,
-        unlocked.active_identity(),
-        &catalog,
-    )
-    .map_err(map_attenuate_error)?;
+    let child =
+        octo_cap_macaroon::attenuate(&parent, &caveats, unlocked.active_identity(), &catalog)
+            .map_err(map_attenuate_error)?;
 
     let output = CapabilityAttenuateOutput {
         child_cap_id: hex::encode(child.macaroon.id),

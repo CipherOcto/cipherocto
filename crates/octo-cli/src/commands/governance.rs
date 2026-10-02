@@ -636,7 +636,8 @@ fn attest_handler(
     // `IdentityKey`, which `unlocked.active_identity().clone()`
     // provides (cheap Arc clone — `IdentityKey` wraps
     // `Arc<dyn HsmAdapter>`).
-    let passphrase = super::identity::acquire_passphrase(cli, "governance attest", passphrase_stdin)?;
+    let passphrase =
+        super::identity::acquire_passphrase(cli, "governance attest", passphrase_stdin)?;
     let mut store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;

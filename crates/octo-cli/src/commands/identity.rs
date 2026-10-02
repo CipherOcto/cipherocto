@@ -745,10 +745,23 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     // exports `ROTATION_GRACE_PERIOD_SECS`; the two agreed, so nothing
     // caught a change to one of them, and the envelope would then
     // disagree with the store about when a rotation completes.
-    let grace_expires_at = unix_to_rfc3339(
-        now as i64
-            + i64::try_from(octo_wallet::identity::ROTATION_GRACE_PERIOD_SECS).unwrap_or(i64::MAX),
-    );
+    //
+    // `null` under `--dry-run`, and this is the same repair the
+    // rotate-complete path already carries for `completed_at`. The
+    // window was computed unconditionally, so a PREVIEW carried a
+    // real expiry instant for a rotation that had not started. An
+    // operator reading a dry run saw a deadline and a DID and could
+    // reasonably believe the rotation was under way. The substrate
+    // was never called, so there is no window, and the field says so.
+    let grace_expires_at = if cli.mode.dry_run {
+        None
+    } else {
+        unix_to_rfc3339(
+            now as i64
+                + i64::try_from(octo_wallet::identity::ROTATION_GRACE_PERIOD_SECS)
+                    .unwrap_or(i64::MAX),
+        )
+    };
     let output = IdentityRotateOutput {
         new_did,
         old_did: old_did.0,
@@ -809,8 +822,17 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
         redact_string(reason)
     );
 
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let mut revoked_at = None;
     if !cli.mode.dry_run {
+        // The clock is read INSIDE the guard, not above it. Read
+        // above, it produced a real RFC 3339 instant for a
+        // revocation that had not happened, and a preview is exactly
+        // where a plausible-looking timestamp does the most damage:
+        // the operator has just been told in words that nothing was
+        // done, and the payload beside that sentence says when it was
+        // done. `null` is the honest answer and is the form the
+        // register and rotate-complete paths already use.
+        let now = chrono::Utc::now().timestamp().max(0) as u64;
         // §AC-7 signing-site migration: open the store, then
         // unlock with the passphrase to mint an `UnlockedWallet`
         // handle. The handle's `revoke(now)` is the
@@ -823,8 +845,8 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
             .unlock(passphrase.as_str(), seed_buf.as_mut())
             .map_err(OctoCliError::from)?;
         unlocked.revoke(now).map_err(OctoCliError::from)?;
+        revoked_at = unix_to_rfc3339(now as i64);
     }
-    let revoked_at = unix_to_rfc3339(now as i64);
     // The reason is echoed to stderr and into the envelope, and then
     // dropped: the v1.0 substrate has nowhere to put it.
     // `UnlockedWallet::revoke` takes only a wall-clock timestamp, and
@@ -4873,6 +4895,97 @@ mod tests {
             "a dry-run rotate-abort must leave the rotation in flight. It is {0:?}, so a \
              preview discarded a rotation the operator had not committed to abandoning",
             record.lifecycle
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // R10 Lens-1: two mutating envelopes carried a real timestamp
+    // for an event the preview did not perform.
+    //
+    // `revoke` read the clock ABOVE its dry-run guard and formatted
+    // the result below it, so a preview shipped `revoked_at` set to
+    // a live RFC 3339 instant. `rotate` computed `grace_expires_at`
+    // unconditionally, so a preview shipped a deadline for a
+    // rotation that had not started. Both are the fabrication the
+    // register and rotate-complete paths had already been repaired
+    // for, and the repair reached two of the four mutating envelopes
+    // rather than all four.
+    //
+    // These are SOURCE vectors, and the choice is deliberate. The
+    // defect is POSITIONAL - a statement sitting outside a guard -
+    // and the handler's envelope goes to stdout, which a unit test
+    // cannot capture. A runtime vector would have to re-derive the
+    // envelope by hand, and a vector that builds its own copy of the
+    // thing it is testing is the R9 lesson about `tv_x_c_1` all over
+    // again. The runtime half of this property is already covered by
+    // `tv_x_c_68` through `tv_x_c_70`, which prove the STORE is
+    // untouched. What is left is the claim that the handler does not
+    // COMPUTE a time it must then not report, and that is a claim
+    // about the source.
+    //
+    // Each assertion below is affirmative and each is falsifiable by
+    // a mutation that changes text, which is the bar a text-shaped
+    // vector has to clear to be worth having.
+
+    #[test]
+    fn tv_x_c_71_revoke_reads_its_clock_inside_the_dry_run_guard() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn revoke(", "pub fn register(");
+
+        let guard = body
+            .find("if !cli.mode.dry_run {")
+            .expect("revoke must still gate its substrate work on dry_run");
+        let clock = body
+            .find("chrono::Utc::now()")
+            .expect("revoke must read the clock somewhere");
+        assert!(
+            clock > guard,
+            "revoke must read the clock INSIDE the dry-run guard. The clock read sits at offset \
+             {clock} and the guard opens at {guard}, so the read happens on the preview path and \
+             the envelope carries a real instant for a revocation that did not occur. Body: {body}"
+        );
+
+        // The reporting site must be an ASSIGNMENT into the binding
+        // declared before the guard, not a fresh binding computed
+        // from a `now` that outlives the guard.
+        assert!(
+            body.contains("let mut revoked_at = None;"),
+            "revoke must declare revoked_at as None and fill it inside the guard, so a preview \
+             has no time to report: {body}"
+        );
+        assert!(
+            body.contains("revoked_at = unix_to_rfc3339(now as i64);"),
+            "the revocation instant must be assigned inside the guard, from the clock read that \
+             is also inside it: {body}"
+        );
+    }
+
+    #[test]
+    fn tv_x_c_72_rotate_reports_no_grace_window_it_never_started() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn rotate(", "pub fn revoke(");
+
+        let start = body
+            .find("let grace_expires_at")
+            .expect("rotate must compute grace_expires_at");
+        let end = body
+            .find("let output = IdentityRotateOutput")
+            .expect("rotate must build its output after the grace window");
+        let window = &body[start..end];
+
+        assert!(
+            window.contains("if cli.mode.dry_run"),
+            "the grace window must be branch-dry-run. It is computed on one path, so a preview \
+             ships a deadline for a rotation that never began. Window: {window}"
+        );
+        assert!(
+            window.contains("None"),
+            "the dry-run arm of the grace window must be None, not a formatted instant: {window}"
+        );
+        assert!(
+            window.contains("ROTATION_GRACE_PERIOD_SECS"),
+            "the live arm must still derive the window from the substrate constant rather than a \
+             local literal: {window}"
         );
     }
 }

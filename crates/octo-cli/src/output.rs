@@ -203,6 +203,28 @@ impl<T> OutputEnvelope<T> {
     ///
     /// `4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
     /// Consumers MUST read this field first and reject any other value.
+    ///
+    /// RFC-0011-x INHERITS this slot and does not claim one of its
+    /// own. Its subcommands introduce no envelope divergence - no
+    /// field renamed, retyped, added or dropped - so a consumer
+    /// branching on `schema_version` sees the v4 shape it already
+    /// handles. This is deliberate, not an omission: RFC-0011-c
+    /// §9.4.1's table leaves the "(future) 8+" slots to amendments
+    /// that actually diverge, and an amendment that changes no field
+    /// would misrepresent the envelope by claiming one.
+    ///
+    /// KNOWN CROSS-RFC CONFLICT, outside this crate's scope and
+    /// reported rather than fixed. RFC-0011-g is Accepted and pins
+    /// `schema_version = 6` in its §Forward Compatibility callout,
+    /// its JSON examples and its test-vector table, while
+    /// `octo governance snapshot --json` emits `4` - measured, not
+    /// inferred. RFC-0011-f is additionally self-contradictory: its
+    /// prose says the next value is 6 while the same table gives it
+    /// "4..5 TBD at promotion". Resolving either means deciding
+    /// which accepted document is authoritative and making the
+    /// constant per-amendment, which is a specification decision for
+    /// the RFC-0011 owners, not a code change. Raising a value here
+    /// would move EVERY command family, not just the two at fault.
     pub const SCHEMA_VERSION: u32 = 4;
 
     /// Build an applied-result envelope with no redaction applied.

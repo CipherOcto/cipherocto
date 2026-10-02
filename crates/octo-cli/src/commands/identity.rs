@@ -4565,4 +4565,314 @@ mod tests {
             "revoke must NOT keep the free-fn path per AC-7 migration: {body}"
         );
     }
+
+    // -----------------------------------------------------------------
+    // R10 Lens-1: the five `if !cli.mode.dry_run` guards in the
+    // mutating handlers had NO runtime vector.
+    //
+    // What the gap was. Every one of the five guards - register,
+    // select, revoke, rotate-complete, rotate-abort - decided whether
+    // to touch the substrate. The arm body opens the store, unlocks,
+    // and mutates. Flipping any guard from `!cli.mode.dry_run` to
+    // `true` therefore makes a PREVIEW perform the mutation: the
+    // operator runs `--dry-run revoke`, sees "would revoke: ...",
+    // and the active identity is gone. That is the worst shape a
+    // review tool can have, because the output is the reassurance.
+    //
+    // Why it survived. The only tests that set `dry_run` exercised
+    // `require_confirm` in isolation, which is a different function
+    // and a different claim. A source-grep vector could not close it
+    // either: `tv_x_c_39` pins the guard's TEXT, so a mutation that
+    // keeps the line and changes only its condition reads identical
+    // to the vector. The condition is the part that matters and the
+    // text is not.
+    //
+    // What these five vectors assert, and how a flipped guard fails:
+    //
+    //   register / select  - the store is read back off disk and
+    //     compared, so a flipped guard shows up as a changed record
+    //     or a changed active pointer.
+    //
+    //   revoke / rotate-complete / rotate-abort - under a flipped
+    //     guard the arm reaches `acquire_passphrase`, and under
+    //     `cargo test` stdin is not a terminal, so it returns
+    //     `WalletLocked` immediately rather than prompting. The
+    //     handler therefore FAILS FAST instead of hanging, which is
+    //     what makes these safe to run: a vector that could block
+    //     the suite is a vector nobody keeps. The assertion is that
+    //     the call returns `Ok`, which a flipped guard cannot do.
+    //
+    // The store-unchanged assertion is kept on all five anyway, so
+    // the vectors say what the property IS and not merely that some
+    // error stopped happening.
+
+    /// Bring up a temp `OCTO_HOME` with one registered identity.
+    /// Returns the two `TempDir` guards so the wallet root outlives
+    /// the handler under test, plus the store root and active DID.
+    /// The caller holds `OCTO_HOME_LOCK` and must clear the env var.
+    fn dry_run_fixture(
+        label: &str,
+        seed_byte: u8,
+    ) -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        std::path::PathBuf,
+        String,
+    ) {
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        // SAFETY: the caller holds OCTO_HOME_LOCK, the only writer of
+        // OCTO_HOME among this module's tests.
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("work dir");
+        let seed_file = dir.path().join("seed.hex");
+        std::fs::write(&seed_file, hex::encode([seed_byte; 32])).expect("write seed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod seed");
+        }
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        register(label, &pass_file, true, Some(&seed_file), &cli).expect("seed the store");
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let did = store.active_did().expect("active DID").0.clone();
+        drop(store);
+        (home, dir, root, did)
+    }
+
+    #[test]
+    fn tv_x_c_66_a_dry_run_register_creates_no_identity() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("work dir");
+        let seed_file = dir.path().join("seed.hex");
+        std::fs::write(&seed_file, hex::encode([9u8; 32])).expect("write seed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod seed");
+        }
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        cli.mode.dry_run = true;
+        let result = register("tv-x-c-66", &pass_file, true, Some(&seed_file), &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect("a dry-run register is a preview and must succeed");
+
+        assert!(
+            !root.join("store.json").exists(),
+            "a dry-run register must not create store.json. It exists, so the guard was crossed \
+             and an identity was minted by a command the operator asked only to preview"
+        );
+    }
+
+    #[test]
+    fn tv_x_c_67_a_dry_run_select_leaves_the_active_pointer_where_it_was() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("work dir");
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+
+        // Two identities, so the pointer has somewhere to move TO.
+        // The DIDs come from `list_records` rather than from
+        // `active_did` after each registration: this handler does not
+        // re-promote on a second register, so reading the pointer
+        // here would have produced the same DID twice and the fixture
+        // would not have been testing a move at all.
+        for (i, byte) in [3u8, 4u8].into_iter().enumerate() {
+            let seed_file = dir.path().join(format!("seed{i}.hex"));
+            std::fs::write(&seed_file, hex::encode([byte; 32])).expect("write seed");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                    .expect("chmod seed");
+            }
+            register("tv-x-c-67", &pass_file, true, Some(&seed_file), &cli).expect("register");
+        }
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let dids: Vec<String> = store
+            .list_records()
+            .iter()
+            .map(|r| r.did.0.clone())
+            .collect();
+        let before = store.active_did().expect("active DID").0.clone();
+        assert_eq!(
+            dids.len(),
+            2,
+            "the fixture must have two identities for the pointer to move between, got {dids:?}"
+        );
+        let target = dids
+            .iter()
+            .find(|d| **d != before)
+            .expect("a second, non-active identity")
+            .clone();
+        assert_ne!(target, before, "the target must not already be active");
+
+        // `Octo` is not `Clone`, and a second `cli_with_mode` is both
+        // simpler and a better test: it proves the dry-run path needs
+        // nothing from the mutating call that preceded it.
+        let mut dry = cli_with_mode(OperatorMode::Human);
+        dry.mode.confirm = true;
+        dry.mode.confirm_acknowledge = true;
+        dry.mode.dry_run = true;
+        let result = select(&target, &dry);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect("a dry-run select is a preview and must succeed");
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen after dry-run");
+        assert_eq!(
+            store.active_did().expect("active DID").0,
+            before,
+            "a dry-run select must not move the active pointer. The pointer moved, so the guard \
+             was crossed and the preview changed which identity the wallet signs with"
+        );
+    }
+
+    #[test]
+    fn tv_x_c_68_a_dry_run_revoke_leaves_the_identity_active() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (_home, _dir, root, did) = dry_run_fixture("tv-x-c-68", 5u8);
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        cli.mode.dry_run = true;
+        // A flipped guard reaches `acquire_passphrase`, which under
+        // `cargo test` returns `WalletLocked` rather than prompting.
+        let result = revoke("dry-run preview", true, &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect(
+            "a dry-run revoke is a preview and must succeed. An error here means the guard was \
+             crossed and the arm ran to the passphrase prompt",
+        );
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let record = store
+            .identity_record(&octo_wallet::Did(did.clone()))
+            .expect("record");
+        assert_eq!(
+            record.lifecycle,
+            octo_wallet::LifecycleState::Active,
+            "a dry-run revoke must not transition the identity. It is {0:?}, so a preview \
+             destroyed the identity the operator still needs",
+            record.lifecycle
+        );
+    }
+
+    #[test]
+    fn tv_x_c_69_a_dry_run_rotate_complete_leaves_the_rotation_in_flight() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (_home, _dir, root, did) = dry_run_fixture("tv-x-c-69", 6u8);
+
+        {
+            let mut store = octo_wallet::WalletStore::open_at(&root).expect("open to rotate");
+            let mut seed_out = Vec::new();
+            let mut unlocked = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
+            unlocked
+                .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+                .expect("begin_rotation");
+        }
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        cli.mode.dry_run = true;
+        let result = rotate_complete(true, &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect(
+            "a dry-run rotate-complete is a preview and must succeed. An error here means the \
+             guard was crossed and the arm ran to the passphrase prompt",
+        );
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let record = store
+            .identity_record(&octo_wallet::Did(did.clone()))
+            .expect("record");
+        assert_eq!(
+            record.lifecycle,
+            octo_wallet::LifecycleState::Rotating,
+            "a dry-run rotate-complete must leave the rotation in flight. It is {0:?}, so a \
+             preview completed a rotation the operator had not committed to",
+            record.lifecycle
+        );
+    }
+
+    #[test]
+    fn tv_x_c_70_a_dry_run_rotate_abort_leaves_the_rotation_in_flight() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (_home, _dir, root, did) = dry_run_fixture("tv-x-c-70", 8u8);
+
+        {
+            let mut store = octo_wallet::WalletStore::open_at(&root).expect("open to rotate");
+            let mut seed_out = Vec::new();
+            let mut unlocked = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
+            unlocked
+                .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+                .expect("begin_rotation");
+        }
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        cli.mode.dry_run = true;
+        let result = rotate_abort(Some("dry-run preview"), true, &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect(
+            "a dry-run rotate-abort is a preview and must succeed. An error here means the \
+             guard was crossed and the arm ran to the passphrase prompt",
+        );
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let record = store
+            .identity_record(&octo_wallet::Did(did.clone()))
+            .expect("record");
+        assert_eq!(
+            record.lifecycle,
+            octo_wallet::LifecycleState::Rotating,
+            "a dry-run rotate-abort must leave the rotation in flight. It is {0:?}, so a \
+             preview discarded a rotation the operator had not committed to abandoning",
+            record.lifecycle
+        );
+    }
 }

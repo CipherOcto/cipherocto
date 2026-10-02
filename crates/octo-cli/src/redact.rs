@@ -523,10 +523,23 @@ pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
                 } else {
                     REDACTED_KEY
                 };
-                // Span covers hex + the wrap separators, so the
-                // redaction removes the line breaks too (the secret
-                // can't be reconstructed from line-broken halves).
-                return Some((start, last_hex_end.max(i), kind));
+                // The span ends at `last_hex_end`, NOT at `i`. The
+                // walk consumes separators so that a run split by
+                // line wrapping is still recognised as ONE run, and
+                // every separator that matters - the ones *between*
+                // hex digits - is already inside `last_hex_end`,
+                // because the walk kept going past them and found
+                // more hex.
+                //
+                // A separator the walk consumed and then stopped on
+                // has no hex after it, so it is a delimiter, not
+                // part of the secret. Including it used to swallow
+                // the space after a 64-hex DID body, turning
+                // `did:octo:<hex> is on a lost device` into
+                // `did:octo:[REDACTED:key]is on a lost device` - a
+                // redaction that corrupts the sentence it is
+                // protecting and still reads as intact prose.
+                return Some((start, last_hex_end, kind));
             }
         } else {
             i += 1;
@@ -1269,6 +1282,68 @@ mod tests {
         let out = redact_string(&input);
         assert!(out.contains(REDACTED_KEY), "{out}");
         assert!(!out.contains(&key), "{out}");
+    }
+
+    /// R9: a redaction must not eat the delimiter that follows the
+    /// secret it replaced.
+    ///
+    /// `find_long_hex` walks separators so a run split by line
+    /// wrapping is recognised as one run. It then used to end the
+    /// redacted span at the walk's stopping index rather than at the
+    /// last hex digit, so a separator the walk consumed and then
+    /// stopped on - a space, with no hex after it - was swallowed
+    /// too. For the most useful audit content a rotation abort
+    /// carries, the output was
+    ///
+    ///     did:octo:[REDACTED:key]is on a lost device
+    ///
+    /// The redaction is correct; the corruption is not. It joins two
+    /// words into one and still reads as intact prose, so nothing
+    /// downstream can tell the operator that text was altered.
+    ///
+    /// The run itself is still redacted - this pins the boundary,
+    /// not the policy. Whether a 64-hex DID body SHOULD be redacted
+    /// is a separate question, answered in the module doc rather
+    /// than here.
+    #[test]
+    fn tv_red3_a_redaction_preserves_the_delimiter_after_the_secret() {
+        let did_body = "107dd0940000000000000000000000000000000000000000000000000000064e";
+        let input = format!("successor did:octo:{did_body} is on a lost device");
+        let out = redact_string(&input);
+        assert!(
+            !out.contains(did_body),
+            "the hex run must still be redacted: {out}"
+        );
+        assert!(
+            out.contains(REDACTED_KEY),
+            "the run must be replaced with the redaction marker: {out}"
+        );
+        assert!(
+            out.ends_with(" is on a lost device"),
+            "the space after the run must survive - the redaction replaced exactly the run \
+             and nothing else. Got: {out}"
+        );
+        assert!(
+            !out.contains("]is"),
+            "the delimiter must not be absorbed into the marker: {out}"
+        );
+
+        // A newline delimiter, the same defect on the wrap path.
+        let wrapped = format!("sig={did_body}\r\nnext line");
+        let out = redact_string(&wrapped);
+        assert!(
+            out.ends_with("\r\nnext line"),
+            "a trailing CRLF must survive a redaction: {out}"
+        );
+
+        // And an interior wrap is still redacted AS ONE run - the
+        // reason the walk consumes separators at all. If the span
+        // ended at the wrong place this would leave a half-secret.
+        let full = "a".repeat(64);
+        let split = format!("sig={}\r\n{}", &full[..30], &full[30..]);
+        let out = redact_string(&split);
+        assert!(!out.contains(&full[..30]), "first half leaked: {out}");
+        assert!(!out.contains(&full[30..]), "second half leaked: {out}");
     }
 
     #[test]

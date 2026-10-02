@@ -282,15 +282,27 @@ pub struct IdentityRotationEventOutput {
 /// [`IdentityRotationEventOutput::signature_proof`].
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityRotateOutput {
-    /// DID of the new (successor) identity, read from the substrate key.
+    /// DID of the new (successor) identity, derived locally from the
+    /// successor key.
     ///
-    /// Under `--dry-run` the substrate is not called, so this is the
-    /// explicit string `<not-read: dry-run>` - the same form `select`
-    /// uses for `previous_active_did`. It is never a `pending`
-    /// placeholder: an earlier revision documented that behaviour
-    /// here, and since `schemars` copies this doc into the generated
-    /// JSON Schema, the stale claim shipped to every consumer of the
-    /// schema as if it were the contract.
+    /// This is a REAL DID on every path, `--dry-run` included. The
+    /// handler derives the successor from its seed before it reaches
+    /// the dry-run branch, so the preview names the identity a
+    /// committed run would promote. It is never a `pending`
+    /// placeholder and never a `<not-read: dry-run>` sentinel -
+    /// the sentinel is used only for `lifecycle_state` in `register`
+    /// and `select`, which genuinely do not read the substrate under
+    /// `--dry-run`.
+    ///
+    /// Two earlier revisions documented this field wrongly, which is
+    /// not harmless: `schemars` copies this doc verbatim into the
+    /// generated JSON Schema, so a false claim here ships to every
+    /// consumer of the schema as if it were the contract. A prior
+    /// revision said it was always `pending`. The revision this
+    /// replaces said it was `<not-read: dry-run>` under `--dry-run`,
+    /// which is also false. If this behaviour ever changes, change
+    /// this doc in the same commit, and run the vector that pins the
+    /// rendered value.
     pub new_did: String,
     /// DID of the rotated-out identity.
     pub old_did: String,
@@ -1378,13 +1390,29 @@ pub fn rotate_abort(
         let mut unlocked = store
             .unlock(passphrase.as_str(), seed_buf.as_mut())
             .map_err(OctoCliError::from)?;
-        // The DID is read from the handle, but only AFTER the abort
-        // has succeeded - the previous revision read it before, and
-        // the field doc claims an achieved state ("restored to
-        // `Active` after abort"), which a pre-mutation read cannot
-        // support. It is then confirmed against the store, so the
-        // envelope reports what the substrate actually holds rather
-        // than what the handler assumed going in.
+        // The DID is read from the store's pointer AFTER the abort
+        // has succeeded. The previous revision read it from the handle
+        // BEFORE the call, while the field doc claims an achieved
+        // state ("restored to `Active` after abort") that a
+        // pre-mutation read cannot support.
+        //
+        // The confirmation against the handle is DEFENSIVE, and this
+        // comment used to claim it as the fix. It is not. R9's own
+        // falsifiability pass established that the check cannot fire:
+        // `unlock` derives the handle's DID from `index.active_did`,
+        // and nothing on the abort path writes that field - `register`,
+        // `revoke`, `select` and `complete_rotation` are its only
+        // writers, and none is reachable from here. So the store
+        // pointer and the handle DID are the same value by
+        // construction, and the `.filter` is a tautology.
+        //
+        // It is kept because a substrate change that made the abort
+        // move the pointer would silently put a wrong DID in a
+        // success envelope, and this turns that into a refusal. It is
+        // NOT evidence of anything today, and it must not be cited as
+        // a defect this handler fixed. If it ever does fire, the
+        // substrate changed and the substrate's own `# Errors` docs
+        // are the thing to read first.
         let aborted_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
         unlocked.abort_rotation().map_err(OctoCliError::from)?;
         let handle_did = unlocked.did().0.clone();
@@ -1755,7 +1783,79 @@ mod tests {
         &src[from..to]
     }
 
-    /// `fn_body` with every line comment removed.
+    /// R9: the comment stripper must be a scanner, not a line
+    /// heuristic - and it is the vectors that USES it that inherit
+    /// the property, so it is tested directly.
+    ///
+    /// The previous revision cut each line at its first `//` and left
+    /// any line carrying a quote alone. It did not recognise `/* */`.
+    /// So a guard commented out with a block comment left its text in
+    /// the slice, and every assertion pinning that guard stayed green
+    /// with the guard dead. A round's mutation proofs were voided by
+    /// a two-line change to a test helper.
+    #[test]
+    fn tv_x_c_52_the_comment_stripper_understands_block_comments() {
+        let src = "pub fn f() {\n    /* let x = needle_in_block; */\n    let y = needle_in_code;\n}\npub fn g(";
+        let out = fn_body_code(src, "pub fn f()", "pub fn g(");
+        assert!(
+            !out.contains("needle_in_block"),
+            "block-comment content must not survive: {out}"
+        );
+        assert!(
+            out.contains("needle_in_code"),
+            "real code must survive: {out}"
+        );
+
+        // Nested block comments. Rust nests them, so a depth-1 toggle
+        // closes on the inner `*/` and leaves the tail of the
+        // comment live.
+        let nested = "pub fn f() {\n    /* outer /* inner */ still_outer */\n    let z = real;\n}\npub fn g(";
+        let out = fn_body_code(nested, "pub fn f()", "pub fn g(");
+        assert!(
+            !out.contains("still_outer"),
+            "a nested block comment must close at the OUTER */ : {out}"
+        );
+        assert!(
+            out.contains("real"),
+            "code after a nested comment must survive: {out}"
+        );
+
+        // A `//` INSIDE a string literal must not truncate the line.
+        // The old heuristic handled this by skipping any line with a
+        // quote, which meant such lines were never stripped at all.
+        let tricky = "pub fn f() {\n    let url = \"http://x\"; // a comment\n    let q = b'x';\n}\npub fn g(";
+        let out = fn_body_code(tricky, "pub fn f()", "pub fn g(");
+        assert!(
+            out.contains("http://x"),
+            "a // inside a string literal is not a comment: {out}"
+        );
+        assert!(
+            !out.contains("a comment"),
+            "a real trailing comment on the same line must still be stripped: {out}"
+        );
+
+        // A lifetime is not a char literal. Reading `'` as opening a
+        // char would run to the next `'` on the file and blank
+        // everything between.
+        let lifetime = "pub fn f<'a>() {\n    let keep: &'a str = \"x\";\n}\npub fn g(";
+        let out = fn_body_code(lifetime, "pub fn f<'a>", "pub fn g(");
+        assert!(
+            out.contains("let keep"),
+            "a lifetime must not be read as an unterminated char literal: {out}"
+        );
+
+        // A raw string containing comment syntax must be preserved
+        // whole, or the scanner blanks code that follows it.
+        let raw = "pub fn f() {\n    let r = r#\"/* not a comment */\"#;\n    let tail = kept;\n}\npub fn g(";
+        let out = fn_body_code(raw, "pub fn f()", "pub fn g(");
+        assert!(
+            out.contains("kept"),
+            "code after a raw string must survive: {out}"
+        );
+    }
+
+    /// `fn_body` with every comment removed, code preserved byte for
+    /// byte otherwise.
     ///
     /// A negative source assertion (`!body.contains("did: String::new()")`)
     /// is only meaningful against CODE. The register handler carries a
@@ -1765,20 +1865,155 @@ mod tests {
     /// in prose would make it pass vacuously — so both directions want
     /// comments gone.
     ///
-    /// Line-oriented rather than a real lexer: a `//` preceded by a
-    /// quote on the same line is left alone, so a `//` inside a string
-    /// literal cannot truncate the rest of that line. Any residual risk
-    /// is fail-toward-visible (an assertion fires) rather than
-    /// fail-toward-green.
+    /// **This was a real lexer gap, and it voided a round's evidence.**
+    /// The previous revision stripped `//` line comments by finding
+    /// the first `//` on each line and cutting there, skipping lines
+    /// that carried a quote. It did not know what `/* ... */` was. So
+    /// commenting out a guard with a block comment left its text
+    /// present and every assertion pinning that guard green. The R9
+    /// commit recorded that it had mutation-proven those guards by
+    /// deleting them; a reviewer wrapping them in `/* */` instead
+    /// passed the whole suite. The guards were real, and the proof
+    /// was not.
+    ///
+    /// So this is a scanner, not a line heuristic. It tracks string
+    /// literals (with backslash escapes), char literals, raw strings
+    /// (with any hash count), line comments, and block comments -
+    /// including nested block comments, which Rust allows and which
+    /// a two-state toggle gets wrong. Comment CONTENT is blanked to
+    /// spaces of the same length rather than deleted, so byte offsets
+    /// into the result still index the same character of the input and
+    /// a failure message points at the right place.
     fn fn_body_code(src: &str, start: &str, end: &str) -> String {
-        fn_body(src, start, end)
-            .lines()
-            .map(|line| match line.find("//") {
-                Some(at) if !line[..at].contains('"') => line[..at].trim_end(),
-                _ => line,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let body = fn_body(src, start, end);
+        let bytes = body.as_bytes();
+        let mut out: Vec<u8> = bytes.to_vec();
+        let mut i = 0usize;
+        // Depth of nested block comments.
+        let mut block_depth = 0usize;
+        while i < bytes.len() {
+            match block_depth {
+                // Inside a block comment: blank everything, tracking
+                // nesting so `/* /* */ */` closes at the right place.
+                d if d > 0 => {
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                        block_depth += 1;
+                        out[i] = b' ';
+                        out[i + 1] = b' ';
+                        i += 2;
+                    } else if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        block_depth -= 1;
+                        out[i] = b' ';
+                        out[i + 1] = b' ';
+                        i += 2;
+                    } else {
+                        // Preserve newlines so line numbers in a
+                        // failure still line up.
+                        if bytes[i] != b'\n' {
+                            out[i] = b' ';
+                        }
+                        i += 1;
+                    }
+                    let _ = d;
+                }
+                _ => {
+                    // Raw string: r"..." / r#"..."# / r##"..."##.
+                    if bytes[i] == b'r' {
+                        let mut j = i + 1;
+                        let mut hashes = 0usize;
+                        while bytes.get(j) == Some(&b'#') {
+                            hashes += 1;
+                            j += 1;
+                        }
+                        if bytes.get(j) == Some(&b'"') {
+                            i = j + 1;
+                            'raw: loop {
+                                if i >= bytes.len() {
+                                    break 'raw;
+                                }
+                                if bytes[i] == b'"' {
+                                    let closing =
+                                        (0..hashes).all(|k| bytes.get(i + 1 + k) == Some(&b'#'));
+                                    if closing {
+                                        i += 1 + hashes;
+                                        break 'raw;
+                                    }
+                                }
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                        // Line comment: blank to end of line.
+                        while i < bytes.len() && bytes[i] != b'\n' {
+                            out[i] = b' ';
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                        block_depth = 1;
+                        out[i] = b' ';
+                        out[i + 1] = b' ';
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        // Ordinary string: skip to the unescaped close.
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' {
+                                i += 2;
+                                continue;
+                            }
+                            if bytes[i] == b'"' {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    if bytes[i] == b'\'' {
+                        // Char literal OR a lifetime. A lifetime is
+                        // `'` + ident + `'`, which would otherwise be
+                        // skipped as an unterminated char and swallow
+                        // the rest of the file.
+                        let is_lifetime = bytes
+                            .get(i + 1)
+                            .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+                            && bytes
+                                .get(i + 2)
+                                .is_some_and(|c| !c.is_ascii_alphabetic() && *c != b'_');
+                        if is_lifetime {
+                            i += 1;
+                            continue;
+                        }
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' {
+                                i += 2;
+                                continue;
+                            }
+                            if bytes[i] == b'\'' {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    i += 1;
+                }
+            }
+        }
+        // SAFETY of the unchecked split: the scanner only ever turns
+        // non-ASCII bytes into more non-ASCII bytes or blanks, and
+        // never splits a multi-byte sequence, so the result is still
+        // valid UTF-8. Re-derive it as a String to prove it rather
+        // than asserting it.
+        String::from_utf8(out).expect("comment stripping must not corrupt UTF-8")
     }
 
     /// The production source of this file, with every test-module line
@@ -2608,7 +2843,7 @@ mod tests {
                  let handle_did = unlocked.did().0.clone();"
             ) && abort.contains("let (restored_did, aborted_at_unix) = abort_facts")
                 && abort.contains("restored_did,"),
-            "the committed arm must RETURN the restored DID, and the handle read must come \
+            "the committed arm must RETURN the restored DID, and the store read must come \
              AFTER the abort call - a pre-mutation read cannot support the field doc's \
              claim that the identity was restored: {abort}"
         );
@@ -2620,8 +2855,11 @@ mod tests {
             abort.contains(".active_did()")
                 && abort.contains(".filter(|d| *d == handle_did)")
                 && abort.contains("rotation aborted but the store's active identity is not the"),
-            "restored_did must be the store's active pointer read after the abort and \
-             confirmed against the handle, or the arm refuses: {abort}"
+            "restored_did must be the store's active pointer read AFTER the abort, with a \
+             defensive confirmation against the handle. The confirmation cannot fire today - \
+             unlock derives the handle DID from the pointer and the abort path never writes it - \
+             so this pins the SHAPE, not a defect this handler fixed. Saying otherwise is how a \
+             tautology gets cited as a repair: {abort}"
         );
         assert!(
             abort.contains("aborted_at: aborted_at_unix.and_then(unix_to_rfc3339)")
@@ -2985,7 +3223,93 @@ mod tests {
         );
     }
 
-    /// tv_x_c_50 — a dry-run timestamp is `null`, not the epoch.
+    /// tv_x_c_51 — the `new_did` doc must not name a sentinel the
+    /// field never carries, and `schemars` ships it into the schema.
+    ///
+    /// Two earlier revisions had this doc wrong in sequence: it said
+    /// the field was always `pending`, then that it was
+    /// `<not-read: dry-run>` under `--dry-run`. Both shipped into the
+    /// generated JSON Schema as the contract. The second was wrong
+    /// because `rotate` derives the successor from its seed BEFORE it
+    /// reaches the dry-run branch, so a dry-run preview names the
+    /// identity a committed run would promote - a real DID.
+    ///
+    /// A doc that is wrong is not a style problem here, so the vector
+    /// pins two things: that the doc names no sentinel for this
+    /// field, and that the derivation it claims is the one the
+    /// handler actually performs, before the branch.
+    #[test]
+    fn tv_x_c_51_the_new_did_doc_matches_what_the_field_carries() {
+        let src = production_src();
+
+        // The field's own doc block, scoped to the struct it belongs
+        // to. A file-wide absence check would pass vacuously: the
+        // sentinel IS used, by register/select `lifecycle_state`.
+        let start = src
+            .find("pub struct IdentityRotateOutput")
+            .expect("IdentityRotateOutput present in production source");
+        let field = start
+            + src[start..]
+                .find("pub new_did: String,")
+                .expect("new_did field present in IdentityRotateOutput");
+        let doc_start = src[..field].rfind("/// DID of the new").expect(
+            "the new_did doc must be a line doc - if this fires the doc moved to a form this \
+                 vector does not model, and the vector must be reworked rather than deleted",
+        );
+        let doc = &src[doc_start..field];
+        // Whitespace-normalised, because rustfmt rewraps doc comments
+        // and a substring that spans a line break is a substring that
+        // breaks on the next unrelated edit. Normalising here is what
+        // keeps this vector about the doc's CLAIM rather than about
+        // where the formatter happened to break it.
+        let flat = doc
+            .lines()
+            .map(|l| l.trim_start().trim_start_matches("/").trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            !flat.contains("not-read: dry-run")
+                || flat.contains("never a `<not-read: dry-run>` sentinel"),
+            "the new_did doc must not claim the dry-run sentinel for a field that carries a real \
+             DID under --dry-run. schemars copies this text into the JSON Schema, so a false \
+             claim here is a false contract for every consumer: {doc}"
+        );
+        // Affirmative, not a bare absence. A doc that REFERENCES the
+        // old behaviour ("a prior revision said it was always
+        // `pending`") trips a naive absence check while claiming the
+        // opposite, which is how a source-grep vector ends up
+        // forbidding the very sentence that makes the doc correct.
+        assert!(
+            flat.contains("never a `pending` placeholder"),
+            "the new_did doc must affirm that the field is never a pending placeholder, so a \
+             reader is not left choosing between a claim and a historical note: {doc}"
+        );
+        assert!(
+            flat.contains("derived locally from the successor key"),
+            "the doc must state the derivation it is claiming, so a reader can check it: {doc}"
+        );
+
+        // The derivation is real, and it happens before the branch
+        // that a reader would assume makes the value unknown.
+        let body = fn_body_code(src, "pub fn rotate(", "pub fn revoke(");
+        let derive = body
+            .find("let new_did = successor.did().0.clone();")
+            .expect("rotate must derive new_did from the successor key");
+        let dry_branch = body
+            .find("let proof = if cli.mode.dry_run {")
+            .expect("the dry-run branch must be findable");
+        assert!(
+            derive < dry_branch,
+            "new_did must be derived BEFORE the dry-run branch. After it, the value would depend \
+             on a branch the doc says does not exist, and the two would silently disagree."
+        );
+        assert!(
+            !body.contains("new_did: \"did:octo:pending\"")
+                && !body.contains("new_did: String::new()"),
+            "rotate must not bind new_did to a placeholder: {body}"
+        );
+    }
+
     ///
     /// The dry-run arm of `rotate-complete` and `rotate-abort` used to
     /// hand the envelope `0`, and `0` is a VALID unix timestamp that

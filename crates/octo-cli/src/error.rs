@@ -3145,13 +3145,23 @@ mod tests {
         );
     }
 
-    /// tv_x_43 — `WalletError::Config` has **no** translation arm. The
-    /// 27 (`NoOctoHome`) is produced upstream by
-    /// `home::resolve` before any command opens the store, and a
-    /// `Config` → 27 mapping would tell the operator to set
-    /// `$OCTO_HOME` for a full-disk or Argon2-hash failure. The
-    /// obligation here is to write nothing — the wildcard arm routes
-    /// `Config` to `Internal(reason)` at exit 64.
+    /// tv_x_43 — `WalletError::Config` has **no** translation arm in
+    /// the general `From<WalletError>` impl, and that is still
+    /// right: `Config` means many things across the substrate (a
+    /// full disk, an Argon2 parameter failure), so mapping all of it
+    /// to 27 would tell the operator to set `$OCTO_HOME` for an
+    /// unrelated fault. The wildcard arm routes `Config` to
+    /// `Internal(reason)` at exit 64.
+    ///
+    /// The previous revision of this comment went further and
+    /// claimed exit 27 is "produced upstream by `home::resolve`
+    /// before any command opens the store". That is true of the rest
+    /// of the CLI and FALSE of the five identity subcommands, which
+    /// call `WalletStore::open` directly and never reach
+    /// `home::resolve` - so on this path exit 27 was unreachable and
+    /// a missing `$OCTO_HOME` was reported as an internal error. The
+    /// narrow fix is in `map_wallet_open_error`, which sees only the
+    /// ONE `Config` `open` can raise; this impl is unchanged.
     #[test]
     fn tv_x_43_config_has_no_arm_exit_27_comes_from_home_resolve() {
         let e: OctoCliError =

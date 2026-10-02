@@ -436,7 +436,23 @@ impl WalletStore {
         // 8. Persist atomically. The write path creates the root
         //    dir (mission §AC-4 inverts: open is lazy, write is
         //    eager).
-        write_index_atomically(&self.root, &self.index)?;
+        //
+        //    On failure the in-memory index must be rolled back to
+        //    match what the disk still says, exactly as the vault
+        //    failure above does. Without this the handle keeps a
+        //    record and a non-None active_did for an identity that
+        //    was never persisted, so a retry in the SAME process
+        //    finds the DID already present and refuses with
+        //    AlreadyRevoked - the operator is locked out of
+        //    registering their own identity by a transient I/O
+        //    error, with no way to tell that from a real duplicate.
+        if let Err(e) = write_index_atomically(&self.root, &self.index) {
+            self.index.records.remove(pos);
+            if self.index.active_did.as_ref() == Some(&did) {
+                self.index.active_did = None;
+            }
+            return Err(e);
+        }
 
         Ok(did)
     }
@@ -1271,7 +1287,35 @@ const fn now_unix_secs_from_u64(t: u64) -> u64 {
 fn resolve_wallet_root() -> PathBuf {
     match read_octo_home() {
         ResolvedHome::Octo(p) => p.join("wallet"),
-        ResolvedHome::HomeUnder(home) => home.join(".octo").join("wallet"),
+        ResolvedHome::HomeUnder(home) => wallet_root_under_home(&home),
+    }
+}
+
+/// Compose the wallet root from a resolved HOME.
+///
+/// Split out of `resolve_wallet_root` so it can be tested without
+/// mutating process environment. The bug this guards against was
+/// invisible to 537 test vectors for exactly that reason: the
+/// decision lived inside a function whose only other input was
+/// `std::env::var`, so no test could reach the `HomeUnder` arm with
+/// the empty sentinel, and a source-grep vector would have been the
+/// only alternative - which is how a wrong comment survives
+/// unchallenged.
+///
+/// The empty path is the sentinel from `read_home_fallback` for
+/// "neither OCTO_HOME nor HOME is set". It must be propagated
+/// verbatim, NOT joined: `PathBuf::new().join(".octo").join("wallet")`
+/// is the RELATIVE path `.octo/wallet`, which is non-empty, so the
+/// `Config` guard in `open` never fired and the store was created
+/// inside whatever directory the operator happened to be standing
+/// in - carrying a sealed seed, and giving the same operator a
+/// DIFFERENT wallet from every directory. Returning the empty path
+/// unchanged lets `open` raise the `Config` it was written to raise.
+fn wallet_root_under_home(home: &Path) -> PathBuf {
+    if home.as_os_str().is_empty() {
+        PathBuf::new()
+    } else {
+        home.join(".octo").join("wallet")
     }
 }
 
@@ -1291,11 +1335,14 @@ fn read_octo_home() -> ResolvedHome {
 fn read_home_fallback() -> PathBuf {
     match std::env::var("HOME") {
         Ok(h) if !h.is_empty() => PathBuf::from(h),
-        // Both env vars unset or empty → caller turns this into a
-        // `Config` error in `resolve_wallet_root`. We return an empty
-        // path here as a sentinel; the caller never reaches `.join` on
-        // it because the resolved-home form goes through HomeUnder only
-        // when HOME is set and non-empty.
+        // Both env vars unset or empty → the caller turns this into
+        // a `Config` error in `resolve_wallet_root`. We return an
+        // empty path here as a sentinel, and the caller MUST check
+        // it before joining. An earlier version of this comment
+        // claimed the caller never reaches `.join` on it, which was
+        // false: the join produced the relative path `.octo/wallet`
+        // and the store was created inside the operator's current
+        // working directory.
         _ => PathBuf::new(),
     }
 }
@@ -3128,5 +3175,62 @@ mod tests {
             after.rotation_history[0].rotation_id[0], 0x5A,
             "the surviving event must be the one written before the in-flight rotation"
         );
+    }
+
+    /// Regression: the wallet store was created relative to the CWD.
+    ///
+    /// With both `OCTO_HOME` and `HOME` unset, `read_home_fallback`
+    /// returns the empty path as a sentinel and the caller was
+    /// supposed to turn it into a `Config` error. Instead it joined
+    /// onto it, and `PathBuf::new().join(".octo").join("wallet")` is
+    /// the RELATIVE path `.octo/wallet` - non-empty, so the `Config`
+    /// guard in `open` never fired. The store was then created inside
+    /// whatever directory the operator happened to be standing in,
+    /// carrying a sealed seed, so the same operator got a different
+    /// wallet from every directory they ran the command in.
+    ///
+    /// Asserts the PROPERTY that was violated rather than the shape
+    /// of the fix: a root composed from a home is absolute whenever
+    /// the home is, and empty when the home is the sentinel. A
+    /// source-grep vector would have been satisfied by the very
+    /// comment that asserted the opposite, which is how the wrong
+    /// claim survived the original review.
+    #[test]
+    fn tv_x_56_a_wallet_root_is_never_composed_relative_to_the_working_directory() {
+        // The sentinel. This is the exact input that used to yield the
+        // relative path `.octo/wallet`.
+        let sentinel = wallet_root_under_home(Path::new(""));
+        assert!(
+            sentinel.as_os_str().is_empty(),
+            "an empty home must yield the empty sentinel, not a joinable path. Got \
+             {sentinel:?} - joining onto it produces the relative path .octo/wallet, which is \
+             non-empty, so the Config guard in open() never fires and the store is created \
+             inside the operator's current working directory"
+        );
+
+        // A real home composes to an absolute path under it.
+        let home = Path::new("/var/lib/operator");
+        let root = wallet_root_under_home(home);
+        assert_eq!(root, Path::new("/var/lib/operator/.octo/wallet"));
+        assert!(
+            root.is_absolute(),
+            "a wallet root must never be relative, or the store lands in the CWD"
+        );
+
+        // A home that is itself relative is an operator misconfiguration
+        // that we surface rather than compound. It must not produce a
+        // path that merely LOOKS absolute.
+        let rel_home = wallet_root_under_home(Path::new("relative/home"));
+        assert!(
+            !rel_home.is_absolute(),
+            "a relative home composes to a relative root, which is the failure mode under \
+             test - if this ever becomes absolute the sentinel path is being papered over. \
+             Got {rel_home:?}"
+        );
+
+        // The sentinel is the ONLY input that yields empty, so the
+        // Config guard in open() is reachable and the CLI's exit-27
+        // mapping is live rather than dead code.
+        assert_ne!(root.as_os_str().is_empty(), sentinel.as_os_str().is_empty());
     }
 }

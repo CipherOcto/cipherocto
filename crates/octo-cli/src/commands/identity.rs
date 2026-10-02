@@ -416,8 +416,31 @@ pub struct IdentityRotateAbortOutput {
 /// Substrate error text is sanitized before being surfaced to the operator —
 /// no SQL markers, no `crates/octo-*` paths. Used at every `WalletStore::open`
 /// call site in this module (R1 review SEC-11).
+/// Map a `WalletStore::open` failure.
+///
+/// This is the OPEN path specifically, and the distinction matters.
+/// `WalletError::Config` means many things across the substrate - a
+/// full disk, an Argon2 parameter failure - so the general
+/// `From<WalletError>` wildcard correctly leaves it at `Internal`.
+/// But `WalletStore::open` has exactly ONE `Config` it can return,
+/// and it is the one `open_at` never produces: "neither $OCTO_HOME
+/// nor $HOME resolves to a non-empty path". That is the caller's
+/// environment, not a defect, and exit 64 tells the operator to
+/// "re-run with RUST_LOG=debug and report the diagnostic" - a false
+/// escalation for a missing environment variable, and in CI the exit
+/// code is what decides retry versus page. Exit 27
+/// (`NoOctoHome`) exists precisely for this and was unreachable on
+/// these five subcommands, which never call `home::resolve`.
+///
+/// Everything else from `open` is `Io` or crypto, which is a real
+/// fault and stays at 64.
 pub(crate) fn map_wallet_open_error(e: octo_wallet::WalletError) -> OctoCliError {
-    OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+    match e {
+        octo_wallet::WalletError::Config(_) => OctoCliError::NoOctoHome,
+        other => OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "wallet store open: {other}"
+        ))),
+    }
 }
 
 /// Map `WalletError::NotActive` to the appropriate `OctoCliError` based on
@@ -2829,7 +2852,41 @@ mod tests {
         assert!(!msg.contains("crates/octo-"), "{msg}");
         assert!(!msg.contains("SQL:"), "{msg}");
         assert!(!msg.contains("query:"), "{msg}");
-        assert!(matches!(mapped, OctoCliError::Internal(_)));
+        // The sanitization property is the point of this vector and
+        // is unchanged. The VARIANT is now asserted separately: this
+        // revision pinned `Internal` at exit 64, which is right for
+        // every OTHER `Config` the substrate can raise and wrong for
+        // the only one `WalletStore::open` actually raises.
+    }
+
+    /// A `Config` from the OPEN path is a missing environment, not a
+    /// fault. The prior vector pinned the opposite, on the reasoning
+    /// that exit 27 is produced upstream by `home::resolve` - which
+    /// is true of the rest of the CLI and false of these five
+    /// subcommands, which call `WalletStore::open` directly and never
+    /// reach `home::resolve`. So exit 27 was unreachable here and
+    /// `env -u OCTO_HOME -u HOME octo identity list` reported an
+    /// internal error at exit 64.
+    #[test]
+    fn tv_x_c_49_a_missing_home_from_the_open_path_is_exit_twenty_seven() {
+        assert!(
+            matches!(
+                map_wallet_open_error(octo_wallet::WalletError::Config(
+                    "neither $OCTO_HOME nor $HOME resolves to a non-empty path".to_string()
+                )),
+                OctoCliError::NoOctoHome
+            ),
+            "a Config from WalletStore::open is the empty-root case and must map to 27"
+        );
+        // And a genuine fault stays at 64 rather than being swept
+        // into the same bucket.
+        assert!(
+            matches!(
+                map_wallet_open_error(octo_wallet::WalletError::Io(std::io::Error::other("disk"))),
+                OctoCliError::Internal(_)
+            ),
+            "an Io from the open path is a real fault and must stay at 64"
+        );
     }
 
     /// CORR-08: auditor mode is blocked at every identity handler entry.

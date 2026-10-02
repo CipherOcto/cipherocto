@@ -1017,6 +1017,28 @@ impl UnlockedWallet<'_> {
         // write path. Reusing the terminal-state variant rather than
         // minting one keeps the CLI's translation table honest.
         let successor_did = successor.did();
+        // Self-rotation is checked FIRST, before the duplicate-
+        // successor guard, and it has to be. The predecessor's own
+        // DID is necessarily present in the index - `unlock` resolved
+        // `active_did` through `WalletIndex::record` to hand out this
+        // handle - so a successor carrying that DID is a duplicate,
+        // and the guard below would answer `AlreadyRevoked` before
+        // `IdentityKey::begin_rotation` ever reached its own
+        // `SelfRotation` check. The operator who passes their own
+        // identity as the rotation successor was told "this identity
+        // is already revoked or already registered; no action
+        // needed" and exited 6, instead of being told the successor
+        // IS the predecessor and exiting 43.
+        //
+        // The guard ordering this defeated is unrelated to
+        // self-rotation: the same public key means the same slot
+        // slug, so `vault.put` would overwrite the predecessor's own
+        // slot rather than orphan a new one, and the vault slot count
+        // is 1 either way. There is no state to protect here that the
+        // check below does not already protect more strictly.
+        if successor.public_key_bytes() == self.key.public_key_bytes() {
+            return Err(WalletError::SelfRotation);
+        }
         let successor_pos = self
             .store
             .index
@@ -1116,7 +1138,14 @@ impl UnlockedWallet<'_> {
     /// Returns `WalletError::NotRotating` if the predecessor is
     /// not in `Rotating` lifecycle; `WalletError::IdentityNotFound`
     /// if the successor record is missing from the index (which
-    /// means `begin_rotation` did not write it).
+    /// means `begin_rotation` did not write it);
+    /// `WalletError::RotationEventMissing` if there is no successor
+    /// linkage to promote. The refusal runs BEFORE
+    /// `write_index_atomically`, so a `Rotating` predecessor stays
+    /// `Rotating` on disk and a fresh process can still unlock and
+    /// retry — which is the state a `Rotating` record with no event
+    /// is meant to be in, and why the refusal is preferable to
+    /// writing a predecessor back as `Active`.
     pub fn complete_rotation(&mut self, now_unix: u64) -> Result<(), WalletError> {
         self.key
             .complete_rotation(now_unix_secs_from_u64(now_unix))?;
@@ -3600,8 +3629,11 @@ mod tests {
     /// The previous revision took the `None` branch out of the
     /// `if let Some(successor_did)` and fell through to `Ok(())`. The
     /// two lines above the branch had already persisted the
-    /// PREDECESSOR as `Active`, so the caller was told its rotation
-    /// completed and read back an active DID that was the old one.
+    /// PREDECESSOR as `Active` - in memory, and only in memory,
+    /// because the `Ok` return then wrote the index out. The caller
+    /// was told its rotation completed, the predecessor was on disk
+    /// as `Active`, and the successor linkage was gone. Reading the
+    /// active pointer back gave the old DID with no error anywhere.
     ///
     /// The state is unreachable through the public API - `begin_rotation`
     /// always sets the linkage - so this vector reaches it the way the
@@ -3622,6 +3654,7 @@ mod tests {
                 1_700_000_000,
             )
             .expect("register predecessor");
+        let predecessor_did = store.active_did().expect("predecessor DID").clone();
         let successor_key = IdentityKey::from_seed([0xE7u8; 32]);
         let successor_did = successor_key.did();
 
@@ -3645,17 +3678,200 @@ mod tests {
         );
 
         drop(handle);
-        // The refusal must not have promoted the predecessor. It is
-        // still `Active` on disk (the persist above it runs before the
-        // branch), but the POINT is that the call did not report
-        // success - so the claim is on the error, and this confirms the
-        // store is still readable and the successor was never made
-        // active.
+        // The refusal must have left the PREDECESSOR `Rotating` on
+        // DISK, not merely in memory. The in-memory record is
+        // persisted as `Active` two lines above the branch, and only
+        // `write_index_atomically` - reached on the `Ok` path alone -
+        // puts that on disk. Asserting the successor is not active
+        // would pass here either way, so it is not the property
+        // under test: the property is that a refused completion
+        // leaves a resumable rotation, which means the predecessor is
+        // still `Rotating` in the file a fresh process reads.
         let reopened = WalletStore::open_at(dir.path()).expect("reopen after the refusal");
         let active = reopened.active_did().expect("active DID after refusal");
-        assert!(
-            active.as_str() != successor_did.as_str(),
+        assert_eq!(
+            active.as_str(),
+            predecessor_did.as_str(),
+            "the active pointer must still name the predecessor"
+        );
+        assert_ne!(
+            active.as_str(),
+            successor_did.as_str(),
             "the successor must not become the active identity when the completion was refused"
+        );
+        let on_disk = reopened
+            .lookup_identity_record(&predecessor_did)
+            .expect("predecessor record after the refusal");
+        assert_eq!(
+            on_disk.lifecycle,
+            LifecycleState::Rotating,
+            "a refused completion must leave the predecessor Rotating ON DISK - the in-memory \
+             record was already written as Active, and the refusal skips write_index_atomically. \
+             If this says Active, the refusal is writing a predecessor back as active and the \
+             rotation is unrecoverable: a fresh process unlocks an identity that is no longer the \
+             one the operator was rotating away from."
+        );
+    }
+
+    /// tv_x_62 — an index whose rows are out of DID order is
+    /// REPAIRED at open, not rejected, and every mutator can then
+    /// find a DID that is present.
+    ///
+    /// This is the other half of the `store.json`-is-not-trusted
+    /// check, and it was the half with no vector. Duplicate DIDs are
+    /// refused because two readers can disagree about which record a
+    /// DID names. Out-of-order rows cannot: they lose no
+    /// information, but `binary_search_by` on an unsorted slice
+    /// returns `Err` for a DID that IS in the collection, and the
+    /// mutators read that `Err` as "absent". `select` on a DID the
+    /// index plainly contains then answers `IdentityNotFound` and
+    /// the operator is told an identity they can see listed does
+    /// not exist.
+    ///
+    /// `read_index_for_test` and `write_index_atomically` bypass the
+    /// normal path precisely so the input can be made the way a hand
+    /// edit makes it.
+    #[test]
+    fn tv_x_62_an_out_of_order_index_is_sorted_at_open_so_mutators_find_present_dids() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key_a = IdentityKey::from_seed([0xA1u8; 32]);
+        let did_a = key_a.did();
+        let key_b = IdentityKey::from_seed([0xB2u8; 32]);
+        let did_b = key_b.did();
+        store
+            .register(key_a, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register A");
+        store
+            .register(key_b, "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("register B");
+        drop(store);
+
+        // Put the rows in the wrong order, the way a binary that
+        // appended without sorting - or a hand edit that moved one
+        // line - would leave them.
+        let mut index = read_index_for_test(dir.path());
+        assert_eq!(
+            index.records.len(),
+            2,
+            "this vector needs two rows; with one row a reversal is a no-op and cannot \
+             displace anything"
+        );
+        index.records.reverse();
+        write_index_atomically(dir.path(), &index).expect("write unsorted index");
+
+        let mut reopened = WalletStore::open_at(dir.path()).expect(
+            "an unsorted index must be repaired, not refused - order carries no \
+                     information the operator could lose",
+        );
+
+        // The repair happened.
+        let order: Vec<String> = reopened
+            .index
+            .records
+            .iter()
+            .map(|r| r.did.as_str().to_owned())
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort();
+        assert_eq!(
+            order, sorted,
+            "open_at must leave the in-memory index in ascending DID order, because every \
+             mutator's binary_search_by assumes it"
+        );
+
+        // The property that actually broke: a mutator resolving a DID
+        // that is unambiguously present. `lookup_identity_record`
+        // alone would NOT catch a missing sort - it scans linearly -
+        // so the vector has to reach the binary path.
+        for did in [&did_a, &did_b] {
+            reopened
+                .lookup_identity_record(did)
+                .unwrap_or_else(|e| panic!("linear read of {} failed: {e}", did.as_str()));
+            reopened.select(did).unwrap_or_else(|e| {
+                panic!(
+                    "select of {} failed with {e} on a DID that IS in the index - that is \
+                     binary_search_by on an unsorted slice, which the open-time sort exists \
+                     to prevent",
+                    did.as_str()
+                )
+            });
+        }
+    }
+
+    /// tv_x_63 — rotating an identity INTO ITSELF is refused as
+    /// `SelfRotation` at the store level, and the store's
+    /// duplicate-successor guard does not swallow it.
+    ///
+    /// The refusal used to arrive as `AlreadyRevoked`, which is a
+    /// materially different message to the operator. The predecessor's
+    /// own DID is necessarily present in the index - `unlock`
+    /// resolved the active pointer through `WalletIndex::record` to
+    /// hand out this handle - so a successor carrying that DID is by
+    /// construction a duplicate, and the duplicate guard answered
+    /// before `IdentityKey::begin_rotation` ever reached its own
+    /// `SelfRotation` check. "This identity is already revoked or
+    /// already registered, no action needed" tells an operator who
+    /// passed their own identity as the successor that there is
+    /// nothing to do, when in fact there is something to do and it is
+    /// a mistake.
+    ///
+    /// The order of the two checks is the whole content of this
+    /// vector: the same key produces a different `WalletError`
+    /// depending on which runs first.
+    #[test]
+    fn tv_x_63_rotating_an_identity_into_itself_is_refused_as_self_rotation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let seed = [0xE6u8; 32];
+        store
+            .register(
+                IdentityKey::from_seed(seed),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register");
+
+        // Same seed, same public key, same DID. This is what an
+        // operator gets by passing the identity they are already
+        // holding as the rotation successor.
+        let self_as_successor = IdentityKey::from_seed(seed);
+        let active = store.active_did().expect("active DID").clone();
+        assert_eq!(
+            self_as_successor.did().as_str(),
+            active.as_str(),
+            "setup: the successor must be the SAME identity as the predecessor, or this \
+             vector is not testing self-rotation"
+        );
+
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let result = handle.begin_rotation(
+            self_as_successor,
+            "correct-horse-battery-staple",
+            1_700_000_010,
+        );
+        assert!(
+            matches!(result, Err(WalletError::SelfRotation)),
+            "rotating an identity into itself must be refused as SelfRotation. It came back as \
+             something else - if that is AlreadyRevoked, the duplicate-successor guard is \
+             running first and the operator is being told their identity does not need \
+             attention when in fact they passed the wrong key. Got: {result:?}"
+        );
+
+        // And the refusal left nothing behind.
+        drop(handle);
+        let reopened = WalletStore::open_at(dir.path()).expect("reopen after the refusal");
+        let record = reopened
+            .lookup_identity_record(&active)
+            .expect("record after the refusal");
+        assert_eq!(
+            record.lifecycle,
+            LifecycleState::Active,
+            "a refused self-rotation must not have moved the predecessor out of Active"
         );
     }
 }

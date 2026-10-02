@@ -96,6 +96,17 @@ pub enum IdentityAction {
         /// `revoke --reason` and `rotate-abort --reason` both carry
         /// the same note, and a label that appears in the register
         /// payload reads as stored.
+        ///
+        /// Run through `redact_string` on both the stderr echo and
+        /// the envelope, as every other operator-supplied free-text
+        /// field on this command family already is. The value is not
+        /// persisted, but it IS written to stderr and into the
+        /// rendered envelope, so a credential pasted here would
+        /// otherwise be emitted verbatim. `redact_string` matches by
+        /// SHAPE - a JSON, YAML or key/value field name, or a
+        /// `bearer` / long-hex token. It does NOT recognise a bare
+        /// high-entropy secret, so a `ghp_`-style token is still
+        /// emitted verbatim; do not paste a credential.
         #[arg(long)]
         label: String,
         /// Path to a file containing the passphrase. Required
@@ -941,10 +952,12 @@ pub fn register(
     // Pastejacking defense: echo the canonical payload BEFORE any
     // substrate mutation. Operator (or automation) running this
     // command can then visually confirm the label + seed source
-    // + activation flag matches intent.
+    // + activation flag matches intent. The label is operator
+    // free text, so it goes through `redact_string` here exactly as
+    // `--reason` does on its two sibling commands.
     eprintln!(
         "would register: label={}, activate={}, seed_source={}",
-        label,
+        redact_string(label),
         activate,
         seed_file
             .map(|p| p.display().to_string())
@@ -1170,7 +1183,7 @@ pub fn register(
     let output = IdentityRegisterOutput {
         did,
         pubkey_hex,
-        label: label.to_string(),
+        label: redact_string(label).into_owned(),
         lifecycle_state,
         // The substrate stamped `registered_at_unix` on the record
         // it just wrote. A second `Utc::now()` here re-reads the
@@ -3702,6 +3715,84 @@ mod tests {
         );
     }
 
+    /// `tv_x_c_87` (R19) — every operator-supplied free-text value
+    /// reaches stderr and the envelope through `redact_string`.
+    ///
+    /// R19 measured that removing `redact_string` from any ONE of
+    /// these five sites left all 878 tests green. The redaction is
+    /// correct in the shipped code — this vector is the evidence that
+    /// was missing, and it is the evidence for all five sites rather
+    /// than the one a previous round happened to write a needle for
+    /// (the rotate-abort envelope, pinned by a different vector).
+    ///
+    /// The property is not "the format string is present". It is
+    /// which EXPRESSION fills the free-text hole, which is the same
+    /// correspondence `tv_x_c_86` pins for the pastejacking payloads
+    /// and the reason a format-string assertion cannot reach it.
+    ///
+    /// A source vector is the only instrument here: the stderr echo
+    /// is written by `eprintln!` to the process descriptor, and no
+    /// runtime path observes what was written to it. The runtime half
+    /// of the claim — that `redact_string` actually removes these
+    /// shapes — is carried by `tv_red4` / `tv_red5` / `tv_red6` in
+    /// `crate::redact`.
+    #[test]
+    fn tv_x_c_87_operator_free_text_is_redacted_on_every_surface_it_reaches() {
+        // (site anchor, what the site is, the free-text field it carries)
+        let sites: &[(&str, &str, &str)] = &[
+            (
+                "would revoke: did=<none>, reason={}",
+                "the revoke preview taken when no identity is active",
+                "reason",
+            ),
+            (
+                "would revoke: did={}, reason={}",
+                "the revoke preview taken with an active identity",
+                "reason",
+            ),
+            (
+                "would rotate-abort: in_flight_rotation=present, reason={}",
+                "the rotate-abort preview",
+                "reason",
+            ),
+            (
+                "would register: label={}, activate={}, seed_source={}",
+                "the register preview",
+                "label",
+            ),
+            (
+                "reason: reason.map(|r| redact_string(r).into_owned())",
+                "the rotate-abort envelope",
+                "reason",
+            ),
+            (
+                "label: redact_string(label).into_owned()",
+                "the register envelope",
+                "label",
+            ),
+        ];
+        let src = production_src();
+        for (anchor, what, field) in sites {
+            let at = src.find(anchor).unwrap_or_else(|| {
+                panic!("{what} is gone, so its `{field}` can no longer be shown to be redacted. Anchor absent: {anchor}")
+            });
+            let window_end = src[at..].find(");").map_or(src.len(), |i| at + i);
+            let window = &src[at..window_end];
+            // The window must bind the field THROUGH redact_string,
+            // not merely mention it. A site that formats the raw
+            // field still contains the field's name, so name
+            // presence is exactly the assertion that already passed
+            // against every one of these mutations.
+            assert!(
+                window.contains(&format!("redact_string({field})"))
+                    || window.contains("|r| redact_string(r)"),
+                "{what} must bind `{field}` through `redact_string`. The window below shows \
+                 the value being formatted WITHOUT it, which emits a credential-shaped value \
+                 verbatim to stderr and into the envelope. Window: {window}"
+            );
+        }
+    }
+
     /// `tv_x_c_86` (R18) — the pastejacking canonical payloads bind
     /// each label to the right value.
     ///
@@ -3740,30 +3831,41 @@ mod tests {
     /// values behind them are swapped.
     #[test]
     fn tv_x_c_86_canonical_payloads_bind_each_label_to_the_right_value() {
-        // (format string, the argument text that must immediately
-        // follow it, and the label the arguments are bound to).
-        let cases: &[(&str, &str, &str)] = &[
+        // (format string, the argument roots that must follow it IN
+        // THIS ORDER, and the label the arguments are bound to).
+        //
+        // R19 rewrote this to assert ORDER rather than argument text.
+        // The first version pinned a literal argument list
+        // (`"label,\n        activate,\n        seed_file"`), which
+        // pins the IMPLEMENTATION rather than the property: when R19
+        // wrapped the label in `redact_string` to close a real
+        // redaction gap, this vector failed — the vector broke
+        // rather than noticing. An assertion that fails when the
+        // site is hardened is a vector in the wrong place. The
+        // property is which value occupies which position, and a
+        // wrapper around a value does not change its position.
+        let cases: &[(&str, &[&str], &str)] = &[
             (
                 "would rotate: old_did={}, new_did={}, grace=24h",
-                "old_did.0, new_did",
+                &["old_did", "new_did"],
                 "the rotate payload must put the identity being replaced in old_did and the \
                  identity being rotated to in new_did",
             ),
             (
                 "would register: label={}, activate={}, seed_source={}",
-                "label,",
-                "the register payload must put the operator's label in label and the resolved \
-                 seed source in seed_source",
+                &["label", "activate", "seed_file"],
+                "the register payload must put the operator's label in label, the activation \
+                 flag in activate, and the resolved seed source in seed_source",
             ),
             (
                 "would revoke: did={}, reason={}",
-                "did.0,",
+                &["did", "reason"],
                 "the revoke payload must put the identity being revoked in did and the \
                  operator's reason in reason",
             ),
         ];
         let src = production_src();
-        for (template, args, claim) in cases {
+        for (template, order, claim) in cases {
             let at = src
                 .find(template)
                 .unwrap_or_else(|| panic!("canonical payload template absent: {template}"));
@@ -3772,27 +3874,29 @@ mod tests {
             // of the macro so a later call cannot satisfy this.
             let window_end = src[at..].find(");").map_or(src.len(), |i| at + i);
             let window = &src[at..window_end];
-            assert!(
-                window.contains(args),
-                "{claim}. The template `{template}` is present, so the existing payload-presence \
-                 vectors pass, but the values behind it are bound in the wrong order. Window: \
-                 {window}"
-            );
+            // Search the ARGUMENT region only. The template itself
+            // contains every label, so searching the whole window
+            // would find `label` inside `label={}` and assert
+            // nothing about which value fills the hole.
+            let args_region = window.split_once("\",").map_or(window, |(_, rest)| rest);
+            let positions: Vec<usize> = order
+                .iter()
+                .map(|root| {
+                    args_region.find(root).unwrap_or_else(|| {
+                        panic!(
+                            "{claim}. The argument `{root}` does not appear in the argument \
+                             region at all. Window: {window}"
+                        )
+                    })
+                })
+                .collect();
+            for pair in positions.windows(2) {
+                assert!(
+                    pair[0] < pair[1],
+                    "{claim}. The arguments are bound in the wrong order. Window: {window}"
+                );
+            }
         }
-        // The register payload is the one case where the two
-        // transposable arguments are not adjacent, so the window
-        // above can be satisfied by the `label` alone. Assert the
-        // whole argument list once, explicitly.
-        let at = src
-            .find("would register: label={}, activate={}, seed_source={}")
-            .expect("register payload template present");
-        let window_end = src[at..].find(");").map_or(src.len(), |i| at + i);
-        let window = &src[at..window_end];
-        assert!(
-            window.contains("label,\n        activate,\n        seed_file"),
-            "the register payload's three arguments must stay in label, activate, seed_source \
-             order. Window: {window}"
-        );
     }
 
     /// tv_x_c_3 — `register` handler must call `WalletStore::register`

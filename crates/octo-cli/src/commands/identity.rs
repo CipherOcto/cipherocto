@@ -1844,6 +1844,63 @@ mod tests {
             "a lifetime must not be read as an unterminated char literal: {out}"
         );
 
+        // `'static` is the case the previous revision got wrong, and
+        // the reason this case is written with a TRAILING COMMENT
+        // rather than a bare `&'a`.
+        //
+        // The old test decided lifetime-vs-char by looking at two
+        // characters after the quote, which models a lifetime as
+        // `'` ident `'`. `&'static` gives `s` then `t` - both ident
+        // chars - so it was classified as a char literal, and the
+        // char-literal walk scanned forward for a closing `'`. It
+        // found none in this snippet, ran to the end of the input,
+        // and in doing so never saw the `//` on the way. The comment
+        // survived into the output.
+        //
+        // That is the shape that matters and it is not a curiosity: a
+        // swallowed region is a region whose COMMENTS are never
+        // stripped, so any source-grep vector scanning a handler
+        // containing `&'static` is satisfied by prose, and any
+        // assertion that a needle is ABSENT is decided by a comment.
+        // Asserting the comment is GONE is what makes the lexer
+        // responsible for it.
+        //
+        // Scope of the claim, stated narrowly because the wider one
+        // was not confirmed. A round reported that adding a single
+        // `&'static` above the `rotate_complete` unchanged-identity
+        // guard, then commenting that guard out, let the mutation
+        // through `tv_x_c_39`. Re-measured here, that shape did NOT
+        // survive: with the old lexer in place the swallowed region
+        // is blanked rather than passed through, so the guard text
+        // is absent and `tv_x_c_39` fails on the missing side. The
+        // defect fixed here is the mis-classification itself, which
+        // is a fact of the code, not the reported exploit. What
+        // these three cases establish is the narrower and verified
+        // one: the old lexer fails them, the new one passes, so the
+        // rule change is load-bearing rather than incidental.
+        let stat = "pub fn f() {\n    let d: &'static str = \"x\"; // needle_in_static_tail\n    \
+                    let keep = real;\n}\npub fn g(";
+        let out = fn_body_code(stat, "pub fn f()", "pub fn g(");
+        assert!(
+            !out.contains("needle_in_static_tail"),
+            "a `//` after a &'static annotation must still be stripped. It survived, which means \
+             the lifetime was read as a char literal and the walk swallowed the line: {out}"
+        );
+        assert!(
+            out.contains("let keep"),
+            "code after a &'static annotation must survive: {out}"
+        );
+
+        // The same shape with a BLOCK comment, because the two
+        // swallow modes differ and only one was previously covered.
+        let stat_block = "pub fn f() {\n    let d: &'static str = \"x\";\n    /* \
+                          needle_in_static_block */\n    let keep = real;\n}\npub fn g(";
+        let out = fn_body_code(stat_block, "pub fn f()", "pub fn g(");
+        assert!(
+            !out.contains("needle_in_static_block"),
+            "a block comment after a &'static annotation must still be stripped: {out}"
+        );
+
         // A raw string containing comment syntax must be preserved
         // whole, or the scanner blanks code that follows it.
         let raw = "pub fn f() {\n    let r = r#\"/* not a comment */\"#;\n    let tail = kept;\n}\npub fn g(";
@@ -1976,17 +2033,67 @@ mod tests {
                         continue;
                     }
                     if bytes[i] == b'\'' {
-                        // Char literal OR a lifetime. A lifetime is
-                        // `'` + ident + `'`, which would otherwise be
-                        // skipped as an unterminated char and swallow
-                        // the rest of the file.
-                        let is_lifetime = bytes
-                            .get(i + 1)
-                            .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
-                            && bytes
-                                .get(i + 2)
-                                .is_some_and(|c| !c.is_ascii_alphabetic() && *c != b'_');
+                        // Char literal OR a lifetime. Getting this
+                        // wrong is not cosmetic: a lifetime that is
+                        // read as an unterminated char literal makes
+                        // the walk scan forward for a closing `'`,
+                        // swallowing everything in between - so a
+                        // `//` comment inside a swallowed region is
+                        // never stripped, and a source-grep vector
+                        // downstream is satisfied by prose.
+                        //
+                        // The previous revision decided this by
+                        // looking at exactly two characters: `'` + one
+                        // ident char + a NON-ident char. That models a
+                        // lifetime as `'` ident `'`, which is the
+                        // shape of `'a` FOLLOWED BY a type - and it
+                        // gets `&'static` wrong, because there the
+                        // third character is `t`, an ident char, so
+                        // the helper classified the most common
+                        // lifetime in Rust as a char literal.
+                        //
+                        // The consequence is that a swallowed region
+                        // is a region whose comments are never
+                        // stripped, so the stripped output a
+                        // source-grep vector reads can be prose
+                        // rather than code. A round reported a
+                        // mutation that exploited exactly that and
+                        // survived the vector pinning the guard; on
+                        // re-measurement the mutation did not
+                        // survive, because the swallowed region is
+                        // blanked rather than passed through, so the
+                        // guard text goes missing and the vector
+                        // fails on the other side. The
+                        // mis-classification is nonetheless real and
+                        // is fixed here on its own terms.
+                        //
+                        // The length decides it, not the neighbours.
+                        // A char literal holds exactly one character
+                        // (or one backslash escape): `'a'`, `'\n'`,
+                        // `'\''`. So an identifier of two or more
+                        // characters after the quote cannot be a char
+                        // literal and must be a lifetime - which is
+                        // what makes `'static` correct. An identifier
+                        // of exactly one is a lifetime only when the
+                        // next byte can neither close a char literal
+                        // nor start an escape.
+                        let mut j = i + 1;
+                        while j < bytes.len()
+                            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                        {
+                            j += 1;
+                        }
+                        let ident_len = j - (i + 1);
+                        let next_is_quote_or_escape =
+                            matches!(bytes.get(j), Some(b'\'') | Some(b'\\'));
+                        let is_lifetime =
+                            ident_len >= 2 || (ident_len == 1 && !next_is_quote_or_escape);
                         if is_lifetime {
+                            // `i += 1` steps onto the first ident
+                            // char; the outer loop then advances the
+                            // rest one byte at a time, which is
+                            // harmless because a lifetime contains no
+                            // character the scanner acts on.
                             i += 1;
                             continue;
                         }

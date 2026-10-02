@@ -5171,4 +5171,71 @@ mod tests {
             other => panic!("a damaged index must map to Internal, got {other:?}"),
         }
     }
+
+    // -----------------------------------------------------------------
+    // R10: the `rotate` successor-derivation gate could be deleted
+    // outright with every test green.
+    //
+    // The whole block is `#[cfg(not(test))]`, so it is INACTIVE in the
+    // test build and no runtime vector can reach it. That is not a
+    // reason to leave it unpinned - it is the reason a source vector
+    // is the only kind available, and `tv_x_c_44` already sets the
+    // precedent for gating a `cfg(not(test))` block this way.
+    //
+    // The block is the only thing standing between a production build
+    // and a publicly-known, signature-forgeable successor seed. The
+    // seed is the literal `[1u8; 32]`, and the comment above it says
+    // so in as many words. Deleting thirteen lines to get a green
+    // suite is exactly the trade a gate is supposed to prevent.
+
+    #[test]
+    fn tv_x_c_76_the_successor_seed_gate_precedes_the_forgeable_seed_it_guards() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn rotate(", "pub fn revoke(");
+
+        // The attribute is the load-bearing part. Asserting the body
+        // of the block without asserting the attribute would be
+        // satisfied by the same text sitting outside a cfg, where it
+        // is active in tests and absent from production - the inverse
+        // of the intended shape and a silent pass.
+        let gate_at = body.find("#[cfg(not(test))]").unwrap_or_else(|| {
+            panic!(
+                "the successor-derivation gate must be compiled out of test builds, so a test \
+                 cannot reach it and the gate is a source claim. It is absent. Body: {body}"
+            )
+        });
+        let seed_at = body
+            .find("IdentityKey::from_seed([1u8; 32])")
+            .unwrap_or_else(|| {
+                panic!(
+                    "rotate must derive its successor from the documented test seed, so the \\
+                     vector is pinning a real site rather than a comment. Body: {body}"
+                )
+            });
+        assert!(
+            gate_at < seed_at,
+            "the gate must precede the derivation of the seed it guards. Gate at {gate_at}, \\
+             derivation at {seed_at}. If the seed is built first the guard has already lost. \\
+             Body: {body}"
+        );
+
+        // The gate must gate BOTH conditions, because the handler has
+        // three legitimate callers and the comment claims the OR
+        // semantics cannot drift. A gate that tests only one of them
+        // either refuses a dry run or lets a production caller
+        // through, and both are invisible to a single-condition
+        // assertion.
+        let gate_body = &body[gate_at..seed_at];
+        assert!(
+            gate_body.contains("!cli.mode.dry_run") && gate_body.contains("!is_dev_mode(cli)"),
+            "the gate must admit a dry-run preview AND a dev-mode caller. Testing one condition \
+             only refuses a legitimate caller or admits a production one. Gate body: {gate_body}"
+        );
+        assert!(
+            gate_body.contains("OctoCliError::DevModeRequired"),
+            "the refusal must be DevModeRequired, whose message names its own remedy and whose \\
+             exit code is the operator-input family rather than page-someone. Gate body: \\
+             {gate_body}"
+        );
+    }
 }

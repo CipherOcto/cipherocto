@@ -2237,9 +2237,43 @@ impl From<octo_wallet::WalletError> for OctoCliError {
                 detail: sanitize_substrate_error(&format!("is {len} bytes, over the 256-byte cap")),
             },
             // Additive-safe wildcard per `#[non_exhaustive]` on
-            // `WalletError`. Future substrate variants collapse
-            // to `Internal(reason)` exit 64 — same pattern as
-            // the audit / attach `From` impls above.
+            // `WalletError`. Same pattern as the audit / attach `From`
+            // impls above.
+            //
+            // R24 corrected the scope of this arm. The comment used to
+            // say "**Future** substrate variants collapse to Internal"
+            // — present-tense grammar about a row that TWENTY-ONE of
+            // the forty `WalletError` variants occupied on the day it
+            // was written. A reader consulting the doc table above,
+            // which lists a dedicated exit for several of them, would
+            // draw the opposite conclusion about the code the table
+            // actually runs.
+            //
+            // Nine of those twenty-one have a dedicated `OctoCliError`
+            // and an exit code documented on the substrate variant:
+            // `ManifestParse` (39), `CapabilityValidationFailed` (40),
+            // `AgentAlreadyExists` (41), `AgentNotFound` (42),
+            // `ForbiddenHolderMismatch` (17, SECURITY HIGH),
+            // `AlreadyInTransition` (43), `InvalidStateTransition` (43),
+            // `AuditUnavailable` (52), `NonceUnderflow` (11).
+            //
+            // None of the nine reaches this arm in production today —
+            // they are intercepted by one of the parallel mappers
+            // (`map_transition_wallet_error`, the inline agent-site
+            // matches) before they can get here. So the correct outcome
+            // today is an ACCIDENT of four mappers, not a decision, and
+            // R24 measured that accident failing: deleting the four
+            // `map_transition_wallet_error` arms sent a routine
+            // `AgentNotFound` to exit 64 with the hint "re-run with
+            // RUST_LOG=debug and report the diagnostic" — a plain
+            // not-found escalated to an infrastructure fault.
+            //
+            // R24 did NOT move the nine into this table. Doing so would
+            // change the exit code of the identity command surface,
+            // which is an operator-visible contract change and the
+            // USER's call. What changed is that the arm says what it
+            // actually is, and the arms that intercept the nine are now
+            // pinned by `tv_r24_map_transition_wallet_error_arms_are_pinned`.
             _ => Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                 "wallet substrate error: {e}"
             )))),
@@ -2367,8 +2401,57 @@ mod tests {
     /// Half two scans the whole `commands` DIRECTORY rather than a
     /// hard-coded file list, so a module added after this vector is
     /// scanned by construction. The earlier R20 vector's own stated
-    /// limit was that a file it did not scan was invisible to it; this
-    /// form removes that limit instead of documenting it.
+    /// limit was that a file it did not scan was invisible to it, and
+    /// the directory form removes THAT limit.
+    ///
+    /// R24 corrected the claim this paragraph used to make. It read
+    /// "this form removes that limit instead of documenting it", which
+    /// is true of the file-list limit and was being read as a claim
+    /// that the directory scan is COMPLETE. It is not, and the residue
+    /// is stated here rather than left for a reader to assume away:
+    ///
+    ///   1. The part-one loop keys on a line that contains both `other`
+    ///      and `=>`. A match arm binding its payload to a different
+    ///      name is outside its reach. Part two covers the four such
+    ///      sites in `network.rs` BY NAME, so they are pinned, but a
+    ///      fifth in a new file would not be.
+    ///   2. The part-one loop additionally requires one of the
+    ///      `INTERPOLATED` patterns. An arm that forwards a substrate
+    ///      value under a spelling that list does not contain is
+    ///      outside its reach, for the same reason and with the same
+    ///      residue.
+    ///   3. Before R24 the arm body was read as a fixed ten-line
+    ///      WINDOW, so an arm whose payload construction sat further
+    ///      down than that was invisible even when the binding name
+    ///      matched. This is the one limit R24 actually closed: the
+    ///      window is now the arm's bracket-balanced body, terminated
+    ///      at the first comma at depth zero.
+    ///
+    ///      The control for that closure is an A/B, and the first
+    ///      attempt at it was a NON-RESULT worth recording. Moving an
+    ///      EXISTING routed arm's scrub eleven lines down failed under
+    ///      BOTH scanners — but the old one failed on the
+    ///      `routed_direct == 17` COUNT, not by detecting the arm,
+    ///      because an arm whose construction falls outside the window
+    ///      is skipped by the `touches_error` guard and stops being
+    ///      counted at all. Converting an existing arm therefore never
+    ///      exposed the blind spot; the count caught it by accident.
+    ///
+    ///      The blind spot is a NEW arm. Measured A/B on one added
+    ///      unrouted arm whose payload construction sits twelve lines
+    ///      below its binding: the ten-line form reports `ok`, the
+    ///      `arm_body` form fails and names `governance.rs` and the
+    ///      line. Same tree, same mutation, opposite outcomes — so the
+    ///      window was load-bearing and the count was not a substitute
+    ///      for it.
+    ///
+    /// Limits 1 and 2 are the same limit — the scan finds arms by
+    /// SPELLING — and closing it needs a name-independent arm
+    /// enumerator. R23 built one, measured it, and REJECTED it on the
+    /// measurement: 22 false positives on a ten-line window, because
+    /// most `=>` lines in these files are not match arms at all. So
+    /// the honest state is a spelling-keyed sweep plus a named
+    /// exception list, and this paragraph is the receipt.
     ///
     /// Non-vacuity: the routed-site count is asserted, so a scan that
     /// stopped matching anything would fail rather than pass. The four
@@ -2377,6 +2460,78 @@ mod tests {
     /// either hop and names which it saw.
     #[test]
     fn tv_x_c_94_every_substrate_payload_routes_through_the_capping_scrubber() {
+        /// Extract one match arm's body, from the line the arm starts on
+        /// to the comma that terminates it at bracket depth zero.
+        ///
+        /// R24 replaced a fixed ten-line window with this. The window was
+        /// an undisclosed blind spot: an arm whose payload construction
+        /// sat more than ten lines below the binding was invisible to
+        /// the scan, and the vector's doc claimed the directory scan
+        /// "removes that limit instead of documenting it" — which was
+        /// true of the part-two arm sweep and false of this part-one
+        /// loop. A blind spot described as a removal is worse than one
+        /// left open, because it tells a reader to stop looking.
+        ///
+        /// Bracket-depth rather than comma scanning: an arm body can
+        /// contain commas at any depth — `sanitize_substrate_error(&format!("…{other}…"))`
+        /// has one — so the first comma is not the terminator. The
+        /// `bound` is a runaway guard, not a window: no arm in this
+        /// crate is anywhere near it, and exceeding it yields the whole
+        /// remainder so the scan over- rather than under-reports.
+        fn arm_body(src: &str, start_line: usize) -> String {
+            const BOUND: usize = 8_000;
+            let mut out = String::new();
+            let mut depth: i32 = 0;
+            let mut after_arrow = false;
+            for line in src.lines().skip(start_line) {
+                if !after_arrow {
+                    // A `=>` on the arm's own line opens the expression.
+                    // Detection is positional rather than character-wise
+                    // so a `=>` inside a comment does not arm the scan.
+                    if line.contains("=>") {
+                        after_arrow = true;
+                    }
+                }
+                let before = out.len();
+                out.push_str(line);
+                out.push('\n');
+                for ch in line.chars() {
+                    match ch {
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if after_arrow && depth <= 0 {
+                    // The arm's expression ends at the first comma at
+                    // bracket depth zero. Replaying the line's own
+                    // brackets finds it; a comma inside a `format!` or a
+                    // tuple is at depth > 0 and is not the terminator.
+                    let chunk = &out[before..];
+                    let mut local = 0i32;
+                    let terminator = chunk.char_indices().find_map(|(idx, c)| match c {
+                        '(' | '[' | '{' => {
+                            local += 1;
+                            None
+                        }
+                        ')' | ']' | '}' => {
+                            local -= 1;
+                            None
+                        }
+                        ',' if local == 0 => Some(idx),
+                        _ => None,
+                    });
+                    if let Some(idx) = terminator {
+                        out.truncate(before + idx);
+                        return out;
+                    }
+                }
+                if out.len() > BOUND {
+                    return out;
+                }
+            }
+            out
+        }
         // ---- half one: the primitive's contract -------------------------
         let budget = SUBSTRATE_PAYLOAD_CAP + " [truncated]".len();
 
@@ -2520,7 +2675,7 @@ mod tests {
                 if is_identity_forward(line) {
                     continue;
                 }
-                let window: String = lines[i..(i + 10).min(lines.len())].join("\n");
+                let window: String = arm_body(&src, i);
                 // Three sinks count as routed, and all three end at the
                 // same primitive. `map_capability_internal` scrubs
                 // directly. `OctoCliError::from(..)` is the
@@ -2658,8 +2813,56 @@ mod tests {
         const CONTRACTED: [(&str, usize); 3] =
             [("capability.rs", 4), ("governance.rs", 2), ("agent.rs", 1)];
 
-        for (file, expected) in CONTRACTED {
-            let src = std::fs::read_to_string(dir.join(file)).expect("command module readable");
+        // R24: iterate the DIRECTORY and compare the SET, rather than
+        // iterating three hard-coded files.
+        //
+        // The per-file COUNTS were already hand-written, so rule 12 was
+        // satisfied. But the list of FILES was derived from nothing, and
+        // a `try_active_identity` site added to `network.rs` was simply
+        // never scanned. That is the same defect the file-list limit
+        // was, one level up, and its sibling `tv_x_c_94` was upgraded
+        // to a directory scan in the very same R23 commit that left
+        // this one on a hard-coded list. Two vectors written side by
+        // side, one swept and one not.
+        //
+        // The directory form is what closes it. A file that gains a
+        // site appears in `found` and is absent from `CONTRACTED`, so
+        // the set comparison fails and names it; a file that gains no
+        // site appears in neither and costs nothing. `common.rs` is
+        // the live case: it holds `map_activate_error`, added by R24,
+        // and it has no `try_active_identity` call, so it belongs in
+        // neither set and its existence is not a reason to edit the
+        // contract.
+        //
+        // Control, and a first attempt that was a NON-RESULT worth
+        // recording. The first probe was appended at the END of
+        // `network.rs`, and BOTH forms passed it — correctly: the scan
+        // stops at `mod tests`, so a site added below that boundary is
+        // test code and outside the property. A control that lands in
+        // the wrong scope reads as "the vector does not work" when it
+        // actually means "the probe is not production code". The probe
+        // was then placed above the boundary, and measured A/B on one
+        // delegated site added to `network.rs`: the hard-coded form
+        // reports `ok`, the directory form fails and prints both sets,
+        // with `network.rs` on the left and absent from the right.
+        //
+        // The set comparison also replaced the per-file count
+        // assertion, which is strictly stronger: it fires when a file
+        // GAINS a site as well as when one moves, and it names both
+        // sides. `network.rs` currently holds none, so it is in neither
+        // set.
+        let mut found: Vec<(String, usize)> = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("the commands directory must be readable") {
+            let path = entry.expect("a directory entry must be readable").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let file = path
+                .file_name()
+                .expect("a .rs entry has a file name")
+                .to_string_lossy()
+                .to_string();
+            let src = std::fs::read_to_string(&path).expect("command module readable");
             let lines: Vec<&str> = src.lines().collect();
             let test_start = lines
                 .iter()
@@ -2675,24 +2878,34 @@ mod tests {
                 .filter(|(_, l)| l.contains("try_active_identity()"))
                 .map(|(i, _)| i)
                 .collect();
-            assert_eq!(
-                sites.len(),
-                expected,
-                "the number of `try_active_identity` call sites in {file} moved. A site added \\
-                 here must be routed through `OctoCliError::from(other)` in the SAME commit and \\
-                 the count updated with it — a site that is added without being delegated would \\
-                 otherwise be invisible here."
-            );
+            if sites.is_empty() {
+                continue;
+            }
+            found.push((file.clone(), sites.len()));
             for at in sites {
                 let arm: String = lines[at..(at + 16).min(lines.len())].join("\n");
                 assert!(
                     arm.contains("OctoCliError::from(other)"),
-                    "the {file} site at line {} must delegate its fall-through to the \\
+                    "the {file} site at line {} must delegate its fall-through to the \
                      `From<WalletError>` table rather than re-deriving a mapping",
                     at + 1
                 );
             }
         }
+        found.sort_unstable();
+        let mut contracted: Vec<(String, usize)> = CONTRACTED
+            .iter()
+            .map(|(f, n)| ((*f).to_string(), *n))
+            .collect();
+        contracted.sort_unstable();
+        assert_eq!(
+            found, contracted,
+            "the SET of files carrying `try_active_identity` call sites changed. A new file must \
+             be added to CONTRACTED with its count in the SAME commit that routes its fall-through \
+             through `OctoCliError::from(other)`; a file that lost its last site must be removed. \
+             Checking three hard-coded files left a site added anywhere else invisible to this \
+             vector, which is the defect R24 measured."
+        );
     }
 
     // R1 MED C13 — cap_substrate_payload boundary tests.

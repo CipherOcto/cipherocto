@@ -185,17 +185,67 @@ fn tv_cap16d_filter_comma_split() {
         .assert()
         // The claim this vector makes is NEGATIVE and is unchanged: a
         // well-formed comma-separated filter must not be rejected as a
-        // malformed one. R23 widened the acceptable set from {0, 2} to
-        // {0, 2, 92} because the store is locked on any machine until
-        // the capability signing path is migrated onto
-        // `WalletStore::unlock` (see the OPEN GAP note on
-        // `tv_cap1_..._locked_exit_92`). Exit 16 is still the failure
-        // this vector exists to catch.
-        .code(
-            predicates::prelude::predicate::eq(0)
-                .or(predicates::prelude::predicate::eq(2))
-                .or(predicates::prelude::predicate::eq(92)),
-        );
+        // malformed one. Exit 16 is the failure it exists to catch.
+        //
+        // R23 widened this set to {0, 2, 92} and in doing so made the
+        // vector vacuous: R24 measured that DELETING the comma split
+        // from the `--filter` argument left it green. The set had grown
+        // a member (2, the clap usage-error code) that no well-formed
+        // filter can produce, so the assertion had stopped constraining
+        // anything. A tolerated exit code is not a witness.
+        //
+        // Measured on clean HEAD, a well-formed comma-separated filter
+        // exits 92 — the store is locked on any machine until the
+        // capability signing path is migrated onto `WalletStore::unlock`
+        // (see the OPEN GAP note on `tv_cap1_..._locked_exit_92`) — or
+        // 0 where a store is available. Exit 2 is not among the
+        // reachable outcomes, so it is not in the set.
+        .code(predicates::prelude::predicate::eq(0).or(predicates::prelude::predicate::eq(92)));
+}
+
+/// TV-CAP16d (witness half) — the comma split is OWNED by clap's
+/// `value_delimiter = ','` on the `--filter` argument, so an exit-code
+/// assertion can only ever observe it indirectly. This half observes it
+/// DIRECTLY, and is the part that survives the widening above was
+/// removed.
+///
+/// The split's signature is that the error names one SEGMENT, not the
+/// whole string. `--filter "caveat=before,nope=x"` has one valid segment
+/// and one unknown field. If clap split the value, `parse_filters` sees
+/// two separate strings and rejects on the second, naming
+/// `nope=x`. If clap did NOT split, `parse_filters` sees the single
+/// string `caveat=before,nope=x`, reads the field as `caveat` and the
+/// value as `before,nope=x` — a caveat is free text, so that is
+/// ACCEPTED and the command proceeds to the identity lookup. Either way
+/// the assertion below fails without the delimiter.
+///
+/// The order is the point: the malformed segment is SECOND, so a
+/// prefix-match on the whole string would pass by accident if clap
+/// passed the value through unsplit. Asserting the ABSENCE of the
+/// unsplit rendering is what makes this a witness rather than a
+/// substring coincidence.
+#[test]
+fn tv_cap16d_filter_comma_split_is_witnessed_by_the_segment_named_in_the_error() {
+    let split = octo()
+        .args(["capability", "list", "--filter", "caveat=before,nope=x"])
+        .assert()
+        .code(16)
+        .stderr(contains("invalid filter: nope=x"));
+
+    // The unsplit rendering must be absent. Without this half, a build
+    // that passed the whole value through would still print
+    // `nope=x` as a SUBSTRING of `caveat=before,nope=x` and pass.
+    split.stderr(predicates::str::contains("caveat=before,nope=x").not());
+
+    // Same property with the malformed segment FIRST, so the assertion
+    // cannot be satisfied by an implementation that only inspects the
+    // head of the value.
+    octo()
+        .args(["capability", "list", "--filter", "nope=x,caveat=before"])
+        .assert()
+        .code(16)
+        .stderr(contains("invalid filter: nope=x"))
+        .stderr(predicates::str::contains("nope=x,caveat=before").not());
 }
 
 /// TV-CAP19 — `capability mint` without `--confirm` in human mode exits 2.

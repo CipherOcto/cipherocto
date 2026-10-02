@@ -75,6 +75,7 @@ use crate::error::sanitize_substrate_error;
 use crate::error::OctoCliError;
 use crate::home;
 use crate::output::OutputEnvelope;
+use crate::redact::redact_string;
 use crate::Octo;
 
 use octo_network::dot::gateway::GatewayClass;
@@ -2921,13 +2922,43 @@ fn bind_envelope_rebind_preview(
 
 /// Redact a free-text `reason` field for the abort envelope
 /// (operator-safe display per RFC-0011 §Output Envelope).
+///
+/// R24 found this function doing only the second of its two jobs. The
+/// envelope field is `pub reason_redacted: String` and the doc claims
+/// redaction, but the body was truncation alone — a GitHub token
+/// reached the JSON envelope verbatim while the sibling flag on the
+/// same binary (`identity revoke --reason`) rendered `[REDACTED:bearer]`.
+/// R19 enumerated three free-text fields; there are five `--reason` args
+/// in this crate and this was the one it missed. The obligation is
+/// per-call-site and it drifts, so the fix is to call the primitive the
+/// other four sites call rather than to hand-roll a second copy of it.
+///
+/// ORDER: redact first, truncate second. Truncating first would cut a
+/// bearer token in half, and the half that survives is no longer shaped
+/// like one — the redaction pass would then find nothing to redact and
+/// the secret would reach the envelope in shortened form. Redacting
+/// first means the truncation can at worst cut a `[REDACTED:…]` marker
+/// in half, which is cosmetic; the secret content is already gone.
+///
+/// TRUNCATION is on a char boundary, not a byte index. `&reason[..MAX]`
+/// panicked on any reason whose UTF-8 codepoint straddled byte 80
+/// (79 ASCII bytes then a 2-byte `é` was enough), and `--reason` is an
+/// uncapped, unvalidated `String` clap arg. Same walk-back
+/// `cap_substrate_payload` uses.
 fn redact_reason(reason: &str) -> String {
     const MAX: usize = 80;
-    if reason.len() <= MAX {
-        reason.to_string()
-    } else {
-        format!("{}...", &reason[..MAX])
+    let redacted = redact_string(reason);
+    if redacted.len() <= MAX {
+        return redacted.into_owned();
     }
+    let mut end = MAX;
+    while end > 0 && !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = String::with_capacity(end + 3);
+    out.push_str(&redacted[..end]);
+    out.push_str("...");
+    out
 }
 
 // === Helpers ===
@@ -5375,13 +5406,90 @@ mod tests {
         }
     }
 
-    // tv_net4_12: bind-envelope rebind-abort reason redaction truncates long text
+    // tv_net4_12: the rebind-abort `reason` field is REDACTED, not merely
+    // truncated, and truncation lands on a char boundary.
+    //
+    // R24 rewrote this vector. The previous form asserted only
+    // `len() <= 83` and `ends_with("...")` on 120 ASCII `x`s — an input
+    // `redact_string` passes through completely unchanged. The mutation
+    // that settled it: ADDING the redaction this function is named for
+    // left all 715 tests green. A length assertion on a shape-less input
+    // cannot see the property its own name states.
+    //
+    // The three halves are the three things that can independently be
+    // wrong, and each is non-vacuous against its own mutation:
+    //   1. redaction — removing the `redact_string` call fails half 1
+    //   2. char boundary — restoring `&reason[..MAX]` fails half 2
+    //   3. truncation — removing the cap fails half 3
     #[test]
-    fn tv_net4_12_bind_envelope_rebind_abort_reason_redaction_truncates() {
+    fn tv_net4_12_bind_envelope_rebind_abort_reason_is_redacted_then_truncated() {
+        // ---- half 1: a secret-shaped reason does not survive ----------
+        // The token body is the same shape the sibling
+        // `identity revoke --reason` redacts, and the field this lands
+        // in is named `reason_redacted`.
+        let secret = "bearer ghp_A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvWxYz0123456789";
+        let redacted = redact_reason(secret);
+        assert!(
+            !redacted.contains("ghp_"),
+            "a bearer token reached a field named reason_redacted verbatim: {redacted}"
+        );
+        assert!(
+            redacted.contains("REDACTED"),
+            "redaction must SUBSTITUTE, not merely drop: {redacted}"
+        );
+
+        // A long hex run is the other class the primitive covers, and it
+        // is the class this field is most likely to carry by accident.
+        let hex = format!("key {}", "a".repeat(64));
+        let out = redact_reason(&hex);
+        assert!(
+            !out.contains(&"a".repeat(64)),
+            "a 64-hex run reached reason_redacted verbatim: {out}"
+        );
+
+        // ---- half 2: a boundary-straddling reason does not panic ------
+        // 79 ASCII bytes then a 2-byte codepoint: byte 80 lands INSIDE
+        // the `é`. This is the input that made the CLI panic outright,
+        // proven against the real binary in R24.
+        //
+        // The filler is `z`, NOT `a`, and that is load-bearing. R24's
+        // first draft of this half used `"a".repeat(79)` and the
+        // char-boundary mutation SURVIVED it — because 79 `a`s is a
+        // 79-character run of hex digits, so `redact_string` replaced
+        // the entire string with a marker before the truncation pass
+        // ever saw a boundary. A control that passes because the input
+        // was shaped by the other pass is a non-result; the input has
+        // to be invisible to the pass it is testing the neighbour of.
+        let straddling = format!("{}é", "z".repeat(79));
+        let out = redact_reason(&straddling);
+        assert!(
+            out.len() <= 83,
+            "boundary-straddling reason exceeded the cap: len={} out={out}",
+            out.len()
+        );
+        // Round-tripping through the output proves no codepoint was
+        // split, which a length assertion alone cannot see.
+        assert!(
+            std::str::from_utf8(out.as_bytes()).is_ok(),
+            "truncation split a codepoint: {out:?}"
+        );
+
+        // A multi-byte codepoint AT the boundary, not before it.
+        let multibyte = "z".repeat(78) + "é" + &"z".repeat(60);
+        let out = redact_reason(&multibyte);
+        assert!(out.len() <= 83, "got len={} out={out}", out.len());
+        assert!(
+            out.is_char_boundary(out.len()),
+            "output ends mid-codepoint: {out:?}"
+        );
+
+        // ---- half 3: long text still truncates -----------------------
+        // Preserved from the original vector: truncation is a real
+        // behaviour and removing it must fail something.
         let long = "x".repeat(120);
-        let redacted = redact_reason(&long);
-        assert!(redacted.len() <= 83, "got len={}", redacted.len());
-        assert!(redacted.ends_with("..."));
+        let out = redact_reason(&long);
+        assert!(out.len() <= 83, "got len={}", out.len());
+        assert!(out.ends_with("..."), "got {out}");
     }
 
     // === Phase 5 test fixture + 6 test vectors (RFC-0011-m §Test Vectors) ===

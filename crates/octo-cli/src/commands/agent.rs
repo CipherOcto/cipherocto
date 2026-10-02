@@ -290,6 +290,48 @@ pub(crate) mod common {
     /// - `ForbiddenHolderMismatch` → `OctoCliError::ForbiddenHolderMismatch`
     /// - `Hsm` → `OctoCliError::HsmUnavailable` (via `map_hsm_error`)
     /// - other → `OctoCliError::Internal` (sanitized)
+    ///
+    /// Translate an `IdentityKey::activate` failure for the AGENT
+    /// surface. Lifted out of an inline closure at the call site in
+    /// R24 so that a vector can reach the production mapping rather than
+    /// a test-only twin of it — R11 found a `#[cfg(test)]` twin mapper
+    /// with three vacuous vectors, and the reason is the same: a twin
+    /// that no binary contains is not the code that runs.
+    ///
+    /// WHY THIS EXISTS ALONGSIDE THE CANONICAL TABLE. This is the second
+    /// `WalletError` → `OctoCliError` mapper in the crate (the first is
+    /// `map_transition_wallet_error`; the canonical one is
+    /// `From<WalletError>` in `error.rs`). The duplicate is deliberate
+    /// for two of its three arms and is DOCUMENTED rather than removed:
+    ///
+    /// - `AlreadyRevoked` → `AlreadyRevoked` (exit 6) — same as the
+    ///   table. No divergence.
+    /// - `RotationInProgress` → `AlreadyRotating` (exit **3**), where
+    ///   `From<WalletError>` sends the SAME variant to
+    ///   `IdentityTransitionRefused` (exit **43**).
+    ///
+    /// The divergence is real and was unrecorded until R24, which also
+    /// found that mutating this arm left all 715 tests green. The codes
+    /// are left as they are: re-slotting a live exit code is an
+    /// operator-visible contract change and is the USER's call, the same
+    /// adjudication R22 applied to the mesh-forward codes. What R24
+    /// bought is that the divergence is now named, and that a mutation
+    /// of either arm now fails a vector.
+    ///
+    /// `IdentityKey::activate` returns exactly `AlreadyRevoked` and
+    /// `RotationInProgress`, so this match is total over its input and
+    /// the wildcard below is unreachable today. It is kept because
+    /// `WalletError` is `#[non_exhaustive]`.
+    pub(crate) fn map_activate_error(wallet_err: octo_wallet::WalletError) -> OctoCliError {
+        match wallet_err {
+            octo_wallet::WalletError::AlreadyRevoked => OctoCliError::AlreadyRevoked,
+            octo_wallet::WalletError::RotationInProgress => OctoCliError::AlreadyRotating,
+            other => OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "identity activation failed: {other}"
+            ))),
+        }
+    }
+
     pub(crate) fn map_transition_wallet_error(e: octo_wallet::WalletError) -> OctoCliError {
         match e {
             octo_wallet::WalletError::AlreadyInTransition(uuid) => {
@@ -956,15 +998,7 @@ mod run {
                 //       principle.
                 holder
                     .activate(now_unix)
-                    .map_err(|wallet_err| match wallet_err {
-                        octo_wallet::WalletError::AlreadyRevoked => OctoCliError::AlreadyRevoked,
-                        octo_wallet::WalletError::RotationInProgress => {
-                            OctoCliError::AlreadyRotating
-                        }
-                        other => OctoCliError::Internal(sanitize_substrate_error(&format!(
-                            "identity activation failed: {other}"
-                        ))),
-                    })?;
+                    .map_err(common::map_activate_error)?;
 
                 // 6.5.2 TTL = mint time + 3600s (RFC-0011-c
                 //       §F.6.1 documented default). saturating_add
@@ -2922,5 +2956,125 @@ mod tests {
         );
         assert_eq!(a["label"], serde_json::json!("alpha"));
         assert_eq!(a["manifest_digest"], serde_json::json!("ab".repeat(32)));
+    }
+
+    // === R24: every arm of map_transition_wallet_error is pinned ===
+    //
+    // R24 found that DELETING four of this mapper's eight named arms
+    // left all 715 tests green. Collapsing the whole mapper to a single
+    // `Internal` arm was caught (2 failures), so the gap was arm-by-arm
+    // and not wholesale: five of eight were unheld.
+    //
+    // `AgentNotFound` is the reason this matters. The agent registry in
+    // `octo-wallet`'s `agent.rs` is a process-global `BTreeMap` that is
+    // never persisted, so `octo agent run` in a fresh process ALWAYS
+    // reaches `registry.get_mut(&uuid).ok_or(AgentNotFound)`. Under the
+    // surviving mutation an ordinary not-found was reported as exit 64
+    // with the hint "re-run with RUST_LOG=debug and report the
+    // diagnostic" — the R12 shape transposed: a plain miss escalated to
+    // an infrastructure fault with a paging instruction.
+    //
+    // The claim is the CORRESPONDENCE (substrate variant → typed CLI
+    // variant → exit code), so the expected side is written out here
+    // rather than derived from `exit_code()` (rule 12 — a table that
+    // reads itself constrains nothing).
+    #[test]
+    fn tv_r24_map_transition_wallet_error_arms_are_pinned() {
+        use octo_wallet::WalletError;
+
+        let uuid = uuid::Uuid::from_u128(0x0011_0000_0000_0000_0000_0000_0000_00a1);
+
+        // (substrate error, expected OctoCliError, expected exit code,
+        //  what the operator would otherwise be told)
+        let cases: Vec<(WalletError, OctoCliError, i32, &str)> = vec![
+            (
+                WalletError::AgentNotFound(uuid),
+                OctoCliError::AgentNotFound(uuid),
+                42,
+                "not-found reported as an internal fault (R24 M8)",
+            ),
+            (
+                WalletError::AlreadyInTransition(uuid),
+                OctoCliError::AlreadyInTransition(uuid),
+                43,
+                "in-transition refusal reported as an internal fault (R24 M8)",
+            ),
+            (
+                WalletError::InvalidStateTransition {
+                    from: octo_wallet::AgentState::Registered,
+                    to: octo_wallet::AgentState::Running,
+                },
+                OctoCliError::InvalidStateTransition {
+                    from: "registered".to_string(),
+                    to: "running".to_string(),
+                },
+                43,
+                "invalid-transition refusal reported as an internal fault (R24 M8)",
+            ),
+            (
+                WalletError::AuditUnavailable("sink down".to_string()),
+                OctoCliError::AuditSubstrateNotReady,
+                52,
+                "audit-unavailable reported as an internal fault (R24 M8)",
+            ),
+            (
+                WalletError::ForbiddenHolderMismatch,
+                OctoCliError::ForbiddenHolderMismatch,
+                17,
+                "SECURITY HIGH holder mismatch reported as an internal fault (R24 M6)",
+            ),
+        ];
+
+        for (input, expected_variant, expected_exit, why) in cases {
+            let label = format!("{input:?}");
+            let got = common::map_transition_wallet_error(input);
+            assert_eq!(
+                got.exit_code(),
+                expected_exit,
+                "{why}: {label} mapped to exit {}, expected {expected_exit}",
+                got.exit_code()
+            );
+            // Also compare the variant itself, not only the code: two
+            // distinct variants may legitimately share an exit code
+            // (R22 measured twelve such codes), so the code alone is
+            // too weak a witness for "this arm is the one that fired".
+            let got_discriminant = std::mem::discriminant(&got);
+            let want_discriminant = std::mem::discriminant(&expected_variant);
+            assert_eq!(
+                got_discriminant, want_discriminant,
+                "{why}: {label} mapped to {got:?}, expected {expected_variant:?}"
+            );
+        }
+    }
+
+    // R24 found a SECOND mapper over the same substrate type, inline at
+    // the `holder.activate()` call site, with no vector of any kind. It
+    // sends `RotationInProgress` to `AlreadyRotating` (exit 3) where the
+    // canonical `From<WalletError>` table sends the SAME variant to
+    // `IdentityTransitionRefused` (exit 43).
+    //
+    // The divergence is left in place and documented rather than
+    // "fixed": re-slotting a live exit code is an operator-visible
+    // contract change and is the USER's call, following R22's
+    // adjudication of the same question. What this vector holds is that
+    // the divergence is now KNOWN — a mutation of this arm can no longer
+    // pass silently, and the reason both codes exist is recorded at the
+    // arm.
+    #[test]
+    fn tv_r24_inline_activate_mapper_pins_its_two_named_arms() {
+        // `IdentityKey::activate` returns exactly two variants, so this
+        // inline match is total over its input by construction. Both are
+        // pinned here; the wildcard below them is the only thing
+        // unobservable, and it is unreachable.
+        let revoked = common::map_activate_error(octo_wallet::WalletError::AlreadyRevoked);
+        assert_eq!(revoked.exit_code(), 6, "AlreadyRevoked must stay exit 6");
+        let rotating = common::map_activate_error(octo_wallet::WalletError::RotationInProgress);
+        assert_eq!(
+            rotating.exit_code(),
+            3,
+            "the agent surface reports an in-progress rotation as AlreadyRotating/3, \
+             not as the identity surface's IdentityTransitionRefused/43 — see the note \
+             at the call site"
+        );
     }
 }

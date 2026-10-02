@@ -1091,3 +1091,199 @@ fn l3_the_guides_vault_id_hex_conversion_produces_64_hex_chars() {
         "the naive form is a byte array, not hex: {naive:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: the unlock → sign chain works end-to-end through real processes
+// ---------------------------------------------------------------------------
+
+/// The cross-process property extends to the signing chain.
+///
+/// The audit `docs/audits/open-limitations-assessment.md` §6 row 4c closed
+/// at `next 7445c289`: the 6 production signing paths in `octo-cli` now
+/// route through `WalletStore::unlock(passphrase, &mut seed_buf)` instead
+/// of `WalletStore::try_active_identity` (a metadata-only stub returning
+/// `WalletError::Locked` unconditionally). Before 4c(b) this harness could
+/// not reach the signing paths — every `capability list` exited 92 and
+/// `capability mint` exited 64 with no way to supply a passphrase from a
+/// non-interactive script. This test exercises the full chain across two
+/// OS processes: register an identity (creates the wallet), then in a
+/// SEPARATE process invoke `capability list` with the passphrase on
+/// stdin. The capability list call exits 0 with an empty capabilities
+/// envelope, proving the unlock split works end-to-end through the real
+/// binary the operator would invoke.
+///
+/// The passphrase is read from a file for register (the substrate's
+/// gate) and from stdin for unlock + capability list (the AC-10
+/// pre-flight, no-TTY fail-closed before this point). 24 characters
+/// clear the 12-character substrate floor with a wide margin so a future
+/// tightening cannot turn this test red without warning.
+#[test]
+fn l3_unlock_then_capability_list_returns_zero() {
+    let home = new_node_home("l3-unlock-cap");
+    let passphrase = "l3-unlock-cap-passphrase-2026"; // 29 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // -- Step 1: register an identity in process #1. The register path
+    //    is mutating but does NOT require unlock (it creates the wallet
+    //    and seals the seed). The CI-mode pair is the dispatch-side
+    //    write gate for scripted runs. The passphrase file is written
+    //    WITHOUT a trailing newline: the substrate takes the passphrase
+    //    as-is and the unlock's stdin path trims `\r\n` (see
+    //    `acquire_passphrase`), so a trailing newline on the file would
+    //    become part of the stored passphrase and the unlock attempt
+    //    would be a guaranteed `WalletError::Locked`.
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-unlock-cap",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "ci",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_did = register_env.payload["did"]
+        .as_str()
+        .expect("register envelope must carry payload.did")
+        .to_string();
+    assert!(
+        register_did.starts_with("did:octo:"),
+        "DID must be in canonical wire form, got {register_did:?}"
+    );
+    assert_eq!(
+        register_env.payload["active_now"],
+        serde_json::Value::Bool(true),
+        "register --activate (default true) must promote the new identity to Active"
+    );
+
+    // -- Step 2: SEPARATE process invokes `identity unlock` with the
+    //    passphrase piped to stdin. This is the substrate-faithful
+    //    passphrase check the audit §6 row 4c(a) shipped at `next
+    //    d5387cd5`. All three stdio streams are piped so the child
+    //    envelope does not leak to the test runner's stdout (which
+    //    would otherwise mix the child JSON with the harness's
+    //    own diagnostic output and break any later Envelope::parse
+    //    call).
+    let mut unlock_cmd = octo_in(&home);
+    unlock_cmd.args([
+        "identity",
+        "unlock",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    unlock_cmd.stdin(std::process::Stdio::piped());
+    unlock_cmd.stdout(std::process::Stdio::piped());
+    unlock_cmd.stderr(std::process::Stdio::piped());
+    let mut unlock_child = unlock_cmd.spawn().expect("spawn unlock");
+    std::io::Write::write_all(
+        unlock_child.stdin.as_mut().expect("unlock stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to unlock");
+    let unlock_out = unlock_child.wait_with_output().expect("wait unlock");
+    assert!(
+        unlock_out.status.success(),
+        "unlock must succeed: stderr={}",
+        String::from_utf8_lossy(&unlock_out.stderr),
+    );
+    let unlock_env = Envelope::parse(&String::from_utf8_lossy(&unlock_out.stdout));
+    let unlock_did = unlock_env.payload["did"]
+        .as_str()
+        .expect("unlock envelope must carry payload.did")
+        .to_string();
+    assert_eq!(
+        unlock_did, register_did,
+        "unlock must report the same DID register created"
+    );
+
+    // -- Step 3: SEPARATE process invokes `capability list` with the
+    //    passphrase on stdin. This is the post-4c(b) signing path: it
+    //    acquires the passphrase through `acquire_passphrase`, calls
+    //    `WalletStore::unlock`, and consumes the unlocked handle for
+    //    the substrate's `list_active(&IdentityKey)` call. Exit 0 +
+    //    empty capabilities array is the canonical happy-path signal.
+    let mut list_cmd = octo_in(&home);
+    list_cmd.args([
+        "capability",
+        "list",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    list_cmd.stdin(std::process::Stdio::piped());
+    list_cmd.stdout(std::process::Stdio::piped());
+    list_cmd.stderr(std::process::Stdio::piped());
+    let mut list_child = list_cmd.spawn().expect("spawn capability list");
+    std::io::Write::write_all(
+        list_child.stdin.as_mut().expect("list stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to capability list");
+    let list_out = list_child.wait_with_output().expect("wait capability list");
+    assert_eq!(
+        list_out.status.code(),
+        Some(0),
+        "capability list on an unlocked wallet must exit 0, got {:?}. stderr={}, stdout={}",
+        list_out.status.code(),
+        String::from_utf8_lossy(&list_out.stderr),
+        String::from_utf8_lossy(&list_out.stdout),
+    );
+    let list_env = Envelope::parse(&String::from_utf8_lossy(&list_out.stdout));
+    assert_eq!(
+        list_env.payload["capabilities"].as_array().map(Vec::len),
+        Some(0),
+        "a freshly registered identity must own zero capabilities, got {:?}",
+        list_env.payload["capabilities"]
+    );
+
+    // -- Step 4 (cross-node isolation property): the wallet created
+    //    on node A is NOT visible to node C. Each `$OCTO_HOME`
+    //    resolves its own wallet; a second home with NO register
+    //    must still report WalletLocked exit 92 on `capability
+    //    list`, because node C has no sealed wallet to unlock.
+    let other = new_node_home("l3-unlock-cap-other");
+    let mut other_list = octo_in(&other);
+    other_list.args([
+        "capability",
+        "list",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    other_list.stdin(std::process::Stdio::piped());
+    other_list.stdout(std::process::Stdio::piped());
+    other_list.stderr(std::process::Stdio::piped());
+    let mut other_child = other_list.spawn().expect("spawn other list");
+    std::io::Write::write_all(
+        other_child.stdin.as_mut().expect("other stdin"),
+        b"some-passphrase-not-relevant\n",
+    )
+    .expect("pipe pp to other");
+    let other_out = other_child.wait_with_output().expect("wait other");
+    assert_eq!(
+        other_out.status.code(),
+        Some(92),
+        "a fresh node with no registered identity must exit 92 (WalletLocked), \
+         got {:?}. stderr={}",
+        other_out.status.code(),
+        String::from_utf8_lossy(&other_out.stderr),
+    );
+}

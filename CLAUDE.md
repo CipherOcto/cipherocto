@@ -2,23 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository Status
-
-**IMPORTANT:** Implementation has begun. The repository now contains both architectural planning (RFCs, Missions) and implementation code (crates/). The current focus is on RFC-0104 Deterministic Floating-Point (DFP) implementation starting with the determin/ crate.
-
 ## Architectural Principles (Apply from Project Start)
 
 Generic SE principles that guide any new RFC, mission, or crate. Full reference: `~/.claude/projects/.../memory/cipherocto-design-principles.md`.
 
 ### Rust crate-level stability (match crate stability to design depth)
 
-| Layer | Scope | Stability | Evolves when |
-|---|---|---|---|
-| **A** | Crypto primitives + canonical encoding + semantic policies | RFC-frozen, semver-major only (years-stable) | PQC migration (years) |
-| **B** | Identity substrate + transport + cable + wallet-core | RFC-driven, additive only (years-stable) | New RFC adds feature |
-| **C** | Specialized nodes (one per node role) | Per-RFC | New node type = new RFC + new crate |
-| **D** | Transport adapters (BLE/USB/TCP/QUIC/HID/...) | Per-adapter | New adapter = new crate |
-| **E** | User extensions + capability variants | Per-extension | New ext = new crate + register |
+| Layer | Scope                                                      | Stability                                    | Evolves when                        |
+| ----- | ---------------------------------------------------------- | -------------------------------------------- | ----------------------------------- |
+| **A** | Crypto primitives + canonical encoding + semantic policies | RFC-frozen, semver-major only (years-stable) | PQC migration (years)               |
+| **B** | Identity substrate + transport + cable + wallet-core       | RFC-driven, additive only (years-stable)     | New RFC adds feature                |
+| **C** | Specialized nodes (one per node role)                      | Per-RFC                                      | New node type = new RFC + new crate |
+| **D** | Transport adapters (BLE/USB/TCP/QUIC/HID/...)              | Per-adapter                                  | New adapter = new crate             |
+| **E** | User extensions + capability variants                      | Per-extension                                | New ext = new crate + register      |
 
 Layer direction: A → B → C → D/E. Never the reverse. Layer B depends on A (stable substrate); Layer D depends on B (transport trait); Layer E registers into B (registry pattern), doesn't depend on it. Audit question for any new crate or dep: which layer? Does the dependency direction respect the layer model?
 
@@ -75,18 +71,20 @@ Hybrid Network Mesh 🪼 (Network Layer)
 
 Design philosophy: **many agents, one intelligence**
 
-## Planned Modules
+## Module Surface
 
-Not yet implemented - these are architectural plans:
+The conceptual module set, and where each one lives in the tree. Implementation state is not recorded here — read `missions/`, `rfcs/`, and `git log` for that.
 
-- Assistant Core
-- Agent Runtime
-- Local Inference Engine
-- Secure Execution Sandbox
-- Node Identity System (OCTO-ID)
-- Hybrid Blockchain Coordination
-- Developer SDK
-- Deployment Toolkit
+| Module                  | Home                                                  |
+| ----------------------- | ----------------------------------------------------- |
+| Assistant Core          | conceptual; no dedicated crate yet                    |
+| Agent Runtime           | `octo-runtime`                                        |
+| Local Inference         | conceptual; no dedicated crate yet                    |
+| Secure Execution        | `octo-runtime`, `octo-runtime-transport-*`            |
+| Node Identity (OCTO-ID) | `octo-ident`, `octo-ident-storage`, `octo-wallet`     |
+| Hybrid Blockchain       | `octo-network`, `octo-mesh`, `octo-coordinator-types` |
+| Developer SDK           | `octo-cli`, `quota-router-pyo3`                       |
+| Deployment Toolkit      | `scripts/`, `octo-cli` node images                    |
 
 ## Documentation Structure
 
@@ -102,6 +100,7 @@ CipherOcto-specific manifestations of the **§Architectural Principles** above. 
 ### Data Flagging System
 
 Every dataset/interaction is tagged with privacy levels:
+
 - `PRIVATE` - Encrypted, local-only, never enters marketplace
 - `CONFIDENTIAL` - Restricted to trusted agents
 - `SHARED` - Allowed marketplace access
@@ -110,6 +109,7 @@ Every dataset/interaction is tagged with privacy levels:
 ### Proof of Reliability (PoR)
 
 Trust emerges from:
+
 - OCTO-ID (persistent identity)
 - Stake (economic commitment)
 - Performance (measurable outcomes)
@@ -129,12 +129,12 @@ Every participant stakes both OCTO (global alignment) + Role Token (local specia
 
 RFCs follow the process defined in `docs/BLUEPRINT.md`. Key stages:
 
-| Stage | Location | Purpose |
-|-------|----------|---------|
-| **Planned** | `rfcs/planned/` | Placeholder, defines concept and scope |
-| **Draft** | `rfcs/draft/` | Full specification, working implementation |
-| **Accepted** | `rfcs/accepted/` | Approved, stable specification |
-| **Archived** | `rfcs/archived/` | Rejected, superseded, or deprecated |
+| Stage        | Location         | Purpose                                    |
+| ------------ | ---------------- | ------------------------------------------ |
+| **Planned**  | `rfcs/planned/`  | Placeholder, defines concept and scope     |
+| **Draft**    | `rfcs/draft/`    | Full specification, working implementation |
+| **Accepted** | `rfcs/accepted/` | Approved, stable specification             |
+| **Archived** | `rfcs/archived/` | Rejected, superseded, or deprecated        |
 
 **RFC Referencing rule:** When referencing RFCs in prose, cross-references, changelogs, and approval criteria — use only the number. Never include status, version pins, or metadata. Example: `RFC-0909` not `RFC-0903 (Accepted v63)`.
 
@@ -147,6 +147,7 @@ See `docs/BLUEPRINT.md` §The RFC Process for full lifecycle details.
 ### Shell Command Guidelines
 
 **DO NOT use compound shell commands** (e.g., `cd path && command`). Instead:
+
 - Use separate Bash calls sequentially when commands depend on each other
 - Use absolute paths to avoid needing `cd`
 - If cd is absolutely necessary, use separate tool calls
@@ -154,11 +155,13 @@ See `docs/BLUEPRINT.md` §The RFC Process for full lifecycle details.
 ### Rust Development Commands
 
 **Lint (must pass with zero warnings)**
+
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 **Format**
+
 ```bash
 cargo fmt
 ```
@@ -194,14 +197,14 @@ For RFC / mission / specialized-node checklists (mandatory sections, naming conv
 
 CipherOcto uses **Trunk-Based + Feature Streams**:
 
-| Branch | Purpose | Protection |
-|--------|---------|------------|
-| `main` | Always releasable | PR only, all checks, 1+ approval |
-| `next` | Integration lane | CI required, direct push OK |
-| `feat/*` | Contributor features | CI required |
-| `agent/*` | AI-generated work | CI required + extra review |
-| `research/*` | Experimental | CI required |
-| `hotfix/*` | Emergency fixes | PR to main |
+| Branch       | Purpose              | Protection                       |
+| ------------ | -------------------- | -------------------------------- |
+| `main`       | Always releasable    | PR only, all checks, 1+ approval |
+| `next`       | Integration lane     | CI required, direct push OK      |
+| `feat/*`     | Contributor features | CI required                      |
+| `agent/*`    | AI-generated work    | CI required + extra review       |
+| `research/*` | Experimental         | CI required                      |
+| `hotfix/*`   | Emergency fixes      | PR to main                       |
 
 **Golden Rule:** Nobody pushes directly to `main`. Push + remote writes (`gh pr/issue/release`) require explicit user instruction per [[git-workflow]] + [[feedback_initiation_user_only]].
 
@@ -215,11 +218,13 @@ Branch protection rules: `.github/branch-protection-rules.md`
 ## Documentation Standards
 
 **Diagrams:** Always prefer Mermaid diagrams over ASCII art. Mermaid is:
+
 - Rendered in GitHub, VS Code, and most Markdown viewers
 - Easier to maintain and edit
 - Consistent with modern documentation practices
 
 **Example:**
+
 ```mermaid
 graph TD
     A[Start] --> B{Decision}
@@ -228,13 +233,14 @@ graph TD
 ```
 
 **When creating or updating docs:**
+
 - Use `mermaid` code blocks for flowcharts, state diagrams, sequence diagrams
 - Avoid ASCII art (`┌─`, `└─`, `─►`, etc.)
 - If existing ASCII diagrams exist, convert them to Mermaid
 
 **Markdown Formatting:**
+
 - All markdown files must pass Prettier formatting
 - Run `npx prettier --write <file>.md` before committing
 - Ensure files end with a newline
 - Use consistent heading hierarchy (no skipping levels)
-

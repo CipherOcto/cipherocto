@@ -2605,7 +2605,7 @@ mod tests {
     /// draft shipped that way and the mutation below confirms the
     /// slicing is load-bearing.
     #[test]
-    fn tv_x_c_45_activate_accepts_the_explicit_false_form() {
+    fn tv_x_c_88_activate_accepts_the_explicit_false_form() {
         let src = production_src();
 
         // Bound the clap attribute block for `activate` itself. The
@@ -5694,6 +5694,125 @@ mod tests {
             "the refusal must be DevModeRequired, whose message names its own remedy and whose \\
              exit code is the operator-input family rather than page-someone. Gate body: \\
              {gate_body}"
+        );
+    }
+
+    /// No vector id is claimed by two test functions.
+    ///
+    /// RFC-0011-x §Test Vectors assigns each id a stated claim, and an
+    /// audit resolves an id to a claim by reading the test that
+    /// carries it. Seven ids were each claimed by two or more
+    /// `fn tv_x_*` declarations, so resolving `tv_x_44` had four
+    /// candidate answers and the other six had two each - and
+    /// picking the right one meant reading the RFC's table rather
+    /// than grepping the tree. A reviewer auditing a claim by id was
+    /// auditing an ambiguous target.
+    ///
+    /// The trailing letter is PART of the id, not a collision. The
+    /// CLI mission's AC-12 lists `tv_x_44` and `tv_x_44b` as
+    /// separate vectors, and `b`/`c`/`d` are the RFC vector's own
+    /// split parts, so `tv_x_44`, `tv_x_44b`, `tv_x_44c` and
+    /// `tv_x_44d` are four distinct ids and this vector must not
+    /// report them. That is the one convention this check has to
+    /// encode, and it is the reason a trailing letter is captured
+    /// rather than truncated.
+    ///
+    /// Scans all five files that declare a `tv_x_*` fn, across both
+    /// crates. It lives in the Layer C crate because it must read
+    /// Layer B's source, and C depends on B - never the reverse.
+    /// `include_str!` rather than a runtime directory walk, so the
+    /// scan is bound to the sources at compile time and needs no
+    /// path resolution and no new dependency.
+    ///
+    /// HONEST LIMIT: a vector added to a file not listed in
+    /// `SOURCES` is outside this check. The count assertion below
+    /// catches a vector removed from - or moved out of - the scanned
+    /// set, because that lowers the total; it cannot see a vector
+    /// added to a sixth file. Re-derive `SOURCES` from the tree if
+    /// a new file ever gains a `tv_x_*` fn.
+    #[test]
+    fn tv_x_c_89_no_vector_id_is_claimed_by_two_test_functions() {
+        const SOURCES: &[(&str, &str)] = &[
+            ("commands/identity.rs", include_str!("identity.rs")),
+            ("error.rs", include_str!("../error.rs")),
+            ("commands/vault.rs", include_str!("vault.rs")),
+            (
+                "octo-wallet/identity_store.rs",
+                include_str!("../../../octo-wallet/src/identity_store.rs"),
+            ),
+            (
+                "octo-wallet/cli_fns.rs",
+                include_str!("../../../octo-wallet/src/cli_fns.rs"),
+            ),
+        ];
+
+        /// Pull the id out of a `fn tv_x_<id>(` declaration. The id is
+        /// the optional `c_` per-call-site marker, the digits, and an
+        /// optional single trailing letter. `None` for anything that
+        /// is not a `tv_x_*` declaration.
+        fn id_of(line: &str) -> Option<String> {
+            let rest = line.trim().strip_prefix("fn tv_x_")?;
+            let (marker, after_marker) = match rest.strip_prefix("c_") {
+                Some(digits) => ("c_", digits),
+                None => ("", rest),
+            };
+            let digits: String = after_marker
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            if digits.is_empty() {
+                return None;
+            }
+            let letter = after_marker[digits.len()..]
+                .chars()
+                .next()
+                .filter(char::is_ascii_lowercase)
+                .map_or_else(String::new, String::from);
+            Some(format!("tv_x_{marker}{digits}{letter}"))
+        }
+
+        let mut owners: std::collections::BTreeMap<String, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        let mut per_file: Vec<(&str, usize)> = Vec::new();
+        for (label, src) in SOURCES {
+            let mut here = 0usize;
+            for line in src.lines() {
+                let Some(id) = id_of(line) else {
+                    continue;
+                };
+                here += 1;
+                owners.entry(id).or_default().push(label);
+            }
+            per_file.push((label, here));
+        }
+        let declared: usize = owners.values().map(Vec::len).sum();
+
+        let collisions: Vec<String> = owners
+            .iter()
+            .filter(|(_, sites)| sites.len() > 1)
+            .map(|(id, sites)| format!("{id} is claimed by {} functions in {sites:?}", sites.len()))
+            .collect();
+        assert!(
+            collisions.is_empty(),
+            "each vector id must name exactly ONE test function. The RFC's table \
+             states one claim per id, and an audit that resolves an id to a claim \
+             resolves it to a single test; with two, the audit target is ambiguous \
+             and which one is canonical is a judgement call rather than a lookup. \
+             Colliding ids:\n  {}",
+            collisions.join("\n  ")
+        );
+
+        // The count rides along so DELETING a vector trips this too. A
+        // deletion leaves the namespace just as injective, so the
+        // assertion above alone would pass - and a removed vector is
+        // the failure mode a collision check is least likely to catch
+        // by eye. Renumbering without a matching count edit fails
+        // here.
+        assert_eq!(
+            declared, 127,
+            "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
+             added, raise this count in the SAME commit; if one was removed, put it \
+             back."
         );
     }
 }

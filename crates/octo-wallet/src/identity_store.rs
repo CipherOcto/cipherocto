@@ -2410,7 +2410,7 @@ mod tests {
     /// is below the floor and is refused at `register`. The
     /// floor is `>= 12`, so 11 is strictly below.
     #[test]
-    fn tv_x_17_passphrase_below_floor_is_refused() {
+    fn tv_x_67_passphrase_below_floor_is_refused() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let key = IdentityKey::from_seed([0x17u8; 32]);
@@ -2435,7 +2435,7 @@ mod tests {
     /// the parent directory so the rename is durable across
     /// power loss.
     #[test]
-    fn tv_x_18_store_json_parses_after_register() {
+    fn tv_x_68_store_json_parses_after_register() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let key = IdentityKey::from_seed([0x18u8; 32]);
@@ -2509,7 +2509,7 @@ mod tests {
     /// stub-shape so a substrate that silently returns a
     /// fresh key without unlock is detected.
     #[test]
-    fn tv_x_22_try_active_identity_is_metadata_only_and_returns_locked() {
+    fn tv_x_69_try_active_identity_is_metadata_only_and_returns_locked() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = WalletStore::open_at(dir.path()).expect("open_at");
         let err = store.try_active_identity().unwrap_err();
@@ -2732,7 +2732,7 @@ mod tests {
     /// `tv_x_39` (mission §AC-15): `lookup_identity_record`
     /// on a DID not in the index returns `IdentityNotFound`.
     #[test]
-    fn tv_x_39_lookup_unknown_did_returns_not_found() {
+    fn tv_x_70_lookup_unknown_did_returns_not_found() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = WalletStore::open_at(dir.path()).expect("open_at");
         let phantom = Did::from("did:octo:zzznotpresent");
@@ -2751,7 +2751,7 @@ mod tests {
     /// success is observed via the handle's `sign` method
     /// rather than the buffer's content.
     #[test]
-    fn tv_x_40_register_then_unlock_round_trip_with_floor_passphrase() {
+    fn tv_x_71_register_then_unlock_round_trip_with_floor_passphrase() {
         let dir = tempfile::tempdir().expect("tempdir");
         let passphrase = "a".repeat(MIN_PASSPHRASE_CHARS);
         {
@@ -2818,7 +2818,7 @@ mod tests {
     /// returned a default-constructed record would silently
     /// emit a fake identity.
     #[test]
-    fn tv_x_44_identity_record_round_trips_through_clone() {
+    fn tv_x_72_identity_record_round_trips_through_clone() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let key = IdentityKey::from_seed([0x44u8; 32]);

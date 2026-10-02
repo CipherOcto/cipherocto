@@ -2576,6 +2576,58 @@ mod tests {
         );
     }
 
+    /// `tv_x_14` (mission §AC-45): `unlock` with a wrong passphrase
+    /// returns `VaultDecryptionFailed`, and the correct passphrase
+    /// on the same slot returns `Ok`.
+    ///
+    /// `tv_x_31` pins the missing-slot half of the discrimination,
+    /// and `tv_x_18` pins the zeroize on the wrong-passphrase path —
+    /// but `tv_x_18` asserts only `result.is_err()`, which every
+    /// wrong-passphrase outcome satisfies. So nothing pinned WHICH
+    /// error, and `tv_x_31`'s own doc comment ("the failure modes
+    /// are discriminable so an operator can tell a deleted-slot case
+    /// from a wrong-passphrase case without re-running") was
+    /// asserting a property nothing enforced.
+    ///
+    /// Negative control, measured: remapping `VaultDecryptionFailed`
+    /// to `VaultSlotNotFound` in `unlock`'s error arm left all 317
+    /// substrate and all 553 CLI tests passing. Both variants reach
+    /// the CLI's `WalletLocked` arm, so the exit code is identical
+    /// and the CLI suite cannot see the difference either — the
+    /// discrimination lives entirely at the substrate boundary, and
+    /// the boundary is where it has to be pinned.
+    #[test]
+    fn tv_x_14_a_wrong_passphrase_yields_vault_decryption_failed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x14u8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+
+        // The spec's negative control, stated as the first half: the
+        // correct passphrase must SUCCEED on this exact slot, so the
+        // variant asserted below cannot be returned unconditionally.
+        let mut good_out = Vec::new();
+        store
+            .unlock("correct-horse-battery-staple", &mut good_out)
+            .expect(
+                "the correct passphrase must succeed on the slot the wrong one is tried against",
+            );
+
+        let mut bad_out = Vec::new();
+        let err = store
+            .unlock("wrong-passphrase-12", &mut bad_out)
+            .expect_err("a wrong passphrase must fail");
+        assert!(
+            matches!(err, WalletError::VaultDecryptionFailed),
+            "a wrong passphrase must yield VaultDecryptionFailed, and NOT VaultSlotNotFound — \
+             the two are the substrate's discrimination between a deleted slot and a wrong \
+             passphrase, and conflating them sends an operator to restore a slot that is \
+             present. Got {err:?}"
+        );
+    }
+
     /// `tv_x_34` (mission §AC-32): the rehydrated key's
     /// public key matches the record's persisted public key
     /// for every lifecycle state the substrate accepts. The

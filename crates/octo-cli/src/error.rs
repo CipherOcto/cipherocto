@@ -3317,6 +3317,22 @@ mod tests {
             "NotActive {{ current_state: Revoked }} must map to AlreadyRevoked (exit 6), got: {e:?}"
         );
         assert_eq!(e.exit_code(), 6);
+        // The same output from the substrate's OWN revoked arm, which
+        // is a different input. `NotActive { Revoked }` is what a
+        // read or a select raises, `AlreadyRevoked` is what
+        // `register` and the lifecycle rehydration raise. They land
+        // on one exit for one reason - the identity is terminal - and
+        // this arm had no vector at all: deleting it left all 553
+        // tests passing, so the two substrate paths to exit 6 were
+        // pinned one deep.
+        let e: OctoCliError = octo_wallet::WalletError::AlreadyRevoked.into();
+        assert!(
+            matches!(e, OctoCliError::AlreadyRevoked),
+            "the substrate's own AlreadyRevoked must map to AlreadyRevoked (exit 6). Falling \
+             through to the wildcard would exit 64 and tell the operator to report a bug for an \
+             identity that is terminal by design. Got {e:?}"
+        );
+        assert_eq!(e.exit_code(), 6);
         // Rotating -> AlreadyRotating (exit 3)
         let e: OctoCliError = octo_wallet::WalletError::NotActive {
             current_state: octo_wallet::LifecycleState::Rotating,

@@ -172,10 +172,29 @@ impl WalletStore {
         // AC-4: a non-existent root is left alone — no directory is
         // created at open time. The lazy-create happens on first write.
         if root.exists() {
-            Self::correct_root_perms(&root)?;
+            Self::correct_dir_perms(&root)?;
         }
         let index = Self::read_or_init_index(&root)?;
         let vault = Vault::open_lazy(root.join("seed"));
+        // R24: the slots directory gets the SAME repair-on-open policy
+        // the root has, and it did not have one. The root is corrected
+        // here on every open; the slots directory sat beside it,
+        // unwritten, and a store created by a build predating the
+        // `0o700` primitive kept a permissive directory forever. Two
+        // directories, one policy stated and one unstated, is the kind
+        // of asymmetry a reader resolves by assuming the unstated one
+        // is deliberate.
+        //
+        // Guarded on existence for the same reason the root is: AC-4
+        // creates nothing at open time, and a fresh store has no slots
+        // directory yet. The correction is deliberately CONDITIONAL on
+        // the mode being too wide rather than unconditional, matching
+        // `correct_dir_perms`, so opening a store does not rewrite a
+        // directory that is already correct.
+        let seed_dir = root.join("seed");
+        if seed_dir.exists() {
+            Self::correct_dir_perms(&seed_dir)?;
+        }
         Ok(Self { root, index, vault })
     }
 
@@ -255,13 +274,23 @@ impl WalletStore {
     // Internals
     // ------------------------------------------------------------------
 
-    fn correct_root_perms(root: &Path) -> Result<(), WalletError> {
+    /// Narrow `dir` to 0o700 if it is currently readable by group or
+    /// other. Conditional on the mode being too wide, so a directory
+    /// that is already correct is not rewritten on every open.
+    ///
+    /// R24 renamed this from `correct_root_perms`: it now serves BOTH
+    /// the store root and the slots directory, and a name that says
+    /// `root` invites a reader to assume the slots directory is
+    /// corrected somewhere else. It was not, for four rounds. A
+    /// function whose name narrows its own applicability is the same
+    /// class of defect as a comment that asserts a check nobody made.
+    fn correct_dir_perms(dir: &Path) -> Result<(), WalletError> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let current = fs::metadata(root)?.permissions().mode();
+            let current = fs::metadata(dir)?.permissions().mode();
             if current & 0o077 != 0 {
-                fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
+                fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
             }
         }
         Ok(())
@@ -2033,6 +2062,96 @@ mod tests {
         assert_eq!(
             file_mode, 0o600,
             "store.json must be 0o600 after first write, got {file_mode:o}"
+        );
+    }
+
+    /// R24: the slots DIRECTORY is 0o700, and the assertion is on the
+    /// directory rather than on the call that is supposed to set it.
+    ///
+    /// This is the vector whose absence let the last create-then-chmod
+    /// site in the crate survive four rounds. `tv_x_3_4` above pins the
+    /// store ROOT and `store.json` and stops there; a grep for any
+    /// test asserting a mode on `join("seed")` returned only the two
+    /// production `set_permissions` calls themselves. Deleting the
+    /// chmod in `Vault::ensure_slots_dir` therefore left all 414 tests
+    /// green over three single-threaded runs.
+    ///
+    /// Two halves, because the property has two ways to be false and
+    /// they fail in opposite directions:
+    ///
+    /// 1. DIRECTORY IS NOT PRIVATE FROM BIRTH. Half one forces the
+    ///    directory to the permissive mode an old build would have
+    ///    left behind, then re-opens the store. A `create_dir_all`
+    ///    that only chmods on create would leave it at 0o777 and fail;
+    ///    so would an implementation that skipped the force entirely.
+    /// 2. A PRE-EXISTING PERMISSIVE DIRECTORY IS NEVER REPAIRED. This
+    ///    is the half the mutation in R24 could not have distinguished,
+    ///    and it is the same asymmetry the root has: `open_at` calls
+    ///    `correct_dir_perms` on every open, so a root left permissive
+    ///    by an old build is repaired. Nothing did the same for the
+    ///    slots directory, and the two sitting side by side with
+    ///    different policies is the part worth holding.
+    #[test]
+    fn tv_r24_slots_dir_is_0700_and_a_permissive_one_is_repaired_on_open() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x5au8; 32]);
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+
+        let seed_dir = dir.path().join("seed");
+        assert!(
+            seed_dir.is_dir(),
+            "register must have created the slots directory, got {}",
+            seed_dir.display()
+        );
+
+        // ---- half 1: private from birth -------------------------------
+        let mode = std::fs::metadata(&seed_dir)
+            .expect("metadata seed")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "the slots directory must be 0o700 once written, got {mode:o}. Under this \
+             repository's 0002 umask a create-then-chmod directory is born 0o775, which \
+             exposes the slot listing (identity-<64-hex-pubkey>) to every local user."
+        );
+
+        // ---- half 2: a pre-existing permissive directory is repaired --
+        // Force the mode the way a build predating the primitive would
+        // have left it, then open the store again. `open_at` is the
+        // only other entry point, so this is the shape an operator
+        // upgrading from an older release actually has on disk.
+        std::fs::set_permissions(&seed_dir, std::fs::Permissions::from_mode(0o777))
+            .expect("force permissive mode");
+        let reopened_mode = std::fs::metadata(&seed_dir)
+            .expect("metadata seed")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            reopened_mode, 0o777,
+            "control: the permissive mode must actually be on disk before the repair is \
+             attempted, otherwise half 2 is vacuous"
+        );
+
+        // Re-open. The store must correct the slots directory on open
+        // the way it already corrects the root.
+        let _store2 = WalletStore::open_at(dir.path()).expect("reopen");
+        let repaired = std::fs::metadata(&seed_dir)
+            .expect("metadata seed")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            repaired, 0o700,
+            "opening the store must repair a slots directory left at {repaired:o}, exactly \
+             as it repairs a permissive root"
         );
     }
 

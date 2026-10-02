@@ -1,16 +1,27 @@
 //! Filesystem permission primitives shared by the substrate's writers.
 //!
-//! One primitive, four callers: the sealed seed slot (`vault`), the
-//! index (`identity_store`), the keystore (`keystore`), and the
-//! `octo-wallet` binary's `init` seed export. They each write a
-//! secret-bearing file, and each needs it to be `0o600` at every
-//! instant it exists.
+//! Two primitives, five callers. `create_private` has four: the sealed
+//! seed slot (`vault`), the index (`identity_store`), the keystore
+//! (`keystore`), and the `octo-wallet` binary's `init` seed export.
+//! They each write a secret-bearing file, and each needs it to be
+//! `0o600` at every instant it exists.
 //!
-//! The binary is the odd one out: it writes DIRECTLY, with no temp
-//! path and no rename, so it has no rename to make durable and needs
-//! only `create_private`. It is listed here anyway, because it is the
-//! only writer of the RAW MASTER SEED - the other three write
+//! The binary is the odd one out among those four: it writes DIRECTLY,
+//! with no temp path and no rename, so it has no rename to make durable
+//! and needs only `create_private`. It is listed here anyway, because it
+//! is the only writer of the RAW MASTER SEED - the other three write
 //! ciphertext, the index, or the keystore.
+//!
+//! `create_dir_private` is the FIFTH caller, and it was the fifth by
+//! omission for four rounds. This doc originally enumerated only the
+//! four FILES, and a reader — R24, in the event — took the enumeration
+//! as the set, exactly as the module was written to be trusted. The
+//! slots directory the sealed seeds live in was therefore never
+//! converted, and kept create-then-chmod. When one primitive covers
+//! N call sites, the module doc is part of the evidence for whether
+//! the Nth site exists, and it has to be kept true as callers are
+//! added rather than describing the callers that happened to be
+//! there when it was written.
 
 use std::fs::File;
 use std::io;
@@ -75,6 +86,63 @@ pub fn create_private(path: &Path) -> io::Result<File> {
 #[cfg(not(unix))]
 pub fn create_private(path: &Path) -> io::Result<File> {
     std::fs::File::create(path)
+}
+
+/// Create `path` and its missing parents, private **from birth**.
+///
+/// The directory twin of [`create_private`], and it exists because the
+/// absence of one is what let a gap survive the R20 → R21 campaign.
+/// Those rounds converted all three secret-bearing FILES to
+/// private-from-birth, and the module doc above enumerates exactly
+/// those files — so the slots DIRECTORY was never in the set, and
+/// `Vault::ensure_slots_dir` kept its create-then-chmod shape verbatim.
+///
+/// `std::fs::create_dir_all` applies the process umask to every
+/// component it creates. Measured under this repository's `0002`
+/// umask, the slots directory is born `0o775`: group- and
+/// world-traversable. The subsequent `chmod` narrows it, but between
+/// the two statements the directory listing — one entry per identity
+/// slot, named `identity-<64-hex-pubkey>` — is readable by any local
+/// user, and if the process dies inside that window the `0o775` mode
+/// is what survives on disk. That is the same class of exposure
+/// `create_private` was written to close, on the other node of the
+/// filesystem tree.
+///
+/// R24 measured the consequence of the shape: deleting the `chmod` in
+/// `ensure_slots_dir` left all 414 substrate and CLI tests green, over
+/// three consecutive single-threaded runs. The property was asserted
+/// by the function's doc comment, by its `# Errors` contract, and by
+/// the mission's 0700/0600 convention — three artifacts agreeing, none
+/// of them the evidence (R17's shape).
+///
+/// Severity is honestly bounded, and this comment states the bound
+/// rather than letting the primitive's existence imply otherwise:
+/// every FILE inside the directory is `0o600` and was already so from
+/// R20 onward, so what a permissive directory exposes is the listing —
+/// public key material, the set of DIDs an operator holds, and the
+/// timing of each rotation — and not the sealed seed. That is real
+/// information and it is not what a `0o700` claim means.
+#[cfg(unix)]
+pub fn create_dir_private(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    // `create_dir_all` succeeds if the directory ALREADY exists, and
+    // in that case it does nothing at all — no mode is applied. So
+    // the force below is not redundant: it is what makes the name true
+    // for a directory left permissive by a build predating this
+    // primitive, exactly as the equivalent force in `create_private`
+    // does for a pre-existing file. Without it, opening a store
+    // created by an older build would leave the old mode in place
+    // forever, and no vector could tell the difference.
+    std::fs::create_dir_all(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+/// Non-Unix has no POSIX mode to request, so plain creation is the
+/// whole contract. Mirrors [`create_private`]'s platform split.
+#[cfg(not(unix))]
+pub fn create_dir_private(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)
 }
 
 /// Make the rename that published `path` durable across power loss.

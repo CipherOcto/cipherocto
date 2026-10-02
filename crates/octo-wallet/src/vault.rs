@@ -134,13 +134,18 @@ impl Vault {
     /// # Errors
     /// Returns `WalletError::Io` if the directory cannot be created or
     /// its permissions cannot be set.
+    ///
+    /// R24: this is `fs_perms::create_dir_private`, not an inline
+    /// `create_dir_all` + `chmod`. It was the last site in the crate
+    /// still using the create-then-chmod shape, and it survived four
+    /// rounds of the campaign that eliminated that shape from all three
+    /// secret-bearing FILES, because `fs_perms` exported a file
+    /// primitive only and this is a directory. The chmod had no vector:
+    /// deleting it left all 414 substrate and CLI tests green across
+    /// three single-threaded runs. See `create_dir_private` for the
+    /// measured exposure and its honest severity bound.
     pub fn ensure_slots_dir(&self) -> Result<(), WalletError> {
-        fs::create_dir_all(&self.slots_dir)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&self.slots_dir, fs::Permissions::from_mode(0o700))?;
-        }
+        crate::fs_perms::create_dir_private(&self.slots_dir)?;
         Ok(())
     }
 

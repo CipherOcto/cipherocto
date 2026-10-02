@@ -214,6 +214,34 @@ pub enum IdentityAction {
         #[arg(long)]
         passphrase_stdin: bool,
     },
+    /// Verify the wallet passphrase without mutating the index
+    /// (RFC-0011-x §Subcommand Taxonomy amendment, audit
+    /// `docs/audits/open-limitations-assessment.md` §5 row 4c).
+    /// Substrate-faithful wrapper over `WalletStore::unlock` that
+    /// performs the unlock, surfaces the active DID in the
+    /// envelope, then drops the handle (the seed is zeroized at
+    /// drop per substrate §AC-20). The CLI does NOT establish a
+    /// session state on this call: each signing subcommand takes
+    /// its own `--passphrase-stdin` (per the per-call model in
+    /// the audit). What this subcommand buys is a single
+    /// operator-visible "your passphrase works, your active
+    /// identity is DID X" check, and the substrate-side error
+    /// surface (`WeakPassphrase` at exit 2, `WalletLocked` at
+    /// exit 92, `VaultSlotNotFound` at exit 92) becomes
+    /// operator-discoverable without a follow-on signing
+    /// attempt. No confirmation gate — the call is read-only by
+    /// substrate contract (it does not write the index, the
+    /// vault, or the registry). Exit codes: 0 / 2 / 15 / 27 /
+    /// 64 / 92.
+    Unlock {
+        /// Read the wallet passphrase from stdin (one line,
+        /// trailing newline trimmed). Bypasses the interactive
+        /// TTY prompt for CI / scripted callers. Required when
+        /// stdin is not a TTY (mission 0011-x-wallet-store-cli
+        /// §AC-10).
+        #[arg(long)]
+        passphrase_stdin: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +482,34 @@ pub struct IdentityRotateAbortOutput {
     /// Abort reason (free-form, sanitized). None when the operator
     /// did not pass `--reason`.
     pub reason: Option<String>,
+}
+
+/// `octo identity unlock` payload (audit
+/// `docs/audits/open-limitations-assessment.md` §5 row 4c).
+///
+/// The subcommand is a verification-only check: it performs the
+/// unlock, surfaces the active DID in the envelope, then drops the
+/// `UnlockedWallet` handle (the seed is zeroized at drop per substrate
+/// §AC-20). The CLI does NOT establish a session state on this call —
+/// the per-call model from the audit holds: each signing subcommand
+/// takes its own `--passphrase-stdin`. What the subcommand buys is a
+/// single operator-visible "your passphrase works, your active
+/// identity is DID X" check, and the substrate-side error surface
+/// (`WeakPassphrase` exit 2, `WalletLocked` exit 92, `VaultSlotNotFound`
+/// exit 92) becomes operator-discoverable without a follow-on signing
+/// attempt.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct IdentityUnlockOutput {
+    /// Canonical DID (RFC-0010 form) of the active identity that the
+    /// passphrase just unlocked. None when the wallet has no active
+    /// pointer — the substrate returns `WalletError::Locked` in that
+    /// case, which the handler propagates as exit 92 BEFORE the
+    /// envelope is rendered.
+    pub did: String,
+    /// Hex-encoded 32-byte Ed25519 public key of the active identity.
+    /// Same shape as `WhoamiOutput::pubkey_hex` so an operator who
+    /// runs `unlock` and then `whoami` sees a consistent view.
+    pub pubkey_hex: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1522,6 +1578,59 @@ pub fn rotate_abort(
         })
 }
 
+/// `octo identity unlock --passphrase-stdin` — verify the wallet
+/// passphrase and surface the active DID (audit
+/// `docs/audits/open-limitations-assessment.md` §5 row 4c).
+///
+/// Per-call model: the handler does NOT establish a session state.
+/// It opens the store, calls `WalletStore::unlock` with the supplied
+/// passphrase, renders the envelope (DID + pubkey), then drops the
+/// `UnlockedWallet` handle. The seed is zeroized at drop per substrate
+/// §AC-20. A subsequent signing call will need its own
+/// `--passphrase-stdin`. This is a verification surface; what it
+/// buys is making the substrate's `WalletError::Locked` / `WeakPassphrase`
+/// / `VaultSlotNotFound` exit codes operator-discoverable without a
+/// follow-on signing attempt.
+///
+/// No confirmation gate. The call is read-only by substrate contract
+/// (it does not write the index, the vault, or the registry) and the
+/// worst it can do is render the envelope and exit 0. Confirmation
+/// gates are for mutations.
+pub fn unlock(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
+    block_auditor(cli, "identity unlock")?;
+    // §AC-10: passphrase acquisition — same helper as rotate/revoke.
+    // The wrapper zeros the bytes on drop. The substrate's
+    // `WalletStore::unlock` takes `&str` so the Zeroizing<String>
+    // derefs cleanly.
+    let passphrase = acquire_passphrase(cli, "identity unlock", passphrase_stdin)?;
+    // §AC-7: open the store, then unlock with the passphrase. The
+    // seed buffer is zeroized by the substrate after the key is
+    // rehydrated into `UnlockedWallet`, so the seed never survives
+    // past the handle's lifetime.
+    let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+    let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+    let unlocked = store
+        .unlock(passphrase.as_str(), seed_buf.as_mut())
+        .map_err(OctoCliError::from)?;
+    // §AC-7: read the unlocked DID + pubkey from the handle. The
+    // handle is the source of truth for the active identity after
+    // `unlock`; the store's `active_did()` could in principle be
+    // different (an interleaving select call), but per substrate
+    // contract the handle's DID is what was just unlocked.
+    let did = unlocked.did().0.clone();
+    let pubkey_hex = hex::encode(unlocked.active_identity().public_key_bytes());
+    // The handle is dropped at the end of this scope; the seed
+    // buffer is zeroized on drop (Zeroizing<Vec<u8>>) and the
+    // IdentityKey's seed slots are zeroized on drop per substrate
+    // §AC-20 / §AC-39. No session state, no persistent unlock.
+    let output = IdentityUnlockOutput { did, pubkey_hex };
+    let env = OutputEnvelope::new("octo.identity.unlock.v1", output);
+    env.render(cli.output.json, cli.output.no_color)
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Confirmation / dry-run gates
 
@@ -1766,6 +1875,7 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
             passphrase_stdin,
             ..
         } => rotate_abort(reason.as_deref(), *passphrase_stdin, cli),
+        IdentityAction::Unlock { passphrase_stdin } => unlock(*passphrase_stdin, cli),
     }
 }
 
@@ -5834,10 +5944,190 @@ mod tests {
         // files lost a vector, so an entry that DID move shows up
         // there too.
         assert_eq!(
-            declared, 136,
+            declared, 141,
             "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
              added, raise this count in the SAME commit; if one was removed, put it \
              back."
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // R25 Item 4c — `octo identity unlock` verification subcommand.
+    //
+    // The substrate has `WalletStore::unlock` since Phase 3, and the
+    // 7 signing sites are pinned to a per-call model by tv_x_c_95,
+    // but the operator had no read-only way to verify a passphrase
+    // short of attempting a signing operation. R24's `open-limitations
+    // -assessment.md` §5 row 4c records the gap; the closure is the
+    // `unlock` subcommand and these 5 vectors. Per-call model: the
+    // handler does not establish a session state, so the vectors
+    // cover the gates (auditor, stdin) and the data flow
+    // (DID + pubkey reach the envelope from the unlocked handle,
+    // not a placeholder), not a happy-path runtime through
+    // `acquire_passphrase` — that path reads stdin and is
+    // unverifiable in `cargo test` without a stdin mock, which the
+    // other rotate/revoke handlers also lack.
+
+    /// tv_x_c_99 — `block_auditor` must fire BEFORE the passphrase
+    /// is acquired, so an Auditor-mode operator is refused without
+    /// being prompted. RUNTIME: a source needle cannot tell a
+    /// "gate fires first" assertion from a "gate fires after prompt"
+    /// one when both contain the same `block_auditor(...)` token.
+    #[test]
+    fn tv_x_c_99_unlock_auditor_gate_fires_before_passphrase() {
+        let cli = cli_with_mode(OperatorMode::Auditor);
+        let err = unlock(false, &cli).expect_err(
+            "Auditor mode must be refused by the auditor gate, before any passphrase prompt. \
+             An err here from `acquire_passphrase` instead would mean the gate is after the \
+             prompt - exactly the over-classification §5 row 4c warns against",
+        );
+        assert!(
+            matches!(err, OctoCliError::AuditorDenied { .. }),
+            "unlock in Auditor mode must yield AuditorDenied, got {err:?}"
+        );
+    }
+
+    /// tv_x_c_100 — `--passphrase-stdin` without `--allow-stdin-secret`
+    /// must be refused at the gate (exit 15), not after the stdin read.
+    /// RUNTIME: the gate is `ensure_stdin_secret_allowed(allow_stdin_secret)?`
+    /// and fires BEFORE `read_line`. A source needle could be satisfied by
+    /// a `read_line` followed by an `ensure_stdin_secret_allowed` that
+    /// never runs, and the secret would be silently consumed.
+    #[test]
+    fn tv_x_c_100_unlock_stdin_gate_fires_before_read() {
+        let cli = cli_with_mode(OperatorMode::Human);
+        // allow_stdin_secret defaults to false in cli_with_mode
+        let err = unlock(true, &cli).expect_err(
+            "--passphrase-stdin without --allow-stdin-secret must be refused at the gate",
+        );
+        assert!(
+            matches!(err, OctoCliError::StdinSecretRefused),
+            "unlock with --passphrase-stdin alone must yield StdinSecretRefused, got {err:?}"
+        );
+        assert_eq!(
+            err.exit_code(),
+            15,
+            "StdinSecretRefused is the slot-15 family, so the exit must be 15"
+        );
+    }
+
+    /// tv_x_c_101 — the unlock envelope's `did` and `pubkey_hex` must
+    /// be derived from the unlocked handle, not a placeholder.
+    /// SOURCE, because a runtime test would need to pipe a passphrase
+    /// through `acquire_passphrase`, and the rest of the suite
+    /// establishes the substrate path is exercised (tv_x_c_40 +
+    /// tv_x_c_41 both call `store.unlock` and read the handle). What
+    /// the runtime tests cannot pin is WHICH expression fills each
+    /// envelope hole - the classic pastejacking transposition class
+    /// (R18 lesson). The source check pins the binding to the handle.
+    #[test]
+    fn tv_x_c_101_unlock_data_flow_derives_did_and_pubkey_from_handle() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn unlock(", "pub fn is_dev_mode(");
+
+        // The DID must be read from the unlocked handle, in the
+        // specific shape that surfaces the substrate's claimed DID
+        // (not a fabricated `Did(String::new())`).
+        assert!(
+            body.contains("unlocked.did()"),
+            "DID must be derived from `unlocked.did()`, not a placeholder. Body: {body}"
+        );
+        // Belt-and-braces: a `Did(String::new())` or `String::new()`
+        // for the DID is the placeholder shape R18 and the pastejacking
+        // class warn about.
+        assert!(
+            !body.contains("String::new()") && !body.contains("Did(String::new"),
+            "DID must not be a placeholder String::new() — it must be derived from the \
+             unlocked handle. Body: {body}"
+        );
+        // The pubkey must come from the active identity on the handle,
+        // hex-encoded. The 32-byte public key is the substrate's
+        // canonical form; reading from `active_identity()` rather than
+        // re-deriving from the seed keeps the envelope in lockstep with
+        // the substrate.
+        assert!(
+            body.contains("active_identity().public_key_bytes()"),
+            "pubkey must be derived from `unlocked.active_identity().public_key_bytes()`. \
+             Body: {body}"
+        );
+        assert!(
+            body.contains("hex::encode("),
+            "pubkey must be hex-encoded for the envelope. Body: {body}"
+        );
+    }
+
+    /// tv_x_c_102 — the unlock handler must wire the three primitives
+    /// (gate, passphrase acquisition, substrate call) AND emit the
+    /// canonical envelope tag. SOURCE: a runtime test of the full
+    /// path requires stdin (see file comment), and each primitive
+    /// is independently exercised in the rest of the suite
+    /// (`block_auditor` in tv_x_c_44 etc., `acquire_passphrase` in
+    /// register/rotate, `store.unlock` in tv_x_c_41). The risk this
+    /// vector pins is the WIRING — a future refactor that drops the
+    /// `block_auditor` call (e.g. "unlock is read-only, no gate
+    /// needed") would not be caught by any single-component test.
+    #[test]
+    fn tv_x_c_102_unlock_handler_wires_the_gates_and_substrate_call() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn unlock(", "pub fn is_dev_mode(");
+
+        assert!(
+            body.contains("block_auditor(cli, \"identity unlock\")?"),
+            "unlock must gate auditor mode via `block_auditor(cli, \"identity unlock\")`. \
+             Dropping the gate is the over-classification §5 row 4c warns against. Body: {body}"
+        );
+        assert!(
+            body.contains("acquire_passphrase(cli, \"identity unlock\", passphrase_stdin)"),
+            "unlock must acquire the passphrase via the shared helper, not reimplement the \
+             prompt. The helper enforces AC-10 (TTY check) and AC-24 (zeroize). Body: {body}"
+        );
+        assert!(
+            body.contains("WalletStore::open()"),
+            "unlock must open the wallet via `WalletStore::open()`. Body: {body}"
+        );
+        assert!(
+            body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+            "unlock must call `store.unlock(passphrase, seed_buf)` and rehydrate the seed \
+             into the handle. Body: {body}"
+        );
+        assert!(
+            body.contains("\"octo.identity.unlock.v1\""),
+            "unlock must emit the canonical envelope tag `octo.identity.unlock.v1`. \
+             Body: {body}"
+        );
+    }
+
+    /// tv_x_c_103 — the dispatch arm must route `IdentityAction::Unlock`
+    /// to the `unlock` handler, passing `passphrase_stdin` through.
+    /// SOURCE: dispatch is a one-line match arm; runtime is exercised
+    /// by the integration tests in `tests/identity.rs`. The risk this
+    /// vector pins is the SHAPE of the call — a refactor that
+    /// destructures into local bindings and passes the wrong value
+    /// (e.g. `unlock(true, cli)` losing the operator's flag) would
+    /// not be caught by a presence check on `IdentityAction::Unlock`
+    /// alone.
+    #[test]
+    fn tv_x_c_103_dispatch_routes_unlock_with_passphrase_stdin_passthrough() {
+        let src = production_src();
+        // Same bound shape as tv_x_c_79: a depth-0 close on its own line.
+        let start = src
+            .find("pub fn dispatch(action: &IdentityAction")
+            .expect("dispatch fn present");
+        let slice = &src[start..];
+        let end = slice
+            .find("\n}\n")
+            .expect("end marker for the dispatch slice bound must exist");
+        let body = &slice[..end];
+        assert!(
+            body.contains("IdentityAction::Unlock { passphrase_stdin } =>"),
+            "dispatch must destructure `IdentityAction::Unlock` with the `passphrase_stdin` \
+             binding. Body: {body}"
+        );
+        assert!(
+            body.contains("unlock(*passphrase_stdin, cli)"),
+            "dispatch must pass `*passphrase_stdin` (the operator's flag) to the handler, \
+             not a literal `true` or `false`. A literal here would silently force the \
+             mode. Body: {body}"
         );
     }
 }

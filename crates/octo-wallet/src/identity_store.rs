@@ -1142,6 +1142,21 @@ impl UnlockedWallet<'_> {
                 return Err(WalletError::IdentityNotFound(successor_did));
             }
             self.store.index.active_did = Some(successor_did);
+        } else {
+            // There is no successor to promote. Returning Ok here
+            // made the whole call a silent no-op while reporting
+            // success: the predecessor was already persisted as
+            // `Active` by the two lines above, so the operator was
+            // told their rotation completed and the envelope named
+            // the PREDECESSOR as the newly active identity.
+            //
+            // The key IS `Rotating` at this point - `complete_rotation`
+            // on the key ran first and accepted it - so a rotation is
+            // genuinely in progress and its successor linkage is
+            // missing. That is precisely what `RotationEventMissing`
+            // already means at the `unlock` gate, so it is the honest
+            // variant here rather than a new one.
+            return Err(WalletError::RotationEventMissing);
         }
         write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(())
@@ -3577,5 +3592,70 @@ mod tests {
              orphan_slots has no consumer in any command"
         );
         drop(handle);
+    }
+
+    /// tv_x_61 — `complete_rotation` with no successor to promote is a
+    /// refusal, not a success.
+    ///
+    /// The previous revision took the `None` branch out of the
+    /// `if let Some(successor_did)` and fell through to `Ok(())`. The
+    /// two lines above the branch had already persisted the
+    /// PREDECESSOR as `Active`, so the caller was told its rotation
+    /// completed and read back an active DID that was the old one.
+    ///
+    /// The state is unreachable through the public API - `begin_rotation`
+    /// always sets the linkage - so this vector reaches it the way the
+    /// substrate's own `# Errors` doc describes it: a `Rotating` key
+    /// whose successor linkage is absent, which is what a hand-edited
+    /// `store.json` plus a torn handle would leave behind. Asserting
+    /// only the error is not enough, so it also pins that the
+    /// predecessor is NOT silently promoted.
+    #[test]
+    fn tv_x_61_completing_a_rotation_with_no_successor_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xE6u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        let successor_key = IdentityKey::from_seed([0xE7u8; 32]);
+        let successor_did = successor_key.did();
+
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(successor_key, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        // Simulate the linkage being lost - the same state a torn
+        // handle or a hand-edited index would leave.
+        handle.rotation_successor_did = None;
+
+        let result = handle.complete_rotation(1_700_000_010 + ROTATION_GRACE_PERIOD_SECS + 1);
+        assert!(
+            matches!(result, Err(WalletError::RotationEventMissing)),
+            "a Rotating key with no successor to promote must be refused, not reported as a \
+             completed rotation. `RotationEventMissing` is the same variant the `unlock` gate \
+             already uses for exactly this condition. Got: {result:?}"
+        );
+
+        drop(handle);
+        // The refusal must not have promoted the predecessor. It is
+        // still `Active` on disk (the persist above it runs before the
+        // branch), but the POINT is that the call did not report
+        // success - so the claim is on the error, and this confirms the
+        // store is still readable and the successor was never made
+        // active.
+        let reopened = WalletStore::open_at(dir.path()).expect("reopen after the refusal");
+        let active = reopened.active_did().expect("active DID after refusal");
+        assert!(
+            active.as_str() != successor_did.as_str(),
+            "the successor must not become the active identity when the completion was refused"
+        );
     }
 }

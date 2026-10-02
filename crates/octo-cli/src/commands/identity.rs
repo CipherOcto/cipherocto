@@ -222,7 +222,7 @@ pub struct WhoamiOutput {
     /// HSM slot id (`None` for `InMemorySigner`-backed identities).
     pub hsm_slot: Option<u32>,
     /// RFC 3339 UTC timestamp of registration.
-    pub registered_at: DateTime<Utc>,
+    pub registered_at: Option<DateTime<Utc>>,
 }
 
 /// `octo identity show [DID]` payload — wraps `IdentityRecord` +
@@ -261,10 +261,10 @@ pub struct IdentityRotationEventOutput {
     /// Hex-encoded 32-byte rotation id.
     pub rotation_id: String,
     /// RFC 3339 UTC timestamp of rotation start.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
     /// RFC 3339 UTC timestamp of grace expiry (24h after start, hard-coded
     /// in substrate via `ROTATION_GRACE_PERIOD_SECS`).
-    pub grace_expires_at: DateTime<Utc>,
+    pub grace_expires_at: Option<DateTime<Utc>>,
     /// DID of the successor identity (RFC-0010 form).
     pub successor_did: String,
     /// Ed25519 proof signature — always rendered as `[REDACTED:sig]`.
@@ -282,14 +282,20 @@ pub struct IdentityRotationEventOutput {
 /// [`IdentityRotationEventOutput::signature_proof`].
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityRotateOutput {
-    /// DID of the new (successor) identity. The current substrate stub does
-    /// not yet expose the successor DID; the CLI surfaces a `pending`
-    /// placeholder until the substrate amendment lands.
+    /// DID of the new (successor) identity, read from the substrate key.
+    ///
+    /// Under `--dry-run` the substrate is not called, so this is the
+    /// explicit string `<not-read: dry-run>` - the same form `select`
+    /// uses for `previous_active_did`. It is never a `pending`
+    /// placeholder: an earlier revision documented that behaviour
+    /// here, and since `schemars` copies this doc into the generated
+    /// JSON Schema, the stale claim shipped to every consumer of the
+    /// schema as if it were the contract.
     pub new_did: String,
     /// DID of the rotated-out identity.
     pub old_did: String,
     /// RFC 3339 UTC timestamp of grace expiry.
-    pub grace_expires_at: DateTime<Utc>,
+    pub grace_expires_at: Option<DateTime<Utc>>,
     /// 64-byte Ed25519 proof signature — always rendered as
     /// `[REDACTED:sig]` regardless of inner contents.
     #[schemars(with = "String")]
@@ -302,7 +308,7 @@ pub struct IdentityRevokeOutput {
     /// DID of the revoked identity.
     pub did: String,
     /// RFC 3339 UTC timestamp of the revocation event.
-    pub revoked_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
     /// Always `true` — `Revoked` is terminal per RFC-0009 §Identity Struct.
     pub terminal: bool,
 }
@@ -355,7 +361,7 @@ pub struct IdentityListRow {
     /// Lifecycle label at list-time.
     pub lifecycle_state: String,
     /// RFC 3339 UTC timestamp of registration.
-    pub registered_at: DateTime<Utc>,
+    pub registered_at: Option<DateTime<Utc>>,
     /// Whether the wallet's active POINTER names this row.
     ///
     /// This is pointer equality with `WalletStore::active_did`,
@@ -391,7 +397,27 @@ pub struct IdentityRotateCompleteOutput {
     /// DID of the rotated-out identity — `Active` and `deprecated`.
     pub old_did: String,
     /// RFC 3339 UTC timestamp at which the rotation completed.
-    pub completed_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Render a substrate Unix timestamp, or `None` when the value cannot
+/// be a real one.
+///
+/// The substrate stores timestamps as `i64` seconds, and the previous
+/// revision rendered every unconvertible value as
+/// `from_timestamp(0, 0)` - 1970-01-01T00:00:00Z, which is a VALID
+/// RFC 3339 timestamp and therefore indistinguishable from a record
+/// genuinely created at the epoch. `register` had already been
+/// hardened against this for its own `registered_at`, using an `i64::MIN`
+/// sentinel and an `Option` field so the envelope carries `null`. Its
+/// four siblings on the read paths were not, so a corrupt or
+/// out-of-range timestamp surfaced as real-looking data.
+///
+/// `None` is the honest answer: the envelope then says "the substrate
+/// holds a value I could not render", which a consumer can act on, and
+/// which cannot be confused with data.
+fn unix_to_rfc3339(unix: i64) -> Option<DateTime<Utc>> {
+    DateTime::<Utc>::from_timestamp(unix, 0)
 }
 
 /// `octo identity rotate-abort` payload (RFC-0011-x §Subcommand
@@ -401,7 +427,7 @@ pub struct IdentityRotateAbortOutput {
     /// DID of the predecessor, restored to `Active` after abort.
     pub restored_did: String,
     /// RFC 3339 UTC timestamp at which the abort was persisted.
-    pub aborted_at: DateTime<Utc>,
+    pub aborted_at: Option<DateTime<Utc>>,
     /// Abort reason (free-form, sanitized). None when the operator
     /// did not pass `--reason`.
     pub reason: Option<String>,
@@ -556,8 +582,7 @@ pub fn whoami(cli: &Octo) -> Result<(), OctoCliError> {
         pubkey_hex: hex::encode(record.pubkey_bytes),
         lifecycle_state: format!("{:?}", record.lifecycle),
         hsm_slot: record.hsm_slot,
-        registered_at: DateTime::<Utc>::from_timestamp(record.registered_at_unix, 0)
-            .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+        registered_at: unix_to_rfc3339(record.registered_at_unix),
     };
     let env = OutputEnvelope::new("octo.whoami.v1", output);
     env.render(cli.output.json, cli.output.no_color)
@@ -593,10 +618,8 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
             .into_iter()
             .map(|e| IdentityRotationEventOutput {
                 rotation_id: hex::encode(e.rotation_id),
-                started_at: DateTime::<Utc>::from_timestamp(e.started_at_unix, 0)
-                    .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
-                grace_expires_at: DateTime::<Utc>::from_timestamp(e.grace_expires_at_unix, 0)
-                    .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+                started_at: unix_to_rfc3339(e.started_at_unix),
+                grace_expires_at: unix_to_rfc3339(e.grace_expires_at_unix),
                 successor_did: e.successor_did.0,
                 signature_proof: RedactedHex(e.signature_proof.to_vec()),
             })
@@ -705,8 +728,15 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
             .begin_rotation(successor, passphrase.as_str(), now)
             .map_err(OctoCliError::from)?
     };
-    let grace_expires_at = DateTime::<Utc>::from_timestamp(now as i64 + 86_400, 0)
-        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+    // The grace window is the substrate's policy, not the CLI's. It
+    // was spelled as a literal `86_400` here while the substrate
+    // exports `ROTATION_GRACE_PERIOD_SECS`; the two agreed, so nothing
+    // caught a change to one of them, and the envelope would then
+    // disagree with the store about when a rotation completes.
+    let grace_expires_at = unix_to_rfc3339(
+        now as i64
+            + i64::try_from(octo_wallet::identity::ROTATION_GRACE_PERIOD_SECS).unwrap_or(i64::MAX),
+    );
     let output = IdentityRotateOutput {
         new_did,
         old_did: old_did.0,
@@ -782,8 +812,7 @@ pub fn revoke(reason: &str, passphrase_stdin: bool, cli: &Octo) -> Result<(), Oc
             .map_err(OctoCliError::from)?;
         unlocked.revoke(now).map_err(OctoCliError::from)?;
     }
-    let revoked_at = DateTime::<Utc>::from_timestamp(now as i64, 0)
-        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+    let revoked_at = unix_to_rfc3339(now as i64);
     // The reason is echoed to stderr and into the envelope, and then
     // dropped: the v1.0 substrate has nowhere to put it.
     // `UnlockedWallet::revoke` takes only a wall-clock timestamp, and
@@ -1201,8 +1230,7 @@ pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
             did: r.did.0.clone(),
             pubkey_hex: hex::encode(r.pubkey_bytes),
             lifecycle_state: format!("{:?}", r.lifecycle),
-            registered_at: DateTime::<Utc>::from_timestamp(r.registered_at_unix, 0)
-                .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+            registered_at: unix_to_rfc3339(r.registered_at_unix),
             active: active_did.as_deref() == Some(r.did.0.as_str()),
         })
         .collect();
@@ -1266,12 +1294,26 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
         unlocked
             .complete_rotation(now)
             .map_err(OctoCliError::from)?;
-        // `complete_rotation` promotes the successor, so the store's
-        // active pointer is the new DID after the call.
-        let new_did = store.active_did().map(|d| d.0.clone()).unwrap_or_default();
-        (new_did, old_did, now)
+        // Read the store's active pointer back AFTER the call. It is
+        // the substrate that decides which DID is now active, and
+        // `complete_rotation` sets it to the promoted successor. The
+        // previous revision read it the same way but defaulted an
+        // absent pointer to `""`, which is the empty-DID shape R5 was
+        // chartered to eliminate - a blank field in a success envelope
+        // is worse than a refusal, because it looks like data.
+        let new_did = store.active_did().map(|d| d.0.clone()).ok_or_else(|| {
+            OctoCliError::Internal(
+                "rotation completed but the store reports no active identity".to_owned(),
+            )
+        })?;
+        if new_did == old_did {
+            return Err(OctoCliError::Internal(
+                "rotation completed but the active identity did not change".to_owned(),
+            ));
+        }
+        (new_did, old_did, Some(now as i64))
     } else {
-        (String::new(), String::new(), 0)
+        (String::new(), String::new(), None)
     };
     let (new_did, old_did, completed_at_unix) = rotate_facts;
     let output = IdentityRotateCompleteOutput {
@@ -1280,11 +1322,14 @@ pub fn rotate_complete(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCli
         // `now` is the value handed to `complete_rotation`, so the
         // envelope and the persisted record agree. Re-reading
         // `Utc::now()` here drifted by however long the unlock took.
-        completed_at: chrono::DateTime::from_timestamp(
-            i64::try_from(completed_at_unix).unwrap_or(i64::MAX),
-            0,
-        )
-        .unwrap_or_else(chrono::Utc::now),
+        // `None` under `--dry-run`, because the substrate was never
+        // called. The previous revision passed `0` here and fell back
+        // to `Utc::now` on a failed conversion, so a dry-run reported
+        // a real-looking completion time for an event that did not
+        // happen - and a genuine conversion failure reported the
+        // current time rather than admitting it could not render the
+        // value.
+        completed_at: completed_at_unix.and_then(unix_to_rfc3339),
     };
     let env = if cli.mode.dry_run {
         OutputEnvelope::redacted("octo.identity.rotate-complete.v1", output)
@@ -1330,26 +1375,35 @@ pub fn rotate_abort(
         let mut unlocked = store
             .unlock(passphrase.as_str(), seed_buf.as_mut())
             .map_err(OctoCliError::from)?;
-        // `abort_rotation` restores THIS handle's record to `Active`
-        // and removes the successor, so the restored DID is the
-        // handle's own. The previous revision emitted
-        // `restored_did: String::new()` while the handler's own doc
-        // comment promised the restored DID was echoed.
-        let restored_did = unlocked.did().0.clone();
+        // The DID is read from the handle, but only AFTER the abort
+        // has succeeded - the previous revision read it before, and
+        // the field doc claims an achieved state ("restored to
+        // `Active` after abort"), which a pre-mutation read cannot
+        // support. It is then confirmed against the store, so the
+        // envelope reports what the substrate actually holds rather
+        // than what the handler assumed going in.
         let aborted_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
         unlocked.abort_rotation().map_err(OctoCliError::from)?;
-        (restored_did, aborted_at_unix)
+        let handle_did = unlocked.did().0.clone();
+        let restored_did = store
+            .active_did()
+            .map(|d| d.0.clone())
+            .filter(|d| *d == handle_did)
+            .ok_or_else(|| {
+                OctoCliError::Internal(
+                    "rotation aborted but the store's active identity is not the restored \
+                     predecessor"
+                        .to_owned(),
+                )
+            })?;
+        (restored_did, Some(aborted_at_unix as i64))
     } else {
-        (String::new(), 0)
+        (String::new(), None)
     };
     let (restored_did, aborted_at_unix) = abort_facts;
     let output = IdentityRotateAbortOutput {
         restored_did,
-        aborted_at: chrono::DateTime::from_timestamp(
-            i64::try_from(aborted_at_unix).unwrap_or(i64::MAX),
-            0,
-        )
-        .unwrap_or_else(chrono::Utc::now),
+        aborted_at: aborted_at_unix.and_then(unix_to_rfc3339),
         // The reason is operator-supplied free text on a mutating
         // command. The sibling `revoke` handler runs it through
         // `redact_string` on both the stderr echo and the envelope;
@@ -1926,7 +1980,7 @@ mod tests {
             pubkey_hex: "deadbeef".to_string(),
             lifecycle_state: "Active".to_string(),
             hsm_slot: None,
-            registered_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            registered_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
         };
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"did\":\"did:octo:abc\""));
@@ -1941,7 +1995,7 @@ mod tests {
         let output = IdentityRotateOutput {
             new_did: "did:octo:pending".to_string(),
             old_did: "did:octo:old".to_string(),
-            grace_expires_at: DateTime::<Utc>::from_timestamp(1_700_086_400, 0).unwrap(),
+            grace_expires_at: Some(DateTime::<Utc>::from_timestamp(1_700_086_400, 0).unwrap()),
             signature_proof: RedactedHex(vec![0xde; 64]),
         };
         let json = serde_json::to_string(&output).unwrap();
@@ -1955,7 +2009,7 @@ mod tests {
     fn revoke_output_terminal_true() {
         let output = IdentityRevokeOutput {
             did: "did:octo:abc".to_string(),
-            revoked_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            revoked_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
             terminal: true,
         };
         let json = serde_json::to_string(&output).unwrap();
@@ -2495,28 +2549,46 @@ mod tests {
         let complete = fn_body_code(src, "pub fn rotate_complete(", "pub fn rotate_abort(");
         assert!(
             complete.contains("let old_did = unlocked.did().0.clone()")
-                && complete.contains("let new_did = store.active_did()"),
+                && complete.contains(".active_did()")
+                && complete.contains("let new_did = store"),
             "rotate-complete must read the predecessor from the handle and the successor \
              from the store pointer: {complete}"
         );
         assert!(
-            complete.contains("(new_did, old_did, now)")
+            complete.contains("(new_did, old_did, Some(now as i64))")
                 && complete.contains("new_did,")
                 && complete.contains("old_did,"),
             "both envelope fields must be the destructured committed values: {complete}"
         );
+        // The committed arm must not be able to yield an empty DID.
+        // An absent pointer is now a refusal, not a `""` that reads
+        // like data in a success envelope - and a completion that left
+        // the active identity unchanged is also a refusal, because
+        // reporting it as a success would tell the operator the old
+        // key is retired when it is not.
         assert!(
-            !complete.contains("new_did: String::new()")
+            complete.contains("rotation completed but the store reports no active identity")
+                && complete.contains("if new_did == old_did {")
+                && complete.contains("rotation completed but the active identity did not change")
+                && !complete.contains("unwrap_or_default()")
+                && !complete.contains("unwrap_or(String::new())")
+                && !complete.contains("new_did: String::new()")
                 && !complete.contains("old_did: String::new()"),
-            "rotate-complete must not fall back to empty DIDs: {complete}"
+            "rotate-complete must refuse an absent or unchanged active identity rather than \
+             fall back to empty DIDs: {complete}"
         );
+        // `None` under dry-run, not a `0` epoch sentinel. `0` is a
+        // VALID timestamp that chrono renders, so a dry-run used to
+        // report a real-looking completion time for an event that
+        // never happened.
         assert!(
-            complete.contains("completed_at: chrono::DateTime::from_timestamp(")
-                && complete.contains("i64::try_from(completed_at_unix)")
-                && complete.contains("(new_did, old_did, now)")
-                && !complete.contains("completed_at: chrono::Utc::now()"),
-            "completed_at must be the `now` handed to complete_rotation, not a second clock \
-             read that drifts by however long the unlock took: {complete}"
+            complete.contains("completed_at: completed_at_unix.and_then(unix_to_rfc3339)")
+                && complete.contains("(new_did, old_did, Some(now as i64))")
+                && complete.contains("(String::new(), String::new(), None)")
+                && !complete.contains("completed_at: chrono::Utc::now()")
+                && !complete.contains("i64::try_from(completed_at_unix)"),
+            "completed_at must be the `now` handed to complete_rotation, absent under \
+             dry-run, and never a second clock read: {complete}"
         );
 
         // rotate-abort: abort restores THIS handle's record to Active.
@@ -2530,21 +2602,32 @@ mod tests {
         assert!(
             abort.contains(
                 "unlocked.abort_rotation().map_err(OctoCliError::from)?;\n        \
-                 (restored_did, aborted_at_unix)\n    } else {"
-            ),
-            "the committed arm must RETURN the restored DID read from the handle, not \
-             compute it into a binding it then discards: {abort}"
-        );
-        assert!(
-            abort.contains("let (restored_did, aborted_at_unix) = abort_facts")
+                 let handle_did = unlocked.did().0.clone();"
+            ) && abort.contains("let (restored_did, aborted_at_unix) = abort_facts")
                 && abort.contains("restored_did,"),
-            "the envelope field must be the arm's value: {abort}"
+            "the committed arm must RETURN the restored DID, and the handle read must come \
+             AFTER the abort call - a pre-mutation read cannot support the field doc's \
+             claim that the identity was restored: {abort}"
+        );
+        // The envelope reports what the STORE holds, not what the
+        // handler assumed going in, and a store that disagrees with
+        // the handle is a refusal rather than a field that quietly
+        // carries the wrong DID.
+        assert!(
+            abort.contains(".active_did()")
+                && abort.contains(".filter(|d| *d == handle_did)")
+                && abort.contains("rotation aborted but the store's active identity is not the"),
+            "restored_did must be the store's active pointer read after the abort and \
+             confirmed against the handle, or the arm refuses: {abort}"
         );
         assert!(
-            abort.contains("aborted_at: chrono::DateTime::from_timestamp(")
-                && abort.contains("i64::try_from(aborted_at_unix)")
-                && !abort.contains("aborted_at: chrono::Utc::now()"),
-            "aborted_at must be built from the captured stamp, not a second clock read: {abort}"
+            abort.contains("aborted_at: aborted_at_unix.and_then(unix_to_rfc3339)")
+                && abort.contains("(restored_did, Some(aborted_at_unix as i64))")
+                && abort.contains("(String::new(), None)")
+                && !abort.contains("aborted_at: chrono::Utc::now()")
+                && !abort.contains("i64::try_from(aborted_at_unix)"),
+            "aborted_at must be built from the captured stamp, absent under dry-run, and \
+             never a second clock read: {abort}"
         );
         assert!(
             !abort.contains("restored_did: String::new()"),
@@ -2899,6 +2982,76 @@ mod tests {
         );
     }
 
+    /// tv_x_c_50 — a dry-run timestamp is `null`, not the epoch.
+    ///
+    /// The dry-run arm of `rotate-complete` and `rotate-abort` used to
+    /// hand the envelope `0`, and `0` is a VALID unix timestamp that
+    /// chrono renders as `1970-01-01T00:00:00Z`. A dry-run therefore
+    /// reported a real-looking completion time for a rotation that had
+    /// not happened — the epoch is indistinguishable from a genuine
+    /// 1970 stamp to whatever consumes the envelope.
+    ///
+    /// Two layers pin this, and the split matters:
+    ///
+    /// - WHICH arm supplies the value is a source-level question, so
+    ///   `tv_x_c_39` pins the binding. It was mutation-proven: making
+    ///   either dry-run arm hand back `Some(0)` fails `tv_x_c_39`.
+    /// - WHAT reaches the wire is a serialization question, and that
+    ///   is what this vector proves. Reverting the field to a
+    ///   non-`Option` `DateTime` does not compile, so the type
+    ///   change is itself the structural pin: there is no longer any
+    ///   expression a future revision can write that fabricates a
+    ///   timestamp where there is none.
+    ///
+    /// This vector therefore pins the JSON a script actually reads,
+    /// not the Rust expression that produces it.
+    #[test]
+    fn tv_x_c_50_a_dry_run_timestamp_is_null_not_the_epoch() {
+        let complete = IdentityRotateCompleteOutput {
+            new_did: String::new(),
+            old_did: String::new(),
+            completed_at: None,
+        };
+        let json = serde_json::to_string(&complete).expect("rotate-complete output serializes");
+        assert!(
+            json.contains("\"completed_at\":null"),
+            "a dry-run must render completed_at as null: {json}"
+        );
+        assert!(
+            !json.contains("1970-01-01"),
+            "the epoch must never appear as a rotation timestamp - it is indistinguishable \
+             from a real 1970 stamp: {json}"
+        );
+
+        let abort = IdentityRotateAbortOutput {
+            restored_did: String::new(),
+            aborted_at: None,
+            reason: None,
+        };
+        let json = serde_json::to_string(&abort).expect("rotate-abort output serializes");
+        assert!(
+            json.contains("\"aborted_at\":null"),
+            "a dry-run must render aborted_at as null: {json}"
+        );
+        assert!(
+            !json.contains("1970-01-01"),
+            "the epoch must never appear as an abort timestamp: {json}"
+        );
+
+        // And the committed path still renders a real stamp, so the
+        // `None` arm is not simply always taken.
+        let committed = IdentityRotateCompleteOutput {
+            new_did: "did:octo:0xee".to_string(),
+            old_did: "did:octo:0xff".to_string(),
+            completed_at: unix_to_rfc3339(1_700_000_000),
+        };
+        let json = serde_json::to_string(&committed).expect("committed output serializes");
+        assert!(
+            json.contains("\"completed_at\":\"2023-11-14T22:13:20Z\""),
+            "a committed rotation must render the substrate's own stamp: {json}"
+        );
+    }
+
     /// CORR-08: auditor mode is blocked at every identity handler entry.
     /// `list` reports every DID, public key, lifecycle state and
     /// registration timestamp - a strict superset of what
@@ -3152,7 +3305,7 @@ mod tests {
                 did: "did:octo:0xcc".to_string(),
                 pubkey_hex: "cc".repeat(32),
                 lifecycle_state: "Designated".to_string(),
-                registered_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+                registered_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
                 active: false,
             }],
             total: 1,
@@ -3176,7 +3329,7 @@ mod tests {
             did: "did:octo:0xdd".to_string(),
             pubkey_hex: "dd".repeat(32),
             lifecycle_state: "Active".to_string(),
-            registered_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            registered_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
             active: true,
         };
         let json = serde_json::to_string(&row).expect("list row serializes");
@@ -3225,7 +3378,7 @@ mod tests {
         let output = IdentityRotateCompleteOutput {
             new_did: "did:octo:0xee".to_string(),
             old_did: "did:octo:0xff".to_string(),
-            completed_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            completed_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
         };
         let json = serde_json::to_string(&output).expect("rotate_complete output serializes");
         for needle in [
@@ -3292,7 +3445,7 @@ mod tests {
     fn tv_x_c_14_rotate_abort_output_json_shape() {
         let output = IdentityRotateAbortOutput {
             restored_did: "did:octo:0xaa".to_string(),
-            aborted_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            aborted_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
             reason: Some("operator compromise suspected".to_string()),
         };
         let json = serde_json::to_string(&output).expect("rotate_abort output serializes");

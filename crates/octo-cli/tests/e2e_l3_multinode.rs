@@ -1571,3 +1571,193 @@ fn l3_capability_mint_then_list_round_trip() {
         String::from_utf8_lossy(&wrong_out.stdout),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: the post-4c(b) `governance attest` signing path is exercised
+// end-to-end through separate processes
+// ---------------------------------------------------------------------------
+
+/// The governance attest path is the second of the six 4c(b) production
+/// signing sites. Unlike `capability mint` (whose substrate side is a
+/// Phase-2 stub at `cli_fns::mint`), the substrate's `attest_v2` is
+/// fully wired and reachable through the CLI in a real (non-dry-run)
+/// invocation. The substrate resolves the kind via
+/// `resolve_kind` which currently admits the single discriminator
+/// `"route-quality:uptime-30d"`; the subject DID is checked for the
+/// `did:octo:subgroup:` prefix only. So a self-attestation (the
+/// registered identity attesting about itself) is the simplest path
+/// that exercises the full substrate signing round-trip without
+/// entangling a second identity or a governance snapshot.
+///
+/// The test flow:
+/// 1. register an identity (CI mode)
+/// 2. SEPARATE process invokes `governance attest` against the
+///    substrate's `attest_v2` (post-4c(b) signing path through
+///    `acquire_passphrase` + `WalletStore::unlock` +
+///    `WalletSignerAdapter::new(IdentityKey)` + `signer.sign_envelope`)
+/// 3. assert the envelope carries an `attestation_id` (32-byte
+///    BLAKE3-256 digest of the canonical envelope bytes)
+/// 4. negative control: a wrong passphrase returns exit 92
+///
+/// The flag combination `--mode ci --allow-write --confirm
+/// --confirm-acknowledge` is the minimum gate that passes both
+/// `require_confirm` (CI mode needs `--allow-write`) and the
+/// attest handler's own `if !confirm` check (line ~584 in
+/// governance.rs). The two-step intent gate is irrelevant here
+/// because `--allow-stale` is not set.
+#[test]
+fn l3_governance_attest_signing_path_succeeds() {
+    let home = new_node_home("l3-gov-attest");
+    let passphrase = "l3-gov-attest-passphrase-2026"; // 30 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // -- Step 1: register an identity. The attest's `signer_did` is
+    //    the active identity's DID, and the subject_did is the same
+    //    DID (a self-attestation is the simplest substrate-reachable
+    //    call). The substrate's `prereq_attest_subgroup_check` only
+    //    rejects `did:octo:subgroup:...`; canonical identity DIDs
+    //    pass. The passphrase file is written without a trailing
+    //    newline: see the unlock test for the substrate-as-is /
+    //    unlock-trim invariant.
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-gov-attest",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "ci",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_did = register_env.payload["did"]
+        .as_str()
+        .expect("register envelope must carry payload.did")
+        .to_string();
+    assert!(
+        register_did.starts_with("did:octo:"),
+        "DID must be canonical, got {register_did:?}"
+    );
+
+    // -- Step 2: SEPARATE process invokes the live (non-dry-run)
+    //    `governance attest` against the substrate's `attest_v2`.
+    //    The kind_ref is the only discriminator the substrate
+    //    currently resolves (`resolve_kind` at attest.rs:89-96).
+    //    The evidence-hash is 32 zero bytes — the substrate's XOR
+    //    invariant requires exactly one of (evidence, evidence_hash)
+    //    and we have no real evidence file at hand; the hash is a
+    //    valid BLAKE3-256 digest input by construction.
+    let mut attest_cmd = octo_in(&home);
+    attest_cmd.args([
+        "governance",
+        "attest",
+        &register_did,
+        "route-quality:uptime-30d",
+        "--evidence-hash-hex",
+        &"00".repeat(32),
+        "--mode",
+        "ci",
+        "--allow-write",
+        "--confirm",
+        "--confirm-acknowledge",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    attest_cmd.stdin(std::process::Stdio::piped());
+    attest_cmd.stdout(std::process::Stdio::piped());
+    attest_cmd.stderr(std::process::Stdio::piped());
+    let mut attest_child = attest_cmd.spawn().expect("spawn attest");
+    std::io::Write::write_all(
+        attest_child.stdin.as_mut().expect("attest stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to attest");
+    let attest_out = attest_child.wait_with_output().expect("wait attest");
+    assert_eq!(
+        attest_out.status.code(),
+        Some(0),
+        "governance attest on an unlocked wallet must exit 0, got {:?}. \
+         stderr={}, stdout={}",
+        attest_out.status.code(),
+        String::from_utf8_lossy(&attest_out.stderr),
+        String::from_utf8_lossy(&attest_out.stdout),
+    );
+    let attest_env = Envelope::parse(&String::from_utf8_lossy(&attest_out.stdout));
+    let attestation_id = attest_env.payload["attestation_id"]
+        .as_str()
+        .expect("attest envelope must carry payload.attestation_id")
+        .to_string();
+    assert!(
+        attestation_id.chars().all(|c| c.is_ascii_hexdigit()) && attestation_id.len() == 64,
+        "attestation_id must be a 64-char lowercase hex (BLAKE3-256 of the \
+         canonical envelope bytes), got len={} value={attestation_id:?}",
+        attestation_id.len()
+    );
+    let appended_at_unix = attest_env.payload["appended_at_unix"]
+        .as_i64()
+        .expect("attest envelope must carry payload.appended_at_unix");
+    assert!(
+        appended_at_unix > 0,
+        "appended_at_unix must be a positive wall-clock timestamp, got {appended_at_unix}"
+    );
+
+    // -- Step 3: negative control. A wrong passphrase on a SEPARATE
+    //    `governance attest` invocation must exit 92 (WalletLocked).
+    //    The substrate's `attest_v2` is unreachable when
+    //    `store.unlock` fails, so any successful-shape receipt is a
+    //    leak (the envelope would reveal an attestation_id by
+    //    SUCCESS, which is the wrong signal under lock).
+    let mut wrong_cmd = octo_in(&home);
+    wrong_cmd.args([
+        "governance",
+        "attest",
+        &register_did,
+        "route-quality:uptime-30d",
+        "--evidence-hash-hex",
+        &"00".repeat(32),
+        "--mode",
+        "ci",
+        "--allow-write",
+        "--confirm",
+        "--confirm-acknowledge",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    wrong_cmd.stdin(std::process::Stdio::piped());
+    wrong_cmd.stdout(std::process::Stdio::piped());
+    wrong_cmd.stderr(std::process::Stdio::piped());
+    let mut wrong_child = wrong_cmd.spawn().expect("spawn wrong-pp attest");
+    std::io::Write::write_all(
+        wrong_child.stdin.as_mut().expect("wrong stdin"),
+        b"this-is-the-wrong-passphrase-12345\n",
+    )
+    .expect("pipe wrong pp");
+    let wrong_out = wrong_child.wait_with_output().expect("wait wrong-pp");
+    assert_eq!(
+        wrong_out.status.code(),
+        Some(92),
+        "governance attest with a wrong passphrase must exit 92 (WalletLocked), \
+         got {:?}. stderr={}, stdout={}",
+        wrong_out.status.code(),
+        String::from_utf8_lossy(&wrong_out.stderr),
+        String::from_utf8_lossy(&wrong_out.stdout),
+    );
+}

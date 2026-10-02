@@ -3160,8 +3160,20 @@ mod tests {
     /// call `WalletStore::open` directly and never reach
     /// `home::resolve` - so on this path exit 27 was unreachable and
     /// a missing `$OCTO_HOME` was reported as an internal error. The
-    /// narrow fix is in `map_wallet_open_error`, which sees only the
-    /// ONE `Config` `open` can raise; this impl is unchanged.
+    /// narrow fix is in `map_wallet_open_error`; this impl is
+    /// unchanged.
+    ///
+    /// A second revision of this comment then said that mapper "sees
+    /// only the ONE `Config` `open` can raise". That was also false,
+    /// and the falsification came from the substrate rather than from
+    /// review: `open` raised `Config` for a duplicate-DID index as
+    /// well as for home resolution, so a damaged `store.json` was
+    /// reported to the operator as a missing environment variable.
+    /// The two index faults now raise the typed `IndexCorrupt`, so the
+    /// mapper's `Config` arm is narrow in fact as well as in
+    /// intention. What makes that claim checkable rather than
+    /// hopeful is `tv_x_75` in the identity handler module, which
+    /// drives a real duplicate-DID index through the mapper.
     #[test]
     fn tv_x_43_config_has_no_arm_exit_27_comes_from_home_resolve() {
         let e: OctoCliError =

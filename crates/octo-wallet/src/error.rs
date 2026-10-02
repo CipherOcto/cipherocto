@@ -68,6 +68,29 @@ pub enum WalletError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// `store.json` is internally inconsistent: the index says
+    /// something the file cannot support, so the store refuses to
+    /// open rather than resolve it one way for reads and another for
+    /// writes.
+    ///
+    /// This is a TYPED variant rather than more `Config(String)`
+    /// because the two are not the same kind of fault and an operator
+    /// can act on only one of them. `Config` from `WalletStore::open`
+    /// means the environment could not be resolved, and the remedy is
+    /// to set `$OCTO_HOME` or `$HOME`. `IndexCorrupt` means the
+    /// environment was fine and the file is damaged, and the remedy is
+    /// to restore or repair the index. The CLI maps the first to exit
+    /// 27 and the second to exit 64, because telling an operator whose
+    /// `OCTO_HOME` is already set to set it is worse than useless: it
+    /// sends them away from the file that is actually broken.
+    ///
+    /// A separate variant is also what stops the failure being
+    /// absorbed: a `Config(_)` catch-all cannot distinguish the two,
+    /// so a caller that wanted to handle the corruption specifically
+    /// would have to match on message text.
+    #[error("wallet index is inconsistent: {detail}")]
+    IndexCorrupt { detail: String },
+
     // ----- Identity lifecycle errors (RFC-0009 §Lifecycle Requirements) -----
     /// `sign()` called when lifecycle state is not `Active` or `Rotating`
     /// (i.e. `Designated` or `Revoked`).

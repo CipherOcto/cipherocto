@@ -307,11 +307,13 @@ impl WalletStore {
         let mut seen = std::collections::BTreeSet::new();
         for record in &index.records {
             if !seen.insert(record.did.as_str().to_owned()) {
-                return Err(WalletError::Config(format!(
-                    "store.json index contains duplicate records for {}; refusing to open \
-                     rather than resolve that DID differently for reads and writes",
-                    record.did
-                )));
+                return Err(WalletError::IndexCorrupt {
+                    detail: format!(
+                        "store.json index contains duplicate records for {}; refusing to open \
+                         rather than resolve that DID differently for reads and writes",
+                        record.did
+                    ),
+                });
             }
         }
 
@@ -891,12 +893,14 @@ impl WalletStore {
         // carried the equivalent check (`SuccessorKeyMismatch`) since
         // it was hardened; the primary path had none.
         if key.did() != record.did {
-            return Err(WalletError::Config(format!(
-                "store.json record for {} carries the public key of {}; the index pair is \
-                 inconsistent, so the handle would report one identity and sign under another",
-                record.did,
-                key.did()
-            )));
+            return Err(WalletError::IndexCorrupt {
+                detail: format!(
+                    "store.json record for {} carries the public key of {}; the index pair is \
+                     inconsistent, so the handle would report one identity and sign under another",
+                    record.did,
+                    key.did()
+                ),
+            });
         }
 
         // Restore the persisted deprecation flag before anything can
@@ -3501,20 +3505,30 @@ mod tests {
             "an index holding two records for one DID must be refused at open. It returned Ok, \
              and from here a read and a write can resolve the same DID to different records"
         );
-        // The VARIANT, not just the message. `WalletError::Config` is
-        // the substrate's stringly-typed catch-all, and the CLI maps
-        // it wholesale to `NoOctoHome` - exit 27, "set $OCTO_HOME or
-        // $HOME". An index fault is not a home-resolution fault, and
-        // the operator holding a correctly-set environment variable
-        // is sent to fix the one thing that is not wrong. A vector
-        // that only asserted the message text cannot see that, which
-        // is why the variant is pinned here and not merely the
-        // `Display` output.
+        // The VARIANT, not just the message.
+        //
+        // This vector used to pin `Config`, and its comment said it
+        // was pinning Config "so the mapping boundary can tell it
+        // apart from a genuine home-resolution fault". That was
+        // backwards, and it is worth recording how. `Config` is the
+        // substrate's stringly-typed catch-all and is ALSO what
+        // `open` raises when the environment cannot be resolved, so
+        // pinning `Config` is what PREVENTED the boundary from
+        // telling the two apart. The CLI mapped the whole variant to
+        // `NoOctoHome` - exit 27, "set $OCTO_HOME or $HOME" - for an
+        // operator whose environment variable is already set, and
+        // discarded the payload naming the offending DID.
+        //
+        // The vector was green and the defect was real, because the
+        // vector asserted what the code did rather than what the
+        // mapping needed. The variant is now `IndexCorrupt`, which
+        // the mapper can actually distinguish.
         let err = result.expect_err("must be refused");
         assert!(
-            matches!(err, WalletError::Config(_)),
-            "the duplicate-index refusal must be Config so the mapping boundary can tell it \
-             apart from a genuine home-resolution fault. Got {err:?}"
+            matches!(err, WalletError::IndexCorrupt { .. }),
+            "the duplicate-index refusal must be IndexCorrupt so the mapping boundary can tell \
+             it apart from a genuine home-resolution fault. Config is the shared catch-all and \
+             asserting it pins the conflation. Got {err:?}"
         );
         let err = err.to_string();
         assert!(
@@ -3587,14 +3601,13 @@ mod tests {
              every envelope while signing under the impostor"
         );
         let err = result.expect_err("must be refused");
-        // The VARIANT, for the same reason tv_x_58 pins it: this is
-        // an integrity fault in operator-editable state, and the CLI
-        // routes the `Config` catch-all to exit 27 "set $OCTO_HOME or
-        // $HOME", which is false advice for an operator whose
-        // environment is already correct.
+        // The VARIANT, for the reason tv_x_58 gives and with the same
+        // correction: this is an integrity fault in operator-editable
+        // state, and asserting `Config` here pinned the conflation
+        // rather than preventing it.
         assert!(
-            matches!(err, WalletError::Config(_)),
-            "the key-to-record binding refusal must be Config so the mapping boundary can \
+            matches!(err, WalletError::IndexCorrupt { .. }),
+            "the key-to-record binding refusal must be IndexCorrupt so the mapping boundary can \
              distinguish an integrity fault from a home-resolution fault. Got {err:?}"
         );
         let err = err.to_string();

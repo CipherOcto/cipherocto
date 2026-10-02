@@ -480,8 +480,20 @@ pub struct IdentityRotateAbortOutput {
 /// sentinel (`wallet_root_under_home`, vector tv_x_56), which is what
 /// makes this mapping live rather than dead code.
 ///
-/// Everything else from `open` is `Io` or crypto, which is a real
-/// fault and stays at 64.
+/// Everything else from `open` is `Io`, crypto, or a damaged index.
+/// `Io` and crypto are real faults and stay at 64.
+///
+/// The index faults were the exception this sentence used to hide.
+/// `open` also raises `IndexCorrupt` when `store.json` names one DID
+/// twice, or pairs a DID with a public key that derives a different
+/// one. Those were reported as `Config`, so they took the arm below
+/// and became exit 27 with the remedy "set `$OCTO_HOME` or `$HOME`" -
+/// for an operator whose `OCTO_HOME` is already set, because the
+/// environment was never the problem. The payload naming the offending
+/// DID was discarded on the way, which is the one piece of information
+/// the operator needs to repair the file. Both faults now arrive as a
+/// typed `IndexCorrupt` and fall to the wildcard arm, where the detail
+/// is carried into the diagnostic.
 pub(crate) fn map_wallet_open_error(e: octo_wallet::WalletError) -> OctoCliError {
     match e {
         octo_wallet::WalletError::Config(_) => OctoCliError::NoOctoHome,
@@ -5070,5 +5082,93 @@ mod tests {
              identity genuinely registered at the epoch. This is what the sentinel exists to \
              avoid, and it is why the sentinel is i64::MIN and not 0"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // R10: `map_wallet_open_error` mapped the whole `Config` catch-all
+    // to `NoOctoHome` at exit 27, and `Config` is not a home fault.
+    //
+    // The claim this vector makes checkable: the mapper's `Config` arm
+    // is narrow in FACT, not only in intention. It is reached by
+    // exactly one condition - the environment could not be resolved -
+    // and a damaged `store.json` does not take it. That is not
+    // assertable by reading the match, because the match looks the
+    // same either way. It takes an index that is genuinely damaged,
+    // handed to the real mapper.
+    //
+    // What it protects against is a specific and quiet regression: a
+    // future change that routes an index fault back through `Config`,
+    // or a new `Config` site added to `open`, both of which leave the
+    // mapper looking correct and the operator being misdirected.
+
+    #[test]
+    fn tv_x_c_75_a_damaged_index_is_not_reported_as_a_missing_home() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().expect("work dir");
+        let seed_file = dir.path().join("seed.hex");
+        std::fs::write(&seed_file, hex::encode([0xC1u8; 32])).expect("write seed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod seed");
+        }
+        let pass_file = dir.path().join("pass.txt");
+        std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        register("tv-x-c-75", &pass_file, true, Some(&seed_file), &cli).expect("register");
+
+        // Damage the index the way an operator or a partial write
+        // would: duplicate the single record, so the store holds two
+        // rows for one DID.
+        // Damaged as JSON rather than through a substrate accessor:
+        // the substrate deliberately exposes no way to hand it a
+        // malformed index, and the point here is that a file edited
+        // outside the process is exactly how this reaches the mapper.
+        let index_path = root.join("store.json");
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index_path).expect("read index")).expect("json");
+        let first = index["records"][0].clone();
+        index["records"]
+            .as_array_mut()
+            .expect("records array")
+            .push(first);
+        std::fs::write(
+            &index_path,
+            serde_json::to_vec_pretty(&index).expect("json"),
+        )
+        .expect("write damaged index");
+
+        let err =
+            octo_wallet::WalletStore::open().expect_err("a duplicate-DID index must be refused");
+        let mapped = map_wallet_open_error(err);
+
+        unsafe { std::env::remove_var("OCTO_HOME") };
+
+        assert!(
+            !matches!(mapped, OctoCliError::NoOctoHome),
+            "a damaged index must not map to NoOctoHome. OCTO_HOME is set and the environment was \
+             never the problem, so exit 27 would tell the operator to set a variable they already \
+             have set. Got {mapped:?}"
+        );
+        match &mapped {
+            OctoCliError::Internal(reason) => {
+                assert!(
+                    reason.contains("duplicate"),
+                    "the diagnostic must name the fault, so the operator knows to repair the \
+                     index rather than their environment. Got {reason}"
+                );
+            }
+            other => panic!("a damaged index must map to Internal, got {other:?}"),
+        }
     }
 }

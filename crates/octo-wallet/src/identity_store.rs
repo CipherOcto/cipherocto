@@ -276,7 +276,7 @@ impl WalletStore {
         if bytes.is_empty() {
             return Ok(WalletIndex::default());
         }
-        let index: WalletIndex = serde_json::from_slice(&bytes)
+        let mut index: WalletIndex = serde_json::from_slice(&bytes)
             .map_err(|e| WalletError::KeystoreParse(format!("store.json deserialize: {e}")))?;
         if index.version != WALLET_INDEX_VERSION {
             return Err(WalletError::KeystoreVersion {
@@ -284,6 +284,47 @@ impl WalletStore {
                 got: index.version.to_string(),
             });
         }
+
+        // store.json is not a trusted input. It is operator-editable
+        // by documented instruction - the `RotationEventMissing`
+        // remediation literally says "edit store.json" - and until
+        // now it was deserialized with no structural validation
+        // beyond `version`, so the index could carry duplicate DIDs.
+        //
+        // That is not cosmetic. `WalletIndex::record` resolves a DID
+        // by LINEAR scan and takes the FIRST match; every mutator
+        // resolves it with `binary_search_by`, which takes an
+        // ARBITRARY match among equals. With one row per DID the two
+        // agree by construction. With two they can return different
+        // records for the same DID - so a reader and a writer
+        // disagree about which identity they are operating on.
+        //
+        // Duplicates are REJECTED rather than repaired: there is no
+        // principled way to choose which of two rows for one DID is
+        // the real one, and silently picking one is the same class of
+        // defect as reading the wrong one. Ordering, by contrast, is
+        // pure presentation and is repaired below.
+        let mut seen = std::collections::BTreeSet::new();
+        for record in &index.records {
+            if !seen.insert(record.did.as_str().to_owned()) {
+                return Err(WalletError::Config(format!(
+                    "store.json index contains duplicate records for {}; refusing to open \
+                     rather than resolve that DID differently for reads and writes",
+                    record.did
+                )));
+            }
+        }
+
+        // Deterministic order is a stated requirement of the index
+        // (records are kept sorted by DID). An index written by a
+        // binary that did not, or edited by hand, would make
+        // `binary_search_by` return `Err` for a DID that IS present,
+        // which `register` reads as "absent, insert here". Sorting is
+        // a repair rather than a rejection, because order carries no
+        // information the operator could lose.
+        index
+            .records
+            .sort_by(|a, b| a.did.as_str().cmp(b.did.as_str()));
         Ok(index)
     }
 
@@ -533,7 +574,7 @@ impl WalletStore {
         let Ok(record) = self.index.record(did) else {
             return false;
         };
-        let slug = format!("identity-{}", hex::encode(record.pubkey_bytes));
+        let slug = seed_slot_slug_by_pubkey(record.pubkey_bytes);
         self.vault
             .slots_dir()
             .join(format!("{slug}.vault"))
@@ -551,7 +592,7 @@ impl WalletStore {
     pub fn orphan_slots(&self) -> Vec<String> {
         let mut known: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for r in &self.index.records {
-            let slug = format!("identity-{}", hex::encode(r.pubkey_bytes));
+            let slug = seed_slot_slug_by_pubkey(r.pubkey_bytes);
             known.insert(format!("{slug}.vault"));
         }
         let Ok(entries) = std::fs::read_dir(self.vault.slots_dir()) else {
@@ -697,7 +738,7 @@ impl WalletStore {
         // 3. Compose the slug and call the vault. The vault's
         //    `VaultSlotNotFound` is preferred over a misleading
         //    `VaultDecryptionFailed` when the slot file is gone.
-        let slug = format!("identity-{}", hex::encode(record.pubkey_bytes));
+        let slug = seed_slot_slug_by_pubkey(record.pubkey_bytes);
         let get_result = self.vault.get(&slug, passphrase, seed_out);
         if let Err(e) = get_result {
             // Mission §AC-20: zeroize the caller-owned buffer
@@ -810,6 +851,28 @@ impl WalletStore {
             revoked_at,
             rotation_started_at,
         )?;
+        // Bind the key to the record it was read from. The vault
+        // lookup above was keyed on `record.pubkey_bytes`, so the
+        // seed decrypts into SOME key - but nothing established that
+        // key's DID is the DID this handle will report, and
+        // `UnlockedWallet.did` was set from `active_did` regardless.
+        //
+        // `Did` is derived from the public key, so this is an exact
+        // equality check rather than a judgement call. Without it, a
+        // `store.json` whose record pairs DID X with the public key
+        // of Y yields a handle that reports X in every envelope while
+        // every signature verifies under Y. The successor path has
+        // carried the equivalent check (`SuccessorKeyMismatch`) since
+        // it was hardened; the primary path had none.
+        if key.did() != record.did {
+            return Err(WalletError::Config(format!(
+                "store.json record for {} carries the public key of {}; the index pair is \
+                 inconsistent, so the handle would report one identity and sign under another",
+                record.did,
+                key.did()
+            )));
+        }
+
         // Restore the persisted deprecation flag before anything can
         // write it back. Without this, the next `persist_active_record`
         // writes `false` over a `true` that a completed rotation set.
@@ -898,9 +961,16 @@ impl UnlockedWallet<'_> {
     /// predecessor is not `Active` - a `Revoked` predecessor arrives
     /// here as `NotActive { current_state: Revoked }`, not
     /// `AlreadyRevoked`; `WalletError::SelfRotation` if the successor
-    /// IS the predecessor; `WalletError::WeakPassphrase` if the
-    /// passphrase is below the floor. The `NotActive` check runs
-    /// BEFORE the vault seal, so a refusal writes nothing.
+    /// IS the predecessor; `WalletError::AlreadyRevoked` if the
+    /// successor DID is already in the index (a re-rotation to an
+    /// already-registered identity); `WalletError::WeakPassphrase`
+    /// if the passphrase is below the floor.
+    ///
+    /// Every refusal in this function runs BEFORE the vault seal and
+    /// before the in-memory lifecycle flip, so a refusal writes
+    /// nothing and leaves the handle reporting the lifecycle the
+    /// store holds. That was not true of the duplicate-successor
+    /// refusal, which ran after both.
     pub fn begin_rotation(
         &mut self,
         successor: IdentityKey,
@@ -922,6 +992,40 @@ impl UnlockedWallet<'_> {
                 current_state: self.key.lifecycle(),
             });
         }
+        // The duplicate-successor refusal belongs here, beside the
+        // lifecycle guard, for the same reason that guard is here: a
+        // refusal must write nothing. Run after the seal it left an
+        // orphaned encrypted slot that no CLI surface reports -
+        // `orphan_slots` has no consumer in any command. Run after
+        // `IdentityKey::begin_rotation` it also flipped the handle to
+        // `Rotating` and returned `Err` while the on-disk record
+        // still said `Active`, so `active_identity().lifecycle()`
+        // disagreed with the store. Both are observable through the
+        // handle even though the index write never happened.
+        //
+        // A hit here is an error, not an insert position.
+        // `binary_search_by` yields `Ok(i)` on a hit and
+        // `unwrap_or_else` passes an `Ok` through UNCHANGED, so the
+        // previous spelling (`unwrap_or_else(|i| i)`) yielded the
+        // matching record's OWN index on a hit and would insert the
+        // successor a SECOND time, immediately in front of the row
+        // it duplicated. That silently corrupts the index: `record`
+        // linear-scans and returns the FIRST match while every
+        // transition uses `binary_search_by`, which returns an
+        // ARBITRARY match among equals. `register` refuses the same
+        // condition explicitly; this is that refusal at the rotation
+        // write path. Reusing the terminal-state variant rather than
+        // minting one keeps the CLI's translation table honest.
+        let successor_did = successor.did();
+        let successor_pos = self
+            .store
+            .index
+            .records
+            .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()));
+        if successor_pos.is_ok() {
+            return Err(WalletError::AlreadyRevoked);
+        }
+        let successor_insert_pos = successor_pos.unwrap_err();
         // Seal the successor's slot before flipping the
         // predecessor's lifecycle to Rotating. The store's index
         // will get the successor record on `complete_rotation`,
@@ -932,7 +1036,6 @@ impl UnlockedWallet<'_> {
             .vault
             .put(&successor_slug, &successor_seed, passphrase)?;
 
-        let successor_did = successor.did();
         // Extract the public-key bytes BEFORE consuming the
         // successor into `begin_rotation`. The seed is held
         // by `IdentityKey`'s `Arc<dyn HsmAdapter>` signer,
@@ -963,34 +1066,12 @@ impl UnlockedWallet<'_> {
             rotation_history: Vec::new(),
             deprecated: false,
         };
-        // Insert in sorted-by-DID order so the determinism
-        // contract holds.
-        // A hit here is an error, not an insert position.
-        // `binary_search_by` yields `Ok(i)` on a hit and
-        // `unwrap_or_else` passes an `Ok` through UNCHANGED, so
-        // the previous spelling (`unwrap_or_else(|i| i)`) yielded
-        // the matching record's OWN index on a hit and inserted
-        // the successor a SECOND time, immediately in front of
-        // the row it duplicated. That silently corrupts the
-        // index: `WalletIndex::record` linear-scans and returns
-        // the FIRST match while every transition below uses
-        // `binary_search_by`, which returns an ARBITRARY match
-        // among equals - so reads and writes then disagree
-        // about which duplicate is live. `register` refuses the
-        // same condition explicitly above; this is that refusal,
-        // applied at the rotation write path. Reusing the
-        // terminal-state variant rather than minting one keeps
-        // the CLI's existing translation table honest.
-        let successor_pos = self
-            .store
+        // Insert at the position resolved by the guard above, which
+        // ran before the seal and confirmed the DID is absent.
+        self.store
             .index
             .records
-            .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()));
-        if successor_pos.is_ok() {
-            return Err(WalletError::AlreadyRevoked);
-        }
-        let pos = successor_pos.unwrap_err();
-        self.store.index.records.insert(pos, successor_record);
+            .insert(successor_insert_pos, successor_record);
         let successor_did_for_event = successor_did.clone();
         self.rotation_successor_did = Some(successor_did);
         // Both record changes - the new Rotating lifecycle and the
@@ -1355,7 +1436,7 @@ fn read_home_fallback() -> PathBuf {
 /// `identity-` + lowercase hex of `key.public_key_bytes()` — 73
 /// characters, inside the 128 cap, every character inside
 /// `[a-zA-Z0-9._-]`. The store composes it here rather than in
-/// `register` so the slug rule lives in exactly one place (mission
+/// `register` so the slug rule has exactly one spelling at every call site (mission
 /// §AC-29). Reaches `validate_slot_id` to assert the rule on every
 /// derivation rather than trust the format.
 ///
@@ -3278,5 +3359,223 @@ mod tests {
             "the message must name both causes, since the variant carries no payload to \
              disambiguate. Got {msg:?}"
         );
+    }
+
+    /// Read `store.json` directly, bypassing `WalletStore::open_at`.
+    /// The two vectors below write an index that `open_at` now
+    /// REJECTS, so they cannot read it back through the normal path.
+    fn read_index_for_test(root: &Path) -> WalletIndex {
+        let bytes = fs::read(root.join("store.json")).expect("read store.json");
+        serde_json::from_slice(&bytes).expect("parse store.json")
+    }
+
+    /// A `Vault` over the same seed directory `open_at` builds, for
+    /// sealing a slot the index points at but no `register` created.
+    fn store_vault_for_test(root: &Path) -> crate::vault::Vault {
+        crate::vault::Vault::open_lazy(root.join("seed"))
+    }
+
+    /// Count on-disk slot files, to detect a slot sealed by a refused
+    /// operation - which no CLI surface reports.
+    fn count_vault_slots_for_test(root: &Path) -> usize {
+        match fs::read_dir(root.join("seed")) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|x| x.eq_ignore_ascii_case("vault"))
+                })
+                .count(),
+            Err(_) => 0,
+        }
+    }
+
+    /// `store.json` is operator-editable - the `RotationEventMissing`
+    /// remediation literally instructs the operator to edit it - and
+    /// it was deserialized with no structural validation beyond
+    /// `version`, so the index could carry duplicate DIDs.
+    ///
+    /// That is not cosmetic. `WalletIndex::record` resolves a DID by
+    /// linear scan and takes the FIRST match; every mutator resolves
+    /// it with `binary_search_by`, which takes an ARBITRARY match
+    /// among equals. With one row per DID the two agree by
+    /// construction; with two they can return different records for
+    /// the same DID, so a reader and a writer disagree about which
+    /// identity they are operating on.
+    ///
+    /// Duplicates are rejected rather than repaired: there is no
+    /// principled way to choose which of two rows for one DID is the
+    /// real one, and silently picking one is the same class of defect
+    /// as reading the wrong one.
+    #[test]
+    fn tv_x_58_an_index_with_duplicate_dids_is_refused_rather_than_resolved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0xE1u8; 32]);
+        let did = key.did();
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        drop(store);
+
+        // Duplicate the single row, exactly as a hand edit or a
+        // pre-guard binary would leave it.
+        let mut index = read_index_for_test(dir.path());
+        index.records.push(index.records[0].clone());
+        write_index_atomically(dir.path(), &index).expect("write duplicated index");
+
+        let result = WalletStore::open_at(dir.path());
+        assert!(
+            result.is_err(),
+            "an index holding two records for one DID must be refused at open. It returned Ok, \
+             and from here a read and a write can resolve the same DID to different records"
+        );
+        let err = result.expect_err("must be refused").to_string();
+        assert!(
+            err.contains("duplicate") && err.contains(did.as_str()),
+            "the refusal must name both the problem and the DID it concerns, or the operator \
+             cannot find the row to fix. Got {err:?}"
+        );
+    }
+
+    /// An index row asserts a PAIR - a DID and the public key said to
+    /// belong to it - and nothing verified the pair.
+    ///
+    /// `unlock` looks the vault slot up by `record.pubkey_bytes`, so
+    /// the seed decrypts into SOME key, but nothing established that
+    /// key's DID is the DID the handle reports, and
+    /// `UnlockedWallet.did` was set from `active_did` regardless. The
+    /// result is a handle that reports one identity in every envelope
+    /// while every signature verifies under another.
+    ///
+    /// `Did` is derived from the public key, so this is an exact
+    /// equality check rather than a judgement call. The successor
+    /// path has carried the equivalent check
+    /// (`SuccessorKeyMismatch`) since it was hardened; the primary
+    /// path had none.
+    #[test]
+    fn tv_x_59_unlock_refuses_a_record_whose_key_does_not_derive_its_did() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0xE2u8; 32]);
+        let real_did = key.did();
+        store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        drop(store);
+
+        // Seal the IMPOSTOR's slot under the same passphrase first, so
+        // the decrypt would succeed and the ONLY thing standing
+        // between the operator and a wrong-identity handle is the
+        // binding check. A vector that merely tripped a slot-not-found
+        // would pass against a fix that got there by accident.
+        let impostor = IdentityKey::from_seed([0xE3u8; 32]);
+        let impostor_seed = impostor.seed_bytes_for_hkdf().expect("impostor seed");
+        let v = store_vault_for_test(dir.path());
+        v.put(
+            &seed_slot_slug_by_pubkey(impostor.public_key_bytes()),
+            &impostor_seed,
+            "correct-horse-battery-staple",
+        )
+        .expect("seal impostor slot");
+
+        // Splice the impostor's public key in while keeping the row's
+        // DID - the inconsistent pair, written by hand.
+        let mut index = read_index_for_test(dir.path());
+        index.records[0].pubkey_bytes = impostor.public_key_bytes();
+        assert_eq!(
+            index.records[0].did, real_did,
+            "precondition: the row still claims the original DID"
+        );
+        write_index_atomically(dir.path(), &index).expect("write spliced index");
+
+        // The spliced index is well-formed apart from the pair, so
+        // open succeeds and the refusal has to come from unlock.
+        let mut reopened = WalletStore::open_at(dir.path()).expect("open_at");
+        let mut seed_out = Vec::new();
+        let result = reopened.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            result.is_err(),
+            "a record pairing DID {real_did} with another identity's public key must not yield \
+             an unlocked handle. It returned Ok, and that handle would report {real_did} in \
+             every envelope while signing under the impostor"
+        );
+        let err = result.expect_err("must be refused").to_string();
+        assert!(
+            err.contains("public key") && err.contains(impostor.did().as_str()),
+            "the refusal must name both DIDs so the operator can see which row is inconsistent. \
+             Got {err:?}"
+        );
+    }
+
+    /// The duplicate-successor refusal ran after the vault seal and
+    /// after the in-memory lifecycle flip, so a refusal did not
+    /// "write nothing" - the property the `NotActive` guard beside it
+    /// was hoisted there to provide.
+    ///
+    /// Two observable consequences: an orphaned encrypted slot that
+    /// no CLI surface reports (`orphan_slots` has no consumer in any
+    /// command), and a handle reporting `Rotating` while the on-disk
+    /// record still said `Active`.
+    #[test]
+    fn tv_x_60_a_refused_rotation_writes_nothing_and_leaves_the_lifecycle_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xE4u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        let successor_key = IdentityKey::from_seed([0xE5u8; 32]);
+        store
+            .register(
+                successor_key.clone(),
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_005,
+            )
+            .expect("register successor");
+
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let slots_before = count_vault_slots_for_test(dir.path());
+        let successor_slot_existed = dir
+            .path()
+            .join("seed")
+            .join(format!(
+                "{}.vault",
+                seed_slot_slug_by_pubkey(successor_key.public_key_bytes())
+            ))
+            .exists();
+        let result =
+            handle.begin_rotation(successor_key, "correct-horse-battery-staple", 1_700_000_010);
+        assert!(
+            result.is_err(),
+            "rotating to an already-registered successor must be refused"
+        );
+        assert_eq!(
+            handle.active_identity().lifecycle(),
+            crate::lifecycle::LifecycleState::Active,
+            "a REFUSED rotation must leave the handle on the lifecycle the store holds. \
+             Reporting Rotating means the in-memory key was flipped before the guard ran"
+        );
+        assert!(
+            successor_slot_existed,
+            "precondition: register sealed the successor's slot, so a later orphan would be \
+             attributable to the refused rotation rather than to registration"
+        );
+        assert_eq!(
+            count_vault_slots_for_test(dir.path()),
+            slots_before,
+            "a REFUSED rotation must not seal a slot - an orphan is invisible, since \
+             orphan_slots has no consumer in any command"
+        );
+        drop(handle);
     }
 }

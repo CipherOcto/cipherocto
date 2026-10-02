@@ -165,7 +165,7 @@ pub enum WalletError {
     /// DID. Substrate path: `octo_role::select_with_chain_id` wraps this as
     /// `RoleError::SigningFailed { reason: format!("nonce counter: {e}") }`.
     /// Exit code = 11 per `OctoCliError::SigningFailed` mapping.
-    #[error("role-binding nonce counter exhausted (u64 saturated) for did")]
+    #[error("role-binding nonce counter exhausted (u64 saturated)")]
     NonceUnderflow,
 
     // ----- Agent manifest + capability-validation errors (RFC-0011-c §9.10) -----

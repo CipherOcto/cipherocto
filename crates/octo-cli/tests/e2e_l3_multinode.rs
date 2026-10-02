@@ -1287,3 +1287,287 @@ fn l3_unlock_then_capability_list_returns_zero() {
         String::from_utf8_lossy(&other_out.stderr),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: the post-4c(b) `capability mint` signing path is exercised
+// end-to-end and the minted cap is observable via the list path in a
+// separate process
+// ---------------------------------------------------------------------------
+
+/// The mint path is the only signing path in the audit amendment that
+/// produces a substrate-visible side effect (a new `cap_id` registered
+/// in the wallet's `index.json`). The mint handler's `SEC-03` root-secret
+/// guard is gated to `--mode dev` (the well-known `[0u8; 32]`
+/// placeholder is the only one the substrate offers before the
+/// root-secret derivation amendment lands; production builds cannot
+/// reach this path). On a release binary the guard is enforced; the
+/// test build is cfg(test) bypassed. The L3 harness runs the release
+/// binary, so the test must explicitly pass `--mode dev --allow-write`
+/// plus `--confirm-acknowledge` (the second-step gate the pastejacking
+/// defense requires on a non-dry-run path) to reach the substrate
+/// mint call.
+///
+/// The round-trip is the property the audit amendment left unharnessed:
+/// `capability mint` writes to the wallet index, and a SEPARATE
+/// process invoking `capability list` against the same `$OCTO_HOME`
+/// must see the minted `cap_id` in the `capabilities` array. Before
+/// 4c(b) this round-trip could not be exercised at all because the
+/// signing path was the `try_active_identity` stub; after 4c(b) it
+/// routes through `acquire_passphrase` + `WalletStore::unlock` and the
+/// two steps (mint, list) are independent OS processes.
+///
+/// `MIN_PASSPHRASE_CHARS = 12` is cleared with a 28-char passphrase.
+/// The holder DID is the freshly-registered identity's own DID so the
+/// mint is a self-issuance — the simplest path that exercises the
+/// substrate's `mint(root_secret, &IdentityKey, holder_did, &caveats)`
+/// signature without entangling a second identity.
+///
+/// **Gated on a substrate amendment, not 4c(b).** The CLI side of the
+/// mint path is wired by 4c(b) (`acquire_passphrase` + `WalletStore::unlock`
+/// on the dev-mode branch), but the substrate side is a stub:
+///
+/// ```text
+/// stub: octo_cap_macaroon::cli_fns::mint is not yet wired; \
+///        use CapabilityToken::mint directly until Phase 2 lands
+/// ```
+///
+/// (`crates/octo-cap-macaroon/src/cli_fns.rs:67-79`). The CLI maps
+/// that to `Internal` at exit 64. The in-process harness mirrors the
+/// stub state with `tv_cap6_mint_signing_failed_exits_11` (ignored,
+/// "revert when substrate amendment lands") and
+/// `tv_cap6_mint_root_secret_blocked_exits_64` (active, pins the
+/// dev-mode guard at exit 64).
+///
+/// This L3 test is the cross-process counterpart of those in-process
+/// vectors: it will flip from `#[ignore]` to a live assertion when
+/// the substrate amendment lands. The assertion shape (minted cap_id
+/// round-trips through a SEPARATE list process) is the property the
+/// audit amendment named "no harness exercises full chain". The
+/// `unlock_then_capability_list` test above covers the read-side
+/// post-4c(b) path; this test covers the write-side post-4c(b) path.
+/// Both halves are needed for the "full chain" claim.
+#[test]
+#[ignore = "gated on `octo_cap_macaroon::cli_fns::mint` substrate amendment; revert `#[ignore]` when Phase 2 lands (see cli_fns.rs:67-79)"]
+fn l3_capability_mint_then_list_round_trip() {
+    let home = new_node_home("l3-mint-list");
+    let passphrase = "l3-mint-list-passphrase-2026"; // 28 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // -- Step 1: register an identity. Use dev mode (and --allow-write)
+    //    so the same wallet is later eligible for the mint SEC-03 guard
+    //    (the substrate's `index.json` records a single mode for the
+    //    issuer, and dev mode is the mode the mint path admits). The
+    //    passphrase file has NO trailing newline: the substrate stores
+    //    the passphrase as-is and the unlock's stdin path trims CR/LF
+    //    (see the `l3_unlock_then_capability_list_returns_zero`
+    //    comment for the full reasoning).
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-mint-list",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "dev",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed in dev mode: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_did = register_env.payload["did"]
+        .as_str()
+        .expect("register envelope must carry payload.did")
+        .to_string();
+    assert!(
+        register_did.starts_with("did:octo:"),
+        "DID must be in canonical wire form, got {register_did:?}"
+    );
+
+    // -- Step 2: SEPARATE process invokes `capability mint` with the
+    //    passphrase on stdin. The mint is a real signing operation:
+    //    the substrate's `octo_cap_macaroon::mint(&[0u8;32], &key, ...)`
+    //    writes a new `cap_id` into the wallet's `index.json` and
+    //    returns the holder signature. The envelope's `capability_id`
+    //    field is the substrate's `hex::encode(token.macaroon.id)` —
+    //    lowercase hex.
+    //
+    //    `--mode dev --allow-write --confirm-acknowledge` is the
+    //    minimum gate combination that passes `require_confirm` (dev
+    //    mode needs `--allow-write`) AND `require_acknowledge` (the
+    //    second-step gate needs `--confirm-acknowledge` on a
+    //    non-dry-run path). Both gates are listed in
+    //    `commands::identity::require_confirm` and
+    //    `commands::capability::require_acknowledge`.
+    let mut mint_cmd = octo_in(&home);
+    mint_cmd.args([
+        "capability",
+        "mint",
+        "--caveats",
+        "[]",
+        "--holder",
+        &register_did,
+        "--mode",
+        "dev",
+        "--allow-write",
+        "--confirm",
+        "--confirm-acknowledge",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    mint_cmd.stdin(std::process::Stdio::piped());
+    mint_cmd.stdout(std::process::Stdio::piped());
+    mint_cmd.stderr(std::process::Stdio::piped());
+    let mut mint_child = mint_cmd.spawn().expect("spawn mint");
+    std::io::Write::write_all(
+        mint_child.stdin.as_mut().expect("mint stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to mint");
+    let mint_out = mint_child.wait_with_output().expect("wait mint");
+    assert_eq!(
+        mint_out.status.code(),
+        Some(0),
+        "capability mint on an unlocked wallet must exit 0, got {:?}. stderr={}, stdout={}",
+        mint_out.status.code(),
+        String::from_utf8_lossy(&mint_out.stderr),
+        String::from_utf8_lossy(&mint_out.stdout),
+    );
+    let mint_env = Envelope::parse(&String::from_utf8_lossy(&mint_out.stdout));
+    let minted_cap_id = mint_env.payload["capability_id"]
+        .as_str()
+        .expect("mint envelope must carry payload.capability_id")
+        .to_string();
+    assert!(
+        minted_cap_id.chars().all(|c| c.is_ascii_hexdigit()) && !minted_cap_id.is_empty(),
+        "capability_id must be a non-empty lowercase hex string, got {minted_cap_id:?}"
+    );
+    let minted_body_hash = mint_env.payload["body_hash"]
+        .as_str()
+        .expect("mint envelope must carry payload.body_hash")
+        .to_string();
+    assert!(
+        minted_body_hash.chars().all(|c| c.is_ascii_hexdigit()) && minted_body_hash.len() == 64,
+        "body_hash must be a 64-char lowercase hex (32-byte BLAKE3 digest), \
+         got len={} value={minted_body_hash:?}",
+        minted_body_hash.len()
+    );
+
+    // -- Step 3: SEPARATE process invokes `capability list` with the
+    //    passphrase on stdin. The list handler is read-only (no
+    //    confirmation gate, no SEC-03 guard), but the post-4c(b)
+    //    migration still routes through `acquire_passphrase` +
+    //    `WalletStore::unlock` because the substrate's `list_active`
+    //    takes `&dyn CapabilitySigner` for trait consistency. The
+    //    list envelope's `capabilities` array MUST contain the
+    //    `cap_id` minted in step 2; this is the cross-process
+    //    property the audit amendment left unharnessed (the
+    //    substrate wrote the new `cap_id` to `index.json` and a
+    //    separate process reading the same index must see it).
+    let mut list_cmd = octo_in(&home);
+    list_cmd.args([
+        "capability",
+        "list",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    list_cmd.stdin(std::process::Stdio::piped());
+    list_cmd.stdout(std::process::Stdio::piped());
+    list_cmd.stderr(std::process::Stdio::piped());
+    let mut list_child = list_cmd.spawn().expect("spawn list-after-mint");
+    std::io::Write::write_all(
+        list_child.stdin.as_mut().expect("list stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to list");
+    let list_out = list_child.wait_with_output().expect("wait list-after-mint");
+    assert_eq!(
+        list_out.status.code(),
+        Some(0),
+        "capability list after a mint must exit 0, got {:?}. stderr={}",
+        list_out.status.code(),
+        String::from_utf8_lossy(&list_out.stderr),
+    );
+    let list_env = Envelope::parse(&String::from_utf8_lossy(&list_out.stdout));
+    let caps = list_env.payload["capabilities"]
+        .as_array()
+        .expect("list payload.capabilities must be an array");
+    assert_eq!(
+        caps.len(),
+        1,
+        "a fresh wallet with exactly one mint must list one capability, \
+         got {} entries: {caps:?}",
+        caps.len()
+    );
+    let listed_cap_id = caps[0]["cap_id"]
+        .as_str()
+        .expect("listed entry must carry cap_id");
+    assert_eq!(
+        listed_cap_id, minted_cap_id,
+        "the listed cap_id must equal the minted cap_id (cross-process read \
+         of the wallet index); a mismatch means the index write was lost or \
+         the list reads from a different source"
+    );
+
+    // -- Step 4: control — a wrong passphrase must return WalletLocked
+    //    (exit 92) on a SEPARATE process invoking `capability list`.
+    //    The substrate's vault decryption fails for the wrong
+    //    passphrase and surfaces as `WalletError::Locked`, which the
+    //    CLI's `From<WalletError>` table maps to `WalletLocked` at
+    //    exit 92. This is the negative control for step 3: the right
+    //    passphrase produced a populated list, the wrong passphrase
+    //    must produce a fail-closed exit.
+    let mut wrong_cmd = octo_in(&home);
+    wrong_cmd.args([
+        "capability",
+        "list",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    wrong_cmd.stdin(std::process::Stdio::piped());
+    wrong_cmd.stdout(std::process::Stdio::piped());
+    wrong_cmd.stderr(std::process::Stdio::piped());
+    let mut wrong_child = wrong_cmd.spawn().expect("spawn wrong-pp list");
+    std::io::Write::write_all(
+        wrong_child.stdin.as_mut().expect("wrong stdin"),
+        b"this-is-the-wrong-passphrase-12345\n",
+    )
+    .expect("pipe wrong pp");
+    let wrong_out = wrong_child.wait_with_output().expect("wait wrong-pp");
+    assert_eq!(
+        wrong_out.status.code(),
+        Some(92),
+        "capability list with a wrong passphrase must exit 92 (WalletLocked), \
+         got {:?}. stderr={}, stdout={}",
+        wrong_out.status.code(),
+        String::from_utf8_lossy(&wrong_out.stderr),
+        String::from_utf8_lossy(&wrong_out.stdout),
+    );
+    let wrong_env = Envelope::parse(&String::from_utf8_lossy(&wrong_out.stdout));
+    assert_eq!(
+        wrong_env.payload.get("capabilities"),
+        None,
+        "a WalletLocked failure must NOT surface a capabilities payload: \
+         the substrate's `list_active` is unreachable when `store.unlock` \
+         fails, so any successful-shape list is a leak (the envelope would \
+         reveal the list is empty by SUCCESS, which is the wrong signal \
+         under lock). stdout={}",
+        String::from_utf8_lossy(&wrong_out.stdout),
+    );
+}

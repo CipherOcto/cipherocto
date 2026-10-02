@@ -3208,7 +3208,7 @@ mod tests {
         assert_eq!(OctoCliError::NoOctoHome.exit_code(), 27);
     }
 
-    /// tv_x_44 — the six `WalletError` lifecycle refusals all map to
+    /// tv_x_44 — the eight `WalletError` lifecycle refusals all map to
     /// `OctoCliError::IdentityTransitionRefused { reason }` at slot 93
     /// with exit 43. The substrate owns the canonical distinction;
     /// the CLI envelope collapses them into one typed variant.
@@ -3217,8 +3217,13 @@ mod tests {
     /// `NoActiveIdentity` (exit 2) per the §New error variants translation
     /// table — the field discriminator is honored here. Asserted by
     /// `tv_x_44b_not_active_field_discriminator_respected`.
+    ///
+    /// The count is asserted against the impl, not just stated. The
+    /// family grew by two after this vector was first written and
+    /// nothing failed, because a hand-written case list and an
+    /// or-pattern are two independent lists of the same set.
     #[test]
-    fn tv_x_44_six_lifecycle_refusals_map_to_slot_93_exit_43() {
+    fn tv_x_44_eight_lifecycle_refusals_map_to_slot_93_exit_43() {
         let cases: Vec<octo_wallet::WalletError> = vec![
             octo_wallet::WalletError::RotationInProgress,
             octo_wallet::WalletError::SelfRotation,
@@ -3231,7 +3236,16 @@ mod tests {
             },
             octo_wallet::WalletError::InvalidSuccessorProof,
             octo_wallet::WalletError::InvalidRevocationProof,
+            // The two the family grew by AFTER this vector was
+            // written. Both are in the translation table above and
+            // both were missing here, which is why dropping either
+            // from the impl's or-pattern left all 553 tests green.
+            octo_wallet::WalletError::RotationEventMissing,
+            octo_wallet::WalletError::SuccessorKeyMismatch {
+                did: octo_wallet::Did("did:octo:mismatched-successor".to_owned()),
+            },
         ];
+        let case_count = cases.len();
         for substrate_err in cases {
             let substrate_dbg = format!("{:?}", substrate_err);
             let e: OctoCliError = substrate_err.into();
@@ -3252,6 +3266,34 @@ mod tests {
                 "IdentityTransitionRefused is exit 43 (shared with the agent amendment chain write-path slots)"
             );
         }
+
+        // A hand-written case list goes stale when the impl's
+        // or-pattern grows, and the two halves are the same family,
+        // so nothing else connects them. This is the connection: the
+        // runtime loop above cannot observe which variants the impl
+        // actually routes to exit 43, only that the ones listed do.
+        //
+        // Source-level because that is what the property IS. The
+        // claim is about correspondence between a list of names and a
+        // pattern of names, and no runtime path observes a name.
+        let src = include_str!("error.rs");
+        let family = src
+            .split("// Lifecycle refusal family")
+            .nth(1)
+            .expect("the translation impl must carry a lifecycle refusal family")
+            .split("=> {")
+            .next()
+            .expect("the family must be followed by its arm body");
+        let impl_members = family.matches("octo_wallet::WalletError::").count();
+        assert_eq!(
+            impl_members,
+            case_count,
+            "the impl's refusal family routes {impl_members} substrate variants to exit 43, and this \
+             vector asserts {case_count}. Every member needs a case here, because a member without \
+             one is unpinned: deleting it from the or-pattern sends it to the wildcard, where it \
+             becomes an internal fault at exit 64 and the operator is told to report a bug for a \
+             normal refusal. The families: {family}"
+        );
     }
 
     /// tv_x_44b — the `NotActive { current_state }` field discriminator

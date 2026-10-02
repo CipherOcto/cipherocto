@@ -4384,4 +4384,80 @@ mod tests {
              a hand-edited index name any successor it likes. Got: {result:?}"
         );
     }
+
+    /// `tv_x_66` (mission §AC-14, the `select` half). R12 established
+    /// the rule that a durability claim can only be witnessed by
+    /// destroying the object and reading the state back, because the
+    /// in-memory index is what a persist call trivially satisfies.
+    /// It applied that rule to `revoke`, in `tv_x_24` and `tv_x_25`,
+    /// and to `register`, in `tv_x_19`. `select` was left on the
+    /// other side of the same rule.
+    ///
+    /// Measured in R16: deleting the single `write_index_atomically`
+    /// call in `WalletStore::select` - the one line that makes the
+    /// move survive the process - left **557 CLI and 318 substrate
+    /// tests green**. The operator-visible shape is a `select` that
+    /// reports success, an envelope naming the new active identity,
+    /// and every later process reverting to the old one.
+    ///
+    /// Two identities are needed, because `select` to the identity
+    /// that is already active is a no-op that any implementation
+    /// passes. The assertion is on the reopened store, never on the
+    /// store that performed the move.
+    #[test]
+    fn tv_x_66_select_persists_the_active_pointer_that_survives_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let first = store
+            .register(
+                IdentityKey::from_seed([0x66u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register first");
+        let second = store
+            .register(
+                IdentityKey::from_seed([0x67u8; 32]),
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_001,
+            )
+            .expect("register second");
+        assert_eq!(
+            store.active_did(),
+            Some(&first),
+            "setup: the first registration activates and the second does not"
+        );
+
+        store.select(&second).expect("select the second identity");
+
+        // Drop the store entirely. Everything below is read back from
+        // `store.json`, which is the only state a restarted binary sees.
+        drop(store);
+        let mut reopened = WalletStore::open_at(dir.path()).expect("reopen after select");
+        reopened.reload().expect("reload");
+        assert_eq!(
+            reopened.active_did(),
+            Some(&second),
+            "select must have written the active pointer to disk. A pointer that reads back as \
+             the pre-select identity is a fail-open: the operator selects, the envelope names the \
+             new identity, and the next process signs as the old one."
+        );
+
+        // The spec's second half, and the one that makes this
+        // non-vacuous: the move is observable through the only API a
+        // real caller has, which is the one that resolves the active
+        // identity. If the pointer were not the second record, unlock
+        // would seal and rehydrate the first.
+        let mut seed_out = Vec::new();
+        let handle = reopened
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock after select");
+        assert_eq!(
+            handle.did(),
+            &second,
+            "unlock must resolve the identity select moved the pointer to"
+        );
+    }
 }

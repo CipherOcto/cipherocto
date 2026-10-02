@@ -3971,6 +3971,59 @@ mod tests {
         }
     }
 
+    /// `tv_x_c_79` (R16) — the routing layer's confirmation gates.
+    ///
+    /// `dispatch` admits `identity rotate` and `identity revoke`
+    /// through `require_confirm` before it hands either to its
+    /// handler. Both handlers then call `require_confirm` again, so
+    /// removing the routing-layer call is a behavioural no-op today —
+    /// and that is exactly the problem. Measured in R16: deleting
+    /// both routing-layer calls left **all 557 CLI tests green**,
+    /// because every identity vector calls the handler directly and
+    /// never goes through `dispatch`. The routing layer's only
+    /// vector, `tv_x_c_17`, is source-presence over the route
+    /// needles, and a removed gate is not a route needle.
+    ///
+    /// This is not a claim that the gate is load-bearing — the
+    /// handlers re-gate, so it is defence in depth. It is a claim
+    /// that defence in depth nobody measures is not defence: the
+    /// second gate is the one that survives any future refactor that
+    /// moves a call site, and nothing here says which layer owns the
+    /// gate for which action. The four other mutating actions —
+    /// `Register`, `Select`, `RotateComplete`, `RotateAbort` — are
+    /// gated at the handler only. The asymmetry is deliberate and
+    /// documented in the RFC, but it was undocumented in the code,
+    /// which is what let it read as an oversight in R15.
+    ///
+    /// Source-presence is the right kind of vector for this claim
+    /// and the wrong kind for most others, for a specific reason:
+    /// the property is *which layer the call sits in*, and no runtime
+    /// path distinguishes a dispatch that re-gates from a dispatch
+    /// that delegates to a handler that does. Asserting the
+    /// correspondence in the test — the arm that routes is the arm
+    /// that gates — is the only form that can observe it.
+    #[test]
+    fn tv_x_c_79_dispatch_gates_the_two_actions_it_also_routes() {
+        let src = include_str!("identity.rs");
+        let start = src
+            .find("pub fn dispatch(action: &IdentityAction")
+            .expect("dispatch fn present");
+        let slice = &src[start..];
+        let end = slice
+            .find("\n}\n")
+            .expect("end marker for the slice bound must exist — if this fires, the function was renamed and the bound would have silently degraded to the test module");
+        let body = &slice[..end];
+        for action in ["identity rotate", "identity revoke"] {
+            assert!(
+                body.contains(&format!("require_confirm(cli, \"{action}\")?;")),
+                "dispatch must admit `{action}` through require_confirm before routing it, so the \
+                 routing layer admits on its own authority rather than on the handler's. Without \
+                 it the handler is the only gate and the routing layer is unverified: deleting \
+                 both routing-layer calls left every CLI test green in R16. Body: {body}"
+            );
+        }
+    }
+
     /// tv_x_20 — The CLI `octo identity select` subcommand must move
     /// the active pointer on success, fail on a miss, and route
     /// through `WalletStore::select` (NOT `UnlockedWallet::select`,

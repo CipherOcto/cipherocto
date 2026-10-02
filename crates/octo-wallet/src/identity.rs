@@ -413,17 +413,43 @@ impl IdentityKey {
 
     /// RFC-0009 §Lifecycle row 3: `Rotating → Active` (after grace).
     ///
-    /// Completes the rotation: verifies the stored `successor_proof` against
-    /// the cached successor's public key (re-derives expected proof and
-    /// compares). After grace period elapses, marks old key as deprecated,
-    /// clears successor linkage, returns to `Active`.
+    /// Completes the rotation: after the grace period elapses, marks the
+    /// old key as deprecated, clears the successor linkage, and returns
+    /// to `Active`.
     ///
     /// Grace period: 24 hours per RFC-0853 §12.
     ///
+    /// # Where the successor proof is checked — NOT here
+    ///
+    /// An earlier revision of this comment claimed that this function
+    /// "verifies the stored `successor_proof` against the cached
+    /// successor's public key", and listed
+    /// `WalletError::InvalidSuccessorProof` among the errors it returns.
+    /// Neither was true and neither could have become true here: the
+    /// body contains no call that can raise either, and the proof is
+    /// not among this function's inputs. The check lives in
+    /// `WalletStore::rehydrate_successor_key`, which every rotation
+    /// path reaches through `unlock` before the successor is ever
+    /// attached to a key — so a `Rotating` key reaching this function
+    /// has already had its proof verified, and a hand-edited index
+    /// naming an unauthorised successor is refused upstream with
+    /// `InvalidSuccessorProof` rather than here.
+    ///
+    /// The property is not unpinned. `tv_x_65` forges the proof on a
+    /// persisted rotation event and asserts the refusal, and the
+    /// round-trip in `tv_x_c_41` fails if the message either side of
+    /// that check - `b"rotate" || successor_pubkey`, written in three
+    /// places - drifts from the other two. What was wrong was the
+    /// claim about *this* function, and a reader auditing the function
+    /// that promotes a successor to active would have stopped here.
+    ///
     /// # Errors
-    /// Returns `WalletError::NotRotating` if state ≠ `Rotating`,
-    /// `WalletError::GracePeriodNotElapsed` if 24h grace not satisfied,
-    /// `WalletError::InvalidSuccessorProof` if proof verification fails.
+    /// Returns `WalletError::NotRotating` if state ≠ `Rotating` or if
+    /// no successor is attached, and `WalletError::GracePeriodNotElapsed`
+    /// if the 24h grace is not satisfied. A clock that has moved
+    /// backwards yields an elapsed of zero and is refused rather than
+    /// underflowing. This function does not return
+    /// `InvalidSuccessorProof`; see the section above.
     pub fn complete_rotation(&mut self, now_unix_secs: u64) -> Result<(), WalletError> {
         use crate::lifecycle::LifecycleState;
         if self.lifecycle != LifecycleState::Rotating {

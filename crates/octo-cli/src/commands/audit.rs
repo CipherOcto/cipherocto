@@ -36,7 +36,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::Parser;
 use serde::Serialize;
 
-use crate::error::{sanitize_substrate_error, OctoCliError};
+use crate::error::{cap_substrate_payload, sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
 use crate::Octo;
@@ -533,11 +533,26 @@ fn map_audit_error(e: AuditError) -> OctoCliError {
         // map to `AuditReadFailed` (exit 18) — the audit amendment
         // chain's canonical slot. The substrate-side scrubber
         // applies the lightweight 3-string-marker pattern plus the
-        // `crates/octo-` path prefix so an unknown future variant
-        // that accidentally carries a key/path leaks only
-        // `<redacted-*>` markers.
+        // `crates/octo-` path prefix, so an unknown future variant
+        // that carries one of those markers has them replaced with
+        // `<substrate-error>` / `<substrate-path>` (R22: this comment
+        // previously said the variant "leaks only `<redacted-*>`
+        // markers". The primitive emits no such marker — the literal
+        // `<redacted-` appears nowhere in the tree but in the sentences
+        // making the claim. It also overstated the primitive: marker
+        // CLASSES are stripped, the sentence around them is not.)
+        //
+        // The cap is applied HERE and was missing until R22. The four
+        // named arms above reach the same slot through
+        // `map_audit_error` in `error.rs`, which caps before
+        // sanitizing; this arm forwards the substrate `Debug` repr
+        // unbounded, and `SinkSpecific` is exactly the unbounded
+        // adapter-emitted text R1 MED C13 identified (Stoolap
+        // transaction diagnostics carry arbitrary SQL fragments and
+        // stack frames). Cap before scrub so the envelope stays
+        // bounded whatever the substrate emits.
         other => {
-            let reason = format!("audit substrate read failure: {other:?}");
+            let reason = cap_substrate_payload(&format!("audit substrate read failure: {other:?}"));
             OctoCliError::AuditReadFailed(sanitize_substrate_error(&reason))
         }
     }
@@ -708,6 +723,49 @@ mod tests {
     struct TestCli {
         #[command(subcommand)]
         action: AuditAction,
+    }
+
+    /// R22: the wildcard arm of `map_audit_error` — the arm every
+    /// `#[non_exhaustive]` `AuditError` variant lands in — forwarded
+    /// the substrate `Debug` repr unbounded and had no exit-code pin.
+    ///
+    /// `SinkSpecific` is the reachable case: it carries
+    /// adapter-emitted text (Stoolap transaction diagnostics can hold
+    /// arbitrary SQL fragments and stack frames), which is the same
+    /// unbounded payload R1 MED C13 capped on the `error.rs` mapper.
+    /// Both halves are asserted here because either alone passes for
+    /// the wrong reason — a cap with no exit pin still mis-slots, an
+    /// exit pin with no cap still overruns the envelope.
+    #[test]
+    fn tv_x_c_93_audit_wildcard_is_capped_and_slotted() {
+        let OctoCliError::AuditReadFailed(reason) =
+            map_audit_error(AuditError::SinkSpecific("sink down".into()))
+        else {
+            panic!("the audit wildcard must route to AuditReadFailed");
+        };
+        assert_eq!(
+            OctoCliError::AuditReadFailed(reason.clone()).exit_code(),
+            18,
+            "the audit amendment chain's canonical slot"
+        );
+
+        // 16 KiB of substrate noise, comfortably past the 4 KiB cap.
+        let noisy = "x".repeat(16 * 1024);
+        let OctoCliError::AuditReadFailed(capped) =
+            map_audit_error(AuditError::SinkSpecific(noisy))
+        else {
+            panic!("the audit wildcard must route to AuditReadFailed");
+        };
+        assert!(
+            capped.len() <= crate::error::SUBSTRATE_PAYLOAD_CAP + " [truncated]".len(),
+            "the audit wildcard must cap the substrate payload, got {} bytes",
+            capped.len()
+        );
+        assert!(
+            capped.ends_with(" [truncated]"),
+            "the cap must be visible to the operator, not a silent truncation: {}",
+            &capped[capped.len().saturating_sub(40)..]
+        );
     }
 
     #[test]

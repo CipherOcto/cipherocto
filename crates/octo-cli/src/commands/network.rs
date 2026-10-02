@@ -2979,6 +2979,19 @@ fn graph_format_str(f: GraphFormat) -> &'static str {
         // substrate-faithfulness precedent per RFC-0011-s).
         // Future variants fall back to "ascii" so the
         // envelope string is always populated.
+        //
+        // KNOWN DIVERGENCE (R22, recorded not repaired). The RAW
+        // variant is what `graph.render` receives, so a future third
+        // `GraphFormat` that renders dot would be LABELLED "ascii" in
+        // the envelope. No vector can catch this: `GraphFormat` has
+        // exactly two variants, so the arm is unreachable from any
+        // input, and a test would have to name a variant that does not
+        // exist. The contrast is `gateway_class_to_str` immediately
+        // below, which matches a type that is NOT `non_exhaustive` and
+        // therefore fails to COMPILE when a variant is added — the
+        // compiler enforces that correspondence and nothing enforces
+        // this one. When a third variant lands, this arm has to learn
+        // its label in the same commit.
         _ => "ascii",
     }
 }

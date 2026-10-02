@@ -1828,8 +1828,16 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // lightweight 3-string-marker pattern plus the
             // `crates/octo-` path prefix (see `sanitize_substrate_error`
             // impl + `ERROR_MARKERS`) so an unknown future variant
-            // that accidentally carries a key/path leaks only
-            // `<redacted-*>` markers.
+            // that carries one of those markers has them replaced with
+            // `<substrate-error>` / `<substrate-path>` (R22: this
+            // comment previously said the variant "leaks only
+            // `<redacted-*>` markers". The primitive emits no such
+            // marker — the literal `<redacted-` appears nowhere in this
+            // file but in the sentence that made the claim. It also
+            // overstated the primitive: `sanitize_substrate_error`
+            // strips identifying CLASSES, not the surrounding sentence,
+            // so prose either side of a marker still reaches the
+            // operator.)
             _ => Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                 "audit substrate error: {e}"
             )))),

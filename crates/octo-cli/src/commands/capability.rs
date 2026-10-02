@@ -813,11 +813,26 @@ fn sanitize_mint_error(e: &MintError) -> String {
 ///
 /// Mirrors `map_wallet_open_error` in `commands/identity.rs` (R1 review
 /// SEC-11): every substrate error that reaches an `Internal(...)` site
-/// here MUST go through `sanitize_substrate_error` so SQL markers,
-/// `crates/octo-*` paths, and `src/` references never reach the operator
-/// envelope. Use this helper at every `OctoCliError::Internal(format!(...))`
-/// site in this module — Wave 5A + Wave 5B found ≥9 raw sites that leaked
-/// substrate paths.
+/// here MUST go through `sanitize_substrate_error` so the identifying
+/// classes it recognizes — `SQL:` / `query:` / `sqlite3_open` markers and
+/// the `crates/octo-<name>/` path prefix — are replaced before the text
+/// is stored. Wave 5A + Wave 5B found ≥9 raw sites that leaked substrate
+/// paths.
+///
+/// **What this does NOT do (R22 correction).** The earlier version of
+/// this comment claimed `src/` references were also stripped. They are
+/// not: R16 Lens-2 F7 established that a bare `src/` substring is too
+/// broad — it matches URLs and any path containing the directory name —
+/// so `sanitize_substrate_error` deliberately leaves `src/` alone. The
+/// primitive strips marker CLASSES, not the sentence around them, so
+/// surrounding prose reaches the operator. The `crates/octo-` anchor is
+/// what covers in-tree source paths.
+///
+/// The scrub is at the CONSTRUCTION site, which is defence in depth:
+/// `user_message` and `hint` (R21) already sanitize at the display
+/// boundary. A vector that observed the rendered output would therefore
+/// pass with this call deleted, so `tv_x_c_92` reads the `Internal`
+/// payload — the thing this function actually controls.
 fn map_capability_internal(e: impl std::fmt::Display) -> OctoCliError {
     OctoCliError::Internal(sanitize_substrate_error(&e.to_string()))
 }
@@ -934,6 +949,56 @@ mod tests {
 
     fn caveat_json(c: &Caveat) -> String {
         serde_json::to_string(c).expect("caveat serializes")
+    }
+
+    /// R22: `map_capability_internal` sanitizes at the CONSTRUCTION
+    /// site, and deleting that call left the whole CLI suite green.
+    ///
+    /// The four catch-alls that forward into it are the reason it
+    /// matters: `map_capability_internal` is what stands between an
+    /// unknown `#[non_exhaustive]` `WalletError` variant and the
+    /// `Internal` payload.
+    ///
+    /// The assertion reads the `Internal` STRING, not `user_message()`.
+    /// `user_message` and `hint` sanitize at the display boundary (R21),
+    /// so a vector that read the rendered output would pass with the
+    /// call deleted and would be measuring the display layer, not this
+    /// site. The payload is the thing this function controls.
+    #[test]
+    fn tv_x_c_92_capability_internal_sanitizes_its_payload() {
+        // One input per class `sanitize_substrate_error` recognizes.
+        // A new marker added to the primitive should be added here, so
+        // the two stay in step in the same direction.
+        let cases: [(&str, &str); 4] = [
+            ("wallet store open: query: SELECT * FROM vault", "query:"),
+            ("wallet store open: SQL: no such table", "SQL:"),
+            ("sqlite3_open failed", "sqlite3_open"),
+            (
+                "render envelope: crates/octo-wallet/src/store.rs",
+                "crates/octo-",
+            ),
+        ];
+        for (input, marker) in cases {
+            let OctoCliError::Internal(payload) = map_capability_internal(input) else {
+                panic!("map_capability_internal must return Internal");
+            };
+            assert!(
+                !payload.contains(marker),
+                "substrate marker `{marker}` survived the construction-site scrub: {payload}"
+            );
+        }
+        // The substitution is observable, not merely an absence: an
+        // implementation that returned the empty string would satisfy
+        // the loop above while destroying the diagnostic.
+        let OctoCliError::Internal(kept) =
+            map_capability_internal("wallet store open: query: SELECT 1")
+        else {
+            panic!("map_capability_internal must return Internal");
+        };
+        assert!(
+            kept.contains("wallet store open:") && kept.contains("<substrate-error>"),
+            "the scrub must replace the marker in place, keeping surrounding text: {kept}"
+        );
     }
 
     /// TV-CAP1 (payload contract) — an empty active set renders as

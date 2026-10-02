@@ -108,6 +108,16 @@ pub enum AgentAction {
             help_heading = "AttachHandle token pathway"
         )]
         token_file: Option<PathBuf>,
+        /// Read the wallet passphrase from stdin. The run
+        /// signing path mints an `AttachHandle` token via
+        /// `octo_runtime::mint_attach_handle`, which requires
+        /// the holder's ed25519 signing keypair. Audit 4c(b)
+        /// routes this through `WalletStore::unlock`. The flag
+        /// is consumed only when the handler enters the
+        /// token-mint path (`--detach --token-file`); for the
+        /// spawn-only path the flag is silently ignored.
+        #[arg(long, default_value_t = false)]
+        passphrase_stdin: bool,
     },
     /// List registered agents owned by the active DID
     /// (RFC-0011-c §9.3.3). Wired by `0011-c-agent-list-subcommand`.
@@ -161,6 +171,12 @@ pub enum AgentAction {
         /// broadcast channel.
         #[arg(long, value_name = "PATH", help_heading = "AttachHandle token pathway")]
         token_file: PathBuf,
+        /// Read the wallet passphrase from stdin. The attach
+        /// signing path resolves the holder's ed25519 pubkey via
+        /// `WalletStore::unlock` so the token's embedded signature
+        /// is verifiable end-to-end. Audit 4c(b).
+        #[arg(long, default_value_t = false)]
+        passphrase_stdin: bool,
     },
     /// Revoke an outstanding `AttachHandle` token (RFC-0011-c §F.3
     /// follow-on). Wired by `0011-c-attach-handle-token-pathway`.
@@ -199,18 +215,21 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             detach,
             reason,
             token_file,
+            passphrase_stdin,
         } => run::handle(
             agent_id,
             *detach,
             reason.as_deref(),
             token_file.as_deref(),
+            *passphrase_stdin,
             cli,
         ),
         AgentAction::Attach {
             agent_id,
             since,
             token_file,
-        } => attach::handle(agent_id, *since, token_file, cli),
+            passphrase_stdin,
+        } => attach::handle(agent_id, *since, token_file, *passphrase_stdin, cli),
         AgentAction::Destroy { agent_id, reason } => {
             destroy::handle(agent_id, reason.as_deref(), cli)
         }
@@ -240,19 +259,21 @@ pub(crate) mod common {
 
     /// Resolve the active identity DID via the wallet store.
     ///
-    /// Thin projection over `resolve_active_identity_key()` — the
-    /// canonical substrate-error mapping lives there so any future
-    /// `WalletError` variant added to the substrate only needs one
-    /// match arm updated. The DID projection is the only
-    /// call-site-specific concern here.
+    /// Thin projection over the active identity slot — the
+    /// canonical substrate-error mapping lives in
+    /// `resolve_active_identity_key` so any future `WalletError`
+    /// variant added to the substrate only needs one match arm
+    /// updated. The DID projection is the only call-site-specific
+    /// concern here.
     ///
     /// This is a **metadata** read and does not route through
-    /// `resolve_active_identity_key`. That helper returns the signing
-    /// primitive `WalletStore::try_active_identity`, which under the
-    /// unlock split yields `Err(WalletError::Locked)` unconditionally —
-    /// so a projection over it could only ever produce exit 64 for the
-    /// five handlers that only need a DID. The active DID is a store
-    /// index field and needs no passphrase.
+    /// `resolve_active_identity_key`. That helper now gates the
+    /// operator's passphrase through `WalletStore::unlock` (audit
+    /// 4c(b) migration, 2026-10-02), so a projection over it would
+    /// force every DID-only handler (`create::handle` register
+    /// path, `list::handle`) to acquire a passphrase they do not
+    /// need. The active DID is a store index field, accessed via
+    /// `store.active_did()` directly, and never needs a passphrase.
     pub(crate) fn resolve_active_did() -> Result<octo_wallet::identity_record::Did, OctoCliError> {
         let store = octo_wallet::WalletStore::open().map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
@@ -408,17 +429,33 @@ pub(crate) mod common {
     /// Failure modes mirror `resolve_active_did` (one `IdentityKey`
     /// per process; the only legitimate failure surface is the
     /// wallet store / HSM boundary).
-    pub(crate) fn resolve_active_identity_key() -> Result<octo_wallet::IdentityKey, OctoCliError> {
-        let store = octo_wallet::WalletStore::open().map_err(|e| {
+    /// Resolve the active identity's signing `IdentityKey` via the
+    /// wallet store, gating the operator's passphrase through
+    /// `WalletStore::unlock`.
+    ///
+    /// Audit 4c(b) migration (2026-10-02): the prior `try_active_identity`
+    /// call site returned `Err(WalletError::Locked)` unconditionally
+    /// under the unlock split. The 6 production signing paths
+    /// (capability list/mint/attenuate, governance attest/vote, agent
+    /// create/attach) now route through `store.unlock(passphrase, seed_buf)`
+    /// so the operator's passphrase is the gating primitive, not a
+    /// metadata-only stub. Per-call passphrase acquisition mirrors
+    /// the `rotate_abort` shape at `crates/octo-cli/src/commands/identity.rs`.
+    pub(crate) fn resolve_active_identity_key(
+        passphrase: &str,
+        seed_buf: &mut Vec<u8>,
+    ) -> Result<octo_wallet::IdentityKey, OctoCliError> {
+        let mut store = octo_wallet::WalletStore::open().map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
         })?;
-        store.try_active_identity().map_err(|e| match e {
+        let unlocked = store.unlock(passphrase, seed_buf).map_err(|e| match e {
             octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
             octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
             // R23: delegate to the `From<WalletError>` table. See the
             // note at the capability call sites.
             other => OctoCliError::from(other),
-        })
+        })?;
+        Ok(unlocked.active_identity().clone())
     }
 
     /// Best-effort wall-clock — same Phase-1 caveat as the substrate
@@ -846,6 +883,7 @@ mod run {
         detach: bool,
         reason: Option<&str>,
         token_file: Option<&std::path::Path>,
+        passphrase_stdin: bool,
         cli: &Octo,
     ) -> Result<(), OctoCliError> {
         // 1. Parse agent id hex → substrate `Uuid`. Parse failure
@@ -977,7 +1015,17 @@ mod run {
                 //       keypair directly so the ed25519 signature
                 //       is verifiable against the holder's public
                 //       key by the future `decode_token` step.
-                let mut holder = common::resolve_active_identity_key()?;
+                //       Audit 4c(b): passphrase-gated via
+                //       `WalletStore::unlock`; the seed is zeroized
+                //       on drop.
+                let passphrase = crate::commands::identity::acquire_passphrase(
+                    cli,
+                    "agent create",
+                    passphrase_stdin,
+                )?;
+                let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+                let mut holder =
+                    common::resolve_active_identity_key(passphrase.as_str(), seed_buf.as_mut())?;
 
                 // 6.5.1a Wall-clock now (declared before activate below).
                 //       Substrate-faithful to RFC-0011-c §F.6.1 — TTL
@@ -1508,6 +1556,7 @@ mod attach {
         agent_id_hex: &str,
         since_unix: Option<u64>,
         token_file: &std::path::Path,
+        passphrase_stdin: bool,
         cli: &Octo,
     ) -> Result<(), OctoCliError> {
         // 1. Parse agent id hex → substrate `Uuid`. Parse failure
@@ -1594,7 +1643,16 @@ mod attach {
             OctoCliError::Internal(sanitize_substrate_error(&format!("token file read: {io}")))
         })?;
 
-        let holder = common::resolve_active_identity_key()?;
+        // Audit 4c(b): the holder pubkey is needed for the
+        // signature-verify step in `decode_token` (RFC-0011-c
+        // §F.2 step (a)). The substrate-faithful path gates the
+        // passphrase through `WalletStore::unlock` so the active
+        // identity's signing key is the same identity whose pubkey
+        // is checked. The seed is zeroized on drop.
+        let passphrase =
+            crate::commands::identity::acquire_passphrase(cli, "agent attach", passphrase_stdin)?;
+        let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let holder = common::resolve_active_identity_key(passphrase.as_str(), seed_buf.as_mut())?;
         let holder_pubkey: [u8; 32] = holder.public_key_bytes();
 
         let token = octo_runtime::decode_token(&token_bytes, &holder_pubkey)?;

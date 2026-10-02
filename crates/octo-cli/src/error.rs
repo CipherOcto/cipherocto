@@ -2852,14 +2852,12 @@ mod tests {
         // `try_active_identity` onto `WalletStore::unlock`, leaving
         // the `#[cfg(test)]` stub at `capability.rs:362` as the only
         // production-code call site (pinned here as a regression net
-        // for the migration). `governance.rs` and `agent.rs` still
-        // carry the sites from sites 4-6; those are migrated in
-        // audit-4c(b) Phases 2-3 and the contract is tightened
-        // further in the same commits.
-        const CONTRACTED: [(&str, usize); 2] = [
-            ("capability.rs", 1),
-            ("agent.rs", 1),
-        ];
+        // for the migration). `governance.rs` and `agent.rs` were
+        // migrated in audit-4c(b) Phases 2-3 and the contract is
+        // tightened in the same commits. The surviving entry is the
+        // `#[cfg(test)]` stub in `capability.rs` (the `fixture_token`
+        // test helper inside `mint`).
+        const CONTRACTED: [(&str, usize); 1] = [("capability.rs", 1)];
 
         // R24: iterate the DIRECTORY and compare the SET, rather than
         // iterating three hard-coded files.

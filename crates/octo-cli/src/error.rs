@@ -1637,7 +1637,7 @@ impl OctoCliError {
                 "schema_version": crate::output::OutputEnvelope::<()>::SCHEMA_VERSION,
                 "error": self.user_message(),
                 "caused_by": sources,
-                "hint": self.hint(),
+                "hint": self.hint().map(|h| sanitize_substrate_error(&h)),
                 "exit_code": code,
             });
             let _ = writeln!(w, "{body}");
@@ -1679,7 +1679,17 @@ impl OctoCliError {
             src = s.source();
         }
         if let Some(hint) = self.hint() {
-            out.push_str(&prefixed_lines("  hint: ", &hint));
+            // Sanitized here, as `user_message` and `caused by:` above
+            // already are. `hint` is the ONE operator surface that was
+            // emitted raw, and it is the surface that interpolates
+            // variant payloads - `NetworkSubstrateUnavailable` renders
+            // its `detail` straight into the hint text. Sanitizing at
+            // the boundary rather than at each construction site means
+            // an arm added later cannot be the one that forgets.
+            out.push_str(&prefixed_lines(
+                "  hint: ",
+                &sanitize_substrate_error(&hint),
+            ));
         }
         out.push_str(&format!("  exit code: {code}\n"));
         out
@@ -3552,6 +3562,132 @@ mod tests {
         assert!(
             !msg.contains("passphrase="),
             "rendered message must not echo a supplied passphrase fragment: {msg}"
+        );
+    }
+
+    /// R21: every operator-facing surface sanitizes, including the
+    /// one that did not.
+    ///
+    /// `render` emits four things: `error` (from `user_message`,
+    /// which sanitizes), `caused_by` (each frame sanitized), `hint`,
+    /// and `exit_code`. **Three of the four sanitized. `hint` did
+    /// not** - and `hint` is the surface that interpolates variant
+    /// payloads, `NetworkSubstrateUnavailable` rendering its `detail`
+    /// straight into the sentence. So substrate text reaching an
+    /// operator had exactly one door, and it was the door the other
+    /// three had already been closed on.
+    ///
+    /// `hint` is now sanitized at the boundary, not at each
+    /// construction site. That is the durable form: a hint arm added
+    /// later interpolating a new payload cannot be the one that
+    /// forgets, because no arm is responsible for it any more.
+    ///
+    /// Two halves.
+    ///
+    /// The BEHAVIOURAL half goes through `render_block`, the real
+    /// stderr render, so it observes what an operator would read. It
+    /// deliberately builds the error with a RAW `detail`, not a
+    /// sanitized one: if the construction site were the only thing
+    /// holding the property, a vector that pre-sanitizes its input
+    /// would pass while the display surface stayed open.
+    ///
+    /// The SOURCE half pins the JSON envelope's `hint` field, which
+    /// `render_block` does not cover - `render` returns `!` and calls
+    /// `process::exit`, so no vector can reach it at runtime. That is
+    /// the same split `render_block` itself was extracted to enable.
+    ///
+    /// HONEST LIMIT: the source half constrains the text at the
+    /// envelope site rather than the value that reaches a consumer.
+    /// It is a spelling check on one line, and the behavioural half is
+    /// what carries the property.
+    #[test]
+    fn tv_x_c_90_every_operator_surface_sanitizes_substrate_text() {
+        // Behavioural: the stderr render, fed a RAW detail.
+        let err = OctoCliError::NetworkSubstrateUnavailable {
+            companion: "G9",
+            detail: "slash bridge: internal error: query: SELECT did FROM records \
+                     WHERE path = crates/octo-wallet/src/identity_store.rs"
+                .to_string(),
+        };
+        let block = err.render_block();
+        // The sanitizer's contract is to strip the two identifying
+        // CLASSES - the `crates/octo-` path prefix and the
+        // SQL/storage markers - not the whole surrounding sentence.
+        // Asserting the markers, because asserting the absence of
+        // arbitrary body text would be asserting a contract this
+        // sanitizer does not have anywhere in the CLI.
+        assert!(
+            !block.contains("crates/octo-wallet"),
+            "a substrate source path reached the operator's stderr block verbatim: {block}"
+        );
+        assert!(
+            !block.to_lowercase().contains("query:"),
+            "a substrate storage marker reached the operator's stderr block verbatim: {block}"
+        );
+        assert!(
+            block.contains("<substrate-error>") && block.contains("<substrate-path>"),
+            "the sanitizer must actually have fired on both classes, or this half asserts \
+             nothing: {block}"
+        );
+        // The two things the operator needs must survive scrubbing:
+        // the companion tag, so exit 89 stays attributable, and the
+        // exit code, so operator switch tables still match.
+        assert!(
+            block.contains("G9"),
+            "scrubbing ate the companion tag: {block}"
+        );
+        assert!(
+            block.contains("exit code: 89"),
+            "the stderr block lost its exit code line: {block}"
+        );
+
+        // Source: the envelope's `hint` field. Unreachable at runtime
+        // because `render` calls `process::exit`.
+        let src = include_str!("error.rs");
+        assert!(
+            src.contains("\"hint\": self.hint().map(|h| sanitize_substrate_error(&h))"),
+            "the JSON envelope must sanitize the `hint` field the way it already sanitizes \
+             `error` and `caused_by`. `hint` is the surface that interpolates variant payloads, \
+             so an unsanitized hint hands substrate internals to any envelope consumer."
+        );
+
+        // Source: the construction sites, as defence in depth. Even
+        // with both display surfaces closed, no site should be
+        // building an operator-visible payload out of raw substrate
+        // text.
+        let network_src = include_str!("commands/network.rs");
+        let production = network_src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("network.rs must have a production region");
+        let mut checked = 0usize;
+        for window in production.split("NetworkSubstrateUnavailable {").skip(1) {
+            let detail_line = window
+                .lines()
+                .find(|l| l.trim_start().starts_with("detail:"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "a NetworkSubstrateUnavailable construction has no detail field: {window}"
+                    )
+                });
+            let value = detail_line
+                .trim_start()
+                .trim_start_matches("detail:")
+                .trim()
+                .trim_end_matches(',');
+            let is_constant = value.contains('"');
+            assert!(
+                is_constant || value.contains("sanitize_substrate_error"),
+                "a NetworkSubstrateUnavailable site assigns `detail` to a value that is neither a \
+                 constant nor sanitized: `{value}`."
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 10,
+            "only {checked} NetworkSubstrateUnavailable constructions were checked in the \
+             production region of network.rs. If the sites moved, this vector is no longer \
+             looking at the set it claims to cover."
         );
     }
 }

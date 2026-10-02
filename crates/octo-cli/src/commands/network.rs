@@ -3401,8 +3401,17 @@ fn network_slash_bridge_propagate(
         // BridgeError variant maps to slot 89 NetworkSubstrateUnavailable
         // with a distinct message. Operators can distinguish Unreachable
         // (transient) from Refused (permanent) from CLI message alone.
-        // (Reviewer 3 R1.5 fix: explicit variant matching instead of
-        // discarding the error via `|_|`.)
+        //
+        // The four constant arms exist so the operator can tell those
+        // four cases apart. They do NOT exhaust `BridgeError`, which is
+        // `#[non_exhaustive]`: the `_` arm is the extension point, and
+        // it renders substrate text verbatim. That text reaches
+        // `user_message` unsanitized - the display site interpolates
+        // `detail` raw into both the JSON envelope and stderr - so a
+        // future Layer-D variant carrying a filesystem path or a
+        // substrate marker would hand it straight to the operator.
+        // Three sibling construction sites in this file already route
+        // the same field through `sanitize_substrate_error`.
         let propagate_result = bridge.propagate_to(slash_envelope_id);
         match propagate_result {
             Ok(receipt) => receipt,
@@ -3427,7 +3436,9 @@ fn network_slash_bridge_propagate(
                 };
                 return Err(OctoCliError::NetworkSubstrateUnavailable {
                     companion: "G9",
-                    detail: msg,
+                    // Sanitized ONCE here rather than at each arm, so
+                    // an arm added later cannot be the one that forgets.
+                    detail: sanitize_substrate_error(&msg),
                 });
             }
         }
@@ -3646,7 +3657,15 @@ fn network_node_bind(args: &NodeBindArgs, cli: &Octo) -> Result<(), OctoCliError
                 };
                 return Err(OctoCliError::NetworkSubstrateUnavailable {
                     companion: "G11",
-                    detail: msg,
+                    // Every arm above is a constant string, so nothing
+                    // substrate-derived reaches the operator today. This
+                    // is applied anyway so the property holds over the
+                    // SET of `NetworkSubstrateUnavailable` sites rather
+                    // than over the ones that happened to leak: the arm
+                    // that discards its payload (`Internal(_)`) is one
+                    // edit away from interpolating it, and the shape
+                    // should not decide whether that edit is safe.
+                    detail: sanitize_substrate_error(&msg),
                 });
             }
         }

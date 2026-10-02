@@ -841,10 +841,20 @@ pub fn register(
                 use std::os::unix::fs::PermissionsExt;
                 let mode = seed_meta.permissions().mode();
                 if mode & 0o077 != 0 {
-                    return Err(OctoCliError::Internal(format!(
-                        "seed file mode {:04o} is group- or world-readable; expected 0600 (or stricter); treat the seed as compromised and re-run `octo-wallet init --seed-out`",
-                        mode & 0o7777
-                    )));
+                    // `SeedFileRejected`, not `Internal`: a permissive
+                    // mode is a deliberate security gate with a
+                    // one-command remedy, and `Internal`'s exit-64
+                    // hint tells the operator to file a diagnostic
+                    // report. In CI that exit code is what decides
+                    // retry versus page.
+                    return Err(OctoCliError::SeedFileRejected {
+                        detail: format!(
+                            "seed file mode {:04o} is group- or world-readable; expected 0600 (or \
+                             stricter). Treat the seed as compromised, re-run `octo-wallet init \
+                             --seed-out` to write a fresh one, and chmod 600 the result",
+                            mode & 0o7777
+                        ),
+                    });
                 }
             }
             let bytes = std::fs::read(seed_path).map_err(|e| {
@@ -859,13 +869,14 @@ pub fn register(
                 // worst available failure mode for a seed. Refuse
                 // with the two spellings rather than guess.
                 if bytes.iter().all(|b| b.is_ascii_hexdigit()) {
-                    return Err(OctoCliError::Internal(
-                        "seed file is 32 bytes of hex characters; refusing to read it as 32 \
-                         raw bytes because that would mint a different identity than the hex \
-                         you supplied. Write the 64-char hex form, or write the 32 raw bytes \
-                         exactly as the key file holds them"
-                            .to_string(),
-                    ));
+                    return Err(OctoCliError::SeedFileRejected {
+                        detail:
+                            "the seed file is 32 bytes of hex characters, so reading it as 32 raw \
+                             bytes would mint a different identity than the hex you supplied \
+                             and report success. Write the 64-char hex form, or write the 32 raw \
+                             bytes exactly as the key file holds them"
+                                .to_string(),
+                    });
                 }
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
@@ -1407,9 +1418,20 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
             }
         }
         OperatorMode::Auditor => {
-            // Auditor short-circuits above, before the
-            // `cli.mode.dry_run` bypass. This arm is unreachable.
-            unreachable!("Auditor short-circuited above (R16 Lens-1 F2)")
+            // Auditor short-circuited above, before the
+            // `cli.mode.dry_run` bypass, so this arm is unreachable
+            // TODAY. It is not unreachable BY CONSTRUCTION: the early
+            // return and this arm are four lines apart, and a future
+            // edit that reorders them - say, moving the dry-run bypass
+            // above the Auditor check to fix a different report -
+            // converts this into a live `unreachable!()` and therefore
+            // a panic at exit 101 on a read-only enforcement path,
+            // which is the worst place to panic. Returning the
+            // refusal costs nothing and fails closed if the ordering
+            // ever changes.
+            return Err(OctoCliError::AuditorDenied {
+                command: command.to_string(),
+            });
         }
         OperatorMode::Dev => {
             // Dev mode is non-interactive: require `--allow-write`
@@ -2050,14 +2072,113 @@ mod tests {
             "the 32-byte branch must detect a hex-shaped payload: {reg}"
         );
         assert!(
-            reg.contains("refusing to read it as 32"),
+            reg.contains("would mint a different identity"),
             "the refusal must name the ambiguity so the operator picks a spelling, not a guess: \
              {reg}"
+        );
+        // The refusal must be an OPERATOR-INPUT variant, not
+        // `Internal`. `Internal` exits 64 with the hint "re-run with
+        // RUST_LOG=debug and report the diagnostic", so a 0644 seed
+        // file told the operator to file a bug report, and in CI the
+        // exit code is what decides retry versus page.
+        assert!(
+            reg.contains("SeedFileRejected"),
+            "the hex-shape refusal must be SeedFileRejected (exit 2, remedy in the message), not \
+             Internal (exit 64, report a diagnostic): {reg}"
         );
         assert!(
             !reg.contains("if bytes.len() == 32 {\n                let mut arr"),
             "the 32-byte arm must open with the hex-shape check, not fall straight through to \
              the copy: {reg}"
+        );
+    }
+
+    /// The `ConfirmationRequired` remediation must name the flag the
+    /// operator's MODE actually gates on.
+    ///
+    /// The hint was the fixed string "re-run with `--confirm`". But
+    /// the gate is mode-dependent: Human requires
+    /// `--confirm --confirm-acknowledge`, while Ci and Dev require
+    /// `--allow-write`. An operator in `--mode ci` who followed the
+    /// hint got byte-identical output on retry, because `--confirm`
+    /// does not satisfy the Ci gate — a loop with no way to discover
+    /// the right flag from the output. The variant's own doc comment
+    /// claimed "the operator sees the per-mode help text from
+    /// `OctoCliError::render`"; `render` has no mode logic at all.
+    ///
+    /// Runtime, because the defect is in what the operator sees. The
+    /// handler's own gate is exercised, not a source needle.
+    #[test]
+    fn tv_x_c_47_confirmation_hint_names_the_flag_the_mode_gates_on() {
+        for (mode, works, hint_must_name) in [
+            // Ci and Dev gate on --allow-write, so that is what the
+            // operator has to be told; --confirm cannot satisfy them.
+            (OperatorMode::Ci, "--allow-write", "--allow-write"),
+            (OperatorMode::Dev, "--allow-write", "--allow-write"),
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let pass_file = dir.path().join("pass.txt");
+            std::fs::write(&pass_file, "correct-horse-battery-staple").expect("write passphrase");
+            let seed_file = dir.path().join("seed.bin");
+            std::fs::write(&seed_file, [0x5Au8; 32]).expect("write seed");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&seed_file, std::fs::Permissions::from_mode(0o600))
+                    .expect("chmod seed");
+            }
+
+            let cli = cli_with_mode(mode);
+            // No confirmation flag at all: the gate must fire.
+            let err = register("tv-x-c-47", &pass_file, true, Some(&seed_file), &cli)
+                .expect_err("an unconfirmed mutation must be refused");
+            let rendered = err
+                .hint()
+                .unwrap_or_else(|| panic!("{mode:?} ConfirmationRequired must carry a hint"));
+            assert!(
+                rendered.contains(hint_must_name),
+                "in {mode:?} the gate is `{works}`, so the hint must name it, or the operator \
+                 retries with a flag that cannot work and gets the same error: {rendered}"
+            );
+            assert!(
+                !rendered.contains("with `--confirm` to acknowledge"),
+                "the hint must not tell the operator to add `--confirm` when that flag does not \
+                 satisfy the {mode:?} gate: {rendered}"
+            );
+        }
+    }
+
+    /// The `SeedFileRejected` variant must exist, exit 2, and render
+    /// its own detail as the hint.
+    ///
+    /// Both seed-file refusals previously rode `Internal` at exit 64,
+    /// whose hint is "re-run with `RUST_LOG=debug` and report the
+    /// diagnostic". A 0644 seed file — a deliberate security gate with
+    /// a one-command remedy — was escalated to a bug report, and in a
+    /// CI pipeline the exit code is what decides retry versus page.
+    #[test]
+    fn tv_x_c_48_seed_file_refusals_exit_two_with_the_remedy_in_the_hint() {
+        let err = OctoCliError::SeedFileRejected {
+            detail: "seed file mode 0644 is group- or world-readable; expected 0600".to_string(),
+        };
+        assert_eq!(
+            err.exit_code(),
+            2,
+            "an operator-supplied file is input validation, not an internal fault"
+        );
+        assert_eq!(
+            err.hint().as_deref(),
+            Some("seed file mode 0644 is group- or world-readable; expected 0600"),
+            "the remedy must be the hint, not a request for a diagnostic report"
+        );
+        // And the exit-2 operator-input family it joins.
+        assert_eq!(OctoCliError::WeakPassphrase.exit_code(), 2);
+        assert_eq!(
+            OctoCliError::DevModeRequired {
+                detail: "x".to_string()
+            }
+            .exit_code(),
+            2
         );
     }
 

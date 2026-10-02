@@ -62,10 +62,23 @@ pub enum OctoCliError {
     /// A mutating command was invoked without confirmation flags.
     ///
     /// Fires for any operator mode (Human / Ci / Dev) when the
-    /// confirmation gate is unmet. Exact escape hatches depend on mode
-    /// and command; the operator sees the per-mode help text from
-    /// `OctoCliError::render` rather than a mode-specific label here.
-    #[error("ConfirmationRequired: --confirm required for mutating command {command}")]
+    /// confirmation gate is unmet.
+    ///
+    /// The flag that satisfies the gate is MODE-DEPENDENT: Human mode
+    /// requires `--confirm --confirm-acknowledge`, while Ci and Dev
+    /// require `--allow-write`. This variant carries only `command`,
+    /// so the message and the hint must both name every mode's flag
+    /// rather than assuming Human.
+    ///
+    /// The previous doc comment here claimed "the operator sees the
+    /// per-mode help text from `OctoCliError::render`". `render`
+    /// has no mode logic at all — it prints `Display` and `hint()`
+    /// verbatim — so that claim was false, and the consequence was
+    /// observable: an operator in `--mode ci` who read the hint,
+    /// added `--confirm`, and retried got byte-identical output,
+    /// because `--confirm` does not satisfy the Ci gate. The hint
+    /// pointed at a flag that could never work.
+    #[error("ConfirmationRequired: mutating command {command} needs its mode's confirmation flag")]
     ConfirmationRequired {
         /// Command that required confirmation.
         command: String,
@@ -1027,6 +1040,30 @@ pub enum OctoCliError {
         /// refused. Never the raw operator input.
         detail: String,
     },
+
+    /// An operator-supplied `--seed-file` was refused before any key
+    /// was derived: either its permission mode is group- or
+    /// world-readable, or its 32-byte payload is entirely ASCII hex
+    /// characters and would mint a different identity read as raw
+    /// bytes.
+    ///
+    /// Both refusals were previously reported as `Internal` at exit
+    /// 64, whose hint is "re-run with `RUST_LOG=debug` and report
+    /// the diagnostic". That is advice for an unexpected fault. A
+    /// 0644 seed file is a deliberate security gate, and a 32-byte
+    /// all-hex file is an input ambiguity with a two-flag remedy
+    /// (write the 64-char form, or write the 32 raw bytes). Sending
+    /// an operator to a bug report for either is a false escalation,
+    /// and in CI the exit-64 classification is what decides whether
+    /// the pipeline retries or pages someone. Exit 2 per the same
+    /// operator-input-validation convention `WeakPassphrase`,
+    /// `InvalidReason` and `DevModeRequired` follow.
+    #[error("seed file refused: {detail}")]
+    SeedFileRejected {
+        /// The refusal and its remedy. Carries the file's mode in
+        /// octal for the permission form; never the file's contents.
+        detail: String,
+    },
 }
 
 impl OctoCliError {
@@ -1213,6 +1250,7 @@ impl OctoCliError {
             Self::WeakPassphrase => 2,
             Self::InvalidReason { .. } => 2,
             Self::DevModeRequired { .. } => 2,
+            Self::SeedFileRejected { .. } => 2,
         }
     }
 
@@ -1234,7 +1272,10 @@ impl OctoCliError {
             // they had already done.
             Self::NoActiveIdentity => "no ACTIVE identity: either the wallet has no active pointer (create or select one with `octo identity register` / `octo identity select --did <did>`), or the active record is `Designated` rather than `Active` and must be promoted - see `octo identity list` for the current lifecycle of every record".to_string(),
             Self::ConfirmationRequired { .. } => {
-                "re-run with `--confirm` to acknowledge the mutation".to_string()
+                "re-run with the flag your mode requires: `--confirm --confirm-acknowledge` \
+                 in Human mode, `--allow-write` in Ci and Dev mode. `--confirm` alone never \
+                 satisfies the Ci or Dev gate, so a retry with it repeats this error"
+                    .to_string()
             }
             Self::AuditorDenied { .. } => {
                 "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations".to_string()
@@ -1513,6 +1554,7 @@ impl OctoCliError {
                 "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements); verify the active identity's state machine position (`octo identity list`) and resolve any in-flight rotation before retrying - if the active identity is not the predecessor, `octo identity select --did <predecessor>` first, then `octo identity rotate-complete` or `octo identity rotate-abort`".to_string()
             }
             Self::DevModeRequired { detail } => detail.to_string(),
+            Self::SeedFileRejected { detail } => detail.to_string(),
             Self::WeakPassphrase => {
                 format!(
                     "the passphrase is below the {}-character floor enforced at both `register` and `unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28); supply a longer passphrase",

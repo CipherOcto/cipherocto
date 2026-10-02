@@ -484,16 +484,28 @@ pub struct IdentityRotateAbortOutput {
 /// `Io` and crypto are real faults and stay at 64.
 ///
 /// The index faults were the exception this sentence used to hide.
-/// `open` also raises `IndexCorrupt` when `store.json` names one DID
-/// twice, or pairs a DID with a public key that derives a different
-/// one. Those were reported as `Config`, so they took the arm below
-/// and became exit 27 with the remedy "set `$OCTO_HOME` or `$HOME`" -
-/// for an operator whose `OCTO_HOME` is already set, because the
+/// `open` raises `IndexCorrupt` when `store.json` names one DID twice.
+/// That fault was reported as `Config`, so it took the arm below and
+/// became exit 27 with the remedy "set `$OCTO_HOME` or `$HOME`" - for
+/// an operator whose `OCTO_HOME` is already set, because the
 /// environment was never the problem. The payload naming the offending
 /// DID was discarded on the way, which is the one piece of information
-/// the operator needs to repair the file. Both faults now arrive as a
-/// typed `IndexCorrupt` and fall to the wildcard arm, where the detail
-/// is carried into the diagnostic.
+/// the operator needs to repair the file. It now arrives as a typed
+/// `IndexCorrupt` and falls to the wildcard arm, where the detail is
+/// carried into the diagnostic.
+///
+/// ONE index fault is NOT this mapper's, and the previous version of
+/// this block claimed it was. The substrate also refuses a record whose
+/// `pubkey_bytes` derive a DID other than the record's own - the
+/// binding check that stopped `unlock` handing back a handle reporting
+/// one identity and signing under another. `read_or_init_index`
+/// validates duplicate DIDs and sort order and never compares a
+/// record's public key to its DID, so that fault is NOT an open-time
+/// one: it first appears at `unlock`, and the identity handlers map it
+/// with `OctoCliError::from`, not here. Both mappers land on `Internal`
+/// at exit 64, so the outcome agrees - but by coincidence of two
+/// wildcards, not by decision, and the payloads differ. Vector
+/// `tv_x_c_78` pins the routing.
 pub(crate) fn map_wallet_open_error(e: octo_wallet::WalletError) -> OctoCliError {
     match e {
         octo_wallet::WalletError::Config(_) => OctoCliError::NoOctoHome,
@@ -5229,6 +5241,142 @@ mod tests {
                 );
             }
             other => panic!("a damaged index must map to Internal, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // R11: `IndexCorrupt` has a SECOND raise site, on a different code
+    // path, through a different mapper, with no CLI vector.
+    //
+    // `tv_x_c_75` covers the duplicate-DID refusal, which `open` raises
+    // and `map_wallet_open_error` maps. The substrate also refuses a
+    // record whose `pubkey_bytes` derive a DID other than the record's
+    // own - the binding check that stopped `unlock` handing back a
+    // handle reporting one identity and signing under another. `open`
+    // does NOT raise it: `read_or_init_index` validates duplicate DIDs
+    // and sort order, and never compares a record's public key to its
+    // DID. So this fault first appears at `unlock`, and the identity
+    // handlers map that with `OctoCliError::from` rather than with the
+    // open mapper.
+    //
+    // Two things follow, and the first is a defect on its own:
+    //
+    //   - Nothing pinned the CLI's translation of it. Both mappers
+    //     happen to land on `Internal` exit 64, so the outcome is
+    //     correct today by agreement rather than by decision.
+    //   - The doc block on `map_wallet_open_error` claimed `open`
+    //     raises `IndexCorrupt` for BOTH index faults. It raises one.
+    //
+    // What this vector makes checkable is the routing, not the exit
+    // code. The refusal has to arrive carrying BOTH DIDs, because the
+    // operator repairing the file needs to know which row is wrong -
+    // and that is the property a wrong mapper would lose, since
+    // `map_wallet_open_error` prefixes its payload with a different
+    // sentence.
+
+    #[test]
+    fn tv_x_c_78_an_index_pairing_fault_at_unlock_carries_both_dids() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("wallet");
+        unsafe { std::env::set_var("OCTO_HOME", home.path()) };
+
+        let pass = "correct-horse-battery-staple";
+        // Two identities, so the vault holds a slot for a public key
+        // that is NOT the corrupted record's own. With a single
+        // identity the slot lookup would miss and the fault would
+        // arrive as `VaultSlotNotFound` (exit 92) - which is a
+        // different fault with a different remedy, and would make this
+        // vector pass for the wrong reason.
+        let mut store = octo_wallet::WalletStore::open_at(&root).expect("open fresh");
+        let did_a = store
+            .register(
+                octo_wallet::IdentityKey::from_seed([0xC1u8; 32]),
+                pass,
+                true,
+                1_700_000_000,
+            )
+            .expect("register A");
+        let did_b = store
+            .register(
+                octo_wallet::IdentityKey::from_seed([0xC2u8; 32]),
+                pass,
+                false,
+                1_700_000_001,
+            )
+            .expect("register B");
+        drop(store);
+
+        // Damage A's row so it names B's public key, and point the
+        // active pointer back at A. Edited as JSON for the same
+        // reason `tv_x_c_75` does: the substrate deliberately exposes
+        // no way to hand it a malformed index, and a file edited
+        // outside the process is exactly how this reaches production.
+        let index_path = root.join("store.json");
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index_path).expect("read index")).expect("json");
+        let a_str = did_a.as_str();
+        let b_str = did_b.as_str();
+        {
+            let b_pubkey = index["records"]
+                .as_array()
+                .expect("records array")
+                .iter()
+                .find(|r| r["did"].as_str() == Some(b_str))
+                .expect("row for B")["pubkey_bytes"]
+                .clone();
+            index["records"]
+                .as_array_mut()
+                .expect("records array")
+                .iter_mut()
+                .find(|r| r["did"].as_str() == Some(a_str))
+                .expect("row for A")["pubkey_bytes"] = b_pubkey;
+        }
+        index["active_did"] = serde_json::Value::String(a_str.to_owned());
+        std::fs::write(
+            &index_path,
+            serde_json::to_vec_pretty(&index).expect("json"),
+        )
+        .expect("write damaged index");
+
+        // `open` must ACCEPT this index. That is the whole reason the
+        // fault surfaces at `unlock`: duplicate-DID and ordering are
+        // validated at open, key-to-record pairing is not.
+        let mut reopened = octo_wallet::WalletStore::open_at(&root)
+            .expect("a record whose key derives a different DID is not an open-time fault");
+        let mut seed_out = zeroize::Zeroizing::new(Vec::with_capacity(32));
+        let err = reopened
+            .unlock(pass, seed_out.as_mut())
+            .expect_err("a record carrying another identity's public key must be refused");
+        assert!(
+            !matches!(err, octo_wallet::WalletError::VaultSlotNotFound(_)),
+            "the slot for the borrowed public key EXISTS, so a slot miss means the binding check \
+             did not run. Got {err:?}"
+        );
+        drop(reopened);
+
+        // The production translation for an `unlock` failure.
+        let mapped = OctoCliError::from(err);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+
+        assert!(
+            !matches!(mapped, OctoCliError::WalletLocked),
+            "exit 92 tells the operator the store is locked and to supply a passphrase, which is \
+             exactly what they did. A wrong passphrase cannot produce this fault, because the \
+             slot they would be reading is the one their own passphrase sealed. Got {mapped:?}"
+        );
+        match &mapped {
+            OctoCliError::Internal(reason) => {
+                assert!(
+                    reason.contains(a_str) && reason.contains(b_str),
+                    "the diagnostic must name BOTH identities, because the operator repairing the \
+                     file needs to know which row is wrong: row {a_str} carries the key of {b_str}. \
+                     Got {reason}"
+                );
+            }
+            other => panic!("an index pairing fault must map to Internal, got {other:?}"),
         }
     }
 

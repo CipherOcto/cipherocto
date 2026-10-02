@@ -2075,6 +2075,7 @@ fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
 /// | `WalletError::GracePeriodNotElapsed { .. }`            | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::InvalidSuccessorProof`                   | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
 /// | `WalletError::InvalidRevocationProof`                  | `OctoCliError::IdentityTransitionRefused { reason }`   | 43   |
+/// | `WalletError::IndexCorrupt { detail }`                  | `OctoCliError::Internal(detail)` (via this impl when raised by `unlock`, via `map_wallet_open_error` when raised by `open`) | 64   |
 /// | `WalletError::ReasonContainsControlChars(<U+XXXX>)`      | `OctoCliError::InvalidReason { detail }`              | 2    |
 /// | `WalletError::ReasonTooLong(len)`                        | `OctoCliError::InvalidReason { detail }`              | 2    |
 /// | (all other substrate variants)                         | `OctoCliError::Internal(sanitize_substrate_error(...))`| 64   |

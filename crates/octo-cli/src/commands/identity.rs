@@ -4911,6 +4911,83 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // R11: `rotate` is the SIXTH mutating handler, and R10's five
+    // vectors could not have covered it.
+    //
+    // The five R10 guards are written `if !cli.mode.dry_run { ... }` -
+    // the live work sits INSIDE a negation. `rotate` is written the
+    // other way round: `let proof = if cli.mode.dry_run { [0u8; 64] }
+    // else { ...unlock, begin_rotation... }`, so the live work sits
+    // inside an `else`. Enumerating guards by grepping for the first
+    // shape finds five and cannot find the sixth, which is exactly
+    // how it was missed: the R10 methodology was shape-specific and
+    // the shape was the discriminator.
+    //
+    // No runtime test calls `rotate` at all, and the one source vector
+    // that touches the branch - `tv_x_c_51` - uses `let proof = if
+    // cli.mode.dry_run {` only as a POSITIONAL ANCHOR for asserting
+    // that `new_did` is derived above it. Inverting the two arms
+    // preserves that anchor verbatim, so the anchor is satisfied and
+    // the guard it appears to be pinning is not pinned at all.
+    //
+    // Measured, in this round: swapping the two arms of that branch
+    // - so a `--dry-run` preview unlocks the store and calls
+    // `begin_rotation` - left all 554 tests passing.
+
+    #[test]
+    fn tv_x_c_77_a_dry_run_rotate_leaves_no_rotation_in_flight() {
+        let _guard = OCTO_HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (_home, _dir, root, did) = dry_run_fixture("tv-x-c-77", 11u8);
+
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
+        cli.mode.dry_run = true;
+        // Under `cargo test` stdin is not a terminal, so an arm that
+        // runs to `acquire_passphrase` returns `WalletLocked` at once
+        // rather than prompting. The vector therefore fails fast on a
+        // crossed guard instead of blocking the suite.
+        let result = rotate(true, &cli);
+        unsafe { std::env::remove_var("OCTO_HOME") };
+        result.expect(
+            "a dry-run rotate is a preview and must succeed. An error here means the guard was \
+             crossed and the arm ran to the passphrase prompt",
+        );
+
+        let store = octo_wallet::WalletStore::open_at(&root).expect("reopen");
+        let record = store
+            .identity_record(&octo_wallet::Did(did.clone()))
+            .expect("record");
+        assert_eq!(
+            record.lifecycle,
+            octo_wallet::LifecycleState::Active,
+            "a dry-run rotate must not begin a rotation. It is {0:?}, so a preview committed the \
+             predecessor to a rotation the operator never asked to start, and the 24-hour grace \
+             period is already running",
+            record.lifecycle
+        );
+
+        // The successor is derived from a fixed seed, so the DID a
+        // crossed guard would have written is known rather than
+        // inferred. Asserting its absence says which mutation this
+        // catches, which a record count alone would not.
+        let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
+        let successor_did = octo_wallet::Did(successor.did().0.clone());
+        assert!(
+            store.identity_record(&successor_did).is_err(),
+            "a dry-run rotate must not append the successor record. The successor is derived from \
+             a fixed seed, so finding it in the index means `begin_rotation` ran under a preview"
+        );
+        assert_eq!(
+            store.list_records().len(),
+            1,
+            "the index must still hold exactly the one registered identity"
+        );
+    }
+
+    // -----------------------------------------------------------------
     // R10 Lens-1: two mutating envelopes carried a real timestamp
     // for an event the preview did not perform.
     //

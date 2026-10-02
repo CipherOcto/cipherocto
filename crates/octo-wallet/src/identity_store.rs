@@ -124,6 +124,11 @@ pub struct WalletStore {
 enum ResolvedHome {
     Octo(PathBuf),
     HomeUnder(PathBuf),
+    /// `OCTO_HOME` is set to the empty string. This is step 2 of the
+    /// four-step contract and it is a hard error, NOT a fall-through
+    /// to `HOME`. See `read_octo_home` for why the two are not the
+    /// same thing.
+    Refused(&'static str),
 }
 
 impl WalletStore {
@@ -150,12 +155,7 @@ impl WalletStore {
     /// `HOME` resolves to a non-empty path. Returns `WalletError::Io`
     /// on filesystem failure reading `store.json`.
     pub fn open() -> Result<Self, WalletError> {
-        let root = resolve_wallet_root();
-        if root.as_os_str().is_empty() {
-            return Err(WalletError::Config(
-                "neither $OCTO_HOME nor $HOME resolves to a non-empty path".to_owned(),
-            ));
-        }
+        let root = resolve_wallet_root()?;
         Self::open_at(root)
     }
 
@@ -1433,20 +1433,31 @@ const fn now_unix_secs_from_u64(t: u64) -> u64 {
     t
 }
 
-/// Resolve the wallet root from the environment. The four-step
-/// resolution mirrors `octo-cli/src/home.rs::resolve` but returns
-/// the resolved path directly (no `Result` wrap) because the env
-/// reader cannot fail — `read_octo_home` collapses the `Ok(empty)`
-/// and `Err(unset)` cases into a single `HomeUnder` fallback arm,
-/// and `read_home_fallback` returns an empty `PathBuf` when both
-/// env vars are absent, which the caller (`open()`) turns into a
-/// `WalletError::Config` only after joining under the empty path is
-/// avoided (an empty path resolves to the cwd, which is what we
-/// want to fail on).
-fn resolve_wallet_root() -> PathBuf {
+/// Resolve the wallet root from the environment, or refuse.
+///
+/// The four-step resolution is the one `WalletStore::open` documents.
+/// Steps 1 and 3 name a root. Steps 2 and 4 are refusals, and they
+/// are different refusals: step 2 is an `OCTO_HOME` the operator set
+/// to the empty string, step 4 is neither variable set at all. The
+/// message names which one happened, because the remedy differs — a
+/// step-2 operator has a broken variable to fix, a step-4 operator
+/// has a bare environment.
+fn resolve_wallet_root() -> Result<PathBuf, WalletError> {
     match read_octo_home() {
-        ResolvedHome::Octo(p) => p.join("wallet"),
-        ResolvedHome::HomeUnder(home) => wallet_root_under_home(&home),
+        ResolvedHome::Octo(p) => Ok(p.join("wallet")),
+        ResolvedHome::HomeUnder(home) => {
+            // An empty `PathBuf` here is `read_home_fallback`'s
+            // sentinel for step 4. It must be propagated verbatim,
+            // NOT joined — see `wallet_root_under_home`.
+            let root = wallet_root_under_home(&home);
+            if root.as_os_str().is_empty() {
+                return Err(WalletError::Config(
+                    "neither $OCTO_HOME nor $HOME resolves to a non-empty path".to_owned(),
+                ));
+            }
+            Ok(root)
+        }
+        ResolvedHome::Refused(why) => Err(WalletError::Config(why.to_owned())),
     }
 }
 
@@ -1479,15 +1490,30 @@ fn wallet_root_under_home(home: &Path) -> PathBuf {
 }
 
 fn read_octo_home() -> ResolvedHome {
-    // `Ok(empty)` and `Err(unset)` both fall through to the HOME
-    // fallback. The two arms share a body — `clippy::match_same_arms`
-    // merges them; the explicit `_` keeps both arms visible for
-    // readers who want to confirm the empty-as-error rule is honored
-    // before the fallback engages.
-    #[allow(clippy::match_same_arms)]
+    // `Ok(empty)` and `Err(unset)` are NOT the same case and are
+    // given different arms. An unset variable has nothing to say
+    // about where the wallet lives, so the `HOME` fallback answers
+    // it. An `OCTO_HOME` that is set to the empty string is an
+    // operator who pointed the variable at something and got it
+    // wrong — a half-written `export OCTO_HOME=`, a CI job whose
+    // secret did not expand — and falling through answers a question
+    // they did not ask, by opening a different store than the one
+    // their configuration named. That is step 2 of the contract
+    // `open` documents, and it is a refusal.
+    //
+    // An earlier revision merged the two arms under `Ok(_) | Err(_)`
+    // and carried a comment asserting the empty-as-error rule was
+    // honoured "before the fallback engages". It was not honoured;
+    // the merge was the rule's negation. The vector that would have
+    // caught it is `tv_x_27`, and it did not exist. See
+    // `tv_x_27_an_empty_octo_home_is_refused_rather_than_falling_back`.
     match std::env::var("OCTO_HOME") {
         Ok(p) if !p.is_empty() => ResolvedHome::Octo(PathBuf::from(p)),
-        Ok(_) | Err(_) => ResolvedHome::HomeUnder(read_home_fallback()),
+        Ok(_) => ResolvedHome::Refused(
+            "$OCTO_HOME is set to the empty string; that names no directory, and falling back to \
+             $HOME would open a different store than this environment asks for",
+        ),
+        Err(_) => ResolvedHome::HomeUnder(read_home_fallback()),
     }
 }
 
@@ -2023,6 +2049,111 @@ mod tests {
         assert_eq!(record.lifecycle, LifecycleState::Revoked);
     }
 
+    /// `tv_x_24` (mission §AC-14, RFC-0011-x §Lifecycle): `revoke`
+    /// persists a terminal record that **survives reload**.
+    ///
+    /// The reload is the whole point, and it is what was missing.
+    /// `tv_x_33` and `tv_x_36` both revoke and then assert, but they
+    /// read the in-memory index — `persist_active_record` updates
+    /// memory and disk together, so they cannot tell a durable
+    /// revocation from one that only ever existed in this process.
+    ///
+    /// Negative control, measured: moving the atomic index write to
+    /// BEFORE the lifecycle flip leaves the on-disk record `Active`
+    /// while memory says `Revoked`. All 315 substrate and all 553
+    /// CLI tests passed under that mutation. It is a fail-open —
+    /// the operator revokes, restarts, and the identity is back.
+    ///
+    /// The second half is the spec's own: a second `revoke` on the
+    /// same DID is refused, which is only true if the first one
+    /// landed.
+    #[test]
+    fn tv_x_24_revoke_persists_a_terminal_record_that_survives_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x24u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        {
+            let mut seed_out = Vec::new();
+            let mut handle = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            handle.revoke(1_700_000_001).expect("revoke");
+        }
+        // Drop the store entirely. Everything asserted from here is
+        // read back from `store.json` on disk, which is the only
+        // state a restarted binary will see.
+        drop(store);
+        let mut reopened = WalletStore::open_at(dir.path()).expect("reopen after revoke");
+        let record = reopened
+            .identity_record(&did)
+            .expect("the revoked record must still be present after a reload");
+        assert_eq!(
+            record.lifecycle,
+            LifecycleState::Revoked,
+            "the revocation must be on disk, not only in the process that performed it. A record \
+             that reads back Active after a reload is a fail-open: the operator revokes, restarts, \
+             and the identity returns."
+        );
+        // The spec's second half: a repeat is refused, which is only
+        // true if the first landed.
+        let mut seed_out = Vec::new();
+        let again = reopened.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            matches!(again, Err(WalletError::AlreadyRevoked)),
+            "a second unlock on the reloaded record must be refused as AlreadyRevoked, proving \
+             the first revoke persisted. Got {again:?}"
+        );
+    }
+
+    /// `tv_x_25` (mission §AC-14): a revoked record is **retained,
+    /// not deleted**.
+    ///
+    /// Deleting it is the tempting implementation — a revoked
+    /// identity has no key, so the row looks like garbage — and it
+    /// is fail-open in a different way: the DID disappears from the
+    /// store, a future registration is free to mint it again, and
+    /// the operator has no record that the identity ever existed.
+    /// Retention is what makes the terminal state terminal.
+    ///
+    /// Asserted across a reload for the same reason as `tv_x_24`:
+    /// the in-memory index is not the state a restart sees.
+    ///
+    /// Negative control, measured: removing the record from
+    /// `index.records` at the end of `revoke` fails this vector and
+    /// fails nothing else.
+    #[test]
+    fn tv_x_25_a_revoked_record_is_retained_not_deleted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let key = IdentityKey::from_seed([0x25u8; 32]);
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+        let before = store.list_records().len();
+        {
+            let mut seed_out = Vec::new();
+            let mut handle = store
+                .unlock("correct-horse-battery-staple", &mut seed_out)
+                .expect("unlock");
+            handle.revoke(1_700_000_001).expect("revoke");
+        }
+        drop(store);
+        let reopened = WalletStore::open_at(dir.path()).expect("reopen after revoke");
+        assert_eq!(
+            reopened.list_records().len(),
+            before,
+            "revoke must not remove the record from the index. Deleting a revoked row frees the \
+             DID for re-registration and erases the fact that the identity existed at all."
+        );
+        assert!(
+            reopened.identity_record(&did).is_ok(),
+            "the revoked record must still resolve by DID after a reload"
+        );
+    }
+
     /// `tv_x_36` (mission §AC-15): `select` on a `Revoked` record
     /// returns `NotActive`. Negative control: a `select` that
     /// moves the pointer without checking lifecycle would leave
@@ -2087,6 +2218,107 @@ mod tests {
         assert_eq!(store.root, octo_dir.path().join("wallet"));
         // The HOME-backed root was NOT touched.
         assert!(!home_dir.path().join(".octo").exists());
+    }
+
+    /// `tv_x_27` (mission §AC-3 step 2, RFC-0011-x §Home
+    /// resolution): an `OCTO_HOME` that is set to the empty string
+    /// is a hard error, not a fall-through to `HOME`.
+    ///
+    /// The negative control is a merge of the two arms in
+    /// `read_octo_home` — `Ok(_) | Err(_)`, which is what the code
+    /// did before this vector existed. Under that merge the store
+    /// opens at `$HOME/.octo/wallet` and both assertions below fail:
+    /// `open` returns `Ok` instead of `Err`, and the HOME-backed
+    /// root exists instead of being untouched.
+    ///
+    /// The refusal is also required to NAME ITS OWN CONDITION. The
+    /// step-4 message ("neither `$OCTO_HOME` nor `$HOME` resolves to
+    /// a non-empty path") would be false here — `$HOME` is set and
+    /// non-empty — and an operator following it would go looking for
+    /// a `$HOME` problem they do not have.
+    #[test]
+    fn tv_x_27_an_empty_octo_home_is_refused_rather_than_falling_back() {
+        let home_dir = tempfile::tempdir().expect("home");
+        let prev_octo = std::env::var_os("OCTO_HOME");
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("OCTO_HOME", "");
+        std::env::set_var("HOME", home_dir.path());
+        let opened = WalletStore::open();
+        if let Some(v) = prev_octo {
+            std::env::set_var("OCTO_HOME", v);
+        } else {
+            std::env::remove_var("OCTO_HOME");
+        }
+        if let Some(v) = prev_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        let err = opened.expect_err(
+            "an OCTO_HOME set to the empty string must not fall through to $HOME: it names no \
+             directory, and falling back opens a different store than this environment asked for",
+        );
+        assert!(
+            matches!(err, WalletError::Config(_)),
+            "the refusal must be Config, the catch-all the four-step contract names. Got {err:?}"
+        );
+        let detail = err.to_string();
+        assert!(
+            !detail.contains("neither $OCTO_HOME nor $HOME"),
+            "the message must not blame $HOME, which is set and non-empty in this vector. The \
+             operator has a broken $OCTO_HOME, not a missing $HOME. Got: {detail}"
+        );
+        // The stronger half: nothing was opened, and nothing was
+        // created. A fall-through would have made the HOME-backed
+        // root exist.
+        assert!(
+            !home_dir.path().join(".octo").exists(),
+            "the HOME-backed root must not exist after a refused open"
+        );
+    }
+
+    /// `tv_x_28` (mission §AC-3 step 4, RFC-0011-x §Home
+    /// resolution): with neither variable set to a non-empty
+    /// value, the store refuses rather than composing a root.
+    ///
+    /// This is the fourth step, and it is a different refusal from
+    /// `tv_x_27`'s: here `$HOME` is genuinely absent, and the
+    /// message says so. The pair is what makes either message
+    /// falsifiable — asserted as a pair because a single assertion
+    /// of "it refused" is satisfied by an implementation that
+    /// refuses everything, which is a different defect.
+    #[test]
+    fn tv_x_28_neither_variable_set_refuses_at_the_store() {
+        let prev_octo = std::env::var_os("OCTO_HOME");
+        let prev_home = std::env::var_os("HOME");
+        std::env::remove_var("OCTO_HOME");
+        std::env::remove_var("HOME");
+        let opened = WalletStore::open();
+        if let Some(v) = prev_octo {
+            std::env::set_var("OCTO_HOME", v);
+        } else {
+            std::env::remove_var("OCTO_HOME");
+        }
+        if let Some(v) = prev_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        let err = opened.expect_err(
+            "with neither $OCTO_HOME nor $HOME set there is no root to compose, and composing \
+             one anyway yields a path relative to the working directory",
+        );
+        assert!(
+            matches!(err, WalletError::Config(_)),
+            "the refusal must be Config. Got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("neither $OCTO_HOME nor $HOME"),
+            "the step-4 refusal must name the step-4 condition, so an operator can tell it from \
+             tv_x_27's. Got: {err}"
+        );
     }
 
     /// `tv_x_10` (mission §AC-5): a pre-existing store root

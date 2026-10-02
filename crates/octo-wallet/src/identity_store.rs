@@ -616,42 +616,6 @@ impl WalletStore {
     // Unlock split (mission §unlock)
     // ------------------------------------------------------------------
 
-    /// Decrypt the active identity seed slot. `seed_out` is
-    /// caller-owned so the zeroization obligation has exactly one
-    /// enforcement site (the caller zeroes the buffer after use -
-    /// mission §AC-39 vector `tv_x_38`).
-    ///
-    /// Seven ordered steps (mission YAML §unlock doc comment):
-    ///
-    /// 1. Validate passphrase length against `MIN_PASSPHRASE_CHARS`.
-    /// 2. Look up the active DID; fail with `Locked` if none, or
-    ///    `IdentityNotFound` if the pointer names an absent record.
-    /// 3. Compose the slug from `record.pubkey_bytes` and call
-    ///    `self.vault.get(slug, passphrase, seed_out)`. The vault
-    ///    returns `VaultSlotNotFound` if the slot is missing
-    ///    (mission §AC-45 - refuses `VaultDecryptionFailed` in favor
-    ///    of `VaultSlotNotFound` when the file is gone).
-    /// 4. Rehydrate the `IdentityKey` via
-    ///    `IdentityKey::from_seed_with_lifecycle`, passing the
-    ///    persisted lifecycle (NOT hard-coding `Designated` as
-    ///    `from_seed` does - mission §AC-33 vector `tv_x_33` /
-    ///    `tv_x_34`).
-    /// 5. Reconstruct `rotation_started_at_unix_secs` from the
-    ///    newest entry in `record.rotation_history` when the
-    ///    persisted lifecycle is `Rotating`; `None` otherwise. This
-    ///    is what stops `complete_rotation` from hitting
-    ///    `.expect(...)` and panicking with exit 101 - mission
-    ///    §AC-32 vector `tv_x_40`.
-    /// 6. Return `UnlockedWallet<'a>` holding a unique `IdentityKey`
-    ///    (NOT a clone - mission §AC-39 vector `tv_x_38`).
-    ///
-    /// # Errors
-    /// Returns `WalletError::WeakPassphrase` when `passphrase.len()
-    /// < MIN_PASSPHRASE_CHARS`; `WalletError::Locked` when no active
-    /// identity is selected; `WalletError::IdentityNotFound` when
-    /// the active pointer names an absent record;
-    /// `WalletError::VaultSlotNotFound` when the slot file is gone;
-    /// `WalletError::VaultDecryptionFailed` on a wrong passphrase.
     /// Re-attach the successor key named by an in-flight rotation.
     ///
     /// Extracted from `unlock` so the binding and proof checks sit in
@@ -659,6 +623,17 @@ impl WalletStore {
     /// lint. The event arrives as a parameter rather than being
     /// re-derived, so this cannot panic the way an `expect` on a
     /// missing event would - the caller has established it exists.
+    ///
+    /// # Errors
+    /// Returns `WalletError::IdentityNotFound` when the index holds
+    /// no record for `successor_did`;
+    /// `WalletError::VaultSlotNotFound` or
+    /// `WalletError::VaultDecryptionFailed` when the sealed slot
+    /// cannot be read; `WalletError::VaultDecryptionFailed` on a
+    /// short read; `WalletError::SuccessorKeyMismatch` when the
+    /// rehydrated key is not the identity `successor_did` names;
+    /// `WalletError::InvalidSuccessorProof` when the predecessor's
+    /// signature over the successor key does not match the event.
     fn rehydrate_successor_key(
         &self,
         successor_did: &Did,
@@ -718,6 +693,57 @@ impl WalletStore {
         Ok(succ_key)
     }
 
+    /// Decrypt the active identity seed slot. `seed_out` is
+    /// caller-owned so the zeroization obligation has exactly one
+    /// enforcement site (the caller zeroes the buffer after use -
+    /// mission §AC-39 vector `tv_x_38`).
+    ///
+    /// Seven ordered steps (mission YAML §unlock doc comment):
+    ///
+    /// 1. Validate passphrase length against `MIN_PASSPHRASE_CHARS`.
+    /// 2. Look up the active DID; fail with `Locked` if none, or
+    ///    `IdentityNotFound` if the pointer names an absent record.
+    /// 3. Compose the slug from `record.pubkey_bytes` and call
+    ///    `self.vault.get(slug, passphrase, seed_out)`. The vault
+    ///    returns `VaultSlotNotFound` if the slot is missing
+    ///    (mission §AC-45 - refuses `VaultDecryptionFailed` in favor
+    ///    of `VaultSlotNotFound` when the file is gone).
+    /// 4. Rehydrate the `IdentityKey` via
+    ///    `IdentityKey::from_seed_with_lifecycle`, passing the
+    ///    persisted lifecycle (NOT hard-coding `Designated` as
+    ///    `from_seed` does - mission §AC-33 vector `tv_x_33` /
+    ///    `tv_x_34`).
+    /// 5. Reconstruct `rotation_started_at_unix_secs` from the
+    ///    newest entry in `record.rotation_history` when the
+    ///    persisted lifecycle is `Rotating`; `None` otherwise. This
+    ///    is what stops `complete_rotation` from hitting
+    ///    `.expect(...)` and panicking with exit 101 - mission
+    ///    §AC-32 vector `tv_x_40`.
+    /// 6. Return `UnlockedWallet<'a>` holding a unique `IdentityKey`
+    ///    (NOT a clone - mission §AC-39 vector `tv_x_38`).
+    ///
+    /// # Errors
+    /// Returns `WalletError::WeakPassphrase` when `passphrase.len()
+    /// < MIN_PASSPHRASE_CHARS`; `WalletError::Locked` when no active
+    /// identity is selected; `WalletError::IdentityNotFound` when
+    /// the active pointer names an absent record;
+    /// `WalletError::VaultSlotNotFound` when the slot file is gone;
+    /// `WalletError::VaultDecryptionFailed` on a wrong passphrase;
+    /// `WalletError::RotationEventMissing` when the active record is
+    /// `Rotating` but carries no rotation event to rehydrate from;
+    /// `WalletError::Config` when the active record's `did` and
+    /// `pubkey_bytes` disagree, which would otherwise make the
+    /// handle sign under a different identity than the one it
+    /// reports; and, via `rehydrate_successor_key`,
+    /// `WalletError::SuccessorKeyMismatch` or
+    /// `WalletError::InvalidSuccessorProof` when an in-flight
+    /// rotation names a successor the predecessor never authorised.
+    ///
+    /// The last four were added with the R9 and R10 repairs and the
+    /// block had listed five of nine when this was found. A `# Errors`
+    /// block that names a subset is not a shorter list, it is a
+    /// contract that quietly disagrees with the function, so every
+    /// variant the body can return is enumerated here.
     pub fn unlock<'a>(
         &'a mut self,
         passphrase: &str,
@@ -3475,7 +3501,22 @@ mod tests {
             "an index holding two records for one DID must be refused at open. It returned Ok, \
              and from here a read and a write can resolve the same DID to different records"
         );
-        let err = result.expect_err("must be refused").to_string();
+        // The VARIANT, not just the message. `WalletError::Config` is
+        // the substrate's stringly-typed catch-all, and the CLI maps
+        // it wholesale to `NoOctoHome` - exit 27, "set $OCTO_HOME or
+        // $HOME". An index fault is not a home-resolution fault, and
+        // the operator holding a correctly-set environment variable
+        // is sent to fix the one thing that is not wrong. A vector
+        // that only asserted the message text cannot see that, which
+        // is why the variant is pinned here and not merely the
+        // `Display` output.
+        let err = result.expect_err("must be refused");
+        assert!(
+            matches!(err, WalletError::Config(_)),
+            "the duplicate-index refusal must be Config so the mapping boundary can tell it \
+             apart from a genuine home-resolution fault. Got {err:?}"
+        );
+        let err = err.to_string();
         assert!(
             err.contains("duplicate") && err.contains(did.as_str()),
             "the refusal must name both the problem and the DID it concerns, or the operator \
@@ -3545,7 +3586,18 @@ mod tests {
              an unlocked handle. It returned Ok, and that handle would report {real_did} in \
              every envelope while signing under the impostor"
         );
-        let err = result.expect_err("must be refused").to_string();
+        let err = result.expect_err("must be refused");
+        // The VARIANT, for the same reason tv_x_58 pins it: this is
+        // an integrity fault in operator-editable state, and the CLI
+        // routes the `Config` catch-all to exit 27 "set $OCTO_HOME or
+        // $HOME", which is false advice for an operator whose
+        // environment is already correct.
+        assert!(
+            matches!(err, WalletError::Config(_)),
+            "the key-to-record binding refusal must be Config so the mapping boundary can \
+             distinguish an integrity fault from a home-resolution fault. Got {err:?}"
+        );
+        let err = err.to_string();
         assert!(
             err.contains("public key") && err.contains(impostor.did().as_str()),
             "the refusal must name both DIDs so the operator can see which row is inconsistent. \
@@ -3872,6 +3924,167 @@ mod tests {
             record.lifecycle,
             LifecycleState::Active,
             "a refused self-rotation must not have moved the predecessor out of Active"
+        );
+    }
+
+    /// tv_x_64 — a successor record whose `pubkey_bytes` names a
+    /// DIFFERENT identity's key is refused as
+    /// `SuccessorKeyMismatch`, and the refusal survives a reopen.
+    ///
+    /// This guard had no vector at all. `SuccessorKeyMismatch` is
+    /// constructed in exactly one place in the crate and asserted in
+    /// none, which matters because the guard is the successor-side
+    /// counterpart of the R9 primary-path binding fix: R9 justified
+    /// rating the primary gap CRITICAL on the grounds that the
+    /// successor path had carried the equivalent check since it was
+    /// hardened. That justification rested on a check no test could
+    /// reach.
+    ///
+    /// The setup needs a SECOND registered identity, and that is the
+    /// point rather than an inconvenience. The seal slot is chosen by
+    /// `seed_slot_slug_by_pubkey(succ_record.pubkey_bytes)`, so
+    /// pointing the record at a key with no sealed slot would fail
+    /// earlier with `VaultSlotNotFound` and never reach the binding
+    /// check. Editing `pubkey_bytes` to an identity that IS sealed
+    /// makes the vault hand back that identity's seed, which is
+    /// precisely the confusion the check exists to catch.
+    ///
+    /// **These two guards are layered, and mutation testing says so.**
+    /// Disabling this one does NOT produce the catastrophic outcome
+    /// its own comment describes: the run falls through to the proof
+    /// check and is refused as `InvalidSuccessorProof`, because
+    /// `begin_rotation` signed `b"rotate" || successor_pubkey` and
+    /// the recomputation now uses a different public key. The
+    /// binding check is still worth having - it is the one that
+    /// names WHICH identity was confused, and it fires when the
+    /// proof is correspondingly forged - but a reader who assumed
+    /// removing it would let a mismatched key through would be
+    /// wrong, and the vector below asserts the VARIANT precisely so
+    /// that the proof check falling in cannot satisfy it.
+    #[test]
+    fn tv_x_64_a_successor_record_naming_another_identitys_key_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        let predecessor = IdentityKey::from_seed([0xB1u8; 32]);
+        let other = IdentityKey::from_seed([0xB2u8; 32]);
+        let other_pubkey = other.public_key_bytes();
+        let successor = IdentityKey::from_seed([0xB3u8; 32]);
+        let successor_did = successor.did();
+        store
+            .register(
+                predecessor,
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        // Registered so its seed slot is sealed and therefore
+        // decryptable, which is what lets the edit reach the binding
+        // check instead of dying on a missing slot.
+        store
+            .register(other, "correct-horse-battery-staple", false, 1_700_000_000)
+            .expect("register the other identity");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        drop(handle);
+        drop(store);
+
+        // The hand edit: point the successor record at a different
+        // identity's public key while leaving its DID alone. The DID
+        // and the key now name different identities, which is the
+        // whole shape of the corruption.
+        let mut index = read_index_for_test(dir.path());
+        let pos = index
+            .records
+            .iter()
+            .position(|r| r.did.as_str() == successor_did.as_str())
+            .expect(
+                "the successor record must be in the index for this vector to be testing anything",
+            );
+        index.records[pos].pubkey_bytes = other_pubkey;
+        write_index_atomically(dir.path(), &index).expect("write the poisoned index");
+
+        let mut store = WalletStore::open_at(dir.path()).expect("reopen");
+        let mut seed_out = Vec::new();
+        let result = store.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            matches!(result, Err(WalletError::SuccessorKeyMismatch { .. })),
+            "a successor record whose pubkey_bytes names another identity's key must be refused \
+             as SuccessorKeyMismatch. Without the check the vault hands back that other \
+             identity's seed, complete_rotation promotes the NAMED did to active, and every \
+             signature the handle then makes is under a different key - silently. Got: {result:?}"
+        );
+    }
+
+    /// tv_x_65 — a rotation event whose `signature_proof` does not
+    /// match the predecessor's signature over the successor key is
+    /// refused as `InvalidSuccessorProof`.
+    ///
+    /// The store-level check is the one that makes "this predecessor
+    /// authorised this successor" verifiable across the process
+    /// boundary, and it is the site the CLI actually reaches after a
+    /// reopen. It was untested. The only `InvalidSuccessorProof`
+    /// assertion in the crate sits on a different site - the
+    /// `VerifyingKey::from_bytes` failure inside `IdentityKey` - so
+    /// the suite was green with this guard removable.
+    ///
+    /// Unlike tv_x_64 the corruption needs no second identity: the
+    /// binding check passes, because the record is untouched, and the
+    /// proof check is the only thing standing between a hand-edited
+    /// event and an unauthorised successor.
+    #[test]
+    fn tv_x_65_a_rotation_event_with_a_forged_proof_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xB4u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        let successor = IdentityKey::from_seed([0xB5u8; 32]);
+        let successor_did = successor.did();
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        handle
+            .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
+            .expect("begin_rotation");
+        drop(handle);
+        drop(store);
+
+        // The hand edit: keep the successor DID, forge the proof.
+        // The event now claims the predecessor authorised a successor
+        // it never signed for.
+        let mut index = read_index_for_test(dir.path());
+        let predecessor = index
+            .records
+            .iter_mut()
+            .find(|r| r.did.as_str() != successor_did.as_str())
+            .expect("the predecessor record carries the rotation event");
+        assert!(
+            !predecessor.rotation_history.is_empty(),
+            "setup: begin_rotation must have persisted an event, or there is nothing to forge"
+        );
+        predecessor.rotation_history[0].signature_proof = [0xABu8; 64];
+        write_index_atomically(dir.path(), &index).expect("write the forged index");
+
+        let mut store = WalletStore::open_at(dir.path()).expect("reopen");
+        let mut seed_out = Vec::new();
+        let result = store.unlock("correct-horse-battery-staple", &mut seed_out);
+        assert!(
+            matches!(result, Err(WalletError::InvalidSuccessorProof)),
+            "a rotation event whose signature_proof the predecessor did not produce must be \
+             refused as InvalidSuccessorProof. Rehydrating the successor without this check lets \
+             a hand-edited index name any successor it likes. Got: {result:?}"
         );
     }
 }

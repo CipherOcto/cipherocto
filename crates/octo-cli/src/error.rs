@@ -1820,9 +1820,9 @@ impl From<octo_audit::AuditError> for OctoCliError {
             // impl + `ERROR_MARKERS`) so an unknown future variant
             // that accidentally carries a key/path leaks only
             // `<redacted-*>` markers.
-            _ => Self::Internal(sanitize_substrate_error(&format!(
+            _ => Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                 "audit substrate error: {e}"
-            ))),
+            )))),
         }
     }
 }
@@ -2022,9 +2022,9 @@ impl From<octo_runtime::AttachError> for OctoCliError {
             // enums. Future substrate variants collapse to
             // `Internal(reason)` exit 64 — same pattern as the audit
             // `From` impl above.
-            _ => Self::Internal(sanitize_substrate_error(&format!(
+            _ => Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                 "attach substrate error: {e}"
-            ))),
+            )))),
         }
     }
 }
@@ -2190,9 +2190,9 @@ impl From<octo_wallet::WalletError> for OctoCliError {
             // `WalletError`. Future substrate variants collapse
             // to `Internal(reason)` exit 64 — same pattern as
             // the audit / attach `From` impls above.
-            _ => Self::Internal(sanitize_substrate_error(&format!(
+            _ => Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
                 "wallet substrate error: {e}"
-            ))),
+            )))),
         }
     }
 }
@@ -2200,6 +2200,72 @@ impl From<octo_wallet::WalletError> for OctoCliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R15: every substrate wildcard arm caps its payload.
+    ///
+    /// The four audit-sink arms capped. The audit / attach / wallet
+    /// wildcard arms did not, while the wallet arm's own comment
+    /// said it followed "the same pattern as the audit / attach
+    /// `From` impls above". Measured before the fix: a substrate
+    /// error carrying a 16 KiB message reached the operator
+    /// envelope at **16,590 bytes against a 4 KiB cap**.
+    ///
+    /// The cap exists because an unbounded substrate payload is a
+    /// denial-of-surface for whatever renders it, and these three
+    /// were the arms exempt from it.
+    ///
+    /// The assertion is on the length after the `Display` prefix,
+    /// because `user_message()` prepends the variant's own
+    /// `Display` head before the scrub. Each case is built through
+    /// the substrate enum's own constructor, so the value asserted
+    /// on is one an operator would actually receive.
+    ///
+    /// Two of the three cases reach a `_` wildcard today; the audit
+    /// impl names every one of its ten `AuditError` variants, so its
+    /// wildcard is currently unreachable and the audit case asserts
+    /// the `SinkSpecific` named arm instead. It is kept because the
+    /// wildcard is the row a future variant lands in, and a
+    /// pre-emptive cap on an unreachable arm is what makes the
+    /// future variant capped rather than not.
+    ///
+    /// Six further String-carrying arms (`PersistenceError`,
+    /// `RevocationError`, `ReceiptNotFound`, `InvalidFilter`,
+    /// `PermissionDenied`, `HsmUnavailable`) are also uncapped.
+    /// They predate this work and are reported rather than fixed
+    /// here; this vector is scoped to the three wildcards.
+    #[test]
+    fn r15_every_substrate_wildcard_arm_caps_its_payload() {
+        let oversized = "z".repeat(SUBSTRATE_PAYLOAD_CAP * 4);
+        let cases: [(&str, OctoCliError); 3] = [
+            (
+                "audit",
+                OctoCliError::from(octo_audit::AuditError::SinkSpecific(oversized.clone())),
+            ),
+            (
+                "attach",
+                OctoCliError::from(octo_runtime::AttachError::Internal(oversized.clone())),
+            ),
+            (
+                "wallet",
+                OctoCliError::from(octo_wallet::WalletError::Config(oversized.clone())),
+            ),
+        ];
+        let budget = SUBSTRATE_PAYLOAD_CAP + " [truncated]".len() + 64;
+        for (name, e) in cases {
+            let msg = e.user_message();
+            assert!(
+                msg.len() <= budget,
+                "the {name} substrate wildcard arm must cap at {SUBSTRATE_PAYLOAD_CAP} bytes plus \
+                 the marker and a short prefix, got {}",
+                msg.len()
+            );
+            assert!(
+                msg.ends_with(" [truncated]"),
+                "the {name} arm must show the operator that the cap fired, got tail: {:?}",
+                &msg[msg.len().saturating_sub(20)..]
+            );
+        }
+    }
 
     // R1 MED C13 — cap_substrate_payload boundary tests.
     #[test]

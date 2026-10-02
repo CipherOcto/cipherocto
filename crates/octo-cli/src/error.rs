@@ -2284,6 +2284,63 @@ impl From<octo_wallet::WalletError> for OctoCliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::identity::tests::fn_body_code;
+
+    /// Strip every `#[cfg(test)] { ... }` block from `src`, returning the
+    /// source that ships in a release build. Used by audit 4c(b)
+    /// vectors to scan only the production signing paths — the
+    /// surviving `try_active_identity` test stub at
+    /// `capability.rs:362` lives inside a `#[cfg(test)]` block and
+    /// must not be counted against the production wiring.
+    ///
+    /// `#[cfg(not(test))]` blocks are KEPT: those are the production
+    /// branches that ship in a release build (the test stub is in the
+    /// sibling `#[cfg(test)]` block and stripped here). Stripping
+    /// both would erase the `fn mint` production branch that contains
+    /// the migrated signing path.
+    ///
+    /// The walker iterates by char boundary so that UTF-8 in doc
+    /// comments (em-dashes, smart quotes) does not produce misaligned
+    /// slices. It tracks brace nesting and matches each attribute to
+    /// the next `{ ... }` block.
+    fn strip_cfg_test_blocks(src: &str) -> String {
+        let mut out = String::with_capacity(src.len());
+        let mut rest = src;
+        while !rest.is_empty() {
+            if rest.starts_with("#[cfg(test)]") {
+                // Skip the attribute line (up to and including the newline).
+                let after_nl = rest.find('\n').map(|n| n + 1).unwrap_or(rest.len());
+                rest = &rest[after_nl..];
+                // Skip spaces/tabs until the opening brace.
+                let lead = rest.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+                rest = &rest[lead..];
+                if rest.starts_with('{') {
+                    // Walk past the matched { ... } block, tracking
+                    // brace nesting.
+                    let mut depth: usize = 1;
+                    let mut byte_pos = '{'.len_utf8();
+                    for (idx, ch) in rest[byte_pos..].char_indices() {
+                        if ch == '{' {
+                            depth += 1;
+                        } else if ch == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                byte_pos += idx + ch.len_utf8();
+                                break;
+                            }
+                        }
+                    }
+                    rest = &rest[byte_pos..];
+                }
+                continue;
+            }
+            // Emit the next char and advance.
+            let c = rest.chars().next().unwrap();
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+        out
+    }
 
     /// R15: every substrate wildcard arm caps its payload.
     ///
@@ -2951,6 +3008,425 @@ mod tests {
              through `OctoCliError::from(other)`; a file that lost its last site must be removed. \
              Checking three hard-coded files left a site added anywhere else invisible to this \
              vector, which is the defect R24 measured."
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Audit 4c(b) — tv_x_c_104..111. The 6 production signing paths
+    // (capability list/mint/attenuate, governance attest/vote, agent
+    // run/attach) now route through WalletStore::unlock rather than
+    // the metadata-only try_active_identity stub. The 8 vectors below
+    // pin the migration:
+    //
+    // - 104..106: source checks for the per-file body changes
+    //   (capability sites use unlocked.active_identity(), governance
+    //   sites use WalletSignerAdapter::new(unlocked.active_identity()
+    //   .clone()), agent helper signature + body use unlock).
+    // - 107..109: source checks for the clap-variant + dispatch changes
+    //   (every production-signing variant carries passphrase_stdin,
+    //   every dispatch arm threads *passphrase_stdin to the handler).
+    // - 110..111: runtime checks that the first thing the production
+    //   handler does in no-TTY is acquire_passphrase, which yields
+    //   WalletLocked at the AC-10 pre-flight (the per-call model: the
+    //   substrate's only legitimate pre-signing access path is now
+    //   unlock(passphrase), and the operator's passphrase is the
+    //   gating primitive).
+    //
+    // The migration closes the per-call-site gap recorded in
+    // docs/audits/open-limitations-assessment.md §5 row 4c. The
+    // surviving try_active_identity call is the cfg(test) fixture_token
+    // stub in capability.rs (asserted by tv_x_c_95's tightened
+    // contract).
+    // -----------------------------------------------------------------
+
+    /// Helper for the 4c(b) runtime vectors (110, 111). Build a
+    /// minimal Octo with the requested mode; cargo test pipes stdin,
+    /// so the AC-10 pre-flight in acquire_passphrase returns
+    /// WalletLocked deterministically (the same path the production
+    /// operators hit in CI / non-interactive scripts).
+    fn cli_with_mode_for_4cb(mode: crate::flags::OperatorMode) -> crate::Octo {
+        use clap::Parser;
+        let argv = vec!["octo", "whoami"];
+        let mut cli = crate::Octo::try_parse_from(argv).expect("clap parse");
+        cli.mode = crate::flags::OperatorModeFlags {
+            mode,
+            dev: false,
+            confirm: false,
+            confirm_acknowledge: false,
+            allow_write: false,
+            dry_run: false,
+            allow_stdin_secret: false,
+        };
+        cli
+    }
+
+    /// tv_x_c_104 — every production signing site in capability.rs
+    /// routes through unlocked.active_identity() (the per-call
+    /// passphrase-gated path), not the prior try_active_identity
+    /// metadata stub. SOURCE: a runtime test would have to mint a
+    /// real macaroon, and the substrate path is exercised by the
+    /// wallet's tv_x_c_40 + tv_x_c_41. The risk this vector pins
+    /// is the WIRING — a future refactor that reverts one of the 3
+    /// sites (list, mint, attenuate) to try_active_identity would
+    /// not be caught by the wallet's per-call test alone.
+    #[test]
+    fn tv_x_c_104_capability_sites_route_through_unlocked_active_identity() {
+        let src = include_str!("commands/capability.rs");
+
+        // Each production handler must contain the unlock prelude
+        // (acquire_passphrase + store.unlock(passphrase, seed_buf)).
+        // The end marker is the START of the NEXT handler (or the
+        // mod tests boundary for the last one), so the body
+        // extraction does not truncate on the function's own `fn `
+        // token.
+        let bodies: &[(&str, &str)] = &[
+            ("pub fn list(", "pub fn mint("),
+            ("pub fn mint(", "pub fn attenuate("),
+            ("pub fn attenuate(", "mod tests {"),
+        ];
+        for (fn_name, end_marker) in bodies {
+            let body = fn_body_code(src, fn_name, end_marker);
+            assert!(
+                body.contains("acquire_passphrase(cli, \"capability")
+                    || body.contains("super::identity::acquire_passphrase("),
+                "capability {fn_name} must acquire the passphrase via acquire_passphrase. \
+                 The prior try_active_identity is a metadata-only stub and cannot reach \
+                 the substrate's signing path. Body: {body}"
+            );
+            assert!(
+                body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+                "capability {fn_name} must call store.unlock(passphrase, seed_buf). \
+                 Body: {body}"
+            );
+        }
+
+        // Belt-and-braces: every octo_cap_macaroon:: call in the
+        // PRODUCTION path (excluding #[cfg(test)] blocks, which is
+        // where the surviving try_active_identity test stub lives)
+        // must consume the unlocked handle, not a stale &key
+        // binding. Walking every occurrence guards against a future
+        // site added in another function. The substrate takes an
+        // owned IdentityKey (the cheap Arc clone from
+        // unlocked.active_identity().clone()).
+        let production = strip_cfg_test_blocks(src);
+        for substrate_call in &[
+            "octo_cap_macaroon::list_active(",
+            "octo_cap_macaroon::mint(",
+            "octo_cap_macaroon::attenuate(",
+        ] {
+            let mut start = 0;
+            let mut found = false;
+            while let Some(at) = production[start..].find(substrate_call) {
+                let after = start + at + substrate_call.len();
+                let window: String = production[after..].chars().take(64).collect();
+                assert!(
+                    window.contains("unlocked.active_identity()"),
+                    "capability production call to {substrate_call} must consume \
+                     unlocked.active_identity(), got window: {window:?}"
+                );
+                start = after;
+                found = true;
+            }
+            assert!(
+                found,
+                "capability.rs production path must contain a call to {substrate_call} \
+                 (the audit 4c(b) migration does not change the substrate surface)"
+            );
+        }
+    }
+
+    /// tv_x_c_105 — the two production signing paths in governance.rs
+    /// (attest, vote) consume unlocked.active_identity().clone() for
+    /// the WalletSignerAdapter::new(...) call. SOURCE: same reason
+    /// as tv_x_c_104 — the substrate path is exercised by the
+    /// wallet's per-call tests, and the wiring is the risk.
+    #[test]
+    fn tv_x_c_105_governance_sites_route_through_unlocked_active_identity() {
+        let src = include_str!("commands/governance.rs");
+
+        for fn_marker in &["fn attest_handler(", "fn vote_handler("] {
+            let start = src.find(fn_marker).unwrap_or_else(|| {
+                panic!("governance.rs must contain {fn_marker} (the audit 4c(b) handler)")
+            });
+            let slice = &src[start..];
+            // End at the next module-level `fn ` or `pub fn ` (the
+            // attest_handler and vote_handler bodies are 180+ lines and
+            // contain inner `}` closes that would truncate a naive
+            // first-`}` search).
+            let end = slice
+                .find("\nfn ")
+                .or_else(|| slice.find("\npub fn "))
+                .unwrap_or(slice.len());
+            let body = &slice[..end];
+            assert!(
+                body.contains("acquire_passphrase(cli, \"governance "),
+                "{fn_marker} must acquire the passphrase via the shared helper. \
+                 The metadata-only try_active_identity cannot reach the substrate's \
+                 signing path. Body: {body}"
+            );
+            assert!(
+                body.contains(".unlock(passphrase.as_str(), seed_buf.as_mut())"),
+                "{fn_marker} must call store.unlock(passphrase, seed_buf). \
+                 Body: {body}"
+            );
+            assert!(
+                body.contains("WalletSignerAdapter::new(unlocked.active_identity().clone())"),
+                "{fn_marker} must construct the WalletSignerAdapter from the unlocked \
+                 handle, not the metadata-only stub. Body: {body}"
+            );
+        }
+    }
+
+    /// tv_x_c_106 — agent::common::resolve_active_identity_key has
+    /// the new (passphrase, seed_buf) signature and calls
+    /// store.unlock(passphrase, seed_buf), not the prior
+    /// try_active_identity stub. SOURCE: the helper is the single
+    /// signing path for agent run (token mint) and agent attach
+    /// (token decode); a signature regression that re-introduces
+    /// try_active_identity would re-open the lock-unlocked store.
+    #[test]
+    fn tv_x_c_106_agent_helper_signature_and_body_use_unlock() {
+        let src = include_str!("commands/agent.rs");
+
+        let start = src
+            .find("pub(crate) fn resolve_active_identity_key(")
+            .expect("resolve_active_identity_key helper must exist");
+        let slice = &src[start..];
+        let end = slice.find("\n    }\n").unwrap_or(slice.len());
+        let body = &slice[..end];
+
+        // The signature must take passphrase: &str and
+        // seed_buf: &mut Vec<u8>. A future regression to the
+        // 0-arg try_active_identity form would re-introduce the
+        // metadata-only stub and the helper would be unreachable
+        // from the production signing paths.
+        assert!(
+            body.contains("passphrase: &str") && body.contains("seed_buf: &mut Vec<u8>"),
+            "resolve_active_identity_key must take (passphrase: &str, seed_buf: &mut Vec<u8>). \
+             The 0-arg form is the legacy metadata-only stub. Body: {body}"
+        );
+        assert!(
+            body.contains(".unlock(passphrase, seed_buf)"),
+            "resolve_active_identity_key must call store.unlock(passphrase, seed_buf). \
+             Body: {body}"
+        );
+        // Belt-and-braces: the legacy try_active_identity() call
+        // must not appear in the helper body.
+        assert!(
+            !body.contains("try_active_identity("),
+            "resolve_active_identity_key must not call the metadata-only try_active_identity. \
+             Body: {body}"
+        );
+    }
+
+    /// tv_x_c_107 — every AgentAction variant that calls
+    /// resolve_active_identity_key carries a passphrase_stdin: bool
+    /// clap field, and the dispatch arm destructures and threads it
+    /// through. SOURCE: the dispatch arm is the only place a future
+    /// refactor can drop the *passphrase_stdin threading; the
+    /// variant field is the operator-facing surface that the
+    /// --passphrase-stdin flag binds to.
+    #[test]
+    fn tv_x_c_107_agent_action_signing_variants_carry_passphrase_stdin() {
+        let src = include_str!("commands/agent.rs");
+
+        // The two production-signing variants are Run (token mint)
+        // and Attach (token decode). Create is excluded — its
+        // register-only path uses the metadata-only
+        // resolve_active_did and never needed a passphrase.
+        for variant in &["    Run {", "    Attach {"] {
+            let start = src.find(variant).unwrap_or_else(|| {
+                panic!("AgentAction must have a {variant} variant (audit 4c(b) migration)")
+            });
+            let slice = &src[start..];
+            let end = slice.find("\n    },").unwrap_or(slice.len());
+            let body = &slice[..end];
+            assert!(
+                body.contains("passphrase_stdin: bool"),
+                "AgentAction {variant} must carry a passphrase_stdin: bool clap field \
+                 so the operator's --passphrase-stdin flag reaches the handler. \
+                 Body: {body}"
+            );
+        }
+
+        // Dispatch arms thread *passphrase_stdin to the handler.
+        let dispatch_start = src
+            .find("pub fn dispatch(action: &AgentAction")
+            .expect("AgentAction dispatch fn present");
+        let dispatch_slice = &src[dispatch_start..];
+        let dispatch_end = dispatch_slice.find("\n}\n").unwrap_or(dispatch_slice.len());
+        let dispatch_body = &dispatch_slice[..dispatch_end];
+        for arm in &["AgentAction::Run {", "AgentAction::Attach {"] {
+            assert!(
+                dispatch_body.contains(arm),
+                "AgentAction dispatch must have an arm for {arm}"
+            );
+        }
+        assert!(
+            dispatch_body.contains("*passphrase_stdin"),
+            "AgentAction dispatch must thread *passphrase_stdin to the handlers, \
+             not a literal true / false. Got: {dispatch_body}"
+        );
+    }
+
+    /// tv_x_c_108 — every GovernanceAction variant that calls the
+    /// signing path carries a passphrase_stdin: bool clap field,
+    /// and the dispatch arm threads *passphrase_stdin. SOURCE:
+    /// same shape as tv_x_c_107; the production-signing variants
+    /// are Attest and Vote.
+    #[test]
+    fn tv_x_c_108_governance_action_signing_variants_carry_passphrase_stdin() {
+        let src = include_str!("commands/governance.rs");
+
+        for variant in &["    Attest {", "    Vote {"] {
+            let start = src.find(variant).unwrap_or_else(|| {
+                panic!("GovernanceAction must have a {variant} variant (audit 4c(b) migration)")
+            });
+            let slice = &src[start..];
+            let end = slice.find("\n    },").unwrap_or(slice.len());
+            let body = &slice[..end];
+            assert!(
+                body.contains("passphrase_stdin: bool"),
+                "GovernanceAction {variant} must carry a passphrase_stdin: bool \
+                 clap field. Body: {body}"
+            );
+        }
+
+        let dispatch_start = src
+            .find("pub fn dispatch(action: &GovernanceAction")
+            .expect("GovernanceAction dispatch fn present");
+        let dispatch_slice = &src[dispatch_start..];
+        let dispatch_end = dispatch_slice.find("\n}\n").unwrap_or(dispatch_slice.len());
+        let dispatch_body = &dispatch_slice[..dispatch_end];
+        for arm in &["GovernanceAction::Attest {", "GovernanceAction::Vote {"] {
+            assert!(
+                dispatch_body.contains(arm),
+                "GovernanceAction dispatch must have an arm for {arm}"
+            );
+        }
+        assert!(
+            dispatch_body.contains("*passphrase_stdin"),
+            "GovernanceAction dispatch must thread *passphrase_stdin to the handlers, \
+             not a literal. Got: {dispatch_body}"
+        );
+    }
+
+    /// tv_x_c_109 — every CapabilityAction variant that calls the
+    /// signing path carries a passphrase_stdin: bool clap field,
+    /// and the dispatch arm threads *passphrase_stdin. SOURCE:
+    /// same shape as tv_x_c_107 + tv_x_c_108; the production-signing
+    /// variants are List (read), Mint (signing), and Attenuate
+    /// (signing). The list site is included because the substrate
+    /// octo_cap_macaroon::list_active consumes &dyn CapabilitySigner
+    /// for trait consistency — the unlock is required even on the
+    /// read path.
+    #[test]
+    fn tv_x_c_109_capability_action_signing_variants_carry_passphrase_stdin() {
+        let src = include_str!("commands/capability.rs");
+
+        for variant in &["    List {", "    Mint {", "    Attenuate {"] {
+            let start = src.find(variant).unwrap_or_else(|| {
+                panic!("CapabilityAction must have a {variant} variant (audit 4c(b) migration)")
+            });
+            let slice = &src[start..];
+            let end = slice.find("\n    },").unwrap_or(slice.len());
+            let body = &slice[..end];
+            assert!(
+                body.contains("passphrase_stdin: bool"),
+                "CapabilityAction {variant} must carry a passphrase_stdin: bool \
+                 clap field. Body: {body}"
+            );
+        }
+
+        let dispatch_start = src
+            .find("pub fn dispatch(action: &CapabilityAction")
+            .expect("CapabilityAction dispatch fn present");
+        let dispatch_slice = &src[dispatch_start..];
+        let dispatch_end = dispatch_slice.find("\n}\n").unwrap_or(dispatch_slice.len());
+        let dispatch_body = &dispatch_slice[..dispatch_end];
+        for arm in &[
+            "CapabilityAction::List {",
+            "CapabilityAction::Mint {",
+            "CapabilityAction::Attenuate {",
+        ] {
+            assert!(
+                dispatch_body.contains(arm),
+                "CapabilityAction dispatch must have an arm for {arm}"
+            );
+        }
+        assert!(
+            dispatch_body.contains("*passphrase_stdin"),
+            "CapabilityAction dispatch must thread *passphrase_stdin to the handlers. \
+             Got: {dispatch_body}"
+        );
+    }
+
+    /// tv_x_c_110 — octo capability list in no-TTY (the AC-10
+    /// pre-flight in acquire_passphrase) yields WalletLocked at
+    /// exit 92. RUNTIME: the source vectors pin the wiring, but the
+    /// runtime check confirms the actual no-TTY behavior. A
+    /// refactor that wires acquire_passphrase AFTER the wallet
+    /// store open would surface as a different exit (Internal or
+    /// NoOctoHome), not WalletLocked.
+    #[test]
+    fn tv_x_c_110_capability_list_in_no_tty_yields_wallet_locked() {
+        let cli = cli_with_mode_for_4cb(crate::flags::OperatorMode::Human);
+        let err = crate::commands::capability::list(&[], false, &cli)
+            .expect_err("capability list in no-TTY without --passphrase-stdin must fail at the AC-10 pre-flight");
+        assert!(
+            matches!(err, crate::error::OctoCliError::WalletLocked),
+            "capability list no-TTY must yield WalletLocked (the AC-10 pre-flight), got {err:?}"
+        );
+        assert_eq!(
+            err.exit_code(),
+            92,
+            "WalletLocked is the slot-92 family; the runtime exit must be 92. \
+             A different exit means the gate is at a different layer than documented."
+        );
+    }
+
+    /// tv_x_c_111 — octo governance attest in no-TTY without
+    /// --passphrase-stdin yields WalletLocked at exit 92. RUNTIME:
+    /// same shape as tv_x_c_110. The Attest dispatch arm threads
+    /// the operator's flag through to the handler; in no-TTY the
+    /// AC-10 pre-flight returns WalletLocked BEFORE
+    /// WalletStore::open is called (the helper is the
+    /// per-call-passphrase gate; the store would otherwise open in
+    /// a clean HOME and surface NoOctoHome, exit 27).
+    #[test]
+    fn tv_x_c_111_governance_attest_in_no_tty_yields_wallet_locked() {
+        use crate::commands::governance::{dispatch, GovernanceAction};
+        let cli = cli_with_mode_for_4cb(crate::flags::OperatorMode::Human);
+        // Construct a minimal Attest variant. The dry-run short
+        // -circuit is bypassed (we want the acquire_passphrase
+        // gate to fire). confirm: true is required to pass the
+        // require_confirm gate; allow_stale: false skips the two
+        // stale-override gates. snapshot_id_hex is None so step
+        // (b) of the stale gate is also skipped.
+        let action = GovernanceAction::Attest {
+            subject_did: "did:octo:test-subject".to_string(),
+            kind_ref: "test-kind".to_string(),
+            evidence_path: None,
+            evidence_hash_hex: None,
+            expires_at_unix: None,
+            snapshot_id_hex: None,
+            allow_stale: false,
+            dry_run: false,
+            confirm: true,
+            confirm_acknowledge: false,
+            passphrase_stdin: false,
+        };
+        let err = dispatch(&action, &cli)
+            .expect_err("governance attest in no-TTY without --passphrase-stdin must fail at the AC-10 pre-flight");
+        assert!(
+            matches!(err, crate::error::OctoCliError::WalletLocked),
+            "governance attest no-TTY must yield WalletLocked (the AC-10 pre-flight), got {err:?}"
+        );
+        assert_eq!(
+            err.exit_code(),
+            92,
+            "WalletLocked is the slot-92 family; the runtime exit must be 92. \
+             A different exit means the gate is at a different layer than documented."
         );
     }
 

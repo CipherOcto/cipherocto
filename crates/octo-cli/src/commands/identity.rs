@@ -1935,7 +1935,7 @@ impl CapabilitySigner for DevSigner {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::flags::OperatorModeFlags;
 
@@ -1949,7 +1949,7 @@ mod tests {
     /// needles would then match the vector's own literals and the
     /// vector would go green with the handler gutted. `expect` on both
     /// markers turns that into a loud failure instead.
-    fn fn_body<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
+    pub(crate) fn fn_body<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
         let from = src
             .find(start)
             .unwrap_or_else(|| panic!("start marker not found in production source: {start}"));
@@ -2119,7 +2119,7 @@ mod tests {
     /// spaces of the same length rather than deleted, so byte offsets
     /// into the result still index the same character of the input and
     /// a failure message points at the right place.
-    fn fn_body_code(src: &str, start: &str, end: &str) -> String {
+    pub(crate) fn fn_body_code(src: &str, start: &str, end: &str) -> String {
         let body = fn_body(src, start, end);
         let bytes = body.as_bytes();
         let mut out: Vec<u8> = bytes.to_vec();
@@ -2321,8 +2321,14 @@ mod tests {
     /// panics rather than silently reintroducing the self-reference.
     fn production_src() -> &'static str {
         let src = include_str!("identity.rs");
+        // The test module boundary marker is `pub(crate) mod tests {`
+        // (made crate-visible for the 4c(b) error::tests reuse of the
+        // comment-stripping helpers). The boundary match is what keeps
+        // source-query vectors honest: if the marker is ever removed,
+        // the helper panics rather than silently reintroducing the
+        // self-reference.
         let end = src
-            .find("\n#[cfg(test)]\nmod tests {")
+            .find("\n#[cfg(test)]\npub(crate) mod tests {")
             .expect("test module boundary present in identity.rs");
         &src[..end]
     }
@@ -5944,7 +5950,7 @@ mod tests {
         // files lost a vector, so an entry that DID move shows up
         // there too.
         assert_eq!(
-            declared, 141,
+            declared, 149,
             "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
              added, raise this count in the SAME commit; if one was removed, put it \
              back."

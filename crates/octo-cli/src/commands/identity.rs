@@ -503,27 +503,36 @@ pub(crate) fn map_wallet_open_error(e: octo_wallet::WalletError) -> OctoCliError
     }
 }
 
-/// Map `WalletError::NotActive` to the appropriate `OctoCliError` based on
-/// the lifecycle state substrate reported.
-///
-/// Per R1 review LAYER-04, the CLI does NOT pre-decide rotation/revocation
-/// eligibility from `lifecycle` (which would leak Layer C → B). The CLI
-/// trusts substrate's `NotActive { current_state }` and translates
-/// `Revoked` / `Rotating` to the matching operator-facing variant.
-#[cfg(test)]
-fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
-    match e {
-        octo_wallet::WalletError::NotActive {
-            current_state: octo_wallet::LifecycleState::Revoked,
-        } => OctoCliError::AlreadyRevoked,
-        octo_wallet::WalletError::NotActive {
-            current_state: octo_wallet::LifecycleState::Rotating,
-        } => OctoCliError::AlreadyRotating,
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => crate::error::map_hsm_error(&e.to_string()),
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
-    }
-}
+// `WalletError::NotActive` mapping is NOT reimplemented here. A
+// `#[cfg(test)]` twin of it used to sit at this position with three
+// vectors named after it, and the twin is a trap rather than a
+// convenience:
+//
+//   - Production routes every `NotActive` through
+//     `OctoCliError::from`, which is the `From<WalletError>` impl in
+//     `crate::error`. The twin is `#[cfg(test)]`, so no production
+//     binary contains it and no production call site can reach it.
+//   - The twin and the impl DISAGREE outside the `NotActive` family.
+//     The twin's wildcard arm sends everything else to `Internal`;
+//     the impl maps the lifecycle refusal family to
+//     `IdentityTransitionRefused` at exit 43. A reader comparing the
+//     two would draw a conclusion about exit codes that production does
+//     not implement.
+//   - Its three vectors would have kept passing if the real coverage
+//     were deleted. `tv_x_44b_not_active_field_discriminator_respected`
+//     in `crate::error` is the load-bearing vector: it goes through
+//     `.into()` - the path production actually takes - and asserts the
+//     exit code as well as the variant. Measured in R11: changing the
+//     impl's `NotActive { Revoked }` arm from `AlreadyRevoked` to
+//     `AlreadyRotating` fails `tv_x_44b` and nothing else.
+//
+// The R1 property those three vectors were written for - that the
+// substrate's `current_state` discriminator decides the CLI variant
+// rather than the CLI pre-deciding eligibility from `lifecycle` - is
+// unchanged and is what `tv_x_44b` pins. A second implementation of a
+// decision is a parallel abstraction, and a test against the wrong one
+// of the two is the failure mode this codebase has now paid for
+// twice.
 
 /// Block Auditor mode from opening the wallet for any identity operation.
 ///
@@ -3280,41 +3289,15 @@ mod tests {
     // of which contain the asserted guard pattern unless the production
     // code itself does.
 
-    /// CORR-01 / CORR-02 / SEC-12 / LAYER-04: `NotActive` must NOT map to
-    /// `HsmUnavailable`. State-aware mapping translates the lifecycle
-    /// state into the matching `OctoCliError` variant.
-    #[test]
-    fn map_not_active_error_revoked_yields_already_revoked() {
-        let e = octo_wallet::WalletError::NotActive {
-            current_state: octo_wallet::LifecycleState::Revoked,
-        };
-        assert!(matches!(
-            map_not_active_error(e),
-            OctoCliError::AlreadyRevoked
-        ));
-    }
-
-    #[test]
-    fn map_not_active_error_rotating_yields_already_rotating() {
-        let e = octo_wallet::WalletError::NotActive {
-            current_state: octo_wallet::LifecycleState::Rotating,
-        };
-        assert!(matches!(
-            map_not_active_error(e),
-            OctoCliError::AlreadyRotating
-        ));
-    }
-
-    #[test]
-    fn map_not_active_error_other_yields_no_active_identity() {
-        let e = octo_wallet::WalletError::NotActive {
-            current_state: octo_wallet::LifecycleState::Designated,
-        };
-        assert!(matches!(
-            map_not_active_error(e),
-            OctoCliError::NoActiveIdentity
-        ));
-    }
+    // CORR-01 / CORR-02 / SEC-12 / LAYER-04 - `NotActive` must NOT map to
+    // `HsmUnavailable`, and the substrate's `current_state` must decide
+    // the CLI variant rather than the CLI pre-deciding eligibility from
+    // `lifecycle` (which would leak Layer C into B). Those three vectors
+    // were removed in R11 alongside the `#[cfg(test)]` twin they called.
+    // The property is unchanged and is pinned by
+    // `tv_x_44b_not_active_field_discriminator_respected` in
+    // `crate::error`, which goes through `.into()` - the path production
+    // takes - and asserts the exit code as well as the variant.
 
     /// SEC-11: wallet-open errors must be sanitized.
     #[test]

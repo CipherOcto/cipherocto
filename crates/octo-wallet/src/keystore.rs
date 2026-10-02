@@ -386,27 +386,39 @@ mod tests {
         assert!(json.contains("argon2id"));
     }
 
-    /// Cross-implementation interop test (m102 box 7, RFC-0102 §Starkli
-    /// Keystore Divergence).
+    /// Upstream-tool read check (m102 §Starkli-compat keystore box 7,
+    /// RFC-0102 §Starkli Keystore Divergence).
     ///
-    /// The earlier form passed vacuously when the `starkli` CLI was not on
-    /// PATH, which is the failure mode m102 §Starkli-compat keystore box 7
-    /// records. The test is `#[ignore]`-gated so a default `cargo test`
-    /// does not run it; running `cargo test -- --ignored starkli_cross_impl`
-    /// invokes the external `starkli` CLI to round-trip an exported file
-    /// through the upstream tool. If `starkli` is absent, the test now
-    /// fails-closed via `panic!` (Rust's test harness has no SKIPPED
-    /// outcome, so an early `return` would be reported as PASS — the
-    /// exact vacuous-pass failure mode the criterion names). The
-    /// `#[ignore]` gate means the panic only fires when an operator
-    /// explicitly opts in via `cargo test -- --ignored`; default CI runs
-    /// never see this test. The fix-closed posture is the
-    /// substrate-faithful answer for environments without the upstream
-    /// tool: they cannot pass the cross-impl check without the tool
-    /// present.
+    /// **This is NOT a cross-implementation roundtrip, and the name
+    /// changed to stop it reading as one.** The earlier form was called
+    /// `starkli_cross_impl_roundtrip` and its comment claimed it
+    /// "round-trip[s] an exported file through the upstream tool". It did
+    /// not. Measured: the test passes against a stub on PATH that reads
+    /// no file, prints nothing, and exits 0. What it observes of the
+    /// upstream tool is its **exit code** — stdout is discarded by this
+    /// test's own step 3, which reads back the envelope the substrate
+    /// just wrote. So the cross-implementation properties this criterion
+    /// exists to establish — that the Argon2id parameters above really
+    /// match Starkli v0.3+ defaults, that the cipher interoperates, that
+    /// the public key Starkli derives is ours — are established by
+    /// nothing. The `ARGON2_*` constants carry the claim in a comment and
+    /// are asserted by no test in the tree.
+    ///
+    /// Box 7 is un-checked for the same reason. Closing it honestly needs
+    /// a genuine upstream-produced keystore fixture, which this
+    /// environment cannot supply: there is no `starkli` binary and no
+    /// network to fetch one. A fixture this repository authored would
+    /// be circular — it would test the substrate against itself, which is
+    /// what the previous form already did.
+    ///
+    /// What the test does still earn its keep: it fails-closed when the
+    /// tool is absent (Rust's harness has no SKIPPED outcome, so an early
+    /// `return` would report as PASS), and it confirms the upstream tool
+    /// parses the envelope without error. It is `#[ignore]`-gated, so
+    /// default CI runs never execute it.
     #[test]
     #[ignore = "requires `starkli` CLI on PATH; run via cargo test -- --ignored"]
-    fn starkli_cross_impl_roundtrip() {
+    fn starkli_cli_reads_envelope() {
         // Probe PATH for the upstream CLI. A missing CLI must fail the
         // test, not pass it via early-return. Rust's `#[test]` framework
         // reports an early `return` as PASS, which is the vacuous-pass
@@ -420,9 +432,9 @@ mod tests {
         };
         assert!(
             starkli_present,
-            "starkli_cross_impl_roundtrip requires the `starkli` CLI on PATH; \
+            "starkli_cli_reads_envelope requires the `starkli` CLI on PATH; \
              install starkli v0.3+ and re-run with \
-             `cargo test -- --ignored starkli_cross_impl`. Rust's test \
+             `cargo test -- --ignored starkli_cli_reads_envelope`. Rust's test \
              harness has no SKIPPED outcome, so this test fails-closed \
              rather than silently passing when the upstream tool is absent."
         );
@@ -439,11 +451,11 @@ mod tests {
             .expect("substrate export");
 
         // 2. Invoke `starkli keystore inspect <path>` (or a comparable
-        //    read-only verb available in v0.3+) so the upstream tool reads
-        //    the file and prints the public key. We tolerate either
-        //    `inspect` or `show` as the verb because the upstream CLI has
-        //    shipped both across minor versions; the assertion only fires
-        //    when the public key matches.
+        //    read-only verb available in v0.3+) so the upstream tool parses
+        //    the file. We tolerate either `inspect` or `show` as the verb
+        //    because the upstream CLI has shipped both across minor
+        //    versions. Only the exit code is consulted — see the test's
+        //    doc comment for why that is not an interop check.
         let inspect = std::process::Command::new(starkli_path)
             .args(["keystore", "inspect", "--path"])
             .arg(&path)
@@ -472,12 +484,13 @@ mod tests {
                 .unwrap_or_default(),
         );
 
-        // 3. Public-key check: the substrate writes the public key as hex
-        //    in the `public_key` field of the JSON envelope, so the hex
-        //    string the upstream tool would print must match the substrate's
-        //    view. We do a structural match against the envelope bytes
-        //    rather than parsing the upstream CLI's stdout, because the
-        //    output format has shifted across minor versions.
+        // 3. Self-consistency check, and it is a SELF check: the substrate
+        //    wrote the `public_key` field of this envelope from the same
+        //    `key`, so comparing the envelope against `public_before`
+        //    compares the substrate to itself. The upstream tool's stdout
+        //    is not read here. This assertion is retained because it does
+        //    catch a malformed export, but it establishes no cross-
+        //    implementation property and must not be read as one.
         let envelope = std::fs::read_to_string(&path).expect("envelope read");
         let expected_hex = hex_encode(&public_before);
         assert!(

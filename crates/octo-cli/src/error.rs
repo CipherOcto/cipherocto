@@ -2856,9 +2856,8 @@ mod tests {
         // carry the sites from sites 4-6; those are migrated in
         // audit-4c(b) Phases 2-3 and the contract is tightened
         // further in the same commits.
-        const CONTRACTED: [(&str, usize); 3] = [
+        const CONTRACTED: [(&str, usize); 2] = [
             ("capability.rs", 1),
-            ("governance.rs", 2),
             ("agent.rs", 1),
         ];
 

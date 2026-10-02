@@ -208,6 +208,16 @@ pub enum GovernanceAction {
         /// accidental stale-override).
         #[arg(long)]
         confirm_acknowledge: bool,
+        /// Read the wallet passphrase from stdin instead of an
+        /// interactive prompt. Refused unless `--allow-stdin-secret`
+        /// is also set (operator guard against unattended secret
+        /// reads; exit 15). 4c(b) audit migration: the substrate's
+        /// only legitimate pre-signing access path is
+        /// `WalletStore::unlock(passphrase)`; the production
+        /// `WalletSignerAdapter::new(identity)` call now routes
+        /// through `unlocked.active_identity().clone()`.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// Cast a vote on a proposal (RFC-0011-g §7.4
     /// `vote()` substrate signature). Mutations require
@@ -256,6 +266,16 @@ pub enum GovernanceAction {
         /// signature.
         #[arg(long, value_name = "text")]
         rationale: Option<String>,
+        /// Read the wallet passphrase from stdin instead of an
+        /// interactive prompt. Refused unless `--allow-stdin-secret`
+        /// is also set (operator guard against unattended secret
+        /// reads; exit 15). 4c(b) audit migration: the substrate's
+        /// only legitimate pre-signing access path is
+        /// `WalletStore::unlock(passphrase)`; the production
+        /// `WalletSignerAdapter::new(identity)` call now routes
+        /// through `unlocked.active_identity().clone()`.
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
 }
 
@@ -287,6 +307,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             dry_run,
             confirm,
             confirm_acknowledge,
+            passphrase_stdin,
         } => attest_handler(
             subject_did.clone(),
             kind_ref.clone(),
@@ -298,6 +319,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             *dry_run,
             *confirm,
             *confirm_acknowledge,
+            *passphrase_stdin,
             cli,
         ),
         GovernanceAction::Vote {
@@ -311,6 +333,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             confirm,
             confirm_acknowledge,
             rationale,
+            passphrase_stdin,
         } => vote_handler(
             proposal_id_hex.clone(),
             vote_choice.clone(),
@@ -322,6 +345,7 @@ pub fn dispatch(action: &GovernanceAction, cli: &Octo) -> Result<(), OctoCliErro
             *confirm,
             *confirm_acknowledge,
             rationale.clone(),
+            *passphrase_stdin,
             cli,
         ),
     }
@@ -502,6 +526,7 @@ fn attest_handler(
     dry_run: bool,
     confirm: bool,
     confirm_acknowledge: bool,
+    passphrase_stdin: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     // --dry-run: validate envelope + return preview without
@@ -603,20 +628,32 @@ fn attest_handler(
     };
 
     // Wallet-backed signer adapter.
-    let store = octo_wallet::WalletStore::open().map_err(|e| {
+    //
+    // 4c(b) audit migration: the production signing path now
+    // routes through `WalletStore::unlock(passphrase)` rather than
+    // the metadata-only `try_active_identity` stub. The substrate's
+    // `&dyn CapabilitySigner` interface still consumes an owned
+    // `IdentityKey`, which `unlocked.active_identity().clone()`
+    // provides (cheap Arc clone — `IdentityKey` wraps
+    // `Arc<dyn HsmAdapter>`).
+    let passphrase = super::identity::acquire_passphrase(cli, "governance attest", passphrase_stdin)?;
+    let mut store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let identity = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-        // R23: delegate to the `From<WalletError>` table. `Hsm` is
-        // overridden above and `NotActive` above that; everything
-        // else belongs to the table, which already maps `Locked` to
-        // `WalletLocked` at exit 92. See the note at the capability
-        // call sites.
-        other => OctoCliError::from(other),
-    })?;
-    let signer = WalletSignerAdapter::new(identity);
+    let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+    let unlocked = store
+        .unlock(passphrase.as_str(), seed_buf.as_mut())
+        .map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+            // R23: delegate to the `From<WalletError>` table. `Hsm` is
+            // overridden above and `NotActive` above that; everything
+            // else belongs to the table, which already maps `Locked` to
+            // `WalletLocked` at exit 92. See the note at the capability
+            // call sites.
+            other => OctoCliError::from(other),
+        })?;
+    let signer = WalletSignerAdapter::new(unlocked.active_identity().clone());
     let signer_did = signer.signer_did();
 
     // Substrate v2 call: build a GovernanceSession with the
@@ -673,6 +710,7 @@ fn vote_handler(
     confirm: bool,
     confirm_acknowledge: bool,
     rationale: Option<String>,
+    passphrase_stdin: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     // Fail-fast: weight_bps must be bounded at 10_000 (100%):
@@ -769,20 +807,31 @@ fn vote_handler(
         None
     };
 
-    let store = octo_wallet::WalletStore::open().map_err(|e| {
+    // 4c(b) audit migration: the production signing path now
+    // routes through `WalletStore::unlock(passphrase)` rather than
+    // the metadata-only `try_active_identity` stub. The substrate's
+    // `&dyn CapabilitySigner` interface still consumes an owned
+    // `IdentityKey`, which `unlocked.active_identity().clone()`
+    // provides (cheap Arc clone — `IdentityKey` wraps
+    // `Arc<dyn HsmAdapter>`).
+    let passphrase = super::identity::acquire_passphrase(cli, "governance vote", passphrase_stdin)?;
+    let mut store = octo_wallet::WalletStore::open().map_err(|e| {
         OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
     })?;
-    let identity = store.try_active_identity().map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-        // R23: delegate to the `From<WalletError>` table. `Hsm` is
-        // overridden above and `NotActive` above that; everything
-        // else belongs to the table, which already maps `Locked` to
-        // `WalletLocked` at exit 92. See the note at the capability
-        // call sites.
-        other => OctoCliError::from(other),
-    })?;
-    let signer = WalletSignerAdapter::new(identity);
+    let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
+    let unlocked = store
+        .unlock(passphrase.as_str(), seed_buf.as_mut())
+        .map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
+            // R23: delegate to the `From<WalletError>` table. `Hsm` is
+            // overridden above and `NotActive` above that; everything
+            // else belongs to the table, which already maps `Locked` to
+            // `WalletLocked` at exit 92. See the note at the capability
+            // call sites.
+            other => OctoCliError::from(other),
+        })?;
+    let signer = WalletSignerAdapter::new(unlocked.active_identity().clone());
     let signer_did = signer.signer_did();
 
     // Substrate v2 call: build a GovernanceSession with the
@@ -1603,6 +1652,7 @@ mod tests {
             false,
             true,
             false,
+            false,
             &test_octo(OperatorMode::Auditor, true),
         );
         assert!(
@@ -1622,6 +1672,7 @@ mod tests {
             Some("ab".repeat(32)),
             None,
             None,
+            false,
             false,
             false,
             false,
@@ -1686,6 +1737,7 @@ mod tests {
             true,
             false,
             None,
+            false,
             &test_octo(OperatorMode::Auditor, true),
         );
         assert!(
@@ -1708,6 +1760,7 @@ mod tests {
             false,
             false,
             None,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1795,6 +1848,7 @@ mod tests {
             true,  // dry_run=true
             false, // confirm=false — should be bypassed
             false,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         // Substrate-faithful: dry-run performs envelope parse
@@ -1822,6 +1876,7 @@ mod tests {
             true, // dry_run
             false,
             false,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1846,6 +1901,7 @@ mod tests {
             false, // confirm=false — should be bypassed
             false,
             None,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1871,6 +1927,7 @@ mod tests {
             false,
             false,
             None,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(
@@ -1895,6 +1952,7 @@ mod tests {
             true,  // confirm=true
             false,
             None,
+            false,
             &test_octo(OperatorMode::Human, true),
         );
         assert!(
@@ -1919,6 +1977,7 @@ mod tests {
             false,
             false,
             None,
+            false,
             &test_octo(OperatorMode::Human, false),
         );
         assert!(

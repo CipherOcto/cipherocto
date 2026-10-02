@@ -237,13 +237,22 @@ impl Vault {
         let path = self.slot_path(slot_id);
         let tmp = path.with_extension("vault.tmp");
         {
-            let mut f = fs::File::create(&tmp)?;
+            // 0o600 FROM BIRTH. `File::create` would apply the umask
+            // (0o664 here) and the chmod below would only close the
+            // window AFTER the rename put this ciphertext at its
+            // final path - so a process that died in between left
+            // the sealed seed readable to every local user. See
+            // `fs_perms::create_private`.
+            let mut f = crate::fs_perms::create_private(&tmp)?;
             f.write_all(&json)?;
             f.sync_all()?;
         }
         fs::rename(&tmp, &path)?;
         #[cfg(unix)]
         {
+            // Redundant on any normal umask - `create_private`
+            // already produced 0o600 - and correcting on a umask so
+            // restrictive it stripped owner bits. Kept deliberately.
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         }

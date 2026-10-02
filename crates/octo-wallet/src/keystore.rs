@@ -304,7 +304,10 @@ impl StarkliCompat {
             .map_err(|e| WalletError::KeystoreParse(format!("keystore serialize: {e}")))?;
         let tmp = path.with_extension("keystore.tmp");
         {
-            let mut f = fs::File::create(&tmp)?;
+            // 0o600 FROM BIRTH - see `fs_perms::create_private`. The
+            // post-rename chmod below is retained deliberately, so
+            // the file is never readable at any instant it exists.
+            let mut f = crate::fs_perms::create_private(&tmp)?;
             f.write_all(&json)?;
             f.sync_all()?;
         }

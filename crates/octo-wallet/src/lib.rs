@@ -16,6 +16,7 @@ pub mod agent;
 pub mod capability;
 pub mod cli_fns;
 pub mod error;
+pub mod fs_perms;
 pub mod hsm;
 pub mod identity;
 pub mod identity_record;

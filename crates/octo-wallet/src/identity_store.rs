@@ -1578,7 +1578,11 @@ pub(crate) fn write_index_atomically(root: &Path, index: &WalletIndex) -> Result
     let json = serde_json::to_vec(index)
         .map_err(|e| WalletError::KeystoreParse(format!("store.json serialize: {e}")))?;
     {
-        let mut f = fs::File::create(&tmp)?;
+        // 0o600 FROM BIRTH - see `fs_perms::create_private`. The index
+        // names every DID in the store, and `File::create` would have
+        // it at 0o664 under this umask for the window between the
+        // rename and the chmod below.
+        let mut f = crate::fs_perms::create_private(&tmp)?;
         f.write_all(&json)?;
         f.sync_all()?;
     }
@@ -1594,6 +1598,27 @@ pub(crate) fn write_index_atomically(root: &Path, index: &WalletIndex) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serialises the tests that mutate `$OCTO_HOME` / `$HOME`.
+    ///
+    /// `std::env::set_var` and `remove_var` are PROCESS-global, and
+    /// the test harness runs tests in parallel threads inside one
+    /// process. Three tests here compose a store root out of those two
+    /// variables, so without this lock any of them can observe the
+    /// others' values: the symptom is a vector that fails on some runs
+    /// and passes on others, with no code change between them.
+    ///
+    /// Poisoning is recovered from rather than propagated - one
+    /// panicking test must not turn every later env test into a
+    /// spurious lock-poison failure, which would replace a real flake
+    /// with a fake one.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     #[test]
     fn wallet_index_default_is_empty() {
@@ -2198,6 +2223,9 @@ mod tests {
     /// `$HOME`-backed root.
     #[test]
     fn tv_x_9_octo_home_takes_precedence_over_home() {
+        // ENV_LOCK: this test composes a root from process-global
+        // vars, so it must not overlap another that does the same.
+        let _env = env_guard();
         let octo_dir = tempfile::tempdir().expect("octo");
         let home_dir = tempfile::tempdir().expect("home");
         let prev_octo = std::env::var_os("OCTO_HOME");
@@ -2238,6 +2266,9 @@ mod tests {
     /// a `$HOME` problem they do not have.
     #[test]
     fn tv_x_27_an_empty_octo_home_is_refused_rather_than_falling_back() {
+        // ENV_LOCK: this test composes a root from process-global
+        // vars, so it must not overlap another that does the same.
+        let _env = env_guard();
         let home_dir = tempfile::tempdir().expect("home");
         let prev_octo = std::env::var_os("OCTO_HOME");
         let prev_home = std::env::var_os("HOME");
@@ -2290,6 +2321,9 @@ mod tests {
     /// refuses everything, which is a different defect.
     #[test]
     fn tv_x_28_neither_variable_set_refuses_at_the_store() {
+        // ENV_LOCK: this test composes a root from process-global
+        // vars, so it must not overlap another that does the same.
+        let _env = env_guard();
         let prev_octo = std::env::var_os("OCTO_HOME");
         let prev_home = std::env::var_os("HOME");
         std::env::remove_var("OCTO_HOME");
@@ -4458,6 +4492,88 @@ mod tests {
             handle.did(),
             &second,
             "unlock must resolve the identity select moved the pointer to"
+        );
+    }
+
+    /// Every test that mutates `$OCTO_HOME` or `$HOME` takes
+    /// `ENV_LOCK`.
+    ///
+    /// `std::env::set_var` and `remove_var` are process-global and the
+    /// harness runs tests in parallel threads, so an env-composing
+    /// test that does not take the lock interleaves with one that
+    /// does. The symptom is a vector whose result depends on thread
+    /// scheduling rather than on the code: measured at roughly one
+    /// run in six, and the VICTIM MOVED between runs - `tv_x_28` in
+    /// one run, `tv_x_27` in the next - which is the signature of a
+    /// race rather than of a defect in either test.
+    ///
+    /// A flaky vector is worse than an absent one, because its green
+    /// is not evidence. The lock is therefore not optional for a
+    /// future env test, and this vector is what makes that stick: the
+    /// obvious repair for a red run is to re-run it, and a re-run
+    /// usually goes green.
+    ///
+    /// It matches the CALL form `env::set_var(` rather than the bare
+    /// word. A comment that says "restore with set_var" is not a
+    /// mutation, and an earlier draft of this vector reported four
+    /// offenders where there were three - the fourth was a doc
+    /// comment in `tv_x_66` that mentions the mutator in prose.
+    ///
+    /// HONEST LIMIT: it checks that the guard is PRESENT, not that it
+    /// is held for the whole body. A test that took the guard and
+    /// dropped it early would pass.
+    #[test]
+    fn tv_x_74_every_env_mutating_test_takes_the_env_lock() {
+        const SELF: &str = "tv_x_74_every_env_mutating_test_takes_the_env_lock";
+        let lines: Vec<&str> = include_str!("identity_store.rs").lines().collect();
+
+        // A block runs from a `fn tv_x_` declaration to the next one.
+        // Line indices, not byte offsets: a byte-span version of this
+        // drifted and merged neighbouring bodies, which is how the
+        // false positive above got in.
+        let starts: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.trim_start().starts_with("fn tv_x_"))
+            .map(|(i, _)| i)
+            .collect();
+
+        let mut unlocked: Vec<String> = Vec::new();
+        for (n, &from) in starts.iter().enumerate() {
+            let to = starts.get(n + 1).copied().unwrap_or(lines.len());
+            let name = lines[from]
+                .trim()
+                .trim_start_matches("fn ")
+                .split('(')
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            if name == SELF {
+                continue;
+            }
+            // Comment lines are dropped before BOTH checks. This
+            // vector's own doc comment names the mutator in order to
+            // describe the match, and it sits between tv_x_66 and
+            // this fn, so an unfiltered scan reads tv_x_66 as a fourth
+            // offender. A comment is never executed, and a comment
+            // claiming a guard must not satisfy the guard check
+            // either.
+            let code: Vec<&str> = lines[from..to]
+                .iter()
+                .copied()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect();
+            let mutates = code
+                .iter()
+                .any(|l| l.contains("env::set_var(") || l.contains("env::remove_var("));
+            if mutates && !code.iter().any(|l| l.contains("env_guard()")) {
+                unlocked.push(name);
+            }
+        }
+        assert!(
+            unlocked.is_empty(),
+            "a test that mutates process-global env must hold ENV_LOCK, or it \
+             interleaves with every other test that does. Missing the guard: {unlocked:?}"
         );
     }
 }

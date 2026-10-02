@@ -5717,7 +5717,7 @@ mod tests {
     /// encode, and it is the reason a trailing letter is captured
     /// rather than truncated.
     ///
-    /// Scans all five files that declare a `tv_x_*` fn, across both
+    /// Scans every file that declares a `tv_x_*` fn, across both
     /// crates. It lives in the Layer C crate because it must read
     /// Layer B's source, and C depends on B - never the reverse.
     /// `include_str!` rather than a runtime directory walk, so the
@@ -5728,8 +5728,19 @@ mod tests {
     /// `SOURCES` is outside this check. The count assertion below
     /// catches a vector removed from - or moved out of - the scanned
     /// set, because that lowers the total; it cannot see a vector
-    /// added to a sixth file. Re-derive `SOURCES` from the tree if
-    /// a new file ever gains a `tv_x_*` fn.
+    /// added to a SEVENTH file. Re-derive `SOURCES` from the tree
+    /// if a new file ever gains a `tv_x_*` fn.
+    ///
+    /// That limit is not hypothetical, and this comment is the
+    /// record of how it was paid: the round that added
+    /// `fs_perms.rs` added its vector to the new file and left
+    /// `SOURCES` at five entries, so the file the round itself
+    /// created was the one file outside the round's own check. The
+    /// count assertion DID catch it - 127 became 129 - but it
+    /// reports a bare arithmetic mismatch, so the reader has to
+    /// work out that the cause is an unscanned file rather than an
+    /// added or removed vector. Both edits land in the same commit
+    /// below, and that co-location is the whole mechanism.
     #[test]
     fn tv_x_c_89_no_vector_id_is_claimed_by_two_test_functions() {
         const SOURCES: &[(&str, &str)] = &[
@@ -5743,6 +5754,10 @@ mod tests {
             (
                 "octo-wallet/cli_fns.rs",
                 include_str!("../../../octo-wallet/src/cli_fns.rs"),
+            ),
+            (
+                "octo-wallet/fs_perms.rs",
+                include_str!("../../../octo-wallet/src/fs_perms.rs"),
             ),
         ];
 
@@ -5807,9 +5822,13 @@ mod tests {
         // assertion above alone would pass - and a removed vector is
         // the failure mode a collision check is least likely to catch
         // by eye. Renumbering without a matching count edit fails
-        // here.
+        // here. It also fires when a vector lands in a file this
+        // vector does not scan, which is the SOURCES-staleness
+        // signal - `per_file` in the message names which scanned
+        // files lost a vector, so an entry that DID move shows up
+        // there too.
         assert_eq!(
-            declared, 127,
+            declared, 129,
             "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
              added, raise this count in the SAME commit; if one was removed, put it \
              back."

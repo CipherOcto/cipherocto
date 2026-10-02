@@ -685,11 +685,15 @@ impl WalletStore {
         if succ_seed.len() < 32 {
             return Err(WalletError::VaultDecryptionFailed);
         }
-        let mut succ_arr = [0u8; 32];
+        let mut succ_arr = zeroize::Zeroizing::new([0u8; 32]);
         succ_arr.copy_from_slice(&succ_seed[..32]);
         // `Zeroizing` wipes the buffer on drop, so both the short-read
-        // return above and this one leave nothing behind.
-        let succ_key = IdentityKey::from_seed(succ_arr);
+        // return above and this one leave nothing behind. R26: that
+        // sentence was true of `succ_seed` and false of `succ_arr`,
+        // which was a plain array and so left the seed on the stack
+        // on every path out of this function. See the note on
+        // `seed_arr` in `unlock`.
+        let succ_key = IdentityKey::from_seed(*succ_arr);
         // BINDING CHECK. The vault slot is chosen by
         // `succ_record.pubkey_bytes`, and the DID is the index
         // key - but nothing tied the two together, so an index
@@ -821,7 +825,37 @@ impl WalletStore {
         //    caller-owned buffer is zeroized after the copy so the
         //    seed's lifetime is exactly the handle lifetime. Mission
         //    §AC-20 asserts this zeroize via `tv_x_17`.
-        let mut seed_arr = [0u8; 32];
+        //
+        //    R26: that paragraph was true of `seed_out` and silent
+        //    about `seed_arr`, which is where the seed actually lives
+        //    for the rest of this function. It was a plain `[u8; 32]`,
+        //    so every one of the five returns below - the short-read
+        //    refusal, the vault error, the `AlreadyRevoked` refusal
+        //    from `from_seed_with_lifecycle`, the `IndexCorrupt`
+        //    refusal, and success - left 32 bytes of the decrypted
+        //    identity seed in the stack frame. The `AlreadyRevoked`
+        //    path is not exotic: `revoke` leaves the active pointer
+        //    naming the revoked record, so every later signing
+        //    command reaches it, and it returns with the seed
+        //    unwiped.
+        //
+        //    The crate already depends on `zeroize` for exactly this
+        //    (RFC-0009 §Security Considerations, per the Cargo.toml
+        //    rationale) and `rehydrate_successor_key` two hundred
+        //    lines up uses `Zeroizing` for the same job. The
+        //    obligation was held everywhere except the two places
+        //    that hold the seed itself.
+        //
+        //    Residue, recorded rather than claimed closed: passing
+        //    `*seed_arr` to `from_seed_with_lifecycle` copies the
+        //    array into the argument slot, and that copy is a plain
+        //    local inside the callee. Closing it means taking the
+        //    seed by reference, which changes the signature RFC-0011-x
+        //    §Detailed Design pins as taking it by value - a spec
+        //    change, and the maintainer's call rather than this
+        //    round's. What is closed here is the long-lived local,
+        //    which is the one that spans the vault I/O in step 6.
+        let mut seed_arr = zeroize::Zeroizing::new([0u8; 32]);
         if seed_out.len() < 32 {
             for byte in seed_out.iter_mut() {
                 *byte = 0;
@@ -902,7 +936,7 @@ impl WalletStore {
         let successor_did = in_flight.as_ref().map(|e| e.successor_did.clone());
 
         let mut key = IdentityKey::from_seed_with_lifecycle(
-            seed_arr,
+            *seed_arr,
             record.lifecycle,
             activated_at,
             revoked_at,
@@ -4710,6 +4744,62 @@ mod tests {
             unlocked.is_empty(),
             "a test that mutates process-global env must hold ENV_LOCK, or it \
              interleaves with every other test that does. Missing the guard: {unlocked:?}"
+        );
+    }
+    /// R26: the two locals that hold the decrypted seed are
+    /// zeroize-guarded.
+    ///
+    /// Source-level because stack memory is not observable from a test.
+    /// The R11 precedent for a cfg-gated block applies equally to a
+    /// drop-order property. The behavioural half that IS observable,
+    /// `seed_out` on every return path, is already pinned by `tv_x_17`
+    /// and `tv_x_18`, so this covers the copy the substrate makes for
+    /// itself.
+    ///
+    /// Scoped to each function's own body, ending BEFORE the test
+    /// module. A whole-file `contains` would be satisfied by this
+    /// vector's own assertion strings, which is the failure the R20
+    /// and R23 rounds each hit separately.
+    #[test]
+    fn tv_x_75_the_seed_locals_are_zeroize_guarded() {
+        let src = include_str!("identity_store.rs");
+
+        let slice = |from: &str, to: &str| -> String {
+            let start = src
+                .find(from)
+                .unwrap_or_else(|| panic!("{from} must exist in identity_store.rs"));
+            let rest = &src[start..];
+            let end = rest
+                .find(to)
+                .unwrap_or_else(|| panic!("{to} must follow {from} in identity_store.rs"));
+            rest[..end].to_string()
+        };
+
+        // The primary seed local in `unlock`.
+        let unlock = slice("pub fn unlock<'a>(", "pub struct UnlockedWallet");
+        assert!(
+            unlock.contains("let mut seed_arr = zeroize::Zeroizing::new([0u8; 32]);"),
+            "`unlock` copies the decrypted seed into a local, so that local must be \
+             zeroize-guarded or the seed outlives the call on every return path. Got: {unlock}"
+        );
+        // And it must be the SEED local, not merely a Zeroizing
+        // somewhere in the function - the vault buffer is a different
+        // type with a different lifetime.
+        assert!(
+            !unlock.contains("let mut seed_arr = [0u8; 32];"),
+            "the plain-array spelling is exactly the defect; both may not be present: {unlock}"
+        );
+
+        // The successor seed local in `rehydrate_successor_key`.
+        let succ = slice("fn rehydrate_successor_key(", "pub fn unlock<'a>(");
+        assert!(
+            succ.contains("let mut succ_arr = zeroize::Zeroizing::new([0u8; 32]);"),
+            "`rehydrate_successor_key` holds a second seed for the rotation successor and \
+             must guard it the same way. Got: {succ}"
+        );
+        assert!(
+            !succ.contains("let mut succ_arr = [0u8; 32];"),
+            "the plain-array spelling is exactly the defect; both may not be present: {succ}"
         );
     }
 }

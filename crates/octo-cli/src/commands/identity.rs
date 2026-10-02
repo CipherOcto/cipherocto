@@ -5834,7 +5834,7 @@ mod tests {
         // files lost a vector, so an entry that DID move shows up
         // there too.
         assert_eq!(
-            declared, 135,
+            declared, 136,
             "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
              added, raise this count in the SAME commit; if one was removed, put it \
              back."

@@ -4988,4 +4988,87 @@ mod tests {
              local literal: {window}"
         );
     }
+
+    // -----------------------------------------------------------------
+    // R10 Lens-1: the two `<not-read: dry-run>` corrections and the
+    // `i64::MIN` registered-at sentinel could each be deleted with the
+    // suite green, which would put an empty `lifecycle_state` and a
+    // 1970-01-01 `registered_at` back into preview envelopes.
+    //
+    // Source assertions again, for the reason `tv_x_c_71` gives: the
+    // envelope is rendered to stdout and the arm is not separately
+    // callable. What is added here on top of the call-site assertions
+    // is a RUNTIME half on the conversion, because the reason the
+    // sentinel is `i64::MIN` and not `0` is a fact about the
+    // conversion and can be checked directly. Between the two, a
+    // consumer's question - "what does a preview actually emit?" - is
+    // answered from both ends.
+
+    #[test]
+    fn tv_x_c_73_a_preview_says_a_value_was_unread_rather_than_emitting_a_placeholder() {
+        let src = production_src();
+
+        for (handler, next, label) in [
+            ("pub fn register(", "pub fn select(", "register"),
+            ("pub fn select(", "pub fn list(", "select"),
+        ] {
+            let body = fn_body_code(src, handler, next);
+            assert!(
+                body.contains("if cli.mode.dry_run {"),
+                "{label} must branch on dry_run before shaping the envelope: {body}"
+            );
+            assert!(
+                body.contains("lifecycle_state = \"<not-read: dry-run>\".to_string();"),
+                "{label} must overwrite lifecycle_state with the unread sentinel under dry_run. \
+                 The empty string is not a member of the documented Designated / Active / Rotating \
+                 / Revoked set, so dropping this override puts an out-of-set value in a preview \
+                 envelope: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn tv_x_c_74_the_registered_at_sentinel_is_unformattable_and_zero_is_not() {
+        let src = production_src();
+        let body = fn_body_code(src, "pub fn register(", "pub fn select(");
+
+        // The dry-run arm of the fact tuple, anchored on the tuple
+        // itself rather than on a brace. A brace search finds the
+        // first inner `else` - there are several in this arm - and a
+        // window computed from the wrong one asserts about a seed-file
+        // length check. The tuple is the thing being claimed.
+        let guard = body
+            .find("let register_facts = if !cli.mode.dry_run {")
+            .expect("register must gate its substrate work on dry_run");
+        let tuple_at = body
+            .find("(String::new(), String::new(), String::new(), false, i64::MIN)")
+            .unwrap_or_else(|| {
+                panic!(
+                    "the dry-run arm must supply the full unread tuple ending in the i64::MIN \
+                     sentinel, so the envelope carries null rather than a time. Body: {body}"
+                )
+            });
+        assert!(
+            tuple_at > guard,
+            "the dry-run tuple must belong to the gated arm, not precede it: {body}"
+        );
+
+        // Why the sentinel and not zero, measured rather than
+        // asserted. This is the half a source vector cannot give: the
+        // claim that `0` would have been a lie is a claim about
+        // `from_timestamp`, and it is checkable in one line.
+        assert!(
+            unix_to_rfc3339(i64::MIN).is_none(),
+            "the sentinel must be unformattable, so a preview emits null. It formatted, which \
+             means the sentinel is a real instant and the epoch lie is back"
+        );
+        let zero = unix_to_rfc3339(0).expect("zero is a real Unix second");
+        assert_eq!(
+            zero.timestamp(),
+            0,
+            "zero formats to 1970-01-01, a VALID RFC 3339 timestamp indistinguishable from an \
+             identity genuinely registered at the epoch. This is what the sentinel exists to \
+             avoid, and it is why the sentinel is i64::MIN and not 0"
+        );
+    }
 }

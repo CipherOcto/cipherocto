@@ -1109,8 +1109,11 @@ pub fn register(
         // it just wrote. A second `Utc::now()` here re-reads the
         // clock and drifts from the persisted value, so the envelope
         // and `store.json` disagree on when the identity was
-        // registered.
-        registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0),
+        // registered. Routed through the same helper every other
+        // timestamp in this module uses, so the conversion has one
+        // spelling and an out-of-range value renders as `null` here
+        // exactly as it does on the rotation paths.
+        registered_at: unix_to_rfc3339(registered_at_unix),
         active_now,
     };
     let env = if cli.mode.dry_run {
@@ -2537,7 +2540,7 @@ mod tests {
         // spelling-bound negative control is what makes the conjunct
         // above falsifiable.
         assert!(
-            reg.contains("registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0)")
+            reg.contains("registered_at: unix_to_rfc3339(registered_at_unix)")
                 && reg.contains("record.registered_at_unix,")
                 && !reg.contains("registered_at: chrono::Utc::now()"),
             "registered_at must be derived from the substrate's own registered_at_unix - a \

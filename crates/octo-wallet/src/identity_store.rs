@@ -365,9 +365,13 @@ impl WalletStore {
         //    `IdentityTransitionRefused` at slot 93, which an
         //    earlier revision of this comment claimed and which
         //    the CLI's `From<WalletError>` does not do. Exit 6 is
-        //    also what a genuinely revoked record returns, so the
-        //    operator message covers both causes rather than
-        //    asserting one.
+        //    also what a genuinely revoked record returns, so both
+        //    conditions share the slot; the message on BOTH
+        //    `WalletError::AlreadyRevoked` and
+        //    `OctoCliError::AlreadyRevoked` names both causes. It
+        //    used to name only revocation here while the CLI named
+        //    both, so a substrate-level reader was told their
+        //    identity had been revoked when it had not been.
         if self
             .index
             .records
@@ -3232,5 +3236,47 @@ mod tests {
         // Config guard in open() is reachable and the CLI's exit-27
         // mapping is live rather than dead code.
         assert_ne!(root.as_os_str().is_empty(), sentinel.as_os_str().is_empty());
+    }
+
+    /// `AlreadyRevoked` is reached from two conditions that have
+    /// nothing to do with each other, and the message must not pick
+    /// one.
+    ///
+    /// `register` on a DID already in the index returns this, and so
+    /// does `activate` on a record in the terminal `Revoked`
+    /// lifecycle. The substrate message said "identity already
+    /// revoked; cannot activate" - the second condition's wording
+    /// applied to the first - so a plain re-registration told the
+    /// operator their identity had been revoked. `OctoCliError`
+    /// already named both causes, so the two layers also disagreed
+    /// about the same error.
+    ///
+    /// Asserts the absence of the revocation-only claim rather than
+    /// the presence of any particular wording, so rewording the
+    /// message does not require touching this vector but reverting to
+    /// a single-cause claim does fail it.
+    #[test]
+    fn tv_x_57_duplicate_registration_is_not_reported_as_a_revocation() {
+        let msg = WalletError::AlreadyRevoked.to_string();
+
+        assert!(
+            !msg.contains("cannot activate"),
+            "the message must not describe the activate path, which is only one of the two \
+             conditions that return this variant. Got {msg:?}"
+        );
+        assert!(
+            !msg.contains("already revoked;"),
+            "the message must not read as a revocation claim on its own - a duplicate \
+             registration is not a revocation and the substrate cannot know which happened. \
+             Got {msg:?}"
+        );
+
+        // Both causes must be nameable, or the operator is left
+        // guessing which one applies to them.
+        assert!(
+            msg.contains("revoked") && msg.contains("registered"),
+            "the message must name both causes, since the variant carries no payload to \
+             disambiguate. Got {msg:?}"
+        );
     }
 }

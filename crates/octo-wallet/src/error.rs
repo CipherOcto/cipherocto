@@ -75,7 +75,16 @@ pub enum WalletError {
     NotActive { current_state: LifecycleState },
 
     /// `activate()` called on a `Revoked` identity (terminal state).
-    #[error("identity already revoked; cannot activate")]
+    /// Two distinct conditions share this variant: `activate()` on a
+    /// record already in the `Revoked` lifecycle (terminal), and
+    /// `register` whose DID is already in the index. The message
+    /// names both. It previously said only "already revoked; cannot
+    /// activate", which is the second condition's message applied to
+    /// the first - so a re-registration told the operator their
+    /// identity had been revoked, a fact the substrate does not know
+    /// and cannot assert. `OctoCliError::AlreadyRevoked` was widened
+    /// for this reason and the two layers disagreed.
+    #[error("identity already revoked or already registered")]
     AlreadyRevoked,
 
     /// `activate()` called while identity is in the `Rotating` state.

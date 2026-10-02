@@ -177,11 +177,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             seed_out,
         } => {
             let id = IdentityKey::generate()?;
-            std::fs::write(&seed_out, id.seed_bytes_for_hkdf()?)?;
-            #[cfg(unix)]
+            // The raw master seed, written through the substrate's
+            // permission primitive so it is 0o600 from birth.
+            // `std::fs::write` would create it at `0o666 & !umask`
+            // (0o664 here) and leave it readable to every local user
+            // until the chmod below - and readable for good if the
+            // process dies in between. This is the only writer in the
+            // crate that emits the RAW seed rather than ciphertext,
+            // and it was the one writer the primitive never reached.
             {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&seed_out, std::fs::Permissions::from_mode(0o600))?;
+                use std::io::Write as _;
+                let mut f = octo_wallet::fs_perms::create_private(&seed_out)?;
+                f.write_all(&id.seed_bytes_for_hkdf()?)?;
+                f.sync_all()?;
             }
             let nt: NodeType = node_type.into();
             eprintln!(

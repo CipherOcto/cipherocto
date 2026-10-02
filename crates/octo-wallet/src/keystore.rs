@@ -317,6 +317,8 @@ impl StarkliCompat {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
+        // Make the rename durable - see `fs_perms::sync_parent_dir`.
+        crate::fs_perms::sync_parent_dir(path);
         Ok(())
     }
 }

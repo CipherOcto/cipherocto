@@ -1592,6 +1592,10 @@ pub(crate) fn write_index_atomically(root: &Path, index: &WalletIndex) -> Result
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     }
+    // Make the rename durable - see `fs_perms::sync_parent_dir`. The
+    // index is the second of the two renames `register` performs, and
+    // it is the one that can land without the slot it names.
+    crate::fs_perms::sync_parent_dir(&path);
     Ok(())
 }
 
@@ -2459,15 +2463,28 @@ mod tests {
         );
     }
 
-    /// `tv_x_18` (mission §AC-26 atomic write): `register`
+    /// `tv_x_18` (mission §AC-35 atomic write): `register`
     /// writes atomically via write-temp + rename, so a crash
     /// mid-write leaves either the previous or the new
     /// `store.json`, never a partial. Verified indirectly: the
     /// read-back always parses as a complete index because
     /// either the rename completed or the temp file remains
-    /// under the unrenamed name. The substrate also `sync_all`
-    /// the parent directory so the rename is durable across
-    /// power loss.
+    /// under the unrenamed name. The substrate also syncs the
+    /// parent directory after the rename, so the directory
+    /// entry is durable across power loss.
+    ///
+    /// Two corrections to what this comment used to say, and both
+    /// mattered. It cited §AC-26, which is the revoked-record
+    /// terminality guards; the atomic-write criterion is AC-35.
+    /// And it asserted the parent-directory sync that the
+    /// substrate did not perform - so the one sentence a reviewer
+    /// reads to decide whether crash-durability is covered was
+    /// describing a check nobody made. `write_index_atomically`
+    /// now calls `fs_perms::sync_parent_dir`, which is
+    /// BEST-EFFORT by design: a filesystem that refuses to sync a
+    /// directory is not an error, so the guarantee is "synced where
+    /// the filesystem supports it". See that function for why
+    /// propagating there would be worse.
     #[test]
     fn tv_x_68_store_json_parses_after_register() {
         let dir = tempfile::tempdir().expect("tempdir");

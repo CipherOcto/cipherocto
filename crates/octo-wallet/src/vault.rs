@@ -256,6 +256,13 @@ impl Vault {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         }
+        // `sync_all` above persisted the ciphertext; the RENAME is a
+        // directory entry, and a directory entry is only durable once
+        // the parent directory has been synced. `register` seals this
+        // slot and then writes the index, so without this a power cut
+        // can lose either rename independently - including the one
+        // that leaves the index naming a DID whose seed slot is gone.
+        crate::fs_perms::sync_parent_dir(&path);
         // Zeroize derived key.
         key.zeroize();
         Ok(())

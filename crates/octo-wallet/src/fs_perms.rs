@@ -1,9 +1,16 @@
 //! Filesystem permission primitives shared by the substrate's writers.
 //!
-//! One primitive, three callers: the sealed seed slot (`vault`), the
-//! index (`identity_store`), and the keystore (`keystore`). They each
-//! write a secret-bearing file through a temp path and a rename, and
-//! each needs the file to be `0o600` at every instant it exists.
+//! One primitive, four callers: the sealed seed slot (`vault`), the
+//! index (`identity_store`), the keystore (`keystore`), and the
+//! `octo-wallet` binary's `init` seed export. They each write a
+//! secret-bearing file, and each needs it to be `0o600` at every
+//! instant it exists.
+//!
+//! The binary is the odd one out: it writes DIRECTLY, with no temp
+//! path and no rename, so it has no rename to make durable and needs
+//! only `create_private`. It is listed here anyway, because it is the
+//! only writer of the RAW MASTER SEED - the other three write
+//! ciphertext, the index, or the keystore.
 
 use std::fs::File;
 use std::io;
@@ -34,24 +41,82 @@ use std::path::Path;
 /// token this way, and its doc comment names this the
 /// substrate-faithful contract. This is the same primitive on the
 /// substrate side, so the two cannot drift apart silently.
+///
+/// `pub` rather than `pub(crate)` because the `octo-wallet` binary is
+/// a SEPARATE crate target and cannot reach a `pub(crate)` item. It
+/// is the only writer of the raw master seed, so it needs this
+/// primitive; giving it a private inline `OpenOptions` instead would
+/// be a second copy of the same rule, which is how the two halves
+/// drift apart in the first place.
 #[cfg(unix)]
-pub(crate) fn create_private(path: &Path) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
+pub fn create_private(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(path)
+        .open(path)?;
+    // `OpenOptionsExt::mode` applies ONLY at create time. If the path
+    // already exists - a `.vault.tmp` left behind at a permissive mode
+    // by a build predating this primitive - the truncate above reuses
+    // the old inode and its old mode, and the file would stay
+    // group-readable. Force the mode on the way out so the name
+    // `create_private` is true unconditionally rather than only for
+    // paths that did not exist. Cheap: one syscall on a path that is
+    // about to be written and renamed anyway.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(f)
 }
 
 /// Non-Unix has no POSIX mode to request, so plain creation is the
 /// whole contract. The callers' post-rename arms are themselves
 /// `#[cfg(unix)]`, so behaviour off Unix is unchanged.
 #[cfg(not(unix))]
-pub(crate) fn create_private(path: &Path) -> io::Result<File> {
+pub fn create_private(path: &Path) -> io::Result<File> {
     std::fs::File::create(path)
 }
+
+/// Make the rename that published `path` durable across power loss.
+///
+/// `File::sync_all` on the temp file persists the DATA BLOCKS.
+/// `rename` creates a DIRECTORY ENTRY, and a directory entry is only
+/// durable once the parent directory itself has been synced. Without
+/// this, `register` can return `Ok(())` having sealed the slot and
+/// written the index, and a power cut can lose either or both
+/// renames - independently and in either order. The state that
+/// survives is then an index naming a DID whose sealed seed is gone,
+/// which is the orphan shape the substrate has handling paths for,
+/// arriving by a route those paths do not model.
+///
+/// The same repository already settled this: `octo-whatsapp`'s
+/// atomic-write path syncs the parent directory and names the reason
+/// in a comment. This is that call, on the substrate side.
+///
+/// HONEST LIMIT, and it is a real one: this is BEST-EFFORT. A
+/// filesystem that refuses to open or sync a directory (some network
+/// and FUSE mounts) is not treated as an error, because by this point
+/// the rename has already succeeded and the bytes are correct -
+/// returning `Err` would report a write that did in fact land, and
+/// would make the store unusable on storage it can otherwise handle.
+/// The guarantee is therefore "the entry is synced on filesystems
+/// that support it", not "the entry is always synced". No test can
+/// observe an `fsync`, so nothing here is pinned by a vector; that is
+/// stated rather than papered over with a source-grep that would only
+/// pin a spelling.
+#[cfg(unix)]
+pub fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+}
+
+/// Windows has no directory handle to sync, so the durability
+/// caveat is Unix-only and this is the whole contract off it.
+#[cfg(not(unix))]
+pub fn sync_parent_dir(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +151,18 @@ mod tests {
     /// correct - its residual window is on a temp name no reader is
     /// told - so the limit does not hide a defect this vector should
     /// have caught.
+    ///
+    /// SECOND HONEST LIMIT, and this one is about the vector rather
+    /// than the code. The source half matches the literal text
+    /// `create_private(&tmp)`, so renaming the local `tmp` to
+    /// anything else - behaviourally identical, still private from
+    /// birth - fails this vector. Verified: renaming the local in
+    /// `vault::put` fails exactly this one test. It is deliberately
+    /// not loosened, because a wider pattern match is weaker at
+    /// catching the real regression; but the failure mode to know
+    /// about is a FALSE POSITIVE, so a red here means "the vector
+    /// matched a spelling", not "the fix regressed". The behavioural
+    /// half is the part that carries the property.
     #[cfg(unix)]
     #[test]
     fn tv_x_73_every_secret_writer_creates_its_temp_file_private() {
@@ -107,7 +184,31 @@ mod tests {
             "create_private must yield 0o600 with no chmod in the call, got {mode:o}"
         );
 
-        // Source: all three writers route the temp file through it.
+        // Behavioural: a pre-existing permissive file is corrected,
+        // not inherited. `OpenOptionsExt::mode` applies only at create
+        // time, so without the post-open force a `.vault.tmp` left at
+        // 0o664 by a build predating this primitive is truncated in
+        // place and STAYS group-readable.
+        let stale = dir.path().join("stale.tmp");
+        std::fs::write(&stale, b"left behind").expect("seed stale file");
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o664))
+            .expect("widen stale file");
+        let mut f = create_private(&stale).expect("create_private over stale");
+        f.write_all(b"resealed").expect("write");
+        drop(f);
+        let stale_mode = std::fs::metadata(&stale)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            stale_mode, 0o600,
+            "create_private must correct a pre-existing permissive file rather than \
+             inherit its mode, got {stale_mode:o}"
+        );
+
+        // Source: the three temp-then-rename writers route the temp
+        // file through it.
         let writers: &[(&str, &str)] = &[
             ("vault.rs", include_str!("vault.rs")),
             ("keystore.rs", include_str!("keystore.rs")),
@@ -126,5 +227,25 @@ mod tests {
                  mode is 0o600 before the rename, not only after it."
             );
         }
+
+        // Source: the binary, which writes DIRECTLY and is the only
+        // writer of the raw master seed. It is a separate `[[bin]]`
+        // crate target, so neither `cargo test --lib` nor the
+        // substrate's own suite compiles it - the defect this half
+        // pins is structurally invisible to every other check in the
+        // crate, which is why it needs a source assertion rather than
+        // a runtime one.
+        let bin_src = include_str!("bin/octo-wallet.rs");
+        assert!(
+            !bin_src.contains("std::fs::write(&seed_out"),
+            "bin/octo-wallet.rs writes the raw master seed with std::fs::write, which is \
+             born at 0o666 & !umask and only corrected by the chmod that follows. Route it \
+             through fs_perms::create_private."
+        );
+        assert!(
+            bin_src.contains("create_private(&seed_out"),
+            "bin/octo-wallet.rs must write the raw master seed through \
+             fs_perms::create_private so it is 0o600 from birth."
+        );
     }
 }

@@ -3702,6 +3702,99 @@ mod tests {
         );
     }
 
+    /// `tv_x_c_86` (R18) — the pastejacking canonical payloads bind
+    /// each label to the right value.
+    ///
+    /// Five vectors already assert that each mutating identity command
+    /// emits a canonical payload before any substrate call, and each
+    /// of them asserts the **format string**: `"would rotate: old_did={},
+    /// new_did={}, grace=24h"` is present. That is exactly the half a
+    /// transposition cannot change.
+    ///
+    /// Measured in R18: transposing the two DID arguments of the
+    /// `rotate` payload, the `label` and `seed_source` arguments of the
+    /// `register` payload, and the `did` and `reason` arguments of the
+    /// `revoke` payload each left **all 877 tests green**. The format
+    /// string is byte-identical in all three.
+    ///
+    /// Why the transposition is the defect and not a cosmetic slip:
+    /// the pastejacking defence exists so an operator reads, before
+    /// confirming, the exact identity that is about to be rotated away
+    /// from and the exact identity being rotated to. Transposed, the
+    /// `rotate` payload names the NEW identity as the one being
+    /// replaced. The defence is not weakened, it is inverted, and the
+    /// operator is shown a payload that is false in the one field the
+    /// defence exists to be true about. The register payload is the
+    /// same shape with a label and a seed source.
+    ///
+    /// On why a source vector is the right instrument here, which it is
+    /// not most of the time. The property is which expression fills
+    /// which hole, and there is no runtime path that observes it: the
+    /// echo goes to stderr, and a vector that captured it would assert
+    /// the rendered string, which is a weaker claim about the same
+    /// thing. What this vector does NOT catch, and the honest limit of
+    /// the form, is a rewrite that changes the template and its
+    /// arguments together into a consistently different payload — that
+    /// would pass here and is a different review question. What it
+    /// does catch is the one that matters: the labels survive and the
+    /// values behind them are swapped.
+    #[test]
+    fn tv_x_c_86_canonical_payloads_bind_each_label_to_the_right_value() {
+        // (format string, the argument text that must immediately
+        // follow it, and the label the arguments are bound to).
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "would rotate: old_did={}, new_did={}, grace=24h",
+                "old_did.0, new_did",
+                "the rotate payload must put the identity being replaced in old_did and the \
+                 identity being rotated to in new_did",
+            ),
+            (
+                "would register: label={}, activate={}, seed_source={}",
+                "label,",
+                "the register payload must put the operator's label in label and the resolved \
+                 seed source in seed_source",
+            ),
+            (
+                "would revoke: did={}, reason={}",
+                "did.0,",
+                "the revoke payload must put the identity being revoked in did and the \
+                 operator's reason in reason",
+            ),
+        ];
+        let src = production_src();
+        for (template, args, claim) in cases {
+            let at = src
+                .find(template)
+                .unwrap_or_else(|| panic!("canonical payload template absent: {template}"));
+            // The arguments follow the template inside the same
+            // `eprintln!` call. Bound the window at the closing paren
+            // of the macro so a later call cannot satisfy this.
+            let window_end = src[at..].find(");").map_or(src.len(), |i| at + i);
+            let window = &src[at..window_end];
+            assert!(
+                window.contains(args),
+                "{claim}. The template `{template}` is present, so the existing payload-presence \
+                 vectors pass, but the values behind it are bound in the wrong order. Window: \
+                 {window}"
+            );
+        }
+        // The register payload is the one case where the two
+        // transposable arguments are not adjacent, so the window
+        // above can be satisfied by the `label` alone. Assert the
+        // whole argument list once, explicitly.
+        let at = src
+            .find("would register: label={}, activate={}, seed_source={}")
+            .expect("register payload template present");
+        let window_end = src[at..].find(");").map_or(src.len(), |i| at + i);
+        let window = &src[at..window_end];
+        assert!(
+            window.contains("label,\n        activate,\n        seed_file"),
+            "the register payload's three arguments must stay in label, activate, seed_source \
+             order. Window: {window}"
+        );
+    }
+
     /// tv_x_c_3 — `register` handler must call `WalletStore::register`
     /// at the substrate boundary (substrate-faithful wrapper per
     /// mission 0011-x-wallet-store-cli §CLI dispatch wiring).

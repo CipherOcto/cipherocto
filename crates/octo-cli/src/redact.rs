@@ -1193,6 +1193,143 @@ mod tests {
         assert_eq!(out, format!("password={REDACTED_PW}"));
     }
 
+    /// `tv_red6_the_field_table_redacts_the_names_it_claims_to`.
+    ///
+    /// An earlier revision of this vector iterated `FIELD_TABLE`
+    /// and asserted every row redacted its own name. It was
+    /// **vacuous for the mutation it was written to catch**:
+    /// renaming a row to a near-miss spelling left it passing,
+    /// because the iteration reads the table it is checking, so a
+    /// renamed row is still tested — under its new name. Measured:
+    /// retargeting the `holder_did` and `envelope_id` rows left all
+    /// 556 tests green, this vector included.
+    ///
+    /// A correspondence vector has to carry one side of the
+    /// correspondence in the test. Here that is an independently
+    /// written list of the field names the table is supposed to
+    /// cover — which is why the earlier per-field vectors were
+    /// deleted rather than kept: they were a partial version of the
+    /// same list, and two partial lists drift in opposite
+    /// directions.
+    #[test]
+    fn tv_red6_the_field_table_redacts_the_names_it_claims_to() {
+        // The names the table is contracted to redact. Each entry
+        // is a field the redaction layer documents as carrying key
+        // material, a signature, a nonce, an identifier, or a
+        // secret payload. A name missing from `FIELD_TABLE` leaks.
+        const CONTRACTED: &[&str] = &[
+            "seed",
+            "seed_bytes",
+            "key",
+            "secret_key",
+            "private_key",
+            "priv",
+            "privkey",
+            "priv_key",
+            "privatekey",
+            "priv-key",
+            "pkey",
+            "skey",
+            "sig",
+            "signature",
+            "holder_sig",
+            "keypair",
+            "pair_code",
+            "paircode",
+            "pw",
+            "password",
+            "bearer",
+            "bearer_token",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "token",
+            "mnemonic",
+            "passphrase",
+            "pin",
+            "api_key",
+            "secret",
+            "payload",
+            "envelope_payload",
+            "forward_payload",
+            "nonce",
+            "envelope_id",
+            "agent_id",
+            "capability_root",
+            "holder_did",
+        ];
+        let secret = "zq7wickledown";
+        for field in CONTRACTED {
+            let row = FIELD_TABLE
+                .iter()
+                .find(|(name, _)| name == field)
+                .unwrap_or_else(|| {
+                    panic!("field `{field}` is contracted to be redacted but has no table row")
+                });
+            let json = format!("{{\"{field}\":\"{secret}\"}}");
+            for shape in [format!("{field}={secret}"), json] {
+                let out = redact_string(&shape);
+                assert!(
+                    !out.contains(secret),
+                    "field `{field}` did not redact its own value: {out}"
+                );
+                assert!(
+                    out.contains(row.1),
+                    "field `{field}` must produce its own marker {}, got: {out}",
+                    row.1
+                );
+            }
+        }
+    }
+
+    /// `tv_red4_passphrase_field_is_redacted`. The
+    /// `passphrase` row of the field table is the one the 0011-x
+    /// identity commands depend on: the passphrase a caller
+    /// supplies is carried in operator-visible envelopes, and
+    /// every other row in this table has a vector naming it while
+    /// this one had none. Mutating the row to a near-miss
+    /// spelling leaves all 553 CLI tests passing, so nothing
+    /// pinned it.
+    ///
+    /// The control asserts the value is gone rather than that a
+    /// marker is present. A vector asserting only the marker
+    /// would be satisfied by a redactor that emitted the marker
+    /// and the value, and the marker is the part that survives a
+    /// field-name miss.
+    #[test]
+    fn tv_red4_passphrase_field_is_redacted() {
+        for shape in [
+            r#"{"passphrase":"correct-horse-battery-staple"}"#,
+            "passphrase=correct-horse-battery-staple",
+        ] {
+            let out = redact_string(shape);
+            assert!(
+                !out.contains("correct-horse-battery-staple"),
+                "a passphrase must never survive redaction, got: {out}"
+            );
+            assert!(
+                out.contains(REDACTED_PASSPHRASE),
+                "the passphrase row must produce its own marker, got: {out}"
+            );
+        }
+    }
+
+    /// `tv_red5_payload_field_is_redacted`. The `payload` row
+    /// carries a comment saying operators must NEVER see raw
+    /// payload bytes on any log, receipt or debug surface. The
+    /// comment is a claim about behaviour and no vector checked
+    /// it; the assertion is that the bytes are gone.
+    #[test]
+    fn tv_red5_payload_field_is_redacted() {
+        for shape in [r#"{"payload":"deadbeefcafe"}"#, "payload=deadbeefcafe"] {
+            let out = redact_string(shape);
+            assert!(
+                !out.contains("deadbeefcafe"),
+                "a payload body must never survive redaction, got: {out}"
+            );
+        }
+    }
+
     #[test]
     fn redacts_seed_bytes_value() {
         let out = redact_string("seed_bytes=deadbeef");

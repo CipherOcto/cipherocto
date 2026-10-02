@@ -1049,6 +1049,32 @@ fn guide_caveats_expressions_all_parse() {
     );
 }
 
+/// The guide must not restate a variant's POSITION in `OctoCliError`.
+///
+/// The enum is `#[non_exhaustive]`, derives only `Error` and `Debug`
+/// (no `serde`, no explicit discriminants), and nothing in the
+/// workspace reads a variant's index. An index quoted in prose is
+/// therefore not a weaker version of a contract — it is not a
+/// contract at all, and it goes stale the first time a variant is
+/// inserted above it. Two such quotes existed and one was already
+/// wrong by two positions.
+#[test]
+fn guide_states_no_enum_variant_index() {
+    let text = guide_text();
+    for needle in ["enum index", "variant index", "enum position"] {
+        if let Some(at) = text.find(needle) {
+            let line_no = text[..at].matches('\n').count() + 1;
+            let line = text.lines().nth(line_no - 1).unwrap_or_default();
+            panic!(
+                "the guide states a variant index at line {line_no} ({needle}). `OctoCliError` is \
+                 #[non_exhaustive] with no stable discriminants and nothing reads a variant's \
+                 index, so a number quoted beside a variant name is not checkable and drifts on \
+                 insertion. Name the variant and its exit code instead. Offending line: {line}"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore]
 fn diagnostic_dump_caveats() {

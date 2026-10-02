@@ -252,10 +252,10 @@ The two switches are not symmetric, and the difference is deliberate. `CI=true` 
 ```mermaid
 flowchart TD
     A[mutating command] --> B{mode?}
-    B -->|Auditor| C[OctoCliError::AuditorDenied\n(enum index 1 per error.rs), exit 2]
+    B -->|Auditor| C[OctoCliError::AuditorDenied, exit 2]
     B -->|Human| D{--confirm\nAND --confirm-acknowledge?}
     B -->|Ci / Dev| E{--allow-write?}
-    D -->|no| F[OctoCliError::ConfirmationRequired\n(enum index 2 per error.rs), exit 2]
+    D -->|no| F[OctoCliError::ConfirmationRequired, exit 2]
     D -->|yes| G[proceed]
     E -->|no| F
     E -->|yes| G
@@ -263,6 +263,8 @@ flowchart TD
     H -->|yes| I[dry-run envelope, exit 0]
     H -->|no| J[apply mutation, exit 0]
 ```
+
+The variant _names_ are stated, not their positions in `OctoCliError`. That enum is `#[non_exhaustive]` with no stable discriminants and no `serde` representation, nothing in the codebase reads a variant's index, and an index restated in a diagram becomes wrong the first time a variant is inserted above it — which is exactly what had happened here. The exit code beside each name is the contract, and it is asserted by the error-mapping vectors.
 
 Dev mode also bypasses `--confirm-acknowledge` (the developer is the acknowledgement) but still requires `--allow-write`. `--dry-run` bypasses both confirmation gates — a preview grants no authority.
 

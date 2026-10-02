@@ -2936,15 +2936,32 @@ fn bind_envelope_rebind_preview(
 /// ORDER: redact first, truncate second. Truncating first would cut a
 /// bearer token in half, and the half that survives is no longer shaped
 /// like one — the redaction pass would then find nothing to redact and
-/// the secret would reach the envelope in shortened form. Redacting
-/// first means the truncation can at worst cut a `[REDACTED:…]` marker
-/// in half, which is cosmetic; the secret content is already gone.
+/// the secret would reach the envelope in shortened form.
 ///
 /// TRUNCATION is on a char boundary, not a byte index. `&reason[..MAX]`
 /// panicked on any reason whose UTF-8 codepoint straddled byte 80
 /// (79 ASCII bytes then a 2-byte `é` was enough), and `--reason` is an
 /// uncapped, unvalidated `String` clap arg. Same walk-back
 /// `cap_substrate_payload` uses.
+///
+/// R25: the char boundary is necessary and NOT sufficient. A marker is
+/// ASCII, so a truncation can land strictly INSIDE one and leave a
+/// partial. Measured: 72 filler bytes plus a bearer token produced
+/// `[REDACTE` — a prefix of `[REDACTED:bearer]` that a consumer
+/// scanning for the real marker cannot match, and that reads as a
+/// redaction that did not complete. The previous comment here called
+/// that "cosmetic" on the grounds that the secret is already gone,
+/// which is true of the SECRET and false of the MARKER: the mark is how
+/// a consumer knows a redaction happened at all. `sanitize_substrate_error`
+/// already treats the identical condition as a defect — its own doc
+/// says a partial marker "reads as a scrub succeeded when it did not" —
+/// so this function was applying R23's hazard and R24's reassurance to
+/// the same transformation.
+///
+/// So the walk-back continues past the char boundary, to the start of
+/// any marker the cut would have bisected. An unterminated `[` in the
+/// retained head is the tell: markers are `[…]`-delimited, so a `[`
+/// with no `]` after it in the head means the cut fell inside one.
 fn redact_reason(reason: &str) -> String {
     const MAX: usize = 80;
     let redacted = redact_string(reason);
@@ -2954,6 +2971,15 @@ fn redact_reason(reason: &str) -> String {
     let mut end = MAX;
     while end > 0 && !redacted.is_char_boundary(end) {
         end -= 1;
+    }
+    // Do not emit half a marker. If the retained head carries an
+    // unterminated `[`, the cut fell inside a `[…]` marker, so retreat
+    // to before its opening bracket. The `...` suffix still follows, so
+    // the operator can see that something was removed.
+    if let Some(open) = redacted[..end].rfind('[') {
+        if !redacted[open..end].contains(']') {
+            end = open;
+        }
     }
     let mut out = String::with_capacity(end + 3);
     out.push_str(&redacted[..end]);
@@ -7537,5 +7563,85 @@ mod tests {
             Some("invalid_peer_did".to_string())
         );
         assert_eq!(parsed2.timeout_ms, 5000);
+    }
+}
+
+#[cfg(test)]
+mod redact_reason_tests {
+    use super::redact_reason;
+
+    /// R25: truncation must not bisect a redaction marker.
+    ///
+    /// Swept rather than sampled. The defect needs the cut to land
+    /// inside a marker, and WHERE that is depends on the filler length,
+    /// so a single hand-picked input only pins one offset out of the
+    /// range that is broken. The sweep moves the filler one byte at a
+    /// time across the whole window, so every offset the cap can land
+    /// on is exercised.
+    ///
+    /// Two assertions, and the order matters. `!contains("[RED")` alone
+    /// would pass on an implementation that emitted no marker at all,
+    /// so the retained head is also required to carry a COMPLETE marker
+    /// whenever the input had one to redact — which is the property
+    /// that actually matters to a consumer: it must be able to see that
+    /// a redaction occurred.
+    #[test]
+    fn tv_x_c_97_truncation_never_bisects_a_redaction_marker() {
+        const MAX: usize = 80;
+        for pad in 0..200usize {
+            let mut input = "x".repeat(pad);
+            input.push_str("Bearer abcdef0123456789abcdef");
+            let out = redact_reason(&input);
+
+            assert!(
+                out.len() <= MAX + "...".len(),
+                "pad={pad}: output {} bytes exceeds the cap plus its marker",
+                out.len()
+            );
+            assert!(
+                !out.contains("abcdef0123456789abcdef"),
+                "pad={pad}: the token body leaked: {out:?}"
+            );
+
+            // A `[` with no `]` after it in the retained head is a
+            // bisected marker, whatever it spells.
+            if let Some(open) = out.find('[') {
+                assert!(
+                    out[open..].contains(']'),
+                    "pad={pad}: truncation emitted a partial marker, head {:?}",
+                    &out[..out.len().min(40)]
+                );
+            }
+        }
+    }
+
+    /// The specific offset R25 measured, pinned by name so the failure
+    /// is legible in CI output rather than only as a swept range.
+    ///
+    /// 72 filler bytes put the cut four bytes inside
+    /// `[REDACTED:bearer]`, and the pre-fix output was
+    /// `"…[REDACTE..."`. The assertion is that the head now stops
+    /// BEFORE the marker's opening bracket, not merely that the
+    /// half-marker is gone — a fix that deleted the whole reason would
+    /// satisfy the weaker form and lose the operator's text.
+    #[test]
+    fn tv_x_c_98_the_measured_offset_stops_before_the_marker() {
+        let mut input = "x".repeat(72);
+        input.push_str("Bearer abcdef0123456789abcdef");
+        let out = redact_reason(&input);
+
+        assert!(
+            !out.contains("[REDACTED") && !out.contains("[REDACTE"),
+            "pad=72 was the measured failure: a partial marker reached the envelope, got {out:?}"
+        );
+        assert!(
+            out.starts_with(&"x".repeat(72)),
+            "pad=72: the filler must survive intact; retreating past the marker must not \
+             discard the operator's text. Got {out:?}"
+        );
+        assert!(
+            out.ends_with("..."),
+            "pad=72: the retreat still has to tell the operator something was removed, got {out:?}"
+        );
     }
 }

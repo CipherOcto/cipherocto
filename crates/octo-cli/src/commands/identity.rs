@@ -5747,6 +5747,12 @@ mod tests {
             ("commands/identity.rs", include_str!("identity.rs")),
             ("error.rs", include_str!("../error.rs")),
             ("commands/vault.rs", include_str!("vault.rs")),
+            // R25: the two redaction vectors landed here, and this list
+            // did not name the file — which is the SOURCES-staleness
+            // case the count assertion below documents. Both ids were
+            // unique by inspection, but "unique by inspection" is the
+            // property this vector exists to replace.
+            ("commands/network.rs", include_str!("network.rs")),
             (
                 "octo-wallet/identity_store.rs",
                 include_str!("../../../octo-wallet/src/identity_store.rs"),
@@ -5828,7 +5834,7 @@ mod tests {
         // files lost a vector, so an entry that DID move shows up
         // there too.
         assert_eq!(
-            declared, 133,
+            declared, 135,
             "the tv_x vector count moved. {per_file:?}. If a vector was genuinely \
              added, raise this count in the SAME commit; if one was removed, put it \
              back."

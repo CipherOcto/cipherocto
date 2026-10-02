@@ -2478,11 +2478,39 @@ mod tests {
         /// `bound` is a runaway guard, not a window: no arm in this
         /// crate is anywhere near it, and exceeding it yields the whole
         /// remainder so the scan over- rather than under-reports.
+        ///
+        /// **R25: the terminator is the block that closes, not a comma
+        /// that may never come.** A block-bodied arm — `other => { … }`
+        /// — needs no trailing comma, so the previous form scanned
+        /// straight past the arm's own closing brace and kept consuming
+        /// the FOLLOWING arm until it happened to find a comma at depth
+        /// zero somewhere downstream. Measured: the governance
+        /// wildcard reordered above the `CacheError` arm and stripped of
+        /// its own scrub still passed this vector, because the window
+        /// inherited `sanitize_substrate_error` from the arm below it.
+        /// A blind spot described as removed rather than documented is
+        /// the same defect R24 found one level up.
+        ///
+        /// So the two arm shapes are terminated by two different rules,
+        /// and which one applies is decided by whether the arm ever
+        /// OPENED a block after the arrow:
+        ///
+        /// * opened a block — the arm ends when that block closes. The
+        ///   closing brace is the terminator, and a trailing comma if
+        ///   present is simply included.
+        /// * never opened a block — the arm is a bare expression and
+        ///   ends at the first comma at depth zero, which is what
+        ///   `other => OctoCliError::from(other),` needs.
+        ///
+        /// The second rule keeps the comma scan rather than returning on
+        /// the arrow's own line, because a method chain can continue
+        /// across lines at depth zero.
         fn arm_body(src: &str, start_line: usize) -> String {
             const BOUND: usize = 8_000;
             let mut out = String::new();
             let mut depth: i32 = 0;
             let mut after_arrow = false;
+            let mut opened_block = false;
             for line in src.lines().skip(start_line) {
                 if !after_arrow {
                     // A `=>` on the arm's own line opens the expression.
@@ -2502,28 +2530,38 @@ mod tests {
                         _ => {}
                     }
                 }
-                if after_arrow && depth <= 0 {
-                    // The arm's expression ends at the first comma at
-                    // bracket depth zero. Replaying the line's own
-                    // brackets finds it; a comma inside a `format!` or a
-                    // tuple is at depth > 0 and is not the terminator.
-                    let chunk = &out[before..];
-                    let mut local = 0i32;
-                    let terminator = chunk.char_indices().find_map(|(idx, c)| match c {
-                        '(' | '[' | '{' => {
-                            local += 1;
-                            None
-                        }
-                        ')' | ']' | '}' => {
-                            local -= 1;
-                            None
-                        }
-                        ',' if local == 0 => Some(idx),
-                        _ => None,
-                    });
-                    if let Some(idx) = terminator {
-                        out.truncate(before + idx);
+                if after_arrow {
+                    if depth > 0 {
+                        opened_block = true;
+                    } else if opened_block {
+                        // The block this arm opened has closed, so the
+                        // arm is over. Anything after this line belongs
+                        // to a different arm.
                         return out;
+                    } else {
+                        // A bare expression: end at the first comma at
+                        // depth zero. Replaying the line's own brackets
+                        // finds it; a comma inside a `format!` or a
+                        // tuple is at depth > 0 and is not the
+                        // terminator.
+                        let chunk = &out[before..];
+                        let mut local = 0i32;
+                        let terminator = chunk.char_indices().find_map(|(idx, c)| match c {
+                            '(' | '[' | '{' => {
+                                local += 1;
+                                None
+                            }
+                            ')' | ']' | '}' => {
+                                local -= 1;
+                                None
+                            }
+                            ',' if local == 0 => Some(idx),
+                            _ => None,
+                        });
+                        if let Some(idx) = terminator {
+                            out.truncate(before + idx);
+                            return out;
+                        }
                     }
                 }
                 if out.len() > BOUND {

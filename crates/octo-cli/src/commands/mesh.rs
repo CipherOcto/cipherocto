@@ -65,7 +65,21 @@
 //! substrate's method registry (keyed by RFC-allocated
 //! `payload_kind` UUIDs) is the canonical answer; unknown methods
 //! fail-closed at the substrate boundary with `MeshError::UnknownMethod`
-//! (CLI exit 17, shared with `InvalidTtlHops`).
+//! (CLI exit 19, via `EnvelopeAuthorizationFailed`).
+//!
+//! **On the exit numbers (R22 correction).** An earlier revision of this
+//! comment said "exit 17, shared with `InvalidTtlHops`" and cited
+//! RFC-0011-f. Both halves were false. `UnknownMethod` maps to
+//! `EnvelopeAuthorizationFailed` at 19, not 17, and 17 is
+//! `InvalidTtlHops`'s own code. Separately, RFC-0011-f §Exit Codes
+//! reserves a 27-31 band and puts `MeshError::UnknownMethod` at **31**.
+//! The band is not implemented: the mesh variants sit on 17-20, which
+//! RFC-0011-a and -b already own. That gap is a specification question
+//! for the RFC-0011-f owner and is deliberately NOT closed by editing
+//! these numbers, because moving four live exit codes is an
+//! operator-visible contract change and RFC-0011-f is already known to
+//! contradict its own table elsewhere. What is fixed here is the
+//! citation, which asserted a value the cited rows do not contain.
 
 use std::fs;
 use std::io::Write;
@@ -133,7 +147,7 @@ pub enum MeshAction {
     /// `HsmAdapter::sign`, sends via `NodeTransport::send_best`, and
     /// awaits a reply correlated via `envelope_id`. Method names
     /// are substrate-defined (no central enum per RFC-0011-f §RPC
-    /// Surface); unknown methods fail-closed with exit 17
+    /// Surface); unknown methods fail-closed with exit 19
     /// (`MeshError::UnknownMethod`). Two-step confirmation gate in
     /// Human mode per RFC-0011-f §Security Considerations 1a.
     Rpc {
@@ -143,7 +157,7 @@ pub enum MeshAction {
         #[arg(long = "peer-did", value_name = "DID")]
         peer_did: String,
         /// Method name (e.g. `quota.drain_queue`). Substrate-defined;
-        /// unknown methods fail-closed with exit 17.
+        /// unknown methods fail-closed with exit 19.
         #[arg(long, value_name = "METHOD")]
         method: String,
         /// Method parameters as JSON. Capped at 64 KiB at the CLI
@@ -1072,15 +1086,20 @@ fn invoke_rpc(
 /// §Error Handling:
 ///
 /// - `InvalidDidShape` → `IdentityNotFound` (exit 4).
-/// - `UnknownMethod` → `EnvelopeAuthorizationFailed` (exit 19, shared
-///   slot with `RpcTimeout` per amendment-chain slot allocation).
+/// - `UnknownMethod` → `EnvelopeAuthorizationFailed` (exit 19).
 ///   Rationale: an unknown method is functionally an authorization
 ///   failure from the operator's perspective — the target refused
 ///   the dispatch. Exit 19 surfaces the canonical
 ///   `EnvelopeAuthorizationFailed` hint which mentions audience +
 ///   signature verification, matching the "target rejected the
 ///   request" diagnostic family.
-/// - `RpcTimeout` → `RpcTimeout` (exit 20).
+///   (R22 correction: an earlier revision of this bullet read "exit 19,
+///   shared slot with `RpcTimeout` per amendment-chain slot
+///   allocation". `RpcTimeout` is at 20, not 19, so they were never in a
+///   shared slot here — and RFC-0011-f §Exit Codes puts BOTH at 30.
+///   See the module note on exit numbers.)
+/// - `RpcTimeout` → `RpcTimeout` (exit 20). RFC-0011-f §Exit Codes
+///   documents 30 for this variant. See the module note.
 /// - `NoOctoHome` → `NoOctoHome` (exit 27). Wave 5.5 F1 mapping:
 ///   substrate env-var resolution fail-closed surfaces the canonical
 ///   operator-facing variant at the same exit-code slot reserved by
@@ -1229,16 +1248,26 @@ mod tests {
         assert_eq!(
             r.err().unwrap().exit_code(),
             17,
-            "InvalidTtlHops MUST exit 17 per RFC-0011-f §Error Handling row 28"
+            "InvalidTtlHops exits 17 as shipped. NOT the RFC-0011-f \
+             §Error Handling row-28 slot — row 28 says 28, shared with \
+             InvalidEndpointScheme. R22 corrected this citation; the \
+             17-vs-28 gap is reported, not closed, and moving the code \
+             is the RFC-0011-f owner's call."
         );
     }
 
     #[test]
     fn mesh_forward_error_exit_codes_pinned() {
         // Pin the exit-code table for the three mesh-forward error
-        // variants added by RFC-0011-f. The amendment-chain slot
-        // allocation reserves 17/18/19 for mesh forward errors per
-        // RFC-0011-f §Exit Codes.
+        // variants added by RFC-0011-f.
+        //
+        // (R22 correction: an earlier revision of this comment said "the
+        // amendment-chain slot allocation reserves 17/18/19 for mesh
+        // forward errors per RFC-0011-f §Exit Codes". RFC-0011-f §Exit
+        // Codes reserves the 27-31 band, and its own variant table puts
+        // `InvalidTtlHops` at 28 and `MeshCapabilityInsufficient` at 29.
+        // The values asserted below are the shipped ones and are pinned
+        // deliberately; the citation is what was wrong.)
         assert_eq!(OctoCliError::InvalidTtlHops { hops: 9 }.exit_code(), 17);
         assert_eq!(
             OctoCliError::MeshCapabilityInsufficient { detail: "x".into() }.exit_code(),
@@ -1532,8 +1561,13 @@ mod tests {
     #[test]
     fn map_rpc_substrate_error_rpc_timeout_becomes_rpc_timeout() {
         // RFC-0011-f §Error Handling: `MeshError::RpcTimeout` →
-        // CLI `RpcTimeout` (exit 20). The amendment-chain slot
-        // allocation reserves 20 for the mesh rpc timeout.
+        // CLI `RpcTimeout` (exit 20). (R22 correction: an earlier
+        // revision of this comment said the amendment-chain slot
+        // allocation reserves 20. RFC-0011-f §Exit Codes reserves 30 for
+        // this variant — 20 is `ReputationNotFound`, a different RFC's
+        // slot. The value asserted below is the shipped one; the
+        // citation is corrected rather than the number, because the
+        // 27-31 band gap is a question for the RFC-0011-f owner.)
         let e = octo_mesh::MeshError::RpcTimeout {
             peer: "did:octo:zpeer".into(),
             method: "quota.drain_queue".into(),
@@ -1688,8 +1722,15 @@ mod tests {
     }
 
     /// Pin the exit-code contract for `NoOctoHome` at the mesh
-    /// surface (exit 27 per RFC-0011-f §Exit Codes amendment-chain
-    /// slot allocation).
+    /// surface (exit 27).
+    ///
+    /// (R22 correction: an earlier revision of this comment read "exit 27
+    /// per RFC-0011-f §Exit Codes amendment-chain slot allocation". That
+    /// citation was false. RFC-0011-f §Exit Codes row 27 is
+    /// `MeshIdentityUnknown` — an invalid peer DID shape — and says
+    /// nothing about home resolution. `NoOctoHome` is at 27 on RFC-0011's
+    /// own authority, not -f's. It therefore shares a code with
+    /// `MeshIdentityUnknown` without that share being recorded anywhere.)
     #[test]
     fn no_octo_home_exit_code_pinned() {
         assert_eq!(OctoCliError::NoOctoHome.exit_code(), 27);

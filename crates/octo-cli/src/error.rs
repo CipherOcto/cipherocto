@@ -2734,6 +2734,594 @@ mod tests {
         assert_eq!(OctoCliError::ClapParse(clap_err).exit_code(), 2);
     }
 
+    /// R22: the exit-code COLLISION SET, as a set.
+    ///
+    /// `tv_err4_exit_code_mapping` pins 51 of the 91 variants one at
+    /// a time. Per-variant pinning is structurally blind to a
+    /// collision: two variants that share a code each satisfy their
+    /// own row, and a NEW variant added to an already-occupied code
+    /// satisfies the new row too. Nothing about the row set observes
+    /// the shape of the set.
+    ///
+    /// This vector is the set-level view. It enumerates every variant
+    /// and asserts two things: which codes are shared, and exactly
+    /// which variants share each one. A new collision is a change to
+    /// that answer, so it fails here even though every individual
+    /// `exit_code()` assertion still passes.
+    ///
+    /// `CONTRACTED` is written by hand from the RFC-0011 exit-code
+    /// allocation, not derived from `exit_code()`'s own output. Deriving
+    /// it would be the code testing itself (R14) and would make this
+    /// vector unable to disagree with the implementation.
+    const CONTRACTED: &[(i32, &[&str])] = &[
+        (
+            2,
+            &[
+                "AuditorDenied",
+                "ClapParse",
+                "ConfirmationRequired",
+                "DevModeRequired",
+                "FileInputRejected",
+                "InvalidProposalState",
+                "InvalidReason",
+                "InvalidRoleSlug",
+                "NoActiveIdentity",
+                "NoAnchorVerifyInMode",
+                "WeakPassphrase",
+            ],
+        ),
+        (13, &["PermissionDenied", "PolicyNotFound"]),
+        (
+            17,
+            &[
+                "ForbiddenHolderMismatch",
+                "InvalidTtlHops",
+                "ReceiptNotFound",
+            ],
+        ),
+        (18, &["AuditReadFailed", "MeshCapabilityInsufficient"]),
+        (
+            19,
+            &["AuditResponseTooLarge", "EnvelopeAuthorizationFailed"],
+        ),
+        (20, &["ReputationNotFound", "RpcTimeout"]),
+        (26, &["ChainIdMismatch", "InvalidChainId"]),
+        (35, &["SignerMismatch", "SnapshotStale"]),
+        (36, &["GroupBindingRejected", "VoteRejected"]),
+        (
+            43,
+            &[
+                "AlreadyInTransition",
+                "IdentityTransitionRefused",
+                "InvalidStateTransition",
+            ],
+        ),
+        (
+            51,
+            &["GovernanceSubstrateError", "RuntimeSubstrateNotReady"],
+        ),
+        (53, &["AttachHandleExpired", "InvalidSinceCursor"]),
+    ];
+
+    #[test]
+    fn tv_x_c_91_exit_code_collision_set() {
+        // Every variant, constructed. Length asserted below, so a
+        // variant added to the enum without a row here fails the
+        // count rather than silently narrowing the set under test
+        // (R12: a name that resolves to nothing is indistinguishable
+        // from a deleted vector).
+        let all: Vec<(&str, OctoCliError)> = vec![
+            (
+                "ClapParse",
+                OctoCliError::ClapParse(clap::Error::new(clap::error::ErrorKind::InvalidValue)),
+            ),
+            ("NoActiveIdentity", OctoCliError::NoActiveIdentity),
+            (
+                "ConfirmationRequired",
+                OctoCliError::ConfirmationRequired {
+                    command: "x".to_string(),
+                },
+            ),
+            (
+                "AuditorDenied",
+                OctoCliError::AuditorDenied {
+                    command: "x".to_string(),
+                },
+            ),
+            ("AlreadyRotating", OctoCliError::AlreadyRotating),
+            (
+                "IdentityNotFound",
+                OctoCliError::IdentityNotFound("x".to_string()),
+            ),
+            (
+                "HsmUnavailable",
+                OctoCliError::HsmUnavailable("x".to_string()),
+            ),
+            ("AlreadyRevoked", OctoCliError::AlreadyRevoked),
+            (
+                "CaveatParse",
+                OctoCliError::CaveatParse {
+                    message: "x".to_string(),
+                },
+            ),
+            (
+                "InvalidCaveatCombination",
+                OctoCliError::InvalidCaveatCombination {
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "HolderNotFound",
+                OctoCliError::HolderNotFound("x".to_string()),
+            ),
+            (
+                "AttenuationViolation",
+                OctoCliError::AttenuationViolation("x".to_string()),
+            ),
+            (
+                "SigningFailed",
+                OctoCliError::SigningFailed("x".to_string()),
+            ),
+            (
+                "ParentCapNotFound",
+                OctoCliError::ParentCapNotFound("x".to_string()),
+            ),
+            (
+                "PolicyNotFound",
+                OctoCliError::PolicyNotFound("x".to_string()),
+            ),
+            (
+                "PolicyVersionNotFound",
+                OctoCliError::PolicyVersionNotFound {
+                    policy: "x".to_string(),
+                    version: 0,
+                },
+            ),
+            ("RoleNotFound", OctoCliError::RoleNotFound("x".to_string())),
+            (
+                "StakeInsufficient",
+                OctoCliError::StakeInsufficient {
+                    required: 0,
+                    available: 0,
+                },
+            ),
+            (
+                "RoleNotSelectable",
+                OctoCliError::RoleNotSelectable {
+                    role_id: "x".to_string(),
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "SignerMismatch",
+                OctoCliError::SignerMismatch {
+                    signer_did: "x".to_string(),
+                    operator_did: "x".to_string(),
+                },
+            ),
+            (
+                "GroupBindingRejected",
+                OctoCliError::GroupBindingRejected {
+                    reason: "x".to_string(),
+                },
+            ),
+            ("StdinSecretRefused", OctoCliError::StdinSecretRefused),
+            (
+                "InvalidFilter",
+                OctoCliError::InvalidFilter("x".to_string()),
+            ),
+            (
+                "StaleStub",
+                OctoCliError::StaleStub {
+                    name: "x".to_string(),
+                    replaced_by: "x",
+                },
+            ),
+            (
+                "ReputationNotFound",
+                OctoCliError::ReputationNotFound {
+                    did: "x".to_string(),
+                    role: "x".to_string(),
+                },
+            ),
+            (
+                "ReputationRevoked",
+                OctoCliError::ReputationRevoked {
+                    did: "x".to_string(),
+                },
+            ),
+            (
+                "AnchorChainBroken",
+                OctoCliError::AnchorChainBroken {
+                    did: "x".to_string(),
+                    last_anchor_unix: 0,
+                },
+            ),
+            (
+                "NoAnchorVerifyInMode",
+                OctoCliError::NoAnchorVerifyInMode { mode: "x" },
+            ),
+            (
+                "InvalidRoleSlug",
+                OctoCliError::InvalidRoleSlug {
+                    slug: "x".to_string(),
+                    reason: "x".to_string(),
+                },
+            ),
+            ("InvalidTtlHops", OctoCliError::InvalidTtlHops { hops: 0 }),
+            (
+                "MeshCapabilityInsufficient",
+                OctoCliError::MeshCapabilityInsufficient {
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "EnvelopeAuthorizationFailed",
+                OctoCliError::EnvelopeAuthorizationFailed {
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "InvalidEndpointScheme",
+                OctoCliError::InvalidEndpointScheme {
+                    scheme: "x".to_string(),
+                },
+            ),
+            (
+                "RpcTimeout",
+                OctoCliError::RpcTimeout {
+                    peer: "x".to_string(),
+                    method: "x".to_string(),
+                    timeout_ms: 0,
+                },
+            ),
+            (
+                "VaultNotOwned",
+                OctoCliError::VaultNotOwned("x".to_string()),
+            ),
+            (
+                "InsufficientBalance",
+                OctoCliError::InsufficientBalance {
+                    have: "x".to_string(),
+                    need: "x".to_string(),
+                },
+            ),
+            ("RoleNotProvisioned", OctoCliError::RoleNotProvisioned),
+            (
+                "ChainIdMismatch",
+                OctoCliError::ChainIdMismatch {
+                    from: "x".to_string(),
+                    to: "x".to_string(),
+                },
+            ),
+            (
+                "InvalidChainId",
+                OctoCliError::InvalidChainId {
+                    received: "x".to_string(),
+                },
+            ),
+            ("NoOctoHome", OctoCliError::NoOctoHome),
+            (
+                "ManifestParseError",
+                OctoCliError::ManifestParseError {
+                    path: "x".to_string(),
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "CapabilityValidationFailed",
+                OctoCliError::CapabilityValidationFailed(0),
+            ),
+            (
+                "AgentAlreadyExists",
+                OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()),
+            ),
+            ("InvalidLimit", OctoCliError::InvalidLimit("x".to_string())),
+            (
+                "InvalidCursor",
+                OctoCliError::InvalidCursor("x".to_string()),
+            ),
+            (
+                "AgentNotFound",
+                OctoCliError::AgentNotFound(uuid::Uuid::nil()),
+            ),
+            (
+                "ForbiddenHolderMismatch",
+                OctoCliError::ForbiddenHolderMismatch,
+            ),
+            (
+                "AlreadyInTransition",
+                OctoCliError::AlreadyInTransition(uuid::Uuid::nil()),
+            ),
+            (
+                "InvalidStateTransition",
+                OctoCliError::InvalidStateTransition {
+                    from: "x".to_string(),
+                    to: "x".to_string(),
+                },
+            ),
+            (
+                "AuditSubstrateNotReady",
+                OctoCliError::AuditSubstrateNotReady,
+            ),
+            (
+                "ReceiptNotFound",
+                OctoCliError::ReceiptNotFound("x".to_string()),
+            ),
+            (
+                "PermissionDenied",
+                OctoCliError::PermissionDenied("x".to_string()),
+            ),
+            (
+                "AuditReadFailed",
+                OctoCliError::AuditReadFailed("x".to_string()),
+            ),
+            (
+                "AuditResponseTooLarge",
+                OctoCliError::AuditResponseTooLarge {
+                    matched: 0,
+                    limit: 0,
+                },
+            ),
+            (
+                "AgentNotRunning",
+                OctoCliError::AgentNotRunning(uuid::Uuid::nil()),
+            ),
+            (
+                "RuntimeSubstrateNotReady",
+                OctoCliError::RuntimeSubstrateNotReady,
+            ),
+            (
+                "RuntimeAttachFailed",
+                OctoCliError::RuntimeAttachFailed {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "RuntimeSpawnFailed",
+                OctoCliError::RuntimeSpawnFailed {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "SnapshotStale",
+                OctoCliError::SnapshotStale {
+                    snapshot_id_hex: "x".to_string(),
+                    age_secs: 0,
+                },
+            ),
+            (
+                "InvalidProposalState",
+                OctoCliError::InvalidProposalState {
+                    state: "x".to_string(),
+                },
+            ),
+            (
+                "GovernanceSubstrateError",
+                OctoCliError::GovernanceSubstrateError {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "VoteRejected",
+                OctoCliError::VoteRejected {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "UnknownAttestationKind",
+                OctoCliError::UnknownAttestationKind {
+                    kind_ref: "x".to_string(),
+                },
+            ),
+            (
+                "PrereqNotAccepted",
+                OctoCliError::PrereqNotAccepted {
+                    rfc_ref: "x".to_string(),
+                },
+            ),
+            ("Internal", OctoCliError::Internal("x".to_string())),
+            (
+                "AttachHandleExpired",
+                OctoCliError::AttachHandleExpired {
+                    mint_unix: 0,
+                    ttl_unix: 0,
+                    now_unix: 0,
+                },
+            ),
+            (
+                "AttachHandleBadSignature",
+                OctoCliError::AttachHandleBadSignature {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "AttachSessionMismatch",
+                OctoCliError::AttachSessionMismatch {
+                    token_session_hex: "x".to_string(),
+                    registered_session_hex: "x".to_string(),
+                },
+            ),
+            (
+                "AttachSessionUnknown",
+                OctoCliError::AttachSessionUnknown("x".to_string()),
+            ),
+            (
+                "PersistenceError",
+                OctoCliError::PersistenceError("x".to_string()),
+            ),
+            (
+                "RevocationError",
+                OctoCliError::RevocationError("x".to_string()),
+            ),
+            (
+                "InvalidSessionIdHex",
+                OctoCliError::InvalidSessionIdHex {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "InvalidSinceCursor",
+                OctoCliError::InvalidSinceCursor {
+                    mint_unix: 0,
+                    requested: 0,
+                },
+            ),
+            (
+                "TransportHandlerNotRegistered",
+                OctoCliError::TransportHandlerNotRegistered {
+                    kind_label: "x".to_string(),
+                },
+            ),
+            (
+                "TokenMintSkipped",
+                OctoCliError::TokenMintSkipped {
+                    reason: "x".to_string(),
+                },
+            ),
+            (
+                "ReplayDetected",
+                OctoCliError::ReplayDetected {
+                    since_unix: 0,
+                    recorded_cursor: 0,
+                },
+            ),
+            (
+                "NetworkPeerNotFound",
+                OctoCliError::NetworkPeerNotFound {
+                    gateway_id_hex: "x".to_string(),
+                },
+            ),
+            (
+                "NetworkLocalKeyUnavailable",
+                OctoCliError::NetworkLocalKeyUnavailable,
+            ),
+            (
+                "NetworkGraphDepthBelowRange",
+                OctoCliError::NetworkGraphDepthBelowRange { depth: 0 },
+            ),
+            (
+                "NetworkInvalidDid",
+                OctoCliError::NetworkInvalidDid {
+                    did_redacted: "x".to_string(),
+                },
+            ),
+            (
+                "NetworkConfigParseFailed",
+                OctoCliError::NetworkConfigParseFailed {
+                    kind_redacted: "x".to_string(),
+                    path_redacted: None,
+                },
+            ),
+            (
+                "NetworkSubstrateUnavailable",
+                OctoCliError::NetworkSubstrateUnavailable {
+                    companion: "x",
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "NetworkCoordinatorNotFound",
+                OctoCliError::NetworkCoordinatorNotFound {
+                    coordinator_id_redacted: "x".to_string(),
+                },
+            ),
+            (
+                "NetworkDryRunDenied",
+                OctoCliError::NetworkDryRunDenied {
+                    arm: "x",
+                    domain_id_redacted: "x".to_string(),
+                },
+            ),
+            (
+                "NetworkKeyRotationUnknownId",
+                OctoCliError::NetworkKeyRotationUnknownId {
+                    key_id_hex: "x".to_string(),
+                    known_keys_band: KnownKeysBand::None,
+                },
+            ),
+            ("WalletLocked", OctoCliError::WalletLocked),
+            (
+                "IdentityTransitionRefused",
+                OctoCliError::IdentityTransitionRefused {
+                    reason: "x".to_string(),
+                },
+            ),
+            ("WeakPassphrase", OctoCliError::WeakPassphrase),
+            (
+                "DevModeRequired",
+                OctoCliError::DevModeRequired {
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "InvalidReason",
+                OctoCliError::InvalidReason {
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "FileInputRejected",
+                OctoCliError::FileInputRejected {
+                    detail: "x".to_string(),
+                },
+            ),
+        ];
+        assert_eq!(
+            all.len(),
+            91,
+            "the exit-code collision set must cover every OctoCliError variant"
+        );
+        // No duplicate name: two rows for one variant would let that
+        // variant's code be checked twice and another variant go
+        // unobserved at a shared code.
+        let mut names: Vec<&str> = all.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            before,
+            "duplicate variant name in the enumeration"
+        );
+
+        // Observed: code -> the variants that return it.
+        let mut observed: std::collections::BTreeMap<i32, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        for (name, v) in &all {
+            observed.entry(v.exit_code()).or_default().push(name);
+        }
+        for members in observed.values_mut() {
+            members.sort_unstable();
+        }
+        let observed_shared: std::collections::BTreeMap<i32, Vec<&str>> = observed
+            .iter()
+            .filter(|(_, m)| m.len() > 1)
+            .map(|(c, m)| (*c, m.clone()))
+            .collect();
+
+        let contracted: std::collections::BTreeMap<i32, Vec<&str>> =
+            CONTRACTED.iter().map(|(c, m)| (*c, m.to_vec())).collect();
+        assert_eq!(
+            observed_shared, contracted,
+            "the set of shared exit codes, or the membership of one, changed"
+        );
+
+        // Every contracted code must actually be reachable, and no
+        // contracted member may be a typo that resolved to nothing:
+        // a name in CONTRACTED absent from the enumeration would make
+        // the equality above pass for the wrong reason.
+        let enumerated: std::collections::BTreeSet<&str> = all.iter().map(|(n, _)| *n).collect();
+        for (code, members) in CONTRACTED {
+            for m in *members {
+                assert!(
+                    enumerated.contains(m),
+                    "CONTRACTED exit {code} names variant `{m}`, which the enumeration does not construct"
+                );
+            }
+        }
+    }
+
     #[test]
     fn tv_err5_no_substrate_internals() {
         let cases = [

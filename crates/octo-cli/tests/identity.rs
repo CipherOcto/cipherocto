@@ -343,10 +343,18 @@ fn tv_id11_revoke_empty_reason_rejected() {
         ])
         .output()
         .expect("run");
+    // R23: this asserted exit 64, when an empty operator-supplied
+    // `--reason` collapsed into `Internal` because the `From<WalletError>`
+    // table had no arm for the reason-guard family. 0011-x added
+    // `ReasonContainsControlChars` / `ReasonTooLong -> InvalidReason`
+    // (exit 2), so the code now reports the true class: invalid
+    // operator input, not an internal fault. The vector's claim is
+    // unchanged — the empty reason is REJECTED — and the exit it pins
+    // is the corrected one.
     assert_eq!(
         output.status.code(),
-        Some(64),
-        "expected exit 64 (Internal: reason must be non-empty), got {:?}\nstderr: {}",
+        Some(2),
+        "expected exit 2 (InvalidReason: reason must be non-empty), got {:?}\nstderr: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr),
     );

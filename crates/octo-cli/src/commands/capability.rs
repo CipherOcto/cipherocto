@@ -219,7 +219,16 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => map_capability_internal(other),
+        // R23: the fall-through DELEGATES to the `From<WalletError>`
+        // translation table instead of re-deriving a mapping here.
+        //
+        // The table already owns `Locked -> WalletLocked` (exit 92);
+        // this arm routed around it and delivered exit 64
+        // ("internal error") for a condition the CLI's own published
+        // table names. A per-call-site re-derivation of a mapping is
+        // the same shape of drift R23 just removed from the payload
+        // cap: a property owned in one place and copied into seven.
+        other => OctoCliError::from(other),
     })?;
     let summaries = octo_cap_macaroon::list_active(&key)
         .map_err(|e| OctoCliError::Internal(sanitize_mint_error(&e)))?;
@@ -352,7 +361,9 @@ pub fn mint(
                 .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
             let key = store.try_active_identity().map_err(|e| match e {
                 octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-                other => map_capability_internal(other),
+                // R23: delegate to the `From<WalletError>` table, as at
+                // the three sibling call sites below. See the note there.
+                other => OctoCliError::from(other),
             })?;
             // Test surface only: synthetic root_secret kept so the
             // `fixture_token` helper can mint a synthetic parent for
@@ -383,7 +394,7 @@ pub fn mint(
             .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
         let key = store.try_active_identity().map_err(|e| match e {
             octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-            other => map_capability_internal(other),
+            other => OctoCliError::from(other),
         })?;
         let token: CapabilityToken =
             octo_cap_macaroon::mint(&[0u8; 32], &key, holder_did, &caveats)
@@ -456,7 +467,16 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let key = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => map_capability_internal(other),
+        // R23: the fall-through DELEGATES to the `From<WalletError>`
+        // translation table instead of re-deriving a mapping here.
+        //
+        // The table already owns `Locked -> WalletLocked` (exit 92);
+        // this arm routed around it and delivered exit 64
+        // ("internal error") for a condition the CLI's own published
+        // table names. A per-call-site re-derivation of a mapping is
+        // the same shape of drift R23 just removed from the payload
+        // cap: a property owned in one place and copied into seven.
+        other => OctoCliError::from(other),
     })?;
     let catalog = resolve_catalog()?;
 

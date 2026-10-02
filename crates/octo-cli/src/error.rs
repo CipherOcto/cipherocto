@@ -271,8 +271,13 @@ pub enum OctoCliError {
     /// Surfaces from `octo mesh forward --ttl-hops`. Substrate clamps to
     /// the per-node-type TTL ceiling from `RouterAnnouncePayload`; the
     /// CLI enforces the wider 1..=8 operator-facing bound at dispatch
-    /// (RFC-0011-f §Error Handling). Exit 17 per the amendment-chain
-    /// slot allocation reserved by RFC-0011-f §Exit Codes.
+    /// (RFC-0011-f §Error Handling). Exit 17.
+    ///
+    /// R23: this cited RFC-0011-f §Exit Codes for the number. RFC-0011-f
+    /// puts `InvalidTtlHops` at **28**, not 17, and the citation was the
+    /// same false one this review corrected in `commands/mesh.rs` — the
+    /// claim is 17 because 17 is where the amendment chain actually put
+    /// it, not because RFC-0011-f says so.
     #[error("invalid TTL hops: {hops} (must be in 1..=8 per RFC-0871 ceiling)")]
     InvalidTtlHops {
         /// The offending hop count.
@@ -306,8 +311,13 @@ pub enum OctoCliError {
     /// Endpoint URI scheme is not in the mesh allowlist
     /// (`tcp://`, `quic://`, `bluetooth://` per RFC-0011-f §Peer
     /// Summary Shape). Mapped from `octo_mesh::MeshError::InvalidEndpointScheme`
-    /// at the `peer add` dispatch boundary. Exit 28 (shared slot
-    /// with `forward`'s `InvalidTtlHops` per RFC-0011-f §Exit Codes).
+    /// at the `peer add` dispatch boundary. Exit 28.
+    ///
+    /// R23: this said the slot is "shared with `forward`'s
+    /// `InvalidTtlHops`". It is not shared — `InvalidTtlHops` is at 17
+    /// and 28 has exactly one occupant, this one. The number 28 does
+    /// match RFC-0011-f §Exit Codes' row for this error, so the slot is
+    /// right and only the sharing claim was false.
     #[error("invalid endpoint URI scheme: `{scheme}` (allowlist: tcp://, quic://, bluetooth://)")]
     InvalidEndpointScheme {
         /// The rejected scheme (lowercase, no `://`).
@@ -1113,8 +1123,9 @@ impl OctoCliError {
             // skipped — last-writer-wins per RFC-0011-d §Security 2).
             Self::SignerMismatch { .. } => 35,
             Self::GroupBindingRejected { .. } => 36,
-            // 28 shared with `InvalidTtlHops` (RFC-0011-f §Exit Codes;
-            // follow-on `forward` mission claims the same slot).
+            // 28, sole occupant (RFC-0011-f §Exit Codes row 28 agrees).
+            // R23: this said the slot was shared with `InvalidTtlHops`,
+            // which is at 17. `tv_x_c_91` records 28 as unshared.
             Self::InvalidEndpointScheme { .. } => 28,
             Self::ReputationNotFound { .. } => 20,
             Self::ReputationRevoked { .. } => 21,
@@ -1877,7 +1888,8 @@ pub(crate) fn cap_substrate_payload(s: &str) -> String {
     }
 }
 
-/// Strip substrate paths and storage-engine internals from an error string.
+/// Strip substrate paths and storage-engine internals from an error string,
+/// and bound the result at [`SUBSTRATE_PAYLOAD_CAP`] bytes.
 ///
 /// Marker policy (R16 Lens-2 F7): substring containment is too broad —
 /// `query:` matches legitimate diagnostic text, `src/` matches URLs and
@@ -1885,6 +1897,25 @@ pub(crate) fn cap_substrate_payload(s: &str) -> String {
 /// (`crates/octo-<name>/`) and require a word-boundary on both sides of
 /// `SQL:` / `query:` / `sqlite3_open` so they only fire when used as SQL
 /// noise markers, not as natural prose.
+///
+/// **R23: the cap moved HERE, out of the individual call sites.** The cap
+/// was a per-call-site obligation, and a per-call-site obligation drifts:
+/// it had been applied to 5 of the 25 substrate payload sites in this
+/// crate (four `From<..>` impls plus the audit command wildcard added in
+/// R22), and the other 20 forwarded an unbounded `Display` repr. Measured
+/// 16,400 bytes reaching the envelope through the capability, vault, mesh,
+/// agent and identity mappers. Call sites cannot forget a property the
+/// primitive already owns.
+///
+/// **Ordering: scrub first, then cap.** Scrubbing replaces marker
+/// substrings, which can only shrink or preserve the string, so a
+/// post-scrub cap is applied to already-redacted text. Capping first
+/// would let a truncation land inside a `<substrate-path>` replacement and
+/// emit a partial marker (`<substrate-pa`), which reads as a scrub
+/// succeeded when it did not. The audit wildcard in
+/// `commands::audit` still calls [`cap_substrate_payload`] first; that is
+/// now redundant and harmless, and the redundancy is left as the
+/// explicit statement of intent at the one site a prior round added it to.
 pub fn sanitize_substrate_error(s: &str) -> String {
     // Anchor SQL/storage markers with word-boundary semantics: the marker
     // must appear at the start, after whitespace, or after a punctuation
@@ -1913,7 +1944,8 @@ pub fn sanitize_substrate_error(s: &str) -> String {
             .unwrap_or(out.len() - idx);
         out.replace_range(idx..idx + end, "<substrate-path>");
     }
-    out
+    // R23: scrub, then bound. See the ordering note on the fn doc.
+    cap_substrate_payload(&out)
 }
 
 /// Map a substrate HSM error reason to `OctoCliError::HsmUnavailable`
@@ -2282,6 +2314,384 @@ mod tests {
                 "the {name} arm must show the operator that the cap fired, got tail: {:?}",
                 &msg[msg.len().saturating_sub(20)..]
             );
+        }
+    }
+
+    /// True when a `match` arm's body is exactly its own binding — the
+    /// `other => other,` identity forward. See the use site for why
+    /// these are excluded from the payload-site set.
+    fn is_identity_forward(line: &str) -> bool {
+        let Some((_, body)) = line.split_once("=>") else {
+            return false;
+        };
+        let binding = line.split("=>").next().unwrap_or_default().trim();
+        !binding.is_empty() && body.trim().trim_end_matches(',').trim() == binding
+    }
+
+    /// **R23: the 4 KiB cap was a per-call-site obligation, and a
+    /// per-call-site obligation drifts.** It had been applied to five
+    /// of the twenty-four command-level substrate payload arms in this
+    /// crate — the four `From<..> for OctoCliError` impls from R15 plus
+    /// the audit command wildcard added in R22 were the only capped
+    /// sites anywhere — while all twenty-four forwarded an unbounded
+    /// `Display` repr, measured at 16,400 bytes arriving in the
+    /// envelope. The repair is not twenty-four more
+    /// `cap_substrate_payload` calls, which would be twenty-four more
+    /// chances to forget; the cap moved INTO [`sanitize_substrate_error`],
+    /// the primitive all of them already call.
+    ///
+    /// Two halves, because the property splits in two.
+    ///
+    /// **Half one is behavioural** and asserts the primitive's contract:
+    /// bounded, visibly truncated, and scrubbed before bounded. That
+    /// ordering is the load-bearing part. Capping first would let a
+    /// truncation land inside a `<substrate-path>` replacement and emit
+    /// a partial marker, which reads to an operator as a scrub that
+    /// succeeded when it did not. The control for that half is a
+    /// marker placed in the first quarter of an oversized string: a
+    /// scrub-then-cap implementation redacts it, a cap-then-scrub one
+    /// would leave it intact whenever the marker happened to fall past
+    /// the boundary.
+    ///
+    /// **Half two is a source check**, and it is source-level on
+    /// purpose. Twenty of the twenty-four arms cannot be reached from a
+    /// test: their substrate variants have no constructor a test can
+    /// drive, so a behavioural vector for each would be a claim
+    /// converted into a fact without a measurement (rule 25). The
+    /// property being asserted is not "does this arm cap" — that is
+    /// half one, one hop away — it is "which function does this arm's
+    /// payload pass through on its way to the envelope", and a
+    /// correspondence about routing layers has no runtime form. R16
+    /// reached the same conclusion for the dispatch-side gate.
+    ///
+    /// Half two scans the whole `commands` DIRECTORY rather than a
+    /// hard-coded file list, so a module added after this vector is
+    /// scanned by construction. The earlier R20 vector's own stated
+    /// limit was that a file it did not scan was invisible to it; this
+    /// form removes that limit instead of documenting it.
+    ///
+    /// Non-vacuity: the routed-site count is asserted, so a scan that
+    /// stopped matching anything would fail rather than pass. The four
+    /// `capability.rs` arms are routed one hop — they hand the value to
+    /// `map_capability_internal`, which scrubs — so the check accepts
+    /// either hop and names which it saw.
+    #[test]
+    fn tv_x_c_94_every_substrate_payload_routes_through_the_capping_scrubber() {
+        // ---- half one: the primitive's contract -------------------------
+        let budget = SUBSTRATE_PAYLOAD_CAP + " [truncated]".len();
+
+        // A marker in the FIRST QUARTER, so it is inside the cap no
+        // matter where the two operations are ordered.
+        let head = "wallet store open: query: SELECT * FROM vault ";
+        let oversized: String = head.to_string() + &"z".repeat(SUBSTRATE_PAYLOAD_CAP * 4);
+        let out = sanitize_substrate_error(&oversized);
+        assert!(
+            out.len() <= budget,
+            "sanitize_substrate_error must bound its result at {SUBSTRATE_PAYLOAD_CAP} bytes plus \
+             the marker, got {}",
+            out.len()
+        );
+        assert!(
+            out.ends_with(" [truncated]"),
+            "the operator must be able to see that the cap fired, got tail {:?}",
+            &out[out.len().saturating_sub(20)..]
+        );
+        // Ordering: the marker was in the retained head, so a scrub that
+        // ran before the cap is the only implementation that redacts it.
+        assert!(
+            !out.contains("query:"),
+            "scrub must run BEFORE the cap: a cap-then-scrub implementation can truncate \
+             mid-replacement and emit a partial marker. Got head {:?}",
+            &out[..120.min(out.len())]
+        );
+        // And the scrub still produces its substitution rather than
+        // dropping the text: an implementation that returned the cap
+        // and skipped the scrub would satisfy the length assertion above.
+        assert!(
+            out.contains("<substrate-error>"),
+            "the substitution must still be observable, got head {:?}",
+            &out[..120.min(out.len())]
+        );
+
+        // Ordering, the observable half. Put a `crates/octo-` path
+        // marker so it STRADDLES the cap: 4,000 bytes of context, then
+        // the prefix, then 4,000 more bytes with no whitespace or
+        // closing punctuation after it, so the path runs to end of
+        // string.
+        //
+        // Scrub-then-cap redacts the whole path to 16 bytes, which
+        // brings the string UNDER the cap — so the cap never fires and
+        // there is no truncation marker. Cap-then-scrub truncates
+        // first, so the cap has already fired and the marker is there
+        // regardless of what the scrub then does. The presence of the
+        // marker is therefore a direct read on which operation ran
+        // first, and the two orders differ measurably (4,017 bytes
+        // without the marker against 4,025 with it).
+        let straddling: String = "z".repeat(SUBSTRATE_PAYLOAD_CAP - 96)
+            + " crates/octo-wallet/src/"
+            + &"z".repeat(SUBSTRATE_PAYLOAD_CAP);
+        let out = sanitize_substrate_error(&straddling);
+        assert!(
+            out.len() < SUBSTRATE_PAYLOAD_CAP,
+            "the redacted path must have brought the string back under the cap, got {}",
+            out.len()
+        );
+        assert!(
+            !out.contains("crates/octo-") && !out.ends_with(" [truncated]"),
+            "redaction must run BEFORE the cap: a cap-then-scrub implementation fires the cap \
+             first and leaves the truncation marker even when redaction alone would have been \
+             enough. Got tail {:?}",
+            &out[out.len().saturating_sub(40)..]
+        );
+        assert!(
+            out.contains("<substrate-path>"),
+            "the path substitution must be observable, got tail {:?}",
+            &out[out.len().saturating_sub(40)..]
+        );
+
+        // A short string is untouched by the cap, so the two operations
+        // are not simply "always truncate".
+        let short = "vault operation error: keystore slot 3 sealed";
+        assert_eq!(
+            sanitize_substrate_error(short),
+            short,
+            "a payload under the cap must pass through unchanged"
+        );
+
+        // ---- half two: the routing, over the whole commands directory ----
+        // Patterns that mean "an arm is forwarding an error value into a
+        // new payload": a `format!` interpolation of the binding, or a
+        // bare pass of the binding to a String-consuming call.
+        const INTERPOLATED: [&str; 9] = [
+            "{other",
+            "{e}",
+            "{err",
+            "{0}",
+            "other)",
+            "other,",
+            "e)",
+            "err)",
+            "to_string()",
+        ];
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        let mut routed_direct = 0usize;
+        let mut routed_via_sink = 0usize;
+        let mut unrouted: Vec<String> = Vec::new();
+
+        for entry in std::fs::read_dir(&dir).expect("the commands directory must be readable") {
+            let path = entry.expect("a directory entry must be readable").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            let src = std::fs::read_to_string(&path).expect("a command module must be readable");
+            let lines: Vec<&str> = src.lines().collect();
+
+            // Stop at the test module: a `#[cfg(test)]` on a single item
+            // is not a boundary, and the arms under test are all
+            // production arms.
+            let test_start = lines
+                .iter()
+                .position(|l| {
+                    let t = l.trim_start();
+                    (t.starts_with("mod tests") || t.starts_with("pub mod tests"))
+                        && t.ends_with('{')
+                })
+                .unwrap_or(lines.len());
+
+            for (i, line) in lines.iter().enumerate().take(test_start) {
+                if !line.contains("other") || !line.contains("=>") {
+                    continue;
+                }
+                // An IDENTITY forward is not a payload site.
+                //
+                // Four arms in `network.rs` read `other => other,` on the
+                // result of `home::resolve()`, whose error type is
+                // `OctoCliError` itself. The binding is not a substrate
+                // value being turned into a new payload; it is an
+                // already-formed CLI error being passed through. The
+                // wildcard is MANDATORY, not dead: `OctoCliError` is
+                // `#[non_exhaustive]`, so a match in a command module
+                // cannot be written without it. (R23 first recorded
+                // these four as dead pass-throughs to be removed. That
+                // reading was wrong — the arms are the only shape the
+                // type admits, and removing them is a compile error.)
+                if is_identity_forward(line) {
+                    continue;
+                }
+                let window: String = lines[i..(i + 10).min(lines.len())].join("\n");
+                // Three sinks count as routed, and all three end at the
+                // same primitive. `map_capability_internal` scrubs
+                // directly. `OctoCliError::from(..)` is the
+                // `From<WalletError>` translation table, every arm of
+                // which scrubs — R23 routed the seven
+                // `try_active_identity` fall-throughs to that table, so
+                // a call site can reach the primitive one hop further
+                // out and still be bounded.
+                let touches_error =
+                    window.contains("OctoCliError::") || window.contains("map_capability_internal");
+                let routes_to_a_sink = window.contains("map_capability_internal")
+                    || window.contains("OctoCliError::from(");
+                let forwards_value = INTERPOLATED.iter().any(|p| window.contains(p));
+                if !touches_error || !forwards_value {
+                    continue;
+                }
+                if window.contains("sanitize_substrate_error") {
+                    routed_direct += 1;
+                } else if routes_to_a_sink {
+                    routed_via_sink += 1;
+                } else {
+                    unrouted.push(format!("{name} line {}", i + 1));
+                }
+            }
+        }
+
+        assert!(
+            unrouted.is_empty(),
+            "these substrate payload arms build an OctoCliError without routing the value through \
+             the capping scrubber: {unrouted:?}"
+        );
+        // Non-vacuity. If the scan stopped recognising arms, the three
+        // counts below would fall and the vector would fail rather than
+        // pass on an empty set. A RUSTFIXME number here is a claim about
+        // the tree at the moment of writing; the assertion is the point.
+        assert_eq!(
+            routed_direct, 17,
+            "expected 17 substrate payload arms to scrub at the arm itself"
+        );
+        assert_eq!(
+            routed_via_sink, 7,
+            "expected seven substrate payload arms to route via a sink that scrubs: the four \
+             capability wildcard arms and the three governance/agent fall-throughs"
+        );
+
+        // ---- half two, part two: the sites the scan CANNOT see -------
+        //
+        // The scan keys on the binding being named `other`. A match arm
+        // that names a specific substrate variant and binds its
+        // payload to a different name is outside its reach, and a
+        // future one would be too. A wider sweep — by match-arm
+        // BOUNDARY, so the binding name does not matter — found four
+        // such sites in `network.rs`, all carrying a `String` out of the
+        // substrate into an operator-visible payload, and all four were
+        // uncapped until R23 routed them through the same primitive.
+        //
+        // They are pinned by name here because a correspondence whose
+        // second side lives only in the code is a claim, not a check.
+        let network = std::fs::read_to_string(dir.join("network.rs")).expect("network.rs readable");
+        let arm_sites: [(&str, usize); 2] = [
+            ("RebindArmError::UnknownArm(s) =>", 3),
+            ("ForwardEnvelopeError::Internal(s) => {", 1),
+        ];
+        for (arm, expected) in arm_sites {
+            let hits: Vec<usize> = network.match_indices(arm).map(|(i, _)| i).collect();
+            assert_eq!(
+                hits.len(),
+                expected,
+                "the expected {expected} `{arm}` sites moved; a site added or removed here must be \
+                 added to or removed from this list in the same commit, not left for the count to \
+                 catch"
+            );
+            for at in hits {
+                // The arm body runs from the binding to the first comma at
+                // depth zero. A generous window is enough: the scrub is
+                // in the arm's own expression, never past its terminator.
+                let after = &network[at..(at + 400).min(network.len())];
+                assert!(
+                    after.contains("sanitize_substrate_error"),
+                    "the `{arm}` site carries a substrate String into an operator payload and must \
+                     route it through the capping scrubber"
+                );
+            }
+        }
+    }
+
+    /// **R23: seven call sites re-derived a mapping the translation
+    /// table already owns, and got a different answer.** The unlock
+    /// split (mission §AC-9, §AC-17) made
+    /// `WalletStore::try_active_identity` a stub returning
+    /// `WalletError::Locked` unconditionally, pinned deliberately by
+    /// `tv_x_69`. The `From<WalletError>` table maps that to
+    /// `OctoCliError::WalletLocked` at exit 92 — `tv_x_29` asserts the
+    /// table. Seven call sites wrote their own fall-through instead,
+    /// and every one of them routed `Locked` to `Internal` at exit 64,
+    /// which renders as `internal error: …` for a condition the CLI's
+    /// own published table names.
+    ///
+    /// Measured on the binary before the fix: `octo capability list` on
+    /// a machine with no wallet at all exited 64. After: 92.
+    ///
+    /// The repair is delegation, not a seventh `Locked =>` arm. Adding
+    /// the arm would fix the seven sites and leave the eighth free to
+    /// get it wrong — the same shape of drift the payload cap had, and
+    /// the reason the cap moved into the primitive this round. The
+    /// site-specific overrides that ARE deliberate — `NotActive` to
+    /// `NoActiveIdentity`, `Hsm` to `map_hsm_error` — stay at the site.
+    ///
+    /// Source-level on purpose. The property is not "does this site
+    /// produce exit 92" but "which layer owns this site's mapping", and
+    /// a correspondence about ownership has no runtime form: these
+    /// handlers are reached only through a live wallet, and
+    /// `try_active_identity` cannot succeed on any wallet, so there is
+    /// no input that drives the success path a behavioural vector would
+    /// need. R16 reached the same conclusion for the dispatch gate.
+    ///
+    /// The behavioural half is one line and it is the whole point of
+    /// the delegation: the table the sites now inherit from maps
+    /// `Locked` to exit 92. `tv_x_29` asserts the same fact from the
+    /// other side; it is repeated here so this vector fails alone if
+    /// the delegation is ever pointed at a different impl.
+    #[test]
+    fn tv_x_c_95_every_try_active_identity_fallthrough_delegates_to_the_table() {
+        let e: OctoCliError = octo_wallet::WalletError::Locked.into();
+        assert_eq!(
+            e.exit_code(),
+            92,
+            "the table the call sites delegate to must map Locked to exit 92"
+        );
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        // Hand-written, not derived: a list built from the same scan
+        // that checks it would constrain nothing (rule 12). These are
+        // the seven sites R23 found, by file.
+        const CONTRACTED: [(&str, usize); 3] =
+            [("capability.rs", 4), ("governance.rs", 2), ("agent.rs", 1)];
+
+        for (file, expected) in CONTRACTED {
+            let src = std::fs::read_to_string(dir.join(file)).expect("command module readable");
+            let lines: Vec<&str> = src.lines().collect();
+            let test_start = lines
+                .iter()
+                .position(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("mod tests") && t.ends_with('{')
+                })
+                .unwrap_or(lines.len());
+            let sites: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .take(test_start)
+                .filter(|(_, l)| l.contains("try_active_identity()"))
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(
+                sites.len(),
+                expected,
+                "the number of `try_active_identity` call sites in {file} moved. A site added \\
+                 here must be routed through `OctoCliError::from(other)` in the SAME commit and \\
+                 the count updated with it — a site that is added without being delegated would \\
+                 otherwise be invisible here."
+            );
+            for at in sites {
+                let arm: String = lines[at..(at + 16).min(lines.len())].join("\n");
+                assert!(
+                    arm.contains("OctoCliError::from(other)"),
+                    "the {file} site at line {} must delegate its fall-through to the \\
+                     `From<WalletError>` table rather than re-deriving a mapping",
+                    at + 1
+                );
+            }
         }
     }
 
@@ -2744,23 +3154,146 @@ mod tests {
 
     /// R22: the exit-code COLLISION SET, as a set.
     ///
-    /// `tv_err4_exit_code_mapping` pins 51 of the 91 variants one at
+    /// `tv_err4_exit_code_mapping` pins 49 of the 91 variants one at
     /// a time. Per-variant pinning is structurally blind to a
     /// collision: two variants that share a code each satisfy their
     /// own row, and a NEW variant added to an already-occupied code
-    /// satisfies the new row too. Nothing about the row set observes
-    /// the shape of the set.
+    /// satisfies the new row too. Nothing about a table of per-variant
+    /// expectations observes the shape of the set.
     ///
-    /// This vector is the set-level view. It enumerates every variant
-    /// and asserts two things: which codes are shared, and exactly
-    /// which variants share each one. A new collision is a change to
-    /// that answer, so it fails here even though every individual
-    /// `exit_code()` assertion still passes.
+    /// R23 rewrote this vector, and both defects were in the first
+    /// form. Both are recorded because the shape recurs.
     ///
-    /// `CONTRACTED` is written by hand from the RFC-0011 exit-code
-    /// allocation, not derived from `exit_code()`'s own output. Deriving
-    /// it would be the code testing itself (R14) and would make this
-    /// vector unable to disagree with the implementation.
+    /// **Defect 1 — the labels were decorative.** The first form
+    /// carried a `(name, value)` pair per variant and read the name
+    /// off the label. Transposing two rows whose variants have UNIQUE
+    /// exit codes left the suite green: neither code is shared so
+    /// neither reaches the assertion, and the count and the
+    /// cross-check were both satisfied. The vector computed real
+    /// codes under the wrong names, and a later genuine collision at
+    /// 14 or 31 would have been reported against the wrong variant.
+    /// [`variant_name`] removes the label — the name comes from the
+    /// TYPE.
+    ///
+    /// **Defect 2 — the count was a literal, and the comment claimed
+    /// the opposite.** The comment said a variant added to the enum
+    /// without a row here would "fail the count rather than silently
+    /// narrowing the set under test". It would not: `all.len()` is
+    /// compared against a hand-written 91, and adding a 92nd variant
+    /// to the enum does not change that 91. A new variant colliding
+    /// at exit 17 — precisely the class this vector exists to detect —
+    /// left the whole suite green.
+    ///
+    /// The repair for both is the same thing: [`variant_name`] matches
+    /// **exhaustively**. `#[non_exhaustive]` restricts matches from
+    /// OTHER crates; this test is in the defining crate, which is why
+    /// `exit_code` can match all 91 without a wildcard and so can this.
+    /// A new variant therefore fails to COMPILE, and a compile failure
+    /// is the only guard that survives an addition. The count
+    /// assertion is kept for the other direction — tying the match to
+    /// the list, so a variant the match knows but the enumeration
+    /// omits is still caught.
+    fn variant_name(e: &OctoCliError) -> &'static str {
+        match e {
+            OctoCliError::ClapParse(..) => "ClapParse",
+            OctoCliError::NoActiveIdentity => "NoActiveIdentity",
+            OctoCliError::ConfirmationRequired { .. } => "ConfirmationRequired",
+            OctoCliError::AuditorDenied { .. } => "AuditorDenied",
+            OctoCliError::AlreadyRotating => "AlreadyRotating",
+            OctoCliError::IdentityNotFound(..) => "IdentityNotFound",
+            OctoCliError::HsmUnavailable(..) => "HsmUnavailable",
+            OctoCliError::AlreadyRevoked => "AlreadyRevoked",
+            OctoCliError::CaveatParse { .. } => "CaveatParse",
+            OctoCliError::InvalidCaveatCombination { .. } => "InvalidCaveatCombination",
+            OctoCliError::HolderNotFound(..) => "HolderNotFound",
+            OctoCliError::AttenuationViolation(..) => "AttenuationViolation",
+            OctoCliError::SigningFailed(..) => "SigningFailed",
+            OctoCliError::ParentCapNotFound(..) => "ParentCapNotFound",
+            OctoCliError::PolicyNotFound(..) => "PolicyNotFound",
+            OctoCliError::PolicyVersionNotFound { .. } => "PolicyVersionNotFound",
+            OctoCliError::RoleNotFound(..) => "RoleNotFound",
+            OctoCliError::StakeInsufficient { .. } => "StakeInsufficient",
+            OctoCliError::RoleNotSelectable { .. } => "RoleNotSelectable",
+            OctoCliError::SignerMismatch { .. } => "SignerMismatch",
+            OctoCliError::GroupBindingRejected { .. } => "GroupBindingRejected",
+            OctoCliError::StdinSecretRefused => "StdinSecretRefused",
+            OctoCliError::InvalidFilter(..) => "InvalidFilter",
+            OctoCliError::StaleStub { .. } => "StaleStub",
+            OctoCliError::ReputationNotFound { .. } => "ReputationNotFound",
+            OctoCliError::ReputationRevoked { .. } => "ReputationRevoked",
+            OctoCliError::AnchorChainBroken { .. } => "AnchorChainBroken",
+            OctoCliError::NoAnchorVerifyInMode { .. } => "NoAnchorVerifyInMode",
+            OctoCliError::InvalidRoleSlug { .. } => "InvalidRoleSlug",
+            OctoCliError::InvalidTtlHops { .. } => "InvalidTtlHops",
+            OctoCliError::MeshCapabilityInsufficient { .. } => "MeshCapabilityInsufficient",
+            OctoCliError::EnvelopeAuthorizationFailed { .. } => "EnvelopeAuthorizationFailed",
+            OctoCliError::InvalidEndpointScheme { .. } => "InvalidEndpointScheme",
+            OctoCliError::RpcTimeout { .. } => "RpcTimeout",
+            OctoCliError::VaultNotOwned(..) => "VaultNotOwned",
+            OctoCliError::InsufficientBalance { .. } => "InsufficientBalance",
+            OctoCliError::RoleNotProvisioned => "RoleNotProvisioned",
+            OctoCliError::ChainIdMismatch { .. } => "ChainIdMismatch",
+            OctoCliError::InvalidChainId { .. } => "InvalidChainId",
+            OctoCliError::NoOctoHome => "NoOctoHome",
+            OctoCliError::ManifestParseError { .. } => "ManifestParseError",
+            OctoCliError::CapabilityValidationFailed(..) => "CapabilityValidationFailed",
+            OctoCliError::AgentAlreadyExists(..) => "AgentAlreadyExists",
+            OctoCliError::InvalidLimit(..) => "InvalidLimit",
+            OctoCliError::InvalidCursor(..) => "InvalidCursor",
+            OctoCliError::AgentNotFound(..) => "AgentNotFound",
+            OctoCliError::ForbiddenHolderMismatch => "ForbiddenHolderMismatch",
+            OctoCliError::AlreadyInTransition(..) => "AlreadyInTransition",
+            OctoCliError::InvalidStateTransition { .. } => "InvalidStateTransition",
+            OctoCliError::AuditSubstrateNotReady => "AuditSubstrateNotReady",
+            OctoCliError::ReceiptNotFound(..) => "ReceiptNotFound",
+            OctoCliError::PermissionDenied(..) => "PermissionDenied",
+            OctoCliError::AuditReadFailed(..) => "AuditReadFailed",
+            OctoCliError::AuditResponseTooLarge { .. } => "AuditResponseTooLarge",
+            OctoCliError::AgentNotRunning(..) => "AgentNotRunning",
+            OctoCliError::RuntimeSubstrateNotReady => "RuntimeSubstrateNotReady",
+            OctoCliError::RuntimeAttachFailed { .. } => "RuntimeAttachFailed",
+            OctoCliError::RuntimeSpawnFailed { .. } => "RuntimeSpawnFailed",
+            OctoCliError::SnapshotStale { .. } => "SnapshotStale",
+            OctoCliError::InvalidProposalState { .. } => "InvalidProposalState",
+            OctoCliError::GovernanceSubstrateError { .. } => "GovernanceSubstrateError",
+            OctoCliError::VoteRejected { .. } => "VoteRejected",
+            OctoCliError::UnknownAttestationKind { .. } => "UnknownAttestationKind",
+            OctoCliError::PrereqNotAccepted { .. } => "PrereqNotAccepted",
+            OctoCliError::Internal(..) => "Internal",
+            OctoCliError::AttachHandleExpired { .. } => "AttachHandleExpired",
+            OctoCliError::AttachHandleBadSignature { .. } => "AttachHandleBadSignature",
+            OctoCliError::AttachSessionMismatch { .. } => "AttachSessionMismatch",
+            OctoCliError::AttachSessionUnknown(..) => "AttachSessionUnknown",
+            OctoCliError::PersistenceError(..) => "PersistenceError",
+            OctoCliError::RevocationError(..) => "RevocationError",
+            OctoCliError::InvalidSessionIdHex { .. } => "InvalidSessionIdHex",
+            OctoCliError::InvalidSinceCursor { .. } => "InvalidSinceCursor",
+            OctoCliError::TransportHandlerNotRegistered { .. } => "TransportHandlerNotRegistered",
+            OctoCliError::TokenMintSkipped { .. } => "TokenMintSkipped",
+            OctoCliError::ReplayDetected { .. } => "ReplayDetected",
+            OctoCliError::NetworkPeerNotFound { .. } => "NetworkPeerNotFound",
+            OctoCliError::NetworkLocalKeyUnavailable => "NetworkLocalKeyUnavailable",
+            OctoCliError::NetworkGraphDepthBelowRange { .. } => "NetworkGraphDepthBelowRange",
+            OctoCliError::NetworkInvalidDid { .. } => "NetworkInvalidDid",
+            OctoCliError::NetworkConfigParseFailed { .. } => "NetworkConfigParseFailed",
+            OctoCliError::NetworkSubstrateUnavailable { .. } => "NetworkSubstrateUnavailable",
+            OctoCliError::NetworkCoordinatorNotFound { .. } => "NetworkCoordinatorNotFound",
+            OctoCliError::NetworkDryRunDenied { .. } => "NetworkDryRunDenied",
+            OctoCliError::NetworkKeyRotationUnknownId { .. } => "NetworkKeyRotationUnknownId",
+            OctoCliError::WalletLocked => "WalletLocked",
+            OctoCliError::IdentityTransitionRefused { .. } => "IdentityTransitionRefused",
+            OctoCliError::WeakPassphrase => "WeakPassphrase",
+            OctoCliError::DevModeRequired { .. } => "DevModeRequired",
+            OctoCliError::InvalidReason { .. } => "InvalidReason",
+            OctoCliError::FileInputRejected { .. } => "FileInputRejected",
+        }
+    }
+
+    /// The shared exit codes and exactly which variants share each
+    /// one. Written by hand from the RFC-0011 exit-code allocation,
+    /// NOT derived from `exit_code()`'s output — deriving it would be
+    /// the code testing itself, and the vector could then never
+    /// disagree with the implementation it checks.
     const CONTRACTED: &[(i32, &[&str])] = &[
         (
             2,
@@ -2813,491 +3346,256 @@ mod tests {
 
     #[test]
     fn tv_x_c_91_exit_code_collision_set() {
-        // Every variant, constructed. Length asserted below, so a
-        // variant added to the enum without a row here fails the
-        // count rather than silently narrowing the set under test
-        // (R12: a name that resolves to nothing is indistinguishable
-        // from a deleted vector).
-        let all: Vec<(&str, OctoCliError)> = vec![
-            (
-                "ClapParse",
-                OctoCliError::ClapParse(clap::Error::new(clap::error::ErrorKind::InvalidValue)),
-            ),
-            ("NoActiveIdentity", OctoCliError::NoActiveIdentity),
-            (
-                "ConfirmationRequired",
-                OctoCliError::ConfirmationRequired {
-                    command: "x".to_string(),
-                },
-            ),
-            (
-                "AuditorDenied",
-                OctoCliError::AuditorDenied {
-                    command: "x".to_string(),
-                },
-            ),
-            ("AlreadyRotating", OctoCliError::AlreadyRotating),
-            (
-                "IdentityNotFound",
-                OctoCliError::IdentityNotFound("x".to_string()),
-            ),
-            (
-                "HsmUnavailable",
-                OctoCliError::HsmUnavailable("x".to_string()),
-            ),
-            ("AlreadyRevoked", OctoCliError::AlreadyRevoked),
-            (
-                "CaveatParse",
-                OctoCliError::CaveatParse {
-                    message: "x".to_string(),
-                },
-            ),
-            (
-                "InvalidCaveatCombination",
-                OctoCliError::InvalidCaveatCombination {
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "HolderNotFound",
-                OctoCliError::HolderNotFound("x".to_string()),
-            ),
-            (
-                "AttenuationViolation",
-                OctoCliError::AttenuationViolation("x".to_string()),
-            ),
-            (
-                "SigningFailed",
-                OctoCliError::SigningFailed("x".to_string()),
-            ),
-            (
-                "ParentCapNotFound",
-                OctoCliError::ParentCapNotFound("x".to_string()),
-            ),
-            (
-                "PolicyNotFound",
-                OctoCliError::PolicyNotFound("x".to_string()),
-            ),
-            (
-                "PolicyVersionNotFound",
-                OctoCliError::PolicyVersionNotFound {
-                    policy: "x".to_string(),
-                    version: 0,
-                },
-            ),
-            ("RoleNotFound", OctoCliError::RoleNotFound("x".to_string())),
-            (
-                "StakeInsufficient",
-                OctoCliError::StakeInsufficient {
-                    required: 0,
-                    available: 0,
-                },
-            ),
-            (
-                "RoleNotSelectable",
-                OctoCliError::RoleNotSelectable {
-                    role_id: "x".to_string(),
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "SignerMismatch",
-                OctoCliError::SignerMismatch {
-                    signer_did: "x".to_string(),
-                    operator_did: "x".to_string(),
-                },
-            ),
-            (
-                "GroupBindingRejected",
-                OctoCliError::GroupBindingRejected {
-                    reason: "x".to_string(),
-                },
-            ),
-            ("StdinSecretRefused", OctoCliError::StdinSecretRefused),
-            (
-                "InvalidFilter",
-                OctoCliError::InvalidFilter("x".to_string()),
-            ),
-            (
-                "StaleStub",
-                OctoCliError::StaleStub {
-                    name: "x".to_string(),
-                    replaced_by: "x",
-                },
-            ),
-            (
-                "ReputationNotFound",
-                OctoCliError::ReputationNotFound {
-                    did: "x".to_string(),
-                    role: "x".to_string(),
-                },
-            ),
-            (
-                "ReputationRevoked",
-                OctoCliError::ReputationRevoked {
-                    did: "x".to_string(),
-                },
-            ),
-            (
-                "AnchorChainBroken",
-                OctoCliError::AnchorChainBroken {
-                    did: "x".to_string(),
-                    last_anchor_unix: 0,
-                },
-            ),
-            (
-                "NoAnchorVerifyInMode",
-                OctoCliError::NoAnchorVerifyInMode { mode: "x" },
-            ),
-            (
-                "InvalidRoleSlug",
-                OctoCliError::InvalidRoleSlug {
-                    slug: "x".to_string(),
-                    reason: "x".to_string(),
-                },
-            ),
-            ("InvalidTtlHops", OctoCliError::InvalidTtlHops { hops: 0 }),
-            (
-                "MeshCapabilityInsufficient",
-                OctoCliError::MeshCapabilityInsufficient {
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "EnvelopeAuthorizationFailed",
-                OctoCliError::EnvelopeAuthorizationFailed {
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "InvalidEndpointScheme",
-                OctoCliError::InvalidEndpointScheme {
-                    scheme: "x".to_string(),
-                },
-            ),
-            (
-                "RpcTimeout",
-                OctoCliError::RpcTimeout {
-                    peer: "x".to_string(),
-                    method: "x".to_string(),
-                    timeout_ms: 0,
-                },
-            ),
-            (
-                "VaultNotOwned",
-                OctoCliError::VaultNotOwned("x".to_string()),
-            ),
-            (
-                "InsufficientBalance",
-                OctoCliError::InsufficientBalance {
-                    have: "x".to_string(),
-                    need: "x".to_string(),
-                },
-            ),
-            ("RoleNotProvisioned", OctoCliError::RoleNotProvisioned),
-            (
-                "ChainIdMismatch",
-                OctoCliError::ChainIdMismatch {
-                    from: "x".to_string(),
-                    to: "x".to_string(),
-                },
-            ),
-            (
-                "InvalidChainId",
-                OctoCliError::InvalidChainId {
-                    received: "x".to_string(),
-                },
-            ),
-            ("NoOctoHome", OctoCliError::NoOctoHome),
-            (
-                "ManifestParseError",
-                OctoCliError::ManifestParseError {
-                    path: "x".to_string(),
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "CapabilityValidationFailed",
-                OctoCliError::CapabilityValidationFailed(0),
-            ),
-            (
-                "AgentAlreadyExists",
-                OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()),
-            ),
-            ("InvalidLimit", OctoCliError::InvalidLimit("x".to_string())),
-            (
-                "InvalidCursor",
-                OctoCliError::InvalidCursor("x".to_string()),
-            ),
-            (
-                "AgentNotFound",
-                OctoCliError::AgentNotFound(uuid::Uuid::nil()),
-            ),
-            (
-                "ForbiddenHolderMismatch",
-                OctoCliError::ForbiddenHolderMismatch,
-            ),
-            (
-                "AlreadyInTransition",
-                OctoCliError::AlreadyInTransition(uuid::Uuid::nil()),
-            ),
-            (
-                "InvalidStateTransition",
-                OctoCliError::InvalidStateTransition {
-                    from: "x".to_string(),
-                    to: "x".to_string(),
-                },
-            ),
-            (
-                "AuditSubstrateNotReady",
-                OctoCliError::AuditSubstrateNotReady,
-            ),
-            (
-                "ReceiptNotFound",
-                OctoCliError::ReceiptNotFound("x".to_string()),
-            ),
-            (
-                "PermissionDenied",
-                OctoCliError::PermissionDenied("x".to_string()),
-            ),
-            (
-                "AuditReadFailed",
-                OctoCliError::AuditReadFailed("x".to_string()),
-            ),
-            (
-                "AuditResponseTooLarge",
-                OctoCliError::AuditResponseTooLarge {
-                    matched: 0,
-                    limit: 0,
-                },
-            ),
-            (
-                "AgentNotRunning",
-                OctoCliError::AgentNotRunning(uuid::Uuid::nil()),
-            ),
-            (
-                "RuntimeSubstrateNotReady",
-                OctoCliError::RuntimeSubstrateNotReady,
-            ),
-            (
-                "RuntimeAttachFailed",
-                OctoCliError::RuntimeAttachFailed {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "RuntimeSpawnFailed",
-                OctoCliError::RuntimeSpawnFailed {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "SnapshotStale",
-                OctoCliError::SnapshotStale {
-                    snapshot_id_hex: "x".to_string(),
-                    age_secs: 0,
-                },
-            ),
-            (
-                "InvalidProposalState",
-                OctoCliError::InvalidProposalState {
-                    state: "x".to_string(),
-                },
-            ),
-            (
-                "GovernanceSubstrateError",
-                OctoCliError::GovernanceSubstrateError {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "VoteRejected",
-                OctoCliError::VoteRejected {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "UnknownAttestationKind",
-                OctoCliError::UnknownAttestationKind {
-                    kind_ref: "x".to_string(),
-                },
-            ),
-            (
-                "PrereqNotAccepted",
-                OctoCliError::PrereqNotAccepted {
-                    rfc_ref: "x".to_string(),
-                },
-            ),
-            ("Internal", OctoCliError::Internal("x".to_string())),
-            (
-                "AttachHandleExpired",
-                OctoCliError::AttachHandleExpired {
-                    mint_unix: 0,
-                    ttl_unix: 0,
-                    now_unix: 0,
-                },
-            ),
-            (
-                "AttachHandleBadSignature",
-                OctoCliError::AttachHandleBadSignature {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "AttachSessionMismatch",
-                OctoCliError::AttachSessionMismatch {
-                    token_session_hex: "x".to_string(),
-                    registered_session_hex: "x".to_string(),
-                },
-            ),
-            (
-                "AttachSessionUnknown",
-                OctoCliError::AttachSessionUnknown("x".to_string()),
-            ),
-            (
-                "PersistenceError",
-                OctoCliError::PersistenceError("x".to_string()),
-            ),
-            (
-                "RevocationError",
-                OctoCliError::RevocationError("x".to_string()),
-            ),
-            (
-                "InvalidSessionIdHex",
-                OctoCliError::InvalidSessionIdHex {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "InvalidSinceCursor",
-                OctoCliError::InvalidSinceCursor {
-                    mint_unix: 0,
-                    requested: 0,
-                },
-            ),
-            (
-                "TransportHandlerNotRegistered",
-                OctoCliError::TransportHandlerNotRegistered {
-                    kind_label: "x".to_string(),
-                },
-            ),
-            (
-                "TokenMintSkipped",
-                OctoCliError::TokenMintSkipped {
-                    reason: "x".to_string(),
-                },
-            ),
-            (
-                "ReplayDetected",
-                OctoCliError::ReplayDetected {
-                    since_unix: 0,
-                    recorded_cursor: 0,
-                },
-            ),
-            (
-                "NetworkPeerNotFound",
-                OctoCliError::NetworkPeerNotFound {
-                    gateway_id_hex: "x".to_string(),
-                },
-            ),
-            (
-                "NetworkLocalKeyUnavailable",
-                OctoCliError::NetworkLocalKeyUnavailable,
-            ),
-            (
-                "NetworkGraphDepthBelowRange",
-                OctoCliError::NetworkGraphDepthBelowRange { depth: 0 },
-            ),
-            (
-                "NetworkInvalidDid",
-                OctoCliError::NetworkInvalidDid {
-                    did_redacted: "x".to_string(),
-                },
-            ),
-            (
-                "NetworkConfigParseFailed",
-                OctoCliError::NetworkConfigParseFailed {
-                    kind_redacted: "x".to_string(),
-                    path_redacted: None,
-                },
-            ),
-            (
-                "NetworkSubstrateUnavailable",
-                OctoCliError::NetworkSubstrateUnavailable {
-                    companion: "x",
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "NetworkCoordinatorNotFound",
-                OctoCliError::NetworkCoordinatorNotFound {
-                    coordinator_id_redacted: "x".to_string(),
-                },
-            ),
-            (
-                "NetworkDryRunDenied",
-                OctoCliError::NetworkDryRunDenied {
-                    arm: "x",
-                    domain_id_redacted: "x".to_string(),
-                },
-            ),
-            (
-                "NetworkKeyRotationUnknownId",
-                OctoCliError::NetworkKeyRotationUnknownId {
-                    key_id_hex: "x".to_string(),
-                    known_keys_band: KnownKeysBand::None,
-                },
-            ),
-            ("WalletLocked", OctoCliError::WalletLocked),
-            (
-                "IdentityTransitionRefused",
-                OctoCliError::IdentityTransitionRefused {
-                    reason: "x".to_string(),
-                },
-            ),
-            ("WeakPassphrase", OctoCliError::WeakPassphrase),
-            (
-                "DevModeRequired",
-                OctoCliError::DevModeRequired {
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "InvalidReason",
-                OctoCliError::InvalidReason {
-                    detail: "x".to_string(),
-                },
-            ),
-            (
-                "FileInputRejected",
-                OctoCliError::FileInputRejected {
-                    detail: "x".to_string(),
-                },
-            ),
+        // Every variant, constructed, with NO name beside it:
+        // `variant_name` reads the name off the type, so there is no
+        // second place for a name and a value to disagree.
+        let all: Vec<OctoCliError> = vec![
+            OctoCliError::ClapParse(clap::Error::new(clap::error::ErrorKind::InvalidValue)),
+            OctoCliError::NoActiveIdentity,
+            OctoCliError::ConfirmationRequired {
+                command: "x".to_string(),
+            },
+            OctoCliError::AuditorDenied {
+                command: "x".to_string(),
+            },
+            OctoCliError::AlreadyRotating,
+            OctoCliError::IdentityNotFound("x".to_string()),
+            OctoCliError::HsmUnavailable("x".to_string()),
+            OctoCliError::AlreadyRevoked,
+            OctoCliError::CaveatParse {
+                message: "x".to_string(),
+            },
+            OctoCliError::InvalidCaveatCombination {
+                detail: "x".to_string(),
+            },
+            OctoCliError::HolderNotFound("x".to_string()),
+            OctoCliError::AttenuationViolation("x".to_string()),
+            OctoCliError::SigningFailed("x".to_string()),
+            OctoCliError::ParentCapNotFound("x".to_string()),
+            OctoCliError::PolicyNotFound("x".to_string()),
+            OctoCliError::PolicyVersionNotFound {
+                policy: "x".to_string(),
+                version: 0,
+            },
+            OctoCliError::RoleNotFound("x".to_string()),
+            OctoCliError::StakeInsufficient {
+                required: 0,
+                available: 0,
+            },
+            OctoCliError::RoleNotSelectable {
+                role_id: "x".to_string(),
+                reason: "x".to_string(),
+            },
+            OctoCliError::SignerMismatch {
+                signer_did: "x".to_string(),
+                operator_did: "x".to_string(),
+            },
+            OctoCliError::GroupBindingRejected {
+                reason: "x".to_string(),
+            },
+            OctoCliError::StdinSecretRefused,
+            OctoCliError::InvalidFilter("x".to_string()),
+            OctoCliError::StaleStub {
+                name: "x".to_string(),
+                replaced_by: "x",
+            },
+            OctoCliError::ReputationNotFound {
+                did: "x".to_string(),
+                role: "x".to_string(),
+            },
+            OctoCliError::ReputationRevoked {
+                did: "x".to_string(),
+            },
+            OctoCliError::AnchorChainBroken {
+                did: "x".to_string(),
+                last_anchor_unix: 0,
+            },
+            OctoCliError::NoAnchorVerifyInMode { mode: "x" },
+            OctoCliError::InvalidRoleSlug {
+                slug: "x".to_string(),
+                reason: "x".to_string(),
+            },
+            OctoCliError::InvalidTtlHops { hops: 0 },
+            OctoCliError::MeshCapabilityInsufficient {
+                detail: "x".to_string(),
+            },
+            OctoCliError::EnvelopeAuthorizationFailed {
+                detail: "x".to_string(),
+            },
+            OctoCliError::InvalidEndpointScheme {
+                scheme: "x".to_string(),
+            },
+            OctoCliError::RpcTimeout {
+                peer: "x".to_string(),
+                method: "x".to_string(),
+                timeout_ms: 0,
+            },
+            OctoCliError::VaultNotOwned("x".to_string()),
+            OctoCliError::InsufficientBalance {
+                have: "x".to_string(),
+                need: "x".to_string(),
+            },
+            OctoCliError::RoleNotProvisioned,
+            OctoCliError::ChainIdMismatch {
+                from: "x".to_string(),
+                to: "x".to_string(),
+            },
+            OctoCliError::InvalidChainId {
+                received: "x".to_string(),
+            },
+            OctoCliError::NoOctoHome,
+            OctoCliError::ManifestParseError {
+                path: "x".to_string(),
+                reason: "x".to_string(),
+            },
+            OctoCliError::CapabilityValidationFailed(0),
+            OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()),
+            OctoCliError::InvalidLimit("x".to_string()),
+            OctoCliError::InvalidCursor("x".to_string()),
+            OctoCliError::AgentNotFound(uuid::Uuid::nil()),
+            OctoCliError::ForbiddenHolderMismatch,
+            OctoCliError::AlreadyInTransition(uuid::Uuid::nil()),
+            OctoCliError::InvalidStateTransition {
+                from: "x".to_string(),
+                to: "x".to_string(),
+            },
+            OctoCliError::AuditSubstrateNotReady,
+            OctoCliError::ReceiptNotFound("x".to_string()),
+            OctoCliError::PermissionDenied("x".to_string()),
+            OctoCliError::AuditReadFailed("x".to_string()),
+            OctoCliError::AuditResponseTooLarge {
+                matched: 0,
+                limit: 0,
+            },
+            OctoCliError::AgentNotRunning(uuid::Uuid::nil()),
+            OctoCliError::RuntimeSubstrateNotReady,
+            OctoCliError::RuntimeAttachFailed {
+                reason: "x".to_string(),
+            },
+            OctoCliError::RuntimeSpawnFailed {
+                reason: "x".to_string(),
+            },
+            OctoCliError::SnapshotStale {
+                snapshot_id_hex: "x".to_string(),
+                age_secs: 0,
+            },
+            OctoCliError::InvalidProposalState {
+                state: "x".to_string(),
+            },
+            OctoCliError::GovernanceSubstrateError {
+                reason: "x".to_string(),
+            },
+            OctoCliError::VoteRejected {
+                reason: "x".to_string(),
+            },
+            OctoCliError::UnknownAttestationKind {
+                kind_ref: "x".to_string(),
+            },
+            OctoCliError::PrereqNotAccepted {
+                rfc_ref: "x".to_string(),
+            },
+            OctoCliError::Internal("x".to_string()),
+            OctoCliError::AttachHandleExpired {
+                mint_unix: 0,
+                ttl_unix: 0,
+                now_unix: 0,
+            },
+            OctoCliError::AttachHandleBadSignature {
+                reason: "x".to_string(),
+            },
+            OctoCliError::AttachSessionMismatch {
+                token_session_hex: "x".to_string(),
+                registered_session_hex: "x".to_string(),
+            },
+            OctoCliError::AttachSessionUnknown("x".to_string()),
+            OctoCliError::PersistenceError("x".to_string()),
+            OctoCliError::RevocationError("x".to_string()),
+            OctoCliError::InvalidSessionIdHex {
+                reason: "x".to_string(),
+            },
+            OctoCliError::InvalidSinceCursor {
+                mint_unix: 0,
+                requested: 0,
+            },
+            OctoCliError::TransportHandlerNotRegistered {
+                kind_label: "x".to_string(),
+            },
+            OctoCliError::TokenMintSkipped {
+                reason: "x".to_string(),
+            },
+            OctoCliError::ReplayDetected {
+                since_unix: 0,
+                recorded_cursor: 0,
+            },
+            OctoCliError::NetworkPeerNotFound {
+                gateway_id_hex: "x".to_string(),
+            },
+            OctoCliError::NetworkLocalKeyUnavailable,
+            OctoCliError::NetworkGraphDepthBelowRange { depth: 0 },
+            OctoCliError::NetworkInvalidDid {
+                did_redacted: "x".to_string(),
+            },
+            OctoCliError::NetworkConfigParseFailed {
+                kind_redacted: "x".to_string(),
+                path_redacted: None,
+            },
+            OctoCliError::NetworkSubstrateUnavailable {
+                companion: "x",
+                detail: "x".to_string(),
+            },
+            OctoCliError::NetworkCoordinatorNotFound {
+                coordinator_id_redacted: "x".to_string(),
+            },
+            OctoCliError::NetworkDryRunDenied {
+                arm: "x",
+                domain_id_redacted: "x".to_string(),
+            },
+            OctoCliError::NetworkKeyRotationUnknownId {
+                key_id_hex: "x".to_string(),
+                known_keys_band: KnownKeysBand::None,
+            },
+            OctoCliError::WalletLocked,
+            OctoCliError::IdentityTransitionRefused {
+                reason: "x".to_string(),
+            },
+            OctoCliError::WeakPassphrase,
+            OctoCliError::DevModeRequired {
+                detail: "x".to_string(),
+            },
+            OctoCliError::InvalidReason {
+                detail: "x".to_string(),
+            },
+            OctoCliError::FileInputRejected {
+                detail: "x".to_string(),
+            },
         ];
         assert_eq!(
             all.len(),
             91,
-            "the exit-code collision set must cover every OctoCliError variant"
+            "the enumeration must construct every OctoCliError variant"
         );
-        // No duplicate name: two rows for one variant would let that
-        // variant's code be checked twice and another variant go
-        // unobserved at a shared code.
-        let mut names: Vec<&str> = all.iter().map(|(n, _)| *n).collect();
-        names.sort_unstable();
-        let before = names.len();
-        names.dedup();
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &all {
+            assert!(
+                seen.insert(variant_name(v)),
+                "variant {} was constructed more than once",
+                variant_name(v)
+            );
+        }
         assert_eq!(
-            names.len(),
-            before,
-            "duplicate variant name in the enumeration"
+            seen.len(),
+            91,
+            "every variant must be constructed exactly once"
         );
 
         // Observed: code -> the variants that return it.
         let mut observed: std::collections::BTreeMap<i32, Vec<&str>> =
             std::collections::BTreeMap::new();
-        for (name, v) in &all {
-            observed.entry(v.exit_code()).or_default().push(name);
+        for v in &all {
+            observed
+                .entry(v.exit_code())
+                .or_default()
+                .push(variant_name(v));
         }
         for members in observed.values_mut() {
             members.sort_unstable();
@@ -3315,15 +3613,13 @@ mod tests {
             "the set of shared exit codes, or the membership of one, changed"
         );
 
-        // Every contracted code must actually be reachable, and no
-        // contracted member may be a typo that resolved to nothing:
-        // a name in CONTRACTED absent from the enumeration would make
-        // the equality above pass for the wrong reason.
-        let enumerated: std::collections::BTreeSet<&str> = all.iter().map(|(n, _)| *n).collect();
+        // Every name in CONTRACTED must be one this vector actually
+        // constructed, so a typo there cannot make the equality above
+        // pass for the wrong reason.
         for (code, members) in CONTRACTED {
             for m in *members {
                 assert!(
-                    enumerated.contains(m),
+                    seen.contains(m),
                     "CONTRACTED exit {code} names variant `{m}`, which the enumeration does not construct"
                 );
             }

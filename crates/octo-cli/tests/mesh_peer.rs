@@ -299,7 +299,13 @@ fn tv_peer_add_4_confirm_required() {
         ])
         .assert()
         .code(2)
-        .stderr(pred_str::contains("--confirm required"));
+        // R23: the literal `--confirm required` moved out of the `error`
+        // string when the renderer moved the remedy into `hint`. The
+        // claim is the same one — the gate fires BEFORE any substrate
+        // call, and it names the flag that would satisfy it — so the
+        // assertions moved with it rather than being deleted.
+        .stderr(pred_str::contains("ConfirmationRequired"))
+        .stderr(pred_str::contains("--confirm --confirm-acknowledge"));
 
     octo_in(&home)
         .args(["mesh", "peer", "list"])
@@ -371,7 +377,10 @@ fn tv_peer_remove_3_confirm_required() {
         .args(["mesh", "peer", "remove", &canonical_did(22)])
         .assert()
         .code(2)
-        .stderr(pred_str::contains("--confirm required"));
+        // R23: as at `tv_peer_add_4` — same claim, assertion moved to
+        // where the renderer now puts it.
+        .stderr(pred_str::contains("ConfirmationRequired"))
+        .stderr(pred_str::contains("--confirm --confirm-acknowledge"));
 }
 
 // ---------------------------------------------------------------------------

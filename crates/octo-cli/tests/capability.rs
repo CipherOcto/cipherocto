@@ -42,17 +42,40 @@ fn tv_cap1_list_emits_empty_capabilities_envelope() {
         .stdout(contains("\"redacted\":false"));
 }
 
-/// Active companion to TV-CAP1: today (v1.0 stub wallet) the
-/// `WalletStore::try_active_identity` errors with `NotActive`. This
-/// pins that v1.0 substrate drift explicitly so the unignore moment is
-/// visible.
+/// Active companion to TV-CAP1.
+///
+/// R23: this vector pinned exit 2 and `NotActive`, which is what the
+/// v1.0 stub wallet returned. The unlock split (mission
+/// 0011-x-s-a-wallet-store-identity §AC-9, §AC-17) made
+/// `WalletStore::try_active_identity` return `WalletError::Locked`
+/// unconditionally, and the `From<WalletError>` table maps that to
+/// `OctoCliError::WalletLocked` at exit 92. Until R23 the seven
+/// `try_active_identity` call sites routed around the table and
+/// delivered exit 64 `internal error`; this file was the only place
+/// that failure was visible, and it had been red since the split
+/// landed.
+///
+/// The name carries the exit it pins, so a future change to the
+/// mapping shows up as a renamed test rather than a silent drift.
+///
+/// OPEN GAP, recorded by R23 and not closed here: the remedy this
+/// message names is NOT actionable from `capability list`. The variant
+/// `hint` tells the operator to "supply the passphrase on stdin with
+/// `--passphrase-stdin --allow-stdin-secret`", and `capability list`
+/// accepts neither flag — `acquire_passphrase` is wired only into the
+/// four identity subcommands (`rotate`, `revoke`, `rotate-complete`,
+/// `rotate-abort`). Migrating the capability, governance and agent
+/// signing paths onto `WalletStore::unlock` is a feature, not a
+/// repair, and is the open item. Until it lands, every `octo
+/// capability` subcommand and both governance signer paths fail
+/// unconditionally.
 #[test]
-fn tv_cap1_list_emits_empty_capabilities_envelope_v0_exit_2() {
+fn tv_cap1_list_emits_empty_capabilities_envelope_locked_exit_92() {
     octo()
         .args(["capability", "list"])
         .assert()
-        .code(2)
-        .stderr(contains("active identity"));
+        .code(92)
+        .stderr(contains("wallet store is locked"));
 }
 
 /// TV-CAP6 — `capability mint --holder did:octo:zTest` reaches the
@@ -160,9 +183,19 @@ fn tv_cap16d_filter_comma_split() {
             "cap_id=abcd,caveat=before",
         ])
         .assert()
-        // Either exit 0 (empty set) or 2 (no active identity) — both
-        // are acceptable; what matters is that we do NOT exit 16.
-        .code(predicates::prelude::predicate::eq(0).or(predicates::prelude::predicate::eq(2)));
+        // The claim this vector makes is NEGATIVE and is unchanged: a
+        // well-formed comma-separated filter must not be rejected as a
+        // malformed one. R23 widened the acceptable set from {0, 2} to
+        // {0, 2, 92} because the store is locked on any machine until
+        // the capability signing path is migrated onto
+        // `WalletStore::unlock` (see the OPEN GAP note on
+        // `tv_cap1_..._locked_exit_92`). Exit 16 is still the failure
+        // this vector exists to catch.
+        .code(
+            predicates::prelude::predicate::eq(0)
+                .or(predicates::prelude::predicate::eq(2))
+                .or(predicates::prelude::predicate::eq(92)),
+        );
 }
 
 /// TV-CAP19 — `capability mint` without `--confirm` in human mode exits 2.

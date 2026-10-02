@@ -2495,8 +2495,15 @@ fn bind_envelope_rebind_prepare(
             RebindArmError::AdapterUnwired => OctoCliError::Internal(
                 "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
             ),
-            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
-                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            // R23: `s` is a String carried out of the substrate, so this
+            // is a payload site like any other. The three sibling
+            // `RebindArmError` sites and the `ForwardEnvelopeError::Internal`
+            // site below were uncapped until R23 swept the arms by their
+            // match BOUNDARY rather than by the name of their binding
+            // (the `other`-bound scan this vector's first half uses does
+            // not reach them).
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(sanitize_substrate_error(
+                &format!("rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"),
             )),
             _ => OctoCliError::Internal(
                 "unknown rebind arm substrate error (forward-looking variant)".into(),
@@ -2555,8 +2562,15 @@ fn bind_envelope_rebind_commit(
             RebindArmError::AdapterUnwired => OctoCliError::Internal(
                 "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
             ),
-            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
-                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            // R23: `s` is a String carried out of the substrate, so this
+            // is a payload site like any other. The three sibling
+            // `RebindArmError` sites and the `ForwardEnvelopeError::Internal`
+            // site below were uncapped until R23 swept the arms by their
+            // match BOUNDARY rather than by the name of their binding
+            // (the `other`-bound scan this vector's first half uses does
+            // not reach them).
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(sanitize_substrate_error(
+                &format!("rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"),
             )),
             _ => OctoCliError::Internal(
                 "unknown rebind arm substrate error (forward-looking variant)".into(),
@@ -2605,8 +2619,15 @@ fn bind_envelope_rebind_abort(
             RebindArmError::AdapterUnwired => OctoCliError::Internal(
                 "rebind arm adapter not yet wired (Phase 6 follow-on)".into(),
             ),
-            RebindArmError::UnknownArm(s) => OctoCliError::Internal(format!(
-                "rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"
+            // R23: `s` is a String carried out of the substrate, so this
+            // is a payload site like any other. The three sibling
+            // `RebindArmError` sites and the `ForwardEnvelopeError::Internal`
+            // site below were uncapped until R23 swept the arms by their
+            // match BOUNDARY rather than by the name of their binding
+            // (the `other`-bound scan this vector's first half uses does
+            // not reach them).
+            RebindArmError::UnknownArm(s) => OctoCliError::Internal(sanitize_substrate_error(
+                &format!("rebind arm `{s}` is not yet wired (post-PQC D2.2 follow-on)"),
             )),
             _ => OctoCliError::Internal(
                 "unknown rebind arm substrate error (forward-looking variant)".into(),
@@ -4075,9 +4096,12 @@ fn network_envelope_forward(args: &EnvelopeForwardArgs, cli: &Octo) -> Result<()
                 command: "destination_peer_id_hex is all-zero (invalid)".to_string(),
             }
         }
+        // R23: same reason as the three `RebindArmError` sites above.
         octo_network::mon::forward_envelope::ForwardEnvelopeError::Internal(s) => {
             OctoCliError::ConfirmationRequired {
-                command: format!("forward envelope build internal error: {s}"),
+                command: sanitize_substrate_error(&format!(
+                    "forward envelope build internal error: {s}"
+                )),
             }
         }
         _ => OctoCliError::ConfirmationRequired {

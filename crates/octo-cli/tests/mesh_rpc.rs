@@ -14,9 +14,13 @@
 //!   times out so the integration path skips this vector and the
 //!   substrate-truth wiring is asserted at the lib boundary.
 //! - TV-RPC-3 `rpc-method-not-registered` — `--method nonexistent`
-//!   fails the substrate method registry lookup → exit 17
-//!   (`EnvelopeAuthorizationFailed` shared slot with
-//!   `InvalidTtlHops`).
+//!   fails the substrate method registry lookup → exit 19
+//!   (`EnvelopeAuthorizationFailed`). Exit 19 is the code the
+//!   amendment chain assigned, not the RFC-0011-f §Exit Codes row
+//!   (which sits in the 27-31 band this CLI does not implement);
+//!   R23 corrected a claim here that named 17 and a share with
+//!   `InvalidTtlHops` that does not exist — `InvalidTtlHops` is the
+//!   SOLE occupant of 17.
 //! - TV-RPC-4 `rpc-request-response-correlation-match` — `ping`
 //!   dispatch surfaces both `request_envelope_id` and
 //!   `response_envelope_id` in the `RpcOutput` envelope per
@@ -119,7 +123,7 @@ fn tv_rpc_1_rpc_success_round_trip_dry_run() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tv_rpc_3_rpc_method_not_registered_returns_exit_17() {
+fn tv_rpc_3_rpc_method_not_registered_returns_exit_19() {
     let home = new_home();
     let peer = canonical_did(0x22);
 
@@ -171,7 +175,7 @@ fn tv_rpc_3b_invalid_peer_did_legacy_returns_exit_4() {
 }
 
 #[test]
-fn tv_rpc_3c_empty_method_returns_exit_17() {
+fn tv_rpc_3c_empty_method_returns_exit_19() {
     let home = new_home();
     let peer = canonical_did(0x33);
 

@@ -45,7 +45,9 @@ pub enum MeshError {
     /// its `payload_kind` UUID (RFC-0011-f §RPC Surface "no central
     /// enum" rationale + RFC-0871 §Specialized Node Lifecycle). The
     /// substrate's method registry is the canonical answer; the CLI
-    /// maps this to exit 17 (shared with `InvalidTtlHops` per
+    /// maps this to exit 19 via `EnvelopeAuthorizationFailed` — NOT 17
+    /// (which is `InvalidTtlHops`'s own code, and is not shared with it
+    /// per
     /// amendment-chain slot allocation, RFC-0011-f §Exit Codes).
     #[error("unknown RPC method `{method}` (target peer does not serve this method per its `payload_kind` UUID)")]
     UnknownMethod {

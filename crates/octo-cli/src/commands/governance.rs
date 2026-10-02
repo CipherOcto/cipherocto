@@ -609,7 +609,12 @@ fn attest_handler(
     let identity = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        // R23: delegate to the `From<WalletError>` table. `Hsm` is
+        // overridden above and `NotActive` above that; everything
+        // else belongs to the table, which already maps `Locked` to
+        // `WalletLocked` at exit 92. See the note at the capability
+        // call sites.
+        other => OctoCliError::from(other),
     })?;
     let signer = WalletSignerAdapter::new(identity);
     let signer_did = signer.signer_did();
@@ -770,7 +775,12 @@ fn vote_handler(
     let identity = store.try_active_identity().map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        // R23: delegate to the `From<WalletError>` table. `Hsm` is
+        // overridden above and `NotActive` above that; everything
+        // else belongs to the table, which already maps `Locked` to
+        // `WalletLocked` at exit 92. See the note at the capability
+        // call sites.
+        other => OctoCliError::from(other),
     })?;
     let signer = WalletSignerAdapter::new(identity);
     let signer_did = signer.signer_did();

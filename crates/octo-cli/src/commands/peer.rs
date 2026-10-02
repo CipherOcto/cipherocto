@@ -277,8 +277,12 @@ fn parse_trust_level_filter(s: &str) -> Result<TrustLevel, OctoCliError> {
 /// Exit-code contract:
 /// - `InvalidDidShape` → `IdentityNotFound` (exit 4) per RFC-0011-f
 ///   §Error Handling + mission YAML §Acceptance Criteria.
-/// - `InvalidEndpointScheme` → `InvalidEndpointScheme` (exit 28)
-///   per RFC-0011-f §Exit Codes (shared slot with `InvalidTtlHops`).
+/// - `InvalidEndpointScheme` → `InvalidEndpointScheme` (exit 28).
+///   RFC-0011-f §Exit Codes row 28 agrees with this mapping. R22
+///   claimed the slot was shared with `InvalidTtlHops`; R23 measured
+///   it and 28 has exactly one occupant — the share is with nothing.
+///   `InvalidTtlHops` holds 17, the code the amendment chain
+///   assigned it.
 /// - `UnknownMethod` / `RpcTimeout` → `Internal` (exit 64). The
 ///   peer-table path cannot surface these (it never invokes the
 ///   RPC substrate); they are mapped for completeness so a future

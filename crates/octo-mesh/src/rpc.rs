@@ -125,7 +125,9 @@ pub struct RpcRequest<'a> {
 /// - `MeshError::InvalidDidShape` when `peer_did` is not canonical
 ///   `did:octo:z<base58btc>` (legacy `did:octo:b<base32>` rejected).
 /// - `MeshError::UnknownMethod` when the target does not serve
-///   `method`. CLI maps to exit 17 (shared with `InvalidTtlHops`).
+///   `method`. CLI maps to exit 19 via `EnvelopeAuthorizationFailed`,
+///   not 17 (R23: the earlier "exit 17, shared with `InvalidTtlHops`"
+///   was false on both halves — 17 belongs to `InvalidTtlHops` alone).
 /// - `MeshError::RpcTimeout` when the reply does not arrive within
 ///   `timeout_ms`. CLI maps to exit 20.
 ///

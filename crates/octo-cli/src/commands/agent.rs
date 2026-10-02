@@ -373,7 +373,9 @@ pub(crate) mod common {
         store.try_active_identity().map_err(|e| match e {
             octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
             octo_wallet::WalletError::Hsm(_) => map_hsm_error(&e.to_string()),
-            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+            // R23: delegate to the `From<WalletError>` table. See the
+            // note at the capability call sites.
+            other => OctoCliError::from(other),
         })
     }
 

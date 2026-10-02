@@ -67,19 +67,32 @@
 //! fail-closed at the substrate boundary with `MeshError::UnknownMethod`
 //! (CLI exit 19, via `EnvelopeAuthorizationFailed`).
 //!
-//! **On the exit numbers (R22 correction).** An earlier revision of this
-//! comment said "exit 17, shared with `InvalidTtlHops`" and cited
-//! RFC-0011-f. Both halves were false. `UnknownMethod` maps to
+//! **On the exit numbers (R22 correction, R23 refinement).** An earlier
+//! revision of this comment said "exit 17, shared with `InvalidTtlHops`"
+//! and cited RFC-0011-f. Both halves were false. `UnknownMethod` maps to
 //! `EnvelopeAuthorizationFailed` at 19, not 17, and 17 is
 //! `InvalidTtlHops`'s own code. Separately, RFC-0011-f §Exit Codes
 //! reserves a 27-31 band and puts `MeshError::UnknownMethod` at **31**.
-//! The band is not implemented: the mesh variants sit on 17-20, which
-//! RFC-0011-a and -b already own. That gap is a specification question
-//! for the RFC-0011-f owner and is deliberately NOT closed by editing
-//! these numbers, because moving four live exit codes is an
-//! operator-visible contract change and RFC-0011-f is already known to
-//! contradict its own table elsewhere. What is fixed here is the
-//! citation, which asserted a value the cited rows do not contain.
+//!
+//! **R23 correction to R22's own text.** R22's version of this block
+//! said "the band is not implemented". That was false, and in a way
+//! that would have caused damage: of the five slots, **27 is
+//! `NoOctoHome`, 28 is `InvalidEndpointScheme`, and 31 is
+//! `RoleNotFound`** — only 29 and 30 are free. Worse, 28 is itself a
+//! mesh variant and it **agrees** with RFC-0011-f's row 28. A reader
+//! told the whole band was unimplemented would have re-slotted 28 as
+//! well and broken a spec-conformant mapping. The accurate statement is
+//! that the band is **half-occupied, and its single mesh occupant is
+//! the one that already matches the RFC**; the four mesh-forward errors
+//! discussed here sit on 17-20 instead, which RFC-0011-a and -b already
+//! own.
+//!
+//! That gap is a specification question for the RFC-0011-f owner and is
+//! deliberately NOT closed by editing these numbers, because moving four
+//! live exit codes is an operator-visible contract change and
+//! RFC-0011-f is already known to contradict its own table elsewhere.
+//! What is fixed here is the citation, which asserted a value the cited
+//! rows do not contain.
 
 use std::fs;
 use std::io::Write;

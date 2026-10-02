@@ -83,14 +83,22 @@ pub enum OctoCliError {
         /// Command that required confirmation.
         command: String,
     },
-    /// A mutating command was invoked under `--mode auditor`.
+    /// A command was invoked under `--mode auditor`.
     ///
     /// Auditor is a read-only role and is denied **before** the
     /// confirmation gate fires. Wave 3 LOW: a separate variant lets
     /// the operator see "auditor mode is read-only" rather than the
     /// generic "--confirm required" (which would be misleading —
     /// adding `--confirm` does not unblock an Auditor session).
-    #[error("auditor mode is read-only; refusing mutating command {command}")]
+    ///
+    /// The variant covers BOTH mutating commands and the read-only
+    /// ones the role is deliberately denied. `whoami`, `show` and
+    /// `list` mutate nothing, so the previous wording — "refusing
+    /// mutating command" — asserted a mutation that never happened
+    /// and told an auditor to leave the role "to perform mutations"
+    /// for a command that performs none. The message is written to
+    /// be true of either case.
+    #[error("auditor mode is read-only; refusing command {command}")]
     AuditorDenied {
         /// Command the auditor attempted to invoke.
         command: String,
@@ -1041,27 +1049,37 @@ pub enum OctoCliError {
         detail: String,
     },
 
-    /// An operator-supplied `--seed-file` was refused before any key
-    /// was derived: either its permission mode is group- or
-    /// world-readable, or its 32-byte payload is entirely ASCII hex
-    /// characters and would mint a different identity read as raw
-    /// bytes.
+    /// An operator-supplied input FILE was refused before any key was
+    /// derived: it could not be read, its contents did not meet the
+    /// stated contract, or its permission mode is group- or
+    /// world-readable.
     ///
-    /// Both refusals were previously reported as `Internal` at exit
-    /// 64, whose hint is "re-run with `RUST_LOG=debug` and report
-    /// the diagnostic". That is advice for an unexpected fault. A
-    /// 0644 seed file is a deliberate security gate, and a 32-byte
-    /// all-hex file is an input ambiguity with a two-flag remedy
-    /// (write the 64-char form, or write the 32 raw bytes). Sending
-    /// an operator to a bug report for either is a false escalation,
-    /// and in CI the exit-64 classification is what decides whether
-    /// the pipeline retries or pages someone. Exit 2 per the same
-    /// operator-input-validation convention `WeakPassphrase`,
-    /// `InvalidReason` and `DevModeRequired` follow.
-    #[error("seed file refused: {detail}")]
-    SeedFileRejected {
+    /// Six distinct conditions share this variant and exit 2. On the
+    /// seed file: a missing path, a payload that is neither 32 raw
+    /// bytes nor 64 hex characters, hex that does not decode, and a
+    /// permission mode that is group- or world-readable. On the
+    /// passphrase file: a missing or unreadable path. On the payload:
+    /// 32 bytes that are entirely ASCII hex characters, which would
+    /// mint a different identity read as raw bytes.
+    ///
+    /// Every one of these was previously reported as `Internal` at
+    /// exit 64, whose hint is "re-run with `RUST_LOG=debug` and
+    /// report the diagnostic". That is advice for an unexpected
+    /// fault. A 0644 seed file is a deliberate security gate, a
+    /// wrong path is a typo, and a wrong-length seed is an input
+    /// contract the message itself states. For the length case the
+    /// CLI literally tells the operator the rule and then tells them
+    /// to report a bug. Sending an operator to a bug report for any
+    /// of these is a false escalation, and in CI the exit-64
+    /// classification is what decides whether the pipeline retries
+    /// or pages someone. Exit 2 per the same operator-input-
+    /// validation convention `WeakPassphrase`, `InvalidReason` and
+    /// `DevModeRequired` follow.
+    #[error("input file refused: {detail}")]
+    FileInputRejected {
         /// The refusal and its remedy. Carries the file's mode in
-        /// octal for the permission form; never the file's contents.
+        /// octal for the permission form; never the file's contents,
+        /// and never the passphrase.
         detail: String,
     },
 }
@@ -1250,7 +1268,7 @@ impl OctoCliError {
             Self::WeakPassphrase => 2,
             Self::InvalidReason { .. } => 2,
             Self::DevModeRequired { .. } => 2,
-            Self::SeedFileRejected { .. } => 2,
+            Self::FileInputRejected { .. } => 2,
         }
     }
 
@@ -1278,10 +1296,22 @@ impl OctoCliError {
                     .to_string()
             }
             Self::AuditorDenied { .. } => {
-                "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations".to_string()
+                "auditor mode is read-only and this command is not part of that role; run it in a \
+                 human or ci session. Auditor sessions are deliberately denied every identity \
+                 command, including the read-only ones, so this refusal is the expected result \
+                 and not a fault to report"
+                    .to_string()
             }
             Self::AlreadyRotating => "complete or abort the in-flight rotation first".to_string(),
-            Self::IdentityNotFound(_) => "list identities with `octo identity show`".to_string(),
+            // `identity show` takes an OPTIONAL single DID and defaults to the
+            // active one. It never enumerates, so naming it here pointed an
+            // operator who did not know the DID at a command that cannot list
+            // them: `identity select --did <unknown>` and `identity show <unknown>`
+            // both print this same hint, and neither discovers anything. The
+            // command that enumerates is `identity list`.
+            Self::IdentityNotFound(_) => {
+                "list the identities in this wallet with `octo identity list`, then re-run with one of the DIDs it prints".to_string()
+            }
             Self::HsmUnavailable(_) => "check that the HSM backend is reachable".to_string(),
             Self::AlreadyRevoked => {
                 "this identity is already revoked or already registered; no action needed".to_string()
@@ -1548,13 +1578,26 @@ impl OctoCliError {
             // substrate `WalletError` envelope so the operator
             // gets an actionable remediation per failure class.
             Self::WalletLocked => {
-                "unlock the wallet with `octo identity unlock --passphrase-file <path>` (or interactive passphrase prompt) to access the identity seed; signing operations require the unlocked state (RFC-0011-x §Lifecycle Requirements)".to_string()
+                // The two forms that actually reach the passphrase. There is no
+                // `octo identity unlock` subcommand and no `--passphrase-file`
+                // flag on any identity subcommand - both were named here and
+                // both fail on the very command that raised this error. The
+                // first form is for a non-interactive run; the second is the
+                // interactive prompt `acquire_passphrase` falls through to.
+                "supply the passphrase on stdin with `--passphrase-stdin --allow-stdin-secret`, or run on a terminal and answer the interactive passphrase prompt; signing operations require the unlocked state (RFC-0011-x §Lifecycle Requirements)".to_string()
             }
+            // One hint serves several refusal classes, so it leads
+            // with the one whose remedy is NOT an action. When the
+            // message names a grace period, the only cure is to
+            // wait - and the previous wording invited the operator to
+            // "resolve any in-flight rotation" or re-point the
+            // wallet, which does not advance the operation and can
+            // abort a legitimate rotation.
             Self::IdentityTransitionRefused { .. } => {
-                "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements); verify the active identity's state machine position (`octo identity list`) and resolve any in-flight rotation before retrying - if the active identity is not the predecessor, `octo identity select --did <predecessor>` first, then `octo identity rotate-complete` or `octo identity rotate-abort`".to_string()
+                "the requested identity lifecycle transition was refused at the substrate (RFC-0011-x §Lifecycle Requirements). If the message names a grace period, the only remedy is to WAIT for it to elapse - do not abort the rotation and do not re-point the wallet. Otherwise verify the active identity's state machine position with `octo identity list` and resolve any in-flight rotation; if the active identity is not the predecessor, `octo identity select --did <predecessor>` first, then `octo identity rotate-complete` or `octo identity rotate-abort`".to_string()
             }
             Self::DevModeRequired { detail } => detail.to_string(),
-            Self::SeedFileRejected { detail } => detail.to_string(),
+            Self::FileInputRejected { detail } => detail.to_string(),
             Self::WeakPassphrase => {
                 format!(
                     "the passphrase is below the {}-character floor enforced at both `register` and `unlock` (mission 0011-x-s-a-wallet-store-identity §AC-28); supply a longer passphrase",

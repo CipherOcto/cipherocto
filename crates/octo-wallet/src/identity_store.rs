@@ -2597,7 +2597,23 @@ mod tests {
     }
 
     /// `select` must also refuse to move the pointer ONTO a record
-    /// whose own transition is already under way.
+    /// `select` has TWO rotation guards and the earlier revision of
+    /// this vector could only reach the first. Both return the
+    /// IDENTICAL `NotActive { current_state: Rotating }`, so the
+    /// assertion could not tell which fired - and the scenario it
+    /// claimed to build did not exist: `begin_rotation` writes the
+    /// SUCCESSOR as `Designated`, so the only `Rotating` record in
+    /// the store was the current active one, which is guard 1's
+    /// subject. Guard 2, the check on the TARGET, was therefore
+    /// unprotected: deleting it left this vector and `tv_x_51` both
+    /// green.
+    ///
+    /// Guard 2 is reachable only from a store whose target is
+    /// mid-rotation while a DIFFERENT identity is active - a state
+    /// the CLI cannot produce in one wallet, and exactly the state a
+    /// hand-edited or partially-written index can carry. The vector
+    /// builds it directly, the same way `tv_x_55` does, so the guard
+    /// has a test rather than a comment.
     #[test]
     fn tv_x_52_select_refuses_to_point_at_a_rotating_record() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2609,29 +2625,61 @@ mod tests {
                 true,
                 1_700_000_000,
             )
-            .expect("register");
-        let successor = IdentityKey::from_seed([0xB4u8; 32]);
-        let successor_did = successor.did().clone();
+            .expect("register the active identity");
+        let successor_key = IdentityKey::from_seed([0xB4u8; 32]);
+        let successor_did = successor_key.did();
         store
             .register(
-                successor,
+                successor_key,
                 "correct-horse-battery-staple",
                 false,
                 1_700_000_001,
             )
-            .expect("register successor");
-        let mut seed_out = Vec::new();
-        let mut handle = store
-            .unlock("correct-horse-battery-staple", &mut seed_out)
-            .expect("unlock");
-        handle
-            .begin_rotation(
-                IdentityKey::from_seed([0xB5u8; 32]),
-                "correct-horse-battery-staple",
-                1_700_000_010,
-            )
-            .expect("begin_rotation");
-        drop(handle);
+            .expect("register the would-be target");
+        let active_did = store.active_did().expect("active").clone();
+
+        // Put the TARGET into Rotating with a rotation event, while
+        // the current active identity stays Active. This is the
+        // precondition guard 2 exists for and guard 1 cannot catch.
+        let pos = store
+            .index
+            .records
+            .iter()
+            .position(|r| r.did.0 == successor_did.0)
+            .expect("successor row");
+        store.index.records[pos].lifecycle = LifecycleState::Rotating;
+        store.index.records[pos].rotation_history = vec![IdentityRotationEvent {
+            rotation_id: [0x33u8; 32],
+            started_at_unix: 1_700_000_010,
+            grace_expires_at_unix: 1_700_000_010 + 86_400,
+            successor_did: IdentityKey::from_seed([0xB6u8; 32]).did(),
+            signature_proof: [0u8; 64],
+        }];
+        write_index_atomically(dir.path(), &store.index).expect("persist the target state");
+
+        // Preconditions, asserted rather than assumed. Without them
+        // this vector is the vacuous one it replaces: it would pass
+        // against a store where guard 1 fired, or where the target
+        // was never Rotating at all.
+        let target = store
+            .identity_record(&successor_did)
+            .expect("target record")
+            .clone();
+        assert_eq!(
+            target.lifecycle,
+            LifecycleState::Rotating,
+            "the TARGET must be Rotating for guard 2 to be the thing under test"
+        );
+        let current = store
+            .identity_record(&active_did)
+            .expect("active record")
+            .clone();
+        assert_eq!(
+            current.lifecycle,
+            LifecycleState::Active,
+            "the current active identity must NOT be Rotating, or guard 1 fires first and \
+             this vector proves nothing about guard 2"
+        );
 
         let err = store
             .select(&successor_did)
@@ -2644,6 +2692,14 @@ mod tests {
                 }
             ),
             "expected NotActive/Rotating, got {err:?}"
+        );
+        // The refusal must not have moved the pointer, and the target
+        // must still be the one guard 2 rejected rather than being
+        // silently promoted.
+        assert_eq!(
+            store.active_did().expect("active").clone(),
+            active_did,
+            "a refused select must leave the active pointer where it was"
         );
     }
 

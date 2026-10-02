@@ -88,7 +88,14 @@ pub enum IdentityAction {
     /// other than `InMemorySigner`, and every constructor reachable
     /// here hard-codes `InMemorySigner`.
     Register {
-        /// Operator-chosen label for the new identity.
+        /// Operator-chosen label for the new identity. It is echoed
+        /// back in the register envelope and NOWHERE ELSE: the v1.0
+        /// `IdentityRecord` carries no label field, so the value is
+        /// NOT persisted to disk and does not appear in `identity
+        /// list` or `identity show`. Stated explicitly because
+        /// `revoke --reason` and `rotate-abort --reason` both carry
+        /// the same note, and a label that appears in the register
+        /// payload reads as stored.
         #[arg(long)]
         label: String,
         /// Path to a file containing the passphrase. Required
@@ -179,6 +186,13 @@ pub enum IdentityAction {
         /// `IdentityRotationEvent` carries a reason field, and
         /// `WalletStore::abort_rotation` takes no reason argument, so
         /// there is no audit-log write to receive it.
+        ///
+        /// `redact_string` removes values shaped like a JSON, YAML or
+        /// key/value field name and `bearer`/long-hex tokens. It does
+        /// NOT recognise a bare high-entropy secret - a `ghp_`-style
+        /// token pasted here is emitted verbatim. The value is not
+        /// persisted, but it IS written to stderr and into the
+        /// rendered envelope, so do not paste a credential.
         #[arg(long)]
         reason: Option<String>,
         /// Read the wallet passphrase from stdin (one line,
@@ -303,11 +317,18 @@ pub struct IdentityRegisterOutput {
     pub pubkey_hex: String,
     /// Operator-chosen label echoed back.
     pub label: String,
-    /// Lifecycle label after registration (`Designated` or `Active`).
+    /// Lifecycle label after registration (`Designated` or `Active`),
+    /// or `<not-read: dry-run>` under `--dry-run` - a sentinel
+    /// outside the documented set, because a preview performs no
+    /// read and the empty string is not a member of that set.
     pub lifecycle_state: String,
     /// RFC 3339 UTC timestamp of registration (caller-supplied
-    /// `now_unix` to keep substrate-faithful determinism).
-    pub registered_at: DateTime<Utc>,
+    /// `now_unix` to keep substrate-faithful determinism), or `null`
+    /// under `--dry-run`. It was previously non-optional and
+    /// rendered the epoch, `1970-01-01T00:00:00Z`, which is a valid
+    /// timestamp and so indistinguishable from a real registration
+    /// at the epoch.
+    pub registered_at: Option<DateTime<Utc>>,
     /// Whether the active pointer moved to the new identity.
     pub active_now: bool,
 }
@@ -335,7 +356,18 @@ pub struct IdentityListRow {
     pub lifecycle_state: String,
     /// RFC 3339 UTC timestamp of registration.
     pub registered_at: DateTime<Utc>,
-    /// Whether this row is the current active identity.
+    /// Whether the wallet's active POINTER names this row.
+    ///
+    /// This is pointer equality with `WalletStore::active_did`,
+    /// not a claim that the identity is usable. `revoke` does not
+    /// move the pointer, so a wallet whose active identity has been
+    /// revoked reports exactly one row with `active: true` and
+    /// `lifecycle_state: "Revoked"`. Both fields are true at once
+    /// and a consumer must read both: select on `active` to find
+    /// the pointer, and check `lifecycle_state` before using it.
+    /// The field was documented as "whether this row is the current
+    /// active identity", which reads as liveness and silently
+    /// invites the revoked-pointer mistake.
     pub active: bool,
 }
 
@@ -585,11 +617,17 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     // (`is_dev_mode`) so the OR semantics cannot drift.
     #[cfg(not(test))]
     {
+        // Not `Internal`: the message names its own remedy, so
+        // telling the operator to file a diagnostic contradicts it
+        // on the same screen, and exit 64 is the page-someone code
+        // in CI. This is an operator choosing a mode, so it joins
+        // the operator-input family at exit 2.
         if !cli.mode.dry_run && !is_dev_mode(cli) {
-            return Err(OctoCliError::Internal(
-                "successor derivation refused outside dev mode; use --dry-run for previews or --mode dev for test signing"
+            return Err(OctoCliError::DevModeRequired {
+                detail: "successor derivation is refused outside dev mode; use --dry-run for \
+                         previews, or re-run with --mode dev for test signing"
                     .to_string(),
-            ));
+            });
         }
     }
     let successor = octo_wallet::IdentityKey::from_seed([1u8; 32]);
@@ -785,9 +823,13 @@ pub fn register(
     );
     // Read passphrase file contents. Empty / missing file → substrate
     // floor check rejects with `WeakPassphrase` at slot 94, exit 2.
-    // Only a file that EXISTS but is empty reaches that check; a
-    // missing path fails one line below at `read_to_string` and
-    // surfaces as `Internal` at exit 64, not as `WeakPassphrase`.
+    // A missing or unreadable path is operator input, not a fault:
+    // it fails here as `FileInputRejected` at exit 2. It previously
+    // rode `Internal` at exit 64, whose hint is "re-run with
+    // RUST_LOG=debug and report the diagnostic" - a wrong path is a
+    // typo, and in CI that exit code is the page-someone one.
+    // Only a file that EXISTS but is empty reaches the floor check
+    // below, which is `WeakPassphrase`.
     // Wrap the passphrase in `Zeroizing<String>` so the bytes are
     // scrubbed when the variable drops at the end of the handler
     // (mission AC-24: passphrase must NOT survive into the heap
@@ -795,9 +837,13 @@ pub fn register(
     // the wrapper derefs cleanly.
     let passphrase =
         zeroize::Zeroizing::new(std::fs::read_to_string(passphrase_file).map_err(|e| {
-            OctoCliError::Internal(sanitize_substrate_error(&format!(
-                "passphrase file read: {e}"
-            )))
+            OctoCliError::FileInputRejected {
+                detail: format!(
+                    "passphrase file could not be read: {e}. Pass a path that exists and is \
+                     readable by this user, or drop --passphrase-file and answer the interactive \
+                     prompt"
+                ),
+            }
         })?);
     let register_facts = if !cli.mode.dry_run {
         // Substrate-side construction. In dev mode (mirrors rotate
@@ -833,32 +879,34 @@ pub fn register(
             // posture §Adversary Analysis A9 takes for the store
             // root, applied to the file that holds the identity
             // itself.
-            let seed_meta = std::fs::metadata(seed_path).map_err(|e| {
-                OctoCliError::Internal(sanitize_substrate_error(&format!("seed file stat: {e}")))
-            })?;
+            let seed_meta =
+                std::fs::metadata(seed_path).map_err(|e| OctoCliError::FileInputRejected {
+                    detail: format!("seed file could not be read: {e}. Pass a path that exists"),
+                })?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = seed_meta.permissions().mode();
                 if mode & 0o077 != 0 {
-                    // `SeedFileRejected`, not `Internal`: a permissive
+                    // `FileInputRejected`, not `Internal`: a permissive
                     // mode is a deliberate security gate with a
                     // one-command remedy, and `Internal`'s exit-64
                     // hint tells the operator to file a diagnostic
                     // report. In CI that exit code is what decides
                     // retry versus page.
-                    return Err(OctoCliError::SeedFileRejected {
+                    return Err(OctoCliError::FileInputRejected {
                         detail: format!(
                             "seed file mode {:04o} is group- or world-readable; expected 0600 (or \
-                             stricter). Treat the seed as compromised, re-run `octo-wallet init \
-                             --seed-out` to write a fresh one, and chmod 600 the result",
+                             stricter). Treat the seed as compromised, write a fresh one with \
+                             `octo-wallet init --node-type wholesale --seed-out <path>` (both \
+                             flags are required), and chmod 600 the result",
                             mode & 0o7777
                         ),
                     });
                 }
             }
-            let bytes = std::fs::read(seed_path).map_err(|e| {
-                OctoCliError::Internal(sanitize_substrate_error(&format!("seed file read: {e}")))
+            let bytes = std::fs::read(seed_path).map_err(|e| OctoCliError::FileInputRejected {
+                detail: format!("seed file could not be read: {e}. Pass a path that exists"),
             })?;
             let seed_arr: [u8; 32] = if bytes.len() == 32 {
                 // A 32-byte file that is entirely hex characters is
@@ -869,7 +917,7 @@ pub fn register(
                 // worst available failure mode for a seed. Refuse
                 // with the two spellings rather than guess.
                 if bytes.iter().all(|b| b.is_ascii_hexdigit()) {
-                    return Err(OctoCliError::SeedFileRejected {
+                    return Err(OctoCliError::FileInputRejected {
                         detail:
                             "the seed file is 32 bytes of hex characters, so reading it as 32 raw \
                              bytes would mint a different identity than the hex you supplied \
@@ -886,23 +934,34 @@ pub fn register(
                 for b in &bytes {
                     hex_str.push(*b as char);
                 }
-                let decoded = hex::decode(hex_str.trim()).map_err(|e| {
-                    OctoCliError::Internal(sanitize_substrate_error(&format!(
-                        "seed hex decode: {e}"
-                    )))
-                })?;
+                let decoded =
+                    hex::decode(hex_str.trim()).map_err(|e| OctoCliError::FileInputRejected {
+                        detail: format!(
+                            "the 64-character seed file is not valid hex: {e}. Write 64 \
+                             lowercase hex characters, or write the 32 raw bytes the key file \
+                             holds"
+                        ),
+                    })?;
                 if decoded.len() != 32 {
-                    return Err(OctoCliError::Internal(sanitize_substrate_error(
-                        "seed file must decode to exactly 32 bytes",
-                    )));
+                    return Err(OctoCliError::FileInputRejected {
+                        detail:
+                            "the 64-character seed file must decode to exactly 32 bytes. Write \
+                             the seed as 64 hex characters or as the 32 raw bytes"
+                                .to_string(),
+                    });
                 }
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&decoded);
                 arr
             } else {
-                return Err(OctoCliError::Internal(sanitize_substrate_error(
-                    "seed file must be exactly 32 bytes raw or 64-char lowercase hex",
-                )));
+                return Err(OctoCliError::FileInputRejected {
+                    detail: format!(
+                        "seed file is {} bytes; it must be exactly 32 bytes raw or 64 \
+                         characters of hex. The CLI states the rule and then, under the previous \
+                         Internal classification, told the operator to report a bug for breaking it",
+                        bytes.len()
+                    ),
+                });
             };
             octo_wallet::IdentityKey::from_seed(seed_arr)
         } else {
@@ -955,9 +1014,30 @@ pub fn register(
         // than fabricating them; the envelope is emitted through
         // `OutputEnvelope::redacted`, which marks it
         // non-authoritative.
-        (String::new(), String::new(), String::new(), false, 0)
+        (String::new(), String::new(), String::new(), false, i64::MIN)
     };
-    let (did, pubkey_hex, lifecycle_state, active_now, registered_at_unix) = register_facts;
+    let (did, pubkey_hex, mut lifecycle_state, active_now, registered_at_unix) = register_facts;
+    // Same convention the `select` handler states for itself: a value
+    // a dry run did not read is said to be unread, never
+    // fabricated. Two forms are corrected here.
+    //
+    // `lifecycle_state` was the empty string, which is not a member
+    // of the documented `Designated` / `Active` / `Rotating` /
+    // `Revoked` set - the exact condition `select` cites when it
+    // emits `<not-read: dry-run>`.
+    //
+    // `registered_at` was `from_timestamp(0, 0)`, i.e. 1970-01-01,
+    // which is a VALID RFC 3339 timestamp and therefore
+    // indistinguishable from an identity genuinely registered at the
+    // epoch. A consumer reading `registered_at` from a preview got a
+    // real-looking answer to a question the preview never asked. The
+    // sentinel is `i64::MIN`, which is not a plausible Unix second
+    // and cannot round-trip through `from_timestamp` at all, and the
+    // field is now `Option` so the envelope carries `null` - the
+    // form `select` already uses for `previous_active_did`.
+    if cli.mode.dry_run {
+        lifecycle_state = "<not-read: dry-run>".to_string();
+    }
     let output = IdentityRegisterOutput {
         did,
         pubkey_hex,
@@ -968,8 +1048,7 @@ pub fn register(
         // clock and drifts from the persisted value, so the envelope
         // and `store.json` disagree on when the identity was
         // registered.
-        registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0)
-            .unwrap_or_else(chrono::Utc::now),
+        registered_at: chrono::DateTime::from_timestamp(registered_at_unix, 0),
         active_now,
     };
     let env = if cli.mode.dry_run {
@@ -1069,6 +1148,17 @@ pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
     // read the whole inventory through `list`, which makes the gate
     // on `show` vacuous.
     block_auditor(cli, "identity list")?;
+    // `--dry-run` is a GLOBAL mode flag, so it reaches this handler
+    // too. It is a deliberate no-op here and the envelope is NOT
+    // redacted: `list` mutates nothing, so there is no pending
+    // state change to withhold and the payload below is the real
+    // inventory either way. The four sibling handlers all switch
+    // to `OutputEnvelope::redacted` under `--dry-run` because theirs
+    // would otherwise have to PERFORM the mutation to describe it.
+    // Redacting a read-only command would report `total: 0` for a
+    // wallet the operator can plainly see is full. Stating the
+    // asymmetry here is what makes `redacted: false` a fact rather
+    // than an inconsistency a consumer has to discover.
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     let active_did = store.active_did().map(|d| d.0.clone());
     let records = store.list_records();
@@ -1936,9 +2026,19 @@ mod tests {
         let src = production_src();
         let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
 
-        // Split the handler into the seed-file arm and the CSPRNG arm.
-        let branch_at = reg
-            .find("} else {")
+        // Split the handler into the seed-file arm and the CSPRNG
+        // arm. The split point is anchored on the MINT CALL and then
+        // walks back to the nearest `} else {` before it. The previous
+        // revision took the FIRST `} else {` in the handler, which is
+        // the seed-length dispatch INSIDE the import arm, so `mint_arm`
+        // also held the tail of the import arm and the vector was not
+        // describing the arms it names. Anchoring on the mint makes
+        // the split correct for any arm ordering.
+        let mint_at = reg
+            .find("IdentityKey::generate()")
+            .expect("the CSPRNG mint arm must exist");
+        let branch_at = reg[..mint_at]
+            .rfind("} else {")
             .expect("register branches between a seed file and the CSPRNG");
         let (import_arm, mint_arm) = reg.split_at(branch_at);
 
@@ -1951,18 +2051,28 @@ mod tests {
             "the second arm must be the CSPRNG mint: {mint_arm}"
         );
 
-        // The gate is on the import, INSIDE the arm that uses
-        // `seed_path` and before the arm's first `seed_path` use - a
-        // gate after the read would be checking a file already read.
+        // The gate must precede the READ OF KEY MATERIAL, not merely
+        // the first mention of `seed_path`. The previous revision
+        // compared against `import_arm.find("seed_path")`, which
+        // resolves to the `if let Some(seed_path)` BINDING at the top
+        // of the arm - so the assertion held for any gate position
+        // whatsoever. A mutation that moved the gate to sit AFTER
+        // `std::fs::read` - reading the raw private key off disk
+        // before refusing it, which is the whole defect - passed.
+        // `std::fs::metadata(seed_path)` legitimately precedes the
+        // gate: stat'ing a path discloses only that a file exists, and
+        // the gate needs the mode to report it.
         let import_gate = import_arm
             .find("is_dev_mode(cli)")
             .unwrap_or_else(|| panic!("the seed-file import must be gated: {import_arm}"));
-        let first_seed_use = import_arm
-            .find("seed_path")
-            .unwrap_or_else(|| panic!("the import arm must read seed_path: {import_arm}"));
+        let key_read = import_arm
+            .find("std::fs::read(seed_path)")
+            .unwrap_or_else(|| panic!("the import arm must read the seed file: {import_arm}"));
         assert!(
-            first_seed_use < import_gate,
-            "the gate must precede the seed file's first use: {import_arm}"
+            import_gate < key_read,
+            "the mode gate must precede the read of key material, not merely the first \
+             mention of the path; the gate at {import_gate} and the read at {key_read} \
+             means the raw private key is loaded before it is refused: {import_arm}"
         );
         assert!(
             import_arm.contains("DevModeRequired"),
@@ -2064,33 +2174,72 @@ mod tests {
         let src = production_src();
         let reg = fn_body_code(src, "pub fn register(", "pub fn select(");
 
-        // Inside the register handler, not the whole file - the
-        // whole-file spelling of this assertion matched its own
-        // literal.
+        // SCOPE: the 32-byte arm alone. The previous revision asserted
+        // against the whole register body, and the body carries a
+        // SIBLING refusal - the permission-mode check - which uses the
+        // same variant. A mutation that changed only THIS arm's
+        // variant to `Internal` therefore left every assertion green
+        // on the strength of a different arm.
+        let arm_at = reg
+            .find("if bytes.len() == 32 {")
+            .unwrap_or_else(|| panic!("register must branch on the seed length: {reg}"));
+        let arm_end = reg[arm_at..]
+            .find("} else if bytes.len() == 64 {")
+            .map(|e| arm_at + e)
+            .unwrap_or_else(|| {
+                panic!("the 32-byte arm must be followed by the 64-char arm: {reg}")
+            });
+        let arm = &reg[arm_at..arm_end];
+
+        // The CHECK, as a predicate that the refusal is guarded by -
+        // not merely the presence of the token. A mutation appending
+        // `&& false` to the condition left the previous
+        // `contains("is_ascii_hexdigit")` green while neutering the
+        // guard completely: every 32-byte seed would be accepted and
+        // the wrong identity minted. Pinning the whole condition
+        // followed by the guard's opening brace is the only spelling
+        // that distinguishes a live check from a disabled one.
+        let cond = "if bytes.iter().all(|b| b.is_ascii_hexdigit()) {";
+        let cond_at = arm.find(cond).unwrap_or_else(|| {
+            panic!(
+                "the 32-byte arm must GUARD the refusal on the whole payload being hex - \
+                 `{cond}` - not merely mention the predicate: {arm}"
+            )
+        });
+        // The refusal must be what the guard returns, not something
+        // that merely appears later in the arm.
+        let after = &arm[cond_at..];
+        let refusal_at = after.find("return Err(").unwrap_or_else(|| {
+            panic!("the hex-shape guard must return a refusal directly: {after}")
+        });
         assert!(
-            reg.contains("is_ascii_hexdigit"),
-            "the 32-byte branch must detect a hex-shaped payload: {reg}"
+            refusal_at < 400,
+            "the guard's body must BE the refusal; a return {refusal_at} bytes after the \
+             condition is not: {after}"
         );
         assert!(
-            reg.contains("would mint a different identity"),
-            "the refusal must name the ambiguity so the operator picks a spelling, not a guess: \
-             {reg}"
-        );
-        // The refusal must be an OPERATOR-INPUT variant, not
-        // `Internal`. `Internal` exits 64 with the hint "re-run with
-        // RUST_LOG=debug and report the diagnostic", so a 0644 seed
-        // file told the operator to file a bug report, and in CI the
-        // exit code is what decides retry versus page.
-        assert!(
-            reg.contains("SeedFileRejected"),
-            "the hex-shape refusal must be SeedFileRejected (exit 2, remedy in the message), not \
-             Internal (exit 64, report a diagnostic): {reg}"
+            after[refusal_at..].contains("FileInputRejected"),
+            "the hex-shape refusal must be FileInputRejected (exit 2, remedy in the message), \
+             not Internal (exit 64, report a diagnostic): {after}"
         );
         assert!(
-            !reg.contains("if bytes.len() == 32 {\n                let mut arr"),
-            "the 32-byte arm must open with the hex-shape check, not fall straight through to \
-             the copy: {reg}"
+            !arm.contains("OctoCliError::Internal"),
+            "the 32-byte arm must not classify operator input as Internal: {arm}"
         );
+        // The refusal must name the ambiguity so the operator picks a
+        // spelling rather than guessing.
+        assert!(
+            arm.contains("would mint a different identity"),
+            "the refusal must name the ambiguity so the operator picks a spelling, not a \
+             guess: {arm}"
+        );
+        // The copy IS reachable - the guard is conditional, and a raw
+        // 32-byte seed is the ordinary case. What must not happen is
+        // reaching it with the guard absent, which the condition and
+        // ordering assertions above already exclude. An earlier
+        // revision asserted the copy was unreachable at all, which
+        // was false of correct code and would have forced the guard
+        // to be removed to make the vector pass.
     }
 
     /// The `ConfirmationRequired` remediation must name the flag the
@@ -2148,7 +2297,7 @@ mod tests {
         }
     }
 
-    /// The `SeedFileRejected` variant must exist, exit 2, and render
+    /// The `FileInputRejected` variant must exist, exit 2, and render
     /// its own detail as the hint.
     ///
     /// Both seed-file refusals previously rode `Internal` at exit 64,
@@ -2158,7 +2307,7 @@ mod tests {
     /// CI pipeline the exit code is what decides retry versus page.
     #[test]
     fn tv_x_c_48_seed_file_refusals_exit_two_with_the_remedy_in_the_hint() {
-        let err = OctoCliError::SeedFileRejected {
+        let err = OctoCliError::FileInputRejected {
             detail: "seed file mode 0644 is group- or world-readable; expected 0600".to_string(),
         };
         assert_eq!(
@@ -2214,15 +2363,60 @@ mod tests {
             "register must consume the substrate's returned DID with `?` rather than \
              discard it: {reg}"
         );
+        // The destructure, tolerating the `mut` the dry-run sentinel
+        // needs on `lifecycle_state`. The previous revision pinned
+        // the bare form, so the fix for a fabricated `lifecycle_state`
+        // would have failed this vector - the test enforcing a shape
+        // the code has a legitimate reason to leave.
+        let tail_at = reg
+            .find("= register_facts;")
+            .unwrap_or_else(|| panic!("register must destructure register_facts: {reg}"));
+        let head_at = reg[..tail_at]
+            .rfind("let (did, pubkey_hex,")
+            .unwrap_or_else(|| panic!("register must destructure register_facts: {reg}"));
+        let destructure = &reg[head_at..tail_at + "= register_facts;".len()];
         assert!(
-            reg.contains(
-                "let (did, pubkey_hex, lifecycle_state, active_now, registered_at_unix) = \
-                 register_facts"
-            ) && reg.contains("did,")
-                && reg.contains("pubkey_hex,")
-                && reg.contains("active_now,"),
-            "the envelope fields must be shorthand bindings taken from the committed arm, \
-             not literals: {reg}"
+            destructure.contains("lifecycle_state")
+                && destructure.contains("active_now")
+                && destructure.contains("registered_at_unix"),
+            "every envelope field must be bound from register_facts: {destructure}"
+        );
+        // The shorthand bindings, anchored INSIDE the output struct
+        // literal. The previous revision used a whole-body
+        // `contains("did,")`, which the LET-DESTRUCTURE above
+        // satisfies on its own - a dead conjunct that could not fail
+        // for any reason including the one it names.
+        let lit = reg
+            .find("let output = IdentityRegisterOutput {")
+            .map(|i| &reg[i..])
+            .and_then(|post| post.find("};").map(|e| &post[..e]))
+            .unwrap_or_else(|| {
+                panic!("register must build an IdentityRegisterOutput literal: {reg}")
+            });
+        for field in ["did,", "pubkey_hex,", "lifecycle_state,", "active_now,"] {
+            assert!(
+                lit.contains(field),
+                "{field} must be a shorthand binding from the committed arm, not a literal: \
+                 {lit}"
+            );
+        }
+        // The committed arm's tuple, which is where the substrate DID
+        // actually enters the envelope. A reviewer mutation that
+        // changed this element to `String::new()` - the exact
+        // regression this vector exists to catch - left every
+        // assertion above green, because the destructured NAMES were
+        // still bound and still used; only the VALUE was dropped.
+        let tuple = reg
+            .find("let active_now = active_did_now")
+            .map(|i| &reg[i..])
+            .and_then(|post| post.find("\n    } else {").map(|e| &post[..e]))
+            .unwrap_or_else(|| {
+                panic!("the committed arm must build a facts tuple from the substrate: {reg}")
+            });
+        assert!(
+            tuple.contains("did.0,") && tuple.contains("hex::encode(key_pubkey)"),
+            "the committed arm's tuple must carry the substrate DID and pubkey, not empty \
+             strings: {tuple}"
         );
         assert!(
             !reg.contains("did: String::new()")
@@ -2795,7 +2989,7 @@ mod tests {
             pubkey_hex: "aa".repeat(32),
             label: "alpha".to_string(),
             lifecycle_state: "Active".to_string(),
-            registered_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+            registered_at: Some(DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap()),
             active_now: true,
         };
         let json = serde_json::to_string(&output).expect("register output serializes");

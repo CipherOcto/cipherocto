@@ -945,12 +945,31 @@ impl UnlockedWallet<'_> {
         };
         // Insert in sorted-by-DID order so the determinism
         // contract holds.
-        let pos = self
+        // A hit here is an error, not an insert position.
+        // `binary_search_by` yields `Ok(i)` on a hit and
+        // `unwrap_or_else` passes an `Ok` through UNCHANGED, so
+        // the previous spelling (`unwrap_or_else(|i| i)`) yielded
+        // the matching record's OWN index on a hit and inserted
+        // the successor a SECOND time, immediately in front of
+        // the row it duplicated. That silently corrupts the
+        // index: `WalletIndex::record` linear-scans and returns
+        // the FIRST match while every transition below uses
+        // `binary_search_by`, which returns an ARBITRARY match
+        // among equals - so reads and writes then disagree
+        // about which duplicate is live. `register` refuses the
+        // same condition explicitly above; this is that refusal,
+        // applied at the rotation write path. Reusing the
+        // terminal-state variant rather than minting one keeps
+        // the CLI's existing translation table honest.
+        let successor_pos = self
             .store
             .index
             .records
-            .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()))
-            .unwrap_or_else(|i| i);
+            .binary_search_by(|r| r.did.as_str().cmp(successor_did.as_str()));
+        if successor_pos.is_ok() {
+            return Err(WalletError::AlreadyRevoked);
+        }
+        let pos = successor_pos.unwrap_err();
         self.store.index.records.insert(pos, successor_record);
         let successor_did_for_event = successor_did.clone();
         self.rotation_successor_did = Some(successor_did);
@@ -1070,9 +1089,27 @@ impl UnlockedWallet<'_> {
             .binary_search_by(|r| r.did.as_str().cmp(predecessor_did.as_str()))
         {
             let mut record = self.store.index.records[pos].clone();
-            record
+            // Retain on the SUCCESSOR DID alone erases more than the
+            // rotation being aborted. `unlock` resolves the rotation
+            // in flight by `max_by_key(started_at_unix)`, which
+            // establishes that a DID is not unique within the
+            // history: a COMPLETED rotation to the same successor
+            // shares it. Aborting a second rotation to S would drop
+            // the completed `P -> S` event too, silently deleting
+            // the audit record of a rotation that really finished -
+            // and `identity show` would then under-report P's
+            // history. Resolve the in-flight event's timestamp
+            // first, then drop only that one event.
+            let in_flight_started_at = record
                 .rotation_history
-                .retain(|e| Some(&e.successor_did) != aborted_successor.as_ref());
+                .iter()
+                .filter(|e| Some(&e.successor_did) == aborted_successor.as_ref())
+                .map(|e| e.started_at_unix)
+                .max();
+            record.rotation_history.retain(|e| {
+                !(Some(&e.successor_did) == aborted_successor.as_ref()
+                    && Some(e.started_at_unix) == in_flight_started_at)
+            });
             self.store.index.records[pos] = record;
         }
         // Always persist the predecessor's restored state so
@@ -2823,6 +2860,217 @@ mod tests {
             before,
             "a refused rotation must seal nothing; orphans went from {before} to {}: {after:?}",
             after.len()
+        );
+    }
+
+    /// tv_x_54 - `begin_rotation` must refuse a successor that is
+    /// already in the index.
+    ///
+    /// The insert used `binary_search_by(..).unwrap_or_else(|i| i)`.
+    /// `binary_search_by` returns `Ok(i)` on a hit and
+    /// `unwrap_or_else` passes an `Ok` through UNCHANGED, so on a
+    /// hit `pos` was the matching record's OWN index and the
+    /// successor was inserted a SECOND time, immediately in front of
+    /// the row it duplicated. The suite stayed green: no vector
+    /// registered a successor separately and then rotated to it.
+    ///
+    /// Why the duplicate is worse than a duplicate line. Once two
+    /// rows share a DID, `WalletIndex::record` linear-scans and
+    /// returns the FIRST match, while `complete_rotation`,
+    /// `abort_rotation`, `persist_active_record` and
+    /// `append_rotation_event` all use `binary_search_by`, which
+    /// returns an ARBITRARY match among equals. Reads and writes
+    /// then disagree about which row is live.
+    ///
+    /// The state is reachable from the CLI without any 24h wait:
+    /// register a predecessor, register a successor from a
+    /// 32-byte seed file, then rotate the predecessor to that same
+    /// successor.
+    #[test]
+    fn tv_x_54_rotation_to_an_already_registered_successor_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xC1u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        let successor_key = IdentityKey::from_seed([0xC2u8; 32]);
+        let successor_did = successor_key.did();
+        // Register the successor too, WITHOUT activating it, so the
+        // predecessor stays the active identity and can be rotated.
+        store
+            .register(
+                successor_key.clone(),
+                "correct-horse-battery-staple",
+                false,
+                1_700_000_005,
+            )
+            .expect("register successor");
+        let baseline = store.index.records.len();
+        assert_eq!(
+            baseline,
+            2,
+            "the precondition is two distinct records; got {}",
+            store.index.records.len()
+        );
+
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let result = handle.begin_rotation(
+            successor_key.clone(),
+            "correct-horse-battery-staple",
+            1_700_000_010,
+        );
+        assert!(
+            result.is_err(),
+            "rotating to an already-registered successor must be refused; it returned \
+             Ok and inserted a second record for the same DID"
+        );
+        drop(handle);
+
+        // The refusal wrote nothing, and specifically did not leave a
+        // second row for the successor DID. Counting distinct DIDs is
+        // the point: a length check alone would pass if the guard
+        // removed one row while leaving another.
+        let dids: std::collections::BTreeSet<&str> =
+            store.index.records.iter().map(|r| r.did.as_str()).collect();
+        assert_eq!(
+            dids.len(),
+            store.index.records.len(),
+            "every record must carry a distinct DID; the index holds {} rows but only \
+             {} distinct DIDs, so a duplicate was persisted",
+            store.index.records.len(),
+            dids.len()
+        );
+        assert_eq!(
+            store.index.records.len(),
+            baseline,
+            "a refused rotation must not change the record count"
+        );
+        // And the successor must not have become Rotating behind the
+        // operator's back, which is what the first, pre-insert write
+        // would have done.
+        let succ = store
+            .identity_record(&successor_did)
+            .expect("successor record")
+            .clone();
+        assert_eq!(
+            succ.lifecycle,
+            LifecycleState::Designated,
+            "the successor must be untouched by a refused rotation"
+        );
+    }
+
+    /// tv_x_55 - `abort_rotation` must drop only the rotation in
+    /// flight, not every event sharing its successor DID.
+    ///
+    /// The retain keyed on `successor_did` alone. That DID is not
+    /// unique within `rotation_history`: the code's own rehydration
+    /// picks the in-flight event by `max_by_key(started_at_unix)`,
+    /// which is only meaningful if more than one event to the same
+    /// successor can be present. A completed `P -> S` event sharing
+    /// the DID was therefore erased by an abort of a later rotation
+    /// to S - silently deleting the audit record of a rotation that
+    /// really finished, and making `identity show` under-report the
+    /// predecessor's history.
+    ///
+    /// The state is built explicitly rather than reached through
+    /// `begin_rotation`, because the tv_x_54 guard now refuses a
+    /// second rotation to a live successor. That is exactly the
+    /// migration case this covers: a `store.json` written by a
+    /// binary from before the guard carries the duplicate events, and
+    /// this release must not destroy the completed one on abort.
+    #[test]
+    fn tv_x_55_abort_preserves_a_completed_event_that_shares_the_successor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("open_at");
+        store
+            .register(
+                IdentityKey::from_seed([0xD1u8; 32]),
+                "correct-horse-battery-staple",
+                true,
+                1_700_000_000,
+            )
+            .expect("register predecessor");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+        let successor_key = IdentityKey::from_seed([0xD2u8; 32]);
+        let successor_did = successor_key.did();
+        // A REAL rotation, so the event carries a proof that verifies
+        // against the rehydrated successor at unlock.
+        handle
+            .begin_rotation(successor_key, "correct-horse-battery-staple", 1_700_000_200)
+            .expect("begin_rotation");
+        drop(handle);
+
+        // Prepend the earlier, completed event to the same successor.
+        // Same proof: it signs (predecessor, successor pubkey), so it
+        // is identical for both rotations and stays verifiable.
+        let predecessor_did = store.active_did().expect("active").clone();
+        let pos = store
+            .index
+            .records
+            .iter()
+            .position(|r| r.did == predecessor_did)
+            .expect("predecessor row");
+        let in_flight = store.index.records[pos]
+            .rotation_history
+            .first()
+            .cloned()
+            .expect("the rotation event just persisted");
+        let completed = IdentityRotationEvent {
+            rotation_id: [0x5Au8; 32],
+            started_at_unix: 1_700_000_100,
+            grace_expires_at_unix: in_flight.grace_expires_at_unix,
+            successor_did: successor_did.clone(),
+            signature_proof: in_flight.signature_proof,
+        };
+        store.index.records[pos]
+            .rotation_history
+            .insert(0, completed);
+        write_index_atomically(dir.path(), &store.index).expect("persist the two-event history");
+        drop(store);
+
+        // Reopen as a second process would, then abort.
+        let mut store = WalletStore::open_at(dir.path()).expect("reopen");
+        let mut seed_out = Vec::new();
+        let mut handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock with two events to one successor");
+        handle.abort_rotation().expect("abort_rotation");
+        drop(handle);
+
+        let after = store
+            .identity_record(&predecessor_did)
+            .expect("predecessor record")
+            .clone();
+        assert_eq!(
+            after.rotation_history.len(),
+            1,
+            "aborting must drop exactly the in-flight event; history now holds {:?}. \
+             The retain keyed on successor_did alone, which is not unique in this \
+             history, so the COMPLETED event was erased with it.",
+            after
+                .rotation_history
+                .iter()
+                .map(|e| (e.started_at_unix, e.rotation_id[0]))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after.rotation_history[0].started_at_unix, 1_700_000_100,
+            "the surviving event must be the COMPLETED one, not the aborted one"
+        );
+        assert_eq!(
+            after.rotation_history[0].rotation_id[0], 0x5A,
+            "the surviving event must be the one written before the in-flight rotation"
         );
     }
 }

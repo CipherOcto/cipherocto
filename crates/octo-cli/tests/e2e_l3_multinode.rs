@@ -1761,3 +1761,310 @@ fn l3_governance_attest_signing_path_succeeds() {
         String::from_utf8_lossy(&wrong_out.stdout),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: the post-4c(b) `governance vote` signing path is exercised
+// end-to-end through separate processes
+// ---------------------------------------------------------------------------
+
+/// The governance vote path is the third of the six 4c(b) production
+/// signing sites and the second one whose substrate is fully wired.
+/// `vote_v2` lives at `crates/octo-governance/src/vote.rs:487` and
+/// builds a `CapabilityToken` from `(voter_cap_id, signer_did,
+/// weight_bps)`, registers the wallet-backed `CapabilitySigner` under
+/// the supplied `voter_cap_id` in an in-memory session registry, then
+/// calls `vote_v2` which signs the canonical envelope through the
+/// substrate.
+///
+/// The in-memory registry means the `voter_cap_id` can be any hex
+/// string: it does NOT need to be minted through the (stubbed)
+/// `cli_fns::mint` substrate path. The substrate's only inviolable
+/// pre-call prereq is `prereq_vote_subgroup_check` which rejects
+/// `did:octo:subgroup:` voter DIDs only — a canonical voter DID
+/// passes. The `weight_bps > 10_000` clamp is enforced at the CLI
+/// boundary (`if weight_bps > 10_000` at vote.rs:725); the substrate
+/// also enforces it.
+///
+/// The test flow:
+/// 1. register an identity (CI mode)
+/// 2. SEPARATE process invokes live `governance vote` against the
+///    substrate's `vote_v2` (post-4c(b) signing path through
+///    `acquire_passphrase` + `WalletStore::unlock` +
+///    `WalletSignerAdapter::new(IdentityKey)` +
+///    `session.register_capability` + `vote_v2`)
+/// 3. assert the envelope carries a 64-char hex `vote_id`
+///    (BLAKE3-256 of the canonical envelope bytes) and a positive
+///    `recorded_at_unix`
+/// 4. negative control: a wrong passphrase returns exit 92
+///    (WalletLocked) and a successful-shape receipt is unreachable
+///    when `store.unlock` fails
+#[test]
+fn l3_governance_vote_signing_path_succeeds() {
+    let home = new_node_home("l3-gov-vote");
+    let passphrase = "l3-gov-vote-passphrase-2026"; // 30 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // -- Step 1: register an identity. The vote's `signer_did` is the
+    //    active identity's DID; a canonical DID passes the
+    //    `prereq_vote_subgroup_check` gate (only `did:octo:subgroup:`
+    //    is rejected). The passphrase file is written without a
+    //    trailing newline: see the unlock test for the
+    //    substrate-as-is / unlock-trim invariant.
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-gov-vote",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "ci",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_did = register_env.payload["did"]
+        .as_str()
+        .expect("register envelope must carry payload.did")
+        .to_string();
+    assert!(
+        register_did.starts_with("did:octo:"),
+        "DID must be canonical, got {register_did:?}"
+    );
+
+    // -- Step 2: SEPARATE process invokes the live (non-dry-run)
+    //    `governance vote` against the substrate's `vote_v2`.
+    //    `proposal_id_hex` and `vote_choice` are positional per
+    //    RFC-0011-g §Command Taxonomy. The `voter_cap_id` is a
+    //    32-byte hex string the substrate session registers in
+    //    memory (it does NOT query the wallet); `weight_bps=5000`
+    //    is well within the 10_000 cap. The `--confirm` gate
+    //    is the only one vote requires here (we do NOT set
+    //    `--allow-stale`, so the two-step intent gate is
+    //    irrelevant).
+    let proposal_id_hex = "11".repeat(32); // 64 hex chars
+    let voter_cap_id = "22".repeat(32); // 64 hex chars, in-memory registered
+    let mut vote_cmd = octo_in(&home);
+    vote_cmd.args([
+        "governance",
+        "vote",
+        &proposal_id_hex,
+        "approve",
+        "--weight-bps",
+        "5000",
+        "--voter-cap-id",
+        &voter_cap_id,
+        "--mode",
+        "ci",
+        "--allow-write",
+        "--confirm",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    vote_cmd.stdin(std::process::Stdio::piped());
+    vote_cmd.stdout(std::process::Stdio::piped());
+    vote_cmd.stderr(std::process::Stdio::piped());
+    let mut vote_child = vote_cmd.spawn().expect("spawn vote");
+    std::io::Write::write_all(
+        vote_child.stdin.as_mut().expect("vote stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to vote");
+    let vote_out = vote_child.wait_with_output().expect("wait vote");
+    assert_eq!(
+        vote_out.status.code(),
+        Some(0),
+        "governance vote on an unlocked wallet must exit 0, got {:?}. \
+         stderr={}, stdout={}",
+        vote_out.status.code(),
+        String::from_utf8_lossy(&vote_out.stderr),
+        String::from_utf8_lossy(&vote_out.stdout),
+    );
+    let vote_env = Envelope::parse(&String::from_utf8_lossy(&vote_out.stdout));
+    let vote_id = vote_env.payload["vote_id"]
+        .as_str()
+        .expect("vote envelope must carry payload.vote_id")
+        .to_string();
+    assert!(
+        vote_id.chars().all(|c| c.is_ascii_hexdigit()) && vote_id.len() == 64,
+        "vote_id must be a 64-char lowercase hex (BLAKE3-256 of the \
+         canonical envelope bytes), got len={} value={vote_id:?}",
+        vote_id.len()
+    );
+    let recorded_at_unix = vote_env.payload["recorded_at_unix"]
+        .as_u64()
+        .expect("vote envelope must carry payload.recorded_at_unix");
+    assert!(
+        recorded_at_unix > 0,
+        "recorded_at_unix must be a positive wall-clock timestamp, \
+         got {recorded_at_unix}"
+    );
+    // Mirror of weight_applied for envelope convenience; the CLI
+    // surfaces it directly from the substrate receipt (never
+    // recomputes).
+    let weight_applied = vote_env.payload["weight_applied"]
+        .as_u64()
+        .expect("vote envelope must carry payload.weight_applied");
+    assert_eq!(
+        weight_applied, 5_000,
+        "weight_applied must mirror the substrate receipt's weight_applied"
+    );
+
+    // -- Step 3: negative control. A wrong passphrase on a SEPARATE
+    //    `governance vote` invocation must exit 92 (WalletLocked).
+    //    The substrate's `vote_v2` is unreachable when
+    //    `store.unlock` fails, so any successful-shape receipt is a
+    //    leak.
+    let mut wrong_cmd = octo_in(&home);
+    wrong_cmd.args([
+        "governance",
+        "vote",
+        &proposal_id_hex,
+        "approve",
+        "--weight-bps",
+        "5000",
+        "--voter-cap-id",
+        &voter_cap_id,
+        "--mode",
+        "ci",
+        "--allow-write",
+        "--confirm",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    wrong_cmd.stdin(std::process::Stdio::piped());
+    wrong_cmd.stdout(std::process::Stdio::piped());
+    wrong_cmd.stderr(std::process::Stdio::piped());
+    let mut wrong_child = wrong_cmd.spawn().expect("spawn wrong-pp vote");
+    std::io::Write::write_all(
+        wrong_child.stdin.as_mut().expect("wrong stdin"),
+        b"this-is-the-wrong-passphrase-12345\n",
+    )
+    .expect("pipe wrong pp");
+    let wrong_out = wrong_child.wait_with_output().expect("wait wrong-pp");
+    assert_eq!(
+        wrong_out.status.code(),
+        Some(92),
+        "governance vote with a wrong passphrase must exit 92 (WalletLocked), \
+         got {:?}. stderr={}, stdout={}",
+        wrong_out.status.code(),
+        String::from_utf8_lossy(&wrong_out.stderr),
+        String::from_utf8_lossy(&wrong_out.stdout),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario: the substrate `capability attenuate` write path is pinned
+// as `#[ignore]` for parity with the `mint` substrate stub
+// ---------------------------------------------------------------------------
+
+/// `capability attenuate` is the third of the six 4c(b) production
+/// signing sites and the second one whose substrate side is a Phase-2
+/// stub at `crates/octo-cap-macaroon/src/cli_fns` `attenuate`. The
+/// CLI surfaces the stub's `Internal` error to the operator as exit
+/// 64. Like the `mint` test (`l3_capability_mint_then_list_round_trip`,
+/// `#[ignore]` at `next 50c023de`), this L3 test pins the
+/// cross-process stub state and the three-flag combination
+/// (`--mode dev --allow-write --confirm --confirm-acknowledge`) the
+/// future wired substrate will need to pass the gates. It will flip
+/// from `#[ignore]` to a live assertion when the substrate amendment
+/// lands, mirroring the mint flip.
+///
+/// Without this pinned harness, a future substrate land could silently
+/// regress the cross-process signing contract while the in-process
+/// `tv_cap6_*` vectors stay green — the in-process suite cannot
+/// observe one process's per-call-site gates the way a separate
+/// OS-process invocation can.
+#[test]
+#[ignore = "substrate cli_fns::attenuate is a Phase-2 stub; flip when the amendment lands"]
+fn l3_capability_attenuate_substrate_stub_exit_code() {
+    let home = new_node_home("l3-cap-attenuate");
+    let passphrase = "l3-cap-attenuate-passphrase-2026"; // 33 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-cap-attenuate",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "dev",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+
+    // The substrate `cli_fns::attenuate` is a stub. The CLI surfaces
+    // its `Internal` text as exit 64 (per the `From<SubstrateError>`
+    // table at `crates/octo-cli/src/error.rs`). When the substrate
+    // amendment lands this assertion flips to a successful exit 0
+    // and the assert_eq() below becomes a passing mint-receipt
+    // assertion (mirroring the mint flip on the same gate).
+    let parent_cap_id = "33".repeat(32); // 64 hex chars, in-memory registered
+    let mut atten_cmd = octo_in(&home);
+    atten_cmd.args([
+        "capability",
+        "attenuate",
+        &parent_cap_id,
+        "{}",
+        "--mode",
+        "dev",
+        "--allow-write",
+        "--confirm",
+        "--confirm-acknowledge",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    atten_cmd.stdin(std::process::Stdio::piped());
+    atten_cmd.stdout(std::process::Stdio::piped());
+    atten_cmd.stderr(std::process::Stdio::piped());
+    let mut atten_child = atten_cmd.spawn().expect("spawn attenuate");
+    std::io::Write::write_all(
+        atten_child.stdin.as_mut().expect("attenuate stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to attenuate");
+    let atten_out = atten_child.wait_with_output().expect("wait attenuate");
+    assert_eq!(
+        atten_out.status.code(),
+        Some(64),
+        "capability attenuate against the Phase-2 substrate stub must \
+         exit 64 (Internal from cli_fns::attenuate), got {:?}. stderr={}, \
+         stdout={}",
+        atten_out.status.code(),
+        String::from_utf8_lossy(&atten_out.stderr),
+        String::from_utf8_lossy(&atten_out.stdout),
+    );
+}

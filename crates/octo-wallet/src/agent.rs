@@ -24,27 +24,146 @@
 //! registry state matches; Phase 1 is in-process only.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent_persist;
 use crate::error::WalletError;
 use crate::identity_record::Did;
 
-/// Process-global in-memory agent registry.
+/// Process-global in-memory agent registry + cached wallet root for
+/// the cross-process persistence boundary.
 ///
-/// Phase 1 stores `(agent_id, (manifest, holder_did))` pairs. The
-/// registry is process-lifetime; no persistence. The static is
-/// intentionally `BTreeMap`-keyed by `Uuid` so that iteration order is
-/// deterministic across runs (per RFC-0008 Class B determinism
-/// contract). The lock is acquired on every register/read; the
-/// critical sections are O(log n) and contention is negligible for
-/// Phase 1 (operator CLI, not a hot loop).
-static AGENT_REGISTRY: OnceLock<Mutex<BTreeMap<Uuid, AgentRecord>>> = OnceLock::new();
+/// Phase 1 (mission 0011-x-s-a-wallet-store-identity
+/// §Cross-process Persistence) extends the original in-memory
+/// `BTreeMap<Uuid, AgentRecord>` with a lazily-hydrated disk
+/// projection: each `register_agent` / `transition_agent` mutates
+/// the in-memory map and then persists the projection to
+/// `<wallet_root>/agent_registry.json` via [`agent_persist`]. A
+/// process restart rehydrates the map from the same file via
+/// [`hydrate_from_disk`].
+///
+/// The static is intentionally `BTreeMap`-keyed by `Uuid` so that
+/// iteration order is deterministic across runs (RFC-0008 Class B
+/// determinism contract). The lock is acquired on every
+/// register/read; the critical sections are O(log n) and contention
+/// is negligible for the operator CLI (not a hot loop).
+///
+/// `wallet_root` is `Some` when the hydration step found a wallet
+/// root; `None` when the wallet could not be resolved at hydration
+/// time. Mutations with `wallet_root = None` skip the persist step
+/// (no-op persistence) so tests that don't set up `OCTO_HOME` keep
+/// the in-memory substrate-faithful contract; production code that
+/// mutates the registry is expected to run with a valid wallet
+/// root.
+pub(crate) struct AgentRegistryState {
+    /// In-memory records. Source of truth at runtime.
+    pub(crate) records: BTreeMap<Uuid, AgentRecord>,
+    /// Cached wallet root for the persistence layer. `None` when
+    /// hydration could not resolve a wallet root (e.g., `OCTO_HOME`
+    /// is unset in a test that doesn't set it up).
+    pub(crate) wallet_root: Option<PathBuf>,
+}
 
-pub(crate) fn registry() -> &'static Mutex<BTreeMap<Uuid, AgentRecord>> {
-    AGENT_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+static AGENT_REGISTRY: OnceLock<Mutex<AgentRegistryState>> = OnceLock::new();
+
+/// Accessor for the process-global agent registry. First call
+/// hydrates from disk via [`hydrate_from_disk`] (best-effort; an
+/// unresolvable wallet root or a missing file is not an error — the
+/// in-memory map starts empty and the first mutation's persist step
+/// re-resolves the wallet root lazily).
+pub(crate) fn registry() -> &'static Mutex<AgentRegistryState> {
+    AGENT_REGISTRY.get_or_init(|| {
+        let (records, wallet_root) = match hydrate_from_disk() {
+            Ok((r, p)) => (r, Some(p)),
+            Err(_) => (BTreeMap::new(), None),
+        };
+        Mutex::new(AgentRegistryState {
+            records,
+            wallet_root,
+        })
+    })
+}
+
+/// First-call hydration: open the wallet, read
+/// `<wallet_root>/agent_registry.json`, and rebuild the in-memory
+/// `BTreeMap<Uuid, AgentRecord>`.
+///
+/// The `transitioning: bool` flag is RAII-only (RFC-0015-b §X.1) and
+/// is **never** persisted; a rehydrated record always starts with
+/// `transitioning = false`, which is the correct state for a fresh
+/// process boundary (a `transition_agent` in flight when the process
+/// died would either have committed its audit event and reset the
+/// flag, or aborted; either way the in-memory flag is cleared on
+/// rehydration).
+fn hydrate_from_disk() -> Result<(BTreeMap<Uuid, AgentRecord>, PathBuf), WalletError> {
+    let store = crate::identity_store::WalletStore::open()?;
+    let root = store.root().to_path_buf();
+    let persisted = agent_persist::load(&root)
+        .map_err(|e| WalletError::AgentPersist(format!("hydrate_from_disk load: {e}")))?;
+    let mut records = BTreeMap::new();
+    for (uuid, p) in persisted.records {
+        records.insert(
+            uuid,
+            AgentRecord {
+                manifest: p.manifest,
+                holder_did: Did::from(p.holder_did.as_str()),
+                registered_at_unix: p.registered_at_unix,
+                state: p.state,
+                transitioning: false,
+            },
+        );
+    }
+    Ok((records, root))
+}
+
+/// Persist the in-memory records to disk. Best-effort by design: if
+/// `wallet_root` is `None` (the hydration step could not resolve a
+/// wallet root), this is a no-op. Callers should treat the
+/// `Err(_)` return as fail-closed and roll back the in-memory
+/// mutation that triggered the persist call.
+///
+/// The wallet directory is created lazily on first persist
+/// (mirroring the wallet's own lazy-create-on-first-write contract
+/// per `WalletStore::open` AC-4 — the open step does not create
+/// directories). This lets the agent registry live alongside
+/// `store.json` from the very first `register_agent` call.
+///
+/// The `&AgentRegistryState` borrow (rather than `&Mutex<...>`) lets
+/// the caller drop the lock before invoking the helper, mirroring
+/// the audit-rollback pattern in `transition_agent`: the in-memory
+/// mutation runs inside the lock; the IO runs outside.
+pub(crate) fn persist_state(state: &AgentRegistryState) -> Result<(), WalletError> {
+    let Some(wallet_root) = state.wallet_root.as_deref() else {
+        return Ok(());
+    };
+    // Lazy-create the wallet directory if it does not exist yet
+    // (the wallet substrate's AC-4 contract — `WalletStore::open`
+    // does not create directories; the first write does).
+    std::fs::create_dir_all(wallet_root)
+        .map_err(|e| WalletError::AgentPersist(format!("persist_state mkdir: {e}")))?;
+    let persisted = agent_persist::PersistedRegistry {
+        records: state
+            .records
+            .iter()
+            .map(|(uuid, r)| {
+                (
+                    *uuid,
+                    agent_persist::PersistedRecord {
+                        manifest: r.manifest.clone(),
+                        holder_did: r.holder_did.as_str().to_owned(),
+                        registered_at_unix: r.registered_at_unix,
+                        state: r.state,
+                    },
+                )
+            })
+            .collect(),
+    };
+    agent_persist::save(wallet_root, &persisted)
+        .map_err(|e| WalletError::AgentPersist(format!("persist_state save: {e}")))
 }
 
 #[derive(Debug, Clone)]
@@ -334,14 +453,15 @@ pub fn transition_agent(
     // 2. Lock the registry. `WalletError::Config` on poisoning
     //    (fail-closed per the established `octo-wallet` pattern —
     //    other call sites in this module use the same mapping).
-    let mut registry = registry()
+    let mut state = registry()
         .lock()
         .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
 
     // 3. Point lookup + caller-attestation. `AgentNotFound` is the
     //    substrate-faithful miss variant; `ForbiddenHolderMismatch`
     //    is the multi-DID enumeration prevention guard.
-    let record = registry
+    let record = state
+        .records
         .get_mut(&uuid)
         .ok_or(WalletError::AgentNotFound(uuid))?;
 
@@ -391,10 +511,28 @@ pub fn transition_agent(
     }
     record.transitioning = true;
 
-    // 6. Apply state mutation. Audit append follows; if it fails,
-    //    we roll back to `from`.
+    // 6. Apply state mutation. Persist follows; if it fails, we
+    //    roll back to `from`. The audit append is the LAST step so
+    //    a persist failure is observable before the audit event is
+    //    committed (mirrors the audit-rollback pattern of "audit is
+    //    the final commit").
     record.state = target;
     let transitioned_at_unix = now_unix_secs();
+
+    // 6.5 Persist the in-memory state to disk (mission
+    //     0011-x-s-a-wallet-store-identity §Cross-process
+    //     Persistence). On failure, roll back the in-memory state
+    //     mutation to `from` AND reset the in-flight flag, mirroring
+    //     the audit-rollback contract. The `&state` borrow is
+    //     released after the call so the rollback's re-borrow via
+    //     `state.records.get_mut(&uuid)` is allowed.
+    if let Err(e) = persist_state(&state) {
+        if let Some(r) = state.records.get_mut(&uuid) {
+            r.state = from;
+            r.transitioning = false;
+        }
+        return Err(e);
+    }
 
     // 7. Build + append the audit event. The `AgentTransition`
     //    variant is cfg-gated via `octo-audit-internal`; when the
@@ -424,19 +562,26 @@ pub fn transition_agent(
     //    audit failure, the state mutation is rolled back to `from`
     //    AND the in-flight flag is reset before the function returns
     //    so the registry remains consistent and concurrent callers
-    //    can re-attempt the transition.
+    //    can re-attempt the transition. The disk is already at
+    //    `target` (the persist step succeeded), so the in-memory
+    //    rollback leaves the registry temporarily divergent; the
+    //    next mutation's persist step will resync the disk.
     let chain_hash = match audit_result {
         Ok(hash) => hash,
         Err(e) => {
-            record.state = from;
-            record.transitioning = false;
+            if let Some(r) = state.records.get_mut(&uuid) {
+                r.state = from;
+                r.transitioning = false;
+            }
             return Err(e);
         }
     };
 
     // 9. Success path: reset the in-flight flag before returning
     //    so concurrent callers can proceed.
-    record.transitioning = false;
+    if let Some(r) = state.records.get_mut(&uuid) {
+        r.transitioning = false;
+    }
 
     Ok(TransitionReceipt {
         agent_id: uuid,
@@ -481,6 +626,7 @@ pub fn list_owned_agents(
         .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
 
     let mut summaries: Vec<AgentSummary> = registry
+        .records
         .values()
         .filter(|record| record.holder_did.as_str() == effective_holder)
         .filter(|record| match filter.state {
@@ -520,6 +666,7 @@ pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, Walle
         .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
 
     let record = registry
+        .records
         .get(&uuid)
         .ok_or(WalletError::AgentNotFound(uuid))?;
 
@@ -554,6 +701,7 @@ pub fn read_agent_state(caller_did: &Did, uuid: Uuid) -> Result<AgentState, Wall
         .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
 
     let record = registry
+        .records
         .get(&uuid)
         .ok_or(WalletError::AgentNotFound(uuid))?;
 
@@ -1149,7 +1297,7 @@ mod tests {
         let (uuid, holder) = register_one();
         {
             let mut reg = registry().lock().expect("registry lock");
-            let record = reg.get_mut(&uuid).expect("record exists");
+            let record = reg.records.get_mut(&uuid).expect("record exists");
             record.state = AgentState::Terminated;
         }
         let err = transition_agent(&holder, uuid, AgentState::Running, None).unwrap_err();
@@ -1187,7 +1335,7 @@ mod tests {
         // self-deadlock (std::sync::Mutex is not re-entrant).
         {
             let mut reg = registry().lock().expect("registry lock");
-            let record = reg.get_mut(&uuid).expect("record exists");
+            let record = reg.records.get_mut(&uuid).expect("record exists");
             record.transitioning = true; // simulate in-flight
         } // lock released
 
@@ -1205,7 +1353,7 @@ mod tests {
         // `std::sync::Mutex`. Lock is released BEFORE assertions.
         let state_after = {
             let mut reg = registry().lock().expect("registry lock");
-            let record = reg.get_mut(&uuid).expect("record exists");
+            let record = reg.records.get_mut(&uuid).expect("record exists");
             record.transitioning = false; // cleanup
             record.state
         }; // lock released

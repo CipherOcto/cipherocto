@@ -295,6 +295,19 @@ pub enum WalletError {
     #[error("audit substrate unavailable: {0}")]
     AuditUnavailable(String),
 
+    /// The agent registry could not be persisted to disk
+    /// (mission 0011-x-s-a-wallet-store-identity §Cross-process
+    /// Persistence — `agent_registry.json` is the on-disk
+    /// cross-process boundary). The in-memory mutation has been
+    /// rolled back, so the registry stays consistent with the file
+    /// (per the audit-rollback contract of `transition_agent`).
+    /// Payload carries the underlying I/O or parse error for log
+    /// forensics; the CLI surfaces the typed variant and the message
+    /// is logged via `tracing::error!` so the operator can read the
+    /// filesystem error without it entering the envelope.
+    #[error("agent registry persistence failed: {0}")]
+    AgentPersist(String),
+
     // ----- WalletStore errors (mission 0011-x-s-a-wallet-store-identity §AC-6) -----
     /// The store is locked. `WalletStore::open` is metadata-only; the
     /// identity seed requires `WalletStore::unlock(passphrase)`. CLI

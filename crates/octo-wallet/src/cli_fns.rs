@@ -121,22 +121,33 @@ pub fn register_agent(
     let name = format!("{digest}:{}", active_did.as_str());
     let agent_id = Uuid::new_v5(agent_namespace(), name.as_bytes());
 
-    let mut store = registry()
+    let mut state = registry()
         .lock()
         .map_err(|e| WalletError::OsRng(format!("agent registry poisoned: {e}")))?;
-    if store.contains_key(&agent_id) {
+    if state.records.contains_key(&agent_id) {
         return Err(WalletError::AgentAlreadyExists(agent_id));
     }
-    store.insert(
+    let registered_at_unix = now_unix_secs();
+    state.records.insert(
         agent_id,
         crate::agent::AgentRecord {
             manifest: manifest.clone(),
             holder_did: active_did.clone(),
-            registered_at_unix: now_unix_secs(),
+            registered_at_unix,
             state: AgentState::Registered,
             transitioning: false,
         },
     );
+    // Persist the in-memory state to disk. On failure, roll back the
+    // in-memory insert so the registry stays consistent with the file
+    // (per the audit-rollback contract of `transition_agent`). The
+    // `persist_state` helper is best-effort by design — when
+    // `wallet_root` is `None` (hydration could not resolve a wallet
+    // root), it is a no-op and the in-memory mutation is preserved.
+    if let Err(e) = crate::agent::persist_state(&state) {
+        state.records.remove(&agent_id);
+        return Err(e);
+    }
     Ok(agent_id)
 }
 

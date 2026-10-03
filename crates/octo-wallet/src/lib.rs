@@ -13,6 +13,7 @@
 #![allow(clippy::doc_markdown)]
 
 pub mod agent;
+pub mod agent_persist;
 pub mod capability;
 pub mod cli_fns;
 pub mod error;

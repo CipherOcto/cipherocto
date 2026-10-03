@@ -376,9 +376,24 @@ on. Two details were found and rejected while implementing it:
   equality, which is the honest property and is strictly stronger than a
   parse-success check.
 
-**Cost, accepted deliberately.** Every payment capability's id changes, because
-`caveat_body_hash` changes. Payment capabilities minted under the previous
-projection must be re-minted.
+**Cost: the id changes, and nothing else.** Every payment capability's id
+changes, because `caveat_body_hash` changes. There is no migration to perform:
+the project is pre-production, no capability has been minted against the old
+projection, and nothing is stored that would need re-minting. The only
+stakeholders are the crates in this workspace, all of which are recompiled
+together.
+
+This is why the change was straightforward rather than a wire-format
+deliberation. Every section of this amendment that described a "wire-format
+cost" was reasoning about a constraint that does not bind here, and the honest
+reading of the `Payment` projection is the one in §Known deviations 1: it was
+sixteen days of unmaintained drift, not a trade-off anyone weighed.
+
+**Pre-production context, recorded so it is not re-litigated.** Capability ids
+and canonical bytes carry no compatibility obligation in this repository while
+no capability exists outside a test or a local run. A future RFC that proposes
+a wire-format change SHOULD NOT cite "breaks existing consumers" as a cost
+without first establishing that such consumers exist.
 
 ### 2. `hex-ids` is a substrate-local opt-in, not a coordinated switch
 
@@ -469,13 +484,13 @@ consequences that a reader of the table above would not predict:
 
 - **Every capability id carrying a `wrapped_only`, `redemption_context`, or
   `asset_binding` caveat changes.** `canonical_ser` feeds `caveat_body_hash`, so
-  correcting the envelope changes the digest preimage. Capabilities minted
-  under the previous projection do not verify under this one and must be
-  re-minted. This is not a soft migration.
+  correcting the envelope changes the digest preimage. Nothing needs to be
+  re-minted: the project is pre-production and no capability was minted under
+  the previous projection. The id change is real, the migration is not.
 - **Previously-emitted canonical bytes for those three arms no longer parse**,
-  because the old bare-string form is not the object the input form wants. A
-  consumer replaying stored canonical JSON for those arms breaks at the parse,
-  not at the digest.
+  because the old bare-string form is not the object the input form wants. Only
+  in-repo producers of those bytes exist, and all of them are updated in the
+  same change, so the breakage is confined to the workspace's own test corpus.
 
 ### 4. The envelope shape is a SECOND, independent cause of the asymmetry
 

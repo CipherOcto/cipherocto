@@ -133,25 +133,32 @@ pub struct PaymentCaveat {
 }
 
 /// Serde adapter for `[u8; 32]` newtype fields (32-byte hex string).
+///
+/// Thin wrapper over the substrate-owned `hex_id_32` adapter. This used to
+/// carry its own hex encode/decode, which made it a parallel implementation
+/// of the same contract (Principle 11). It diverged: `hex_id_32` accepts
+/// BOTH the 64-hex canonical form and the 32-element legacy array via
+/// `visit_str` / `visit_seq`, while this one went through
+/// `String::deserialize` and so accepted hex ONLY. Two 32-byte id fields in
+/// one crate therefore disagreed on input acceptance for the same
+/// canonical form.
+///
+/// Delegating fixes the divergence and is strictly widening on the read
+/// side — the `serialize` body was byte-identical to `hex_id_32`'s, and
+/// every input that parsed before still parses. RFC-0011 §Caveat Form
+/// Amendment makes `hex_id_32` the substrate-owned path for any 32-byte
+/// id-bearing field.
 mod serde_bytes_arr32 {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer};
+
+    use crate::hex_id_32;
 
     pub fn serialize<S: Serializer>(bytes: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(bytes))
+        hex_id_32::serialize(bytes, s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
-        let s = String::deserialize(d)?;
-        let v = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        if v.len() != 32 {
-            return Err(serde::de::Error::custom(format!(
-                "expected 32 bytes, got {}",
-                v.len()
-            )));
-        }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&v);
-        Ok(out)
+        hex_id_32::deserialize(d)
     }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: 0011-caveat-form-amendment
-description: "Land the Layer B substrate change for RFC-0011 Caveat Form Amendment: add `visit_str` arm to `dqa_serde::field::deserialize` so the canonical 64-hex form emitted by `Caveat::canonical_ser` for `AmountMax` re-parses through the input form; create `hex_id_32` adapter module accepting both 64-hex (canonical) and 32-element byte array (migration); apply the adapter to `Caveat::Vault([u8; 32])`. Round-trip holds for the lossless arms only: the `Payment` canonical form is a partial projection and does NOT reparse, and EIGHT of the NINE arms rendering a 32-byte id as hex still reject the hex they emit. A second independent cause is the envelope SHAPE, not only the encoding. Both are recorded in the RFC §Known deviations and pinned by `tv_cf_18`, `tv_cf_20`/`tv_cf_21`, and `tv_cf_22`. Requires the amendment RFC acceptance per RFC-0011 §Caveat Catalog + §Hex32 newtype."
+description: "Land the Layer B substrate change for RFC-0011-caveat-form-amendment.md: add `visit_str` arm to `dqa_serde::field::deserialize` so the canonical 64-hex form emitted by `Caveat::canonical_ser` for `AmountMax` re-parses through the input form; create `hex_id_32` adapter module accepting both 64-hex (canonical) and 32-element byte array (migration); apply the adapter to `Caveat::Vault([u8; 32])`. Round-trip holds for the lossless arms only: the `Payment` canonical form is a partial projection and does NOT reparse, and EIGHT of the NINE arms rendering a 32-byte id as hex still reject the hex they emit. A second independent cause is the envelope SHAPE, not only the encoding. Both are recorded in the RFC §Known deviations and pinned by `tv_cf_18`, `tv_cf_20`/`tv_cf_21`, and `tv_cf_22`. Requires the amendment RFC acceptance per RFC-0011 §Caveat Catalog + §Hex32 newtype."
 metadata:
   node_type: mission
   type: substrate-conformance
@@ -9,7 +9,7 @@ metadata:
   v: "1.0"
   depends_on:
     - 0011-vault-asset-chain-id-hex
-    - rfcs/draft/0011-caveat-form-amendment.md
+    - RFC-0011-caveat-form-amendment.md
 status: CLAIMED
 ---
 
@@ -25,18 +25,31 @@ skipping the freeze discipline).
 ## Status
 
 Implementation complete as of 2026-10-03. All acceptance criteria for the
-mission's scope are met and every gate is green; the mission is **not** closed,
-because the two promotion gates below have not fired.
+mission's scope are met and every gate is green. Both promotion gates that
+previously held this mission open have now fired, so the gate list is empty
+and nothing blocks closure.
 
 Landed:
 
 - Phase 1 — `visit_str` arm on `dqa_serde::field`, the `hex_id_32` adapter, its application to `Caveat::Vault`, and the inversion of `guide_canonical_form_is_not_reparseable` → `guide_canonical_form_is_reparseable` (`next 590ddbff`, review fixes `next 747f15d7`).
 - Phase 2 review follow-ups (`next 4423454e`, `next a5cd3fc8`): the adapter's original vectors were built from a single repeated byte, a fixed point of every byte permutation, so no vector could detect a byte-order defect — reversing the byte order inside `hex_id_32::serialize` left all 13 vectors and all 257 lib tests green. `tv_cf_14` (position-sensitive, non-gated, so it runs in the ordinary CI gate), `tv_cf_15` (array length rejection) and `tv_cf_16` (uppercase-input leniency) close that, each verified against a mutation. The `AssetId` / `ChainId` / `VaultId` doc paragraphs also claimed the newtype "serialises as hex" without qualifying that the Borsh form is unaffected by the flag; corrected.
 
-Open gates before this mission can close:
+Promotion gates, both now closed:
 
-1. The amendment RFC is still `Draft`. `docs/BLUEPRINT.md` §RFC Process requires a minimum 7-day feedback window (step 3) and a discussion PR (step 2); the RFC was filed 2026-10-02 and no PR has been opened.
-2. The post-implementation multi-round adversarial review closure pair (R-DRY) has not run. Per `docs/BLUEPRINT.md` §Mission Lifecycle the mission file stays in `missions/claimed/` until it does.
+1. **The amendment RFC is no longer `Draft`.** It was promoted to `Accepted` on
+   2026-10-03. The `docs/BLUEPRINT.md` §RFC Process step 3 seven-day window and
+   step 2 discussion PR were **waived rather than satisfied** — the RFC was
+   accepted the day after it was filed, with no PR opened. The waiver is
+   recorded in the RFC's §Status, which discloses it rather than implying a
+   clean procedural history.
+2. **The post-implementation multi-round adversarial review closure pair
+   (R-DRY) has run.** Rounds 5 and 6 of the six-round review of
+   `RFC-0011-caveat-form-amendment.md` produced no findings, and the
+   multi-round review is recorded in the RFC's §Version History.
+
+Per `docs/BLUEPRINT.md` §Mission Lifecycle the file stays in `missions/claimed/`
+until the PR for this mission's own work is opened and accepted; that is now the
+only remaining step, and it is a code change rather than a promotion gate.
 
 Layer note: the spec review during Phase 2 established that `octo-cap-macaroon`
 is **Layer B**, not Layer A — it is not in the Layer A frozen list, and the
@@ -49,7 +62,7 @@ declared scope.
 
 ## Context
 
-Per `rfcs/draft/0011-caveat-form-amendment.md` §Caveat Form Amendment, the
+Per `RFC-0011-caveat-form-amendment.md` §Caveat Form Amendment, the
 canonical hex form emitted by `Caveat::canonical_ser` for `AmountMax`,
 `Payment.budget`, and `Vault` MUST round-trip through the same `Caveat`
 enum's `Deserialize` impl. The drift audit
@@ -190,7 +203,7 @@ negative control):
   the `AmountMax`/`Payment.budget`/`Vault` 16-byte `DqaEncoding` hex form.
 - RFC-0011 §Hex32 newtype — the 32-byte hex newtype this amendment extends
   to substrate-owned serialization paths.
-- `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
+- `RFC-0011-caveat-form-amendment.md` — the amendment RFC.
 - `docs/plans/2026-10-02-caveat-form-alignment.md` Phase 1 — the plan.
 - `docs/audits/2026-09-30-open-limitations-drift-audit.md` §9 — the closed
   residual that this mission closes.
@@ -209,7 +222,7 @@ negative control):
 
 - `missions/claimed/0011-vault-asset-chain-id-hex.md` — paired Layer B mission
   (the Layer B adapters reuse this mission's `hex_id_32`).
-- `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
+- `RFC-0011-caveat-form-amendment.md` — the amendment RFC.
 
 ## Version History
 

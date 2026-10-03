@@ -9,7 +9,7 @@ metadata:
   v: "1.0"
   depends_on:
     - 0011-caveat-form-amendment
-    - rfcs/draft/0011-caveat-form-amendment.md
+    - RFC-0011-caveat-form-amendment.md
 status: CLAIMED
 ---
 
@@ -41,15 +41,18 @@ language is prescriptive and the implementation used Principle 11-aligned
 `cfg_attr` delegation to the shared adapter instead. The wording should be
 corrected to "3 cfg_attr annotations" so the mission describes what shipped.
 
-Open gates before this mission can close: the amendment RFC is still `Draft`
-(7-day feedback window plus discussion PR per `docs/BLUEPRINT.md` §RFC Process),
-and the post-implementation multi-round adversarial review closure pair (R-DRY)
-has not run. Per `docs/BLUEPRINT.md` §Mission Lifecycle the file stays in
-`missions/claimed/` until it does.
+Promotion gates, both now closed. The amendment RFC is no longer `Draft`; it
+was promoted to `Accepted` on 2026-10-03, with the `docs/BLUEPRINT.md`
+§RFC Process seven-day feedback window and discussion PR waived rather than
+satisfied, which the RFC's §Status discloses. The post-implementation
+multi-round adversarial review closure pair (R-DRY) also ran, as rounds 5 and 6
+of that review. Per `docs/BLUEPRINT.md` §Mission Lifecycle the file stays in
+`missions/claimed/` until the PR for this mission's own work is opened and
+accepted; that is now the only remaining step.
 
 ## Context
 
-Per `rfcs/draft/0011-caveat-form-amendment.md` §Caveat Form Amendment clause 2,
+Per `RFC-0011-caveat-form-amendment.md` §Caveat Form Amendment clause 2,
 `hex_id_32` is the substrate-owned serialization path for any 32-byte
 id-bearing field. The drift audit
 `docs/audits/2026-09-30-open-limitations-drift-audit.md` §5 records the
@@ -185,7 +188,7 @@ The mission is closed when the following are true:
   aligns with.
 - RFC-0011 §Hex32 newtype — the operator-visible hex discipline this mission
   extends to substrate newtypes.
-- `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC. The
+- `RFC-0011-caveat-form-amendment.md` — the amendment RFC. The
   acceptance of this mission is the `hex-ids` feature's `OFF by default`
   → `ON after migration` switch.
 - `docs/plans/2026-10-02-caveat-form-alignment.md` Phase 2 — the plan.
@@ -205,7 +208,7 @@ The mission is closed when the following are true:
 
 - `missions/claimed/0011-caveat-form-amendment.md` — paired mission
   whose `hex_id_32` adapter this mission's newtype adapters delegate to.
-- `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
+- `RFC-0011-caveat-form-amendment.md` — the amendment RFC.
 
 ## Version History
 

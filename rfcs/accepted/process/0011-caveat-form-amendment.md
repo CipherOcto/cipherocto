@@ -2,12 +2,23 @@
 
 | Field      | Value                                                        |
 | ---------- | ------------------------------------------------------------ |
-| Status     | Draft                                                        |
-| Version    | (v1.0 lands at promotion)                                    |
+| Status     | Accepted (2026-10-03)                                        |
+| Version    | v1.0                                                         |
 | Layer      | B (`octo-cap-macaroon`, RFC-driven, additive)                |
-| Parent RFC | RFC-0011                                                     |
+| Parent RFC | RFC-0011 §Caveat Catalog                                     |
 | Companion  | `missions/claimed/0011-caveat-form-amendment.md` (paired)    |
 |            | `missions/claimed/0011-vault-asset-chain-id-hex.md` (paired) |
+
+**Number note.** This amendment keeps the number 0011 and was accepted into
+`process/` without renumbering, by maintainer decision, so a bare `RFC-0011`
+is ambiguous in this repository: it names both the parent substrate RFC and
+this amendment. The two are told apart by section, not by number, because
+`§Caveat Catalog` and `§Hex32 newtype` are sections of the parent and appear
+nowhere in this document, while every section of this document is named
+`§Caveat Form Amendment`, `§The 32-byte id hex form`, `§Compatibility`,
+`§Known deviations`, or `§Acceptance Criteria`. A later renumbering that
+separates the two numbers would remove the ambiguity outright and remains the
+cleaner fix.
 
 **Layer note.** An earlier revision of this header read `Layer A
 (substrate-frozen octo-cap-macaroon)`. That is wrong on both counts, and
@@ -20,72 +31,106 @@ freeze discipline for every change in this amendment, including the
 
 ## Version History
 
-| Version | Date | Change                                                                                       |
-| ------- | ---- | -------------------------------------------------------------------------------------------- |
-|         |      | (v1.0 lands at promotion — all 23 `tv_cf_*` vectors green + the inverted guide vector green) |
+| Version | Date       | Change                                                                                                                                                                                                                                      |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-10-03 | Accepted. All four implementation phases landed; six adversarial review rounds plus two correction passes reached a dry closure; 23 `tv_cf_*` vectors green under default features, 3 more under `hex-ids`, plus the inverted guide vector. |
 
-Note: v1.0 lands at promotion; the empty Version cell above is intentional and will be filled in then.
+Per `docs/BLUEPRINT.md` §Adversarial Review Process, the final review summary
+belongs in this section. Rounds 1 through 4 each found real defects and are
+recorded under §Status below; rounds 5 and 6 produced no findings and closed
+the review. The two correction passes after that closure were not new rounds —
+they re-opened the count that the closure had rested on, and the review is
+only dry on the tree that carries their corrections:
+
+- **Round 1** found the acceptance table citing a vector that was never
+  written, a normative clause the implementation violated, and a second
+  32-byte adapter that had drifted from the first. The parallel adapter was
+  consolidated onto `hex_id_32` rather than kept alongside it.
+- **Round 2** found the hex-emitting asymmetry surviving for most of the set
+  the amendment names, and found the review's own first vector to be blind:
+  it fed `canonical_ser` output straight back in, which cannot fail for a
+  struct-payload arm for reasons unrelated to the claim. The vector was
+  rewritten to compare derived-`Serialize` output against canonical output.
+- **Round 3** narrowed the clause preamble to the arms the clauses actually
+  govern, added the self-describing-format precondition that
+  `deserialize_any` implies, and corrected an overstatement in the drift
+  audit.
+- **Round 4** corrected layer attribution and vector counts that had drifted
+  across the two paired missions and the adapter's module documentation.
+- **Rounds 5 and 6** found nothing; the dry closure pair.
+- **Correction 1** found the count the closure rested on was itself wrong.
+  "Four of five" was corrected to **eight of nine**: `AssetBinding`,
+  `Factory`, and `PolicyReference` had been missed because the arm set was
+  cross-checked against other documents rather than against `canonical_ser`.
+  `tv_cf_22` now derives the set from the source.
+- **Correction 2** found the derivation could pass vacuously — the source scan
+  stops at the first line beginning `};`, which is the end of `canonical_ser`
+  only by coincidence of formatting. `tv_cf_23` asserts the scan reaches the
+  enum's final variant.
+
+The pattern worth carrying forward: every one of these findings came from
+enumerating a set from the code under test rather than from another document
+or a hand-maintained list. Cross-document agreement is not evidence of
+completeness when the documents descend from the same unswept list.
 
 ## Status
 
-**Draft (2026-10-02).** Created as Phase 0 of the Caveat Form Alignment plan.
-
-**Implementation complete, promotion NOT yet due (as of 2026-10-03).** All four
-implementation phases have landed locally and the amendment's normative clauses
-are implemented:
+**Draft (2026-10-02) — created as Phase 0 of the Caveat Form Alignment plan.
+Accepted (2026-10-03), on the maintainer's direct order; the procedural
+shortcuts that implies are disclosed below rather than left to be inferred from
+the date.** All four implementation phases have landed and the amendment's
+normative clauses are implemented:
 
 - Phase 1 — `visit_str` arm on `dqa_serde::field` plus the `hex_id_32` adapter on `Caveat::Vault` (`next 590ddbff`, review fixes `747f15d7`).
 - Phase 2 — `hex-ids` feature (off by default) on `AssetId` / `ChainId` / `VaultId` (`next f675efb0`).
 - Phase 2 review follow-ups — position-sensitive adapter vectors, the `hex-ids` CI test gate, and the serde-versus-borsh doc correction (`next 4423454e`, `next a5cd3fc8`).
 - Phase 3 — `CaveatSummaryView` serialises as `type` / `value` (`next 6b20f480`).
 
-**Adversarial review, second pass (2026-10-03)** corrected round 2's central
-count. Four of five was wrong: **eight of nine** arms that render a 32-byte id
-as hex still reject the hex they emit. Round 2 missed `asset_binding`,
-`factory`, and `policy_reference` because the enumeration was cross-checked
-against other documents rather than against `canonical_ser`. `tv_cf_22` now
-derives the set from the source and compares it to the literal, and the scan
-was itself wrong on its first run before that fix. A second independent cause
-was also recorded: the envelope SHAPE, not only the encoding — adding the hex
-adapter to a struct-payload arm changes nothing on its own.
-
-**Adversarial review round 2 (2026-10-03)** found that four of the then-listed
-five hex-emitting `Caveat` arms still reject the hex they emit, so the asymmetry
-this amendment exists to remove survives for most of the set the amendment
-itself names. Three further deviations were recorded at the same time: the
-`canonical_ser` and input forms disagree on envelope SHAPE for the two
-struct-variant arms and not only on encoding, and `hex-ids` is a
-substrate-local opt-in rather than a coordinated switch. Vectors `tv_cf_20`
-and `tv_cf_21` were added by that review, and the first draft of `tv_cf_20`
-was itself blind and had to be rewritten.
-
-**Adversarial review round 1 (2026-10-03)** found the acceptance table
-citing a vector that was never written, a normative clause that the
-implementation violates, and a second 32-byte adapter that had drifted from
-the first. All corrected: clause 1 rescoped to the lossless arms, a §Known
-deviations section added, the AC table rebuilt per crate, and the parallel
-adapter consolidated onto `hex_id_32`. Vectors `tv_cf_18` and `tv_cf_19` were
-added by that review.
-
 Gate vectors, all green: `tv_cf_01..06`, `tv_cf_13..16`, and `tv_cf_18..23`
-in `octo-cap-macaroon` under default features;
-`tv_cf_07..09` in-crate in the same crate; `tv_cf_10..12` under
-`--features hex-ids`; and `tv_cf_17` in `octo-cli`. The inverted guide
-vector `guide_canonical_form_is_reparseable` is green.
+in `octo-cap-macaroon` under default features; `tv_cf_07..09` in-crate in the
+same crate; `tv_cf_10..12` under `--features hex-ids`; and `tv_cf_17` in
+`octo-cli`. The inverted guide vector `guide_canonical_form_is_reparseable` is
+green. Measured at v1.0: 312 passing on `octo-cap-macaroon` with default
+features, 314 with `--features hex-ids`, 0 failures in both.
 
-Promotion to `Accepted` is **blocked on two process gates, not on the code**:
+**Process deviation — recorded rather than smoothed over.** Promotion was
+ordered directly by the maintainer and executed the same day the RFC was
+filed. Two process gates in `docs/BLUEPRINT.md` were therefore not satisfied,
+and the §Status of this document is not evidence that they were:
 
-1. `docs/BLUEPRINT.md` §RFC Process step 3 requires a minimum 7-day feedback
-   window, and step 2 requires the RFC to be submitted as a PR for discussion.
-   This RFC was filed 2026-10-02 and no discussion PR has been opened, so the
-   window has not started. The 7-day minimum is not met.
-2. The paired missions stay in `missions/claimed/` until the post-implementation
-   multi-round adversarial review closure pair (R-DRY) fires, per
-   `docs/BLUEPRINT.md` §Mission Lifecycle.
+1. **§RFC Process step 3 — minimum 7-day feedback window: NOT held.** This RFC
+   was filed 2026-10-02 and accepted 2026-10-03. The window did not run; it
+   could not have, being shorter than the minimum by six days.
+2. **§RFC Process step 2 — submission as a discussion PR: NOT done.** No
+   discussion PR was opened. The adversarial review recorded in §Version
+   History was machine-driven and adversarial, which is not the community
+   discussion step 2 asks for. No objection was recorded, but the absence of
+   objection is not the same as a discussion having happened.
+3. **§RFC Acceptance Process — "At least 2 maintainer approvals": NOT
+   evidenced here.** This document records one maintainer instruction. Any
+   second approval exists outside this file, and the gap is this record's, not
+   necessarily the process's.
 
-The Caveat Form Alignment plan's own promotion criterion (Phases 1-3 landed plus
-the gate vectors green) is narrower than the two gates above; the gates above
-govern.
+§Human vs Agent Roles assigns "Accept RFCs" to the human column and withholds it
+from the agent column. The accept decision was therefore the maintainer's; this
+promotion is the mechanical execution of that decision, and the deviation
+above is disclosed so the artifact does not read as a clean procedural
+history. A maintainer wanting the window honoured should re-date the
+acceptance.
+
+**Both mission-side gates are now resolved.** The paired missions remain in
+`missions/claimed/`, which is their correct state. Earlier revisions of this
+section recorded two blocking gates; both are closed:
+
+- The post-implementation multi-round adversarial review closure pair (R-DRY)
+  fired: rounds 5 and 6 of the review produced no findings.
+- The RFC-side gate — a minimum 7-day feedback window — was waived, not
+  satisfied. See the process deviation above. The waiver is the reason this
+  gate is listed as closed rather than pending.
+
+The Caveat Form Alignment plan's own promotion criterion (Phases 1-3 landed
+plus the gate vectors green) remains narrower than `docs/BLUEPRINT.md` and did
+not by itself authorise this promotion.
 
 ## Summary
 
@@ -426,7 +471,7 @@ row from its test.
 | `tv_cf_18_payment_canonical_form_is_a_partial_projection`             | default              | **pins the deviation** in §Known deviations: the `Payment` canonical form does not re-parse, and the dropped fields are named.                             |
 | `tv_cf_19_all_32byte_id_fields_accept_both_forms`                     | default              | every 32-byte id-bearing field accepts hex and legacy array alike, checked through its owning envelope.                                                    |
 | `tv_cf_20_hex_emitting_arms_acceptance_set_is_explicit`               | default              | the hex-emitting arm set is enumerated, and each arm's hex-input acceptance is stated rather than assumed.                                                 |
-| `tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_hex` | default              | pins the four-arm deviation recorded in §Known deviations, and that those arms still accept the legacy array form.                                         |
+| `tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_hex` | default              | pins the eight-arm deviation recorded in §Known deviations, and that those arms still accept the legacy array form.                                        |
 | `tv_cf_22_hex_rendering_set_matches_canonical_ser_source`             | default              | the hex-rendering arm set is derived from the `canonical_ser` source and compared against the literal, so a new hex-emitting arm cannot be added silently. |
 | `tv_cf_23_hex_scan_reaches_the_final_caveat_variant`                  | default              | the `canonical_ser` scan reaches the enum's final variant, so a truncated scan cannot make `tv_cf_22` agree with a short list.                             |
 | `tv_cf_13_default_newtype_serde_is_byte_array`                        | default (bare types) | under default features, a bare `AssetId` / `ChainId` / `VaultId` serialises as a 32-element byte array.                                                    |
@@ -466,6 +511,10 @@ Gate mechanics, so these cannot pass vacuously:
   adapter passed all 13 vectors that preceded it.
 
 ## References
+
+Both entries name sections of the parent RFC-0011 rather than of this
+amendment; see the number note in the header table for how the two
+same-numbered documents are told apart.
 
 - RFC-0011 §Caveat Catalog — defines the canonical envelope `{ type, value }`
   for every caveat arm, including the 16-byte `DqaEncoding` hex form for

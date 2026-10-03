@@ -10,14 +10,41 @@ metadata:
   depends_on:
     - 0011-caveat-form-amendment
     - rfcs/draft/0011-caveat-form-amendment.md
-status: OPEN
+status: CLAIMED
 ---
 
-# Mission `0011-vault-asset-chain-id-hex` v1.0 — OPEN 2026-10-02
+# Mission `0011-vault-asset-chain-id-hex` v1.0 — CLAIMED 2026-10-02, implementation complete 2026-10-03
 
 **Owner:** substrate (Layer B, `octo-cap-macaroon::substrate`).
 **Phase:** Phase 2 of the Caveat Form Alignment plan.
-**Companion:** `missions/open/0011-caveat-form-amendment.md` (Layer A, paired).
+**Companion:** `missions/claimed/0011-caveat-form-amendment.md` (Layer A, paired).
+
+## Status
+
+Implementation complete as of 2026-10-03. Phase 2 landed at `next f675efb0`
+and passed spec review; the post-implementation code-quality review that the
+previous session dispatched was killed by a token-plan 429 before it produced a
+verdict, and was completed on 2026-10-03 instead.
+
+Review outcome: the implementation is correct — the `cfg_attr` annotations work,
+`hex_id_32` handles both the tuple-variant application (`Caveat::Vault`) and the
+newtype-field application, and the feature is additive with the default wire form
+unchanged. Two defects were found in the surrounding apparatus, both fixed at
+`next 4423454e` and `next a5cd3fc8`:
+
+1. **The feature was outside the test gate.** `hex-ids` is declared in one place and enabled by nothing — no workflow, no script, no dependent crate. The clippy gates pass `--all-features`, so the code was compiled and linted in CI, but the workspace test gate uses default features, which compiles `tests/tv_cf_newtype_hex_round_trip.rs` to an empty test binary. The three hex vectors had never been executed by CI. The pre-existing note in `ci.yml` justifying skipped feature-gated tests cites dependency weight, which does not apply to a flag with none. CI now runs the feature explicitly.
+2. **The vectors could not fail.** `tv_cf_10..13` each build a 32-byte input from a single repeated byte, a fixed point of every byte permutation, so no byte-order or reversal defect was detectable. Proven by mutation, not argued: reversing the byte order inside `hex_id_32::serialize` left all three hex vectors and all 257 lib tests green.
+
+AC-9 wording follow-up (non-blocking, from the spec review): the "3 new modules"
+language is prescriptive and the implementation used Principle 11-aligned
+`cfg_attr` delegation to the shared adapter instead. The wording should be
+corrected to "3 cfg_attr annotations" so the mission describes what shipped.
+
+Open gates before this mission can close: the amendment RFC is still `Draft`
+(7-day feedback window plus discussion PR per `docs/BLUEPRINT.md` §RFC Process),
+and the post-implementation multi-round adversarial review closure pair (R-DRY)
+has not run. Per `docs/BLUEPRINT.md` §Mission Lifecycle the file stays in
+`missions/claimed/` until it does.
 
 ## Context
 
@@ -26,9 +53,9 @@ Per `rfcs/draft/0011-caveat-form-amendment.md` §Caveat Form Amendment clause 2,
 id-bearing field. The drift audit
 `docs/audits/2026-09-30-open-limitations-drift-audit.md` §5 records the
 asymmetry between canonical-form hex and derived byte-array form for the
-eight `Caveat` fields as *specified* in two places — `PaymentCaveat.asset_id`
+eight `Caveat` fields as _specified_ in two places — `PaymentCaveat.asset_id`
 (`AssetId`) and `PaymentCaveat.budget` (`Dqa`) carry explicit hex mandates —
-and *unspecified* in the other six. For the three newtypes this mission
+and _unspecified_ in the other six. For the three newtypes this mission
 targets (`AssetId`, `ChainId`, `VaultId`), the derived 32-element array form
 is unspecified behaviour at the newtype level, so changing the default would
 be a wire-format break for any consumer that already pins the 32-element
@@ -72,8 +99,8 @@ Edit `crates/octo-cap-macaroon/src/substrate.rs`. Add a paragraph to each of
 New file `crates/octo-cap-macaroon/tests/tv_cf_newtype_hex_round_trip.rs`,
 gated with `#![cfg(feature = "hex-ids")]`:
 
-| Vector | What it pins |
-| ------ | ------------ |
+| Vector                             | What it pins                                                     |
+| ---------------------------------- | ---------------------------------------------------------------- |
 | `tv_cf_10_asset_id_hex_round_trip` | `AssetId` under `--features hex-ids` round-trips through 64-hex. |
 | `tv_cf_11_chain_id_hex_round_trip` | `ChainId` under `--features hex-ids` round-trips through 64-hex. |
 | `tv_cf_12_vault_id_hex_round_trip` | `VaultId` under `--features hex-ids` round-trips through 64-hex. |
@@ -84,8 +111,8 @@ New file `crates/octo-cap-macaroon/tests/tv_cf_newtype_default_serde.rs`
 (un-gated; this test must pass under default features to prove the
 gate is honest):
 
-| Vector | What it pins |
-| ------ | ------------ |
+| Vector                                         | What it pins                                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `tv_cf_13_default_newtype_serde_is_byte_array` | under default features, `AssetId` / `ChainId` / `VaultId` serialize as 32-element byte arrays. |
 
 ### Step 6: Confirm the gate is honest
@@ -163,19 +190,19 @@ The mission is closed when the following are true:
 
 - The `Caveat::Vault` `hex_id_32` application (owned by the paired Layer A
   mission `0011-caveat-form-amendment`). This mission's `vault_id_hex` is
-  for `VaultId` *outside* `Caveat::Vault`.
+  for `VaultId` _outside_ `Caveat::Vault`.
 - The `CaveatSummaryView` field rename (owned by Phase 3 of the plan).
 - Removing the 32-element array form from the adapters (deferred until the
   amendment is Accepted and consumers migrate).
 
 ## Dependencies
 
-- `missions/open/0011-caveat-form-amendment.md` — paired Layer A mission
+- `missions/claimed/0011-caveat-form-amendment.md` — paired Layer A mission
   whose `hex_id_32` adapter this mission's newtype adapters delegate to.
 - `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                          |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version | Date       | Change                                                                                                                                                                                                                                           |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | v1.0    | 2026-10-02 | Initial filing per Caveat Form Alignment plan Phase 0. `hex-ids` feature flag (off by default) + 3 newtype-specific adapter modules (`asset_id_hex`, `chain_id_hex`, `vault_id_hex`) + 4 new test vectors (`tv_cf_10..13`). Paired with Layer A. |

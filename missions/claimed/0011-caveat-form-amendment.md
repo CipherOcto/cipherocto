@@ -10,14 +10,36 @@ metadata:
   depends_on:
     - 0011-vault-asset-chain-id-hex
     - rfcs/draft/0011-caveat-form-amendment.md
-status: OPEN
+status: CLAIMED
 ---
 
-# Mission `0011-caveat-form-amendment` v1.0 — OPEN 2026-10-02
+# Mission `0011-caveat-form-amendment` v1.0 — CLAIMED 2026-10-02, implementation complete 2026-10-03
 
 **Owner:** substrate (Layer A, `octo-cap-macaroon`).
 **Phase:** Phase 1 of the Caveat Form Alignment plan.
-**Companion:** `missions/open/0011-vault-asset-chain-id-hex.md` (Layer B, paired).
+**Companion:** `missions/claimed/0011-vault-asset-chain-id-hex.md` (Layer B, paired).
+
+## Status
+
+Implementation complete as of 2026-10-03. All acceptance criteria for the
+Layer A scope are met and every gate is green; the mission is **not** closed,
+because the two promotion gates below have not fired.
+
+Landed:
+
+- Phase 1 — `visit_str` arm on `dqa_serde::field`, the `hex_id_32` adapter, its application to `Caveat::Vault`, and the inversion of `guide_canonical_form_is_not_reparseable` → `guide_canonical_form_is_reparseable` (`next 590ddbff`, review fixes `next 747f15d7`).
+- Phase 2 review follow-ups (`next 4423454e`, `next a5cd3fc8`): the adapter's original vectors were built from a single repeated byte, a fixed point of every byte permutation, so no vector could detect a byte-order defect — reversing the byte order inside `hex_id_32::serialize` left all 13 vectors and all 257 lib tests green. `tv_cf_14` (position-sensitive, non-gated, so it runs in the ordinary CI gate), `tv_cf_15` (array length rejection) and `tv_cf_16` (uppercase-input leniency) close that, each verified against a mutation. The `AssetId` / `ChainId` / `VaultId` doc paragraphs also claimed the newtype "serialises as hex" without qualifying that the Borsh form is unaffected by the flag; corrected.
+
+Open gates before this mission can close:
+
+1. The amendment RFC is still `Draft`. `docs/BLUEPRINT.md` §RFC Process requires a minimum 7-day feedback window (step 3) and a discussion PR (step 2); the RFC was filed 2026-10-02 and no PR has been opened.
+2. The post-implementation multi-round adversarial review closure pair (R-DRY) has not run. Per `docs/BLUEPRINT.md` §Mission Lifecycle the mission file stays in `missions/claimed/` until it does.
+
+Layer note: the spec review during Phase 2 established that `octo-cap-macaroon`
+is **Layer B**, not Layer A — it is not in the Layer A frozen list, and the
+"Layer A frozen" header in `src/substrate.rs` is a pre-existing inaccuracy left
+out of scope. The `Layer A` label in this mission's `Owner` line and in the RFC
+header is therefore inaccurate and worth correcting in a follow-up.
 
 ## Context
 
@@ -76,17 +98,17 @@ Add 9 new test functions to `crates/octo-cap-macaroon` (across the existing
 `dqa_serde` and `caveat/mod` test modules plus a new
 `tests/tv_cf_dqa_hex_round_trip.rs` integration file):
 
-| Vector | Where | What it pins |
-| ------ | ----- | ------------ |
-| `tv_cf_01_dqa_hex_round_trip` | `tests/tv_cf_dqa_hex_round_trip.rs` | 64-hex `Dqa` decodes to the same value as the byte-array form. |
-| `tv_cf_02_dqa_hex_rejects_odd_length` | same | odd-length hex rejects. |
-| `tv_cf_03_dqa_hex_rejects_non_hex_chars` | same | non-hex characters reject. |
-| `tv_cf_04_hex_id_32_round_trip_string` | `tests/tv_cf_hex_id_32_round_trip.rs` | 64-char hex round-trips through `hex_id_32`. |
-| `tv_cf_05_hex_id_32_accepts_legacy_array_form` | same | 32-element array form parses. |
-| `tv_cf_06_hex_id_32_rejects_short_hex` | same | short hex rejects. |
-| `tv_cf_07_canonical_amount_max_reparses_through_input_form` | `caveat/mod.rs` lib test | `Caveat::AmountMax`'s `canonical_ser` re-parses through the input form. |
-| `tv_cf_08_canonical_vault_reparses_through_input_form` | same | `Caveat::Vault`'s `canonical_ser` re-parses through the input form. |
-| `tv_cf_09_legacy_vault_array_form_still_parses` | same | legacy 32-element array form on `Caveat::Vault` continues to parse. |
+| Vector                                                      | Where                                 | What it pins                                                            |
+| ----------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------- |
+| `tv_cf_01_dqa_hex_round_trip`                               | `tests/tv_cf_dqa_hex_round_trip.rs`   | 64-hex `Dqa` decodes to the same value as the byte-array form.          |
+| `tv_cf_02_dqa_hex_rejects_odd_length`                       | same                                  | odd-length hex rejects.                                                 |
+| `tv_cf_03_dqa_hex_rejects_non_hex_chars`                    | same                                  | non-hex characters reject.                                              |
+| `tv_cf_04_hex_id_32_round_trip_string`                      | `tests/tv_cf_hex_id_32_round_trip.rs` | 64-char hex round-trips through `hex_id_32`.                            |
+| `tv_cf_05_hex_id_32_accepts_legacy_array_form`              | same                                  | 32-element array form parses.                                           |
+| `tv_cf_06_hex_id_32_rejects_short_hex`                      | same                                  | short hex rejects.                                                      |
+| `tv_cf_07_canonical_amount_max_reparses_through_input_form` | `caveat/mod.rs` lib test              | `Caveat::AmountMax`'s `canonical_ser` re-parses through the input form. |
+| `tv_cf_08_canonical_vault_reparses_through_input_form`      | same                                  | `Caveat::Vault`'s `canonical_ser` re-parses through the input form.     |
+| `tv_cf_09_legacy_vault_array_form_still_parses`             | same                                  | legacy 32-element array form on `Caveat::Vault` continues to parse.     |
 
 ### Step 6: Invert the guide vector
 
@@ -170,12 +192,12 @@ negative control):
 
 ## Dependencies
 
-- `missions/open/0011-vault-asset-chain-id-hex.md` — paired Layer B mission
+- `missions/claimed/0011-vault-asset-chain-id-hex.md` — paired Layer B mission
   (the Layer B adapters reuse this mission's `hex_id_32`).
 - `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                  |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version | Date       | Change                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v1.0    | 2026-10-02 | Initial filing per Caveat Form Alignment plan Phase 0. Substrate-owned serialization paths for the 16-byte `DqaEncoding` payload (`dqa_serde::field`) and 32-byte ids (`hex_id_32`). Paired with Layer B mission `0011-vault-asset-chain-id-hex` for the newtype hex feature. |

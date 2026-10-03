@@ -1,28 +1,53 @@
 # RFC-0011 Caveat Form Amendment
 
-| Field        | Value                                                       |
-| ------------ | ----------------------------------------------------------- |
-| Status       | Draft                                                       |
-| Version      | (v1.0 lands at Phase 4 promotion)                           |
-| Layer        | A (substrate-frozen `octo-cap-macaroon`)                    |
-| Parent RFC   | RFC-0011                                                    |
-| Companion    | `missions/open/0011-caveat-form-amendment.md` (Layer A)      |
-|              | `missions/open/0011-vault-asset-chain-id-hex.md` (Layer B)  |
+| Field      | Value                                                         |
+| ---------- | ------------------------------------------------------------- |
+| Status     | Draft                                                         |
+| Version    | (v1.0 lands at Phase 4 promotion)                             |
+| Layer      | A (substrate-frozen `octo-cap-macaroon`)                      |
+| Parent RFC | RFC-0011                                                      |
+| Companion  | `missions/claimed/0011-caveat-form-amendment.md` (Layer A)    |
+|            | `missions/claimed/0011-vault-asset-chain-id-hex.md` (Layer B) |
 
 ## Version History
 
-| Version | Date | Change |
-| ------- | ---- | ------ |
-|         |      | (v1.0 lands at Phase 4 promotion — all 14 `tv_cf_*` vectors green + the inverted guide vector green) |
+| Version | Date | Change                                                                                       |
+| ------- | ---- | -------------------------------------------------------------------------------------------- |
+|         |      | (v1.0 lands at promotion — all 17 `tv_cf_*` vectors green + the inverted guide vector green) |
 
-Note: v1.0 lands at Phase 4 promotion; the empty Version cell above is intentional and will be filled in then.
+Note: v1.0 lands at promotion; the empty Version cell above is intentional and will be filled in then.
 
 ## Status
 
 **Draft (2026-10-02).** Created as Phase 0 of the Caveat Form Alignment plan.
-Promoted to `Accepted` after Phase 1 (`visit_str` + `hex_id_32` on `Caveat::Vault`)
-and Phase 2 (`hex-ids` feature on `AssetId` / `ChainId` / `VaultId`) land and the
-gate vectors `tv_cf_07..09` + `tv_cf_14` pass on every crate touched.
+
+**Implementation complete, promotion NOT yet due (as of 2026-10-03).** All four
+implementation phases have landed locally and the amendment's normative clauses
+are implemented:
+
+- Phase 1 — `visit_str` arm on `dqa_serde::field` plus the `hex_id_32` adapter on `Caveat::Vault` (`next 590ddbff`, review fixes `747f15d7`).
+- Phase 2 — `hex-ids` feature (off by default) on `AssetId` / `ChainId` / `VaultId` (`next f675efb0`).
+- Phase 2 review follow-ups — position-sensitive adapter vectors, the `hex-ids` CI test gate, and the serde-versus-borsh doc correction (`next 4423454e`, `next a5cd3fc8`).
+- Phase 3 — `CaveatSummaryView` serialises as `type` / `value` (`next 6b20f480`).
+
+Gate vectors, all green: `tv_cf_01..06` and `tv_cf_14..16` in `octo-cap-macaroon`,
+`tv_cf_07..09` in `octo-cap-macaroon`, `tv_cf_10..13` under `--features hex-ids`,
+and `tv_cf_17` in `octo-cli`. The inverted guide vector
+`guide_canonical_form_is_reparseable` is green.
+
+Promotion to `Accepted` is **blocked on two process gates, not on the code**:
+
+1. `docs/BLUEPRINT.md` §RFC Process step 3 requires a minimum 7-day feedback
+   window, and step 2 requires the RFC to be submitted as a PR for discussion.
+   This RFC was filed 2026-10-02 and no discussion PR has been opened, so the
+   window has not started. The 7-day minimum is not met.
+2. The paired missions stay in `missions/claimed/` until the post-implementation
+   multi-round adversarial review closure pair (R-DRY) fires, per
+   `docs/BLUEPRINT.md` §Mission Lifecycle.
+
+The Caveat Form Alignment plan's own promotion criterion (Phases 1-3 landed plus
+the gate vectors green) is narrower than the two gates above; the gates above
+govern.
 
 ## Summary
 
@@ -116,22 +141,22 @@ adapter's `deserialize_any` is the documented public surface of the path.
 The amendment is promoted to `Accepted` once the following vectors all pass
 on the substrate crate (`octo-cap-macaroon`):
 
-| Vector | Property locked |
-| ------ | --------------- |
-| `tv_cf_01_dqa_hex_round_trip` | `dqa_serde::field::deserialize` accepts a 64-hex string and decodes to the same `Dqa` as the 16-byte byte-array form. |
-| `tv_cf_02_dqa_hex_rejects_odd_length` | odd-length hex strings reject. |
-| `tv_cf_03_dqa_hex_rejects_non_hex_chars` | non-hex characters reject. |
-| `tv_cf_04_hex_id_32_round_trip_string` | `hex_id_32` adapter round-trips through a 64-char hex string. |
-| `tv_cf_05_hex_id_32_accepts_legacy_array_form` | `hex_id_32` adapter parses the legacy 32-element array form. |
-| `tv_cf_06_hex_id_32_rejects_short_hex` | short hex strings reject. |
-| `tv_cf_07_canonical_amount_max_reparses_through_input_form` | `Caveat::AmountMax`'s `canonical_ser` output re-parses through `#[serde(with = "dqa_serde::field")]`. |
-| `tv_cf_08_canonical_vault_reparses_through_input_form` | `Caveat::Vault`'s `canonical_ser` output re-parses through `#[serde(with = "hex_id_32")]`. |
-| `tv_cf_09_legacy_vault_array_form_still_parses` | legacy 32-element array form on `Caveat::Vault` continues to parse. |
-| `tv_cf_10_asset_id_hex_round_trip` | under `--features hex-ids`, `AssetId` round-trips through 64-hex. |
-| `tv_cf_11_chain_id_hex_round_trip` | under `--features hex-ids`, `ChainId` round-trips through 64-hex. |
-| `tv_cf_12_vault_id_hex_round_trip` | under `--features hex-ids`, `VaultId` round-trips through 64-hex. |
-| `tv_cf_13_default_newtype_serde_is_byte_array` | under default features, `AssetId` / `ChainId` / `VaultId` serialize as 32-element byte arrays. |
-| `tv_cf_14_caveat_summary_view_serialises_as_type_value` | `CaveatSummaryView` serialises as `{ type, value }`, not `{ kind, body }`. |
+| Vector                                                      | Property locked                                                                                                       |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `tv_cf_01_dqa_hex_round_trip`                               | `dqa_serde::field::deserialize` accepts a 64-hex string and decodes to the same `Dqa` as the 16-byte byte-array form. |
+| `tv_cf_02_dqa_hex_rejects_odd_length`                       | odd-length hex strings reject.                                                                                        |
+| `tv_cf_03_dqa_hex_rejects_non_hex_chars`                    | non-hex characters reject.                                                                                            |
+| `tv_cf_04_hex_id_32_round_trip_string`                      | `hex_id_32` adapter round-trips through a 64-char hex string.                                                         |
+| `tv_cf_05_hex_id_32_accepts_legacy_array_form`              | `hex_id_32` adapter parses the legacy 32-element array form.                                                          |
+| `tv_cf_06_hex_id_32_rejects_short_hex`                      | short hex strings reject.                                                                                             |
+| `tv_cf_07_canonical_amount_max_reparses_through_input_form` | `Caveat::AmountMax`'s `canonical_ser` output re-parses through `#[serde(with = "dqa_serde::field")]`.                 |
+| `tv_cf_08_canonical_vault_reparses_through_input_form`      | `Caveat::Vault`'s `canonical_ser` output re-parses through `#[serde(with = "hex_id_32")]`.                            |
+| `tv_cf_09_legacy_vault_array_form_still_parses`             | legacy 32-element array form on `Caveat::Vault` continues to parse.                                                   |
+| `tv_cf_10_asset_id_hex_round_trip`                          | under `--features hex-ids`, `AssetId` round-trips through 64-hex.                                                     |
+| `tv_cf_11_chain_id_hex_round_trip`                          | under `--features hex-ids`, `ChainId` round-trips through 64-hex.                                                     |
+| `tv_cf_12_vault_id_hex_round_trip`                          | under `--features hex-ids`, `VaultId` round-trips through 64-hex.                                                     |
+| `tv_cf_13_default_newtype_serde_is_byte_array`              | under default features, `AssetId` / `ChainId` / `VaultId` serialize as 32-element byte arrays.                        |
+| `tv_cf_14_caveat_summary_view_serialises_as_type_value`     | `CaveatSummaryView` serialises as `{ type, value }`, not `{ kind, body }`.                                            |
 
 Inverted guide vector:
 

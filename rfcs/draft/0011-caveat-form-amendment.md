@@ -104,8 +104,15 @@ the canonical-form level; the remaining piece is the round-trip.
 
 ## Caveat Form Amendment
 
-The following is normative for any `Caveat` enum whose canonical form is
-emitted by `Caveat::canonical_ser`.
+Clauses 1 to 3 below are normative for the caveat payload widths this
+amendment governs: the 16-byte `DqaEncoding` and the 32-byte id. They are
+**not** normative for every arm whose canonical form `canonical_ser` happens
+to emit, which is a much larger set. An earlier revision opened this section by
+saying the clauses were "normative for any `Caveat` enum whose canonical form
+is emitted by `Caveat::canonical_ser`", which on its face swept in the
+`Raw` variable-length blob, the `Permission` info-string, and the four arms
+recorded in §Known deviations — arms this amendment does not govern. The
+preamble is narrowed here to match what the clauses actually require.
 
 1. **Round-trip MUST hold for every caveat arm whose canonical form is
    lossless.** The canonical hex form emitted by `Caveat::canonical_ser` for
@@ -164,18 +171,33 @@ emitted by `Caveat::canonical_ser`.
    byte-array-shaped everywhere, and `tv_cf_13` tests the bare type for that
    reason.
 
-## Caveat::Vault hex form
+## The 32-byte id hex form
 
-The `hex_id_32` adapter's `deserialize_any` semantics are the substrate-owned
-path for accepting both forms transparently. The adapter accepts:
+The `hex_id_32` adapter is the substrate-owned path for every 32-byte
+id-bearing field, not only `Caveat::Vault`; the section title in earlier
+revisions of this document said `Vault` and understated the scope after the
+parallel adapter was folded in. The adapter accepts:
 
-- A 64-char lowercase hex string (canonical, preferred), via `visit_str`.
+- A 64-char hex string (canonical, preferred), via `visit_str`.
 - A 32-element byte array (legacy, preserved for migration), via `visit_seq`.
 
 A `deserialize_str` / `deserialize_seq` dispatch would force the consumer to
-commit to one form via a tag; the cleaner substrate-owned solution is to
-accept both forms transparently. The migration-window contract is that the
-adapter's `deserialize_any` is the documented public surface of the path.
+commit to one form via a tag; the cleaner substrate-owned solution is to accept
+both forms transparently. The migration-window contract is that the adapter's
+`deserialize_any` is the documented public surface of the path.
+
+**Precondition: the format must be self-describing.** `deserialize_any` asks
+the format to describe the incoming value, which JSON and MessagePack do and
+bincode and postcard do not. A `Caveat` carrying a 32-byte id therefore cannot
+be read through a non-self-describing serde format once this adapter is on the
+path, and the failure is a runtime error rather than a compile error. Nothing in
+the workspace hits this today — `octo-cap-macaroon` only ever moves a `Caveat`
+through `serde_json`, and the workspace's bincode users are in other crates —
+so this is a constraint on future work rather than a live defect. It is stated
+because the alternative is a consumer adopting this adapter, then discovering
+the format limit through a runtime error on a wire path. A future
+non-self-describing consumer needs a tag or an out-of-band form, not this
+adapter.
 
 ## Compatibility
 

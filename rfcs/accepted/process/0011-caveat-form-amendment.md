@@ -86,7 +86,7 @@ normative clauses are implemented:
 - Phase 2 review follow-ups — position-sensitive adapter vectors, the `hex-ids` CI test gate, and the serde-versus-borsh doc correction (`next 4423454e`, `next a5cd3fc8`).
 - Phase 3 — `CaveatSummaryView` serialises as `type` / `value` (`next 6b20f480`).
 
-Gate vectors, all green: `tv_cf_01..06`, `tv_cf_13..16`, and `tv_cf_18..25`
+Gate vectors, all green: `tv_cf_01..06`, `tv_cf_13..16`, and `tv_cf_18..26`
 in `octo-cap-macaroon` under default features; `tv_cf_07..09` in-crate in the
 same crate; `tv_cf_10..12` under `--features hex-ids`; and `tv_cf_17` in
 `octo-cli`. The inverted guide vector `guide_canonical_form_is_reparseable` is
@@ -559,11 +559,41 @@ form, reversing the bytes on serialize, reversing them on deserialize, and
 reverting one envelope to the bare string — and each was caught by the assertion
 that names the corresponding half of the contract.
 
-### 5. `Caveat::Permission` remains asymmetric
+### 5. `Caveat::Permission` emitted the HMAC info string — **CLOSED 2026-10-03**
 
-Unchanged by this amendment and out of its scope: `canonical_ser` emits the
-full HMAC info string for the `Permission` arm while the input form expects
-the short tag. It is a separate defect with its own follow-up.
+> **Status: closed.** `canonical_ser` now emits the short tag and the arm
+> round-trips. `tv_cf_26` pins every `PermissionKind` variant, deriving the
+> variant set from this crate's source.
+
+`canonical_ser` emitted `PermissionKind::as_str()` for this arm, which is the
+full HMAC info string — `"cipherocto/cap/v1/permission/vault_mutation"`. The
+input form derives `Serialize` with `rename_all = "snake_case"` and therefore
+expects `"vault_mutation"`. Those are two different _vocabularies_, not two
+encodings of one value, so the canonical form could not be re-read at all:
+
+```
+{"type":"permission","value":"cipherocto/cap/v1/permission/vault_mutation"}
+```
+
+serde rejects it with `unknown variant`, listing the five tags it does accept.
+
+**Why no vector caught it.** This is a different defect CLASS from everything
+else in this amendment. The other arms failed because of the _encoding_ of a
+32-byte id or the _shape_ of the envelope, so the vectors that found them all
+enumerate arms whose `canonical_ser` renders bytes through `hex::encode`.
+`permission` does not render hex, so it was outside the set every one of them
+enumerates. A fix to all eight hex arms left this one still broken, and the
+suite stayed green — which is the same failure mode as the missed arms in
+§Known deviations 3, one level up: a set nobody enumerated.
+
+`PermissionKind::as_str()` was not wrong in itself. It is the `info` parameter
+to HMAC-BLAKE3, and `caveat_name_stable` deliberately pins the distinction
+between the HMAC string and the wire tag. The defect was using it on the wire.
+
+The arm now emits the derived form, so `rename_all` covers any variant added
+later. `tv_cf_26` still enumerates the variants from source and fails on a new
+one, because "the encoder is right by construction" is precisely the claim
+that was false here.
 
 ## Acceptance Criteria
 

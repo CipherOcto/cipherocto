@@ -17,7 +17,7 @@
 //!   crate disagreed on the same canonical form.
 
 use octo_cap_macaroon::caveat::payment::PaymentCaveat;
-use octo_cap_macaroon::{AssetId, Caveat, Dqa, Epoch, Nonce};
+use octo_cap_macaroon::{AssetId, Caveat, Dqa, Epoch, Nonce, PermissionKind};
 
 /// Position-distinctive bytes. A single repeated byte is a fixed point of
 /// every byte permutation, so a constant array cannot detect a reordering
@@ -130,6 +130,150 @@ fn tv_cf_18_payment_canonical_form_is_lossless() {
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
         "budget must be lowercase hex, got {budget}"
+    );
+}
+
+/// `Caveat::Permission`'s canonical form uses the SHORT TAG, and every variant
+/// round-trips.
+///
+/// This arm's asymmetry was not an encoding one, so none of the vectors in
+/// `tv_cf_hex_arm_acceptance` covered it: that file enumerates the arms whose
+/// `canonical_ser` renders bytes through `hex::encode`, and `permission` is not
+/// one of them. `canonical_ser` wrote
+/// `PermissionKind::as_str()` — the full HMAC info string
+/// `"cipherocto/cap/v1/permission/vault_mutation"` — where the input form, which
+/// derives `Serialize` with `rename_all = "snake_case"`, expects
+/// `"vault_mutation"`. Two different vocabularies, not two encodings of one, so
+/// the canonical form could not be re-read at all.
+///
+/// The variant set is read out of this crate's source, not hand-listed, so a
+/// sixth `PermissionKind` variant cannot be added without this vector covering
+/// it. `rename_all` would make the encoder correct for a new variant
+/// automatically, but "the encoder is right" is exactly the claim that was
+/// false here, and an unenumerated variant is the cheapest place for it to go
+/// wrong again.
+#[test]
+fn tv_cf_26_permission_canonical_form_uses_the_short_tag_for_every_variant() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let path = std::path::Path::new(manifest).join("src/caveat/mod.rs");
+    let source = std::fs::read_to_string(&path).expect("caveat/mod.rs readable from the test");
+
+    // Bound the PermissionKind body by brace counting.
+    let start = source
+        .find("pub enum PermissionKind {")
+        .expect("PermissionKind must exist");
+    let after_open = start + "pub enum PermissionKind {".len();
+    let mut depth = 1usize;
+    let mut end = after_open;
+    for (offset, ch) in source[after_open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = after_open + offset;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &source[after_open..end];
+    assert!(
+        !body.is_empty(),
+        "could not bound the PermissionKind body, so the derived variant set \
+         would be empty and this vector would pass vacuously"
+    );
+
+    let variants: Vec<String> = body
+        .lines()
+        .map(|line| line.trim().trim_end_matches(','))
+        .filter(|line| !line.is_empty() && line.chars().next().is_some_and(|c| c.is_uppercase()))
+        .map(|line| {
+            line.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        variants.len() >= 5,
+        "expected at least the five known PermissionKind variants, found \
+         {variants:?}. A variant rename or removal should be a deliberate edit \
+         here rather than a silent drop."
+    );
+
+    let mut problems: Vec<String> = Vec::new();
+    for name in &variants {
+        // The snake_case wire tag that `rename_all` produces.
+        let expected_tag: String = {
+            let mut out = String::new();
+            for (i, ch) in name.chars().enumerate() {
+                if ch.is_uppercase() {
+                    if i != 0 {
+                        out.push('_');
+                    }
+                    out.extend(ch.to_lowercase());
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        };
+
+        let kind: PermissionKind = match name.as_str() {
+            "NativeTokenTransfer" => PermissionKind::NativeTokenTransfer,
+            "Erc20TokenTransfer" => PermissionKind::Erc20TokenTransfer,
+            "ContractCall" => PermissionKind::ContractCall,
+            "Reservation" => PermissionKind::Reservation,
+            "VaultMutation" => PermissionKind::VaultMutation,
+            other => {
+                problems.push(format!(
+                    "{other} is a new PermissionKind variant and this vector has no \
+                     way to construct it. Add a match arm here so the new variant \
+                     is covered rather than skipped."
+                ));
+                continue;
+            }
+        };
+
+        let caveat = Caveat::Permission(kind);
+        let canonical = caveat.canonical_ser();
+        let text = String::from_utf8_lossy(&canonical);
+
+        // The HMAC info string must NOT appear. This is the exact defect:
+        // `as_str()` was written where the short tag belonged.
+        if text.contains("cipherocto/cap/v1/permission/") {
+            problems.push(format!(
+                "{name}: the canonical form contains the HMAC info string, which \
+                 the input form cannot read: {text}"
+            ));
+        }
+        if !text.contains(&format!("\"value\":\"{expected_tag}\"")) {
+            problems.push(format!(
+                "{name}: expected the short tag \"{expected_tag}\" under `value`, \
+                 got {text}"
+            ));
+        }
+        match serde_json::from_slice::<Caveat>(&canonical) {
+            Ok(parsed) if parsed == caveat => {}
+            Ok(parsed) => problems.push(format!(
+                "{name}: reparsed to a different caveat: {parsed:?}"
+            )),
+            Err(e) => problems.push(format!(
+                "{name}: the canonical form does not reparse, so the Permission \
+                 arm is asymmetric: {e}\n  {text}"
+            )),
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "the Permission arm's canonical form is not the short tag for every \
+         variant:\n  {}\n\nThe HMAC info string (`PermissionKind::as_str`) and the \
+         wire tag (`rename_all = \"snake_case\"`) are different vocabularies. \
+         `as_str` is the HMAC `info` parameter and belongs there only.",
+        problems.join("\n  ")
     );
 }
 

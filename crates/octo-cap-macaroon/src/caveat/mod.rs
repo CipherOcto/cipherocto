@@ -824,7 +824,31 @@ impl Caveat {
                 "value": {"name": r.name, "value": hex::encode(&r.value)}
             }),
             Caveat::Vault(id) => serde_json::json!({"type": "vault", "value": hex::encode(id)}),
-            Caveat::Permission(k) => serde_json::json!({"type": "permission", "value": k.as_str()}),
+            Caveat::Permission(k) => {
+                // The SHORT TAG, not the HMAC info string.
+                //
+                // `PermissionKind` derives `Serialize` with
+                // `rename_all = "snake_case"`, so the input form expects
+                // `"vault_mutation"`. This arm used to write
+                // `PermissionKind::as_str()`, which is the full HMAC info string
+                // `"cipherocto/cap/v1/permission/vault_mutation"` — a different
+                // vocabulary, not a different encoding of the same one, so the
+                // canonical form could not be re-read at all.
+                //
+                // `as_str()` is correct for its own purpose: it is the `info`
+                // parameter to HMAC-BLAKE3, and `caveat_name_stable` pins that
+                // distinction between the HMAC string and the wire tag. Mixing
+                // the two here is what created the asymmetry.
+                //
+                // Emitting the derived form rather than a hand-written string
+                // table means a variant added to `PermissionKind` is covered
+                // automatically by `rename_all`, and `tv_cf_26` derives the
+                // variant set from this crate's source to confirm it.
+                serde_json::json!({
+                    "type": "permission",
+                    "value": serde_json::to_value(k).expect("PermissionKind is serializable"),
+                })
+            }
             Caveat::ValidRange {
                 valid_after_unix,
                 valid_until_unix,

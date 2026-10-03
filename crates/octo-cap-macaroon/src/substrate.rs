@@ -3,9 +3,18 @@
 //!
 //! ## Layer model
 //!
-//! Per `cipherocto-design-principles`, this module is Layer A frozen
-//! substrate (RFC-frozen, semver-major only, years-stable). Traits and
-//! newtypes declared here MUST NOT have semver-minor breakage.
+//! Per `cipherocto-design-principles`, this module is **Layer B** substrate
+//! (RFC-driven, additive) — the crate is NOT in the Layer A frozen list.
+//! Traits and newtypes declared here are additive per RFC and may take
+//! semver-minor changes under RFC amendment; they are not semver-frozen.
+//!
+//! An earlier revision of this header read "Layer A frozen substrate
+//! (RFC-frozen, semver-major only, years-stable). Traits and newtypes declared
+//! here MUST NOT have semver-minor breakage." That was wrong, and wrong in a
+//! way that licensed skipping the freeze discipline for every change in this
+//! file, including the `Caveat` enum and `canonical_ser` changes carried by
+//! RFC-0011 §Caveat Form Amendment. The crate-level table in `CLAUDE.md`
+//! places `octo-cap-macaroon` at Layer B.
 //!
 //! ## Mission D + Mission E substrate additions
 //!

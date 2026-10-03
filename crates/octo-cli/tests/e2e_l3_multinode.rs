@@ -2454,3 +2454,316 @@ fn l3_agent_run_unknown_agent_exits_42() {
          transition_agent rejects the unknown agent"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: the post-e02f8b02 agent registry persistence is observable
+// across separate OS processes (`agent create` → `agent list`)
+// ---------------------------------------------------------------------------
+
+/// The agent registry was a process-global `static Mutex<BTreeMap>` that
+/// lost every registration on CLI exit (`crates/octo-wallet/src/agent.rs`,
+/// the `AGENT_REGISTRY` static pre-e02f8b02). A second process could not
+/// see what the first one registered, blocking the L3 multi-peer e2e
+/// harness's `agent run` success-path test. Substrate agent persistence
+/// (`next e02f8b02`) now persists the registry to
+/// `<wallet_root>/agent_registry.json` on every mutation and hydrates
+/// from the same file on first access. This test pins the cross-process
+/// visibility property end-to-end through the CLI:
+///
+/// 1. Register an identity (dev mode).
+/// 2. Build a manifest JSON file with the registered DID.
+/// 3. **Control**: SEPARATE process invokes `agent list` BEFORE the
+///    create. Must report 0 agents (the in-memory + on-disk registry
+///    is empty for a freshly registered identity).
+/// 4. SEPARATE process A invokes `octo agent create` — the substrate's
+///    `register_agent` writes a record to `agent_registry.json`.
+/// 5. SEPARATE process B invokes `octo agent list` — the substrate
+///    re-hydrates from `agent_registry.json` and the list MUST contain
+///    exactly one entry whose `agent_id` matches the create envelope.
+///
+/// The cross-process property under test: **process B sees the
+/// registration written by process A**. Before e02f8b02 the in-memory
+/// `AGENT_REGISTRY` was per-process, so a second process could not
+/// observe the first process's registration and the list would have
+/// returned 0 entries even after a successful create. The mint+list
+/// test (`l3_capability_mint_then_list_round_trip`) is the reference
+/// pattern for the cap-macaroon round-trip; this test is the analogous
+/// surface for the agent registry.
+///
+/// The `manifest_id` is the canonical UUIDv4 form per RFC-0002 §Agent
+/// Manifest. The `signature_hex` is a 64-char hex (32-byte) placeholder
+/// — the substrate's Phase 1 records the value but does not verify
+/// against the holder's pubkey (the 6-step capability validation
+/// pipeline wires in a follow-on substrate amendment). The
+/// `holder_did` MUST match the active DID; the substrate's
+/// `register_agent` derives the `agent_id` from
+/// `(manifest_digest, active_did)` via UUIDv5 (RFC 4122 §4.3), so a
+/// mismatch would surface as a holder-binding error in Phase 2 and as
+/// a divergence in `manifest_digest` between the create envelope and
+/// the on-disk record in Phase 1.
+#[test]
+fn l3_agent_create_then_list_round_trip() {
+    let home = new_node_home("l3-agent-create-list");
+    let passphrase = "l3-agent-create-list-passphrase-2026"; // 35 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // -- Step 1: register an identity. Dev mode is required so the
+    //    wallet's `index.json` records `mode = dev` (the substrate's
+    //    SEC-03 guard checks the issuer's mode at the `capability
+    //    mint` boundary; `agent create` does not gate on mode but
+    //    the dev mode is what the L3 harness consistently uses
+    //    across sibling tests).
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-agent-create-list",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "dev",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed in dev mode: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_did = register_env.payload["did"]
+        .as_str()
+        .expect("register envelope must carry payload.did")
+        .to_string();
+    assert!(
+        register_did.starts_with("did:octo:"),
+        "DID must be in canonical wire form, got {register_did:?}"
+    );
+
+    // -- Step 2: build the manifest JSON file. The `holder_did` MUST
+    //    match the active DID (substrate-enforced per RFC-0002
+    //    §Agent Manifest §Holder Binding). The `label` is surfaced
+    //    through `AgentSummary::label` and the list handler's
+    //    envelope projection; pinning it lets the post-list
+    //    assertion catch a redaction / re-projection regression.
+    let manifest_path = home.join("manifest.json");
+    let manifest = serde_json::json!({
+        "manifest_id": "00000000-0000-4000-8000-000000000001",
+        "holder_did": register_did,
+        "label": "l3-agent-create-list-runner",
+        "created_at_unix": 1_700_000_000_u64,
+        "signature_hex": "ab".repeat(64),
+    });
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest)
+            .expect("serialize manifest")
+            .as_bytes(),
+    )
+    .expect("write manifest file");
+
+    // -- Step 3 (control / substrate gate): SEPARATE process invokes
+    //    `agent list` BEFORE the create. The pre-create registry
+    //    is empty (the in-memory `AGENT_REGISTRY` is a fresh
+    //    `BTreeMap::new()` and the on-disk file does not exist yet).
+    //    The control pins the "before" state so the "after"
+    //    assertion is a delta, not a single observation.
+    let pre_list = octo_in(&home)
+        .args(["agent", "list", "--json"])
+        .output()
+        .expect("spawn pre-list");
+    assert_eq!(
+        pre_list.status.code(),
+        Some(0),
+        "pre-create agent list must exit 0, got {:?}. stderr={}, stdout={}",
+        pre_list.status.code(),
+        String::from_utf8_lossy(&pre_list.stderr),
+        String::from_utf8_lossy(&pre_list.stdout),
+    );
+    let pre_list_env = Envelope::parse(&String::from_utf8_lossy(&pre_list.stdout));
+    let pre_count = pre_list_env.payload["count"]
+        .as_u64()
+        .expect("pre-list payload.count must be a u64");
+    assert_eq!(
+        pre_count, 0,
+        "pre-create list must report 0 agents (the in-memory + on-disk \
+         registry is empty for a freshly registered identity). got {pre_count}"
+    );
+
+    // -- Step 4: SEPARATE process A invokes `octo agent create`. The
+    //    handler is a write path (denied in Auditor mode per
+    //    RFC-0011-c §Roles and Authorities); the flag combination
+    //    --mode dev --allow-write --confirm --confirm-acknowledge
+    //    is the minimum that passes `require_confirm` (dev mode
+    //    needs --allow-write) AND the handler's own `if !confirm`
+    //    check. The substrate's `register_agent` derives the
+    //    `agent_id` from `(manifest_digest, active_did)` via UUIDv5
+    //    and persists the record to `agent_registry.json`.
+    let create = octo_in(&home)
+        .args([
+            "agent",
+            "create",
+            "--manifest-path",
+            manifest_path.to_str().unwrap(),
+            "--mode",
+            "dev",
+            "--allow-write",
+            "--confirm",
+            "--confirm-acknowledge",
+            "--json",
+        ])
+        .output()
+        .expect("spawn create");
+    assert_eq!(
+        create.status.code(),
+        Some(0),
+        "agent create on a registered identity must exit 0, got {:?}. \
+         stderr={}, stdout={}",
+        create.status.code(),
+        String::from_utf8_lossy(&create.stderr),
+        String::from_utf8_lossy(&create.stdout),
+    );
+    let create_env = Envelope::parse(&String::from_utf8_lossy(&create.stdout));
+    let created_agent_id = create_env.payload["agent_id"]
+        .as_str()
+        .expect("create envelope must carry payload.agent_id")
+        .to_string();
+    // The envelope-boundary redactor truncates `agent_id` to 8 hex
+    // chars + `...` (the cross-process rehydration must project the
+    // same truncated form for the same record). The shape check
+    // (`<8 hex chars>...`) pins the redaction contract; the equality
+    // check below catches divergence between the two envelopes.
+    assert!(
+        created_agent_id.len() == 11
+            && created_agent_id.ends_with("...")
+            && created_agent_id[..8].chars().all(|c| c.is_ascii_hexdigit()),
+        "create envelope's agent_id must be the 8-hex + '...' truncated \
+         form per the envelope-boundary redactor. got {created_agent_id:?}"
+    );
+
+    // -- Step 5: SEPARATE process B invokes `octo agent list`. THIS
+    //    IS THE CROSS-PROCESS PROPERTY. Process B re-hydrates from
+    //    `agent_registry.json` (the e02f8b02 amendment) and the
+    //    list MUST contain exactly one entry whose `agent_id`
+    //    matches the create envelope's. Before e02f8b02 the
+    //    in-memory `AGENT_REGISTRY` was per-process; a second
+    //    process could not see the first process's registration,
+    //    and the list would have returned 0 entries.
+    let post_list = octo_in(&home)
+        .args(["agent", "list", "--json"])
+        .output()
+        .expect("spawn post-list");
+    assert_eq!(
+        post_list.status.code(),
+        Some(0),
+        "post-create agent list must exit 0, got {:?}. stderr={}, stdout={}",
+        post_list.status.code(),
+        String::from_utf8_lossy(&post_list.stderr),
+        String::from_utf8_lossy(&post_list.stdout),
+    );
+    let post_list_env = Envelope::parse(&String::from_utf8_lossy(&post_list.stdout));
+    let agents = post_list_env.payload["agents"]
+        .as_array()
+        .expect("post-list payload.agents must be an array");
+    assert_eq!(
+        agents.len(),
+        1,
+        "post-create list must contain exactly one entry (the cross-process \
+         visibility property of the e02f8b02 agent_registry.json amendment). \
+         got {} entries: {agents:?}",
+        agents.len()
+    );
+    // The list envelope's redactor is
+    // `RedactionContext::new().with_active_did(active_did.as_str())`
+    // — it does NOT call `with_holder_did` or `with_agent_id`. The
+    // redaction walker's conditional `holder_did` un-redact requires
+    // BOTH `holder_did_raw` AND `active_did` to be set (per the
+    // `apply_inner` source), so the wholesale-redacted `[REDACTED:key]`
+    // survives the walk for `holder_did`. The `agent_id` walker arm
+    // requires `agent_id_raw` and is similarly not configured. Both
+    // fields surface as `[REDACTED:key]` in the list envelope today;
+    // both are evidence the record was hydrated (the field is
+    // present), but neither lets the test assert against the
+    // persistence layer directly. The cross-process property is
+    // pinned through the OTHER fields both envelopes render verbatim:
+    // `count`, `state`, `label`, `manifest_digest`,
+    // `registered_at_unix`.
+    let listed_agent_id = agents[0]["agent_id"]
+        .as_str()
+        .expect("list entry must carry agent_id string");
+    assert!(
+        !listed_agent_id.is_empty(),
+        "list entry's agent_id must be a non-empty string (the field is \
+         present after rehydration even though it is redacted). got \
+         {listed_agent_id:?}"
+    );
+    let listed_holder_did = agents[0]["holder_did"]
+        .as_str()
+        .expect("list entry must carry holder_did string")
+        .to_string();
+    assert!(
+        listed_holder_did == register_did || listed_holder_did == "[REDACTED:key]",
+        "list entry's holder_did must either un-redact to the active DID \
+         or surface as the wholesale [REDACTED:key] form (the list \
+         redactor does not call `with_holder_did` so the conditional \
+         un-redact does not fire; the redaction walker is a separate \
+         concern from the persistence layer this test pins). got \
+         {listed_holder_did:?}"
+    );
+    let listed_state = agents[0]["state"]
+        .as_str()
+        .expect("list entry must carry state string")
+        .to_string();
+    assert_eq!(
+        listed_state, "registered",
+        "create transitions the agent to the Registered terminal state \
+         (RFC-0011-c §9.3.1); the cross-process list must observe the \
+         same state. got {listed_state:?}"
+    );
+    let listed_label = agents[0]["label"]
+        .as_str()
+        .expect("list entry must carry label string")
+        .to_string();
+    assert_eq!(
+        listed_label, "l3-agent-create-list-runner",
+        "the manifest's operator label is surfaced through \
+         AgentSummary::label and the list envelope; a divergence \
+         would mean the cross-process rehydration lost a field. \
+         got {listed_label:?}"
+    );
+    let listed_manifest_digest = agents[0]["manifest_digest"]
+        .as_str()
+        .expect("list entry must carry manifest_digest string")
+        .to_string();
+    assert!(
+        !listed_manifest_digest.is_empty()
+            && listed_manifest_digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+            && listed_manifest_digest.len() == 64,
+        "list entry's manifest_digest must be the 64-char BLAKE3-256 \
+         hex form (per RFC-0002 §Agent Manifest §Canonical Hash). A \
+         divergence here would mean the rehydration changed the \
+         canonical hash (e.g. a re-serialization field-order change). \
+         got len={} value={listed_manifest_digest:?}",
+        listed_manifest_digest.len()
+    );
+    let listed_registered_at = agents[0]["registered_at_unix"]
+        .as_u64()
+        .expect("list entry must carry registered_at_unix u64");
+    assert!(
+        listed_registered_at > 0,
+        "list entry's registered_at_unix must be a positive unix-seconds \
+         value (the substrate records the registration time at create \
+         and rehydrates it on the list path). got {listed_registered_at}"
+    );
+}

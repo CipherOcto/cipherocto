@@ -903,20 +903,76 @@ impl Caveat {
                 serde_json::json!({"type": "sharded", "value": shard_id})
             }
             Caveat::Payment(p) => {
-                // Same 16-byte encoding as `AmountMax`. The substrate
-                // *enforces* scale-binding here — `PaymentCaveat::attenuate`
-                // Gate 3 rejects a budget whose scale differs from the
-                // parent's — so the canonical form must carry the scale too,
-                // or the encoder would discard exactly the invariant the
-                // attenuator defends. Regression test:
-                // `canonical_payment_budget_carries_scale`.
+                // LOSSLESS, and deliberately so.
+                //
+                // This arm used to project four of `PaymentCaveat`'s seven
+                // fields — `caveat_name`, `budget`, `model`,
+                // `expires_at_unix_ms` — and drop `asset_id`,
+                // `registry_snapshot_epoch`, and `nonce`. The four that
+                // survived were exactly the four inert descriptive fields,
+                // and the three that were dropped are the three that
+                // CONSTRAIN what the capability may do: the asset binding
+                // that stops a USDC budget being spent against an OCTO-W
+                // query, the registry-epoch staleness guard, and the
+                // anti-replay token.
+                //
+                // There was never a design reason. The projection was written
+                // on 2026-08-10, when those four WERE all of the struct's
+                // fields, and it was lossless then. Three fields were added on
+                // 2026-08-26 by `726960ea` (the 8-gate verify plus
+                // `Caveat::AssetBinding`), and that commit did not touch this
+                // match arm. Nothing failed, because a hand-written field list
+                // does not break when a struct grows a field.
+                //
+                // Two consequences made it worse than a stale digest:
+                //
+                // * `caveat_body_hash` feeds the capability id, so two payment
+                //   caveats differing only in asset, epoch, or nonce hashed
+                //   identically. Enforcement still reads the real fields, so
+                //   this is an identifier collision rather than a bypass.
+                // * `caveat_body_hash` also backs the dry-run pastejacking
+                //   echo in `octo-cli capability mint`, whose entire purpose is
+                //   to show the operator what they are about to authorize. The
+                //   echo was hiding the asset binding and the nonce from the
+                //   one surface that exists to display them.
+                //
+                // The budget keeps its 16-byte hex encoding, carrying `scale`
+                // as `PaymentCaveat::attenuate` Gate 3 requires — the regression
+                // test `canonical_payment_budget_carries_scale` pins that, and
+                // the `budget` field's own `#[serde(with = "dqa_serde::field")]`
+                // produces it.
+                //
+                // The projection is written out field by field rather than
+                // taken from `serde_json::to_value(p)`, and the reason is
+                // specific: the `budget` field's adapter is
+                // `dqa_serde::field`, whose `serialize` calls
+                // `serialize_bytes`, which `serde_json::Value` renders as an
+                // ARRAY OF NUMBERS rather than the canonical hex string. The
+                // derived form therefore does not carry `budget` as hex, and
+                // using it here broke `canonical_payment_budget_carries_scale`.
+                //
+                // That trade is deliberate: the hand-written list can drift when
+                // the struct gains a field, which is exactly how this arm lost
+                // three of them. `tv_cf_25` closes that gap by reading the
+                // field names out of `PaymentCaveat`'s own source and failing
+                // if the projection omits any, so the drift cannot recur
+                // silently. That guard is why the list can be explicit here
+                // without inheriting the original defect.
+                //
+                // Wire forms, from the field adapters: `asset_id` and `nonce`
+                // are 64-char lowercase hex via `hex_id_32`;
+                // `registry_snapshot_epoch` is a decimal STRING via
+                // `serde_epoch`; `budget` is 16-byte hex carrying `scale`.
                 serde_json::json!({
                     "type": "payment",
                     "value": {
                         "caveat_name": p.caveat_name,
+                        "asset_id": hex::encode(p.asset_id.as_bytes()),
                         "budget": hex::encode(dqa_serde::dqa_to_bytes(&p.budget)),
                         "model": p.model,
                         "expires_at_unix_ms": p.expires_at_unix_ms,
+                        "registry_snapshot_epoch": p.registry_snapshot_epoch.0.to_string(),
+                        "nonce": hex::encode(p.nonce.as_bytes()),
                     }
                 })
             }

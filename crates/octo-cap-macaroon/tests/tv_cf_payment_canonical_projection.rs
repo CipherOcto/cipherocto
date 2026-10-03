@@ -38,61 +38,89 @@ fn sample_payment() -> PaymentCaveat {
     }
 }
 
-/// PINS THE REMAINING ASYMMETRY. `Caveat::Payment`'s canonical form is a
-/// deliberate partial projection, not a lossless serialization.
+/// PINS THAT THE `Payment` CANONICAL FORM IS LOSSLESS.
 ///
-/// `canonical_ser` emits only `caveat_name`, `budget`, `model`, and
-/// `expires_at_unix_ms`. It drops `asset_id`, `registry_snapshot_epoch`, and
-/// `nonce`, so feeding the canonical form back into the `Caveat` enum's
-/// `Deserialize` fails with a missing-field error. The `AmountMax` and
-/// `Vault` arms are single-payload, so for them the canonical form IS
-/// lossless and does round-trip (`tv_cf_07`, `tv_cf_08`).
+/// This vector used to assert the opposite — that the projection was partial
+/// and that reparsing FAILED. It was written to "pin a deviation", and in doing
+/// so it enforced a maintenance drift: the projection was written on 2026-08-10
+/// when `caveat_name`, `budget`, `model`, and `expires_at_unix_ms` were all of
+/// `PaymentCaveat`'s fields; `asset_id`, `registry_snapshot_epoch`, and `nonce`
+/// were added on 2026-08-26 by `726960ea` without touching the match arm, and
+/// this assertion is what stopped anyone noticing for sixteen days.
 ///
-/// This is asserted, not tolerated silently. A future change that makes the
-/// `Payment` canonical form lossless would change `caveat_body_hash`, and
-/// therefore every payment capability's id — so it is a decision with a
-/// stated cost, not a cleanup. Anyone reading a failure here should treat it
-/// as "the projection changed, re-examine the capability-id contract", not
-/// as a broken test.
+/// A vector that pins a defect is not neutral. It reads as a considered
+/// decision, so a later reader trusts the drift rather than seeing it. The
+/// three dropped fields were the three that constrain the capability — asset
+/// binding, staleness guard, anti-replay nonce — and the four that survived
+/// were the four inert descriptive ones.
 ///
-/// The three dropped fields are not incidental:
-/// `asset_id` is the asset binding that stops a USDC budget being spent
-/// against an OCTO-W query, `registry_snapshot_epoch` is the staleness
-/// guard, and `nonce` is the anti-replay token. Nothing in the CLI may treat
-/// `canonical_ser` output as re-input for this arm.
+/// `tv_cf_25` now guards COMPLETENESS mechanically, so the projection cannot
+/// drift from the struct again. This vector pins the behaviour.
 #[test]
-fn tv_cf_18_payment_canonical_form_is_a_partial_projection() {
+fn tv_cf_18_payment_canonical_form_is_lossless() {
     let caveat = Caveat::Payment(sample_payment());
     let canonical = caveat.canonical_ser();
-    let parsed: Result<Caveat, _> = serde_json::from_slice(&canonical);
+    let text = String::from_utf8_lossy(&canonical);
 
+    let parsed: Result<Caveat, _> = serde_json::from_slice(&canonical);
     assert!(
-        parsed.is_err(),
-        "canonical_ser(Payment) reparsed successfully. If this now passes, the \
-         projection became lossless, which changes caveat_body_hash and every \
-         payment capability id — update RFC-0011 §Caveat Form Amendment clause 1 \
-         and the capability-id contract deliberately, do not just relax this pin. \
-         canonical was: {}",
-        String::from_utf8_lossy(&canonical)
+        parsed.is_ok(),
+        "canonical_ser(Payment) no longer reparses, so the arm is asymmetric \
+         again: {parsed:?}\ncanonical was: {text}"
+    );
+    let reparsed = parsed.expect("reparses");
+
+    // The round-trip must be a FIXED POINT of the canonical form, not a
+    // struct equality.
+    //
+    // A plain `assert_eq!(reparsed, caveat)` fails here, and it is right to
+    // fail: `Dqa` has several representations of one value, and
+    // `DqaEncoding::from_dqa` canonicalizes before encoding ("CRITICAL:
+    // Canonicalizes before encoding to ensure deterministic Merkle hashes" in
+    // the Layer A `determin` crate). So `Dqa { value: 1_000_000, scale: 6 }`
+    // re-reads as `Dqa { value: 1, scale: 0 }` — the same economic value in the
+    // canonical representation. Demanding representation equality would be
+    // demanding a defect from a frozen consensus crate.
+    //
+    // The fixed-point form is the honest property and is strictly stronger than
+    // a parse-success check: it still fails if a field is dropped, reordered
+    // into a different value, or silently altered, because re-canonicalizing
+    // the reparsed caveat must reproduce the identical bytes.
+    assert_eq!(
+        reparsed.canonical_ser(),
+        canonical,
+        "the Payment canonical form is not a fixed point: reparsing and \
+         re-canonicalizing does not reproduce the same bytes, so the \
+         projection loses or alters something.\nfirst:  {text}\nsecond: {}",
+        String::from_utf8_lossy(&reparsed.canonical_ser())
     );
 
-    // Name the dropped fields so the deviation is legible in the failure
-    // output of a related test, not only here.
-    let text = String::from_utf8_lossy(&canonical);
-    for dropped in ["asset_id", "registry_snapshot_epoch", "nonce"] {
+    // Every field the projection used to drop must be present. Named
+    // explicitly, not merely counted, so a failure says which one is missing.
+    let value: serde_json::Value = serde_json::from_str(&text).expect("canonical is valid json");
+    for field in [
+        "asset_id",
+        "registry_snapshot_epoch",
+        "nonce",
+        "caveat_name",
+        "budget",
+        "model",
+        "expires_at_unix_ms",
+    ] {
         assert!(
-            !text.contains(dropped),
-            "canonical_ser(Payment) now emits {dropped}, so the projection is \
-             no longer the one this vector pins"
+            !value["value"][field].is_null(),
+            "canonical_ser(Payment) does not carry {field}, so the projection \
+             is partial again. Every field of PaymentCaveat must be in the \
+             canonical form: it feeds caveat_body_hash, which backs both the \
+             capability id and the dry-run pastejacking echo. canonical: {text}"
         );
     }
 
-    // The fields it DOES carry must be the canonical hex budget, which is
-    // the reason the projection exists: PaymentCaveat::attenuate Gate 3
-    // rejects a budget whose scale differs from the parent's, so the scale
-    // has to survive into the hashed form.
-    let value: serde_json::Value =
-        serde_json::from_slice(&canonical).expect("canonical is valid json");
+    // The budget must still be the canonical 16-byte hex carrying `scale`.
+    // `PaymentCaveat::attenuate` Gate 3 rejects a budget whose scale differs
+    // from the parent's, so dropping the scale would discard exactly the
+    // invariant the attenuator defends. Pinned by
+    // `canonical_payment_budget_carries_scale` on the substrate side too.
     let budget = value["value"]["budget"]
         .as_str()
         .expect("budget is the canonical hex string");
@@ -102,6 +130,103 @@ fn tv_cf_18_payment_canonical_form_is_a_partial_projection() {
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
         "budget must be lowercase hex, got {budget}"
+    );
+}
+
+/// MECHANICAL completeness guard: every field `PaymentCaveat` declares must
+/// appear in the canonical projection.
+///
+/// The defect this closes was invisible because a hand-written field list does
+/// not break when a struct grows a field, and the only test touching it
+/// asserted the drift was intentional. Deriving the field set from the struct's
+/// own source means adding a field to `PaymentCaveat` without adding it to
+/// `canonical_ser` fails here.
+///
+/// The list is read from the source rather than reflected over, so a field
+/// marked `#[serde(skip)]` is correctly excluded.
+#[test]
+fn tv_cf_25_payment_canonical_projection_covers_every_declared_field() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let path = std::path::Path::new(manifest).join("src/caveat/payment.rs");
+    let source = std::fs::read_to_string(&path).expect("payment.rs readable from the test");
+
+    // Bound the struct body by brace counting, so a later struct in the file
+    // cannot contribute fields.
+    let start = source
+        .find("pub struct PaymentCaveat {")
+        .expect("PaymentCaveat must exist");
+    let after_open = start + "pub struct PaymentCaveat {".len();
+    let mut depth = 1usize;
+    let mut end = after_open;
+    for (offset, ch) in source[after_open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = after_open + offset;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &source[after_open..end];
+    assert!(
+        body.contains("pub asset_id") && body.contains("pub nonce"),
+        "the PaymentCaveat body could not be bounded, so this guard would be \
+         reading a different struct and reporting agreement"
+    );
+
+    let mut declared: Vec<String> = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("pub ") {
+            continue;
+        }
+        // A skipped field is not part of the wire form, so requiring it in the
+        // projection would be wrong.
+        if trimmed.contains("serde(skip") {
+            continue;
+        }
+        let after_pub = trimmed["pub ".len()..].trim_start();
+        let name: String = after_pub
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        // Must be a FIELD (`name:`), not a method (`fn name(`).
+        if after_pub[name.len()..].trim_start().starts_with(':') {
+            declared.push(name);
+        }
+    }
+
+    assert!(
+        declared.len() >= 7,
+        "expected at least the seven known fields, found {declared:?}. A field \
+         rename or removal should be a deliberate edit here, not a silent drop."
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&Caveat::Payment(sample_payment()).canonical_ser())
+            .expect("canonical is valid json");
+    let projected = value["value"].as_object().expect("value is an object");
+
+    let mut missing: Vec<&String> = declared
+        .iter()
+        .filter(|f| !projected.contains_key(f.as_str()))
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "PaymentCaveat declares {declared:?} but canonical_ser omits {missing:?}. \
+         Every declared field must be projected: the canonical form feeds \
+         caveat_body_hash, which backs the capability id and the dry-run \
+         pastejacking echo. A field added to the struct without being added here \
+         is invisible to every other test, which is exactly how asset_id, \
+         registry_snapshot_epoch, and nonce stayed out for sixteen days."
     );
 }
 

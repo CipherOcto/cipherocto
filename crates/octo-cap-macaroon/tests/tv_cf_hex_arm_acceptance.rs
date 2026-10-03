@@ -159,13 +159,11 @@ fn arms() -> Vec<ArmCase> {
             }),
             canonical_round_trips: true,
         },
-        // STILL ASYMMETRIC, and the one remaining case. `canonical_ser` emits
-        // 4 of `PaymentCaveat`'s 7 fields and drops `asset_id`,
-        // `registry_snapshot_epoch`, and `nonce`, so re-input fails on a
-        // MISSING FIELD rather than on encoding or envelope shape. Adopting the
-        // adapter and fixing the envelope cannot fix this arm; only a lossless
-        // projection can, and that changes every payment capability's
-        // `caveat_body_hash`.
+        // The last remaining asymmetric arm. It round-trips now that the
+        // projection carries all seven fields rather than four. See
+        // `tv_cf_18` and `tv_cf_25` for the projection, and
+        // RFC-0011-caveat-form-amendment.md §Known deviations 1 for the
+        // sixteen-day drift that hid three of them.
         ArmCase {
             name: "payment",
             caveat: Caveat::Payment(PaymentCaveat {
@@ -177,7 +175,7 @@ fn arms() -> Vec<ArmCase> {
                 registry_snapshot_epoch: Epoch::new(1),
                 nonce: Nonce::from_bytes([0x22u8; 32]),
             }),
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
     ]
 }
@@ -239,49 +237,41 @@ fn tv_cf_20_hex_rendering_arm_acceptance_set_is_explicit() {
     );
 }
 
-/// The arms that render hex and still reject their own canonical output must
-/// keep doing so for a STATED reason, and the reason lives next to the pin.
+/// NO fixed-width-id arm may reject its own canonical form.
 ///
-/// This vector pinned EIGHT such arms and now pins ONE. Seven were fixed by
-/// adopting `hex_id_32` on each 32-byte id field and correcting `canonical_ser`
-/// to emit an object under `value` for the struct-payload arms. The eighth,
-/// `payment`, is unchanged and for a different reason than the other seven had:
-/// its blocker is a partial projection, not an encoding or envelope defect.
+/// This vector has been the count of the asymmetric set through every stage of
+/// the eight-arm work: eight arms, then one, then none. Each transition was a
+/// deliberate wire-format decision landing in the same commit as the count
+/// change, which is the property that made the sequence auditable.
 ///
-/// It is kept as a named pin rather than deleted, because a vector that only
-/// ever asserts the happy state cannot notice the day an arm regresses. The
-/// remaining case is asserted by NAME so that fixing `payment` fails this
-/// vector loudly instead of quietly deleting the last asymmetric arm.
+/// It is kept as a standing assertion rather than deleted at zero, because a
+/// vector that only ever asserts a count is worth nothing once the count is
+/// trivially satisfied — and because the way this set reached zero is the
+/// cautionary part. The projection that left `payment` asymmetric was asserted
+/// here as INTENTIONAL, and that assertion is what kept a sixteen-day field
+/// drift looking like a design decision. An empty set should be a standing
+/// property, not a one-time milestone.
 #[test]
-fn tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_form() {
+fn tv_cf_21_no_fixed_width_arm_rejects_its_own_canonical_form() {
     let all = arms();
-    let asymmetric: Vec<&ArmCase> = all.iter().filter(|c| !c.canonical_round_trips).collect();
+    let asymmetric: Vec<&str> = all
+        .iter()
+        .filter(|c| !c.canonical_round_trips)
+        .map(|c| c.name)
+        .collect();
 
-    assert_eq!(
+    assert!(
+        asymmetric.is_empty(),
+        "{} now reject their own canonical form, out of {} hex-rendering arms: {}. \
+         If an arm regressed, restore the `hex_id_32` adapter on its 32-byte id \
+         field and, for a struct-payload arm, the object envelope in \
+         `canonical_ser`. If an arm is DELIBERATELY asymmetric again, it needs a \
+         named entry in RFC-0011-caveat-form-amendment.md §Known deviations, and \
+         this vector should pin THAT arm by name rather than a bare count.",
         asymmetric.len(),
-        1,
-        "the asymmetric arm count changed; that is a substantive change to the \
-         deviation, not a test-maintenance detail"
+        all.len(),
+        asymmetric.join(", ")
     );
-    assert_eq!(
-        asymmetric[0].name, "payment",
-        "the remaining asymmetric arm is `payment`, blocked by the partial \
-         projection in RFC-0011-caveat-form-amendment.md §Known deviations 1. \
-         If a different arm is now asymmetric, something regressed and the \
-         deviation list needs rewriting rather than this constant."
-    );
-
-    for case in asymmetric {
-        let canonical = case.caveat.canonical_ser();
-        assert!(
-            serde_json::from_slice::<Caveat>(&canonical).is_err(),
-            "{} now accepts its own canonical form. That is progress, not a \
-             broken test. Land it as a deliberate wire-format decision, drop the \
-             arm from this vector, and update RFC-0011 §Caveat Form Amendment \
-             §Known deviations in the same commit.",
-            case.name
-        );
-    }
 }
 
 /// MECHANICAL derivation of the hex-rendering set from the `canonical_ser`
@@ -576,6 +566,23 @@ fn tv_cf_24_fixed_width_arms_round_trip_and_still_accept_the_legacy_array_form()
                 }
             }),
         ),
+        (
+            "payment",
+            serde_json::json!({
+                "type": "payment",
+                "value": {
+                    "caveat_name": "paid-query/v1",
+                    "asset_id": id_val,
+                    // 16-byte DqaEncoding wire form: value 8B BE, scale, 7 reserved.
+                    "budget": hex::encode([0u8; 16]),
+                    "model": "gpt-4",
+                    "expires_at_unix_ms": u64::MAX,
+                    // `serde_epoch` writes a decimal STRING, not a number.
+                    "registry_snapshot_epoch": "1",
+                    "nonce": id_val,
+                }
+            }),
+        ),
     ];
 
     let mut problems: Vec<String> = Vec::new();
@@ -589,20 +596,19 @@ fn tv_cf_24_fixed_width_arms_round_trip_and_still_accept_the_legacy_array_form()
         }
     }
 
-    // Property 1: the canonical form of each of the eight arms above parses.
-    // `payment` is excluded by NAME and counted nowhere, so a future fix to it
-    // shows up as a new entry here rather than as a silently passing test.
-    let canonical_ok: Vec<&str> = arms()
+    // Property 1: the canonical form of every hex-rendering arm parses. This
+    // was eight of nine, then nine of nine once the `payment` projection was
+    // made lossless. It is asserted as a SET against the literal above rather
+    // than as a count, so an arm silently leaving the set fails here.
+    let mut observed: Vec<&str> = arms()
         .iter()
-        .filter(|c| c.name != "payment")
         .filter(|c| serde_json::from_slice::<Caveat>(&c.caveat.canonical_ser()).is_ok())
         .map(|c| c.name)
         .collect();
     let mut expected: Vec<&str> = legacy_cases.iter().map(|(l, _)| *l).collect();
     expected.push("amount_max");
-    expected.sort_unstable();
-    let mut observed = canonical_ok.clone();
     observed.sort_unstable();
+    expected.sort_unstable();
     if observed != expected {
         problems.push(format!(
             "the arms accepting their own canonical form changed.\n  expected: {expected:?}\n  \

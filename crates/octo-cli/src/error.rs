@@ -909,8 +909,12 @@ pub enum OctoCliError {
     /// not `Result`. Exit 84.
     #[error("network coordinator not found (substrate `CoordinatorRecord::load` returned None)")]
     NetworkCoordinatorNotFound {
-        /// 52-char hex-encoded coordinator ID (CLI-parsed form).
-        coordinator_id_redacted: String,
+        /// 52-char hex-encoded coordinator ID (CLI-parsed form; the
+        /// historical `_redacted` suffix was a copy-paste from
+        /// `kind_redacted` — the value is the operator's own input
+        /// in canonical form, not a secret, so the suffix was
+        /// misleading. R21-0011-x finding §6.26 / §6.27.)
+        coordinator_id: String,
     },
     /// `octo network bind-envelope rebind-{prepare,commit,abort}`
     /// dry-run denial.
@@ -929,8 +933,12 @@ pub enum OctoCliError {
         /// The rebind arm that the operator declined
         /// (`prepare` | `commit` | `abort`).
         arm: &'static str,
-        /// The 52-char hex domain_id the operator was previewing.
-        domain_id_redacted: String,
+        /// The 52-char hex domain_id the operator was previewing
+        /// (the historical `_redacted` suffix was a copy-paste from
+        /// `kind_redacted` — the value is the operator's own input
+        /// in canonical form, not a secret, so the suffix was
+        /// misleading. R21-0011-x finding §6.26 / §6.27.)
+        domain_id: String,
     },
     /// `AttachError::UnknownKeyId` translation (LANDED at
     /// `crates/octo-runtime/src/handle/error.rs` per
@@ -4298,11 +4306,11 @@ mod tests {
                 detail: "x".to_string(),
             },
             OctoCliError::NetworkCoordinatorNotFound {
-                coordinator_id_redacted: "x".to_string(),
+                coordinator_id: "x".to_string(),
             },
             OctoCliError::NetworkDryRunDenied {
                 arm: "x",
-                domain_id_redacted: "x".to_string(),
+                domain_id: "x".to_string(),
             },
             OctoCliError::NetworkKeyRotationUnknownId {
                 key_id_hex: "x".to_string(),

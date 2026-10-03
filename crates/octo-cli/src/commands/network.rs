@@ -2387,7 +2387,7 @@ fn coordinator_show(args: &CoordinatorShowArgs, _cli: &Octo) -> Result<(), OctoC
     // Option::None to typed exit 84 `NetworkCoordinatorNotFound`.
     if CoordinatorRecord::load(&args.coordinator_id).is_none() {
         return Err(OctoCliError::NetworkCoordinatorNotFound {
-            coordinator_id_redacted: hex::encode(args.coordinator_id),
+            coordinator_id: hex::encode(args.coordinator_id),
         });
     }
     // Unreachable in current substrate (load always returns None);
@@ -2550,7 +2550,7 @@ fn bind_envelope_rebind_commit(
     if !args.confirm {
         return Err(OctoCliError::NetworkDryRunDenied {
             arm: "commit",
-            domain_id_redacted: args.domain_id.clone(),
+            domain_id: args.domain_id.clone(),
         });
     }
     let coord = RebindCoordinator::new(

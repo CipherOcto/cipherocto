@@ -119,6 +119,25 @@ jobs:
       #   cargo test -p octo-whatsapp --features query --lib
       # to exercise these on a developer machine.
 
+      # Mission 0011-vault-asset-chain-id-hex: the `hex-ids` feature
+      # gates the 64-char hex wire form for AssetId / ChainId /
+      # VaultId. Unlike the `query` feature above it pulls in NO extra
+      # dependencies (`hex-ids = []`), so there is no build-budget
+      # reason to skip it. Without this step the three vectors in
+      # tests/tv_cf_newtype_hex_round_trip.rs are cfg'd OUT of the
+      # default-feature test run above: the file compiles to an empty
+      # test binary. The clippy gates do pass --all-features, but
+      # compiling a vector is not running it. The default-feature
+      # vectors (tv_cf_newtype_default_serde.rs) are mutually
+      # exclusive with these via #![cfg(...)] / #![cfg(not(...))], so
+      # both steps are required.
+      - name: Test hex-ids feature gate (cap-macaroon)
+        run: |
+          if [ -f Cargo.toml ]; then
+            cargo test -p octo-cap-macaroon --features hex-ids;
+            cargo clippy -p octo-cap-macaroon --features hex-ids --all-targets -- -D warnings;
+          fi
+
       - name: Check telegram-cli builds with real-tdlib
         # The Telegram CLI (octo-telegram-onboard) is excluded from the main
         # workspace (see root Cargo.toml) to prevent TDLib's libc++ runtime

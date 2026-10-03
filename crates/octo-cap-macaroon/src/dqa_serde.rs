@@ -92,10 +92,12 @@ pub mod field {
             }
         }
         // Use `deserialize_any` so the deserializer dispatches based on the
-        // actual on-wire JSON type: a string → `visit_str` (hex form), a
-        // sequence → `visit_seq` (legacy 16-elt byte array). `deserialize_bytes`
-        // would route JSON strings through base64 first, defeating the
-        // hex-form amendment.
+        // actual on-wire JSON type (string vs sequence). The visit_str arm
+        // added above is what makes the canonical hex form parseable; the
+        // dispatch switch is hygiene so the visitor does not have to handle
+        // the `bytes`-flavored semantics serde imposes. The visit_string arm
+        // is explicit (the default already delegates); kept for contract
+        // visibility.
         d.deserialize_any(V)
     }
 }

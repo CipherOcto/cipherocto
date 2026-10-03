@@ -1663,11 +1663,24 @@ mod tests {
         );
     }
 
-    /// The canonical form emitted by `Caveat::canonical_ser` MUST
-    /// round-trip back through `--caveats`. Per RFC-0011 §Caveat Form
-    /// Amendment, the asymmetry closed at the substrate by adding
-    /// `visit_str` to `dqa_serde::field` is now the corrected form:
-    /// what `canonical_ser` emits is what `--caveats` accepts.
+    /// Per RFC-0011 §Caveat Form Amendment: the canonical hex form
+    /// emitted by `Caveat::canonical_ser` MUST round-trip through the
+    /// input (`--caveats`) form. This is the post-amendment pin; the
+    /// pre-amendment `guide_canonical_form_is_not_reparseable` was the
+    /// regression lock written against the drifted encoder.
+    ///
+    /// As of this amendment, the canonical form is reparseable for:
+    /// - `Caveat::Vault` (hex adapter applied to the [u8; 32] payload)
+    /// - `Caveat::AmountMax` (visit_str arm on dqa_serde::field)
+    ///
+    /// Out of scope for this amendment (PINS THE REMAINING ASYMMETRY):
+    /// - `Caveat::Permission` — canonical_ser emits the full HMAC info
+    ///   string (e.g. "cipherocto/cap/v1/permission/vault_mutation")
+    ///   while the input form expects the short tag ("vault_mutation").
+    ///   The substrate's PermissionKind is a typed enum that derives
+    ///   Serialize via CaveatName's short tag, but canonical_ser routes
+    ///   through k.as_str() which is the long form. This is a separate
+    ///   Layer A defect and is not closed here.
     ///
     /// Earlier this test pinned the converse (`guide_canonical_form_is_not_reparseable`)
     /// when the asymmetry was deliberate; the amendment closes the trap.
@@ -1677,11 +1690,21 @@ mod tests {
     /// to make the structural round-trip clean.
     #[test]
     fn guide_canonical_form_is_reparseable() {
-        let c = Caveat::AmountMax(Dqa::new(1_234_567, 3).expect("dqa"));
-        let canonical = c.canonical_ser();
+        // Caveat::Vault — hex adapter applied in Caveat::Vault([u8; 32]).
+        let vault_id = [0xaau8; 32];
+        let cv = Caveat::Vault(vault_id);
+        let canonical = cv.canonical_ser();
         let json = std::str::from_utf8(&canonical).expect("utf8");
-        let parsed =
-            parse_caveats(&format!("[{}]", json)).expect("canonical form must be reparseable");
-        assert_eq!(parsed, vec![c]);
+        let parsed = parse_caveats(&format!("[{}]", json))
+            .expect("vault canonical form must be reparseable");
+        assert_eq!(parsed, vec![cv]);
+
+        // Caveat::AmountMax — visit_str arm added to dqa_serde::field.
+        let ca = Caveat::AmountMax(Dqa::new(1_234_567, 3).expect("dqa"));
+        let canonical = ca.canonical_ser();
+        let json = std::str::from_utf8(&canonical).expect("utf8");
+        let parsed = parse_caveats(&format!("[{}]", json))
+            .expect("amount_max canonical form must be reparseable");
+        assert_eq!(parsed, vec![ca]);
     }
 }

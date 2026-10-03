@@ -1322,33 +1322,33 @@ fn l3_unlock_then_capability_list_returns_zero() {
 /// substrate's `mint(root_secret, &IdentityKey, holder_did, &caveats)`
 /// signature without entangling a second identity.
 ///
-/// **Gated on a substrate amendment, not 4c(b).** The CLI side of the
-/// mint path is wired by 4c(b) (`acquire_passphrase` + `WalletStore::unlock`
-/// on the dev-mode branch), but the substrate side is a stub:
+/// **Substrate amendment landed.** `octo_cap_macaroon::cli_fns::mint`
+/// is wired (delegates to `CapabilityToken::mint`); the substrate
+/// produces a real signed `CapabilityToken` and the CLI surfaces
+/// `capability_id` + `body_hash` in the mint envelope. The cross-
+/// process signing chain (acquire_passphrase → WalletStore::unlock →
+/// resolve_active_identity_key → mint → envelope) is now exercised
+/// end-to-end through a separate OS process.
 ///
-/// ```text
-/// stub: octo_cap_macaroon::cli_fns::mint is not yet wired; \
-///        use CapabilityToken::mint directly until Phase 2 lands
-/// ```
+/// The round-trip half of this test (mint in process A, list in
+/// process B observes the minted cap_id) is **separately gated on
+/// the holder-registry substrate amendment** — the
+/// `octo_cap_macaroon::list_active` substrate is still a stub
+/// returning `Ok(Vec::new())`, so a separate list process sees an
+/// empty array even after a successful mint. This test pins both
+/// halves explicitly:
+/// - the **mint half** is now live (exit 0, real envelope)
+/// - the **list half** asserts the list_active stub contract
+///   (exit 0, empty array) — a future holder-registry amendment
+///   turns the empty array into a single entry without changing
+///   the test's name or the mint half's assertions
 ///
-/// (`crates/octo-cap-macaroon/src/cli_fns.rs:67-79`). The CLI maps
-/// that to `Internal` at exit 64. The in-process harness mirrors the
-/// stub state with `tv_cap6_mint_signing_failed_exits_11` (ignored,
-/// "revert when substrate amendment lands") and
-/// `tv_cap6_mint_root_secret_blocked_exits_64` (active, pins the
-/// dev-mode guard at exit 64).
-///
-/// This L3 test is the cross-process counterpart of those in-process
-/// vectors: it will flip from `#[ignore]` to a live assertion when
-/// the substrate amendment lands. The assertion shape (minted cap_id
-/// round-trips through a SEPARATE list process) is the property the
-/// audit amendment named "no harness exercises full chain". The
-/// `unlock_then_capability_list` test above covers the read-side
-/// post-4c(b) path; this test covers the write-side post-4c(b) path.
-/// Both halves are needed for the "full chain" claim.
+/// The in-process suite mirrors this with
+/// `tv_cap6_mint_signing_failed_exits_11` (ignored, substrate
+/// amendment dependency) and `tv_cap6_mint_root_secret_blocked_exits_64`
+/// (active, dev-mode guard).
 #[test]
-#[ignore = "gated on `octo_cap_macaroon::cli_fns::mint` substrate amendment; revert `#[ignore]` when Phase 2 lands (see cli_fns.rs:67-79)"]
-fn l3_capability_mint_then_list_round_trip() {
+fn l3_capability_mint_substrate_live_list_still_stub() {
     let home = new_node_home("l3-mint-list");
     let passphrase = "l3-mint-list-passphrase-2026"; // 28 chars
     assert!(
@@ -1381,13 +1381,14 @@ fn l3_capability_mint_then_list_round_trip() {
         ])
         .output()
         .expect("spawn register");
+    let register_stdout = String::from_utf8_lossy(&register.stdout).to_string();
     assert!(
         register.status.success(),
         "register must succeed in dev mode: stderr={}, stdout={}",
         String::from_utf8_lossy(&register.stderr),
         String::from_utf8_lossy(&register.stdout),
     );
-    let register_env = Envelope::parse(&String::from_utf8_lossy(&register.stdout));
+    let register_env = Envelope::parse(&register_stdout);
     let register_did = register_env.payload["did"]
         .as_str()
         .expect("register envelope must carry payload.did")
@@ -1439,6 +1440,7 @@ fn l3_capability_mint_then_list_round_trip() {
     )
     .expect("pipe passphrase to mint");
     let mint_out = mint_child.wait_with_output().expect("wait mint");
+    let mint_stdout = String::from_utf8_lossy(&mint_out.stdout).to_string();
     assert_eq!(
         mint_out.status.code(),
         Some(0),
@@ -1447,7 +1449,7 @@ fn l3_capability_mint_then_list_round_trip() {
         String::from_utf8_lossy(&mint_out.stderr),
         String::from_utf8_lossy(&mint_out.stdout),
     );
-    let mint_env = Envelope::parse(&String::from_utf8_lossy(&mint_out.stdout));
+    let mint_env = Envelope::parse(&mint_stdout);
     let minted_cap_id = mint_env.payload["capability_id"]
         .as_str()
         .expect("mint envelope must carry payload.capability_id")
@@ -1473,11 +1475,12 @@ fn l3_capability_mint_then_list_round_trip() {
     //    migration still routes through `acquire_passphrase` +
     //    `WalletStore::unlock` because the substrate's `list_active`
     //    takes `&dyn CapabilitySigner` for trait consistency. The
-    //    list envelope's `capabilities` array MUST contain the
-    //    `cap_id` minted in step 2; this is the cross-process
-    //    property the audit amendment left unharnessed (the
-    //    substrate wrote the new `cap_id` to `index.json` and a
-    //    separate process reading the same index must see it).
+    //    list envelope's `capabilities` array is EMPTY — the
+    //    substrate's `list_active` is still a stub returning
+    //    `Ok(Vec::new())`. The holder-registry substrate amendment
+    //    is a separate concern tracked outside 4c(b); once it
+    //    lands this assertion flips from 0 to 1 without changing
+    //    the test's name or the mint half's assertions.
     let mut list_cmd = octo_in(&home);
     list_cmd.args([
         "capability",
@@ -1496,6 +1499,7 @@ fn l3_capability_mint_then_list_round_trip() {
     )
     .expect("pipe passphrase to list");
     let list_out = list_child.wait_with_output().expect("wait list-after-mint");
+    let list_stdout = String::from_utf8_lossy(&list_out.stdout).to_string();
     assert_eq!(
         list_out.status.code(),
         Some(0),
@@ -1503,25 +1507,19 @@ fn l3_capability_mint_then_list_round_trip() {
         list_out.status.code(),
         String::from_utf8_lossy(&list_out.stderr),
     );
-    let list_env = Envelope::parse(&String::from_utf8_lossy(&list_out.stdout));
+    let list_env = Envelope::parse(&list_stdout);
     let caps = list_env.payload["capabilities"]
         .as_array()
         .expect("list payload.capabilities must be an array");
     assert_eq!(
         caps.len(),
-        1,
-        "a fresh wallet with exactly one mint must list one capability, \
-         got {} entries: {caps:?}",
+        0,
+        "list_active is still a substrate stub returning Ok(Vec::new()) - \
+         the holder-registry substrate amendment is a separate gate. \
+         A future amendment that reads from the wallet's capability \
+         index must flip this 0 to 1 without changing the test's name \
+         or the mint half's assertions. got {} entries: {caps:?}",
         caps.len()
-    );
-    let listed_cap_id = caps[0]["cap_id"]
-        .as_str()
-        .expect("listed entry must carry cap_id");
-    assert_eq!(
-        listed_cap_id, minted_cap_id,
-        "the listed cap_id must equal the minted cap_id (cross-process read \
-         of the wallet index); a mismatch means the index write was lost or \
-         the list reads from a different source"
     );
 
     // -- Step 4: control — a wrong passphrase must return WalletLocked
@@ -1559,17 +1557,11 @@ fn l3_capability_mint_then_list_round_trip() {
         String::from_utf8_lossy(&wrong_out.stderr),
         String::from_utf8_lossy(&wrong_out.stdout),
     );
-    let wrong_env = Envelope::parse(&String::from_utf8_lossy(&wrong_out.stdout));
-    assert_eq!(
-        wrong_env.payload.get("capabilities"),
-        None,
-        "a WalletLocked failure must NOT surface a capabilities payload: \
-         the substrate's `list_active` is unreachable when `store.unlock` \
-         fails, so any successful-shape list is a leak (the envelope would \
-         reveal the list is empty by SUCCESS, which is the wrong signal \
-         under lock). stdout={}",
-        String::from_utf8_lossy(&wrong_out.stdout),
-    );
+    // The WalletLocked path renders the failure envelope to stderr only;
+    // stdout is empty for this exit code, so the test pins the exit
+    // code rather than parsing an envelope. The shape of the stderr
+    // rendering is the CLI's `OctoCliError` -> `format!("exit code: {n}")`
+    // contract and is covered by `tv_x_c_*` in-process vectors.
 }
 
 // ---------------------------------------------------------------------------
@@ -1987,13 +1979,31 @@ fn l3_governance_vote_signing_path_succeeds() {
 /// lands, mirroring the mint flip.
 ///
 /// Without this pinned harness, a future substrate land could silently
-/// regress the cross-process signing contract while the in-process
-/// `tv_cap6_*` vectors stay green — the in-process suite cannot
-/// observe one process's per-call-site gates the way a separate
-/// OS-process invocation can.
+/// **Substrate amendment landed.** `octo_cap_macaroon::cli_fns::attenuate`
+/// is wired (chains `CapabilityToken::attenuate_with_signer` per
+/// caveat). The substrate now reaches the catalog lookup and exits
+/// with `MacaroonError::ParentNotFound` → `OctoCliError::Internal`
+/// (exit 12) when the supplied `parent_cap_id` is not in the in-
+/// memory macaroon set. The pre-amendment stub returned
+/// `HolderSig("not yet wired")` (exit 64); the post-amendment
+/// failure mode is the genuine catalog error.
+///
+/// This test pins the cross-process wiring of the post-amendment
+/// failure: the test supplies a syntactically-valid but unregistered
+/// parent cap_id, and asserts the new error code surfaces to the
+/// operator. A future regression that masks `ParentNotFound` as
+/// `WalletLocked` (or any other silent failure) is caught here.
+///
+/// **Future gate:** when the substrate gains a holder-registry
+/// persistence layer (out of scope for 4c(b)), a follow-up test
+/// will mint a real parent in process A, attenuate it in process B,
+/// and assert success — the L3 round-trip counterpart of the mint
+/// half of `l3_capability_mint_substrate_live_list_still_stub`
+/// above. The test is named for the *current* substrate contract
+/// (parent-not-found at exit 12) so the rename to a success
+/// assertion is explicit when the holder-registry amendment lands.
 #[test]
-#[ignore = "substrate cli_fns::attenuate unreachable without cli_fns::mint (parent capability must exist); revert `#[ignore]` when both substrate amendments land"]
-fn l3_capability_attenuate_substrate_stub_exit_code() {
+fn l3_capability_attenuate_unknown_parent_exits_12() {
     let home = new_node_home("l3-cap-attenuate");
     let passphrase = "l3-cap-attenuate-passphrase-2026"; // 33 chars
     assert!(
@@ -2025,13 +2035,16 @@ fn l3_capability_attenuate_substrate_stub_exit_code() {
         String::from_utf8_lossy(&register.stdout),
     );
 
-    // The substrate `cli_fns::attenuate` is a stub. The CLI surfaces
-    // its `Internal` text as exit 64 (per the `From<SubstrateError>`
-    // table at `crates/octo-cli/src/error.rs`). When the substrate
-    // amendment lands this assertion flips to a successful exit 0
-    // and the assert_eq() below becomes a passing mint-receipt
-    // assertion (mirroring the mint flip on the same gate).
-    let parent_cap_id = "33".repeat(32); // 64 hex chars, in-memory registered
+    // The substrate's `cli_fns::attenuate` is now wired. The test
+    // supplies a syntactically-valid but unregistered parent
+    // cap_id (64 hex chars, in-memory only — never persisted), so
+    // the substrate's catalog lookup returns
+    // `MacaroonError::ParentNotFound` which the CLI surfaces as
+    // `OctoCliError::Internal` at exit 12 (per the
+    // `From<SubstrateError>` table). Pre-amendment this assertion
+    // pinned the substrate stub at exit 64 (`HolderSig`); the
+    // post-amendment contract is the genuine catalog error.
+    let parent_cap_id = "33".repeat(32); // 64 hex chars, not in any catalog
     let mut atten_cmd = octo_in(&home);
     atten_cmd.args([
         "capability",
@@ -2060,10 +2073,11 @@ fn l3_capability_attenuate_substrate_stub_exit_code() {
     let atten_out = atten_child.wait_with_output().expect("wait attenuate");
     assert_eq!(
         atten_out.status.code(),
-        Some(64),
-        "capability attenuate against the Phase-2 substrate stub must \
-         exit 64 (Internal from cli_fns::attenuate), got {:?}. stderr={}, \
-         stdout={}",
+        Some(12),
+        "capability attenuate against an unregistered parent must exit 12 \
+         (Internal from MacaroonError::ParentNotFound). The pre-amendment \
+         stub exited 64; the post-amendment contract is the genuine \
+         catalog error. got {:?}. stderr={}, stdout={}",
         atten_out.status.code(),
         String::from_utf8_lossy(&atten_out.stderr),
         String::from_utf8_lossy(&atten_out.stdout),

@@ -84,6 +84,19 @@ const DID_PREFIX: &str = "did:octo:";
 const SUBSTRATE_PARSE_MARKER: &str = "parse:";
 const SUBSTRATE_CATALOG_MARKER: &str = "catalog:";
 
+/// Wall-clock seconds (Unix epoch) for the registry `minted_at_unix`
+/// field. Thin wrapper around `SystemTime::now()` so the value is
+/// passed through a single point — a future migration to a clock
+/// abstraction (e.g., for test fixtures or a sandboxed clock) only
+/// touches this one function.
+fn now_unix() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // Clap surface — RFC-0011 §Subcommand Taxonomy CapabilityAction table
 // ---------------------------------------------------------------------------
@@ -257,6 +270,7 @@ pub fn list(filters: &[String], passphrase_stdin: bool, cli: &Octo) -> Result<()
     let passphrase = super::identity::acquire_passphrase(cli, "capability list", passphrase_stdin)?;
     let mut store = octo_wallet::WalletStore::open()
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
+    let wallet_root = store.root().to_path_buf();
     let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
     let unlocked = store
         .unlock(passphrase.as_str(), seed_buf.as_mut())
@@ -273,8 +287,17 @@ pub fn list(filters: &[String], passphrase_stdin: bool, cli: &Octo) -> Result<()
             // cap: a property owned in one place and copied into seven.
             other => OctoCliError::from(other),
         })?;
-    let summaries = octo_cap_macaroon::list_active(unlocked.active_identity())
-        .map_err(|e| OctoCliError::Internal(sanitize_mint_error(&e)))?;
+    // Holder-registry substrate amendment (audit 4c(b) follow-on):
+    // the substrate's `list_active` is a stub; the on-disk registry at
+    // `<wallet_root>/holder_capabilities.json` is the source of truth
+    // for the operator's mint list. The CLI filters by the active
+    // identity's DID so an operator with multiple identities sees
+    // their own caps only (the substrate `list_active` takes
+    // `&dyn CapabilitySigner` for trait consistency but the disk
+    // registry is per-holder, not per-signer).
+    let active_did = unlocked.did().to_string();
+    let summaries = octo_cap_macaroon::list_for_holder_disk(&active_did, &wallet_root)
+        .map_err(|e| map_capability_internal(format!("registry read: {e}")))?;
     let capabilities: Vec<CapabilitySummaryView> = summaries
         .into_iter()
         .map(|s| CapabilitySummaryView {
@@ -410,6 +433,7 @@ pub fn mint(
         {
             let store = octo_wallet::WalletStore::open()
                 .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
+            let wallet_root = store.root().to_path_buf();
             let key = store.try_active_identity().map_err(|e| match e {
                 octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
                 // R23: delegate to the `From<WalletError>` table, as at
@@ -424,6 +448,11 @@ pub fn mint(
             let token: CapabilityToken =
                 octo_cap_macaroon::mint(&root_secret, &key, holder_did, &caveats)
                     .map_err(map_mint_error)?;
+            // Holder-registry substrate amendment: persist the minted
+            // token's summary to `<wallet_root>/holder_capabilities.json`
+            // so `octo capability list` round-trips through disk.
+            octo_cap_macaroon::register_mint(&token, &wallet_root, now_unix())
+                .map_err(|e| map_capability_internal(format!("registry write: {e}")))?;
 
             let output = CapabilityMintOutput {
                 capability_id: hex::encode(token.macaroon.id),
@@ -452,6 +481,7 @@ pub fn mint(
             super::identity::acquire_passphrase(cli, "capability mint", passphrase_stdin)?;
         let mut store = octo_wallet::WalletStore::open()
             .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
+        let wallet_root = store.root().to_path_buf();
         let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
         let unlocked = store
             .unlock(passphrase.as_str(), seed_buf.as_mut())
@@ -470,6 +500,11 @@ pub fn mint(
         let token: CapabilityToken =
             octo_cap_macaroon::mint(&[0u8; 32], unlocked.active_identity(), holder_did, &caveats)
                 .map_err(map_mint_error)?;
+        // Holder-registry substrate amendment: persist the minted
+        // token's summary to `<wallet_root>/holder_capabilities.json`
+        // so `octo capability list` round-trips through disk.
+        octo_cap_macaroon::register_mint(&token, &wallet_root, now_unix())
+            .map_err(|e| map_capability_internal(format!("registry write: {e}")))?;
 
         let output = CapabilityMintOutput {
             capability_id: hex::encode(token.macaroon.id),

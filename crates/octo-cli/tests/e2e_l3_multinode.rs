@@ -1331,24 +1331,26 @@ fn l3_unlock_then_capability_list_returns_zero() {
 /// end-to-end through a separate OS process.
 ///
 /// The round-trip half of this test (mint in process A, list in
-/// process B observes the minted cap_id) is **separately gated on
-/// the holder-registry substrate amendment** — the
-/// `octo_cap_macaroon::list_active` substrate is still a stub
-/// returning `Ok(Vec::new())`, so a separate list process sees an
-/// empty array even after a successful mint. This test pins both
-/// halves explicitly:
-/// - the **mint half** is now live (exit 0, real envelope)
-/// - the **list half** asserts the list_active stub contract
-///   (exit 0, empty array) — a future holder-registry amendment
-///   turns the empty array into a single entry without changing
-///   the test's name or the mint half's assertions
+/// process B observes the minted cap_id) is now live. The holder-
+/// registry substrate amendment persists a `CapabilitySummary` to
+/// `<wallet_root>/holder_capabilities.json` after every successful
+/// mint, and the list handler reads from the same file on a
+/// separate process invocation. The substrate's in-process
+/// `list_active` stub is bypassed by the CLI: the on-disk file is
+/// the source of truth for the operator's mint list. The test name
+/// reflects the now-live list half.
+///
+/// This test pins both halves explicitly:
+/// - the **mint half** is live (exit 0, real envelope)
+/// - the **list half** is live (exit 0, one entry whose cap_id is
+///   the truncated-hex form of the minted token's `macaroon.id`)
 ///
 /// The in-process suite mirrors this with
 /// `tv_cap6_mint_signing_failed_exits_11` (ignored, substrate
 /// amendment dependency) and `tv_cap6_mint_root_secret_blocked_exits_64`
 /// (active, dev-mode guard).
 #[test]
-fn l3_capability_mint_substrate_live_list_still_stub() {
+fn l3_capability_mint_then_list_round_trip() {
     let home = new_node_home("l3-mint-list");
     let passphrase = "l3-mint-list-passphrase-2026"; // 28 chars
     assert!(
@@ -1473,14 +1475,12 @@ fn l3_capability_mint_substrate_live_list_still_stub() {
     //    passphrase on stdin. The list handler is read-only (no
     //    confirmation gate, no SEC-03 guard), but the post-4c(b)
     //    migration still routes through `acquire_passphrase` +
-    //    `WalletStore::unlock` because the substrate's `list_active`
-    //    takes `&dyn CapabilitySigner` for trait consistency. The
-    //    list envelope's `capabilities` array is EMPTY — the
-    //    substrate's `list_active` is still a stub returning
-    //    `Ok(Vec::new())`. The holder-registry substrate amendment
-    //    is a separate concern tracked outside 4c(b); once it
-    //    lands this assertion flips from 0 to 1 without changing
-    //    the test's name or the mint half's assertions.
+    //    `WalletStore::unlock`. The handler then reads the
+    //    holder-registry file at `<wallet_root>/holder_capabilities.json`
+    //    and the returned envelope's `capabilities` array MUST
+    //    contain exactly one entry whose `cap_id` is the truncated-hex
+    //    form of the minted token's `macaroon.id` (the substrate's
+    //    `summary_from_token` projects to 16-hex-char truncation).
     let mut list_cmd = octo_in(&home);
     list_cmd.args([
         "capability",
@@ -1513,13 +1513,31 @@ fn l3_capability_mint_substrate_live_list_still_stub() {
         .expect("list payload.capabilities must be an array");
     assert_eq!(
         caps.len(),
-        0,
-        "list_active is still a substrate stub returning Ok(Vec::new()) - \
-         the holder-registry substrate amendment is a separate gate. \
-         A future amendment that reads from the wallet's capability \
-         index must flip this 0 to 1 without changing the test's name \
-         or the mint half's assertions. got {} entries: {caps:?}",
+        1,
+        "list after a successful mint must contain exactly one entry \
+         (the holder-registry amendment persists the CapabilitySummary \
+         to <wallet_root>/holder_capabilities.json and the list handler \
+         reads from the same file). got {} entries: {caps:?}",
         caps.len()
+    );
+    // The list-view's `cap_id` is the first 16 hex chars of the full
+    // 64-hex mint envelope's `capability_id` (per RFC-0011
+    // §Subcommand Taxonomy list-view truncation). A failure mode where
+    // a different token (or the wrong substring) showed up in the list
+    // is what this assertion pins — not just that the array is non-empty.
+    let listed_cap_id = caps[0]["cap_id"]
+        .as_str()
+        .expect("list entry must carry cap_id string")
+        .to_string();
+    let expected_truncated = minted_cap_id
+        .get(..16)
+        .expect("minted cap_id is at least 16 hex chars (32-byte macaroon.id)")
+        .to_string();
+    assert_eq!(
+        listed_cap_id, expected_truncated,
+        "list's cap_id must be the truncated form of the minted cap_id \
+         (16-hex-char prefix per RFC-0011 §Subcommand Taxonomy). \
+         minted={minted_cap_id:?}, listed={listed_cap_id:?}"
     );
 
     // -- Step 4: control — a wrong passphrase must return WalletLocked

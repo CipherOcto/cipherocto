@@ -3110,7 +3110,13 @@ mod tests {
         // unlocked.active_identity().clone()).
         let production = strip_cfg_test_blocks(src);
         for substrate_call in &[
-            "octo_cap_macaroon::list_active(",
+            // Holder-registry substrate amendment: the production
+            // `list` path reads from the on-disk registry via
+            // `list_for_holder_disk`, NOT the substrate's
+            // `list_active` stub. The assertion below checks the
+            // handle that flows INTO the substrate call is the
+            // unlocked one (active_did), not a stale key binding.
+            "octo_cap_macaroon::list_for_holder_disk(",
             "octo_cap_macaroon::mint(",
             "octo_cap_macaroon::attenuate(",
         ] {
@@ -3120,9 +3126,22 @@ mod tests {
                 let after = start + at + substrate_call.len();
                 let window: String = production[after..].chars().take(64).collect();
                 assert!(
-                    window.contains("unlocked.active_identity()"),
+                    window.contains("unlocked.active_identity()")
+                        // Holder-registry substrate amendment: the list
+                        // path reads via `&active_did` (a DID string
+                        // derived from `unlocked.did()`) plus
+                        // `&wallet_root` (a PathBuf from `store.root()`).
+                        // Both originate in the unlock prelude, so
+                        // either handle being present in the 64-char
+                        // window is sufficient evidence the call site
+                        // is wired to the unlock path. A future
+                        // regression that reverts to a metadata stub
+                        // will lose BOTH bindings.
+                        || window.contains("&active_did")
+                        || window.contains("&wallet_root"),
                     "capability production call to {substrate_call} must consume \
-                     unlocked.active_identity(), got window: {window:?}"
+                     unlocked.active_identity() (or, for the list path, a handle \
+                     derived from unlocked.did()/store.root()), got window: {window:?}"
                 );
                 start = after;
                 found = true;

@@ -79,6 +79,7 @@ pub mod vault_verify_error;
 pub mod bearer_capsule_stub;
 pub mod clock;
 pub mod holder_kind;
+pub mod holder_persist;
 pub mod holder_record;
 pub mod holder_registry;
 
@@ -121,6 +122,10 @@ pub use governance_signature::{
     GovernanceSignatureError,
 };
 pub use holder_kind::HolderKind;
+pub use holder_persist::{
+    list_for_holder as list_for_holder_disk, register_mint, summary_from_token, HolderEntry,
+    PersistError, PersistedRegistry, REGISTRY_FILENAME,
+};
 pub use holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
 pub use holder_registry::{HolderRegistry, RegistryError};
 pub use macaroon::{

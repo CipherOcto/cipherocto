@@ -159,6 +159,18 @@ impl WalletStore {
         Self::open_at(root)
     }
 
+    /// Resolved wallet root directory (`<wallet_root>`). Layer B
+    /// additive accessor; callers downstream of the store need the
+    /// path to colocate per-wallet files (e.g., the capability
+    /// holder registry at `<wallet_root>/holder_capabilities.json`).
+    /// The path is the same `PathBuf` that `open()` resolved via
+    /// `resolve_wallet_root`; re-opening with this path via
+    /// [`Self::open_at`] is a no-op of sorts but re-reads the index.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Test seam: open the store at an explicit root without reading
     /// the environment. Used by the substrate test vectors.
     ///

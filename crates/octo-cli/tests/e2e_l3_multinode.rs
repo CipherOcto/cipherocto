@@ -1992,7 +1992,7 @@ fn l3_governance_vote_signing_path_succeeds() {
 /// observe one process's per-call-site gates the way a separate
 /// OS-process invocation can.
 #[test]
-#[ignore = "substrate cli_fns::attenuate is a Phase-2 stub; flip when the amendment lands"]
+#[ignore = "substrate cli_fns::attenuate unreachable without cli_fns::mint (parent capability must exist); revert `#[ignore]` when both substrate amendments land"]
 fn l3_capability_attenuate_substrate_stub_exit_code() {
     let home = new_node_home("l3-cap-attenuate");
     let passphrase = "l3-cap-attenuate-passphrase-2026"; // 33 chars
@@ -2036,8 +2036,9 @@ fn l3_capability_attenuate_substrate_stub_exit_code() {
     atten_cmd.args([
         "capability",
         "attenuate",
+        "--caveats",
+        r#"{"type":"before","value":4102444800}"#,
         &parent_cap_id,
-        "{}",
         "--mode",
         "dev",
         "--allow-write",

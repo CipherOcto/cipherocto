@@ -208,10 +208,24 @@ pub struct CaveatSummaryView {
     /// `#[schemars(with = "String")]` so the substrate's typed
     /// enum (which does not pull in `schemars`) still produces a
     /// stable `string` schema for the CLI envelope.
+    ///
+    /// Serialises as `type` so the view shape mirrors the canonical
+    /// `{ "type": ..., "value": ... }` form a `Caveat` deserialises
+    /// from. The Rust field is still named `kind`; the rename is
+    /// wire-only, so the construction sites are unchanged. The `schemars`
+    /// schema still reports the property as `kind` — schemars reads the
+    /// field name, not the serde rename, so the generated schema and the
+    /// emitted envelope disagree on this one property. Accepted for now:
+    /// fixing it means overriding the schemars property name by hand.
+    /// RFC-0011 §Caveat Form Amendment.
     #[schemars(with = "String")]
+    #[serde(rename = "type")]
     pub kind: CaveatName,
     /// Caveat payload in RFC-0964 canonical form, augmented with the
-    /// scale annotation when a budget caveat is present.
+    /// scale annotation when a budget caveat is present. Serialises as
+    /// `value` for the same reason as `kind` above. Same schemars
+    /// caveat applies.
+    #[serde(rename = "value")]
     pub body: serde_json::Value,
 }
 
@@ -1706,5 +1720,40 @@ mod tests {
         let parsed = parse_caveats(&format!("[{}]", json))
             .expect("amount_max canonical form must be reparseable");
         assert_eq!(parsed, vec![ca]);
+    }
+
+    /// The operator-facing caveat summary MUST use the canonical
+    /// `{ "type", "value" }` property names, not the pre-amendment
+    /// `{ "kind", "body" }` spelling, so the summary view and the
+    /// `--caveats` input form agree on one set of names.
+    ///
+    /// This asserts the WIRE form (the serialised JSON keys), not the
+    /// Rust field names — the struct fields are still `kind` and `body`
+    /// because the rename is a `serde(rename)` only. An earlier draft of
+    /// this vector read the fields instead of the JSON, which would have
+    /// passed whether or not the rename attributes were present.
+    ///
+    /// Numbered `tv_cf_17`, not `tv_cf_14` as the plan drafted it:
+    /// `tv_cf_14..16` are taken by the adapter-level vectors added during
+    /// the Phase 2 review. RFC-0011 §Caveat Form Amendment.
+    #[test]
+    fn tv_cf_17_caveat_summary_view_serialises_as_type_value() {
+        let view = caveat_view(&Caveat::Before(1_700_000_000));
+        let json = serde_json::to_value(&view).expect("serialise view");
+        let obj = json.as_object().expect("object");
+
+        assert_eq!(
+            obj.keys().collect::<Vec<_>>(),
+            vec!["type", "value"],
+            "wire form must be exactly type then value, got {json}"
+        );
+        assert_eq!(obj.get("type").and_then(|v| v.as_str()), Some("before"));
+        assert!(
+            !obj.contains_key("kind") && !obj.contains_key("body"),
+            "pre-amendment spellings must be gone, got {json}"
+        );
+
+        // The payload rides under `value` and is still reachable.
+        assert_eq!(obj.get("value"), Some(&serde_json::json!(1_700_000_000u64)));
     }
 }

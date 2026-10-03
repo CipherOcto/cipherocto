@@ -701,19 +701,23 @@ octo --mode dev --allow-write capability mint \
 
 The `AuditWindow { duration_secs }` caveat attaches the audit window. The substrate enforces the `set_subsumes` attenuation rule: parent `p_dur` subsumes child `c_dur` iff `c_dur >= p_dur`. Non-zero parent cannot subsume zero child (downgrade disallowed; widening disallowed).
 
-Reading it back is a different shape again: `octo capability list --json`
-projects each caveat to `{"kind": <short tag>, "body": <canonical value>}` —
-not to the `{"type": ..., "value": ...}` form you supply. For `vault` the
-`body` is the 64-hex id; for `permission` it is the full HMAC info string
-(`cipherocto/cap/v1/permission/vault_mutation`); for `amount_max` it is
-augmented to `{"amount_dqa", "scale", "value"}`, where `amount_dqa` and
-`scale` are the decoded budget and `value` is the 32-hex canonical
-`DqaEncoding` — the same 16 bytes the `dqa16` helper above builds, spelled
-as hex. The two forms do **not** round-trip: `--caveats` accepts the budget
-only as a 16-element byte array, so feeding a canonical `body` back into it
-exits 7. Nothing is lost in the difference — `amount_dqa` and `scale` recover
-the exact budget — but the spellings differ, so paste the `dqa16` form rather
-than the read-back `body`.
+Reading it back uses the same property names you supply: `octo capability list
+--json` projects each caveat to `{"type": <short tag>, "value": <canonical
+value>}`. For `vault` the `value` is the 64-hex id; for `permission` it is the
+full HMAC info string (`cipherocto/cap/v1/permission/vault_mutation`); for
+`amount_max` it is augmented to `{"amount_dqa", "scale", "value"}`, where
+`amount_dqa` and `scale` are the decoded budget and the inner `value` is the
+32-hex canonical `DqaEncoding` — the same 16 bytes the `dqa16` helper above
+builds, spelled as hex. Note the nested `value` inside the `amount_max` payload
+is the canonical encoding, not the outer projection key.
+
+The read-back form still does **not** round-trip, but not because `--caveats`
+rejects hex — that changed with RFC-0011 §Caveat Form Amendment, and the
+canonical hex form is now accepted. The read-back `value` for `amount_max` is an
+augmented object rather than the bare hex payload, so pasting it straight back
+into `--caveats` still exits 7. Nothing is lost — `amount_dqa` and `scale` recover
+the exact budget — so paste the `dqa16` form, or the canonical hex form, rather
+than the read-back projection.
 
 ### Operate
 
@@ -1257,14 +1261,14 @@ erc20_token_transfer, contract_call, reservation, vault_mutation`.
 # 4. Buyer discovers the listing.
 #    [SUBSTRATE-NEW] `octo capability search` is NOT wired. Substrate-faithful
 #    alternative: enumerate via `octo capability list --json` and jq-filter on
-#    the `vault` caveat. Note the two field names: the list envelope projects
-#    each caveat to `{"kind", "body"}` — there is no `.type`, and the payload
-#    is `.body`, not `.value`. The `vault` body is the 64-hex id, so it
-#    compares directly against $VAULT_ID from the shared-value block.
+#    the `vault` caveat. The list envelope projects each caveat to
+#    `{"type", "value"}` — the same property names the `--caveats` input form
+#    uses. The `vault` value is the 64-hex id, so it compares directly against
+#    $VAULT_ID from the shared-value block.
 octo capability list --json | jq --arg v "$VAULT_ID" '
     [ .payload.capabilities[]
       | select(any(.caveats[]?;
-                   .kind == "vault" and (.body | ascii_downcase) == ($v | ascii_downcase))) ]'
+                   .type == "vault" and (.value | ascii_downcase) == ($v | ascii_downcase))) ]'
 
 # 5. Buyer acquires the listing (capability is transferred to the buyer's
 #    holder).

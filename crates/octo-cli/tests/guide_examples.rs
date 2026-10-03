@@ -1075,6 +1075,72 @@ fn guide_states_no_enum_variant_index() {
     }
 }
 
+/// The guide's caveat property names must match the envelope the CLI
+/// actually emits.
+///
+/// `guide_jq_filters_all_compile` only proves jq can PARSE a filter. It
+/// never resolves `.kind` or `.body` against a real envelope, so a guide
+/// that filters on renamed-away properties compiles cleanly and silently
+/// returns nothing. That is exactly how the pre-amendment
+/// `{"kind", "body"}` spelling survived in the marketplace walkthrough
+/// after the summary view moved to `{"type", "value"}`.
+///
+/// This check ties the two together: the expected key list is written out
+/// literally here (NOT read back off the serialised value, which would
+/// make the test agree with whatever the code happens to do), and the guide
+/// is required to use those names and to contain none of the old ones.
+#[test]
+fn guide_caveat_property_names_match_the_envelope() {
+    use octo_cap_macaroon::Caveat;
+    use octo_cli::commands::capability::caveat_view;
+
+    // Independently written expectation. If this list is ever derived from
+    // the serialised output instead, the check stops being a check.
+    const EXPECTED: [&str; 2] = ["type", "value"];
+
+    let view = caveat_view(&Caveat::Before(1_700_000_000));
+    let json = serde_json::to_value(&view).expect("serialise view");
+    let keys: Vec<&str> = json
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        EXPECTED.to_vec(),
+        "the envelope no longer emits the documented property names; update \
+         EXPECTED and the guide together"
+    );
+
+    let text = guide_text();
+
+    // The read-back paragraph and the marketplace jq filter must both use
+    // the current names.
+    for needle in [
+        ".type ==",
+        "{\"type\", \"value\"}",
+        "{\"type\": <short tag>",
+    ] {
+        assert!(
+            text.contains(needle),
+            "guide no longer documents the current caveat property names; \
+             expected to find {needle:?}"
+        );
+    }
+
+    // No trace of the pre-amendment spellings may survive in caveat prose
+    // or in a caveat jq filter.
+    for needle in [".kind ==", ".kind |", ".body |", "{\"kind\", \"body\"}"] {
+        assert!(
+            !text.contains(needle),
+            "guide still filters or documents the pre-amendment caveat \
+             property via {needle:?}; the summary view now serialises as \
+             type and value"
+        );
+    }
+}
+
 #[test]
 #[ignore]
 fn diagnostic_dump_caveats() {

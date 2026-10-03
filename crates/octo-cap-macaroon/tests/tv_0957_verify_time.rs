@@ -384,9 +384,26 @@ fn tv_0957_09_policy_reference_variant_wire_form() {
         json.contains("\"type\":\"policy_reference\""),
         "TV-0957-09: PolicyReference discriminant MUST be \"policy_reference\": got {json}"
     );
+    // `policy_id` is a 32-byte id and now routes through the substrate-owned
+    // `hex_id_32` adapter, so its wire form is a 64-char lowercase hex string
+    // rather than a 32-element array. That expectation was the ARRAY form
+    // until RFC-0011 §Caveat Form Amendment closed the eight-arm asymmetry; the
+    // array form is still ACCEPTED on input, only no longer emitted, and
+    // `tv_cf_24` pins that both ways.
+    //
+    // Byte-exact pin, written literally: 32 bytes of 0x11 = 64 lowercase hex
+    // chars of `1`. A `contains` on `"policy_id":["` would keep passing if the
+    // adapter emitted a hex string for some other field, so the pin names the
+    // key AND the exact value.
+    let expected_policy_id_hex = "\"policy_id\":\"".to_owned() + &"1".repeat(64) + "\"";
     assert!(
-        json.contains("\"policy_id\":["),
-        "policy_id must serialize as a JSON array of u8s (default serde): got {json}"
+        json.contains(&expected_policy_id_hex),
+        "policy_id MUST be the canonical 64-char hex form (hex_id_32): \
+         expected substring {expected_policy_id_hex:?} in {json}"
+    );
+    assert!(
+        !json.contains("\"policy_id\":["),
+        "policy_id must no longer emit the 32-element array form: {json}"
     );
     assert!(
         json.contains("\"policy_version_seq\":42"),

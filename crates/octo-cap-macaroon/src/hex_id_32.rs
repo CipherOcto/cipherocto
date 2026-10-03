@@ -9,17 +9,17 @@
 //! review of RFC-0011 §Caveat Form Amendment:
 //!
 //! * It listed the arms that EMIT hex as though they all routed through this
-//!   adapter. They do not. `Caveat::Vault` is the only arm that does. Eight
-//!   other arms render a 32-byte id as hex from `canonical_ser` and still use
-//!   the derived array form on input, so they reject the hex they write:
-//!   `InvocationHashBind`, `AskBinding`, `WrappedOnly`, `RedemptionContext`,
-//!   `AssetBinding`, `Factory` (`target_vault_id`), `PolicyReference`
-//!   (`policy_id`), and `Payment` (16-byte `budget`). See §Known deviations 3
-//!   in the RFC. `tv_cf_22` derives that list from the `canonical_ser` source
-//!   so it cannot be short, and `tv_cf_20` / `tv_cf_21` pin the current
-//!   accept/reject state. An earlier revision of this doc named only four of
-//!   those eight, because the list was cross-checked against other documents
-//!   instead of against `canonical_ser`.
+//!   adapter. They did not. `Caveat::Vault` was the only arm that did, and
+//!   eight others rendered a 32-byte id as hex from `canonical_ser` while still
+//!   using the derived array form on input, so they rejected the hex they
+//!   wrote: `InvocationHashBind`, `AskBinding`, `WrappedOnly`,
+//!   `RedemptionContext`, `AssetBinding`, `Factory` (`target_vault_id`),
+//!   `PolicyReference` (`policy_id`), and `Payment` (16-byte `budget`).
+//!   An earlier revision of this doc named only four of those eight, because
+//!   the list was cross-checked against other documents instead of against
+//!   `canonical_ser`. **All eight now route through this adapter** as of
+//!   2026-10-03, which closed seven of the eight; `Payment` still does not
+//!   round-trip, for a different reason — see below.
 //! * It did not mention `PaymentCaveat::asset_id` and `::nonce`, which now
 //!   route through here. They previously used a parallel private adapter that
 //!   accepted hex only, so the same canonical form parsed for `Vault` and was
@@ -28,7 +28,21 @@
 //!   whose `value` is an OBJECT, it does not: `Caveat` is adjacently tagged, so
 //!   the encoder must also emit the object shape. The adapter alone leaves the
 //!   canonical form unparseable, and a plan that fixes only the adapter will
-//!   appear to succeed and change nothing.
+//!   appear to succeed and change nothing. **Both halves are now done**:
+//!   `canonical_ser` emits `{"value": {"<field>": "<hex>"}}` for
+//!   `wrapped_only`, `redemption_context`, and `asset_binding`.
+//!
+//! `Payment` is the one arm still asymmetric, and neither half of the above is
+//! its problem: `canonical_ser` emits 4 of `PaymentCaveat`'s 7 fields, so
+//! re-input fails on a MISSING FIELD. Only a lossless projection fixes it, and
+//! that changes every payment capability's `caveat_body_hash`. See
+//! §Known deviations 1.
+//!
+//! `tv_cf_24` pins the contract this adapter now owes: every fixed-width-id arm
+//! round-trips its own canonical form AND still accepts the legacy
+//! 32-element array form on input. The second half is the one an
+//! adapter-only change can silently break, and it is invisible to any test
+//! that only ever sends hex.
 //!
 //! Dispatch is via `deserialize_any`, which requires a SELF-DESCRIBING serde
 //! format. JSON and MessagePack qualify; bincode and postcard do not. A type

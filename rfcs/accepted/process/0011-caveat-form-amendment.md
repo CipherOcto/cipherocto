@@ -141,15 +141,23 @@ canonical hex form emitted by `canonical_ser` for the `AmountMax` arm and the
 The asymmetry is a conformance drift and the corrected form is the
 canonical-hex form, not the byte-array form.
 
-**Scope, stated up front because it is narrower than it first looks.** This
-amendment closes the gap for the two arms named above and for the shared
-adapter discipline. It does **not** close the gap for the whole hex-emitting
-set: four further arms emit hex and still read only the byte array, and for
-two of those the emitter and the input form disagree on envelope shape as well
-as encoding. Those are recorded in §Known deviations with their cost, and
-pinned by `tv_cf_20` and `tv_cf_21` so the remaining set cannot drift
-unnoticed. An earlier revision of this Summary read as though the full set was
-covered.
+**Scope, and how far it now reaches.** The amendment closes the gap for the
+`AmountMax` and `Vault` arms named above and for the shared adapter discipline.
+It originally stopped there, leaving the rest of the hex-emitting set reading
+only the byte array; as of 2026-10-03 that is fixed too, and the full
+fixed-width set round-trips except for one arm. Nine arms carry a fixed-width
+id. Eight now accept their own canonical form; `payment` does not, because
+`canonical_ser` projects 4 of `PaymentCaveat`'s 7 fields and the fix for that
+is a different change with a different cost. It is recorded in §Known
+deviations 1 and pinned by name in `tv_cf_21`.
+
+That paragraph previously read "four further arms emit hex and still read only
+the byte array". Four was the count from the first review pass, and it was
+wrong — the correct as-found figure was eight of nine, because the enumeration
+had been cross-checked against other documents rather than against
+`canonical_ser`. §Known deviations 3 carries the full history. It is recorded
+here because a Summary that understated the gap is how the gap survived four
+review rounds unnoticed.
 
 ## Context
 
@@ -325,10 +333,17 @@ coordinated rollout, not a safe default. Clause 4 promises only that
 non-opted-in consumers see no change, which is true and is not the same
 promise as interoperability.
 
-### 3. Eight of the nine hex-rendering arms still reject their own hex
+### 3. Eight of the nine hex-rendering arms still reject their own hex — **CLOSED for seven of the eight, 2026-10-03**
 
-This is the largest gap between what this amendment claims and what it
-delivers, so it is stated first among the structural deviations.
+> **Status: closed for seven arms.** The gap this section described existed
+> while the amendment was in review and has since been implemented. `vault`
+> already worked; `invocation_hash_bind`, `ask_binding`, `wrapped_only`,
+> `redemption_context`, `asset_binding`, `factory`, and `policy_reference` now
+> accept their own canonical form. `payment` is the **one remaining** asymmetric
+> arm, and its blocker was never this section's — see §Known deviations 1.
+> `tv_cf_20` and `tv_cf_21` were updated in the same commit, and `tv_cf_24` was
+> added to pin what the fix owes. The analysis below is retained because it is
+> the record of how the gap was found and why the count was wrong twice.
 
 `canonical_ser` renders bytes through `hex::encode` in **eleven** arms: eight
 carry a 32-byte id, two carry a 16-byte `Dqa` payload (`amount_max` and
@@ -337,21 +352,21 @@ one that round-trips, because Phase 1 added the `visit_str` arm to
 `dqa_serde::field`. `raw` is outside the 32-byte question entirely.
 
 Of the nine arms carrying a fixed-width id, the amendment gave the hex input
-path to **one**.
+path to **one**. The table below is the state **as found**, not as shipped:
 
-| Arm                    | Renders 32-byte id as hex | Accepts its own canonical form |
-| ---------------------- | ------------------------- | ------------------------------ |
-| `vault`                | yes                       | **yes**                        |
-| `invocation_hash_bind` | yes                       | no                             |
-| `ask_binding`          | yes                       | no                             |
-| `wrapped_only`         | yes                       | no                             |
-| `redemption_context`   | yes                       | no                             |
-| `asset_binding`        | yes                       | no                             |
-| `factory`              | yes (`target_vault_id`)   | no                             |
-| `policy_reference`     | yes (`policy_id`)         | no                             |
-| `payment`              | yes (16-byte `budget`)    | no                             |
+| Arm                    | Renders 32-byte id as hex | Accepted its own canonical form (as found) | Now              |
+| ---------------------- | ------------------------- | ------------------------------------------ | ---------------- |
+| `vault`                | yes                       | **yes**                                    | yes              |
+| `invocation_hash_bind` | yes                       | no                                         | **yes**          |
+| `ask_binding`          | yes                       | no                                         | **yes**          |
+| `wrapped_only`         | yes                       | no                                         | **yes**          |
+| `redemption_context`   | yes                       | no                                         | **yes**          |
+| `asset_binding`        | yes                       | no                                         | **yes**          |
+| `factory`              | yes (`target_vault_id`)   | no                                         | **yes**          |
+| `policy_reference`     | yes (`policy_id`)         | no                                         | **yes**          |
+| `payment`              | yes (16-byte `budget`)    | no                                         | no — deviation 1 |
 
-So eight of nine. The other eight still exhibit the exact emitter/input
+So eight of nine as found, one of nine remaining. The other eight still exhibited the exact emitter/input
 asymmetry this amendment exists to remove. The drift audit cited in §Context
 already named six of them by name — "Six other arms render 32-byte ids as hex:
 `Vault`, `AskBinding`, `WrappedOnly`, `InvocationHashBind`, `RedemptionContext`,
@@ -378,10 +393,12 @@ it had not earned, and both are recorded in the vector:
   scan early, and the comparison would then hold for a short list. `tv_cf_23`
   guards exactly that, by asserting the scan reaches the enum's final variant.
 
-**Why they are not simply fixed here.** Adopting the adapter on an arm widens
-that arm's _input_ acceptance to both forms, which is free and backward
-compatible. It also changes the arm's _emitted_ form from a 32-element array to
-a hex string, which breaks every consumer that reads the array form.
+**What the fix cost, and why it was left open while it was open.** Adopting the
+adapter on an arm widens that arm's _input_ acceptance to both forms, which is
+free and backward compatible. It also changes the arm's _emitted_ form from a
+32-element array to a hex string, which breaks every consumer that reads the
+array form. Input widening is free; output flipping is not, and that is a
+wire-format decision belonging to the owner of the capability wire format.
 
 The mechanical cost is one attribute per arm. `InvocationHashBind` and
 `AskBinding` use the `Blake3` and `AskId` spellings, but both are type ALIASES
@@ -390,9 +407,18 @@ exactly as it does for `Vault`. An earlier revision of this section claimed the
 adapter signature did not fit those two arms; that was checked and is wrong —
 clippy's "useless conversion" lint on the `.into()` calls is what surfaced it.
 
-Left as a follow-up with the cost stated, not quietly taken. It is a
-wire-format decision per arm, and it belongs to the owner of the capability
-wire format, not to a document review.
+**What implementing it actually changed, beyond the emitted form.** Two
+consequences that a reader of the table above would not predict:
+
+- **Every capability id carrying a `wrapped_only`, `redemption_context`, or
+  `asset_binding` caveat changes.** `canonical_ser` feeds `caveat_body_hash`, so
+  correcting the envelope changes the digest preimage. Capabilities minted
+  under the previous projection do not verify under this one and must be
+  re-minted. This is not a soft migration.
+- **Previously-emitted canonical bytes for those three arms no longer parse**,
+  because the old bare-string form is not the object the input form wants. A
+  consumer replaying stored canonical JSON for those arms breaks at the parse,
+  not at the digest.
 
 ### 4. The envelope shape is a SECOND, independent cause of the asymmetry
 
@@ -403,6 +429,22 @@ struct-payload arm therefore expects an OBJECT under `value`, while
 `payment` are all affected. Their canonical forms cannot be parsed by the
 CLI's own `--caveats` parser **regardless of encoding**.
 
+### 4. The envelope shape is a SECOND, independent cause of the asymmetry — **CLOSED for the three arms that emitted a bare string, 2026-10-03**
+
+> **Status: closed.** `canonical_ser` now emits an object under `value` for
+> `wrapped_only`, `redemption_context`, and `asset_binding`. The other three
+> named below — `factory`, `policy_reference`, `payment` — already emitted an
+> object and needed only the adapter. The two causes below are retained as the
+> record of why this was a separate fix and not a consequence of the other one.
+
+`Caveat` is adjacently tagged (`tag = "type"`, `content = "value"`). A
+struct-payload arm therefore expects an OBJECT under `value`, while
+`canonical_ser` wrote a bare hex STRING there for `wrapped_only`,
+`redemption_context`, and `asset_binding`. Their canonical forms could not be
+parsed by the CLI's own `--caveats` parser **regardless of encoding**.
+`factory`, `policy_reference`, and `payment` emitted an object already, so for
+those the envelope was never the blocker.
+
 This is not the same defect as the hex-versus-array one, and fixing one does
 not fix the other. That was measured, not assumed: adding
 `#[serde(with = "hex_id_32")]` to `AssetBinding::asset_id` on its own leaves
@@ -411,7 +453,9 @@ form wants an object. Only when the adapter **and** the envelope shape are both
 corrected does the arm's canonical form start parsing, and at that point
 `tv_cf_20` and `tv_cf_21` fail and demand the deviation list be updated. So
 each of these arms needs two changes, not one, and any plan that fixes only the
-adapter will appear to succeed and change nothing.
+adapter will appear to succeed and change nothing. That prediction held: the
+three envelope arms were the three that stayed broken after the adapter landed
+on all eight.
 
 Correcting the envelope shape means the encoder emits
 `{"type": "asset_binding", "value": {"asset_id": "…"}}` rather than
@@ -431,6 +475,17 @@ in. That measures nothing useful, because for a struct-payload arm the input
 can never parse for reasons unrelated to hex-versus-array. Adopting the
 adapter on `wrapped_only` left that version green. A check that cannot fail for
 the claim it names is worse than none, because it reads as evidence.
+
+`tv_cf_24` was added when the fix landed. `tv_cf_20` and `tv_cf_21` pin the
+accept/reject SET, but every assertion in them is satisfied by "it parses"; none
+of them would notice if the adapter had been narrowed to accept hex ONLY, which
+would break every existing consumer sending a 32-element array while leaving all
+the hex-path tests green. `tv_cf_24` pins the legacy array form explicitly, and
+its id is position-distinct (`0x00..=0x1f`) so that a byte-order defect in the
+hex path is visible. Four mutations were run against it — refusing the array
+form, reversing the bytes on serialize, reversing them on deserialize, and
+reverting one envelope to the bare string — and each was caught by the assertion
+that names the corresponding half of the contract.
 
 ### 5. `Caveat::Permission` remains asymmetric
 
@@ -454,27 +509,28 @@ row from its test.
 
 ### `octo-cap-macaroon` — encoding substrate
 
-| Vector                                                                | Crate / feature      | Property locked                                                                                                                                            |
-| --------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tv_cf_01_dqa_hex_round_trip`                                         | default              | `dqa_serde::field::deserialize` accepts a 64-hex string and decodes to the same `Dqa` as the 16-byte byte-array form.                                      |
-| `tv_cf_02_dqa_hex_rejects_odd_length`                                 | default              | odd-length hex strings reject.                                                                                                                             |
-| `tv_cf_03_dqa_hex_rejects_non_hex_chars`                              | default              | non-hex characters reject.                                                                                                                                 |
-| `tv_cf_04_hex_id_32_round_trip_string`                                | default              | `hex_id_32` adapter round-trips through a 64-char hex string.                                                                                              |
-| `tv_cf_05_hex_id_32_accepts_legacy_array_form`                        | default              | `hex_id_32` adapter parses the legacy 32-element array form.                                                                                               |
-| `tv_cf_06_hex_id_32_rejects_short_hex`                                | default              | short hex strings reject.                                                                                                                                  |
-| `tv_cf_07_canonical_amount_max_reparses_through_input_form`           | default (in-crate)   | `Caveat::AmountMax`'s `canonical_ser` output re-parses through `#[serde(with = "dqa_serde::field")]`.                                                      |
-| `tv_cf_08_canonical_vault_reparses_through_input_form`                | default (in-crate)   | `Caveat::Vault`'s `canonical_ser` output re-parses through `#[serde(with = "hex_id_32")]`.                                                                 |
-| `tv_cf_09_legacy_vault_array_form_still_parses`                       | default (in-crate)   | legacy 32-element array form on `Caveat::Vault` continues to parse.                                                                                        |
-| `tv_cf_14_hex_id_32_preserves_byte_positions`                         | default              | the adapter encodes byte _i_ at hex position _i_, so no permutation is invisible.                                                                          |
-| `tv_cf_15_hex_id_32_rejects_short_array_form`                         | default              | a 31- or 33-element array is rejected rather than truncated or panicked into acceptance.                                                                   |
-| `tv_cf_16_hex_id_32_accepts_uppercase_hex_input`                      | default              | uppercase hex is accepted on input as documented leniency, and is never the emitted form.                                                                  |
-| `tv_cf_18_payment_canonical_form_is_a_partial_projection`             | default              | **pins the deviation** in §Known deviations: the `Payment` canonical form does not re-parse, and the dropped fields are named.                             |
-| `tv_cf_19_all_32byte_id_fields_accept_both_forms`                     | default              | every 32-byte id-bearing field accepts hex and legacy array alike, checked through its owning envelope.                                                    |
-| `tv_cf_20_hex_emitting_arms_acceptance_set_is_explicit`               | default              | the hex-emitting arm set is enumerated, and each arm's hex-input acceptance is stated rather than assumed.                                                 |
-| `tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_hex` | default              | pins the eight-arm deviation recorded in §Known deviations, and that those arms still accept the legacy array form.                                        |
-| `tv_cf_22_hex_rendering_set_matches_canonical_ser_source`             | default              | the hex-rendering arm set is derived from the `canonical_ser` source and compared against the literal, so a new hex-emitting arm cannot be added silently. |
-| `tv_cf_23_hex_scan_reaches_the_final_caveat_variant`                  | default              | the `canonical_ser` scan reaches the enum's final variant, so a truncated scan cannot make `tv_cf_22` agree with a short list.                             |
-| `tv_cf_13_default_newtype_serde_is_byte_array`                        | default (bare types) | under default features, a bare `AssetId` / `ChainId` / `VaultId` serialises as a 32-element byte array.                                                    |
+| Vector                                                                        | Crate / feature      | Property locked                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tv_cf_01_dqa_hex_round_trip`                                                 | default              | `dqa_serde::field::deserialize` accepts a 64-hex string and decodes to the same `Dqa` as the 16-byte byte-array form.                                                                                          |
+| `tv_cf_02_dqa_hex_rejects_odd_length`                                         | default              | odd-length hex strings reject.                                                                                                                                                                                 |
+| `tv_cf_03_dqa_hex_rejects_non_hex_chars`                                      | default              | non-hex characters reject.                                                                                                                                                                                     |
+| `tv_cf_04_hex_id_32_round_trip_string`                                        | default              | `hex_id_32` adapter round-trips through a 64-char hex string.                                                                                                                                                  |
+| `tv_cf_05_hex_id_32_accepts_legacy_array_form`                                | default              | `hex_id_32` adapter parses the legacy 32-element array form.                                                                                                                                                   |
+| `tv_cf_06_hex_id_32_rejects_short_hex`                                        | default              | short hex strings reject.                                                                                                                                                                                      |
+| `tv_cf_07_canonical_amount_max_reparses_through_input_form`                   | default (in-crate)   | `Caveat::AmountMax`'s `canonical_ser` output re-parses through `#[serde(with = "dqa_serde::field")]`.                                                                                                          |
+| `tv_cf_08_canonical_vault_reparses_through_input_form`                        | default (in-crate)   | `Caveat::Vault`'s `canonical_ser` output re-parses through `#[serde(with = "hex_id_32")]`.                                                                                                                     |
+| `tv_cf_09_legacy_vault_array_form_still_parses`                               | default (in-crate)   | legacy 32-element array form on `Caveat::Vault` continues to parse.                                                                                                                                            |
+| `tv_cf_14_hex_id_32_preserves_byte_positions`                                 | default              | the adapter encodes byte _i_ at hex position _i_, so no permutation is invisible.                                                                                                                              |
+| `tv_cf_15_hex_id_32_rejects_short_array_form`                                 | default              | a 31- or 33-element array is rejected rather than truncated or panicked into acceptance.                                                                                                                       |
+| `tv_cf_16_hex_id_32_accepts_uppercase_hex_input`                              | default              | uppercase hex is accepted on input as documented leniency, and is never the emitted form.                                                                                                                      |
+| `tv_cf_18_payment_canonical_form_is_a_partial_projection`                     | default              | **pins the deviation** in §Known deviations: the `Payment` canonical form does not re-parse, and the dropped fields are named.                                                                                 |
+| `tv_cf_19_all_32byte_id_fields_accept_both_forms`                             | default              | every 32-byte id-bearing field accepts hex and legacy array alike, checked through its owning envelope.                                                                                                        |
+| `tv_cf_20_hex_rendering_arm_acceptance_set_is_explicit`                       | default              | the hex-emitting arm set is enumerated, and each arm's hex-input acceptance is stated rather than assumed. True for every fixed-width-id arm except `payment`.                                                 |
+| `tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_hex`         | default              | pins the one remaining asymmetric arm, `payment`, named rather than counted, and asserts it still rejects its own canonical form. The eight-arm pin this replaced is recorded in §Known deviations 3.          |
+| `tv_cf_22_hex_rendering_set_matches_canonical_ser_source`                     | default              | the hex-rendering arm set is derived from the `canonical_ser` source and compared against the literal, so a new hex-emitting arm cannot be added silently.                                                     |
+| `tv_cf_23_hex_scan_reaches_the_final_caveat_variant`                          | default              | the `canonical_ser` scan reaches the enum's final variant, so a truncated scan cannot make `tv_cf_22` agree with a short list.                                                                                 |
+| `tv_cf_24_fixed_width_arms_round_trip_and_still_accept_the_legacy_array_form` | default              | every fixed-width-id arm accepts its own canonical form AND still accepts the legacy 32-element array form, with byte order preserved in both directions. This is the half `tv_cf_20` / `tv_cf_21` cannot see. |
+| `tv_cf_13_default_newtype_serde_is_byte_array`                                | default (bare types) | under default features, a bare `AssetId` / `ChainId` / `VaultId` serialises as a 32-element byte array.                                                                                                        |
 
 ### `octo-cap-macaroon` — `hex-ids` feature
 

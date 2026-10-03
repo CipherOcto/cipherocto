@@ -224,6 +224,10 @@ negative control):
   (the Layer B adapters reuse this mission's `hex_id_32`).
 - `RFC-0011-caveat-form-amendment.md` — the amendment RFC.
 
+## Claimant
+
+@mmacedoeu (agent-assisted)
+
 ## Version History
 
 | Version | Date       | Change                                                                                                                                                                                                                                                                        |

@@ -121,7 +121,14 @@ pub enum Caveat {
     RateLimit(RateLimit),
 
     /// Bind capability to a specific request body hash (anti-replay).
-    #[serde(rename = "invocation_hash_bind")]
+    ///
+    /// `with = "crate::hex_id_32"` aligns the derived `Serialize` with the
+    /// hex that `canonical_ser` emits for this arm. Without it the emitter
+    /// wrote a 64-hex string and the input form demanded a 32-element array,
+    /// so the arm rejected the hex it produced. `Blake3` is a type ALIAS for
+    /// `[u8; 32]`, not a newtype, so the adapter applies exactly as it does
+    /// for `Vault`.
+    #[serde(rename = "invocation_hash_bind", with = "crate::hex_id_32")]
     InvocationHashBind(Blake3),
 
     /// Jurisdiction whitelist.
@@ -133,7 +140,10 @@ pub enum Caveat {
     CacheStrategy(CachePolicy),
 
     /// Bind capability to a specific Ask by id.
-    #[serde(rename = "ask_binding")]
+    ///
+    /// See `InvocationHashBind` for why the adapter is present. `AskId` is
+    /// likewise a type ALIAS for `[u8; 32]`.
+    #[serde(rename = "ask_binding", with = "crate::hex_id_32")]
     AskBinding(AskId),
 
     /// Third-party caveat requiring a discharge macaroon.
@@ -178,7 +188,10 @@ pub enum Caveat {
     /// parent capability. Chain depth bounded to 16 per RFC-0965
     /// §3.7 R7-F1.
     #[serde(rename = "wrapped_only")]
-    WrappedOnly { parent_capability: [u8; 32] },
+    WrappedOnly {
+        #[serde(with = "crate::hex_id_32")]
+        parent_capability: [u8; 32],
+    },
 
     /// Factory vet (RFC-0965 §3.8): pre-validated invocation
     /// (target + selector + arg template). NOT raw bytes (phishing vector).
@@ -190,6 +203,7 @@ pub enum Caveat {
     /// binding the attenuation per RFC-0967 §8.2.
     #[serde(rename = "policy_reference")]
     PolicyReference {
+        #[serde(with = "crate::hex_id_32")]
         policy_id: [u8; 32],
         policy_version_seq: u64,
         #[serde(with = "serde_bytes_arr64")]
@@ -205,7 +219,10 @@ pub enum Caveat {
     /// Redemption context (RFC-0965 §3.6). Anti-replay domain separator.
     /// `context_hash = BLAKE3(0xA2 || canonical_ser(context))` per RFC-0965 §3.6.
     #[serde(rename = "redemption_context")]
-    RedemptionContext { context_hash: [u8; 32] },
+    RedemptionContext {
+        #[serde(with = "crate::hex_id_32")]
+        context_hash: [u8; 32],
+    },
 
     /// Shard pin (RFC-0965 §1.2 + RFC-0963 §6). Restricts capability to a
     /// specific shard.
@@ -263,6 +280,7 @@ pub struct ActionTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactoryVet {
     /// Target vault for the pre-validated invocation.
+    #[serde(with = "crate::hex_id_32")]
     pub target_vault_id: [u8; 32],
     /// Typed invocation shape (selector + ordered args).
     pub action_template: ActionTemplate,
@@ -294,6 +312,7 @@ pub struct RawCaveat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetBinding {
     /// 32-byte asset_id (`BLAKE3("cipherocto/asset/v1/" + role_token)`).
+    #[serde(with = "crate::hex_id_32")]
     pub asset_id: [u8; 32],
 }
 
@@ -822,9 +841,16 @@ impl Caveat {
             }
             Caveat::MaxUses { count } => serde_json::json!({"type": "max_uses", "value": count}),
             Caveat::WrappedOnly { parent_capability } => {
+                // The `value` is an OBJECT, not a bare hex string. `Caveat` is
+                // adjacently tagged, so a struct-payload arm's input form
+                // expects an object under `value`. This arm used to write the
+                // bare string, which no input form could parse regardless of
+                // encoding. Changing it alters `caveat_body_hash` and so every
+                // capability id carrying a `wrapped_only` caveat — see
+                // RFC-0011-caveat-form-amendment.md §Known deviations 4.
                 serde_json::json!({
                     "type": "wrapped_only",
-                    "value": hex::encode(parent_capability),
+                    "value": { "parent_capability": hex::encode(parent_capability) },
                 })
             }
             Caveat::Factory(vet) => {
@@ -866,7 +892,12 @@ impl Caveat {
                 serde_json::json!({"type": "valid_after", "value": not_before_unix})
             }
             Caveat::RedemptionContext { context_hash } => {
-                serde_json::json!({"type": "redemption_context", "value": hex::encode(context_hash)})
+                // Object envelope, for the same adjacently-tagged reason as
+                // `wrapped_only`. Digest-relevant; see §Known deviations 4.
+                serde_json::json!({
+                    "type": "redemption_context",
+                    "value": { "context_hash": hex::encode(context_hash) }
+                })
             }
             Caveat::Sharded { shard_id } => {
                 serde_json::json!({"type": "sharded", "value": shard_id})
@@ -890,9 +921,11 @@ impl Caveat {
                 })
             }
             Caveat::AssetBinding(b) => {
+                // Object envelope, for the same adjacently-tagged reason as
+                // `wrapped_only`. Digest-relevant; see §Known deviations 4.
                 serde_json::json!({
                     "type": "asset_binding",
-                    "value": hex::encode(b.asset_id)
+                    "value": { "asset_id": hex::encode(b.asset_id) }
                 })
             }
         };

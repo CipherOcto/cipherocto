@@ -78,13 +78,21 @@ struct ArmCase {
     name: &'static str,
     caveat: Caveat,
     /// Whether the canonical form is accepted back by the enum's `Deserialize`.
-    /// Only `vault` is, via the `hex_id_32` adapter.
+    /// True for every 32-byte-id arm except `payment`, whose blocker is a
+    /// PARTIAL PROJECTION rather than an encoding or envelope defect — see
+    /// `tv_cf_21` and RFC-0011-caveat-form-amendment.md §Known deviations 1.
     canonical_round_trips: bool,
 }
 
 /// The 32-byte id-bearing hex-rendering arms, plus `amount_max` as the
 /// conformant control: it renders a 16-byte payload as hex and does round-trip,
 /// because Phase 1 added the `visit_str` arm to `dqa_serde::field`.
+///
+/// Seven of the eight `canonical_round_trips: false` entries below became
+/// `true` when `hex_id_32` was adopted on each 32-byte id field AND
+/// `canonical_ser` was corrected to emit an OBJECT under `value` for the
+/// struct-payload arms. Only `payment` remains `false`, and for a different
+/// reason than the other seven had.
 fn arms() -> Vec<ArmCase> {
     vec![
         ArmCase {
@@ -95,12 +103,12 @@ fn arms() -> Vec<ArmCase> {
         ArmCase {
             name: "invocation_hash_bind",
             caveat: Caveat::InvocationHashBind([0x44u8; 32]),
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "ask_binding",
             caveat: Caveat::AskBinding([0x55u8; 32]),
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "vault",
@@ -112,7 +120,7 @@ fn arms() -> Vec<ArmCase> {
             caveat: Caveat::WrappedOnly {
                 parent_capability: [0x22u8; 32],
             },
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "factory",
@@ -126,7 +134,7 @@ fn arms() -> Vec<ArmCase> {
                 pre_conditions: vec![],
                 expiry_for_deploy_unix: 0,
             }),
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "policy_reference",
@@ -135,22 +143,29 @@ fn arms() -> Vec<ArmCase> {
                 policy_version_seq: 1,
                 attenuation_witness: [0x99u8; 64],
             },
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "redemption_context",
             caveat: Caveat::RedemptionContext {
                 context_hash: [0x33u8; 32],
             },
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
         ArmCase {
             name: "asset_binding",
             caveat: Caveat::AssetBinding(AssetBinding {
                 asset_id: [0x66u8; 32],
             }),
-            canonical_round_trips: false,
+            canonical_round_trips: true,
         },
+        // STILL ASYMMETRIC, and the one remaining case. `canonical_ser` emits
+        // 4 of `PaymentCaveat`'s 7 fields and drops `asset_id`,
+        // `registry_snapshot_epoch`, and `nonce`, so re-input fails on a
+        // MISSING FIELD rather than on encoding or envelope shape. Adopting the
+        // adapter and fixing the envelope cannot fix this arm; only a lossless
+        // projection can, and that changes every payment capability's
+        // `caveat_body_hash`.
         ArmCase {
             name: "payment",
             caveat: Caveat::Payment(PaymentCaveat {
@@ -224,8 +239,19 @@ fn tv_cf_20_hex_rendering_arm_acceptance_set_is_explicit() {
     );
 }
 
-/// The eight arms that render hex and still reject their own canonical output
-/// must keep doing so for a STATED reason, and the reason lives next to the pin.
+/// The arms that render hex and still reject their own canonical output must
+/// keep doing so for a STATED reason, and the reason lives next to the pin.
+///
+/// This vector pinned EIGHT such arms and now pins ONE. Seven were fixed by
+/// adopting `hex_id_32` on each 32-byte id field and correcting `canonical_ser`
+/// to emit an object under `value` for the struct-payload arms. The eighth,
+/// `payment`, is unchanged and for a different reason than the other seven had:
+/// its blocker is a partial projection, not an encoding or envelope defect.
+///
+/// It is kept as a named pin rather than deleted, because a vector that only
+/// ever asserts the happy state cannot notice the day an arm regresses. The
+/// remaining case is asserted by NAME so that fixing `payment` fails this
+/// vector loudly instead of quietly deleting the last asymmetric arm.
 #[test]
 fn tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_form() {
     let all = arms();
@@ -233,9 +259,16 @@ fn tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_form() {
 
     assert_eq!(
         asymmetric.len(),
-        8,
+        1,
         "the asymmetric arm count changed; that is a substantive change to the \
          deviation, not a test-maintenance detail"
+    );
+    assert_eq!(
+        asymmetric[0].name, "payment",
+        "the remaining asymmetric arm is `payment`, blocked by the partial \
+         projection in RFC-0011-caveat-form-amendment.md §Known deviations 1. \
+         If a different arm is now asymmetric, something regressed and the \
+         deviation list needs rewriting rather than this constant."
     );
 
     for case in asymmetric {
@@ -451,6 +484,167 @@ fn tv_cf_23_hex_scan_reaches_the_final_caveat_variant() {
          ({last_variant}), so it stopped early and tv_cf_22 was comparing a \
          truncated list against the literal. Fix the scan bound rather than the \
          literal."
+    );
+}
+
+/// POSITIVE pin for what the seven-arm fix delivered, plus the regression it
+/// could have caused.
+///
+/// Two properties, both stated as literal expectations rather than derived from
+/// the code under test:
+///
+/// 1. **Every fixed-width-id arm accepts its own canonical form**, except
+///    `payment`, which is named rather than counted.
+/// 2. **The legacy 32-element array form still parses on input** for every one
+///    of those arms. This is the half that a fix like this can silently break:
+///    adopting `hex_id_32` widens input acceptance, but if the adapter had been
+///    written to accept only the hex form, every existing consumer sending a
+///    byte array would break while the new hex tests stayed green. The
+///    canonical-form test above cannot see that, because it only ever sends hex.
+///
+/// The ids here are POSITION-DISTINCT (`0x00..=0x1f`, not a repeated byte).
+/// A single repeated byte is a fixed point of every byte permutation, so an
+/// adapter that reversed byte order would pass this vector — that is exactly how
+/// the original thirteen vectors were blind, and it is why `tv_cf_14` exists.
+#[test]
+fn tv_cf_24_fixed_width_arms_round_trip_and_still_accept_the_legacy_array_form() {
+    /// Position-distinct 32-byte id: byte `i` is `i`. A permutation of this
+    /// value is a DIFFERENT value, so a byte-order defect is detectable.
+    fn id() -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        out
+    }
+
+    let id_val = serde_json::to_value(id()).expect("id serializes");
+
+    // (label, legacy-form JSON with the id as a 32-element array)
+    let legacy_cases: Vec<(&str, serde_json::Value)> = vec![
+        (
+            "invocation_hash_bind",
+            serde_json::json!({"type": "invocation_hash_bind", "value": id_val}),
+        ),
+        (
+            "ask_binding",
+            serde_json::json!({"type": "ask_binding", "value": id_val}),
+        ),
+        (
+            "vault",
+            serde_json::json!({"type": "vault", "value": id_val}),
+        ),
+        (
+            "wrapped_only",
+            serde_json::json!({
+                "type": "wrapped_only",
+                "value": {"parent_capability": id_val}
+            }),
+        ),
+        (
+            "redemption_context",
+            serde_json::json!({
+                "type": "redemption_context",
+                "value": {"context_hash": id_val}
+            }),
+        ),
+        (
+            "asset_binding",
+            serde_json::json!({"type": "asset_binding", "value": {"asset_id": id_val}}),
+        ),
+        (
+            "factory",
+            serde_json::json!({
+                "type": "factory",
+                "value": {
+                    "target_vault_id": id_val,
+                    "action_template": {"selector": "probe", "args": []},
+                    "required_caller": null,
+                    "pre_conditions": [],
+                    "expiry_for_deploy_unix": 0,
+                }
+            }),
+        ),
+        (
+            "policy_reference",
+            serde_json::json!({
+                "type": "policy_reference",
+                "value": {
+                    "policy_id": id_val,
+                    "policy_version_seq": 1,
+                    "attenuation_witness": hex::encode([0xAB; 64]),
+                }
+            }),
+        ),
+    ];
+
+    let mut problems: Vec<String> = Vec::new();
+    for (label, legacy) in &legacy_cases {
+        match serde_json::from_value::<Caveat>(legacy.clone()) {
+            Ok(_) => {}
+            Err(e) => problems.push(format!(
+                "{label}: the LEGACY 32-element array form no longer parses, so an \
+                 existing consumer that sends arrays breaks: {e}"
+            )),
+        }
+    }
+
+    // Property 1: the canonical form of each of the eight arms above parses.
+    // `payment` is excluded by NAME and counted nowhere, so a future fix to it
+    // shows up as a new entry here rather than as a silently passing test.
+    let canonical_ok: Vec<&str> = arms()
+        .iter()
+        .filter(|c| c.name != "payment")
+        .filter(|c| serde_json::from_slice::<Caveat>(&c.caveat.canonical_ser()).is_ok())
+        .map(|c| c.name)
+        .collect();
+    let mut expected: Vec<&str> = legacy_cases.iter().map(|(l, _)| *l).collect();
+    expected.push("amount_max");
+    expected.sort_unstable();
+    let mut observed = canonical_ok.clone();
+    observed.sort_unstable();
+    if observed != expected {
+        problems.push(format!(
+            "the arms accepting their own canonical form changed.\n  expected: {expected:?}\n  \
+             observed: {observed:?}"
+        ));
+    }
+
+    // Property 1b: byte ORDER is preserved in BOTH directions on the hex path.
+    // Round-trip success alone does not prove this: an adapter that reversed the
+    // bytes on the way out AND on the way in would round-trip perfectly while
+    // emitting the wrong value. These two assertions are what make the
+    // position-distinct id above worth having, and they are the reason this
+    // vector exists separately from the `contains`-style pins elsewhere.
+    let id = id();
+    let emitted = serde_json::to_value(Caveat::Vault(id)).expect("vault serializes");
+    let expected_hex = hex::encode(id);
+    if emitted.get("value").and_then(|v| v.as_str()) != Some(expected_hex.as_str()) {
+        problems.push(format!(
+            "vault emitted {:?} under `value`, expected the 64-char hex of the id \
+             in order ({expected_hex:?})",
+            emitted.get("value")
+        ));
+    }
+    let decoded: Caveat = serde_json::from_value(serde_json::json!({
+        "type": "vault",
+        "value": expected_hex,
+    }))
+    .expect("hex form parses");
+    match decoded {
+        Caveat::Vault(got) if got == id => {}
+        other => problems.push(format!(
+            "decoding the canonical hex did not yield the original id in order: {other:?}"
+        )),
+    }
+
+    assert!(
+        problems.is_empty(),
+        "the fixed-width-id round-trip contract changed:\n  {}\n\n\
+         The canonical-form half is RFC-0011-caveat-form-amendment.md clause 1 \
+         and clause 3. If an arm stopped accepting the legacy array form, clause \
+         3 is broken and every pre-existing consumer that sends arrays breaks.",
+        problems.join("\n  ")
     );
 }
 

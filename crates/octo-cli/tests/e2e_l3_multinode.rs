@@ -2068,3 +2068,231 @@ fn l3_capability_attenuate_substrate_stub_exit_code() {
         String::from_utf8_lossy(&atten_out.stdout),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: dry-run on the four post-4c(b) write paths renders the
+// preview envelope and never reaches `WalletStore::unlock`
+// ---------------------------------------------------------------------------
+
+/// Dry-run on a mutating identity / capability / governance command
+/// MUST short-circuit BEFORE `WalletStore::unlock` so the preview
+/// envelope is rendered without ever opening the wallet. The
+/// invariant is load-bearing: a `--dry-run` that needed a
+/// passphrase would leak the operator's secret-read pattern into
+/// every CI script that exercises the preview (the operator's
+/// deliberate guard against unattended secret reads at the
+/// `--passphrase-stdin --allow-stdin-secret` boundary is exactly
+/// the thing dry-run is meant to NOT trigger).
+///
+/// These four tests are the cross-process regression net for the
+/// invariant. Each one:
+/// 1. asserts the dry-run invocation exits 0 in a clean HOME
+///    (no wallet open)
+/// 2. asserts the rendered preview envelope carries a stable
+///    identifier (placeholder cap_id or dry-run correlation UUID)
+/// 3. asserts no passphrase-related stderr text leaks through
+///    (the operator's wallet was never opened)
+///
+/// The four write paths covered:
+/// - `capability mirror dry-run` (mint dry-run, substrate stubbed)
+/// - `capability attenuate dry-run` (substrate stubbed)
+/// - `governance attest dry-run` (substrate wired)
+/// - `governance vote dry-run` (substrate wired)
+///
+/// Mint + attenuate dry-run are the cross-process counterparts of
+/// the in-process `tv_cap17b_mint_dry_run_stderr_echo` and
+/// `tv_cap18b_attenuate_dry_run_stderr_echo` (the pastejacking
+/// defense echo lives BEFORE the dry-run gate per the substrate's
+/// pre-gate ordering).
+#[test]
+fn l3_capability_mint_dry_run_does_not_open_wallet() {
+    let home = new_node_home("l3-cap-mint-dry");
+
+    // Caveats must be parseable JSON; holder DID must be
+    // canonical. The substrate's `parse_caveats` is exercised
+    // before the dry-run short-circuit, so a malformed caveat
+    // surfaces an exit-9 before the preview render.
+    let mint = octo_in(&home)
+        .args([
+            "capability",
+            "mint",
+            "--caveats",
+            r#"{"type":"before","value":4102444800}"#,
+            "--holder",
+            "did:octo:holder-1",
+            "--root",
+            "ab".repeat(32).as_str(),
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("spawn mint dry-run");
+    assert_eq!(
+        mint.status.code(),
+        Some(0),
+        "capability mirror --dry-run must exit 0 in a clean HOME, \
+         got {:?}. stderr={}, stdout={}",
+        mint.status.code(),
+        String::from_utf8_lossy(&mint.stderr),
+        String::from_utf8_lossy(&mint.stdout),
+    );
+    let env = Envelope::parse(&String::from_utf8_lossy(&mint.stdout));
+    assert_eq!(
+        env.payload["capability_id"].as_str(),
+        Some("(preview)"),
+        "dry-run preview must carry the canonical PREVIEW_CAP_ID \
+         placeholder, got {:?}",
+        env.payload["capability_id"]
+    );
+    let stderr = String::from_utf8_lossy(&mint.stderr);
+    assert!(
+        !stderr.contains("passphrase") && !stderr.contains("unlock"),
+        "dry-run preview must NEVER touch the wallet; a stderr leak of \
+         'passphrase' or 'unlock' means the dry-run gate moved AFTER \
+         wallet IO. stderr={stderr}"
+    );
+}
+
+#[test]
+fn l3_capability_attenuate_dry_run_does_not_open_wallet() {
+    let home = new_node_home("l3-cap-atten-dry");
+
+    let atten = octo_in(&home)
+        .args([
+            "capability",
+            "attenuate",
+            "ab".repeat(32).as_str(),
+            "--caveats",
+            r#"{"type":"before","value":4102444800}"#,
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("spawn attenuate dry-run");
+    assert_eq!(
+        atten.status.code(),
+        Some(0),
+        "capability attenuate --dry-run must exit 0 in a clean HOME, \
+         got {:?}. stderr={}, stdout={}",
+        atten.status.code(),
+        String::from_utf8_lossy(&atten.stderr),
+        String::from_utf8_lossy(&atten.stdout),
+    );
+    let env = Envelope::parse(&String::from_utf8_lossy(&atten.stdout));
+    assert_eq!(
+        env.payload["child_cap_id"].as_str(),
+        Some("(preview)"),
+        "attenuate dry-run preview must carry the canonical \
+         PREVIEW_CAP_ID placeholder, got {:?}",
+        env.payload["child_cap_id"]
+    );
+    let stderr = String::from_utf8_lossy(&atten.stderr);
+    assert!(
+        !stderr.contains("passphrase") && !stderr.contains("unlock"),
+        "dry-run preview must NEVER touch the wallet; a stderr leak \
+         means the dry-run gate moved AFTER wallet IO. stderr={stderr}"
+    );
+}
+
+#[test]
+fn l3_governance_attest_dry_run_does_not_open_wallet() {
+    let home = new_node_home("l3-gov-attest-dry");
+
+    let out = octo_in(&home)
+        .args([
+            "governance",
+            "attest",
+            "did:octo:subject-1",
+            "route-quality:uptime-30d",
+            "--evidence-hash-hex",
+            &"00".repeat(32),
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("spawn attest dry-run");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "governance attest --dry-run must exit 0 in a clean HOME, \
+         got {:?}. stderr={}, stdout={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout),
+    );
+    let env = Envelope::parse(&String::from_utf8_lossy(&out.stdout));
+    // The attest dry-run preview carries a per-invocation UUID
+    // `dry_run_correlation_id`. Asserting it is a UUID-form string
+    // pins the correlation primitive without coupling to a fixed
+    // value (the UUID is freshly minted per call).
+    let corr = env.payload["dry_run_correlation_id"]
+        .as_str()
+        .expect("attest dry-run preview must carry dry_run_correlation_id");
+    assert!(
+        corr.len() == 36 && corr.chars().filter(|c| *c == '-').count() == 4,
+        "dry_run_correlation_id must be a UUID-form string, got {corr:?}"
+    );
+    assert_eq!(
+        env.payload["subject_did"].as_str(),
+        Some("did:octo:subject-1"),
+        "dry-run preview must echo the subject_did verbatim"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("passphrase") && !stderr.contains("unlock"),
+        "attest dry-run must NEVER touch the wallet; a stderr leak \
+         means the dry-run gate moved AFTER wallet IO. stderr={stderr}"
+    );
+}
+
+#[test]
+fn l3_governance_vote_dry_run_does_not_open_wallet() {
+    let home = new_node_home("l3-gov-vote-dry");
+
+    let proposal_id_hex = "11".repeat(32);
+    let voter_cap_id = "22".repeat(32);
+    let out = octo_in(&home)
+        .args([
+            "governance",
+            "vote",
+            &proposal_id_hex,
+            "approve",
+            "--weight-bps",
+            "5000",
+            "--voter-cap-id",
+            &voter_cap_id,
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("spawn vote dry-run");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "governance vote --dry-run must exit 0 in a clean HOME, \
+         got {:?}. stderr={}, stdout={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout),
+    );
+    let env = Envelope::parse(&String::from_utf8_lossy(&out.stdout));
+    // The vote dry-run preview mirrors operator-supplied input
+    // args per the comment at `crates/octo-cli/src/commands/
+    // governance.rs:1236` (extracted to `build_vote_dry_run_preview`).
+    // The `choice` is canonicalized (APPROVE -> yes); assert the
+    // substrate-normalized form to pin the canonicalization at
+    // the preview boundary.
+    assert_eq!(
+        env.payload["vote_choice"].as_str(),
+        Some("yes"),
+        "vote dry-run preview must canonicalize the choice to the \
+         substrate form (APPROVE -> yes), got {:?}",
+        env.payload["vote_choice"]
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("passphrase") && !stderr.contains("unlock"),
+        "vote dry-run must NEVER touch the wallet; a stderr leak \
+         means the dry-run gate moved AFTER wallet IO. stderr={stderr}"
+    );
+}

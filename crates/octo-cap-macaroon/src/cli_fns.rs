@@ -15,13 +15,15 @@
 //!
 //! ## Stub status
 //!
-//! `list_active`, `mint`, and `attenuate` are intentional stubs
-//! (return `Ok(Vec::new())` / `Err(MintError::HolderSig(...))`).
-//! Phase 1 of `0011-capability-commands` lands the substrate surface
-//! + types; full implementation lives in Phase 2 once the holder
-//! registry / catalog wiring decisions are finalized per RFC-0011
-//! §Implementation Phases. Caveat-parse / caveat-combination errors
-//! are surfaced directly by the CLI layer as
+//! `list_active` remains a stub returning `Ok(Vec::new())` — the
+//! active capability inventory is held in the in-process CLI
+//! registry for now (the holder-registry substrate is not yet
+//! wired). `mint` and `attenuate` are wired: `mint` delegates to
+//! [`CapabilityToken::mint`], `attenuate` iterates `caveats` and
+//! chains [`CapabilityToken::attenuate_with_signer`]. The composite
+//! catalog is consulted per-append so the `WrappedOnly` chain guard
+//! is enforced at the substrate boundary. Caveat-parse / caveat-
+//! combination errors are surfaced directly by the CLI layer as
 //! `OctoCliError::CaveatParse` (exit 7) or
 //! `OctoCliError::InvalidCaveatCombination` (exit 8) — the substrate
 //! does not need its own caveat-validation variant.
@@ -52,56 +54,50 @@ pub fn list_active<S: CapabilitySigner + ?Sized>(
 ///
 /// Thin facade over [`CapabilityToken::mint`] that the CLI reaches
 /// via this single entry point rather than calling the substrate
-/// type directly. Future CLI-specific pre/post hooks (e.g., wire
-/// encoding, holder-registry persistence per RFC-0969) will be
-/// composed here without modifying [`CapabilityToken::mint`] itself
-/// (Layer B additive principle).
+/// type directly. CLI-specific pre/post hooks (e.g., wire encoding,
+/// holder-registry persistence per RFC-0969) compose here without
+/// modifying [`CapabilityToken::mint`] itself (Layer B additive
+/// principle).
 ///
 /// # Errors
 ///
-/// Returns whatever [`CapabilityToken::mint`] returns. Today the stub
-/// short-circuits to `MintError::HolderSig("stub: not implemented")`
-/// because `CapabilityToken::mint` does not yet consume `holder_did`
-/// as a separate parameter (it stores `holder_did` itself). The full
-/// implementation will call [`CapabilityToken::mint`] directly.
-pub fn mint<S: CapabilitySigner + ?Sized>(
+/// Returns whatever [`CapabilityToken::mint`] returns — RNG failure
+/// surfaces as `MintError::Macaroon`, holder key rejection as
+/// `MintError::Signer`.
+pub fn mint<S: CapabilitySigner>(
     root_secret: &[u8; 32],
     holder: &S,
     holder_did: &str,
     caveats: &[Caveat],
 ) -> Result<CapabilityToken, MintError> {
-    let _ = (root_secret, holder, holder_did, caveats);
-    Err(MintError::HolderSig(
-        "stub: octo_cap_macaroon::cli_fns::mint is not yet wired; \
-         use CapabilityToken::mint directly until Phase 2 lands"
-            .to_owned(),
-    ))
+    CapabilityToken::mint(root_secret, holder, holder_did, caveats)
 }
 
-/// Attenuate a parent capability.
+/// Attenuate a parent capability by chaining a slice of caveats.
 ///
-/// Thin facade over [`CapabilityToken::attenuate_with_signer`]. Stub:
-/// short-circuits to `MintError::HolderSig`. The full
-/// implementation iterates `caveats` and chains
-/// `parent.attenuate_with_signer(c, holder, catalog.as_ref())` for
-/// each caveat, then returns the final token.
+/// Thin facade over [`CapabilityToken::attenuate_with_signer`]. Each
+/// caveat in `caveats` is appended to the parent in order, with the
+/// holder key re-signing the chain after every append. The catalog
+/// (composite storage + gossip) is consulted per-append so the
+/// `WrappedOnly` chain guard is enforced at the substrate boundary
+/// for every caveat, not only the last.
 ///
 /// # Errors
 ///
-/// Returns whatever [`CapabilityToken::attenuate_with_signer`] returns.
-pub fn attenuate<S: CapabilitySigner + ?Sized>(
+/// Returns the first error from [`CapabilityToken::attenuate_with_signer`]:
+/// `MintError::Macaroon` on catalog cycle / depth / parent-not-found /
+/// `UnknownRawName`, or `MintError::Signer` on holder key rejection.
+pub fn attenuate<S: CapabilitySigner>(
     parent: &CapabilityToken,
     caveats: &[Caveat],
     holder: &S,
     catalog: &CompositeCapabilityCatalog,
 ) -> Result<CapabilityToken, MintError> {
-    let _ = (parent, caveats, holder, catalog);
-    Err(MintError::HolderSig(
-        "stub: octo_cap_macaroon::cli_fns::attenuate is not yet wired; \
-         use CapabilityToken::attenuate_with_signer directly until \
-         Phase 2 lands"
-            .to_owned(),
-    ))
+    let mut current = parent.clone();
+    for caveat in caveats {
+        current = current.attenuate_with_signer(caveat.clone(), holder, catalog)?;
+    }
+    Ok(current)
 }
 
 #[cfg(test)]
@@ -153,40 +149,37 @@ mod tests {
         assert!(result.is_empty(), "list_active stub must return empty Vec");
     }
 
-    /// `mint` stub must return `HolderSig` (not panic, not hang). The
-    /// stub uses the closest available variant (no `Other`/caveat
-    /// variant exists in `MintError` per LAYER-01 layer-model audit).
-    /// CLI depends on this contract to render a "not implemented"
-    /// error envelope rather than crashing.
+    /// `mint` is wired: returns a real `CapabilityToken` whose
+    /// `holder_did` matches the input and whose macaroon carries
+    /// the requested initial caveats. Holder signature is set, not
+    /// stale, because the substrate path signs at mint.
     #[test]
-    fn mint_stub_returns_holder_sig() {
+    fn mint_returns_real_token_with_holder_did_and_initial_caveats() {
         let holder = fixture();
         let root = [0x42u8; 32];
-        let result = mint(&root, &holder, "did:octo:zStubMint", &[]);
-        match result {
-            Err(MintError::HolderSig(msg)) => {
-                assert!(
-                    msg.contains("not yet wired"),
-                    "stub error must explain Phase 2 status, got: {msg}"
-                );
-            }
-            other => panic!("expected HolderSig stub error, got {other:?}"),
-        }
+        let initial = [Caveat::Model("gpt-4".to_owned())];
+        let token = mint(&root, &holder, "did:octo:zMintLive", &initial)
+            .expect("mint must succeed when wired");
+        assert_eq!(token.holder_did, "did:octo:zMintLive");
+        assert_eq!(token.macaroon.caveats, initial);
+        assert!(
+            !token.holder_sig_stale,
+            "mint must produce a fresh, signed token"
+        );
     }
 
-    /// `attenuate` stub must return `HolderSig`. Composite catalog
-    /// + signer + parent token are constructed but unused (the stub
-    /// binds them with `let _`); this test pins the contract.
+    /// `attenuate` is wired: chains caveats in order, returns a
+    /// non-stale signed token whose macaroon has all caveats
+    /// appended. The catalog's `WrappedOnly` chain guard is enforced
+    /// per-append at the substrate boundary.
     #[test]
-    fn attenuate_stub_returns_holder_sig() {
+    fn attenuate_chains_caveats_in_order_and_resigns() {
         let holder = fixture();
         let root = [0x42u8; 32];
-        // Mint a real parent via the substrate entry point so we have
-        // a non-garbage `CapabilityToken` to pass.
         let parent = CapabilityToken::mint(
             &root,
             &holder,
-            "did:octo:zStubAttenuate",
+            "did:octo:zAttenuateLive",
             &[Caveat::Model("gpt-4".to_owned())],
         )
         .expect("mint parent");
@@ -194,15 +187,23 @@ mod tests {
             std::sync::Arc::new(InMemoryCatalog::default()),
             std::sync::Arc::new(NoopGossip),
         );
-        let result = attenuate(&parent, &[Caveat::Before(2_000_000_000)], &holder, &catalog);
-        match result {
-            Err(MintError::HolderSig(msg)) => {
-                assert!(
-                    msg.contains("not yet wired"),
-                    "stub error must explain Phase 2 status, got: {msg}"
-                );
-            }
-            other => panic!("expected HolderSig stub error, got {other:?}"),
-        }
+        let new_caveats = [
+            Caveat::Before(2_000_000_000),
+            Caveat::Model("gpt-3.5-turbo".to_owned()),
+        ];
+        let child = attenuate(&parent, &new_caveats, &holder, &catalog)
+            .expect("attenuate must succeed when wired");
+        let expected = {
+            let mut all = parent.macaroon.caveats.clone();
+            all.extend(new_caveats.iter().cloned());
+            all
+        };
+        assert_eq!(child.macaroon.caveats, expected);
+        assert!(
+            !child.holder_sig_stale,
+            "attenuate_with_signer path must resign, not mark stale"
+        );
+        // Sanity: parent is unchanged (attenuate is non-mutating).
+        assert_eq!(parent.macaroon.caveats.len(), 1);
     }
 }

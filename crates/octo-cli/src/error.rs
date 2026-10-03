@@ -1557,8 +1557,17 @@ impl OctoCliError {
             }
             // RFC-0011-j §Error Handling row 82 — TOML parse/write
             // failure for `octo network mode set` + `authority rotate`.
-            Self::NetworkConfigParseFailed { .. } => {
-                "verify `<octo_home>/network/<file>.toml` exists and is well-formed; the substrate-side BootstrapConfigError is forwarded with operator-safe redaction".to_string()
+            //
+            // The `path_redacted` field is `None` at all four
+            // construction sites (R21-0011-x §6.28 reported-not-fixed
+            // finding); the message previously asserted an
+            // "operator-safe redaction" policy that no code implements.
+            // The remedy text below names the file the operator
+            // should check instead of pretending the redaction happened.
+            Self::NetworkConfigParseFailed { kind_redacted, .. } => {
+                format!(
+                    "verify <octo_home>/network/<file>.toml exists and is well-formed; the substrate-side BootstrapConfigError is forwarded (kind tag: {kind_redacted})"
+                )
             }
             // RFC-0011-j §Error Handling row 89 — companion mission
             // closure gating. Pre-companion (G1/G6/G6b/G8 not yet

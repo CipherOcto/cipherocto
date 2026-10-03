@@ -1,14 +1,33 @@
-//! `#[serde(with = "hex_id_32")]` adapter for 32-byte id newtypes.
+//! `#[serde(with = "hex_id_32")]` adapter for 32-byte id-bearing fields.
 //!
-//! Serialises as a 64-char lowercase hex string (the canonical form
-//! already emitted by `Caveat::canonical_ser` for `Vault`, `AskBinding`,
-//! `WrappedOnly`, `RedemptionContext`, `InvocationHashBind`).
-//! Deserialises from either a 64-char hex string OR a 32-element byte
-//! array (legacy form preserved for migration).
+//! Serialises as a 64-char lowercase hex string — the canonical form that
+//! `Caveat::canonical_ser` emits for every 32-byte id it renders.
+//! Deserialises from either a 64-char hex string (canonical) OR a 32-element
+//! byte array (legacy form preserved for migration).
 //!
-//! RFC-0011 §Caveat Form Amendment: this adapter is the substrate-owned
-//! wire form for any 32-byte id newtype that crosses the canonical
-//! boundary.
+//! Two things this doc previously got wrong, both caught by the adversarial
+//! review of RFC-0011 §Caveat Form Amendment:
+//!
+//! * It listed the arms that EMIT hex as though they all routed through this
+//!   adapter. They do not. `Caveat::Vault` does. `WrappedOnly`,
+//!   `RedemptionContext`, `InvocationHashBind`, and `AskBinding` emit hex from
+//!   `canonical_ser` but still use the derived array form on input, so they
+//!   reject the hex they write. See §Known deviations 3 in the RFC, and
+//!   `tv_cf_20` / `tv_cf_21` for the current set.
+//! * It did not mention `PaymentCaveat::asset_id` and `::nonce`, which now
+//!   route through here. They previously used a parallel private adapter that
+//!   accepted hex only, so the same canonical form parsed for `Vault` and was
+//!   rejected by its siblings in the same crate. `tv_cf_19` pins the parity.
+//!
+//! Dispatch is via `deserialize_any`, which requires a SELF-DESCRIBING serde
+//! format. JSON and MessagePack qualify; bincode and postcard do not. A type
+//! carrying a 32-byte id cannot be read through a non-self-describing format
+//! once this adapter is on the path, and the failure is a runtime error, not a
+//! compile error. Nothing in this crate does that today, but the constraint is
+//! load-bearing for anyone adding a format.
+//!
+//! RFC-0011 §Caveat Form Amendment: this adapter is the substrate-owned wire
+//! form for any 32-byte id-bearing field that crosses the canonical boundary.
 
 use serde::de::{self, Visitor};
 use serde::{Deserializer, Serializer};

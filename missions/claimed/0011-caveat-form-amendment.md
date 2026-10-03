@@ -1,6 +1,6 @@
 ---
 name: 0011-caveat-form-amendment
-description: "Land the Layer A substrate change for RFC-0011 Caveat Form Amendment: add `visit_str` arm to `dqa_serde::field::deserialize` so the canonical 64-hex form emitted by `Caveat::canonical_ser` for `AmountMax` + `Payment.budget` re-parses through the input form; create `hex_id_32` adapter module accepting both 64-hex (canonical) and 32-element byte array (migration); apply the adapter to `Caveat::Vault([u8; 32])`. 9 new test vectors (`tv_cf_01..09`) plus inversion of `guide_canonical_form_is_not_reparseable` → `guide_canonical_form_is_reparseable`. Layer A frozen substrate — requires the amendment RFC acceptance per RFC-0011 §Caveat Catalog + §Hex32 newtype."
+description: "Land the Layer B substrate change for RFC-0011 Caveat Form Amendment: add `visit_str` arm to `dqa_serde::field::deserialize` so the canonical 64-hex form emitted by `Caveat::canonical_ser` for `AmountMax` re-parses through the input form; create `hex_id_32` adapter module accepting both 64-hex (canonical) and 32-element byte array (migration); apply the adapter to `Caveat::Vault([u8; 32])`. Round-trip holds for the lossless arms only: the `Payment` canonical form is a partial projection and does NOT reparse, and four of the five hex-emitting arms still reject their own hex. Both are recorded in the RFC §Known deviations and pinned by `tv_cf_18` and `tv_cf_20`/`tv_cf_21`. Requires the amendment RFC acceptance per RFC-0011 §Caveat Catalog + §Hex32 newtype."
 metadata:
   node_type: mission
   type: substrate-conformance
@@ -15,14 +15,17 @@ status: CLAIMED
 
 # Mission `0011-caveat-form-amendment` v1.0 — CLAIMED 2026-10-02, implementation complete 2026-10-03
 
-**Owner:** substrate (Layer A, `octo-cap-macaroon`).
+**Owner:** substrate (Layer B, `octo-cap-macaroon` — the spec review during
+Phase 2 established the crate is Layer B and **not** in the Layer A frozen
+list; an earlier revision of this line said Layer A, which would have licensed
+skipping the freeze discipline).
 **Phase:** Phase 1 of the Caveat Form Alignment plan.
 **Companion:** `missions/claimed/0011-vault-asset-chain-id-hex.md` (Layer B, paired).
 
 ## Status
 
 Implementation complete as of 2026-10-03. All acceptance criteria for the
-Layer A scope are met and every gate is green; the mission is **not** closed,
+mission's scope are met and every gate is green; the mission is **not** closed,
 because the two promotion gates below have not fired.
 
 Landed:
@@ -119,9 +122,10 @@ comment records the inversion.
 
 ## Layer model
 
-- `octo-cap-macaroon` (Layer A) — frozen substrate; the change is additive
-  (a new `visit_str` arm + a new module + a `#[serde(with = ...)]` on one
-  enum arm + 3 new tests). No field removals, no variant additions.
+- `octo-cap-macaroon` (Layer B) — RFC-driven and additive; the change is a
+  new `visit_str` arm + a new module + a `#[serde(with = ...)]` on one enum arm
+  - 3 new tests. No field removals, no variant additions. It is **not** frozen,
+    which is why AC-9 below is a change-scope check rather than a freeze check.
 - `octo-cli` (Layer C) — one test vector inverted in Step 6.
 
 ## Acceptance Criterion
@@ -144,19 +148,27 @@ negative control):
   without the adapter), so the failure mode for AC-2-NC is the loss of the
   hex-form acceptance — `tv_cf_08_canonical_vault_reparses_through_input_form`
   fails when the adapter is removed.
-- **AC-3:** `cargo test -p octo-cap-macaroon --lib` green (existing 250 + 9
-  new = 259 tests).
-- **AC-4:** `cargo test -p octo-cap-macaroon --tests` green (6 new
-  integration tests across two files).
+- **AC-3:** `cargo test -p octo-cap-macaroon --lib` green (257 lib tests,
+  including the 3 in-crate `tv_cf_07..09`).
+- **AC-4:** `cargo test -p octo-cap-macaroon --tests` green (14 integration
+  vectors under default features, 16 under `--features hex-ids`).
+
+  Counts corrected 2026-10-03. These ACs previously read 259 and 6, written
+  when the amendment carried 13 vectors. The adversarial review added six
+  (`tv_cf_14..16`, `tv_cf_18..21`), and the two feature configs are mutually
+  exclusive per file via `cfg` attributes. Measured per file, not estimated.
+
 - **AC-5:** `cargo test -p octo-cli --lib guide_canonical_form_is_reparseable`
   green (the inverted vector).
 - **AC-6:** `cargo clippy -p octo-cap-macaroon --all-targets -- -D warnings`
   clean.
 - **AC-7:** `cargo clippy -p octo-cli --all-targets -- -D warnings` clean.
 - **AC-8:** `cargo fmt --all -- --check` clean.
-- **AC-9:** Layer A frozen check: `git diff crates/octo-cap-macaroon` shows
+- **AC-9:** change-scope check: `git diff crates/octo-cap-macaroon` shows
   only `dqa_serde.rs`, `hex_id_32.rs` (new), `caveat/mod.rs` (one enum arm
-  attribute + 3 tests), `lib.rs` (one `pub mod`), and the new test files.
+  attribute + 3 tests), `caveat/payment.rs` (one adapter now delegating to
+  `hex_id_32`), `lib.rs` (one `pub mod`), and the new test files. Recorded as a
+  scope check rather than a freeze check because the crate is Layer B.
 
 ## Files / Artifacts
 

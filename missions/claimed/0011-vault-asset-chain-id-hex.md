@@ -1,6 +1,6 @@
 ---
 name: 0011-vault-asset-chain-id-hex
-description: "Land the Layer B wire-format migration for the three 32-byte id newtypes (`AssetId`, `ChainId`, `VaultId`) behind a `hex-ids` feature flag (off by default). Under `--features hex-ids`, each newtype serializes as a 64-char lowercase hex string via a newtype-specific adapter that delegates to `hex_id_32` from the paired Layer A mission `0011-caveat-form-amendment`. Each adapter accepts both the 64-hex form (canonical, preferred) and the 32-element byte-array form (legacy, preserved for migration). Under default features the derived `Serialize` form (32-element byte array) is unchanged. 4 new test vectors (`tv_cf_10..13`)."
+description: "Land the Layer B wire-format migration for the three 32-byte id newtypes (`AssetId`, `ChainId`, `VaultId`) behind a `hex-ids` feature flag (off by default). Under `--features hex-ids`, each newtype serializes as a 64-char lowercase hex string via a newtype-specific adapter that delegates to `hex_id_32` from the paired mission `0011-caveat-form-amendment` (same crate, Layer B). Each adapter accepts both the 64-hex form (canonical, preferred) and the 32-element byte-array form (legacy, preserved for migration). Under default features the derived `Serialize` form (32-element byte array) is unchanged. 4 new test vectors (`tv_cf_10..13`)."
 metadata:
   node_type: mission
   type: layer-b-wire-format
@@ -17,7 +17,8 @@ status: CLAIMED
 
 **Owner:** substrate (Layer B, `octo-cap-macaroon::substrate`).
 **Phase:** Phase 2 of the Caveat Form Alignment plan.
-**Companion:** `missions/claimed/0011-caveat-form-amendment.md` (Layer A, paired).
+**Companion:** `missions/claimed/0011-caveat-form-amendment.md` (Layer B, paired — the
+crate is Layer B; an earlier revision of this line said Layer A).
 
 ## Status
 
@@ -63,7 +64,7 @@ form. A feature flag is the correct shape: OFF by default, ON once the
 amendment lands and consumers migrate.
 
 The newtype adapters delegate the hex-decode work to `hex_id_32` from the
-paired Layer A mission, so the 32-byte constraint is defined once and
+paired mission, so the 32-byte constraint is defined once and
 re-exported three times.
 
 ## Scope
@@ -72,7 +73,7 @@ re-exported three times.
 
 Edit `crates/octo-cap-macaroon/Cargo.toml`. Add a `[features]` entry for
 `hex-ids = []`. The flag is OFF by default. The comment block names the
-paired Layer A mission and the off-until-acceptance migration posture.
+paired mission and the off-until-acceptance migration posture.
 
 ### Step 2: Add 3 newtype-specific adapter modules
 
@@ -92,7 +93,7 @@ Each adapter exposes `pub fn serialize<S>` (emits `hex::encode` of the inner
 
 Edit `crates/octo-cap-macaroon/src/substrate.rs`. Add a paragraph to each of
 `AssetId`, `ChainId`, and `VaultId`'s doc comment describing the
-`hex-ids`-flag migration posture and pointing to the paired Layer A mission.
+`hex-ids`-flag migration posture and pointing to the paired mission.
 
 ### Step 4: Add the feature-gated round-trip vectors
 
@@ -141,19 +142,24 @@ The mission is closed when the following are true:
   (canonical, preferred) and the 32-element byte-array form (legacy,
   preserved for migration). Pinned by `tv_cf_10..12` plus the
   `hex_id_32_accepts_legacy_array_form` test (`tv_cf_05`) from the paired
-  Layer A mission (the Layer B adapter delegates to `hex_id_32::deserialize`
-  which already accepts both forms). Layer B inherits the legacy-array
+  mission, same crate (the newtype adapter delegates to
+  `hex_id_32::deserialize` which already accepts both forms). The newtypes
+  inherit the legacy-array
   acceptance from `hex_id_32`; if `tv_cf_05` fails, `tv_cf_10..12` fail for
   the same reason.
 - **AC-3:** under default features (no `hex-ids`), the derived `Serialize`
   form is unchanged — 32-element byte array. Pinned by
   `tv_cf_13_default_newtype_serde_is_byte_array`.
 - **AC-4:** `cargo test -p octo-cap-macaroon --features hex-ids --tests`
-  green (the 3 feature-gated vectors + the 6 Layer A integration vectors =
-  9 total integration tests under `--features hex-ids`).
-- **AC-5:** `cargo test -p octo-cap-macaroon --tests` green (the 1
-  default-feature regression vector + the 6 Layer A integration vectors = 7
-  total integration tests under default features).
+  green (16 integration vectors under `--features hex-ids`).
+- **AC-5:** `cargo test -p octo-cap-macaroon --tests` green (14 integration
+  vectors under default features).
+
+  Counts corrected 2026-10-03. These ACs previously read 9 and 7, written when
+  the amendment carried 13 vectors. The adversarial review added six, and the
+  two configs are mutually exclusive per file via `cfg` attributes, so the two
+  totals differ rather than nesting. Measured per file, not estimated.
+
 - **AC-6:** `cargo clippy -p octo-cap-macaroon --all-targets -- -D warnings`
   clean.
 - **AC-7:** `cargo clippy -p octo-cap-macaroon --all-features -- -D warnings`
@@ -183,12 +189,12 @@ The mission is closed when the following are true:
   acceptance of this mission is the `hex-ids` feature's `OFF by default`
   → `ON after migration` switch.
 - `docs/plans/2026-10-02-caveat-form-alignment.md` Phase 2 — the plan.
-- Paired Layer A mission `0011-caveat-form-amendment` — provides
+- Paired mission `0011-caveat-form-amendment` (same crate) — provides
   `hex_id_32` for the newtype adapters to delegate to.
 
 ## Out of scope
 
-- The `Caveat::Vault` `hex_id_32` application (owned by the paired Layer A
+- The `Caveat::Vault` `hex_id_32` application (owned by the paired
   mission `0011-caveat-form-amendment`). This mission's `vault_id_hex` is
   for `VaultId` _outside_ `Caveat::Vault`.
 - The `CaveatSummaryView` field rename (owned by Phase 3 of the plan).
@@ -197,12 +203,12 @@ The mission is closed when the following are true:
 
 ## Dependencies
 
-- `missions/claimed/0011-caveat-form-amendment.md` — paired Layer A mission
+- `missions/claimed/0011-caveat-form-amendment.md` — paired mission
   whose `hex_id_32` adapter this mission's newtype adapters delegate to.
 - `rfcs/draft/0011-caveat-form-amendment.md` — the amendment RFC.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                           |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v1.0    | 2026-10-02 | Initial filing per Caveat Form Alignment plan Phase 0. `hex-ids` feature flag (off by default) + 3 newtype-specific adapter modules (`asset_id_hex`, `chain_id_hex`, `vault_id_hex`) + 4 new test vectors (`tv_cf_10..13`). Paired with Layer A. |
+| Version | Date       | Change                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-10-02 | Initial filing per Caveat Form Alignment plan Phase 0. `hex-ids` feature flag (off by default) + 3 newtype-specific adapter modules (`asset_id_hex`, `chain_id_hex`, `vault_id_hex`) + 4 new test vectors (`tv_cf_10..13`). Paired mission in the same crate. |

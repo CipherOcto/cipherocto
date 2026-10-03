@@ -2296,3 +2296,128 @@ fn l3_governance_vote_dry_run_does_not_open_wallet() {
          means the dry-run gate moved AFTER wallet IO. stderr={stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: `agent run --detach --token-file` signing-path behaviour
+// is pinned at the EXIT-CODE level because cross-process L3 is blocked
+// by the substrate's in-memory-only agent registry
+// ---------------------------------------------------------------------------
+
+/// The sixth of the six 4c(b) production signing sites is the
+/// `agent run --detach --token-file <path>` token-mint path.
+/// Unlike the read-side `capability list` (which routes `unlock`
+/// solely for trait-uniformity on `&dyn CapabilitySigner`),
+/// `agent run --detach` actually CONSUMES the signing keypair:
+/// `octo_runtime::mint_attach_handle` requires the holder's
+/// ed25519 signing keypair so the future `decode_token` step can
+/// verify the signature against the holder's public key
+/// (RFC-0011-c §F.5 + §F.6.1).
+///
+/// **Cross-process L3 is blocked by the Phase-1 substrate.** The
+/// agent registry is an in-memory `Mutex<BTreeMap<Uuid, AgentRecord>>`
+/// (a `static` at `crates/octo-wallet/src/agent.rs:46`); `register_agent`
+/// and `transition_agent` are per-process free fns of the binary.
+/// A separate `octo` process therefore starts with no agents registered,
+/// regardless of what earlier processes did — so an L3 test that
+/// creates in process 1 and runs in process 2 will see
+/// `AgentNotFound` (exit 42) in process 2 even with a re-derived
+/// agent_id.
+///
+/// This test pins the cross-process exit-code contract: a
+/// `agent run --detach --token-file` invocation in a fresh
+/// process against an unregistered agent must exit 42
+/// (AgentNotFound). When the substrate gains persistence (Phase 2),
+/// this same test becomes the negative control for the cross-process
+/// success path; today, it pins the failure contract so a future
+/// regression that masks AgentNotFound as WalletLocked (or any other
+/// silent failure) is caught at the L3 boundary.
+///
+/// The post-4c(b) signing chain is exercised by the in-process
+/// `tv_agent_run_token_path` vectors in `crates/octo-cli/src/commands/
+/// agent.rs`; the L3 cross-process surface awaits substrate persistence.
+#[test]
+fn l3_agent_run_unknown_agent_exits_42() {
+    let home = new_node_home("l3-agent-unknown");
+    let passphrase = "l3-agent-unknown-passphrase-2026"; // 32 chars
+    assert!(
+        passphrase.len() >= 24,
+        "passphrase must be wide of the 12-char floor"
+    );
+
+    // Register an identity so the wallet substrate is set up.
+    let pp_file = home.join("passphrase.txt");
+    std::fs::write(&pp_file, passphrase.as_bytes()).expect("write pp file");
+    let register = octo_in(&home)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "l3-agent-unknown",
+            "--passphrase-file",
+            pp_file.to_str().unwrap(),
+            "--mode",
+            "dev",
+            "--allow-write",
+            "--json",
+        ])
+        .output()
+        .expect("spawn register");
+    assert!(
+        register.status.success(),
+        "register must succeed: stderr={}, stdout={}",
+        String::from_utf8_lossy(&register.stderr),
+        String::from_utf8_lossy(&register.stdout),
+    );
+
+    // `agent run --detach --token-file <PATH>` against a fresh-process
+    // agent_id (which the in-memory registry cannot find) must exit
+    // 42 (AgentNotFound). The post-4c(b) signing chain runs to
+    // completion; the substrate's `transition_agent` is the FIRST
+    // substrate call after the unlock + activate, so a 42 here proves
+    // the signing chain reached the substrate boundary (the unlock
+    // succeeded, the activation succeeded, the substrate then
+    // rejected the unknown agent).
+    let token_path = home.join("attach.token");
+    let mut run_cmd = octo_in(&home);
+    run_cmd.args([
+        "agent",
+        "run",
+        "--agent-id",
+        "00000000-0000-4000-8000-000000000003",
+        "--detach",
+        "--token-file",
+        token_path.to_str().unwrap(),
+        "--mode",
+        "dev",
+        "--allow-write",
+        "--confirm",
+        "--passphrase-stdin",
+        "--allow-stdin-secret",
+        "--json",
+    ]);
+    run_cmd.stdin(std::process::Stdio::piped());
+    run_cmd.stdout(std::process::Stdio::piped());
+    run_cmd.stderr(std::process::Stdio::piped());
+    let mut run_child = run_cmd.spawn().expect("spawn run");
+    std::io::Write::write_all(
+        run_child.stdin.as_mut().expect("run stdin"),
+        format!("{passphrase}\n").as_bytes(),
+    )
+    .expect("pipe passphrase to run");
+    let run_out = run_child.wait_with_output().expect("wait run");
+    assert_eq!(
+        run_out.status.code(),
+        Some(42),
+        "agent run against an unregistered agent must exit 42 \
+         (AgentNotFound), got {:?}. stderr={}, stdout={}",
+        run_out.status.code(),
+        String::from_utf8_lossy(&run_out.stderr),
+        String::from_utf8_lossy(&run_out.stdout),
+    );
+    assert!(
+        !token_path.exists(),
+        "a 42 (AgentNotFound) failure must NOT write a token file; \
+         the substrate's mint_attach_handle is unreachable when \
+         transition_agent rejects the unknown agent"
+    );
+}

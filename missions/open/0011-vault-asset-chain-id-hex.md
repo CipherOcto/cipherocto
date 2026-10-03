@@ -4,7 +4,7 @@ description: "Land the Layer B wire-format migration for the three 32-byte id ne
 metadata:
   node_type: mission
   type: layer-b-wire-format
-  originSessionId: caveat-form-alignment-phase-0
+  originSessionId: 6b66c09a-4979-47ba-b92f-e3a757ecff92
   created: 2026-10-02
   v: "1.0"
   depends_on:
@@ -24,12 +24,16 @@ status: OPEN
 Per `rfcs/draft/0011-caveat-form-amendment.md` §Caveat Form Amendment clause 2,
 `hex_id_32` is the substrate-owned serialization path for any 32-byte
 id-bearing field. The drift audit
-`docs/audits/2026-09-30-open-limitations-drift-audit.md` §3 records the
-asymmetry on `AssetId`, `ChainId`, and `VaultId` as *unspecified* — neither
-hex nor array is mandated on the newtype — so changing the default would be
-a wire-format break for any consumer that already pins the 32-element form. A
-feature flag is the correct shape: OFF by default, ON once the amendment lands
-and consumers migrate.
+`docs/audits/2026-09-30-open-limitations-drift-audit.md` §5 records the
+asymmetry between canonical-form hex and derived byte-array form for the
+eight `Caveat` fields as *specified* in two places — `PaymentCaveat.asset_id`
+(`AssetId`) and `PaymentCaveat.budget` (`Dqa`) carry explicit hex mandates —
+and *unspecified* in the other six. For the three newtypes this mission
+targets (`AssetId`, `ChainId`, `VaultId`), the derived 32-element array form
+is unspecified behaviour at the newtype level, so changing the default would
+be a wire-format break for any consumer that already pins the 32-element
+form. A feature flag is the correct shape: OFF by default, ON once the
+amendment lands and consumers migrate.
 
 The newtype adapters delegate the hex-decode work to `hex_id_32` from the
 paired Layer A mission, so the 32-byte constraint is defined once and
@@ -111,7 +115,9 @@ The mission is closed when the following are true:
   preserved for migration). Pinned by `tv_cf_10..12` plus the
   `hex_id_32_accepts_legacy_array_form` test (`tv_cf_05`) from the paired
   Layer A mission (the Layer B adapter delegates to `hex_id_32::deserialize`
-  which already accepts both forms).
+  which already accepts both forms). Layer B inherits the legacy-array
+  acceptance from `hex_id_32`; if `tv_cf_05` fails, `tv_cf_10..12` fail for
+  the same reason.
 - **AC-3:** under default features (no `hex-ids`), the derived `Serialize`
   form is unchanged — 32-element byte array. Pinned by
   `tv_cf_13_default_newtype_serde_is_byte_array`.

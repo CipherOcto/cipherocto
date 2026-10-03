@@ -4,7 +4,7 @@ description: "Land the Layer A substrate change for RFC-0011 Caveat Form Amendme
 metadata:
   node_type: mission
   type: substrate-conformance
-  originSessionId: caveat-form-alignment-phase-0
+  originSessionId: 6b66c09a-4979-47ba-b92f-e3a757ecff92
   created: 2026-10-02
   v: "1.0"
   depends_on:
@@ -111,8 +111,8 @@ negative control):
   decodes to the same `Dqa` as the 16-byte byte-array form. Pinned by
   `tv_cf_01_dqa_hex_round_trip`.
 - **AC-1-NC (negative control):** reverting the `visit_str` arm makes AC-1
-  fail. `tv_cf_01_dqa_hex_round_trip` produces the failing-test green
-  vector only with the `visit_str` arm present.
+  fail. `tv_cf_01_dqa_hex_round_trip` is green with the `visit_str` arm
+  present and failing without it.
 - **AC-2:** `Caveat::Vault` accepts both forms on input — the 64-hex form
   (canonical) and the 32-element array form (legacy, preserved for
   migration). Pinned by `tv_cf_08` + `tv_cf_09`.

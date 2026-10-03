@@ -15,6 +15,8 @@
 | ------- | ---- | ------ |
 |         |      | (v1.0 lands at Phase 4 promotion — all 14 `tv_cf_*` vectors green + the inverted guide vector green) |
 
+Note: v1.0 lands at Phase 4 promotion; the empty Version cell above is intentional and will be filled in then.
+
 ## Status
 
 **Draft (2026-10-02).** Created as Phase 0 of the Caveat Form Alignment plan.

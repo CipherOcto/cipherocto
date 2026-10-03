@@ -81,6 +81,20 @@ octo-ident = { path = "../octo-ident" }
 # Tokio for `CompositeCapabilityCatalog` async TV (mission 0959-c4).
 tokio = { version = "1", features = ["macros", "rt"] }
 
+# Mission 0011-vault-asset-chain-id-hex Phase 2: feature-gates the
+# 64-char hex wire form for the three 32-byte id newtypes
+# (`AssetId` / `ChainId` / `VaultId`) in `crate::substrate`. Defaults
+# OFF per the open-limitations drift audit's "no amendment warranted"
+# verdict on the newtype change (the migration is opt-in). When
+# enabled, each newtype's inner `[u8; 32]` field is annotated with
+# `#[serde(with = "crate::hex_id_32")]` (via `#[cfg_attr]`), which
+# delegates to the paired Phase 1 `hex_id_32` adapter from mission
+# 0011-caveat-form-amendment. The adapter accepts BOTH the 64-hex
+# canonical form AND the 32-element byte-array legacy form (dual-form
+# deserialize is delegated to `hex_id_32`'s `visit_str` / `visit_seq`).
+[features]
+hex-ids = []
+
 [lints.rust]
 unsafe_code = "forbid"
 # `missing_docs` is a rustc lint; the crate-level `#![allow(missing_docs)]`

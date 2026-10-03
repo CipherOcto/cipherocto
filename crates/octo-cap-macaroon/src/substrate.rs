@@ -37,6 +37,20 @@ use thiserror::Error;
 /// `AssetId::derive` + `derive_v1` impls live in `octo-vault` (Layer B)
 /// which has access to the `chain_id` + `owner_did` context; this
 /// newtype is the substrate-import path.
+///
+/// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
+///
+/// Under `--features hex-ids`, this newtype serialises as a 64-char
+/// lowercase hex string (the canonical wire form already emitted by
+/// `Caveat::Vault` etc. via the paired Phase 1 `hex_id_32` adapter).
+/// Under default features the derived `Serialize` form is the
+/// 32-element byte array — the legacy 32-byte-id form preserved for
+/// migration.
+///
+/// The `hex-ids` capability defaults OFF per the open-limitations
+/// drift audit's "no amendment warranted" verdict on the newtype
+/// change. Migration is opt-in: enable the feature on the producer,
+/// redeploy consumers that already accept the hex form.
 #[derive(
     Clone,
     Copy,
@@ -51,7 +65,7 @@ use thiserror::Error;
     BorshSerialize,
     BorshDeserialize,
 )]
-pub struct AssetId(pub [u8; 32]);
+pub struct AssetId(#[cfg_attr(feature = "hex-ids", serde(with = "crate::hex_id_32"))] pub [u8; 32]);
 
 impl AssetId {
     /// Build from raw 32 bytes (no derivation).
@@ -168,6 +182,14 @@ impl GovernanceSignature {
 }
 
 /// 32-byte chain identifier. `chain_id = BLAKE3("cipherocto/chain/v1/" + chain_string)`.
+///
+/// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
+///
+/// Under `--features hex-ids`, this newtype serialises as a 64-char
+/// lowercase hex string (canonical form, see `AssetId` for the full
+/// paragraph). Default features emit the 32-element byte array. The
+/// capability defaults OFF per the drift audit's "no amendment
+/// warranted" verdict; migration is opt-in.
 #[derive(
     Clone,
     Copy,
@@ -182,7 +204,7 @@ impl GovernanceSignature {
     BorshSerialize,
     BorshDeserialize,
 )]
-pub struct ChainId(pub [u8; 32]);
+pub struct ChainId(#[cfg_attr(feature = "hex-ids", serde(with = "crate::hex_id_32"))] pub [u8; 32]);
 
 impl ChainId {
     /// Build from raw 32 bytes.
@@ -215,6 +237,14 @@ impl ChainId {
 /// `BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`
 /// per RFC-0105 §8.10. The full derivation lives in `octo-vault`; this
 /// newtype is the substrate-import path.
+///
+/// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
+///
+/// Under `--features hex-ids`, this newtype serialises as a 64-char
+/// lowercase hex string (canonical form, see `AssetId` for the full
+/// paragraph). Default features emit the 32-element byte array. The
+/// capability defaults OFF per the drift audit's "no amendment
+/// warranted" verdict; migration is opt-in.
 #[derive(
     Clone,
     Copy,
@@ -229,7 +259,7 @@ impl ChainId {
     BorshSerialize,
     BorshDeserialize,
 )]
-pub struct VaultId(pub [u8; 32]);
+pub struct VaultId(#[cfg_attr(feature = "hex-ids", serde(with = "crate::hex_id_32"))] pub [u8; 32]);
 
 impl VaultId {
     /// Build from raw 32 bytes.

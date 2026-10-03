@@ -41,8 +41,11 @@ Open gates before this mission can close:
 Layer note: the spec review during Phase 2 established that `octo-cap-macaroon`
 is **Layer B**, not Layer A — it is not in the Layer A frozen list, and the
 "Layer A frozen" header in `src/substrate.rs` is a pre-existing inaccuracy left
-out of scope. The `Layer A` label in this mission's `Owner` line and in the RFC
-header is therefore inaccurate and worth correcting in a follow-up.
+out of scope. The `Layer A` label in this mission's `Owner` line, in its
+frontmatter description, and in the RFC header was corrected by the adversarial
+review on 2026-10-03. The `src/substrate.rs` header itself is the one part
+still outstanding, since changing it is a code change outside this mission's
+declared scope.
 
 ## Context
 

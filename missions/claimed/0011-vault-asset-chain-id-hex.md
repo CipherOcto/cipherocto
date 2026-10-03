@@ -36,10 +36,11 @@ unchanged. Two defects were found in the surrounding apparatus, both fixed at
 1. **The feature was outside the test gate.** `hex-ids` is declared in one place and enabled by nothing — no workflow, no script, no dependent crate. The clippy gates pass `--all-features`, so the code was compiled and linted in CI, but the workspace test gate uses default features, which compiles `tests/tv_cf_newtype_hex_round_trip.rs` to an empty test binary. The three hex vectors had never been executed by CI. The pre-existing note in `ci.yml` justifying skipped feature-gated tests cites dependency weight, which does not apply to a flag with none. CI now runs the feature explicitly.
 2. **The vectors could not fail.** `tv_cf_10..13` each build a 32-byte input from a single repeated byte, a fixed point of every byte permutation, so no byte-order or reversal defect was detectable. Proven by mutation, not argued: reversing the byte order inside `hex_id_32::serialize` left all three hex vectors and all 257 lib tests green.
 
-AC-9 wording follow-up (non-blocking, from the spec review): the "3 new modules"
-language is prescriptive and the implementation used Principle 11-aligned
-`cfg_attr` delegation to the shared adapter instead. The wording should be
-corrected to "3 cfg_attr annotations" so the mission describes what shipped.
+AC-9 wording follow-up: **RESOLVED 2026-10-03.** The "3 new modules" language
+was prescriptive and wrong — the implementation used Principle 11-aligned
+`cfg_attr` delegation to the shared adapter instead, and `substrate.rs` has no
+`pub mod` at all. AC-9 and the `Files / Artifacts` section now describe the
+shipped change, which is 3 `cfg_attr` annotations on the three newtypes.
 
 Promotion gates, both now closed. The amendment RFC is no longer `Draft`; it
 was promoted to `Accepted` on 2026-10-03, with the `docs/BLUEPRINT.md`
@@ -127,9 +128,10 @@ under default features — the default-feature `Serialize` is unchanged.
 
 ## Layer model
 
-- `octo-cap-macaroon` (Layer B) — additive only (a new feature flag + 3 new
-  feature-gated `pub mod` adapter modules + 4 new tests). No field removals,
-  no variant additions, no public-API changes under default features.
+- `octo-cap-macaroon` (Layer B) — additive only (a new feature flag + 3
+  `cfg_attr`-gated `serde(with)` annotations on existing newtype definitions +
+  4 new tests). No field removals, no variant additions, no new adapter
+  modules, no public-API changes under default features.
 - `octo-vault` (consumer of `AssetId` / `ChainId` / `VaultId`) — unchanged.
   Consumers that did not opt into `--features hex-ids` see no wire-format
   change.
@@ -154,14 +156,18 @@ The mission is closed when the following are true:
   form is unchanged — 32-element byte array. Pinned by
   `tv_cf_13_default_newtype_serde_is_byte_array`.
 - **AC-4:** `cargo test -p octo-cap-macaroon --features hex-ids --tests`
-  green (16 integration vectors under `--features hex-ids`).
-- **AC-5:** `cargo test -p octo-cap-macaroon --tests` green (14 integration
+  green (20 integration vectors under `--features hex-ids`).
+- **AC-5:** `cargo test -p octo-cap-macaroon --tests` green (18 integration
   vectors under default features).
 
-  Counts corrected 2026-10-03. These ACs previously read 9 and 7, written when
-  the amendment carried 13 vectors. The adversarial review added six, and the
-  two configs are mutually exclusive per file via `cfg` attributes, so the two
-  totals differ rather than nesting. Measured per file, not estimated.
+  Counts re-measured 2026-10-03: 18 and 20, up from the 14 and 16 written here
+  earlier. This is the third correction to this pair and, like the paired
+  mission's AC-4, every correction was triggered by a later commit ADDING
+  vectors rather than by anyone re-checking the number. Measured per target:
+  the `tv_cf_*` integration files, not the crate total, which also carries
+  `bundle_v2_tv`, `tv_0957_verify_time`, and `tv_c1_verify_time` from other
+  work. The two configs are mutually exclusive per file via `cfg` attributes,
+  so the totals differ by which gated file is live rather than by nesting.
 
 - **AC-6:** `cargo clippy -p octo-cap-macaroon --all-targets -- -D warnings`
   clean.
@@ -169,14 +175,28 @@ The mission is closed when the following are true:
   clean.
 - **AC-8:** `cargo fmt --all -- --check` clean.
 - **AC-9:** Layer B frozen check: `git diff crates/octo-cap-macaroon` shows
-  only the `Cargo.toml` feature entry, the `substrate.rs` 3 new modules +
-  3 doc-comment paragraphs, and the 2 new test files.
+  only the `Cargo.toml` feature entry, the `substrate.rs` 3 new adapter
+  modules + 3 doc-comment paragraphs, and the 2 new test files.
+
+  Wording corrected 2026-10-03. This previously read "3 new modules" in the
+  `substrate.rs` clause, which was prescriptive: what shipped was **3
+  `#[cfg_attr(feature = "hex-ids", serde(with = "..."))]` annotations** on the
+  three newtype definitions, delegating to the shared `hex_id_32` adapter from
+  the paired mission. No new adapter module was added here, by Principle 11 —
+  a second 32-byte adapter would have been exactly the divergence
+  `serde_bytes_arr32` already caused. The `Files / Artifacts` section carried
+  the same false "3 new `pub mod` adapter modules" claim and was corrected
+  alongside it. Verified against the source: `substrate.rs` declares no
+  `pub mod` at all, and each of the three newtypes carries exactly one
+  `cfg_attr`.
 
 ## Files / Artifacts
 
 - Edit: `crates/octo-cap-macaroon/Cargo.toml` (add `hex-ids` feature flag)
-- Edit: `crates/octo-cap-macaroon/src/substrate.rs` (3 new
-  `pub mod` adapter modules + 3 doc-comment paragraphs)
+- Edit: `crates/octo-cap-macaroon/src/substrate.rs` (3
+  `#[cfg_attr(feature = "hex-ids", serde(with = "crate::hex_id_32"))]`
+  annotations on `AssetId`, `ChainId`, and `VaultId` + 3 doc-comment
+  paragraphs. No new module was added here)
 - New: `crates/octo-cap-macaroon/tests/tv_cf_newtype_hex_round_trip.rs`
   (3 tests, feature-gated)
 - New: `crates/octo-cap-macaroon/tests/tv_cf_newtype_default_serde.rs`

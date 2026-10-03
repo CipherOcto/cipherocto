@@ -166,13 +166,22 @@ negative control):
   fails when the adapter is removed.
 - **AC-3:** `cargo test -p octo-cap-macaroon --lib` green (257 lib tests,
   including the 3 in-crate `tv_cf_07..09`).
-- **AC-4:** `cargo test -p octo-cap-macaroon --tests` green (14 integration
-  vectors under default features, 16 under `--features hex-ids`).
+- **AC-4:** `cargo test -p octo-cap-macaroon --tests` green (18 integration
+  vectors under default features, 20 under `--features hex-ids`).
 
-  Counts corrected 2026-10-03. These ACs previously read 259 and 6, written
-  when the amendment carried 13 vectors. The adversarial review added six
-  (`tv_cf_14..16`, `tv_cf_18..21`), and the two feature configs are mutually
-  exclusive per file via `cfg` attributes. Measured per file, not estimated.
+  Counts re-measured 2026-10-03 after the eight-arm and lossless-`Payment`
+  work. This AC has now been corrected three times — 6, then 14/16, now 18/20 —
+  and every one of the corrections came from a _later_ commit adding vectors
+  rather than from anyone re-checking the number. The two feature configs are
+  mutually exclusive per file via `cfg` attributes, so the two totals differ by
+  which gated file is live, not by which tests run twice.
+
+  Measured per target, not estimated: 3 + 5 + 6 + 1 + 0 + 3 of `tv_cf_*`
+  integration tests under default features, 3 + 5 + 6 + 0 + 3 + 3 under
+  `hex-ids`. The `0` entries are `tv_cf_newtype_hex_round_trip` (gated off by
+  default) and `tv_cf_newtype_default_serde` (gated off by `hex-ids`).
+  `tv_cf_07..09` are in-crate and counted in AC-3's 257 lib tests, not here;
+  `tv_cf_17` lives in `octo-cli`.
 
 - **AC-5:** `cargo test -p octo-cli --lib guide_canonical_form_is_reparseable`
   green (the inverted vector).

@@ -5,19 +5,30 @@
 //! Deserialises from either a 64-char hex string (canonical) OR a 32-element
 //! byte array (legacy form preserved for migration).
 //!
-//! Two things this doc previously got wrong, both caught by the adversarial
+//! Three things this doc previously got wrong, all caught by the adversarial
 //! review of RFC-0011 §Caveat Form Amendment:
 //!
 //! * It listed the arms that EMIT hex as though they all routed through this
-//!   adapter. They do not. `Caveat::Vault` does. `WrappedOnly`,
-//!   `RedemptionContext`, `InvocationHashBind`, and `AskBinding` emit hex from
-//!   `canonical_ser` but still use the derived array form on input, so they
-//!   reject the hex they write. See §Known deviations 3 in the RFC, and
-//!   `tv_cf_20` / `tv_cf_21` for the current set.
+//!   adapter. They do not. `Caveat::Vault` is the only arm that does. Eight
+//!   other arms render a 32-byte id as hex from `canonical_ser` and still use
+//!   the derived array form on input, so they reject the hex they write:
+//!   `InvocationHashBind`, `AskBinding`, `WrappedOnly`, `RedemptionContext`,
+//!   `AssetBinding`, `Factory` (`target_vault_id`), `PolicyReference`
+//!   (`policy_id`), and `Payment` (16-byte `budget`). See §Known deviations 3
+//!   in the RFC. `tv_cf_22` derives that list from the `canonical_ser` source
+//!   so it cannot be short, and `tv_cf_20` / `tv_cf_21` pin the current
+//!   accept/reject state. An earlier revision of this doc named only four of
+//!   those eight, because the list was cross-checked against other documents
+//!   instead of against `canonical_ser`.
 //! * It did not mention `PaymentCaveat::asset_id` and `::nonce`, which now
 //!   route through here. They previously used a parallel private adapter that
 //!   accepted hex only, so the same canonical form parsed for `Vault` and was
 //!   rejected by its siblings in the same crate. `tv_cf_19` pins the parity.
+//! * It implied adopting this adapter closes an arm's asymmetry. For an arm
+//!   whose `value` is an OBJECT, it does not: `Caveat` is adjacently tagged, so
+//!   the encoder must also emit the object shape. The adapter alone leaves the
+//!   canonical form unparseable, and a plan that fixes only the adapter will
+//!   appear to succeed and change nothing.
 //!
 //! Dispatch is via `deserialize_any`, which requires a SELF-DESCRIBING serde
 //! format. JSON and MessagePack qualify; bincode and postcard do not. A type

@@ -273,11 +273,16 @@ pub struct RedactionContext {
     /// The renderer's `holder_did` field handler un-redacts the JSON
     /// tree ONLY when this matches `active_did`.
     holder_did_raw: Option<String>,
-    /// Raw `agent_id` value (UUID form, hex). The renderer's
-    /// `agent_id` field handler un-redacts the JSON tree with a
-    /// truncated form (`first-8-chars + "..."`) so operators can
-    /// correlate with substrate logs without seeing the full id.
-    agent_id_raw: Option<String>,
+    /// Raw `agent_id` values (UUID form, hex), in walk-order. The
+    /// renderer's `agent_id` field handler walks the JSON tree and
+    /// truncates each `[REDACTED:key]` occurrence to its first-8
+    /// chars + `...`. The n-th `agent_id` key encountered uses the
+    /// n-th entry of the Vec, so a list envelope with N rows sets
+    /// N entries and each row gets the right truncated form (a
+    /// single-entry Vec still works for one-agent envelopes). Callers
+    /// set this via [`Self::with_agent_id`] (pushes one) or
+    /// [`Self::with_agent_ids`] (extends with many).
+    agent_id_raw: Vec<String>,
 }
 
 impl RedactionContext {
@@ -302,10 +307,30 @@ impl RedactionContext {
         self
     }
 
-    /// Set the raw `agent_id` value (UUID form).
+    /// Set a single raw `agent_id` value (UUID form). Convenience
+    /// for one-agent envelopes (e.g. `agent create`, `agent run`);
+    /// pushes one entry to the positional Vec.
     #[must_use]
     pub fn with_agent_id(mut self, id: impl Into<String>) -> Self {
-        self.agent_id_raw = Some(id.into());
+        self.agent_id_raw.push(id.into());
+        self
+    }
+
+    /// Set multiple raw `agent_id` values (UUID form), in walk-order.
+    /// Use for list envelopes where each row carries a distinct
+    /// `agent_id` (e.g. `agent list`); the walker truncates each
+    /// `[REDACTED:key]` occurrence using the n-th entry.
+    ///
+    /// Order MUST match the order rows appear in the serialised
+    /// JSON tree — typically the order rows are produced by the
+    /// substrate's listing call.
+    #[must_use]
+    pub fn with_agent_ids<I, S>(mut self, ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.agent_id_raw.extend(ids.into_iter().map(Into::into));
         self
     }
 
@@ -319,11 +344,17 @@ impl RedactionContext {
     /// matching keys returns `false`.
     pub fn apply(&self, value: &mut serde_json::Value) -> bool {
         let mut altered = false;
-        Self::apply_inner(self, value, &mut altered);
+        let mut agent_id_index = 0usize;
+        Self::apply_inner(self, value, &mut altered, &mut agent_id_index);
         altered
     }
 
-    fn apply_inner(&self, value: &mut serde_json::Value, altered: &mut bool) {
+    fn apply_inner(
+        &self,
+        value: &mut serde_json::Value,
+        altered: &mut bool,
+        agent_id_index: &mut usize,
+    ) {
         match value {
             serde_json::Value::Object(map) => {
                 for (k, v) in map.iter_mut() {
@@ -367,26 +398,37 @@ impl RedactionContext {
                         "agent_id" => {
                             if let serde_json::Value::String(s) = v {
                                 if s == REDACTED_KEY {
-                                    if let Some(raw) = &self.agent_id_raw {
-                                        // Always truncate to the
-                                        // first 8 chars + ellipsis.
-                                        // Operator-owned agents get
-                                        // a correlatable truncated
-                                        // form per RFC-0011 §Hex32
-                                        // newtype redaction.
+                                    // Positional lookup: the n-th
+                                    // `agent_id` `[REDACTED:key]`
+                                    // key encountered in the walk
+                                    // uses the n-th entry of the
+                                    // Vec. The counter advances ONLY
+                                    // on `[REDACTED:key]` visits —
+                                    // pre-un-redacted `agent_id`
+                                    // values (rare; not produced by
+                                    // `RedactedIdentifier`) leave
+                                    // the count in sync with the
+                                    // Vec. Out-of-range lookups are
+                                    // a no-op (extra `[REDACTED:key]`
+                                    // occurrences stay wholesale
+                                    // redacted), mirroring the
+                                    // pre-Vec `if let Some(...)`
+                                    // semantics.
+                                    if let Some(raw) = self.agent_id_raw.get(*agent_id_index) {
                                         *v = serde_json::Value::String(truncate_id(raw));
                                         *altered = true;
                                     }
+                                    *agent_id_index += 1;
                                 }
                             }
                         }
-                        _ => self.apply_inner(v, altered),
+                        _ => self.apply_inner(v, altered, agent_id_index),
                     }
                 }
             }
             serde_json::Value::Array(items) => {
                 for item in items.iter_mut() {
-                    self.apply_inner(item, altered);
+                    self.apply_inner(item, altered, agent_id_index);
                 }
             }
             _ => {}

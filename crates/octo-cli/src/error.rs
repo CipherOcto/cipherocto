@@ -3466,6 +3466,136 @@ mod tests {
         );
     }
 
+    /// tv_x_c_112 — `commands::agent::list::handle` builds its
+    /// envelope-boundary redactor with `with_active_did`,
+    /// `with_holder_did(active_did)` AND `with_agent_ids(<row
+    /// UUIDs>)`. SOURCE: the prior handler built the redactor with
+    /// only `with_active_did`, so the list envelope's `holder_did`
+    /// and `agent_id` fields wholesale-redacted to `[REDACTED:key]`
+    /// even though every row's `holder_did == caller_did` (substrate
+    /// enforced) and every row's `agent_id` is a correlatable
+    /// operator-visible id. A future regression that drops either
+    /// call leaves the field wholesale-redacted; the L3 cross-process
+    /// `l3_agent_create_then_list_round_trip` test would fail on the
+    /// `holder_did` equality assertion. The source check pins the
+    /// pattern at the call site so a regression that drops the call
+    /// but leaves the redactor otherwise correct still trips the
+    /// assertion (the runtime test would also fail, but the source
+    /// vector identifies the call-site as the owner).
+    #[test]
+    fn tv_x_c_112_list_handler_redactor_calls_with_holder_did_and_agent_ids() {
+        let agent_src = include_str!("commands/agent.rs");
+        // The list handler builds the redactor immediately before
+        // constructing the `AgentListOutput`. The expected pattern is
+        // a single block with three chained `with_*` calls in source
+        // order: `with_active_did(active_did.as_str())`,
+        // `with_holder_did(active_did.as_str())`,
+        // `with_agent_ids(agent_ids)`. We assert each call by name
+        // (not the surrounding text) so a future refactor that re-orders
+        // the chain or splits it across helper calls still trips the
+        // vector when the binding is wrong.
+        assert!(
+            agent_src.contains(".with_active_did(active_did.as_str())"),
+            "list::handle must call .with_active_did(active_did.as_str()) on the redactor. A drop surfaces as `holder_did` and `agent_id` staying wholesale-redacted in the list envelope."
+        );
+        assert!(
+            agent_src.contains(".with_holder_did(active_did.as_str())"),
+            "list::handle must call .with_holder_did(active_did.as_str()) on the redactor. The walker requires BOTH `holder_did_raw` AND `active_did` to fire the conditional un-redact; without it the row's holder_did stays [REDACTED:key]."
+        );
+        assert!(
+            agent_src.contains(".with_agent_ids("),
+            "list::handle must call .with_agent_ids(<row UUIDs>) on the redactor. The walker truncates each row's [REDACTED:key] agent_id positionally using the Vec the handler passes in; without it the row's agent_id stays [REDACTED:key]."
+        );
+    }
+
+    /// tv_x_c_113 — `RedactionContext::with_agent_ids([..])`
+    /// truncates N `[REDACTED:key]` `agent_id` occurrences using
+    /// the Nth Vec entry, positionally by walk-order. BEHAVIOR:
+    /// the walker's counter advances ONLY on `[REDACTED:key]`
+    /// visits and uses `Vec::get(counter)` for the lookup, so the
+    /// first row truncates with `Vec[0]`, the second with `Vec[1]`,
+    /// and a Vec with fewer entries than `[REDACTED:key]`
+    /// occurrences leaves the surplus rows untouched. The test
+    /// builds a JSON tree with two `agent_id` keys (one row with a
+    /// `[REDACTED:key]` value, one row with a truncated form) and
+    /// the contract is the FIRST one (the `RedactedIdentifier`-emitted
+    /// form). Out-of-range Vec entries leave the `[REDACTED:key]`
+    /// as-is (no panic; the walker skips silently), so the Vec
+    /// length can be smaller than the row count and the surplus
+    /// rows stay wholesale-redacted. The vector covers both the
+    /// in-range and out-of-range cases.
+    #[test]
+    fn tv_x_c_113_with_agent_ids_truncates_positionally_by_walk_order() {
+        use crate::redact::{RedactionContext, REDACTED_KEY};
+
+        // Two rows: row 0 is [REDACTED:key], row 1 is [REDACTED:key].
+        // Both should be truncated positionally using Vec[0] and
+        // Vec[1] respectively.
+        let mut tree = serde_json::json!({
+            "agents": [
+                {"agent_id": REDACTED_KEY, "label": "row-0"},
+                {"agent_id": REDACTED_KEY, "label": "row-1"},
+            ]
+        });
+        let redactor = RedactionContext::new()
+            .with_active_did("did:octo:zOperator")
+            .with_holder_did("did:octo:zOperator")
+            .with_agent_ids([
+                "ff2166ce-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000002",
+            ]);
+        let altered = redactor.apply(&mut tree);
+        assert!(altered, "with_agent_ids + active+holder redactor MUST alter the tree (the two [REDACTED:key] occurrences rewrite to truncated forms).");
+
+        // In-range lookup: row 0 truncates with Vec[0], row 1 with Vec[1].
+        let row0 = &tree["agents"][0]["agent_id"];
+        let row1 = &tree["agents"][1]["agent_id"];
+        assert_eq!(
+            row0.as_str(),
+            Some("ff2166ce..."),
+            "row 0 must truncate with Vec[0] = `ff2166ce-...` to `ff2166ce...`. got {row0:?}"
+        );
+        assert_eq!(
+            row1.as_str(),
+            Some("00000000..."),
+            "row 1 must truncate with Vec[1] = `00000000-...` to `00000000...`. got {row1:?}"
+        );
+
+        // Out-of-range lookup: a Vec shorter than the row count
+        // leaves the surplus [REDACTED:key] as-is (no panic, no
+        // cross-row bleed). The walker uses Vec::get(counter) which
+        // returns None for out-of-range; the counter still
+        // advances so the next in-range entry uses the right raw.
+        let mut tree = serde_json::json!({
+            "agents": [
+                {"agent_id": REDACTED_KEY, "label": "row-0"},
+                {"agent_id": REDACTED_KEY, "label": "row-1"},
+                {"agent_id": REDACTED_KEY, "label": "row-2"},
+            ]
+        });
+        let redactor =
+            RedactionContext::new().with_agent_ids(["ff2166ce-0000-4000-8000-000000000001"]);
+        redactor.apply(&mut tree);
+        assert_eq!(
+            tree["agents"][0]["agent_id"].as_str(),
+            Some("ff2166ce..."),
+            "row 0 truncates with Vec[0] (in range). got {:?}",
+            tree["agents"][0]["agent_id"]
+        );
+        assert_eq!(
+            tree["agents"][1]["agent_id"].as_str(),
+            Some(REDACTED_KEY),
+            "row 1 stays [REDACTED:key] when Vec[1] is out of range (no panic, no bleed). got {:?}",
+            tree["agents"][1]["agent_id"]
+        );
+        assert_eq!(
+            tree["agents"][2]["agent_id"].as_str(),
+            Some(REDACTED_KEY),
+            "row 2 stays [REDACTED:key] when Vec[2] is out of range. got {:?}",
+            tree["agents"][2]["agent_id"]
+        );
+    }
+
     // R1 MED C13 — cap_substrate_payload boundary tests.
     #[test]
     fn cap_substrate_payload_under_cap_passes_through() {

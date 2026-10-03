@@ -2682,41 +2682,55 @@ fn l3_agent_create_then_list_round_trip() {
          got {} entries: {agents:?}",
         agents.len()
     );
-    // The list envelope's redactor is
-    // `RedactionContext::new().with_active_did(active_did.as_str())`
-    // — it does NOT call `with_holder_did` or `with_agent_id`. The
-    // redaction walker's conditional `holder_did` un-redact requires
-    // BOTH `holder_did_raw` AND `active_did` to be set (per the
-    // `apply_inner` source), so the wholesale-redacted `[REDACTED:key]`
-    // survives the walk for `holder_did`. The `agent_id` walker arm
-    // requires `agent_id_raw` and is similarly not configured. Both
-    // fields surface as `[REDACTED:key]` in the list envelope today;
-    // both are evidence the record was hydrated (the field is
-    // present), but neither lets the test assert against the
-    // persistence layer directly. The cross-process property is
-    // pinned through the OTHER fields both envelopes render verbatim:
-    // `count`, `state`, `label`, `manifest_digest`,
-    // `registered_at_unix`.
+    // The list envelope's redactor is built with `with_active_did`,
+    // `with_holder_did(active_did)` and `with_agent_ids(agent_ids)` —
+    // the substrate enforces `holder_did == caller_did` for the list
+    // path so the conditional `holder_did` un-redact fires on every
+    // row (and on the list-level `holder_did` field); the
+    // positional-Vec truncation in the walker rewrites each row's
+    // `agent_id` to first-8-chars + `...` using the substrate
+    // summary's `agent_id` UUID. Both fields therefore surface as
+    // correlatable operator-visible forms. The list summary's
+    // `agent_id` is the substrate's `record.manifest.manifest_id`
+    // (the operator-supplied input), NOT the canonical
+    // UUIDv5-derived id that `register_agent` returns in the create
+    // response — the persistence layer's `AgentIdMismatch` error
+    // explicitly tracks both ids, so the two envelopes intentionally
+    // carry different ids by substrate design. The test pins:
+    //   1. The list envelope's `holder_did` un-redacts to the active
+    //      DID (a future regression that drops `with_holder_did`
+    //      surfaces as `[REDACTED:key]` and fails the equality
+    //      check).
+    //   2. The list envelope's `agent_id` is in the truncated
+    //      first-8-hex + `...` form (the redaction-layer contract;
+    //      a future regression that drops `with_agent_ids` surfaces
+    //      as `[REDACTED:key]` and fails the shape check).
     let listed_agent_id = agents[0]["agent_id"]
         .as_str()
-        .expect("list entry must carry agent_id string");
+        .expect("list entry must carry agent_id string")
+        .to_string();
     assert!(
-        !listed_agent_id.is_empty(),
-        "list entry's agent_id must be a non-empty string (the field is \
-         present after rehydration even though it is redacted). got \
-         {listed_agent_id:?}"
+        listed_agent_id.len() == 11
+            && listed_agent_id.ends_with("...")
+            && listed_agent_id[..8].chars().all(|c| c.is_ascii_hexdigit()),
+        "list envelope's agent_id must be the 8-hex + '...' truncated form \
+         per the envelope-boundary redactor (the list redactor builds a \
+         positional Vec via `with_agent_ids` so the walker truncates each \
+         row's [REDACTED:key] to the correlatable form). A divergence \
+         means either the list handler dropped the `with_agent_ids` call \
+         OR the walker advanced out of sync. got {listed_agent_id:?}"
     );
     let listed_holder_did = agents[0]["holder_did"]
         .as_str()
         .expect("list entry must carry holder_did string")
         .to_string();
-    assert!(
-        listed_holder_did == register_did || listed_holder_did == "[REDACTED:key]",
-        "list entry's holder_did must either un-redact to the active DID \
-         or surface as the wholesale [REDACTED:key] form (the list \
-         redactor does not call `with_holder_did` so the conditional \
-         un-redact does not fire; the redaction walker is a separate \
-         concern from the persistence layer this test pins). got \
+    assert_eq!(
+        listed_holder_did, register_did,
+        "list entry's holder_did must un-redact to the active DID \
+         (substrate enforces holder_did == caller_did for the list \
+         path, and the list redactor calls `with_holder_did` so the \
+         conditional un-redact fires). A divergence means the list \
+         handler dropped the `with_holder_did` call. got \
          {listed_holder_did:?}"
     );
     let listed_state = agents[0]["state"]

@@ -330,7 +330,24 @@ fn tv_agt_redact_walks_nested_payload() {
             "holder_did": REDACTED_KEY,
         },
     });
-    let redactor = self_holder_redactor("did:octo:zOperator");
+    // Positional truncation: with N entries in the Vec, the n-th
+    // `[REDACTED:key]` `agent_id` key encountered in walk-order
+    // truncates with the n-th entry. Walk-order for this tree is
+    // `serde_json::Map`'s sorted-key iteration (`agents` < `metadata`)
+    // then array-index order, so the visit sequence is
+    // `agents[0].agent_id` -> `agents[1].agent_id` ->
+    // `metadata.agent_id`. Pass three distinct entries so each
+    // truncates to its own form (a single `with_agent_id(s)` value
+    // would only truncate the first; `tv_x_c_113` covers that
+    // out-of-range behaviour separately).
+    let redactor = RedactionContext::new()
+        .with_active_did("did:octo:zOperator")
+        .with_holder_did("did:octo:zOperator")
+        .with_agent_ids([
+            "11111111-0000-4000-8000-000000000001",
+            "22222222-0000-4000-8000-000000000002",
+            "33333333-0000-4000-8000-000000000003",
+        ]);
     redactor.apply(&mut payload);
 
     // Outer metadata block.
@@ -343,10 +360,13 @@ fn tv_agt_redact_walks_nested_payload() {
         Some("did:octo:zOperator"),
         "metadata.holder_did un-redacted: {payload}",
     );
+    // metadata.agent_id is the THIRD `[REDACTED:key]` visit (the
+    // sorted-key iteration visits `agents` first); the third Vec
+    // entry truncates it.
     assert_eq!(
         metadata.get("agent_id").and_then(|v| v.as_str()),
-        Some("00000000..."),
-        "metadata.agent_id truncated: {payload}",
+        Some("33333333..."),
+        "metadata.agent_id truncated by Vec[2] (third visit in walk-order): {payload}",
     );
 
     // Inner agents array.
@@ -355,17 +375,20 @@ fn tv_agt_redact_walks_nested_payload() {
         .and_then(|v| v.as_array())
         .expect("agents is array");
     assert_eq!(agents.len(), 2);
-    for (i, agent) in agents.iter().enumerate() {
-        let obj = agent.as_object().expect("agent is object");
+    // agents[0].agent_id is the FIRST visit; agents[1].agent_id is
+    // the SECOND. Each truncates with the corresponding Vec entry.
+    let expected = [("agents[0]", "11111111..."), ("agents[1]", "22222222...")];
+    for (i, (label, expected_truncation)) in expected.iter().enumerate() {
+        let obj = agents[i].as_object().expect("agent is object");
         assert_eq!(
             obj.get("holder_did").and_then(|v| v.as_str()),
             Some("did:octo:zOperator"),
-            "agents[{i}].holder_did un-redacted: {payload}",
+            "{label}.holder_did un-redacted: {payload}",
         );
         assert_eq!(
             obj.get("agent_id").and_then(|v| v.as_str()),
-            Some("00000000..."),
-            "agents[{i}].agent_id truncated: {payload}",
+            Some(*expected_truncation),
+            "{label}.agent_id truncated by Vec[{i}]: {payload}",
         );
     }
 }

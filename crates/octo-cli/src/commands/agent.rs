@@ -738,10 +738,22 @@ mod list {
         let summaries = wallet_list_owned_agents(&active_did, &filter)
             .map_err(common::map_transition_wallet_error)?;
 
-        // 5. Build output envelope. Each summary's `holder_did` will
-        //    match `active_did` by construction (substrate enforced),
-        //    so the redactor un-redacts every holder_did row.
-        let redactor = RedactionContext::new().with_active_did(active_did.as_str());
+        // 5. Build output envelope. Each summary's `holder_did`
+        //    matches `active_did` by construction (substrate
+        //    enforced), so the redactor un-redacts every holder_did
+        //    row in the JSON tree. Each row's `agent_id` is a
+        //    distinct UUID — the walker truncates each one to
+        //    first-8-chars + `...` using a positional Vec indexed
+        //    by walk-order. Capturing the agent_ids from the
+        //    substrate summaries here keeps the redactor's Vec in
+        //    sync with the order the rows will appear in the
+        //    serialised `agents: [...]` array (substrate order is
+        //    preserved through `from_substrate`).
+        let agent_ids: Vec<String> = summaries.iter().map(|s| s.agent_id.to_string()).collect();
+        let redactor = RedactionContext::new()
+            .with_active_did(active_did.as_str())
+            .with_holder_did(active_did.as_str())
+            .with_agent_ids(agent_ids);
         let output = AgentListOutput {
             count: summaries.len(),
             holder_did: RedactedIdentifier::new(active_did.as_str()),

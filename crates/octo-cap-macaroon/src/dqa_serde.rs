@@ -66,10 +66,22 @@ pub mod field {
         impl<'de> Visitor<'de> for V {
             type Value = Dqa;
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "16-byte BE DqaEncoding")
+                write!(f, "16-byte DqaEncoding as 64-char hex or 16-elt u8 array")
             }
             fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
                 dqa_from_bytes(v).map_err(|e| de::Error::custom(format!("Dqa decode: {e:?}")))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                // RFC-0011 §Caveat Form Amendment: 64 lowercase hex chars
+                // representing the 16-byte DqaEncoding. Accept uppercase too
+                // — hex::decode is case-insensitive and serde canonicalises
+                // the canonical_ser form to lowercase via hex::encode.
+                let bytes = hex::decode(v)
+                    .map_err(|e| de::Error::custom(format!("Dqa hex decode: {e}")))?;
+                dqa_from_bytes(&bytes).map_err(|e| de::Error::custom(format!("Dqa decode: {e:?}")))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                self.visit_str(v.as_str())
             }
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let mut buf = Vec::with_capacity(super::WIRE_BYTES);
@@ -79,6 +91,11 @@ pub mod field {
                 dqa_from_bytes(&buf).map_err(|e| de::Error::custom(format!("Dqa decode: {e:?}")))
             }
         }
-        d.deserialize_bytes(V)
+        // Use `deserialize_any` so the deserializer dispatches based on the
+        // actual on-wire JSON type: a string → `visit_str` (hex form), a
+        // sequence → `visit_seq` (legacy 16-elt byte array). `deserialize_bytes`
+        // would route JSON strings through base64 first, defeating the
+        // hex-form amendment.
+        d.deserialize_any(V)
     }
 }

@@ -59,6 +59,7 @@ pub mod caveat;
 pub mod discharge;
 pub mod dqa_serde;
 pub mod governance_signature;
+pub mod hex_id_32;
 pub mod macaroon;
 pub mod signer;
 pub mod substrate;

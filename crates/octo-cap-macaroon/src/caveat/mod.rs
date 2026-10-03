@@ -146,7 +146,7 @@ pub enum Caveat {
 
     // RFC-0965 §3 — caveat payload encodings.
     /// Bind capability to a specific vault (RFC-0960 §2.1).
-    #[serde(rename = "vault")]
+    #[serde(rename = "vault", with = "crate::hex_id_32")]
     Vault([u8; 32]),
 
     /// Permission kind (RFC-0965 §3.2).
@@ -2122,6 +2122,49 @@ mod tests {
             Caveat::Factory(f) => f.clone(),
             _ => panic!("expected Caveat::Factory"),
         }
+    }
+
+    /// RFC-0011 §Caveat Form Amendment: the canonical hex form emitted
+    /// by `canonical_ser` MUST be acceptable as `--caveats` input. The
+    /// pre-amendment asymmetry was closed by adding `visit_str` to
+    /// `dqa_serde::field`.
+    ///
+    /// Note: the substrate canonicalises trailing-zero numerators through
+    /// the wire form (1_000_000 @ scale 6 is the same wire form as
+    /// 1 @ scale 0). Use a value/scale that does not get canonicalised
+    /// to make the structural round-trip clean.
+    #[test]
+    fn tv_cf_07_canonical_amount_max_reparses_through_input_form() {
+        let c = Caveat::AmountMax(Dqa::new(1_234_567, 3).unwrap());
+        let canonical = c.canonical_ser();
+        // canonical is `{"type":"amount_max","value":"<64-hex>"}`. The
+        // 64-hex value MUST parse back to a Caveat via the input
+        // (#[serde(with = "dqa_serde::field")]) form.
+        let restored: Caveat = serde_json::from_slice(&canonical).expect("canonical form reparses");
+        assert_eq!(restored, c);
+    }
+
+    /// RFC-0011 §Caveat Form Amendment: the canonical hex form of
+    /// `Caveat::Vault([u8; 32])` MUST be acceptable as input. Closed by
+    /// applying `#[serde(with = "hex_id_32")]` to the variant.
+    #[test]
+    fn tv_cf_08_canonical_vault_reparses_through_input_form() {
+        let id = [0xaau8; 32];
+        let c = Caveat::Vault(id);
+        let canonical = c.canonical_ser();
+        let restored: Caveat = serde_json::from_slice(&canonical).expect("canonical form reparses");
+        assert_eq!(restored, c);
+    }
+
+    /// Migration back-compat: the legacy 32-element array form MUST
+    /// continue to parse after the `hex_id_32` adapter lands.
+    #[test]
+    fn tv_cf_09_legacy_vault_array_form_still_parses() {
+        let id = [0xaau8; 32];
+        let arr: Vec<u8> = id.to_vec();
+        let json = serde_json::json!({"type": "vault", "value": arr});
+        let restored: Caveat = serde_json::from_value(json).expect("legacy array form");
+        assert_eq!(restored, Caveat::Vault(id));
     }
 }
 

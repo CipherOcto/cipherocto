@@ -1101,7 +1101,7 @@ pub fn dispatch(action: &CapabilityAction, cli: &Octo) -> Result<(), OctoCliErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_cap_macaroon::{Dqa, PermissionKind};
+    use octo_cap_macaroon::Dqa;
 
     fn caveat_json(c: &Caveat) -> String {
         serde_json::to_string(c).expect("caveat serializes")
@@ -1610,15 +1610,18 @@ mod tests {
         assert_eq!(e.exit_code(), 7, "{e}");
     }
 
-    /// A hex vault id — the other rejected form. `Caveat::Vault([u8; 32])`
-    /// takes the 32-byte array, the same wire form as `VaultId` in every
-    /// envelope.
+    /// A hex vault id — the canonical form that `Caveat::canonical_ser`
+    /// emits. After RFC-0011 §Caveat Form Amendment, the `hex_id_32`
+    /// adapter accepts BOTH the 64-char hex string (canonical) AND the
+    /// 32-element byte array (legacy migration). The previously-pinned
+    /// rejection is inverted: the canonical form is now the preferred
+    /// wire form and MUST be accepted.
     #[test]
-    fn guide_vault_caveat_rejects_hex_string() {
+    fn guide_vault_caveat_accepts_hex_string() {
         let hex = "aa".repeat(32);
-        let e = parse_caveats(&format!(r#"[{{"type":"vault","value":"{hex}"}}]"#))
-            .expect_err("hex vault id must be rejected");
-        assert_eq!(e.exit_code(), 7, "{e}");
+        let parsed = parse_caveats(&format!(r#"[{{"type":"vault","value":"{hex}"}}]"#))
+            .expect("hex vault id must be accepted");
+        assert_eq!(parsed, vec![Caveat::Vault([0xaa; 32])]);
     }
 
     /// There is no free-form `scope` payload on the permission caveat.
@@ -1660,31 +1663,25 @@ mod tests {
         );
     }
 
-    /// The canonical form does NOT round-trip back through `--caveats`.
-    /// `canonical_ser` is the HMAC input and renders every binary payload as
-    /// a hex string (`Vault`'s 32-byte id, `AmountMax`'s 16-byte
-    /// `DqaEncoding`), while the derived input form accepts `AmountMax` only
-    /// as a 16-element byte array — `dqa_serde::field` implements `visit_seq`
-    /// and `visit_bytes` but not `visit_str`. `Permission` renders as the full
-    /// info string, which the input form also does not accept.
+    /// The canonical form emitted by `Caveat::canonical_ser` MUST
+    /// round-trip back through `--caveats`. Per RFC-0011 §Caveat Form
+    /// Amendment, the asymmetry closed at the substrate by adding
+    /// `visit_str` to `dqa_serde::field` is now the corrected form:
+    /// what `canonical_ser` emits is what `--caveats` accepts.
     ///
-    /// Note this is a *representation* asymmetry, not a *lossiness* one.
-    /// `AmountMax` now carries the full scale-bearing encoding (RFC-0011
-    /// §Caveat Catalog: "The canonical form MUST carry `scale`"), so nothing
-    /// is lost; only the spelling differs. `guide_dqa16_helper_bytes_round_trip`
-    /// shows the input form parsing the same 16 bytes.
+    /// Earlier this test pinned the converse (`guide_canonical_form_is_not_reparseable`)
+    /// when the asymmetry was deliberate; the amendment closes the trap.
+    /// The substrate canonicalises trailing-zero numerators through the
+    /// wire form (1_000_000 @ scale 6 and 1 @ scale 0 share an
+    /// encoding), so a non-canonicalising value (1_234_567 @ 3) is used
+    /// to make the structural round-trip clean.
     #[test]
-    fn guide_canonical_form_is_not_reparseable() {
-        for c in [
-            Caveat::Vault([0xaa; 32]),
-            Caveat::AmountMax(Dqa::new(1_000_000, 6).expect("dqa")),
-            Caveat::Permission(PermissionKind::VaultMutation),
-        ] {
-            let canonical = String::from_utf8(c.canonical_ser()).expect("canonical utf8");
-            assert!(
-                parse_caveats(&canonical).is_err(),
-                "canonical form must not reparse: {canonical}"
-            );
-        }
+    fn guide_canonical_form_is_reparseable() {
+        let c = Caveat::AmountMax(Dqa::new(1_234_567, 3).expect("dqa"));
+        let canonical = c.canonical_ser();
+        let json = std::str::from_utf8(&canonical).expect("utf8");
+        let parsed =
+            parse_caveats(&format!("[{}]", json)).expect("canonical form must be reparseable");
+        assert_eq!(parsed, vec![c]);
     }
 }

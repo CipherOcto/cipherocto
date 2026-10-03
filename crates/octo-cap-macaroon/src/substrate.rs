@@ -40,12 +40,19 @@ use thiserror::Error;
 ///
 /// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
 ///
-/// Under `--features hex-ids`, this newtype serialises as a 64-char
-/// lowercase hex string (the canonical wire form already emitted by
-/// `Caveat::Vault` etc. via the paired Phase 1 `hex_id_32` adapter).
-/// Under default features the derived `Serialize` form is the
-/// 32-element byte array — the legacy 32-byte-id form preserved for
-/// migration.
+/// Under `--features hex-ids`, the **serde** form of this newtype
+/// serialises as a 64-char lowercase hex string (the canonical wire form
+/// already emitted by `Caveat::Vault` etc. via the paired Phase 1
+/// `hex_id_32` adapter). Under default features the derived `Serialize`
+/// form is the 32-element byte array — the legacy 32-byte-id form
+/// preserved for migration.
+///
+/// The `BorshSerialize` impl is **not** feature-gated: under
+/// `hex-ids` the Borsh form is still the raw 32 bytes, so the two
+/// encodings disagree whenever the feature is on. That is deliberate
+/// (Borsh is the substrate-internal layout, not the canonical
+/// wire boundary) but it means "serialises as hex" is only true of
+/// serde — a Borsh consumer is unaffected by the flag.
 ///
 /// The `hex-ids` capability defaults OFF per the open-limitations
 /// drift audit's "no amendment warranted" verdict on the newtype
@@ -185,11 +192,12 @@ impl GovernanceSignature {
 ///
 /// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
 ///
-/// Under `--features hex-ids`, this newtype serialises as a 64-char
-/// lowercase hex string (canonical form, see `AssetId` for the full
-/// paragraph). Default features emit the 32-element byte array. The
-/// capability defaults OFF per the drift audit's "no amendment
-/// warranted" verdict; migration is opt-in.
+/// Under `--features hex-ids`, the **serde** form of this newtype
+/// serialises as a 64-char lowercase hex string (canonical form, see
+/// `AssetId` for the full paragraph, including the note that the
+/// Borsh form is not feature-gated). Default features emit the
+/// 32-element byte array. The capability defaults OFF per the drift
+/// audit's "no amendment warranted" verdict; migration is opt-in.
 #[derive(
     Clone,
     Copy,
@@ -240,11 +248,12 @@ impl ChainId {
 ///
 /// ## Wire form (mission 0011-vault-asset-chain-id-hex Phase 2)
 ///
-/// Under `--features hex-ids`, this newtype serialises as a 64-char
-/// lowercase hex string (canonical form, see `AssetId` for the full
-/// paragraph). Default features emit the 32-element byte array. The
-/// capability defaults OFF per the drift audit's "no amendment
-/// warranted" verdict; migration is opt-in.
+/// Under `--features hex-ids`, the **serde** form of this newtype
+/// serialises as a 64-char lowercase hex string (canonical form, see
+/// `AssetId` for the full paragraph, including the note that the
+/// Borsh form is not feature-gated). Default features emit the
+/// 32-element byte array. The capability defaults OFF per the drift
+/// audit's "no amendment warranted" verdict; migration is opt-in.
 #[derive(
     Clone,
     Copy,

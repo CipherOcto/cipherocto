@@ -22,7 +22,7 @@ freeze discipline for every change in this amendment, including the
 
 | Version | Date | Change                                                                                       |
 | ------- | ---- | -------------------------------------------------------------------------------------------- |
-|         |      | (v1.0 lands at promotion — all 22 `tv_cf_*` vectors green + the inverted guide vector green) |
+|         |      | (v1.0 lands at promotion — all 23 `tv_cf_*` vectors green + the inverted guide vector green) |
 
 Note: v1.0 lands at promotion; the empty Version cell above is intentional and will be filled in then.
 
@@ -67,7 +67,7 @@ deviations section added, the AC table rebuilt per crate, and the parallel
 adapter consolidated onto `hex_id_32`. Vectors `tv_cf_18` and `tv_cf_19` were
 added by that review.
 
-Gate vectors, all green: `tv_cf_01..06`, `tv_cf_13..16`, and `tv_cf_18..22`
+Gate vectors, all green: `tv_cf_01..06`, `tv_cf_13..16`, and `tv_cf_18..23`
 in `octo-cap-macaroon` under default features;
 `tv_cf_07..09` in-crate in the same crate; `tv_cf_10..12` under
 `--features hex-ids`; and `tv_cf_17` in `octo-cli`. The inverted guide
@@ -321,10 +321,17 @@ documents rather than against `canonical_ser` itself. Cross-document agreement
 is not evidence of completeness when the documents all descend from the same
 unswept list. `tv_cf_22` now derives the set mechanically from the
 `canonical_ser` source and compares it against the vector's literal, so an arm
-that renders hex cannot be added without failing a test. That check was itself
-wrong on its first run — it dropped every single-line match arm, including
-`Vault` — which is the same failure mode it was written to prevent, and is
-recorded in the vector's doc comment so nobody repeats it.
+that renders hex cannot be added without failing a test.
+
+That check was wrong twice, both times in the direction of reporting agreement
+it had not earned, and both are recorded in the vector:
+
+- It first dropped every single-line match arm, including `Vault`.
+- Its scan bound is the first line beginning `};` while an arm is open, which
+  today is the end of `canonical_ser` by coincidence of formatting rather than
+  by construction. An ordinary nested block inside any early arm would stop the
+  scan early, and the comparison would then hold for a short list. `tv_cf_23`
+  guards exactly that, by asserting the scan reaches the enum's final variant.
 
 **Why they are not simply fixed here.** Adopting the adapter on an arm widens
 that arm's _input_ acceptance to both forms, which is free and backward
@@ -421,6 +428,7 @@ row from its test.
 | `tv_cf_20_hex_emitting_arms_acceptance_set_is_explicit`               | default              | the hex-emitting arm set is enumerated, and each arm's hex-input acceptance is stated rather than assumed.                                                 |
 | `tv_cf_21_known_asymmetric_arms_still_reject_their_own_canonical_hex` | default              | pins the four-arm deviation recorded in §Known deviations, and that those arms still accept the legacy array form.                                         |
 | `tv_cf_22_hex_rendering_set_matches_canonical_ser_source`             | default              | the hex-rendering arm set is derived from the `canonical_ser` source and compared against the literal, so a new hex-emitting arm cannot be added silently. |
+| `tv_cf_23_hex_scan_reaches_the_final_caveat_variant`                  | default              | the `canonical_ser` scan reaches the enum's final variant, so a truncated scan cannot make `tv_cf_22` agree with a short list.                             |
 | `tv_cf_13_default_newtype_serde_is_byte_array`                        | default (bare types) | under default features, a bare `AssetId` / `ChainId` / `VaultId` serialises as a 32-element byte array.                                                    |
 
 ### `octo-cap-macaroon` — `hex-ids` feature

@@ -348,6 +348,112 @@ fn tv_cf_22_hex_rendering_set_matches_canonical_ser_source() {
     );
 }
 
+/// Guards the scan in `tv_cf_22` against silent truncation.
+///
+/// The scan stops at the first line beginning `};` that appears while a match
+/// arm is open, which today is exactly the end of `canonical_ser`'s
+/// `let value = match self { ... };`. That is correct by coincidence of
+/// formatting, not by construction: a future refactor that introduced a nested
+/// block ending in `};` inside an arm would stop the scan early, and the
+/// comparison would then hold for a SHORT list and report agreement. That is
+/// the under-reporting failure this whole check exists to prevent, so it gets
+/// its own guard rather than a hope.
+///
+/// The sentinel is the enum's LAST variant, read from the enum declaration
+/// rather than hard-coded. If a new final variant lands, this fails until the
+/// scan is confirmed to reach it. If the scan stops early, this fails.
+#[test]
+fn tv_cf_23_hex_scan_reaches_the_final_caveat_variant() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let path = std::path::Path::new(manifest).join("src/caveat/mod.rs");
+    let source = std::fs::read_to_string(&path).expect("canonical_ser source readable");
+
+    // The enum's last variant. Bounded by brace counting over the enum
+    // declaration: scanning to end-of-file instead picks up `Caveat::` match
+    // arms in LATER FUNCTIONS and reports one of those as the final variant,
+    // which makes the sentinel wrong while still happening to sit far enough
+    // down the file to catch truncation. A sentinel that is wrong for the
+    // stated reason is the same class of defect as the one being guarded.
+    let enum_start = source
+        .find("pub enum Caveat {")
+        .expect("Caveat enum must exist");
+    let after_open = enum_start + "pub enum Caveat {".len();
+    let mut depth = 1usize;
+    let mut enum_end = after_open;
+    for (offset, ch) in source[after_open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    enum_end = after_open + offset;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let enum_body = &source[after_open..enum_end];
+    assert!(
+        !enum_body.is_empty(),
+        "could not bound the Caveat enum body, so the sentinel would be unreliable"
+    );
+    // Inside the enum declaration a variant is a BARE name at one indent level
+    // (`AmountMax(Dqa),`, `WrappedOnly { ... },`) — there is no `Caveat::`
+    // prefix. A first attempt of this guard looked for that prefix, found
+    // nothing inside the enum body, and only ever "worked" because it was
+    // scanning past the enum and matching later `Caveat::` match arms, which
+    // made the sentinel a different variant than the one it claimed to name.
+    let last_variant = enum_body
+        .lines()
+        .filter_map(|line| {
+            let name: String = line
+                .chars()
+                .skip_while(|c| c.is_whitespace())
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() || !name.starts_with(|c: char| c.is_uppercase()) {
+                return None;
+            }
+            let rest = line.trim_start().trim_start_matches(&name);
+            (rest.starts_with('(') || rest.starts_with('{') || rest.starts_with(','))
+                .then_some(name)
+        })
+        .next_back()
+        .expect("the Caveat enum must declare at least one variant");
+
+    // Re-run the same stop rule the scan uses, and check it got that far.
+    let start = source
+        .find("pub fn canonical_ser")
+        .expect("canonical_ser must exist");
+    let mut reached_last = false;
+    let mut current: Option<String> = None;
+    for line in source[start..].lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("Caveat::") {
+            current = Some(
+                rest.chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect(),
+            );
+            if current.as_deref() == Some(last_variant.as_str()) {
+                reached_last = true;
+            }
+        }
+        if current.is_some() && trimmed.starts_with("};") {
+            break;
+        }
+    }
+
+    assert!(
+        reached_last,
+        "the canonical_ser scan never reached the enum's final variant \
+         ({last_variant}), so it stopped early and tv_cf_22 was comparing a \
+         truncated list against the literal. Fix the scan bound rather than the \
+         literal."
+    );
+}
+
 /// True when any string value anywhere in the canonical JSON is a hex string
 /// of 16 or 32 bytes, which is the shape of a rendered `Dqa` payload or a
 /// rendered 32-byte id. Used instead of checking one specific key, so an

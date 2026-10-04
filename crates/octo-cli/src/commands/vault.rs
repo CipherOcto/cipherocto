@@ -2082,28 +2082,58 @@ mod tests {
     }
 }
 
-/// `VaultId` is a 32-byte newtype with a **derived** `Serialize`, so
-/// serde renders it as a JSON array of 32 decimal bytes — not as a hex
-/// string. Every vault-taking flag wants the 64-hex form
-/// (`parse_vault_id_hex`), so an operator who copies `vault_id` straight
-/// out of the envelope gets a bracketed byte list that the argument
-/// parser rejects. Pin the wire form so the guide's hex-conversion jq
-/// stays necessary, and so nobody "simplifies" it away.
+/// The `VaultId` wire form is FEATURE-DEPENDENT, and this pins both sides.
+///
+/// With default features, `VaultId`'s derived `Serialize` renders it as a JSON
+/// array of 32 decimal bytes. Every vault-taking flag wants the 64-hex form
+/// (`parse_vault_id_hex`), so an operator who copies `vault_id` straight out of
+/// the envelope gets a bracketed byte list that the argument parser rejects.
+/// That is the default and the guide's hex-conversion jq exists for it.
+///
+/// Under the substrate-local `hex-ids` opt-in, `VaultId`'s derive delegates to
+/// the shared `hex_id_32` adapter and the envelope carries the 64-hex string
+/// directly, so the jq conversion becomes unnecessary. That is the intended
+/// effect of the feature and the reason it exists.
+///
+/// This test previously asserted the array form unconditionally and its name
+/// said the hex form must never happen. That was true when the feature was the
+/// only thing that could change it, and stopped being true when the opt-in
+/// landed. The CI coverage workflow builds with `--workspace --all-features`,
+/// which enables `hex-ids` on `octo-cap-macaroon`, so it failed there.
+///
+/// A `cargo test -p octo-cli --all-features` does NOT reproduce it: `-p` scopes
+/// `--all-features` to the named package, so the dependency's feature stays
+/// off. Reproducing needs `--features octo-cap-macaroon/hex-ids`, or the
+/// workspace form CI uses. Both sides are asserted here rather than one, so
+/// neither configuration can drift unnoticed.
 #[test]
-fn tv_vault_6_vault_id_is_a_byte_array_not_a_hex_string() {
+fn tv_vault_6_vault_id_wire_form_is_feature_dependent() {
     use octo_cap_macaroon::substrate::VaultId;
 
     let rendered = serde_json::to_string(&VaultId([0xab; 32])).expect("serialize VaultId");
-    assert_eq!(
-        rendered,
-        format!("[{}]", vec!["171"; 32].join(",")),
-        "vault_id must stay a decimal byte array in the envelope: {rendered}"
-    );
-    assert!(
-        !rendered.contains('"'),
-        "if this ever becomes a string the guide's hex-conversion jq must be \
-         revisited: {rendered}"
-    );
+
+    if cfg!(feature = "hex-ids") {
+        // `rendered` is a JSON string, so the expectation carries the quotes
+        // that `serde_json::to_string` emits. Comparing against the bare hex
+        // would fail on the quotes rather than on the encoding.
+        assert_eq!(
+            rendered,
+            format!("\"{}\"", "ab".repeat(32)),
+            "with hex-ids enabled the envelope carries the 64-hex vault id: {rendered}"
+        );
+    } else {
+        assert_eq!(
+            rendered,
+            format!("[{}]", vec!["171"; 32].join(",")),
+            "with default features vault_id must stay a decimal byte array in the \
+             envelope: {rendered}"
+        );
+        assert!(
+            !rendered.contains('"'),
+            "if this ever becomes a string under default features the guide's \
+             hex-conversion jq must be revisited: {rendered}"
+        );
+    }
 
     // The 64-hex form the CLI actually accepts round-trips back to the
     // same bytes, which is the conversion the guide has to perform.

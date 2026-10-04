@@ -35,6 +35,22 @@ revocation-store-stoolap = ["dep:octo-runtime-revocation-store"]
 # required dep without re-declaring it as optional per
 # [[substrate-faithfulness-verification]] R3.A HIGH-1 finding.
 octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
+# Passthrough to the substrate-local `hex-ids` opt-in on `octo-cap-macaroon`,
+# following the RFC-0011-w precedent above. `octo-cap-macaroon` is a required
+# dep, so the plain `<dep>/<feature>` syntax applies with no `dep:` prefix.
+#
+# This exists for two reasons, and the second is the one that bit. First, it
+# lets the CLI be built in the configuration CI actually uses. Second, a test
+# that pins a FEATURE-DEPENDENT wire form needs a real `cfg!` to branch on, and
+# `cfg!(feature = ...)` can only see the current crate's own features. Without
+# this passthrough, `tv_vault_6` had no way to know whether `VaultId` was
+# rendering as a byte array or as hex.
+#
+# It also closes a reproduction gap: `cargo test -p octo-cli --all-features`
+# scopes `--all-features` to the named package, so it does NOT enable
+# `octo-cap-macaroon/hex-ids`. The coverage workflow uses
+# `--workspace --all-features`, which does. The two are not the same build.
+hex-ids = ["octo-cap-macaroon/hex-ids"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

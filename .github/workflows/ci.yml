@@ -14,6 +14,24 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
 
+    env:
+      # Build-disk budget. This job stacks `cargo check`, a full-workspace
+      # `cargo test`, two clippy passes, a telegram build, and finally a full
+      # whatsapp-cli test link into ONE target/ directory. The last of those
+      # ran the runner out of disk twice in a row, failing to archive
+      # libwaproto.rlib and libwacore.rlib with "No space left on device".
+      #
+      # Debug info is the dominant consumer of build disk on a workspace this
+      # size, and nothing in this job needs it. A failing test still fails and
+      # still prints its assertion; it just carries less symbol detail in a
+      # panic backtrace, which is the tradeoff taken to keep the job inside the
+      # runner's disk. Incremental compilation is disabled for the same
+      # reason: it stores a second copy of intermediate artifacts and buys
+      # little on a CI machine that compiles each commit once.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+
     strategy:
       matrix:
         node-version: [20]
@@ -32,6 +50,25 @@ jobs:
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
+
+      - name: Free disk space
+        # The hosted ubuntu runner ships images, SDKs, and language toolchains
+        # this job never touches, and it starts with roughly 14 GB free. The
+        # workspace test build plus the whatsapp link needs most of it. This
+        # reclaims a few GB before any cargo command runs.
+        #
+        # Every removal is guarded by an existence test so the step stays
+        # correct when the runner image changes and a path disappears. Nothing
+        # here is used later: dotnet, the Android SDK, and GHC are not in this
+        # repository's toolchain, and the apt lists are re-fetchable.
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          df -h /
 
       - name: Install system deps
         # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in by

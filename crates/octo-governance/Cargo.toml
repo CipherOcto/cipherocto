@@ -30,7 +30,7 @@ thiserror = "2.0"
 # deterministically. The `lru` crate uses an internal doubly-
 # linked list to maintain true LRU order independent of hash
 # iteration order.
-lru = "0.12"
+lru = "0.16"
 
 [lints.rust]
 unsafe_code = "forbid"

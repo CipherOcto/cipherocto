@@ -88,7 +88,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 # manually on top of stoolap; the libsql feature is therefore
 # unnecessary and would conflict with the convention.
 grammers-session = { version = "0.9.0", default-features = false }
-grammers-mtproto = { version = "0.9.0" }
+grammers-mtproto = { version = "0.10.0" }
 # grammers-client is feature-gated on `real-network`; the mock path
 # (used by default in tests) does not pull grammers-client in.
 # When enabled, it also forces `default-features = false` so the

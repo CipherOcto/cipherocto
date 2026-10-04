@@ -9,7 +9,7 @@ octo-network = { path = "../octo-network" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["net", "io-util", "sync", "time", "macros"] }
 blake3 = "1.5"
-bincode = "1"
+bincode = "3"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 thiserror = "1"

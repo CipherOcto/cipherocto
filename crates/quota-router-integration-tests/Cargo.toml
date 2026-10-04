@@ -13,7 +13,7 @@ octo-adapter-tcp = { path = "../octo-adapter-tcp" }
 octo-protocol = { path = "../octo-protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 async-trait = "0.1"
-bincode = "1"
+bincode = "3"
 blake3 = "1.5"
 borsh = "1"
 rand = "0.8"

@@ -123,7 +123,7 @@ ciborium = "0.2"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = "0.26"
 rustls-pki-types = "1"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 # X25519 for the ephemeral static pub we put in frame[0]. Wacore pins
 # x25519-dalek 2.0.1 in the lockfile (see Cargo.lock); pin the same major.
 x25519-dalek = { version = "2", features = ["static_secrets"] }

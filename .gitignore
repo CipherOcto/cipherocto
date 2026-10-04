@@ -50,6 +50,17 @@ docs/reviews/
 # untracked via `git rm --cached -r docs/audits/` on 2026-08-20.
 docs/audits/
 
+# Claude Code memory cards (local tooling scratchpad, never committed). These
+# are per-session and per-machine working notes, not project artifacts: no
+# build, gate, or spec reads them. 30 previously-tracked files untracked via
+# `git rm --cached -r memory/` on 2026-10-03.
+#
+# An ignore rule only affects UNTRACKED files. Cards already in the index stay
+# tracked until they are explicitly untracked, so adding a rule here is not on
+# its own a fix for anything already committed. `docs/reviews/` is the standing
+# example of that gap: it is listed below and still has 91 tracked files.
+memory/
+
 # CocoIndex
 .cocoindex_code/
 coco.toml

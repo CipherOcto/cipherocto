@@ -232,7 +232,7 @@ jobs:
           cargo fuzz run capability_zk_verify -p octo-wallet-fuzz \
               -- -max_total_time=5400 -max_len=4096
       - name: Upload corpus artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-corpus-capability-zk
           path: crates/octo-wallet/fuzz/corpus/capability_zk_verify

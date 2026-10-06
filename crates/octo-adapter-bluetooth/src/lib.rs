@@ -210,15 +210,22 @@ impl PlatformAdapter for BluetoothAdapter {
             )));
         }
 
-        // Stub: store the message for BLE transmission
+        // Stub: queue the message for BLE transmission.
         let encoded = Self::encode_envelope(&wire_bytes);
         let mut outgoing = self.outgoing.lock().await;
         outgoing.push(encoded.into_bytes());
+        drop(outgoing);
 
-        Ok(DeliveryReceipt {
-            platform_message_id: format!("ble-{}", epoch_millis()),
-            delivered_at: epoch_millis(),
-        })
+        // No receipt. This adapter has no radio link, so nothing was
+        // transmitted; returning `Ok(DeliveryReceipt { … })` told the caller a
+        // message was delivered, and callers record that fact for settlement
+        // and audit. A queued frame is not a delivery. The envelope stays in
+        // `outgoing` for a future transmit path, and the caller learns the
+        // truth by handling this error.
+        Err(transport_err(
+            "bluetooth adapter is a stub: the envelope was queued, not transmitted. \
+             No delivery receipt is issued because no delivery occurred.",
+        ))
     }
 
     async fn receive_messages(
@@ -241,12 +248,25 @@ impl PlatformAdapter for BluetoothAdapter {
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+        let envelope = DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
             }
-        })
+        })?;
+        // M-15: parsing is not verification. `from_wire_bytes` accepts a
+        // well-formed frame whose `envelope_id` does not match its contents and
+        // whose signature is garbage, so without this the adapter is an
+        // unauthenticated injection point.
+        //
+        // The key is the envelope's own `source_peer`, so this proves integrity
+        // and internal consistency, NOT that the claimed peer is who it says it
+        // is. Binding the key to a known peer is the registry work in CD-6;
+        // what this closes is the "any well-formed blob is accepted" gap.
+        envelope
+            .verify(&envelope.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(envelope)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -326,13 +346,10 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
-
-fn epoch_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
+//
+// `epoch_millis` used to live here to stamp the `DeliveryReceipt` this stub
+// returned. M-16 removed that receipt, and with it the only caller, so the
+// helper went with it rather than being left as dead code.
 
 // ── Tests ──────────────────────────────────────────────────────────
 
@@ -436,5 +453,126 @@ mod tests {
             let decoded = BluetoothAdapter::decode_message(&encoded).unwrap();
             assert_eq!(decoded, d);
         }
+    }
+
+    // ── M-16: a stub must not issue a delivery receipt ──
+
+    fn test_adapter() -> BluetoothAdapter {
+        BluetoothAdapter::new(BluetoothConfig {
+            device_name: "test-ble".into(),
+            service_uuid: "12345678-1234-5678-1234-56789abcdef0".into(),
+            characteristic_uuid: "abcdef01-2345-6789-abcd-ef0123456789".into(),
+        })
+    }
+
+    fn raw(env: &DeterministicEnvelope) -> RawPlatformMessage {
+        RawPlatformMessage {
+            platform_id: "ble-test".into(),
+            payload: env.to_wire_bytes(),
+            metadata: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Regression: the adapter queued the envelope in `outgoing` and returned
+    /// `Ok(DeliveryReceipt { .. })`. Callers record that as delivery and the
+    /// receipt feeds settlement and audit, so a message that was never
+    /// transmitted was recorded as delivered.
+    #[tokio::test]
+    async fn send_message_issues_no_receipt_when_nothing_was_transmitted() {
+        let adapter = test_adapter();
+        let domain = adapter.domain_id("test");
+        let env = DeterministicEnvelope::default();
+
+        let err = adapter
+            .send_message(&domain, &env, b"hello")
+            .await
+            .expect_err("a stub must not report a delivery receipt");
+        assert!(
+            err.to_string().contains("not transmitted"),
+            "the error must say the frame was queued, not transmitted, got: {err}"
+        );
+    }
+
+    // ── M-15: canonicalize must verify, not just parse ──
+
+    fn signed_envelope(sk: &ed25519_dalek::SigningKey) -> DeterministicEnvelope {
+        use ed25519_dalek::Signer as _;
+        let mut env = DeterministicEnvelope {
+            version: 1,
+            network_id: 1,
+            message_type: 1,
+            source_peer: sk.verifying_key().to_bytes(),
+            logical_timestamp: 1,
+            ttl_hops: 8,
+            ..Default::default()
+        };
+        // `verify` checks envelope_id against its own derivation BEFORE the
+        // signature, so a fixture has to set it — otherwise the "genuine"
+        // envelope is rejected for an unrelated reason and the anti-vacuity
+        // test cannot tell the two failures apart.
+        env.envelope_id = env.derive_envelope_id();
+        env.signature = sk.sign(&env.to_signing_bytes()).to_bytes();
+        env
+    }
+
+    #[test]
+    fn canonicalize_accepts_a_genuinely_signed_envelope() {
+        use ed25519_dalek::SigningKey;
+        let sk = SigningKey::from_bytes(&[11u8; 32]);
+        let env = signed_envelope(&sk);
+        assert!(
+            test_adapter().canonicalize(&raw(&env)).is_ok(),
+            "a correctly signed envelope must canonicalize — otherwise the \
+             M-15 guard rejects everything"
+        );
+    }
+
+    #[test]
+    fn canonicalize_rejects_an_envelope_tampered_after_signing() {
+        use ed25519_dalek::SigningKey;
+        let sk = SigningKey::from_bytes(&[11u8; 32]);
+        let env = signed_envelope(&sk);
+
+        // `from_wire_bytes` parses this happily: it is a structurally valid
+        // frame. Only signature verification catches the edit.
+        for (field, mutate) in [
+            (
+                "ttl_hops",
+                (|e: &mut DeterministicEnvelope| e.ttl_hops = 1) as fn(&mut _),
+            ),
+            ("payload_hash", |e: &mut DeterministicEnvelope| {
+                e.payload_hash = [0xAA; 32]
+            }),
+            ("logical_timestamp", |e: &mut DeterministicEnvelope| {
+                e.logical_timestamp = 999
+            }),
+        ] {
+            let mut tampered = env.clone();
+            mutate(&mut tampered);
+            let err = test_adapter()
+                .canonicalize(&raw(&tampered))
+                .expect_err(&format!("tampered {field} was accepted"));
+            assert!(
+                err.to_string().contains("verify failed"),
+                "tampered {field} should fail verification, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonicalize_rejects_a_forged_signature() {
+        let env = DeterministicEnvelope {
+            version: 1,
+            network_id: 1,
+            message_type: 1,
+            source_peer: [7u8; 32],
+            logical_timestamp: 1,
+            ttl_hops: 8,
+            ..Default::default()
+        };
+        assert!(
+            test_adapter().canonicalize(&raw(&env)).is_err(),
+            "an all-zero signature over a claimed peer was accepted"
+        );
     }
 }

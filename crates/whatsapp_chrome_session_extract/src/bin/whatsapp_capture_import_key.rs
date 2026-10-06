@@ -30,6 +30,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use anyhow::{Context, Result};
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
@@ -38,6 +39,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
+use whatsapp_chrome_session_extract::write_private_json;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -123,9 +125,12 @@ async fn main() -> Result<()> {
         args.port
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -322,7 +327,7 @@ window.__capturedDerives.origDerive = _origDerive;
         Some(s) => {
             // s is a JSON string
             let parsed: Value = serde_json::from_str(s.as_str().unwrap_or("{}"))?;
-            std::fs::write(&out_path, serde_json::to_string_pretty(&parsed)?)?;
+            write_private_json(&out_path, &parsed)?;
             println!("== whatsapp_capture_import_key ==");
             println!("profile        : {}", profile.display());
             println!("captured_at    : {}", Utc::now().to_rfc3339());

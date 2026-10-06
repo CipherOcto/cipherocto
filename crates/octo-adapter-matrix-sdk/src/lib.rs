@@ -1171,15 +1171,26 @@ impl PlatformAdapter for MatrixAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        if raw.payload.is_empty() {
-            return Err(transport_err("Empty payload"));
-        }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {}", e),
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            if raw.payload.is_empty() {
+                return Err(transport_err("Empty payload"));
             }
-        })
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {}", e),
+                }
+            })
+        };
+        let env = decode()?;
+        env.verify(&env.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {

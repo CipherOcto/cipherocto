@@ -344,11 +344,16 @@ impl RulesConfig {
 ///   `$data_dir/tokens/grace.json`.
 /// - `grace_period_ms` — default rotation grace window. Clamped to
 ///   1000..=300_000 ms. Default 60_000.
-/// - `bearer_required` — if true, every RPC method MUST present a
-///   valid bearer token. If false (default), bearer is optional —
-///   hermetic tests and operator tools work without ceremony. Per
-///   plan §A1: full enforcement is part of Part B (observability
-///   surfaces), Part A provides the plumbing.
+/// - `bearer_required` — if true (the default), every RPC method MUST present
+///   a valid bearer token. This was `false` by default, which meant an
+///   omitted config key produced an IPC daemon that accepted unauthenticated
+///   *mutating* RPCs — including outbound `send.*` — from any local process
+///   that could reach the socket. The default is now fail-closed: a daemon
+///   with no token fails to start at boot rather than serving unauthenticated
+///   mutations. Hermetic tests and operator tools opt out explicitly with
+///   `bearer_required: false` (and, for the fully-unconditional path,
+///   `hermetic_bypass: true`). Per plan §A1: full enforcement is part of
+///   Part B (observability surfaces), Part A provides the plumbing.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SecurityConfig {
     #[serde(default)]
@@ -363,7 +368,8 @@ pub struct SecurityConfig {
     pub grace_path: Option<PathBuf>,
     #[serde(default = "default_grace_period_ms")]
     pub grace_period_ms: i64,
-    #[serde(default)]
+    /// Defaults to `true` (fail-closed) — see the field docs.
+    #[serde(default = "default_true")]
     pub bearer_required: bool,
     /// **Security review F1, F10.** When `bearer_token_env` is unset
     /// and `bearer_required = true`, the daemon enters "hermetic
@@ -390,10 +396,15 @@ impl Default for SecurityConfig {
             bearer_token_env: default_bearer_token_env(),
             grace_path: None,
             grace_period_ms: default_grace_period_ms(),
-            bearer_required: false,
+            bearer_required: true,
             hermetic_bypass: false,
         }
     }
+}
+
+/// Serde default for fail-closed booleans.
+fn default_true() -> bool {
+    true
 }
 
 fn default_audit_max_rows() -> usize {

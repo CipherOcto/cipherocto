@@ -1,0 +1,72 @@
+# Build context exclusions for the Layer 4 quota-router node image.
+#
+# BuildKit reads this file when the Dockerfile is not at the context root:
+# it looks for `<dockerfile>.dockerignore` next to the Dockerfile. The
+# context itself is the repository root, so without this the transfer
+# carries the whole local build tree.
+#
+# That is not hypothetical here. `target/` reached 120 GB on a machine
+# that has run the full workspace test suite, and `COPY . .` would have
+# written all of it into the builder layer before cargo was even
+# invoked. The `crates/octo-cli/tests/e2e_docker/` image is built from
+# the same repository root and carries the equivalent file; this one
+# was simply never added, which is why `layer4_2node` had never been
+# run end to end.
+#
+# SCOPE RULE, carried over from that sibling file: only exclude what is
+# provably irrelevant AND large. Do not add `cairo/` here — `zk-circuit`
+# reads `cairo/src/lib.cairo` at compile time, and excluding it breaks
+# dependency resolution with an error that names a path rather than the
+# mistake. Prose directories total a few tens of MB against a multi-GB
+# context, so excluding them saves nothing and risks the same class of
+# failure.
+
+# Build output and the local toolchain cache. By far the largest
+# source-tree-adjacent directory.
+target/
+**/target/
+
+# Version control and CI. `.git` alone is over a gigabyte.
+.git/
+.github/
+.gitignore
+
+# Local virtualenvs and Python caches.
+.venv/
+venv/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Agent tooling state and caches. Large, and none of it participates in
+# a cargo build.
+.claude/
+.clinerules/
+.agents/
+agents/
+.cocoindex_code/
+.continue/
+.cursor/
+.gitnexus/
+.jcode/
+.mimocode/
+.opencode/
+.openclaude/
+.playwright-mcp/
+
+# Local test and analysis scratch output.
+live-tests/
+check_arc3b/
+.octo/
+.audit/
+.audits/
+tarpaulin-report.json
+cobertura.xml
+*.profraw
+
+# NOT excluded, deliberately: `cairo/` (read by `zk-circuit` at compile
+# time), `docs/`, `rfcs/`, `missions/`, `memory/`, `python/`,
+# `examples/`, `packaging/`, `pipelines/`, and the root-level crates
+# `determin/`, `octo-sync/`, `octo-transport/`, `quota-router/`,
+# `quota-router-e2e-tests/`, `sync-e2e-tests/`. Several are read by
+# build scripts; the rest are small.

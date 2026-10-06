@@ -13,6 +13,7 @@
 //!           --profile-dir /tmp/wa-observer/run-1784043740549/chrome-profile/Default --wait-secs 60
 
 use anyhow::{bail, Context, Result};
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -20,6 +21,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::info;
+use whatsapp_chrome_session_extract::write_private_json;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -128,9 +130,12 @@ async fn main() -> Result<()> {
         find_latest_profile(&args.log_dir).context("no profile")?
     };
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -373,7 +378,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .join("decrypt-attempts.json");
     if let Some(v) = result {
-        std::fs::write(&out_path, serde_json::to_string_pretty(&v)?)?;
+        write_private_json(&out_path, &v)?;
         println!("== whatsapp_decrypt_with_captured_keys ==");
         println!("profile        : {}", profile.display());
         println!("dump           : {}", out_path.display());

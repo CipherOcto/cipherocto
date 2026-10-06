@@ -11,3 +11,6 @@ tokio = { version = "1", features = ["net", "io-util", "sync", "time", "macros"]
 blake3 = "1.5"
 tracing = "0.1"
 thiserror = "1"
+
+[dev-dependencies]
+ed25519-dalek = "2.2"

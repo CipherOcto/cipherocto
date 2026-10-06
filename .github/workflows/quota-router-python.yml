@@ -5,15 +5,15 @@ on:
     branches: [main, next, feat/*]
   pull_request:
     paths:
-      - 'crates/quota-router-pyo3/**'
-      - 'python/**'
+      - "crates/quota-router-pyo3/**"
+      - "python/**"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.12']
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v7
@@ -85,7 +85,7 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       # Install Rust explicitly. Without this, `maturin develop` below
       # tries to bootstrap its own rustc via rustup and fails on fresh
@@ -129,22 +129,27 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
+      # Identical to the `test` and `type-check` jobs above, deliberately.
+      #
+      # This step used to carry `profile: default`, with a long comment
+      # explaining that the action defaults to `--profile minimal` and that
+      # switching to the default profile was what installed cargo. That input
+      # does not exist — actionlint reported it as
+      #   input "profile" is not defined in action "dtolnay/rust-toolchain@stable"
+      #   available inputs are "components", "target", "targets", "toolchain"
+      # so it was silently ignored and the build job ran with exactly the
+      # configuration it has now.
+      #
+      # Whether the original maturin failure
+      #   error: 'cargo' is not installed for the toolchain '1.96.0-…'
+      # is actually resolved is NOT established by this change; see audit §8
+      # R11. What is established is that the previous comment claimed a fix
+      # that never took effect. If the failure reappears, `components:` is the
+      # supported input, not `profile:`.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # dtolnay/rust-toolchain defaults to `--profile minimal`, which
-          # installs only rustc (no cargo, no clippy, no rustfmt). The
-          # `test` and `type-check` jobs in this workflow happen to work
-          # because their runners have cargo pre-installed in the Ubuntu
-          # image. The `build` job hit a fresh runner without that, and
-          # maturin failed with:
-          #   error: 'cargo' is not installed for the toolchain '1.96.0-x86_64-unknown-linux-gnu'
-          # Switching to `profile: default` installs cargo (and clippy,
-          # rustfmt, rust-docs) explicitly via rustup, making the build
-          # job self-sufficient regardless of the runner image.
-          profile: default
 
       - name: Install maturin
         run: pip install --upgrade pip && pip install maturin

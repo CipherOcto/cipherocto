@@ -16,3 +16,6 @@ base64 = "0.22"
 uuid = { version = "1.6", features = ["v4"] }
 async-trait = "0.1"
 octo-network = { path = "../octo-network" }
+
+[dev-dependencies]
+ed25519-dalek = "2.2"

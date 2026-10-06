@@ -173,9 +173,26 @@ impl ReputationAnchorNode {
     /// §Roles and Authorities) lands in mission 0870-b follow-on or a
     /// dedicated reputation-announce mission.
     ///
-    /// Phase 3 MVP also uses a placeholder `from_did` derived from the
-    /// node's announced kinds (no signing identity bound yet — full
-    /// registry-backed identity lands in mission 0968a-reputation-anchoring).
+    /// # Identity is mandatory (RFC-0009 §Identity)
+    ///
+    /// This node announces under a DID derived from its signing key, so
+    /// [`ReputationAnchorNodeConfig::identity`] is **required**. The node
+    /// fails closed without one.
+    ///
+    /// It previously substituted `pk = [0u8; 32]` and minted a DID from
+    /// that. Because [`CanonicalCodec::mint`] is a pure function of its
+    /// pubkey input, **every unconfigured anchor announced the identical
+    /// DID** — a collision in the identifier space rather than an
+    /// anonymous-but-distinct identity. Two anchors could not be told
+    /// apart, and neither could be attributed.
+    ///
+    /// The zero-key fallback is therefore removed rather than defaulted.
+    /// Binding a real identity (full registry-backed identity) lands in
+    /// mission 0968a-reputation-anchoring; until then an operator must
+    /// supply a key, and an unconfigured node refuses to announce.
+    ///
+    /// # Errors
+    /// [`TransportError::GovernanceViolation`] when no identity is bound.
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
         // Mission 0871e-phase5c: emit canonical RouterAnnouncePayload
         // (replaces the Phase 3 MVP
@@ -186,12 +203,16 @@ impl ReputationAnchorNode {
         // Mission 0871-phase5-router-dispatch-wiring: use the shared
         // `RouterAnnounceBuilder` (single source of truth).
         use quota_router_core::node::announce::{PricingPolicy, RouterAnnounceBuilder};
-        let pk = self
-            .config
-            .identity
-            .as_ref()
-            .map(|i| i.public_key_bytes())
-            .unwrap_or([0u8; 32]);
+        // Fail closed: no identity ⇒ no announce. See the doc comment for
+        // why the zero-key DID was worse than an anonymous announce.
+        let identity = self.config.identity.as_ref().ok_or_else(|| {
+            TransportError::GovernanceViolation(
+                "reputation-anchor announce requires a bound identity; refusing to mint a \
+                 zero-key DID (see RFC-0009 §Identity)"
+                    .to_string(),
+            )
+        })?;
+        let pk = identity.public_key_bytes();
         let announce = RouterAnnounceBuilder::new(
             quota_router_core::node::provider::RouterNodeId(pk),
             quota_router_core::node::provider::NetworkId([0u8; 32]),
@@ -204,12 +225,11 @@ impl ReputationAnchorNode {
         .build(&self.config.network_key);
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
-        let placeholder_did = CanonicalCodec::mint(&pk);
-        let placeholder_wire =
-            <CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
-                .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let node_did = CanonicalCodec::mint(&pk);
+        let node_wire = <CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&node_did)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let envelope = NodeEnvelope::build(
-            placeholder_wire,
+            node_wire,
             RecipientRef::Broadcast,
             octo_protocol::payload_kind::REPUTATION_ANCHOR_QUERY,
             announce_body,
@@ -340,5 +360,76 @@ mod tests {
         .unwrap();
         let err = node.handle_envelope(&envelope).unwrap_err();
         assert!(matches!(err, ProtocolError::AuthorizationFailed(_)));
+    }
+
+    // ---- D1-A: identity binding (zero-key DID elimination) ----
+
+    #[tokio::test]
+    async fn announce_fails_closed_without_identity() {
+        let transport = test_transport();
+        let node = ReputationAnchorNode::new(ReputationAnchorNodeConfig {
+            transport,
+            identity: None,
+            network_key: [0u8; 32],
+        });
+
+        let err = node
+            .broadcast_announce()
+            .await
+            .expect_err("announce must fail closed without a bound identity");
+
+        match err {
+            TransportError::GovernanceViolation(msg) => {
+                assert!(
+                    msg.contains("bound identity"),
+                    "error should name the missing identity, got: {msg}"
+                );
+            }
+            other => panic!("expected GovernanceViolation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn announce_proceeds_with_bound_identity() {
+        let transport = test_transport();
+        // The test transport has zero senders, so `broadcast` returns
+        // Ok(0) — it succeeds having delivered to nobody. Reaching `Ok`
+        // proves the identity gate let the call through. Paired with
+        // `announce_fails_closed_without_identity`, this pins the gate in
+        // both directions: it is a real condition, not a blanket failure.
+        let identity = Arc::new(octo_wallet::identity::IdentityKey::generate().expect("generate"));
+        let node = ReputationAnchorNode::new(ReputationAnchorNodeConfig {
+            transport,
+            identity: Some(identity),
+            network_key: [0u8; 32],
+        });
+
+        assert_eq!(
+            node.broadcast_announce()
+                .await
+                .expect("bound identity must proceed"),
+            0
+        );
+    }
+
+    #[test]
+    fn zero_key_mint_is_colliding_which_is_why_it_is_refused() {
+        // Pins the property that made the zero-key DID dangerous:
+        // `CanonicalCodec::mint` is a pure function of the pubkey, so the
+        // former fallback produced the SAME DID for every unconfigured
+        // anchor. If this ever stops holding, the rationale for failing
+        // closed needs re-examination.
+        let a = CanonicalCodec::mint(&[0u8; 32]);
+        let b = CanonicalCodec::mint(&[0u8; 32]);
+        assert_eq!(a, b, "mint must be deterministic — this is the collision");
+
+        // Two distinct real keys must NOT collide.
+        let k1 = octo_wallet::identity::IdentityKey::generate().expect("k1");
+        let k2 = octo_wallet::identity::IdentityKey::generate().expect("k2");
+        assert_ne!(
+            CanonicalCodec::mint(&k1.public_key_bytes()),
+            CanonicalCodec::mint(&k2.public_key_bytes()),
+            "distinct identities must mint distinct DIDs"
+        );
     }
 }

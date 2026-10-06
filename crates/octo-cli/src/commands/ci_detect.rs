@@ -3,10 +3,39 @@
 //! Layer C CLI dispatch surface (NOT Layer B substrate) per
 //! RFC-0011-l Phase 4 row G25. Determines whether the operator
 //! invoking `octo network ...` is an interactive operator or a CI
-//! agent. CI agents are blocked from the 6 CI-DENY-default write
-//! subcommands (the rebind-* trio + mode set + authority rotate +
-//! slash apply) per RFC-0011-h §Confirmation Flag + Per-Axis Exit
-//! Code Matrix rows 138-140.
+//! agent.
+//!
+//! ## THIS MODULE ENFORCES NOTHING. Read this before trusting it.
+//!
+//! The detection logic below is implemented and unit-tested, and it is
+//! correct for what it measures. But **no command calls it**: as of this
+//! revision the only references to `CiDetection::detect` outside this
+//! file are the `pub mod ci_detect;` re-export in `commands/mod.rs` and
+//! a comment in `network.rs` recording that the gate is deferred.
+//!
+//! Consequently there is no CI write-denial today. The 6
+//! CI-DENY-default write subcommands (the rebind-* trio + mode set +
+//! authority rotate + slash apply) execute for a CI agent exactly as
+//! they do for a human. An earlier revision of this doc comment stated
+//! the opposite in the present tense — that CI agents "are blocked",
+//! that an escape hatch "lets CI agents opt into" the 6 subcommands, and
+//! that this module keeps N caller arms DRY. All three described a
+//! control that was never wired, and a security control documented as
+//! enforced is worse than one documented as absent: an operator who
+//! believes the gate holds will not set the one thing that would have
+//! protected them.
+//!
+//! The deferral is not a bug being papered over — it is the recorded
+//! plan. `network.rs` says so at the gate site: "CI gate (slot 90
+//! `NetworkCIDenyDefault`) is forward-looking … the slot 90 error variant
+//! is deferred to Phase 5/6 per RFC-0011-l row 50."
+//!
+//! When the gate does land, three things must change together, and this
+//! comment should change with them: the 6 handlers must call
+//! `CiDetection::detect()` and map `CiAgent` to the slot-90 exit code;
+//! `allow_ci_deny_default` must be READ in a production condition (it is
+//! currently only ever read by a test assertion); and only then does the
+//! "escape hatch" below describe anything real.
 //!
 //! ## Detection inputs
 //!
@@ -23,24 +52,24 @@
 //! "CI agent without env-var set" case (most CI systems do not
 //! set `OCTO_CLI_CI` but pipe stdin from a build script).
 //!
-//! ## Escape hatch
+//! ## Escape hatch — declared, not honoured
 //!
 //! `--allow-ci-deny-default` (DEBUG-ONLY, hidden from `--help`
 //! per RFC-0011 §Security Considerations experimental-flag
-//! contract; surfaces in `octo network ... --help-all`) lets
-//! CI agents opt into the 6 CI-DENY-default subcommands when
-//! the CI pipeline has explicit human approval. Surfaces as
-//! stable contract: experimental, removed before v1.0.
+//! contract; surfaces in `octo network ... --help-all`) is declared
+//! as a clap field on the three network arg structs that will carry
+//! the gate. **It is not read in any production condition**, so today
+//! it gates nothing; it parses, and then nothing consults it. It is
+//! kept as a stable experimental contract: experimental, removed
+//! before v1.0.
 //!
 //! ## Why a separate helper module
 //!
 //! Putting the CI detection inside the network module would
 //! force every rebind-* arm to duplicate the env-var + TTY
-//! probe + escape-hatch check. Centralising the helper
-//! keeps the 5 caller arms (rebind-prepare + rebind-commit +
-//! rebind-abort + mode set + authority rotate + slash apply)
-//! DRY and lets operator switch tables grep on a single
-//! `CiDetection::detect` boundary.
+//! probe + escape-hatch check. Centralising the helper is what
+//! lets the 6 future gate sites share one `CiDetection::detect`
+//! boundary. Today it has zero, which is the honest count.
 
 use std::env;
 use std::io::IsTerminal;
@@ -49,8 +78,9 @@ use std::io::IsTerminal;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CiMode {
     /// Operator is a CI agent (env-var set OR stdin not a TTY).
-    /// Blocked from the 6 CI-DENY-default subcommands unless
-    /// `--allow-ci-deny-default` is passed.
+    ///
+    /// WARNING: nothing currently branches on this variant — see the
+    /// module header. The value is correct; the enforcement is absent.
     CiAgent,
     /// Operator is an interactive terminal user.
     Interactive,

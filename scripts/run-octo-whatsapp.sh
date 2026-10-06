@@ -131,6 +131,33 @@ case "$PROFILE" in
     *) echo "invalid --profile: $PROFILE (expected: debug | release)" >&2; exit 1 ;;
 esac
 
+# Validate every value that reaches the systemd unit heredoc (and the paths
+# derived from them) BEFORE it is written. The heredoc interpolates these raw,
+# so an unvalidated value carrying a newline injects unit directives and
+# `systemctl --user start` executes them as the operator (RCE). Validation
+# happens here, after the per-instance path re-derivation above, so the derived
+# values are the ones actually checked. Uses `echo` rather than `log()` —
+# `log` is not defined until further down, and this block runs before it.
+case "$NAME" in
+    ''|*[!a-zA-Z0-9._-]*)
+        echo "invalid --name: must match [a-zA-Z0-9._-]+ (got: $NAME)" >&2; exit 1 ;;
+esac
+if [ "${#NAME}" -gt 64 ]; then
+    echo "invalid --name: exceeds 64 characters (got ${#NAME})" >&2; exit 1
+fi
+# systemd unit-file values: no newlines, and no '[' / ']' (they would open a
+# new directive or an unexpected section header).
+for v in "$DATA_DIR" "$SOCKET_DIR" "$LOG_DIR" "$SESSION_PATH" "$CAPTURE_LOG_DIR" "$BIN" "$SOCKET"; do
+    case "$v" in
+        /*) ;;
+        *) echo "invalid path: must be absolute (got: $v)" >&2; exit 1 ;;
+    esac
+    case "$v" in
+        *$'\n'*|*'['*|*']'*|'')
+            echo "invalid path: illegal character in (got: $v)" >&2; exit 1 ;;
+    esac
+done
+
 # === Path discovery (canonical worktree path) ===============================
 
 REPO_ROOT="$HOME/_w/ai/cipherocto"
@@ -282,7 +309,7 @@ Environment=OCTO_WHATSAPP_DATA_DIR=$DATA_DIR
 Environment=OCTO_WHATSAPP_SOCKET_DIR=$SOCKET_DIR
 Environment=OCTO_WHATSAPP_LOG_DIR=$LOG_DIR
 Environment=OCTO_WHATSAPP_SESSION_PATH=$SESSION_PATH
-ExecStart=$BIN --socket $SOCKET --name $NAME daemon
+ExecStart=$BIN --socket '$SOCKET' --name '$NAME' daemon
 Restart=on-failure
 RestartSec=2
 StandardOutput=append:$CAPTURE_LOG_DIR/octo-whatsapp-$NAME.log

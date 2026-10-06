@@ -108,6 +108,15 @@ pub enum RedemptionError {
     /// Catalog has no entry for the policy id referenced by the capability.
     #[error("policy {policy_id:?} not found in catalog")]
     PolicyNotFound { policy_id: [u8; 32] },
+
+    /// The capability's validity window does not contain `now`.
+    #[error("capability is not valid at {now_unix}: {reason}")]
+    OutsideValidityWindow {
+        /// The instant redemption was attempted at.
+        now_unix: u64,
+        /// Which bound was violated.
+        reason: String,
+    },
 }
 
 /// Redeem a capability against a policy catalog (RFC-0967 §5).
@@ -126,6 +135,113 @@ pub enum RedemptionError {
 /// - `RedemptionError::PolicyNotSuperseded { cap_id, policy_id }` if
 ///   the capability's surface is not contained in the policy's surface.
 pub fn redeem_capability(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+) -> Result<(), RedemptionError> {
+    // H-4: this entry point has no clock, so it cannot evaluate a deadline.
+    // Rather than let an expired capability redeem, it refuses outright when a
+    // time caveat is present. Capabilities with no time caveat are unaffected —
+    // there is nothing time-dependent about them.
+    if let Some(bound) = cap.macaroon.caveats.iter().find_map(time_caveat_bounds) {
+        return Err(RedemptionError::OutsideValidityWindow {
+            now_unix: 0,
+            reason: format!("clock-less redemption refused; capability has {bound}"),
+        });
+    }
+    redeem_capability_at(cap, catalog, 0)
+}
+
+/// The validity window a caveat imposes, as a human-readable description, or
+/// `None` if the caveat carries no time bound.
+///
+/// RULE: a TIME-BOUNDING caveat is `ValidRange`, `ValidAfter`, or
+/// `ExpiresAt`. Adding a variant here is required when a new time-bearing
+/// variant lands — a variant missed here silently redeems forever.
+fn time_caveat_bounds(caveat: &Caveat) -> Option<String> {
+    match caveat {
+        Caveat::ValidRange {
+            valid_after_unix,
+            valid_until_unix,
+        } => Some(format!(
+            "ValidRange [{valid_after_unix}, {valid_until_unix}]"
+        )),
+        Caveat::ValidAfter { not_before_unix } => Some(format!("ValidAfter {not_before_unix}")),
+        _ => None,
+    }
+}
+
+/// Does every time-bearing caveat on the capability admit `now_unix`?
+///
+/// Evaluated before any policy lookup, so an expired capability is rejected for
+/// the reason that actually applies rather than incidentally failing a later
+/// check.
+fn time_caveats_admit(cap: &CapabilityToken, now_unix: u64) -> Result<(), RedemptionError> {
+    for caveat in &cap.macaroon.caveats {
+        match caveat {
+            Caveat::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => {
+                // RFC-0960 §R5-F2: `after > until` is unsatisfiable, so every
+                // instant is rejected rather than the range wrapping.
+                if valid_after_unix > valid_until_unix {
+                    return Err(RedemptionError::OutsideValidityWindow {
+                        now_unix,
+                        reason: format!(
+                            "unsatisfiable ValidRange [{valid_after_unix}, {valid_until_unix}]"
+                        ),
+                    });
+                }
+                if now_unix < *valid_after_unix {
+                    return Err(RedemptionError::OutsideValidityWindow {
+                        now_unix,
+                        reason: format!("not yet valid; starts at {valid_after_unix}"),
+                    });
+                }
+                if now_unix > *valid_until_unix {
+                    return Err(RedemptionError::OutsideValidityWindow {
+                        now_unix,
+                        reason: format!("expired at {valid_until_unix}"),
+                    });
+                }
+            }
+            Caveat::ValidAfter { not_before_unix } if now_unix < *not_before_unix => {
+                return Err(RedemptionError::OutsideValidityWindow {
+                    now_unix,
+                    reason: format!("not yet valid; starts at {not_before_unix}"),
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Redeem a capability against a policy catalog at a known instant
+/// (RFC-0967 §5).
+///
+/// The clock-aware form of [`redeem_capability`]. Steps:
+///
+/// 1. Evaluate every time caveat against `now_unix` — first, so an expired
+///    capability fails for the reason that actually applies.
+/// 2. Require a `PolicyReference` caveat on the capability.
+/// 3. Look up the referenced policy in the catalog.
+/// 4. Derive a `PolicySurface` from the capability's caveats.
+/// 5. Reject iff `!is_subgraph(&&cap_surface, &&policy.surface)`.
+///
+/// # Errors
+/// - `OutsideValidityWindow` if a time caveat does not admit `now_unix`.
+/// - The remaining variants [`redeem_capability`] documents.
+pub fn redeem_capability_at(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+    now_unix: u64,
+) -> Result<(), RedemptionError> {
+    time_caveats_admit(cap, now_unix)?;
+    redeem_shape_and_policy(cap, catalog)
+}
+
+fn redeem_shape_and_policy(
     cap: &CapabilityToken,
     catalog: &dyn PolicyCatalog,
 ) -> Result<(), RedemptionError> {

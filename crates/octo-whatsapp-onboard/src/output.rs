@@ -114,6 +114,7 @@ mod tests {
             out: Some(path),
             stdout: false,
             force: false,
+            show_secret: false,
         }
     }
 

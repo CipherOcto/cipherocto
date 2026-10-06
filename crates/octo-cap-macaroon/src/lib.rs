@@ -191,15 +191,26 @@ pub fn hmac_blake3(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
 ///
 /// `macaroon_id = blake3::keyed_hash(root_secret, nonce)[:16]`
 ///
-/// **Note (mission 0957-ext-macaroon follow-up):** RFC-0957 §Algorithms
-/// documents `macaroon_id = blake3::keyed_hash(root_secret, MACAR_ID_DOMAIN ++ hex(nonce))[:16]`
-/// (domain-separated + hex-encoded nonce). The current implementation uses
-/// the raw 16-byte nonce as the BLAKE3 message (no domain prefix, no hex
-/// encoding) for byte-identical backward compatibility with the pre-extraction
-/// `crates/octo-wallet/src/capability/macaroon.rs::macaroon_id` function.
-/// A future audit mission will reconcile the algorithm-vs-implementation drift;
-/// wire-form stability is preserved by exporting this function (Phase 1) without
-/// changing observable behavior.
+/// **Spec reconciliation (RFC-0972, 2026-10-06).** RFC-0957 §Mint documents
+/// `macaroon_id = blake3::keyed_hash(root_secret, "cipherocto/macaroon/v1:" ++ hex(nonce))[:16]`
+/// (domain-separated + hex-encoded nonce). This implementation uses the raw
+/// 16-byte nonce as the BLAKE3 message. **This form is normative** — RFC-0972
+/// amends the spec to match the code, because the implementation is the only
+/// form ever live and no wire compatibility is gained by changing it.
+///
+/// **The nonce is NOT retained, and that is deliberate.** `root_id` is the
+/// verifier-side replay-dedup key (RFC-0957 §Replay Protection); since
+/// `root_id` is a deterministic function of the nonce, a recoverable nonce
+/// would let a token holder regenerate its `root_id` and defeat dedup. The
+/// nonce's unrecoverability is the mechanism. See RFC-0972 §Nonce Handling.
+///
+/// Note the asymmetry is intentional and stays: the **chain** derivation
+/// applies `MACAR_ID_DOMAIN` (`MACAR_ID_DOMAIN ++ nonce`, see `macaroon.rs`
+/// mint), while this id derivation does not. RFC-0972 records that asymmetry
+/// as deliberate rather than pending.
+///
+/// Wire-form stability is pinned by `l12_macaroon_id_derivation_is_pinned`
+/// (`crates/octo-cli/tests/security_regressions.rs`).
 #[must_use]
 pub fn macaroon_id(root_secret: &[u8; 32], nonce: &[u8; 16]) -> MacaroonId {
     let mac = hmac_blake3(root_secret, nonce);

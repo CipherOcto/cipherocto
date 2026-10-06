@@ -2,10 +2,11 @@
 //!
 //! Per RFC-0968 §21: every authoritative signature or registration carries
 //! one of these types and is shape-validated before any chain-side effect.
-//! Real signature verification is stubbed (`verify_governance_suspension`,
-//! `slash_recorder`) pending a later mission that owns governance key
-//! provisioning. The shape, freshness, and quorum checks all land now so the
-//! production signer can be swapped in later without API churn.
+//! The shape, freshness, and quorum checks are enforced by the store layer;
+//! signature verification is performed by [`verify_governance_signature`],
+//! which every store implementation delegates to. The preimage constructions
+//! are byte-pinned so the production signer can be swapped in later without
+//! API churn.
 
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
@@ -122,18 +123,18 @@ pub struct GovernanceProof {
     /// `slash_destination` is `Some`:
     ///
     /// - Suspension (`slash_destination == None`):
-    ///   `BLAKE3(BLAKE3_GOVERNANCE_PROOF_DOMAIN || reason_hash)`.
+    ///   [`governance_suspension_digest`] —
+    ///   `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id
+    ///   || reason_hash || governance_pubkey || now_unix)`.
     /// - Slash (`slash_destination == Some(_)`):
     ///   the canonical preimage returned by
     ///   [`GovernanceProof::slash_signature_preimage`] — the
     ///   chain-tx byte-equality on-wire lock (mission 0851p-a AC,
     ///   RFC-0968 §21 + §23 Review-Round-7).
     ///
-    /// The chain-tx layer MUST re-derive the preimage from the
-    /// signed fields and verify the signature against it; the
-    /// `issue_governance_slash` byte-equality gate guarantees the
-    /// caller-supplied fields match the signed fields so a chain-tx
-    /// builder cannot suppress-destination-on-chain.
+    /// Both forms are verified by
+    /// [`verify_governance_signature`], which every store
+    /// implementation delegates to.
     pub signature: Vec<u8>,
     /// Snapshot under which this proof is valid.
     pub snapshot: GovernanceSnapshot,
@@ -210,6 +211,105 @@ impl GovernanceProof {
         out.copy_from_slice(digest.as_bytes());
         Some(out)
     }
+
+    /// Canonical signed digest for a *suspension* proof. See
+    /// [`governance_suspension_digest`] for the byte layout.
+    pub fn suspension_signature_digest(&self, now_unix: u64) -> [u8; 32] {
+        governance_suspension_digest(
+            &self.recorder_id,
+            &self.reason_hash,
+            &self.governance_pubkey,
+            now_unix,
+        )
+    }
+}
+
+/// Canonical byte preimage that a governance **suspension** signature covers.
+///
+/// ```text
+/// BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN
+///     || recorder_id.as_bytes()      // 8 bytes, u64 BE
+///     || reason_hash                // 32 bytes
+///     || governance_pubkey          // 32 bytes
+///     || now_unix.to_be_bytes())     // 8 bytes
+/// ```
+///
+/// This is the Round 13 form and it is the on-wire contract: the field order
+/// mirrors [`GovernanceProof::slash_signature_preimage`] (pubkey then
+/// timestamp last) so the two proof kinds stay positionally consistent. It
+/// binds the target recorder, the reason, the signing officer's key, and the
+/// timestamp — so a proof issued for recorder A cannot authorize suspending B,
+/// and a captured proof cannot be replayed at a later `now_unix`.
+///
+/// Note there is no `governance_set_hash` in the digest: the set hash is
+/// checked against the snapshot directly, and adding it here would give two
+/// conflicting preimages for the same proof.
+pub fn governance_suspension_preimage(
+    recorder_id: &RecorderId,
+    reason_hash: &[u8; 32],
+    governance_pubkey: &[u8; 32],
+    now_unix: u64,
+) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::with_capacity(35 + 8 + 32 + 32 + 8);
+    buf.extend_from_slice(crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
+    buf.extend_from_slice(recorder_id.as_bytes());
+    buf.extend_from_slice(reason_hash);
+    buf.extend_from_slice(governance_pubkey);
+    buf.extend_from_slice(&now_unix.to_be_bytes());
+    buf
+}
+
+/// BLAKE3 of [`governance_suspension_preimage`] — the 32 bytes the ed25519
+/// signature covers.
+pub fn governance_suspension_digest(
+    recorder_id: &RecorderId,
+    reason_hash: &[u8; 32],
+    governance_pubkey: &[u8; 32],
+    now_unix: u64,
+) -> [u8; 32] {
+    let preimage =
+        governance_suspension_preimage(recorder_id, reason_hash, governance_pubkey, now_unix);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(blake3::hash(&preimage).as_bytes());
+    out
+}
+
+/// Verify a governance suspension/slash signature. **The single choke point**
+/// for this check — every `ReputationStore::verify_governance_suspension`
+/// implementation delegates here rather than re-deriving the preimage, so the
+/// three store impls cannot drift apart.
+///
+/// Returns `Ok(())` only when the ed25519 signature over
+/// [`governance_suspension_digest`] verifies against `governance_pubkey`.
+/// A zero pubkey, a signature of the wrong length, a malformed key, and a
+/// genuine signature mismatch all return `GovernanceSignatureInvalid` — the
+/// error does not distinguish them, so a caller cannot use the error to learn
+/// which key was tried.
+pub fn verify_governance_signature(
+    governance_pubkey: &[u8; 32],
+    recorder_id: &RecorderId,
+    reason_hash: &[u8; 32],
+    signature: &[u8],
+    now_unix: u64,
+) -> Result<(), ReputationError> {
+    if *governance_pubkey == [0u8; 32] {
+        return Err(ReputationError::GovernanceSignatureInvalid);
+    }
+    // ed25519 signatures are exactly 64 bytes. Checking the length before the
+    // parse keeps a caller-supplied blob from reaching `Signature::from_slice`,
+    // which panics on a short slice.
+    let signature: [u8; 64] = signature
+        .try_into()
+        .map_err(|_| ReputationError::GovernanceSignatureInvalid)?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(governance_pubkey)
+        .map_err(|_| ReputationError::GovernanceSignatureInvalid)?;
+    let signature = ed25519_dalek::Signature::from_bytes(&signature);
+    let message =
+        governance_suspension_digest(recorder_id, reason_hash, governance_pubkey, now_unix);
+    use ed25519_dalek::Verifier as _;
+    verifying_key
+        .verify(&message, &signature)
+        .map_err(|_| ReputationError::GovernanceSignatureInvalid)
 }
 
 /// Authorisation for `verify_governance_suspension` (read-side). Carries
@@ -650,6 +750,7 @@ impl AnchorGovernanceProof {
 mod tests {
     use super::*;
     use crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS;
+    use ed25519_dalek::{Signer as _, SigningKey};
 
     fn dummy_snapshot(now: u64) -> GovernanceSnapshot {
         GovernanceSnapshot {
@@ -970,5 +1071,155 @@ mod tests {
             "Debug form must be hex-prefixed (got: {dbg})"
         );
         assert!(dbg.ends_with(")"), "Debug form must close with ')'");
+    }
+
+    // -- C-4: governance suspension signatures are actually verified --
+
+    /// Build a correctly signed suspension proof: the officer signs the
+    /// canonical digest with their real key.
+    fn signed_suspension_proof(now: u64) -> (SigningKey, GovernanceProof) {
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = sk.verifying_key().to_bytes();
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xAB; 32];
+        let digest = governance_suspension_digest(&recorder_id, &reason_hash, &pk, now);
+        let signature = sk.sign(&digest).to_bytes().to_vec();
+        let proof = GovernanceProof {
+            governance_pubkey: pk,
+            recorder_id,
+            reason_hash,
+            signature,
+            snapshot: dummy_snapshot(now),
+            governance_set_hash: [1u8; 32],
+            slash_destination: None,
+            slash_amount: 0,
+            slash_asset: AssetTag::None,
+        };
+        (sk, proof)
+    }
+
+    #[test]
+    fn a_correctly_signed_suspension_proof_verifies() {
+        let now = 1_700_000_000u64;
+        let (_sk, p) = signed_suspension_proof(now);
+        assert_eq!(
+            p.suspension_signature_digest(now),
+            p.suspension_signature_digest(now)
+        );
+        verify_governance_signature(
+            &p.governance_pubkey,
+            &p.recorder_id,
+            &p.reason_hash,
+            &p.signature,
+            now,
+        )
+        .expect("a genuine signature must verify");
+    }
+
+    /// The regression itself. Before C-4 every one of these verified, because
+    /// the `signature` field was never read: a proof could suspend or slash an
+    /// arbitrary recorder with no key material at all.
+    #[test]
+    fn forged_suspension_proofs_are_rejected() {
+        let now = 1_700_000_000u64;
+        let (sk, valid) = signed_suspension_proof(now);
+        let verify = |p: &GovernanceProof, now: u64| {
+            verify_governance_signature(
+                &p.governance_pubkey,
+                &p.recorder_id,
+                &p.reason_hash,
+                &p.signature,
+                now,
+            )
+        };
+
+        // 1. The all-zero signature the pre-C-4 tests passed with.
+        let mut zeroed = valid.clone();
+        zeroed.signature = vec![0u8; 64];
+        assert!(verify(&zeroed, now).is_err(), "zero signature accepted");
+
+        // 2. Empty and wrong-length blobs must error, not panic.
+        for bad in [vec![], vec![0u8; 63], vec![0u8; 65], vec![0u8; 96]] {
+            let mut p = valid.clone();
+            p.signature = bad.clone();
+            assert!(verify(&p, now).is_err(), "len {} accepted", bad.len());
+        }
+
+        // 3. A valid signature, replayed against a different recorder — the
+        //    authorization-confusion case: proof issued for A must not
+        //    suspend B.
+        let mut other_recorder = valid.clone();
+        other_recorder.recorder_id = RecorderId::from_u64(43);
+        assert!(
+            verify(&other_recorder, now).is_err(),
+            "proof issued for recorder 42 authorized recorder 43"
+        );
+
+        // 4. A different reason than the one signed.
+        let mut other_reason = valid.clone();
+        other_reason.reason_hash = [0xCD; 32];
+        assert!(verify(&other_reason, now).is_err(), "reason rebound");
+
+        // 5. A different timestamp (replay at a later now_unix).
+        assert!(
+            verify(&valid, now + 1).is_err(),
+            "proof replayed at a later now_unix"
+        );
+
+        // 6. The right signature, but the pubkey swapped to a different
+        //    officer — the signature does not verify under the other key.
+        let other_sk = SigningKey::from_bytes(&[9u8; 32]);
+        let mut swapped = valid.clone();
+        swapped.governance_pubkey = other_sk.verifying_key().to_bytes();
+        assert!(verify(&swapped, now).is_err(), "pubkey swapped");
+
+        // 7. A zero pubkey is rejected even with a real signature over the
+        //    matching digest.
+        let zero_pk = [0u8; 32];
+        let digest =
+            governance_suspension_digest(&valid.recorder_id, &valid.reason_hash, &zero_pk, now);
+        let mut zeroed_pk = valid.clone();
+        zeroed_pk.governance_pubkey = zero_pk;
+        zeroed_pk.signature = sk.sign(&digest).to_bytes().to_vec();
+        assert!(verify(&zeroed_pk, now).is_err(), "zero pubkey accepted");
+    }
+
+    #[test]
+    fn suspension_preimage_is_byte_pinned() {
+        // Field-order contract, mirroring the slash preimage's pin.
+        let now = 1_700_000_000u64;
+        let pk = [7u8; 32];
+        let pre = governance_suspension_preimage(&RecorderId::from_u64(42), &[0xAB; 32], &pk, now);
+        let domain = crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN;
+        assert_eq!(pre.len(), domain.len() + 8 + 32 + 32 + 8);
+        assert_eq!(&pre[..domain.len()], domain);
+        let off = domain.len();
+        assert_eq!(&pre[off..off + 8], &42u64.to_be_bytes());
+        assert_eq!(&pre[off + 8..off + 40], &[0xAB; 32]);
+        assert_eq!(&pre[off + 40..off + 72], &pk);
+        assert_eq!(&pre[off + 72..off + 80], &now.to_be_bytes());
+    }
+
+    #[test]
+    fn every_signed_field_changes_the_suspension_digest() {
+        let now = 1_700_000_000u64;
+        let pk = [7u8; 32];
+        let base = governance_suspension_digest(&RecorderId::from_u64(42), &[0xAB; 32], &pk, now);
+        assert_ne!(
+            governance_suspension_digest(&RecorderId::from_u64(43), &[0xAB; 32], &pk, now),
+            base
+        );
+        assert_ne!(
+            governance_suspension_digest(&RecorderId::from_u64(42), &[0xCD; 32], &pk, now),
+            base
+        );
+        assert_ne!(
+            governance_suspension_digest(&RecorderId::from_u64(42), &[0xAB; 32], &[8u8; 32], now),
+            base
+        );
+        assert_ne!(
+            governance_suspension_digest(&RecorderId::from_u64(42), &[0xAB; 32], &pk, now + 1),
+            base
+        );
     }
 }

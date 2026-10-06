@@ -15,6 +15,11 @@ name = "octo_wallet"
 path = "src/lib.rs"
 
 [dependencies]
+# Canonical filesystem permission primitives (private-from-birth file/dir
+# creation). Lives in its own dependency-free crate so secret-bearing writers
+# OUTSIDE the wallet (WhatsApp session dumps H-6, session export H-7) share
+# one definition instead of copying the rule. `fs_perms` re-exports it.
+cipherocto-fs-perms = { path = "../cipherocto-fs-perms" }
 # Workspace deps — only what's needed for wallet MVP
 serde.workspace = true
 serde_json.workspace = true

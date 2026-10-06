@@ -692,4 +692,140 @@ mod tests {
             "stub-shaped proof should verify via FFI or stub fallback, got {result:?}"
         );
     }
+
+    // ── M-5: the commitment must cover every field of `PublicInputs` ───────
+    //
+    // M-5 as written in the audit ("the stub commitment binds only 5 of 9
+    // public-input fields") describes the gap between TWO types:
+    // `zk_verifier::PublicInputs` has 5 fields, and the router's
+    // `quota_router_core::zk_verify::PublicInputs` has 8. Five of the
+    // router's fields (`ask_id`, `axes_consumed`, `invocation_hash`,
+    // `holder_did`, `output_hash`) have no representation here at all, so no
+    // amount of editing `canonicalize_public` can bind them — they never
+    // reach this layer. That part of the finding is CD-1 phase 2 work
+    // (widening the Layer A public-input type), not a bounded edit.
+    //
+    // What IS a bounded edit, and what this guard pins, is the property the
+    // concern actually rests on: `canonicalize_public` binds *every* field of
+    // the type it is given. If someone adds a field to `PublicInputs` and
+    // forgets to fold it into the transcript, these tests go red instead of
+    // silently producing a commitment that does not cover it.
+
+    fn baseline_public_inputs() -> PublicInputs {
+        PublicInputs {
+            proof_issued_at_unix: 1_700_000_000,
+            verifier_local_unix_time: 1_700_000_005,
+            compiled_casm_hash: "casm-baseline".to_owned(),
+            capability_root_hash: "caproot-baseline".to_owned(),
+            provider_slot_id: "slot-baseline".to_owned(),
+        }
+    }
+
+    #[test]
+    fn m5_every_public_input_field_changes_the_commitment() {
+        let base = canonicalize_public(&baseline_public_inputs());
+        assert!(
+            !base.is_empty(),
+            "canonicalization must not produce an empty transcript"
+        );
+
+        // One mutation per field of `PublicInputs`. If a field is added to
+        // the struct and not bound here, this match becomes non-exhaustive
+        // and the test fails to compile — which is the intended alarm.
+        let mutations: [(&str, PublicInputs); 5] = [
+            (
+                "proof_issued_at_unix",
+                PublicInputs {
+                    proof_issued_at_unix: 1_700_000_001,
+                    ..baseline_public_inputs()
+                },
+            ),
+            (
+                "verifier_local_unix_time",
+                PublicInputs {
+                    verifier_local_unix_time: 1_700_000_006,
+                    ..baseline_public_inputs()
+                },
+            ),
+            (
+                "compiled_casm_hash",
+                PublicInputs {
+                    compiled_casm_hash: "casm-other".to_owned(),
+                    ..baseline_public_inputs()
+                },
+            ),
+            (
+                "capability_root_hash",
+                PublicInputs {
+                    capability_root_hash: "caproot-other".to_owned(),
+                    ..baseline_public_inputs()
+                },
+            ),
+            (
+                "provider_slot_id",
+                PublicInputs {
+                    provider_slot_id: "slot-other".to_owned(),
+                    ..baseline_public_inputs()
+                },
+            ),
+        ];
+
+        for (field, mutated) in mutations {
+            let changed = canonicalize_public(&mutated);
+            assert_ne!(
+                base, changed,
+                "M-5: `{field}` is not bound by canonicalize_public — a proof \
+                 would verify with that field altered"
+            );
+        }
+    }
+
+    #[test]
+    fn m5_length_prefixes_prevent_field_boundary_confusion() {
+        // Without per-field length prefixes, ("ab", "c") and ("a", "bc")
+        // canonicalize identically, so a proof could carry one ask's field
+        // values and be verified against another's.
+        //
+        // Note what this test does NOT claim: removing a *single* prefix is
+        // not exploitable, because the next field's own prefix re-syncs the
+        // boundary and the transcripts still differ. The vulnerable state is
+        // total absence of prefixes. A mutation that strips one prefix at a
+        // time is therefore green here by construction, and treating that as
+        // a vacuous guard would be a mistake.
+        let left = PublicInputs {
+            compiled_casm_hash: "ab".to_owned(),
+            capability_root_hash: "c".to_owned(),
+            ..baseline_public_inputs()
+        };
+        let right = PublicInputs {
+            compiled_casm_hash: "a".to_owned(),
+            capability_root_hash: "bc".to_owned(),
+            ..baseline_public_inputs()
+        };
+        assert_ne!(
+            canonicalize_public(&left),
+            canonicalize_public(&right),
+            "M-5: adjacent string fields must be length-prefixed so that \
+             shifting a character across the boundary changes the transcript"
+        );
+    }
+
+    #[test]
+    fn m5_the_stub_commitment_covers_the_same_fields() {
+        // The verifier compares `proof_bytes[..32]` against `stub_commitment`,
+        // so the proofer-side helper must not drift from `canonicalize_public`.
+        let casm = "casm-stub-parity";
+        let base = baseline_public_inputs();
+        let expected = {
+            let mut commit = Hasher::new();
+            commit.update(casm.as_bytes());
+            commit.update(&canonicalize_public(&base));
+            *commit.finalize().as_bytes()
+        };
+        assert_eq!(
+            stub_commitment(casm, &base).expect("stub proofer available under cfg(test)"),
+            expected,
+            "stub_commitment must hash exactly the canonical public inputs"
+        );
+    }
 }

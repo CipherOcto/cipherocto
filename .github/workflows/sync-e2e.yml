@@ -97,7 +97,22 @@ jobs:
       - name: Cleanup Docker
         if: always()
         run: |
-          docker kill $(docker ps -q) 2>/dev/null || true
-          docker rm -f $(docker ps -aq) 2>/dev/null || true
-          docker network rm $(docker network ls -q --filter "name=sync-e2e") 2>/dev/null || true
+          # SC2046 is right about the general hazard and wrong about this
+          # idiom, so it is suppressed with the reason rather than "fixed"
+          # into a bug. See audit §8 R15.
+          #
+          # Word splitting is REQUIRED on the three commands below: each
+          # passes a LIST of container / network ids to docker. Quoting the
+          # substitution collapses two ids into one newline-joined argument
+          # and docker rejects it.
+          #
+          # The `{ …; }` group exists only so this single directive scopes
+          # to all three; a bare `disable=` applies to the next command
+          # alone, and the commands are independent (each ends `|| true`).
+          # shellcheck disable=SC2046
+          {
+            docker kill $(docker ps -q) 2>/dev/null || true
+            docker rm -f $(docker ps -aq) 2>/dev/null || true
+            docker network rm $(docker network ls -q --filter "name=sync-e2e") 2>/dev/null || true
+          }
           docker rmi -f stoolap-node-test 2>/dev/null || true

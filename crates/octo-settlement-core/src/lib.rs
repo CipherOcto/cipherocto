@@ -49,7 +49,9 @@ pub mod store;
 pub use ask::Ask;
 pub use ask::AskState;
 pub use chain::{
-    receipt_id_for, receipt_id_for_digest, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR,
+    receipt_id_for, receipt_id_for_digest, router_signature_digest, router_signature_preimage,
+    verify_receipt_chain, verify_receipt_chain_authenticated, RouterKeyResolver,
+    CHAIN_DOMAIN_SEPARATOR, ROUTER_SIG_DOMAIN_SEPARATOR,
 };
 pub use error::{SettlementError, SettlementHashOpaque};
 pub use receipt::{Receipt, ReceiptId, ReceiptStatus};

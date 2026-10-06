@@ -226,14 +226,31 @@ fn parse_wire_to_token(
 
 /// Compute the `cap_root_hash` PK from a v1 wire string (RFC-0957-A1 §Phase 2).
 ///
-/// `cap_root_hash = BLAKE3(macaroon.root_id)` (R21-N4 fix; canonical derivation).
-/// This is the lookup key for `HolderRegistry::lookup(cap_root_hash)`. The
-/// wire-only derivation is byte-identical to the mint-time derivation
-/// (Round 3 R2 C1 fix): both hash the macaroon's `root_id` directly.
+/// `cap_root_hash = compute_capability_id(macaroon)`, i.e.
+/// `BLAKE3(CAPABILITY_ID_DOMAIN ‖ canonical_ser_unsigned(macaroon))` over the
+/// **whole canonical macaroon** — `root_id`, `root_secret_hash`, the chain, and
+/// the caveats. This is the lookup key for `HolderRegistry::lookup(cap_root_hash)`.
+///
+/// Because `Macaroon::mint` sets `macaroon.id = compute_capability_id(&macaroon)`
+/// (`macaroon.rs`, mint path), the registry key **is** the token's `id` field,
+/// and the wire-only derivation is byte-identical to the mint-time derivation
+/// (Round 3 R2 C1 fix). Pinned by
+/// `compute_cap_root_hash_matches_macaroons_compute_capability_id`.
+///
+/// **Correction (2026-10-06).** This comment previously stated
+/// `cap_root_hash = BLAKE3(macaroon.root_id)` and claimed "both hash the
+/// macaroon's `root_id` directly." The code has always called
+/// `compute_capability_id`; only the comment was wrong. The error mattered:
+/// `root_id` alone does **not** determine the key — changing a caveat changes
+/// `cap_root_hash` — so a reader relying on this comment would draw wrong
+/// conclusions about which fields are covered by the registry primary key.
+/// See `docs/audits/2026-10-04-red-team-security-audit.md` §C-2.
 ///
 /// Forward compat: v2 wire (4 segments) is accepted but the 4th segment
 /// (proof_bundle) is NOT included in the hash (the proof_bundle is
-/// post-mint artifact that doesn't change the registry PK).
+/// post-mint artifact that doesn't change the registry PK). Note this means a
+/// captured v2 envelope's proof bundle can be swapped without changing the PK —
+/// safe only while nothing at redemption reads that 4th segment (finding H-3).
 ///
 /// # Errors
 /// Returns `WireError::Parse` on malformed wire format. Returns

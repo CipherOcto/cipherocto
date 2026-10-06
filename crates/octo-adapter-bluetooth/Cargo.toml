@@ -14,3 +14,8 @@ blake3 = "1.5"
 base64 = "0.22"
 async-trait = "0.1"
 octo-network = { path = "../octo-network" }
+
+[dev-dependencies]
+# Sign a real envelope so the M-15 guard can distinguish "rejects a tampered
+# frame" from "rejects everything".
+ed25519-dalek = "2.2"

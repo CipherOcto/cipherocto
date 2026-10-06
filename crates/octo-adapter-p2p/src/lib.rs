@@ -295,6 +295,10 @@ impl PlatformAdapter for NativeP2PAdapter {
         // Native P2P carries raw wire bytes — no encoding layer.
         // Try direct deserialization first (binary path from gossipsub).
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
+            // M-15: see the note on the fallback path below — parsing alone
+            // accepts a structurally valid frame with a forged signature.
+            env.verify(&env.source_peer)
+                .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
             return Ok(env);
         }
 
@@ -306,12 +310,22 @@ impl PlatformAdapter for NativeP2PAdapter {
                 message: format!("canonicalize failed: {e}"),
             })?;
 
-        DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
+        let envelope = DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
             }
-        })
+        })?;
+        // M-15: parsing is not verification. `from_wire_bytes` accepts a
+        // structurally valid frame whose `envelope_id` does not match its
+        // contents and whose signature is garbage. The key is the envelope's
+        // own `source_peer`, so this proves integrity and internal consistency,
+        // NOT that the claimed peer is who it claims to be — binding the key to
+        // a known peer is the registry work in CD-6.
+        envelope
+            .verify(&envelope.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(envelope)
     }
 
     fn capabilities(&self) -> CapabilityReport {

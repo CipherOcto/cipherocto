@@ -405,48 +405,20 @@ fn base64_encode(bytes: &[u8]) -> String {
     String::from_utf8(buf).unwrap_or_default()
 }
 
+/// Decode standard base64.
+///
+/// L-9: this was a hand-rolled decoder. It accepted malformed padding — for a
+/// chunk like `QQ=A` it saw `chunk[2] == '='` and skipped the `chunk[3]` check,
+/// so a corrupt or tampered field decoded to bytes no conforming encoder would
+/// ever produce. The input here is authenticated AEAD ciphertext, so no
+/// security impact was found, but a bespoke parser for a standard encoding is
+/// exactly the latent-bug class worth deleting rather than auditing.
 fn base64_decode(s: &str) -> Result<Vec<u8>, WalletError> {
-    fn val(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return Err(WalletError::Config(
-            "base64 length not multiple of 4".to_owned(),
-        ));
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for chunk in bytes.chunks(4) {
-        let v0 = val(chunk[0]).ok_or_else(|| WalletError::Config("base64 invalid".to_owned()))?;
-        let v1 = val(chunk[1]).ok_or_else(|| WalletError::Config("base64 invalid".to_owned()))?;
-        let pad = chunk[2] == b'=';
-        let v2 = if pad {
-            0
-        } else {
-            val(chunk[2]).ok_or_else(|| WalletError::Config("base64 invalid".to_owned()))?
-        };
-        let pad2 = chunk[3] == b'=';
-        let v3 = if pad2 {
-            0
-        } else {
-            val(chunk[3]).ok_or_else(|| WalletError::Config("base64 invalid".to_owned()))?
-        };
-        out.push((v0 << 2) | (v1 >> 4));
-        if !pad {
-            out.push((v1 << 4) | (v2 >> 2));
-        }
-        if !pad2 {
-            out.push((v2 << 6) | v3);
-        }
-    }
-    Ok(out)
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+    STANDARD
+        .decode(s)
+        .map_err(|e| WalletError::Config(format!("base64 invalid: {e}")))
 }
 
 // Keep `Path` import alive for potential future Path-based API additions.
@@ -536,5 +508,25 @@ mod tests {
         let h = v.get("slot", "p", &mut buf).unwrap();
         assert_eq!(h.as_bytes(), b"v2");
         buf.zeroize();
+    }
+
+    // ── L-9: malformed base64 must be rejected, not silently reshaped ──
+
+    #[test]
+    fn base64_decode_rejects_misplaced_padding() {
+        // The hand-rolled decoder saw `chunk[2] == '='` and skipped the
+        // `chunk[3]` check, so `QQ=A` decoded successfully even though no
+        // conforming encoder emits it. It has to be an error, because a value
+        // that this decoder accepts and another does not is a portability bug
+        // waiting to become a parsing differential.
+        for bad in ["QQ=A", "QQ==A=", "A=BC", "QQ=AQQA"] {
+            assert!(
+                base64_decode(bad).is_err(),
+                "malformed base64 {bad:?} was accepted"
+            );
+        }
+        // Anti-vacuity: the well-formed encodings still decode.
+        assert_eq!(base64_decode("QQ==").unwrap(), b"A");
+        assert_eq!(base64_decode("QUJD").unwrap(), b"ABC");
     }
 }

@@ -89,6 +89,20 @@ pub fn receipt_id_for_digest(digest: &[u8; 32]) -> Option<ReceiptId> {
 /// Verify a chain of receipts. Returns `Ok(())` on a valid chain;
 /// returns `Err(SettlementError)` on the first detected violation.
 ///
+/// **This is an integrity check, not an authenticity check.** It proves the
+/// chain is internally consistent — monotonic ids and self-consistent hashes.
+/// It does **not** prove a router signed anything: the keyed hash uses the
+/// public zero key, so anyone can compute a valid `settlement_hash`, and
+/// `router_sig` is hashed into the receipt but never verified here.
+///
+/// That division is deliberate and specified: RFC-0014 §Threats assigns
+/// router-signature verification to the DOMAIN layer ("the substrate does NOT
+/// verify signature — that's the domain's job"), and RFC-0014-v2 pins this
+/// function's signature and behaviour. So the frozen signature stays as it is.
+/// The missing capability is available additively as
+/// [`verify_receipt_chain_authenticated`]; a caller that needs authenticity
+/// must use that.
+///
 /// # Errors
 ///
 /// - `SequenceGap` — `receipt_id` is not the successor of the previous
@@ -113,6 +127,117 @@ pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>
             });
         }
         last_receipt_id = Some(receipt.receipt_id);
+    }
+    Ok(())
+}
+
+/// Canonical domain separator for the router settlement signature.
+pub const ROUTER_SIG_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/settlement/router-sig/v1";
+
+/// Canonical byte preimage a router signs when issuing a settlement receipt.
+///
+/// ```text
+/// ROUTER_SIG_DOMAIN_SEPARATOR
+///     || receipt_id.to_be_bytes()   // 8 bytes, u64 BE
+///     || ask_id                     // 32 bytes
+///     || router_id                  // UTF-8, length-unambiguous (see below)
+///     || timestamp_unix.to_be_bytes() // 8 bytes
+/// ```
+///
+/// `settlement_hash` and `router_sig` are deliberately **absent**: including
+/// the hash would make the signature depend on a value derived from the
+/// signature, and including the signature itself is circular.
+///
+/// `router_id` is a variable-length UTF-8 string, so it is length-prefixed with
+/// a 4-byte BE length before the bytes. Without that prefix, `("ab", "c")` and
+/// `("a", "bc")` would produce the same preimage — two different routers could
+/// reuse one another's signature. The length prefix is part of the byte-pinned
+/// contract and changing it changes every signature.
+pub fn router_signature_preimage(receipt: &Receipt) -> Vec<u8> {
+    let router_id = receipt.router_id.as_bytes();
+    let mut buf: Vec<u8> =
+        Vec::with_capacity(ROUTER_SIG_DOMAIN_SEPARATOR.len() + 8 + 32 + 4 + router_id.len() + 8);
+    buf.extend_from_slice(ROUTER_SIG_DOMAIN_SEPARATOR);
+    buf.extend_from_slice(&receipt.receipt_id.to_be_bytes());
+    buf.extend_from_slice(&receipt.ask_id);
+    buf.extend_from_slice(&(router_id.len() as u32).to_be_bytes());
+    buf.extend_from_slice(router_id);
+    buf.extend_from_slice(&receipt.timestamp_unix.to_be_bytes());
+    buf
+}
+
+/// BLAKE3 of [`router_signature_preimage`] — the 32 bytes the router's ed25519
+/// signature covers.
+pub fn router_signature_digest(receipt: &Receipt) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out.copy_from_slice(blake3::hash(&router_signature_preimage(receipt)).as_bytes());
+    out
+}
+
+/// Resolves the ed25519 public key authorised to sign receipts for a router id.
+///
+/// The registry itself is domain-owned (Layer C); the substrate only needs the
+/// lookup, so the dependency points at this trait and the domain implements it
+/// (dependency inversion — the side that owns the data owns the impl).
+pub trait RouterKeyResolver {
+    /// The authorised signing key for `router_id`, or `None` if that router is
+    /// unknown or has no active key.
+    fn router_key(&self, router_id: &str) -> Option<[u8; 32]>;
+}
+
+/// Verify a settlement receipt chain **and** each router's signature.
+///
+/// This is the authenticity half that [`verify_receipt_chain`] deliberately
+/// does not provide. It runs the frozen integrity check first, then requires,
+/// per receipt, that:
+///
+/// 1. `router_id` resolves to an authorised key via the injected resolver, and
+/// 2. `router_sig` is a valid ed25519 signature by that key over
+///    [`router_signature_digest`].
+///
+/// An unknown router, a malformed key, a wrong-length signature, and a genuine
+/// signature mismatch all return [`SettlementError::RouterSignatureInvalid`];
+/// the error does not distinguish them, so a caller cannot probe which keys are
+/// registered.
+///
+/// An empty chain returns `Ok(())` — there is nothing to authenticate, matching
+/// [`verify_receipt_chain`].
+///
+/// # Errors
+///
+/// Everything [`verify_receipt_chain`] returns, plus
+/// `RouterSignatureInvalid`.
+pub fn verify_receipt_chain_authenticated(
+    receipts: &[Receipt],
+    keys: &dyn RouterKeyResolver,
+) -> Result<(), SettlementError> {
+    verify_receipt_chain(receipts)?;
+    for receipt in receipts {
+        let key =
+            keys.router_key(&receipt.router_id)
+                .ok_or(SettlementError::RouterSignatureInvalid {
+                    receipt_id: receipt.receipt_id,
+                })?;
+        // ed25519 signatures are exactly 64 bytes; check before parsing so a
+        // short blob cannot reach a panicking slice conversion.
+        let sig: [u8; 64] = receipt.router_sig.as_slice().try_into().map_err(|_| {
+            SettlementError::RouterSignatureInvalid {
+                receipt_id: receipt.receipt_id,
+            }
+        })?;
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| {
+            SettlementError::RouterSignatureInvalid {
+                receipt_id: receipt.receipt_id,
+            }
+        })?;
+        let signature = ed25519_dalek::Signature::from_bytes(&sig);
+        let digest = router_signature_digest(receipt);
+        use ed25519_dalek::Verifier as _;
+        verifying_key.verify(&digest, &signature).map_err(|_| {
+            SettlementError::RouterSignatureInvalid {
+                receipt_id: receipt.receipt_id,
+            }
+        })?;
     }
     Ok(())
 }
@@ -179,4 +304,180 @@ mod tests {
     // Byte-pin test lives at `domain_separator::mission_01_…` (single
     // canonical substrate surface per substrate-faithful no-duplication
     // policy). Do NOT add an inline duplicate here.
+
+    // -- C-5: router signature verification (the authenticity half) --
+
+    use ed25519_dalek::{Signer as _, SigningKey};
+
+    /// Single-router key registry, standing in for the domain-owned
+    /// `RouterKeyResolver` implementation.
+    struct OneRouter {
+        router_id: String,
+        key: [u8; 32],
+    }
+
+    impl RouterKeyResolver for OneRouter {
+        fn router_key(&self, router_id: &str) -> Option<[u8; 32]> {
+            (router_id == self.router_id).then_some(self.key)
+        }
+    }
+
+    fn signed_receipt(
+        sk: &SigningKey,
+        id: u64,
+        ask: [u8; 32],
+        ts: u64,
+        router_id: &str,
+    ) -> Receipt {
+        let mut r = Receipt {
+            receipt_id: id,
+            ask_id: ask,
+            settlement_hash: [0; 32],
+            router_id: router_id.to_owned(),
+            router_sig: vec![0u8; 64],
+            timestamp_unix: ts,
+            ..Default::default()
+        };
+        r.router_sig = sk.sign(&router_signature_digest(&r)).to_bytes().to_vec();
+        r.settlement_hash = receipt_id_for(&r);
+        r
+    }
+
+    #[test]
+    fn authenticated_chain_accepts_a_genuine_signature() {
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: sk.verifying_key().to_bytes(),
+        };
+        let chain: Vec<Receipt> = (0..3)
+            .map(|i| signed_receipt(&sk, i, [0x01; 32], 1000 + i * 100, "did:oct:router"))
+            .collect();
+        verify_receipt_chain_authenticated(&chain, &keys).unwrap();
+    }
+
+    #[test]
+    fn authenticated_chain_rejects_forged_receipts() {
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: sk.verifying_key().to_bytes(),
+        };
+        let good = signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router");
+
+        // 1. The zero signature that the integrity-only path accepts.
+        let mut zeroed = good.clone();
+        zeroed.router_sig = vec![0u8; 64];
+        zeroed.settlement_hash = receipt_id_for(&zeroed);
+        // This is the exact forgery C-5 describes: the chain is internally
+        // consistent, and `verify_receipt_chain` accepts it.
+        assert!(verify_receipt_chain(std::slice::from_ref(&zeroed)).is_ok());
+        assert!(matches!(
+            verify_receipt_chain_authenticated(&[zeroed], &keys),
+            Err(SettlementError::RouterSignatureInvalid { .. })
+        ));
+
+        // 2. Empty and wrong-length signature blobs error, not panic.
+        for bad in [vec![], vec![0u8; 63], vec![0u8; 65]] {
+            let mut r = good.clone();
+            r.router_sig = bad.clone();
+            r.settlement_hash = receipt_id_for(&r);
+            assert!(matches!(
+                verify_receipt_chain_authenticated(&[r], &keys),
+                Err(SettlementError::RouterSignatureInvalid { .. })
+            ));
+        }
+
+        // 3. A receipt claiming a router that is not registered.
+        let stranger = signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:someone-else");
+        assert!(matches!(
+            verify_receipt_chain_authenticated(&[stranger], &keys),
+            Err(SettlementError::RouterSignatureInvalid { .. })
+        ));
+
+        // 4. A valid signature rebound to a different ask_id — the signature
+        //    covers ask_id, so this must not verify.
+        let mut rebound = good.clone();
+        rebound.ask_id = [0x02; 32];
+        rebound.settlement_hash = receipt_id_for(&rebound);
+        assert!(matches!(
+            verify_receipt_chain_authenticated(&[rebound], &keys),
+            Err(SettlementError::RouterSignatureInvalid { .. })
+        ));
+
+        // 5. Same fields, different router key: the signature does not verify
+        //    under the other router's key.
+        let other = SigningKey::from_bytes(&[9u8; 32]);
+        let other_keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: other.verifying_key().to_bytes(),
+        };
+        assert!(matches!(
+            verify_receipt_chain_authenticated(&[good], &other_keys),
+            Err(SettlementError::RouterSignatureInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn authenticated_chain_still_reports_integrity_failures() {
+        // The authenticated path must not lose the frozen integrity checks.
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: sk.verifying_key().to_bytes(),
+        };
+        let r0 = signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router");
+        let r2 = signed_receipt(&sk, 2, [0x01; 32], 1200, "did:oct:router");
+        assert!(matches!(
+            verify_receipt_chain_authenticated(&[r0, r2], &keys),
+            Err(SettlementError::SequenceGap { .. })
+        ));
+    }
+
+    #[test]
+    fn authenticated_empty_chain_is_ok() {
+        let keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: SigningKey::from_bytes(&[3u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        };
+        assert!(verify_receipt_chain_authenticated(&[], &keys).is_ok());
+    }
+
+    #[test]
+    fn router_id_length_prefix_prevents_boundary_collisions() {
+        // Without the 4-byte length prefix, ("ab","c") and ("a","bc") hash the
+        // same bytes, so one router could replay another's signature.
+        let mut a = Receipt {
+            receipt_id: 1,
+            ask_id: [0x01; 32],
+            settlement_hash: [0; 32],
+            router_id: "ab".into(),
+            router_sig: vec![],
+            timestamp_unix: 1000,
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        a.router_id = "ab".into();
+        a.ask_id = [0x01; 32];
+        b.router_id = "a".into();
+        b.ask_id = [0x01; 32];
+        // Same ask_id/timestamp/receipt_id, different router split — the
+        // preimages must still differ.
+        let pa = router_signature_preimage(&a);
+        let pb = router_signature_preimage(&b);
+        assert_ne!(pa, pb, "router_id boundary collision");
+
+        // And the documented layout: domain || id(8) || ask(32) || len(4) || id || ts(8)
+        let d = ROUTER_SIG_DOMAIN_SEPARATOR;
+        assert_eq!(&pa[..d.len()], d);
+        let off = d.len();
+        assert_eq!(&pa[off..off + 8], &1u64.to_be_bytes());
+        assert_eq!(&pa[off + 8..off + 40], &[0x01; 32]);
+        assert_eq!(&pa[off + 40..off + 44], &2u32.to_be_bytes());
+        assert_eq!(&pa[off + 44..off + 46], b"ab");
+        assert_eq!(&pa[off + 46..off + 54], &1000u64.to_be_bytes());
+        assert_eq!(pa.len(), off + 54);
+    }
 }

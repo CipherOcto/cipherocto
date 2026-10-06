@@ -34,6 +34,11 @@ thiserror = "1"
 serde = { version = "1.0", features = ["derive"] }
 # Hex / binary helpers for blob types
 hex = { version = "0.4", features = ["serde"] }
+# Governance signature verification substrate (Layer A; RFC-0968 §21 mandates
+# ed25519 verification of every authoritative proof). Added for C-4: the
+# governance/slash proof structs carried a `signature` field that nothing in the
+# tree verified, so proofs were forgeable without key material.
+ed25519-dalek = { version = "2.2", features = ["serde"] }
 # Async runtime for storage layer (Session 2)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 # Session 4 parity sweep uses block_on to drive the canonical store synchronously

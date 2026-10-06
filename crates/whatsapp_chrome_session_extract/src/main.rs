@@ -37,12 +37,14 @@
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
+use whatsapp_chrome_session_extract::write_private_json;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -140,9 +142,12 @@ async fn main() -> Result<()> {
         args.port
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -397,11 +402,7 @@ async fn main() -> Result<()> {
                 .parent()
                 .unwrap()
                 .join("indexeddb-summary.json");
-            std::fs::write(
-                &out_path,
-                serde_json::to_string_pretty(&v).unwrap_or_default(),
-            )
-            .context("write summary")?;
+            write_private_json(&out_path, &v).context("write summary")?;
             println!();
             println!("summary written to: {}", out_path.display());
         }

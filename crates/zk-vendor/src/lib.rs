@@ -92,11 +92,128 @@ pub fn stwo_stub_marker() -> [u8; 32] {
 
 /// Default path to the `stwo-sys` shared library, overridable via the
 /// `CIPHEROCTO_STWO_LIB` environment variable.
+///
+/// **This function performs no trust check.** It only resolves *which* path
+/// was requested. Before the result is `dlopen`ed it MUST pass
+/// [`validate_library_path`] — see [`loaded_library`], which is the only
+/// production caller and does so.
+///
+/// M-4 (2026-10-05): before this split, `default_library_path` fed straight
+/// into `Library::new`, so anyone able to set an environment variable for the
+/// wallet/router process could `dlopen` an arbitrary shared object and get
+/// code execution as that process. A substituted object whose `stwo_verify`
+/// returns 0 additionally defeats every proof check, which after the C-1 fix
+/// is the *only* sound verification path left.
 #[must_use]
 pub fn default_library_path() -> std::path::PathBuf {
     match std::env::var_os("CIPHEROCTO_STWO_LIB") {
         Some(p) => std::path::PathBuf::from(p),
         None => std::path::PathBuf::from("/var/lib/cipherocto/libstwo_sys.so"),
+    }
+}
+
+/// Why a candidate `stwo-sys` path was refused.
+///
+/// Every variant is a fail-closed condition: the caller treats the library as
+/// absent, so `zk-verifier` returns `VerifyError::StubDisabled` rather than
+/// accepting a proof.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum LibraryPathError {
+    #[error("stwo-sys library path must be absolute: {0}")]
+    NotAbsolute(std::path::PathBuf),
+    #[error("stwo-sys library path does not exist: {path}")]
+    Missing { path: std::path::PathBuf },
+    #[error("stwo-sys library path is not a regular file: {path}")]
+    NotRegularFile { path: std::path::PathBuf },
+    #[error(
+        "stwo-sys library {path} is owned by uid {owner}, expected {expected} \
+         (the owner of the running binary)"
+    )]
+    WrongOwner {
+        path: std::path::PathBuf,
+        owner: u32,
+        expected: u32,
+    },
+    #[error("stwo-sys library {path} is group- or world-writable (mode {mode:o})")]
+    WritableByOthers { path: std::path::PathBuf, mode: u32 },
+}
+
+/// Validate that a `stwo-sys` path is safe to `dlopen`.
+///
+/// The library is loaded into the wallet/router process and its `stwo_verify`
+/// symbol decides whether a ZK proof is accepted, so it is a
+/// code-execution-and-soundness boundary, not a configuration detail.
+///
+/// Rules:
+///
+/// 1. the path must be absolute (no cwd-relative resolution);
+/// 2. the resolved target (symlinks followed) must be a regular file;
+/// 3. it must be owned by the same uid that owns the running binary —
+///    whoever can replace the binary already controls the process, so this
+///    grants nothing new, while blocking an unprivileged attacker from
+///    injecting a library into a root-run node;
+/// 4. it must not be group- or world-writable.
+///
+/// On non-Unix targets only rule 1 is enforced (ownership/mode semantics are
+/// not portable).
+///
+/// # Errors
+///
+/// Returns the specific [`LibraryPathError`] if any rule fails.
+#[cfg(unix)]
+pub fn validate_library_path(path: &std::path::Path) -> Result<(), LibraryPathError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if !path.is_absolute() {
+        return Err(LibraryPathError::NotAbsolute(path.to_path_buf()));
+    }
+
+    // `fs::metadata` follows symlinks on purpose: the question is who owns
+    // the bytes that actually get mapped, not the link that names them.
+    let Ok(md) = std::fs::metadata(path) else {
+        return Err(LibraryPathError::Missing {
+            path: path.to_path_buf(),
+        });
+    };
+
+    if !md.is_file() {
+        return Err(LibraryPathError::NotRegularFile {
+            path: path.to_path_buf(),
+        });
+    }
+
+    if md.permissions().mode() & 0o022 != 0 {
+        return Err(LibraryPathError::WritableByOthers {
+            path: path.to_path_buf(),
+            mode: md.permissions().mode() & 0o777,
+        });
+    }
+
+    let expected = std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::metadata(exe).ok())
+        // Without a readable exe path, fall back to root-only rather than
+        // waving through an unknown owner.
+        .map_or(0, |m| m.uid());
+
+    if md.uid() != expected {
+        return Err(LibraryPathError::WrongOwner {
+            path: path.to_path_buf(),
+            owner: md.uid(),
+            expected,
+        });
+    }
+
+    Ok(())
+}
+
+/// Non-Unix fallback: absolute-path check only. See the Unix variant.
+#[cfg(not(unix))]
+pub fn validate_library_path(path: &std::path::Path) -> Result<(), LibraryPathError> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        Err(LibraryPathError::NotAbsolute(path.to_path_buf()))
     }
 }
 
@@ -125,11 +242,37 @@ pub enum VendorError {
 /// struct, never dropped before the symbols). `prove` is invoked by
 /// `StwoSys::prove`, `free_proof` is invoked by `ProofBytes::drop`, and
 /// `verify` is invoked by `StwoSys::verify`.
+///
+/// # Threading
+///
+/// M-4 (2026-10-05): the FFI contract (`stwo-sys/src/lib.rs` — "All functions
+/// are NOT thread-safe with respect to a single `ProofHandle`; the caller is
+/// responsible for synchronization") previously contradicted a bare
+/// `unsafe impl Send + Sync`, which handed concurrent `prove`/`verify` calls
+/// to a library that never promised to accept them. `call_lock` now serializes
+/// every FFI call made through this handle, so the contract is enforced rather
+/// than merely documented.
 pub struct StwoSys {
     _lib: Library,
     prove: libloading::Symbol<'static, ProveFn>,
     verify: libloading::Symbol<'static, VerifyFn>,
     free_proof: libloading::Symbol<'static, FreeProofFn>,
+    /// Serializes all FFI entry points. See the type-level docs.
+    call_lock: std::sync::Mutex<()>,
+}
+
+impl StwoSys {
+    /// Acquire the FFI call lock, recovering from poisoning.
+    ///
+    /// The FFI entry points return status codes rather than unwinding, so a
+    /// poisoned lock here means some *other* panic raced through — the library
+    /// handle is still sound and refusing to serve would be a worse outcome
+    /// than continuing.
+    fn ffi_call(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.call_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 impl std::fmt::Debug for StwoSys {
@@ -138,9 +281,13 @@ impl std::fmt::Debug for StwoSys {
     }
 }
 
-// SAFETY: the FFI functions are C `extern "C"` and stateless with respect
-// to thread safety for individual calls; the FFI contract docs note that
-// `ProofHandle` is not thread-safe across threads but each call is atomic.
+// SAFETY: `StwoSys` is `Send`/`Sync` because every field is
+// (`Library`, the resolved `Symbol` pointers, and a `Mutex`), and because
+// M-4 added `call_lock` so that the non-thread-safe FFI entry points are
+// never entered concurrently through this handle. The `ProofHandle` returned
+// by `prove` is owned by its `ProofBytes`, whose `Drop` calls
+// `stwo_free_proof` — and `ProofBytes` is `Send` only by the same
+// serialization guarantee.
 unsafe impl Send for StwoSys {}
 unsafe impl Sync for StwoSys {}
 
@@ -215,6 +362,7 @@ pub fn try_load(path: &std::path::Path) -> Result<Option<StwoSys>, VendorError> 
             prove: prove_static,
             verify: verify_static,
             free_proof: free_proof_static,
+            call_lock: std::sync::Mutex::new(()),
         };
         Ok(Some(sys))
     }
@@ -222,11 +370,26 @@ pub fn try_load(path: &std::path::Path) -> Result<Option<StwoSys>, VendorError> 
 
 /// Process-global cached `StwoSys` handle (or `None` if load failed).
 /// First call attempts load; subsequent calls return the cached result.
+///
+/// M-4 (2026-10-05): the candidate path is validated by
+/// [`validate_library_path`] before any `dlopen`. A path that fails
+/// validation is treated exactly like a missing library — the cache stores
+/// `None`, the caller falls through to the fail-closed `StubDisabled` arm,
+/// and no attacker-supplied object is ever mapped into this process.
 #[must_use]
 pub fn loaded_library() -> Option<&'static StwoSys> {
     static CACHE: OnceLock<Option<StwoSys>> = OnceLock::new();
     let cached = CACHE.get_or_init(|| {
         let path = default_library_path();
+        if let Err(e) = validate_library_path(&path) {
+            warn!(
+                "refusing to load stwo-sys from {}: {} (treating library as absent; \
+                 verification falls back to the fail-closed stub-disabled arm)",
+                path.display(),
+                e
+            );
+            return None;
+        }
         match try_load(&path) {
             Ok(Some(sys)) => Some(sys),
             Ok(None) => None,
@@ -245,6 +408,8 @@ impl StwoSys {
     pub fn version(&self) -> String {
         type VersionFn = unsafe extern "C" fn() -> *const std::os::raw::c_char;
         let path = b"stwo_sys_version\0";
+        // M-4: serialize against concurrent FFI entry points.
+        let _guard = self.ffi_call();
         // SAFETY: symbol is documented in stwo-sys/src/lib.rs as a
         // static C string returned by `stwo_sys_version`. Pointer is
         // valid for the lifetime of the library (held in `lib`).
@@ -272,6 +437,8 @@ impl StwoSys {
     /// - `proof` and `public` MUST be valid slices for the duration of
     ///   this call.
     pub fn verify(&self, proof: &[u8], public: &[u8]) -> Result<(), VendorError> {
+        // Serialize against concurrent `prove`/`version` calls (M-4).
+        let _guard = self.ffi_call();
         // SAFETY: pointers from non-null slice references; lengths match.
         let ret =
             unsafe { (self.verify)(proof.as_ptr(), proof.len(), public.as_ptr(), public.len()) };
@@ -314,6 +481,8 @@ impl StwoSys {
         // a STWO prover receipt whose public bytes were the witness
         // bytes — silent fraud (prover proves garbage, verifier
         // verifies garbage). Fixed in this commit.
+        // M-4: serialize against concurrent FFI entry points.
+        let _guard = self.ffi_call();
         let handle = unsafe {
             (self.prove)(
                 casm.as_ptr(),

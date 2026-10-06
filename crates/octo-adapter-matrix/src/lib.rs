@@ -390,16 +390,27 @@ impl PlatformAdapter for MatrixAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        if raw.payload.is_empty() {
-            return Err(transport_err("Empty payload"));
-        }
-        // payload contains full wire bytes from decode_envelope() in receive_messages()
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {}", e),
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            if raw.payload.is_empty() {
+                return Err(transport_err("Empty payload"));
             }
-        })
+            // payload contains full wire bytes from decode_envelope() in receive_messages()
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {}", e),
+                }
+            })
+        };
+        let env = decode()?;
+        env.verify(&env.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -749,10 +760,29 @@ mod tests {
         assert!(adapter.canonicalize(&raw).is_err());
     }
 
+    /// A genuinely signed envelope for canonicalization tests.
+    ///
+    /// M-15 makes `canonicalize` verify the envelope, so a `default()` fixture (all
+    /// zeros, no signature) is now correctly rejected. These tests exercise the
+    /// accept path, not the rejection path, so they must hand it a real signature.
+    fn signed_test_envelope() -> DeterministicEnvelope {
+        use ed25519_dalek::Signer as _;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+        let mut env = DeterministicEnvelope {
+            source_peer: sk.verifying_key().to_bytes(),
+            ..Default::default()
+        };
+        // `verify` checks envelope_id against its own derivation before the
+        // signature, so the fixture has to set it.
+        env.envelope_id = env.derive_envelope_id();
+        env.signature = sk.sign(&env.to_signing_bytes()).to_bytes();
+        env
+    }
+
     #[test]
     fn test_canonicalize_valid_envelope() {
         let adapter = make_test_adapter();
-        let envelope = DeterministicEnvelope::default();
+        let envelope = signed_test_envelope();
         let wire = envelope.to_wire_bytes();
         let raw = RawPlatformMessage {
             platform_id: "test".into(),

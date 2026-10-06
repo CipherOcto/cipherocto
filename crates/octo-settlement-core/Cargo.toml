@@ -18,6 +18,12 @@ serde = { version = "1", features = ["derive"] }
 blake3 = "1.5"
 # Layer A error type per cipherocto-design-principles Layer A row.
 thiserror = "2.0"
+# Router settlement-signature verification (Layer A, additive). RFC-0014
+# §Threats assigns signature verification to the DOMAIN layer, so the frozen
+# `verify_receipt_chain` does not do it — but no domain implemented the
+# delegated check, and the zero-keyed receipt hash means anyone can forge a
+# chain. `verify_receipt_chain_authenticated` supplies the missing primitive.
+ed25519-dalek = "2.2"
 
 [lints.rust]
 unsafe_code = "forbid"

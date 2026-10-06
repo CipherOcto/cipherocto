@@ -331,6 +331,19 @@ impl ReputationStore for InMemoryReputationStore {
         if auth.governance_pubkey == [0u8; 32] {
             return Err(ReputationError::GovernanceSignatureInvalid);
         }
+        // The ed25519 signature over the canonical suspension digest. This is
+        // the check the module doc used to claim and did not perform: without
+        // it a `GovernanceProof` with an arbitrary `recorder_id` suspends or
+        // slashes any recorder, and forging one needs no key material at all.
+        // Shared with the other store impls via `auth::verify_governance_signature`
+        // so the three cannot drift apart.
+        crate::auth::verify_governance_signature(
+            &auth.governance_pubkey,
+            &auth.recorder_id,
+            &auth.reason_hash,
+            &auth.signature,
+            now_unix,
+        )?;
         Ok(())
     }
 

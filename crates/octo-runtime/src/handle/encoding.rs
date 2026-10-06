@@ -301,7 +301,17 @@ fn decode_transport(bytes: &[u8]) -> Result<(Transport, usize), AttachError> {
     ) as usize;
     let mut cursor = 5usize;
 
-    if bytes.len() < cursor + addr_len {
+    // `addr_len` is attacker-controlled and cast from u32, so on a 32-bit target
+    // `cursor + addr_len` can wrap and turn a "declared 4 GiB address" into a
+    // small number that passes the length check — then the slice below reads
+    // out of bounds. `checked_add` fails closed on overflow.
+    let addr_end = cursor.checked_add(addr_len).ok_or_else(|| {
+        AttachError::PersistenceError(format!(
+            "transport addr_len overflows usize: declared {addr_len} bytes"
+        ))
+    })?;
+
+    if bytes.len() < addr_end {
         return Err(AttachError::PersistenceError(format!(
             "transport addr truncated: declared {addr_len} bytes, got {}",
             bytes.len() - cursor
@@ -310,9 +320,9 @@ fn decode_transport(bytes: &[u8]) -> Result<(Transport, usize), AttachError> {
     let addr = if addr_len == 0 {
         None
     } else {
-        let s = std::str::from_utf8(&bytes[cursor..cursor + addr_len])
+        let s = std::str::from_utf8(&bytes[cursor..addr_end])
             .map_err(|e| AttachError::PersistenceError(format!("transport addr utf-8: {e}")))?;
-        cursor += addr_len;
+        cursor = addr_end;
         Some(s.to_string())
     };
 

@@ -44,6 +44,17 @@ if ! [[ "$SOURCE" =~ ^[A-Za-z_][A-Za-z0-9_$#]*$ ]]; then
     exit 3
 fi
 
+# LIMIT / OFFSET are interpolated straight into the SQL text below, and SQLite
+# accepts the two-argument `LIMIT offset, count` form — so an unvalidated value
+# like `1,(SELECT …)` is a working injection that reaches the events DB. Both
+# must be plain non-negative integers. Same error shape as the SOURCE check.
+for numeric in LIMIT OFFSET; do
+    if ! [[ "${!numeric}" =~ ^[0-9]+$ ]]; then
+        echo "invalid $numeric: must be a non-negative integer (got: ${!numeric})" >&2
+        exit 3
+    fi
+done
+
 # === Pre-run health check ===============================================
 
 if ! wa_health_check; then

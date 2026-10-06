@@ -417,3 +417,201 @@ fn tv_xfer_auditor_with_dry_run_still_denied() {
         .code(2)
         .stderr(contains("auditor"));
 }
+
+// ---------------------------------------------------------------------------
+// C1 — the transfer pipeline's actual reachable end state
+// ---------------------------------------------------------------------------
+//
+// Finding #1 asked for the 9-stage pipeline to be driven to a successful
+// envelope. It cannot be, and the reason is the finding, not an obstacle to
+// it: `vault_transfer_cmd` evaluates the transfer role gate at stage 4
+// (`crates/octo-cli/src/commands/vault.rs:1325`), the production port bundle
+// always resolves that gate to `UnprovisionedRoleGate` (`:735` → `:745`), and
+// `UnprovisionedRoleGate::can_transfer` returns `false` for every DID
+// unconditionally (`:627`). Nothing in the codebase ever installs a different
+// gate: `with_role_gate` is called from tests only.
+//
+// So stages 4 through 11 are unreachable in production, and no operator
+// action changes that. This matters to the guide, which presents `§7` as a
+// runnable transfer scenario and whose own error hint tells the operator to
+// run `octo role select` — a command that cannot clear this gate either.
+//
+// The tests below pin the two facts that were previously unpinned and that
+// the guide gets wrong: where the pipeline actually stops, and what `--amount`
+// actually accepts.
+
+// A wallet with a registered, activated identity — the state every existing
+// test in this file is denied. Registering through the binary rather than
+// through the wallet substrate keeps the test honest: it proves the CLI can
+// reach the identity gate, so anything after it is a property of the transfer
+// pipeline and not of an empty `$OCTO_HOME`.
+fn wallet_with_active_identity() -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path();
+    // Clears `MIN_PASSPHRASE_CHARS` at both `register` and `unlock`.
+    let passphrase = path.join("passphrase.txt");
+    std::fs::write(&passphrase, "correct-horse-battery-staple-passphrase-01\n")
+        .expect("write passphrase");
+    octo()
+        .env("OCTO_HOME", path)
+        .args([
+            "identity",
+            "register",
+            "--label",
+            "c1-probe",
+            "--passphrase-file",
+            passphrase.to_str().expect("utf-8 path"),
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .assert()
+        .success();
+    home
+}
+
+/// TV-XFER12 — with an active identity, a syntactically valid amount, valid
+/// 32-byte vault hex on both sides, and a confirmed mutation, the transfer
+/// stops at the ROLE gate, not at the identity gate.
+///
+/// This is the vector the audit's Layer 2 analysis said was missing: the two
+/// existing tests that get past validation (`tv_xfer_confirm_then_no_active_
+/// identity_exit_2` and its dry-run twin) terminate at exit 2 with no
+/// identity, so nothing in the repo had ever observed where a *fully
+/// provisioned* invocation actually lands.
+///
+/// It is also a fail-closed assertion, not a success assertion. If the role
+/// gate is ever wired — the event this test exists to make visible — this
+/// test fails, and the failure is the signal to rewrite it into the
+/// success-path test the audit asked for.
+#[test]
+fn tv_xfer12_walled_at_role_gate_even_with_an_active_identity() {
+    let home = wallet_with_active_identity();
+    octo()
+        .env("OCTO_HOME", home.path())
+        .args([
+            "vault",
+            "transfer",
+            "--from",
+            &any_valid_vault_hex(),
+            "--to",
+            &any_other_vault_hex(),
+            "--amount",
+            "1000000",
+            "--asset",
+            "DQA",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .assert()
+        .code(25)
+        .stderr(contains("role not provisioned"));
+}
+
+/// TV-XFER13 — `--amount` is an INTEGER count of DQA micros.
+///
+/// The guide's `§7` step 6 and `§24` step 2 both pass `--amount "1.000000"`
+/// and a comment there states the flag "takes DQA canonical-form decimal
+/// string per RFC-0960-v36 §Wire Form (NOT micro-integer)". That is the
+/// inverse of the implemented contract: the decimal form is rejected at exit
+/// 64 before any wallet or substrate call, and only an integer passes.
+///
+/// The three cases are asserted together because the ORDER is the contract:
+/// a non-integer is rejected as malformed, `0` is rejected as non-positive,
+/// and a positive integer clears stage 2 and advances to stage 4. Asserting
+/// only the first would not distinguish "amount parsing is strict" from
+/// "amount parsing is strict AND the pipeline then proceeds".
+#[test]
+fn tv_xfer13_amount_is_integer_micros_not_a_decimal_string() {
+    let home = wallet_with_active_identity();
+
+    // The guide's own documented form, verbatim.
+    octo()
+        .env("OCTO_HOME", home.path())
+        .args([
+            "vault",
+            "transfer",
+            "--from",
+            &any_valid_vault_hex(),
+            "--to",
+            &any_other_vault_hex(),
+            "--amount",
+            "1.000000",
+            "--asset",
+            "DQA",
+            "--dry-run",
+        ])
+        .assert()
+        .code(64)
+        .stderr(contains("integer count of DQA micros"));
+
+    // Well-formed but non-positive.
+    octo()
+        .env("OCTO_HOME", home.path())
+        .args([
+            "vault",
+            "transfer",
+            "--from",
+            &any_valid_vault_hex(),
+            "--to",
+            &any_other_vault_hex(),
+            "--amount",
+            "0",
+            "--asset",
+            "DQA",
+            "--dry-run",
+        ])
+        .assert()
+        .code(64)
+        .stderr(contains("must be > 0"));
+
+    // A positive integer clears stage 2 — proven by where it stops next.
+    octo()
+        .env("OCTO_HOME", home.path())
+        .args([
+            "vault",
+            "transfer",
+            "--from",
+            &any_valid_vault_hex(),
+            "--to",
+            &any_other_vault_hex(),
+            "--amount",
+            "1000000",
+            "--asset",
+            "DQA",
+            "--dry-run",
+        ])
+        .assert()
+        .code(25)
+        .stderr(contains("role not provisioned"));
+}
+
+/// TV-XFER14 — `--dry-run` does not bypass the role gate.
+///
+/// Recorded because `§7` step 6 tells the operator to run `--dry-run` FIRST
+/// precisely because it is "safe and canonical" and "prints the canonical
+/// envelope (handle_id + nonce + status)". It prints an error envelope. The
+/// dry-run rewrite at stage 10 happens *after* the role gate at stage 4, so
+/// there is no pre-flight dry-run for a transfer — which removes the one
+/// step the guide offers as a way to try the command safely.
+#[test]
+fn tv_xfer14_dry_run_does_not_bypass_the_role_gate() {
+    let home = wallet_with_active_identity();
+    octo()
+        .env("OCTO_HOME", home.path())
+        .args([
+            "vault",
+            "transfer",
+            "--from",
+            &any_valid_vault_hex(),
+            "--to",
+            &any_other_vault_hex(),
+            "--amount",
+            "1000000",
+            "--asset",
+            "DQA",
+            "--dry-run",
+        ])
+        .assert()
+        .code(25)
+        .stderr(contains("role not provisioned"));
+}

@@ -46,6 +46,17 @@ pub enum SettlementError {
     #[error("receipt_id {0} already persisted")]
     AlreadyExists(u64),
 
+    /// A receipt's router signature is absent, malformed, signed by an
+    /// unknown router, or does not verify.
+    ///
+    /// Deliberately does not distinguish those cases, so a caller cannot use
+    /// the error to learn which router ids are registered.
+    #[error("router signature invalid at receipt_id {receipt_id}")]
+    RouterSignatureInvalid {
+        /// The receipt_id whose router signature failed verification.
+        receipt_id: u64,
+    },
+
     /// Sink-specific failure (e.g. Stoolap transaction aborted).
     #[error("sink-specific error: {0}")]
     SinkSpecific(String),

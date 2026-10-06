@@ -19,7 +19,15 @@ async fn cli_capabilities_prints_max_payload_bytes() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
-        security: SecurityConfig::default(),
+        // Explicit opt-out: `bearer_required` now defaults to true, so a test
+        // that needs to reach the handler must disable it deliberately rather
+        // than inheriting an insecure default. Matches the idiom already used
+        // by `it_daemon_chain.rs`.
+        security: SecurityConfig {
+            bearer_required: false,
+            hermetic_bypass: true,
+            ..SecurityConfig::default()
+        },
         observability: Default::default(),
         rules: RulesConfig::default(),
         ..Default::default()

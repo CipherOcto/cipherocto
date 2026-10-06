@@ -62,9 +62,13 @@ struct Args {
     /// Initial URL to navigate to.
     #[arg(long, default_value = "https://web.whatsapp.com")]
     url: String,
-    /// Trace output file (one JSONL event per line). Empty = stdout.
-    #[arg(long, default_value = "/tmp/whatsapp_chrome_driver.jsonl")]
-    trace: PathBuf,
+    /// Trace output file (one JSONL event per line). `-` or empty = stdout.
+    ///
+    /// Defaults under the private runtime dir, NOT `/tmp`: this trace captures
+    /// CDP `Network.*` request headers and WebSocket `payloadData` frames, so
+    /// it is the live WhatsApp Web session in a file.
+    #[arg(long)]
+    trace: Option<PathBuf>,
     /// Wall-clock duration in seconds before tearing down.
     #[arg(long, default_value_t = 30)]
     duration: u64,
@@ -112,6 +116,47 @@ struct CapturedEvent {
     summary: String,
 }
 
+/// Resolve where the CDP trace goes. `None` (no flag) means the default
+/// private location; `Some("-")` or `Some("")` means stdout.
+fn resolve_trace_path(arg: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    match arg {
+        Some(p) => {
+            if p.as_os_str().is_empty() || p == std::path::Path::new("-") {
+                None
+            } else {
+                Some(p.to_path_buf())
+            }
+        }
+        // `$XDG_RUNTIME_DIR` is 0700 by convention, so it is the right parent
+        // for session material. `/tmp` is not, which is why the old default
+        // was a world-readable disclosure.
+        None => Some(default_private_dir().join("whatsapp_chrome_driver.jsonl")),
+    }
+}
+
+fn default_private_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/octo-chrome-driver"))
+}
+
+#[cfg(unix)]
+async fn restrict_owner_only(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = tokio::fs::metadata(dir).await?.permissions();
+    if perms.mode() & 0o777 != 0o700 {
+        perms.set_mode(0o700);
+        tokio::fs::set_permissions(dir, perms).await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn restrict_owner_only(_dir: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -142,10 +187,13 @@ async fn main() -> Result<()> {
         user_data.display()
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg("--headless=new")
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -277,16 +325,41 @@ async fn main() -> Result<()> {
     .await?;
 
     // Trace file.
-    let trace_file = if args.trace.to_str() != Some("") {
-        Some(Arc::new(Mutex::new(
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&args.trace)
-                .await?,
-        )))
-    } else {
+    let trace_path = resolve_trace_path(args.trace.as_deref());
+    let trace_to_stdout = matches!(
+        trace_path.as_deref().map(|p| p.to_str()),
+        Some(None) | Some(Some("-"))
+    );
+    let trace_file = if trace_to_stdout {
         None
+    } else {
+        let path = trace_path
+            .clone()
+            .expect("non-stdout trace must resolve to a path");
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await?;
+                restrict_owner_only(parent).await?;
+            }
+        }
+        let mut opts = tokio::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            // 0600: the trace is live session material.
+            opts.mode(0o600);
+        }
+        let f = opts.open(&path).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = f.metadata().await?.permissions();
+            if perms.mode() & 0o777 != 0o600 {
+                perms.set_mode(0o600);
+                tokio::fs::set_permissions(&path, perms).await?;
+            }
+        }
+        Some(Arc::new(Mutex::new(f)))
     };
 
     // Run for `args.duration` seconds, reading every CDP message.
@@ -478,10 +551,10 @@ async fn main() -> Result<()> {
     println!("  WS frames sent / recv    : {frame_count_sent} / {frame_count_received}");
     println!(
         "  trace file               : {}",
-        if trace_file.is_some() {
-            args.trace.display().to_string()
-        } else {
-            "(none)".into()
+        match (&trace_path, trace_file.is_some()) {
+            (_, false) => "(none — stdout)".to_string(),
+            (Some(p), true) => p.display().to_string(),
+            (None, true) => "(unresolved)".to_string(),
         }
     );
     Ok(())
@@ -500,4 +573,47 @@ fn auto_find_chrome() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Regression (M-13): the default trace path was
+    /// `/tmp/whatsapp_chrome_driver.jsonl`, world-readable. That file holds CDP
+    /// `Network.*` request headers and WebSocket `payloadData` frames — the
+    /// live WhatsApp Web session on disk.
+    #[test]
+    fn default_trace_path_is_not_world_readable_tmp() {
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        let p = resolve_trace_path(None).expect("a default path must resolve");
+        assert_ne!(
+            p,
+            PathBuf::from("/tmp/whatsapp_chrome_driver.jsonl"),
+            "the trace must not default to a bare /tmp path"
+        );
+        assert!(
+            !p.starts_with("/tmp/octo-chrome-driver/../"),
+            "the trace must not default to a bare /tmp path"
+        );
+        // The file name is still predictable — only the parent directory is
+        // private, which is the property that matters.
+        assert_eq!(
+            p.file_name().unwrap(),
+            std::ffi::OsStr::new("whatsapp_chrome_driver.jsonl")
+        );
+    }
+
+    #[test]
+    fn explicit_dash_means_stdout() {
+        assert!(resolve_trace_path(Some(Path::new("-"))).is_none());
+        assert!(resolve_trace_path(Some(Path::new(""))).is_none());
+    }
+
+    #[test]
+    fn explicit_path_is_honoured_verbatim() {
+        let p = resolve_trace_path(Some(Path::new("/var/tmp/operator-chose.jsonl"))).unwrap();
+        assert_eq!(p, PathBuf::from("/var/tmp/operator-chose.jsonl"));
+    }
 }

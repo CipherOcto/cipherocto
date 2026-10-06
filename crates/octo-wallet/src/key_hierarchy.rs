@@ -140,7 +140,11 @@ fn is_valid_mission_id_char(c: char) -> bool {
 /// **Debug redaction (octo-wallet §Security):** `identity_seed` is the raw
 /// 32-byte seed — must NEVER appear in Debug output (panic messages, log
 /// lines, `dbg!()`). Manual `Debug` impl prints only the byte count.
-#[derive(Clone)]
+///
+/// **Memory hygiene:** this holds the root seed itself, not a derived key, so
+/// it zeroizes on drop like `MissionKey` and `AxisSubkey` do. `Debug` redaction
+/// covers logs; it does nothing for freed heap memory.
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct KeyHierarchy {
     identity_seed: [u8; 32],
 }

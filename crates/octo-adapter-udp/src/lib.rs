@@ -176,12 +176,26 @@ impl PlatformAdapter for UdpAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("envelope parse error: {}", e),
-            }
-        })
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("envelope parse error: {}", e),
+                }
+            })
+        };
+        let env = decode()?;
+        env.verify(&env.source_peer)
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "udp".into(),
+                reason: format!("envelope verify failed: {e}"),
+            })?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {

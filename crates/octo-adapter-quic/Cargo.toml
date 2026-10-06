@@ -18,4 +18,8 @@ octo-network = { path = "../octo-network" }
 # QUIC transport (RFC 9000, RFC-0850 §8.7)
 quinn = "0.11"
 rustls = "0.23"
+# PEM decoding for operator-supplied TLS material (audit H-8: tls_cert_path /
+# tls_key_path were silently ignored). Already a workspace dependency — using
+# the workspace entry keeps one version of the rustls PEM stack in the graph.
+rustls-pemfile.workspace = true
 rcgen = "0.13"

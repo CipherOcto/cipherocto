@@ -21,7 +21,17 @@ async fn cli_send_image_without_adapter_reports_not_connected() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
-        security: SecurityConfig::default(),
+        // This test is about the `NotConnected` marker, not about auth, so it
+        // opts out of bearer enforcement explicitly. `SecurityConfig::default()`
+        // no longer works here: `bearer_required` defaults to true, so an
+        // unauthenticated CLI is rejected with `unauthorized` before it ever
+        // reaches the adapter — which is the correct behaviour, and not what
+        // this test is measuring.
+        security: SecurityConfig {
+            bearer_required: false,
+            hermetic_bypass: true,
+            ..SecurityConfig::default()
+        },
         observability: Default::default(),
         rules: RulesConfig::default(),
         ..Default::default()

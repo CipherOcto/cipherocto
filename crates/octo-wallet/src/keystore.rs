@@ -186,14 +186,42 @@ impl StarkliCompat {
         // Derive key via Argon2id.
         let salt_bytes = hex_decode(&file.crypto.kdfparams.salt)
             .map_err(|e| WalletError::KeystoreParse(format!("salt hex: {e}")))?;
+        // KDF parameters are taken from the compile-time constants, never from
+        // the file. The file is untrusted input and this runs *before* any
+        // passphrase check, so a hostile `memory_cost` (e.g. 4 GiB) would
+        // force a giant allocation and OOM-kill the importing process — a
+        // denial of service that needs no key material at all.
+        //
+        // A file declaring different parameters is rejected rather than
+        // silently re-derived: it genuinely cannot be decrypted with these
+        // constants, so a clear error beats a confusing MAC failure.
+        let kdf = &file.crypto.kdfparams;
+        if kdf.memory_cost != ARGON2_M_COST
+            || kdf.time_cost != ARGON2_T_COST
+            || kdf.parallelism != ARGON2_P_COST
+            || kdf.output_len as usize != ARGON2_OUTPUT_LEN
+        {
+            return Err(WalletError::KeystoreParse(format!(
+                "unsupported kdfparams: memory_cost={} time_cost={} parallelism={} \
+                 output_len={} (expected {}/{}/{}/{})",
+                kdf.memory_cost,
+                kdf.time_cost,
+                kdf.parallelism,
+                kdf.output_len,
+                ARGON2_M_COST,
+                ARGON2_T_COST,
+                ARGON2_P_COST,
+                ARGON2_OUTPUT_LEN,
+            )));
+        }
         let argon = Argon2::new(
             argon2::Algorithm::Argon2id,
             argon2::Version::V0x13,
             Params::new(
-                file.crypto.kdfparams.memory_cost,
-                file.crypto.kdfparams.time_cost,
-                file.crypto.kdfparams.parallelism,
-                Some(file.crypto.kdfparams.output_len),
+                ARGON2_M_COST,
+                ARGON2_T_COST,
+                ARGON2_P_COST,
+                Some(ARGON2_OUTPUT_LEN),
             )
             .map_err(|e| WalletError::KeystoreParse(format!("argon2 params: {e}")))?,
         );
@@ -361,6 +389,64 @@ mod tests {
         StarkliCompat.export(&key, &path, "right").unwrap();
         let err = StarkliCompat.import(&path, "wrong").unwrap_err();
         assert!(matches!(err, WalletError::VaultDecryptionFailed));
+    }
+
+    /// Regression (M-17): a hostile keystore must not be able to choose the
+    /// Argon2 cost. `memory_cost` is in KiB, so 4_194_304 asks for a 4 GiB
+    /// allocation, and the KDF runs before any passphrase check — so the file
+    /// alone is enough to OOM-kill the importing process.
+    #[test]
+    fn import_rejects_hostile_kdf_params_before_allocating() {
+        // Keys are the wire names (`KdfParams` renames them), not the Rust
+        // field names — writing the wrong key just adds an ignored field and
+        // the test passes for the wrong reason.
+        for (field, hostile) in [
+            ("memorycost", 4_194_304u64), // 4 GiB
+            ("timecost", 4_294_967_295u64),
+            ("parallelism", 1_048_575u64),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("keystore.json");
+            let key = IdentityKey::generate().unwrap();
+            StarkliCompat.export(&key, &path, "p").unwrap();
+
+            // Rewrite the exported file with a hostile value for one field.
+            let mut json: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            json["crypto"]["kdfparams"][field] = serde_json::json!(hostile);
+            fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+
+            let err = StarkliCompat.import(&path, "p").unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("unsupported kdfparams"),
+                "expected a kdfparams rejection for {field}, got: {msg}"
+            );
+        }
+    }
+
+    /// A file whose declared params do not match the constants cannot be
+    /// decrypted with them, so it must fail with a clear parse error rather
+    /// than a confusing MAC failure.
+    #[test]
+    fn import_reports_mismatched_kdf_params_clearly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keystore.json");
+        let key = IdentityKey::generate().unwrap();
+        StarkliCompat.export(&key, &path, "p").unwrap();
+
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        json["crypto"]["kdfparams"]["timecost"] = serde_json::json!(99);
+        fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let err = StarkliCompat.import(&path, "p").unwrap_err();
+        assert!(
+            err.to_string().contains("time_cost=99"),
+            "expected the offending field named, got: {err}"
+        );
+        // Not a decryption failure — we never got as far as the cipher.
+        assert!(!matches!(err, WalletError::VaultDecryptionFailed));
     }
 
     #[test]

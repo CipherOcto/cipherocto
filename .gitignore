@@ -126,3 +126,6 @@ uv.lock
 # `Database::open`) prevents new emissions; these are leftover from
 # pre-fix test runs. Pattern `file:*/` matches any DSN-shaped stub path.
 file:*/
+
+# Mutation-harness lock (see scripts/mutate-zk-guards.py)
+.mutate-zk-guards.lock

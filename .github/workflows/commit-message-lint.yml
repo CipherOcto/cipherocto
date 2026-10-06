@@ -36,11 +36,24 @@ jobs:
 
       - name: Compute base SHA
         id: base
+        # Both expressions are read from `github.event.*`. The bare
+        # `github.before` that used to be here is not a GitHub context
+        # property at all — `before` is part of the push webhook payload, so
+        # it lives at `github.event.before`. Like the `event_pull_request`
+        # typo above it, it evaluated to the empty string rather than
+        # failing, which meant the push branch of this workflow has been
+        # scanning against an empty base. Values are passed through `env:`
+        # rather than interpolated into the script body, so a branch name or
+        # commit subject can never be read as shell.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "base=${{ github.event_pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "base=$PR_BASE_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "base=${{ github.before }}" >> "$GITHUB_OUTPUT"
+            echo "base=$PUSH_BEFORE" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Scan commit messages

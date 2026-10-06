@@ -35,7 +35,7 @@
 §18 [Scenario: operator onboarding + first-run checklist](#18-operator-onboarding--first-run-checklist)
 §19 [Scenario: run a specialized node (wallet / identity-resolver / capability-issuer / reputation-anchor / paid-query)](#19-run-a-specialized-node)
 §20 [Scenario: Stoolap persistence backend setup](#20-stoolap-persistence-backend-setup)
-§21 [Scenario: transport adapter onboarding (telegram / whatsapp / matrix)](#21-transport-adapter-onboarding)
+§21 [Scenario: transport adapter onboarding (telegram / whatsapp / matrix) — DESIGN INTENT, not yet operational](#21-transport-adapter-onboarding-design-intent--not-yet-operational)
 §22 [Scenario: backup + restore wallet home + vault + ledger](#22-backup--restore-wallet-home--vault--ledger)
 §23 [Scenario: substrate migration + upgrade](#23-substrate-migration--upgrade)
 §24 [Scenario: cross-chain / bridge operations](#24-cross-chain--bridge-operations)
@@ -83,7 +83,7 @@ export CIPHEROCTO_DATA_DIR="$OCTO_HOME/data"
 mkdir -p "$OCTO_HOME" "$CIPHEROCTO_DATA_DIR"
 ```
 
-The CLI resolves home the same way the wallet substrate does (env override → `~/.octo` fallback). On first run, the CLI creates `$OCTO_HOME/mesh/peers.toml` (0700 perms, atomic write + fsync + rename) on demand.
+The CLI resolves home the same way the wallet substrate does (env override → `~/.octo` fallback). On first run, the CLI creates `$OCTO_HOME/mesh/peers.toml` (0700 perms, atomic write + fsync + rename) on demand. Two sidecars appear beside it and are not user-facing: `mesh/.peers.lock`, a zero-byte advisory `flock(2)` file that serialises read-modify-write across processes, and `mesh/.peers.toml.<pid>.<seq>.tmp`, a short-lived write temporary. A `.peers.lock` left behind is harmless — the lock is advisory and released on process exit — and an orphaned `.tmp` is a crashed write. §22's backup tar sweeps both, which is correct: restoring them is harmless.
 
 ### Environment variables
 
@@ -469,10 +469,15 @@ octo-wallet init \
     --seed-out /var/lib/cipherocto/operator.seed
 
 # 2c. List identities.
-#    [SUBSTRATE-NEW] `octo identity list` is not yet wired in IdentityAction.
-#    Workaround: read the operator directory directly (the substrate-level
-#    identity catalog is stored as a `BTreeMap<Did, IdentityRecord>` at the
-#    directory referenced by OCTO_WALLET_HOME; not CLI-served). See
+#    `octo identity list` IS wired (IdentityAction::List, identity.rs:35) and
+#    is the supported way to enumerate identities: it renders
+#    `octo.identity.list.v1` with `.payload.records[]` (did, pubkey_hex,
+#    lifecycle_state, registered_at, active) plus `.payload.total`.
+#    The substrate-level identity catalog is stored as a `BTreeMap<Did,
+#    IdentityRecord>` at the
+#    directory referenced by `OCTO_HOME` — there is no `OCTO_WALLET_HOME`;
+#    the wallet substrate resolves the same home the CLI does, per
+#    `crates/octo-wallet/src/identity_store.rs`). See
 #    `crates/octo-wallet/src/agent_index.rs` for the substrate reader.
 ```
 
@@ -869,25 +874,46 @@ octo vault balance "$VAULT_ID" --json
 #   `cache_hit` gives the same signal as a boolean.
 
 # 6. Initiate a transfer (substrate: initiate_transfer).
+#
+#    ⚠️ THIS STEP CANNOT COMPLETE TODAY. `octo vault transfer` evaluates the
+#    transfer ROLE GATE as pre-flight stage 4, and the production gate is
+#    `UnprovisionedRoleGate`, which returns false for every DID. The gate is
+#    resolved from the default port bundle, and nothing in the codebase ever
+#    installs a different one, so EVERY invocation exits 25
+#    (`RoleNotProvisioned`) — including a `--dry-run`, because the dry-run
+#    rewrite happens at stage 10, after the gate.
+#
+#    The error's own hint tells you to run `octo role select`. That does not
+#    help: the hint predates the gate, and `role select` writes a role binding
+#    this gate never reads. Treat the hint as stale.
+#
+#    So steps 6-7 below describe the intended shape, and steps 8 onward
+#    (balance re-projection, settlement) cannot be reached. Pinned by
+#    tv_xfer12/13/14 in crates/octo-cli/tests/vault.rs.
+#
 # Pre-flight checks (CLI-side, NOT substrate): chain-affinity, balance-sufficient-source,
 # owner-authorized, vault-state-active, recipient-existence.
 # Substrate-faithful: VaultAction::Transfer shape is --from + --to + --amount + --asset
 # (long flags, all REQUIRED) per crates/octo-cli/src/commands/vault.rs:149-180.
-# --amount takes DQA canonical-form decimal string per RFC-0960-v36 §Wire Form
-# (NOT micro-integer; convert with `dfp scale --from micros` or compute manually).
+# --amount is an INTEGER count of DQA micros (e.g. 1000000 = 1.000000 DQA). The
+# decimal form "1.000000" is REJECTED at exit 64 before any wallet or substrate
+# call: `parse_amount_micros` requires an integer. Convert with
+# `dfp scale --from micros` if you are starting from a decimal amount.
 octo vault transfer \
     --from "$SOURCE_VAULT_ID" \
     --to "$DEST_VAULT_ID" \
-    --amount "1.000000" \
+    --amount 1000000 \
     --asset "$ASSET_SYMBOL" \
     --dry-run
-# Dry-run prints the canonical envelope (handle_id + nonce + status); no signing, no broadcast.
+# Dry-run is INTENDED to print the canonical envelope (handle_id + nonce + status)
+# with no signing and no broadcast. It does not: see the ⚠️ above — it exits 25.
 
 # 7. Re-run for real (production: HSM signs; dev: InMemorySigner).
+#    Also exits 25 today, for the same reason as step 6.
 octo vault transfer \
     --from "$SOURCE_VAULT_ID" \
     --to "$DEST_VAULT_ID" \
-    --amount "1.000000" \
+    --amount 1000000 \
     --asset "$ASSET_SYMBOL" \
     --confirm --confirm-acknowledge
 ```
@@ -927,9 +953,11 @@ octo audit show <receipt-id-u64>
 #     [SUBSTRATE-NEW] `octo vault destroy` is NOT wired — VaultAction
 #     has ONLY List + Balance + Transfer. Vault destruction is
 #     substrate-level (`octo_vault::destroy_vault`); for a CLI-bound
-#     path, drain all balances via `octo vault transfer --amount "1.000000"
-#     --asset "$ASSET_SYMBOL"` (substrate-faithful form) matching the existing
-#     balance, then revoke the holder identity (Section 4 step 9).
+#     path, drain all balances via `octo vault transfer --from "$VAULT_ID"
+#     --to "$DEST_VAULT_ID" --amount <remaining micros> --asset "$ASSET_SYMBOL"`
+#     (substrate-faithful form; --amount is integer micros, per step 6 above)
+#     matching the existing balance, then revoke the holder identity
+#     (Section 4 step 9).
 ```
 
 ---
@@ -942,7 +970,7 @@ octo audit show <receipt-id-u64>
 - [enhanced-quota-router-gateway.md](../use-cases/enhanced-quota-router-gateway.md) (gateway spec)
 - [privacy-preserving-query-routing.md](../use-cases/privacy-preserving-query-routing.md) (private routing)
 
-**Substrate layer:** `quota-router-core` (Layer B, RFC-0870). CLI: `quota-router-cli` (separate binary from `octo`).
+**Substrate layer:** `quota-router-core` (Layer B, RFC-0870). CLI: the `quota-router-cli` package, whose binary is `quota-router` (separate from `octo`).
 
 ### Prerequisites
 
@@ -950,13 +978,18 @@ octo audit show <receipt-id-u64>
 - A pool of unused AI API quotas (e.g., OpenAI, Anthropic API keys) — dev only, never commit.
 - Cross-region peers reachable (see §5).
 
-### Setup — `quota-router-cli`
+### Setup — `quota-router`
 
 ```bash
 # 1. Install the quota router CLI (separate workspace member).
 cargo build --release -p quota-router-cli
 
-export QUOTA_ROUTER_BIN="$PWD/target/release/quota-router-cli"
+export QUOTA_ROUTER_BIN="$PWD/target/release/quota-router"
+# The BINARY is `quota-router`; `quota-router-cli` is the package name, so the
+# build above (`-p quota-router-cli`) is right and this path was wrong. Every
+# `"$QUOTA_ROUTER_BIN" …` invocation below was failing with "No such file or
+# directory" until this was corrected. Held by
+# `guide_build_output_paths_are_real_binaries`.
 ```
 
 ### Register
@@ -1483,7 +1516,12 @@ octo network governance tally --proposal-id <proposal-id-u64> --json
 #    List | Show. Rollup is a derived view: group receipts by `router_id`
 #    (the audit substrate-faithful tag; AuditListOutput does NOT carry a
 #    `kind` field — receipts are grouped by their canonical `router_id`):
-octo audit list --since 1d --json | jq 'group_by(.router_id) | map({router_id: .[0].router_id, count: length})'
+octo audit list --since 1d --json | jq '.payload.receipts | group_by(.router_id) | map({router_id: .[0].router_id, count: length})'
+# The leading `.payload.receipts` is load-bearing. `group_by` applied to the
+# bare envelope fails at RUNTIME with `Cannot index string with string
+# "router_id"` — it parses fine and every field it reads exists, so only a
+# check that EXECUTES the filter catches it. Held by
+# `guide_jq_filters_run_against_real_envelopes`.
 ```
 
 ### Tear down
@@ -1943,9 +1981,9 @@ rm -rf "$OCTO_HOME"
 | Runtime substrate    | `octo-runtime`                                                                                                                                                                                                                          | B                                             |
 | Quota router         | `quota-router-core`                                                                                                                                                                                                                     | B (separate workspace member)                 |
 | CLI dispatcher       | `octo-cli` (binary `octo`)                                                                                                                                                                                                              | C                                             |
-| Quota router CLI     | `quota-router-cli`                                                                                                                                                                                                                      | C                                             |
+| Quota router CLI     | `quota-router` (`quota-router-cli` package)                                                                                                                                                                                             | C                                             |
 | Provider nodes       | `octo-capability-issuer-node`, `octo-identity-resolver-node`, `octo-paid-query`, `octo-reputation-anchor-node`, `octo-wallet-node` (all rlib-only today; per-extension Layer D adapter daemons land in follow-on missions per RFC-0871) | C (deferred)                                  |
-| Transport adapters   | `octo-adapter-{telegram,whatsapp,discord,slack,bluesky,matrix,signal,lark,wechat,dingtalk,twitter,nostr,reddit,irc,qq,bluetooth,lora,quic,tcp,udp,webrtc,webhook,p2p}`                                                                  | D                                             |
+| Transport adapters   | `octo-adapter-{telegram,telegram-mtproto,whatsapp,discord,slack,bluesky,matrix,matrix-sdk,signal,lark,wechat,dingtalk,twitter,nostr,reddit,irc,qq,bluetooth,lora,quic,tcp,udp,webrtc,webhook,p2p}`                                      | D                                             |
 
 ---
 
@@ -2226,7 +2264,11 @@ octo identity register \
 #     Design). Without select, `octo whoami` exits 2 with "no active
 #     identity" even when an identity is registered — the active pointer
 #     is the substrate-level switch that `role select` reads downstream.
-octo identity select --did "$(octo --json identity list | jq -r '.payload.identities[0].did')"
+#     `identity list` renders `octo.identity.list.v1` with payload keys
+#     `records[]` and `total` (IdentityListOutput) — there is no
+#     `identities` key. Prefer the `active` flag when one is already
+#     set; fall back to the DID-ascending first record.
+octo identity select --did "$(octo --json identity list | jq -r '.payload.records[0].did')"
 
 # 6. Set the active identity (substrate: RoleAction::Select takes positional `<role_id>` slug).
 #    TWO substrate gates apply:
@@ -2252,7 +2294,8 @@ octo network node bind \
 
 # 8. Backup the mnemonic + identity keys (offline; encrypted at rest).
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
-#    has ONLY Show | Rotate | Revoke. Workaround: copy the wallet's encrypted
+#    has 9 variants (identity.rs:35): Show | Rotate | Revoke | Register |
+#    Select | List | RotateComplete | RotateAbort | Unlock. Workaround: copy the wallet's encrypted
 #    mnemonic directly from the substrate path.
 #    Two things to know: the DID is at `.payload.did` in the envelope, not at
 #    the top level, so the projection needs `--json` and the `payload` path;
@@ -2561,9 +2604,40 @@ rm -rf "$CIPHEROCTO_DATA_DIR"
 
 ---
 
-## §21 Transport adapter onboarding
+## §21 Transport adapter onboarding (DESIGN INTENT — not yet operational)
 
-**New operator scenario.** CipherOcto ships 27 transport adapters as Layer D per-extension crates. Three of them (`octo-telegram-onboard`, `octo-whatsapp-onboard`, `octo-matrix-onboard`) ship standalone onboarding CLIs that capture credentials and write a JSON config the adapter loads at startup. The other adapters read credentials from environment variables or the wallet substrate.
+> ### ⚠️ This section is NOT an operator procedure. Do not run it.
+>
+> Everything below describes the shape adapter onboarding is _designed_ to
+> have. No step in it completes an onboarding today, for one mechanical
+> reason: **no adapter daemon ships.** The `[[bin]]` targets exist, the
+> onboard CLIs build and run, and they write a JSON file — but nothing in
+> this workspace starts an adapter process that reads it. The
+> specialized-node crates are rlib-only (see the rlib-only notes later in
+> this section), so there is no process whose startup could load a config.
+>
+> Concretely, what the steps below do and do not achieve:
+>
+> | Step                                       | Status                                                                                               |
+> | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+> | Build the onboard CLI                      | works, for WhatsApp and Matrix via `cargo -p`; Telegram needs `--manifest-path` (workspace-excluded) |
+> | Capture credentials                        | works — the onboard CLIs run their auth flows                                                        |
+> | Write `$OCTO_HOME/adapters/<adapter>.json` | works — the file is written                                                                          |
+> | **The adapter loads it at startup**        | **does not happen — no adapter process starts**                                                      |
+>
+> The section is kept because the design is real and the captured
+> credentials are durable on disk, so the moment an adapter daemon ships,
+> this procedure is the one that already works. It is a specification
+> with a working first half, not a runbook.
+
+**Scenario (design intent).** CipherOcto ships **25** transport adapters as
+Layer D per-extension crates (`crates/octo-adapter-*`; the authoritative list
+is the §16 crate map). Three of them (`octo-telegram-onboard`,
+`octo-whatsapp-onboard`, `octo-matrix-onboard`) ship standalone onboarding
+CLIs that capture credentials and write a JSON config — which, per the
+banner above, no adapter currently reads. The other adapters read
+credentials from environment variables or the wallet substrate; the exact
+per-adapter mechanism is given in the Register step.
 
 ### Prerequisites
 
@@ -2575,8 +2649,11 @@ rm -rf "$CIPHEROCTO_DATA_DIR"
 ### Setup — Telegram
 
 ```bash
-# 1. Build the telegram onboard CLI.
-cargo build --release -p octo-telegram-onboard
+# 1. Build the telegram onboard CLI. `-p` selects WORKSPACE MEMBERS only, and
+#    `octo-telegram-onboard` is in the workspace `exclude` array (it activates
+#    the `real-tdlib` feature, which would leak TDLib into every test binary).
+#    Build it by manifest path, or through the meta-crate's feature flag.
+cargo build --release --manifest-path crates/octo-telegram-onboard/Cargo.toml
 
 # 2. Set credentials.
 export TELEGRAM_API_ID="<your-api-id>"
@@ -2628,34 +2705,51 @@ cargo build --release -p octo-matrix-onboard
 # 8. Confirm the config files are 0700.
 chmod 0700 "$OCTO_HOME/adapters"/*.json
 
-# 9. Verify the config files parse. Substrate: octo-adapter-{telegram,whatsapp,matrix}
-#    implement a `load_config` function that reads each adapter's JSON file at adapter
-#    startup. The CLI `octo whoami` itself takes no `--adapter-config` flag — adapter
-#    loading happens in the adapter-process startup context, not in the CLI binary.
-#    Workaround: each adapter process subscribes to its config path via env var
-#    (e.g., `OCTO_ADAPTER_TELEGRAM_CONFIG=/path/to/telegram.json`) OR the adapter
-#    reads from the canonical path `$OCTO_HOME/adapters/<adapter>.json` at boot.
+# 9. Verify the config files parse. Substrate: the CLI `octo whoami` takes no
+#    `--adapter-config` flag, and no `OCTO_ADAPTER_*_CONFIG` env var is read by
+#    any crate — there is no such variable. Adapter config reaches an adapter
+#    only through that adapter's own API, and the three differ:
+#      * telegram: `MtprotoTelegramConfig::from_file_or_env(path)` — the JSON
+#        file at `path` if it exists, else the `TELEGRAM_*` env vars
+#        (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE`,
+#        `TELEGRAM_BOT_TOKEN`, …). `path` is supplied by the CALLER.
+#      * whatsapp: reads `OCTO_WHATSAPP_PERSIST_DIR` and
+#        `OCTO_WHATSAPP_SESSION_NAME` directly.
+#      * matrix: no env-var config path at all; `config_path` is a field of
+#        `MatrixConfig` that the embedding process fills in.
+#    The `path` in the telegram case is not derived from a convention: the only
+#    in-repo callers of `from_file_or_env` are two dev binaries and the
+#    live-session test, and no adapter daemon ships (§21 note 6), so there is
+#    no boot-time reader of `$OCTO_HOME/adapters/<adapter>.json` either.
 ./target/release/octo whoami --json
 ```
 
 ### Operate
 
+> **Nothing to operate yet** — no adapter process exists to start. The
+> bootstrap command below runs and produces a mesh peer table; it does not
+> attach an adapter, because there is no adapter side to attach.
+
 ```bash
-# 10. Start the mesh node (per §5) with the adapter configs. Substrate: there is NO
+# 10. Start the mesh node (per §5). Substrate: there is NO
 #     `--adapter-telegram/whatsapp/matrix` global flag — `Octo` struct's flatten
 #     surface (lib.rs) is limited to OutputFlags + OperatorModeFlags (--json,
 #     --no-color, --mode, --dev, --allow-write, --confirm, --confirm-acknowledge,
-#     --dry-run, --allow-stdin-secret). Adapter configs are loaded via env vars
-#     (OCTO_ADAPTER_<NAME>_CONFIG=<path>) or the canonical path convention.
+#     `--dry-run`, `--allow-stdin-secret). Adapter config is NOT plumbed through
+#     the CLI: there is no `OCTO_ADAPTER_*_CONFIG` env var to set here, and no
+#     crate reads one. The variables a real adapter process reads are that
+#     adapter's own (`TELEGRAM_*` for telegram, `OCTO_WHATSAPP_*` for
+#     whatsapp), and none of them is consumed by `octo network bootstrap`.
 #     BootstrapArgs has ONLY --json (per RFC-0011-h row 97); there is no
 #     `--mode default` flag (mode is operator-global).
-OCTO_ADAPTER_TELEGRAM_CONFIG="$OCTO_HOME/adapters/telegram.json" \
-OCTO_ADAPTER_WHATSAPP_CONFIG="$OCTO_HOME/adapters/whatsapp.json" \
-OCTO_ADAPTER_MATRIX_CONFIG="$OCTO_HOME/adapters/matrix.json" \
 octo network bootstrap
 ```
 
 ### Verify
+
+> **These probes cannot succeed** — the DIDs are placeholders and the adapters
+> they name are not running. The commands are real and the exit codes are
+> real; the reachability they report is not.
 
 ```bash
 # 11. Probe each adapter reachability.
@@ -2761,7 +2855,8 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 
 # 3. Snapshot the mnemonic + identity export (offline-encrypted).
 #    [SUBSTRATE-NEW] `octo identity export-mnemonic` is NOT wired — IdentityAction
-#    has ONLY Show | Rotate | Revoke. Mnemonic export is via the wallet substrate
+#    has 9 variants (identity.rs:35): Show | Rotate | Revoke | Register |
+#    Select | List | RotateComplete | RotateAbort | Unlock. Mnemonic export is via the wallet substrate
 #    API directly. Workaround: copy the encrypted mnemonic file from
 #    $OCTO_HOME/identity/<did>/mnemonic.enc after the wallet mints it.
 #    The DID comes from `.payload.did` of the `--json` envelope; `octo
@@ -2875,7 +2970,8 @@ tar -xzf "$OCTO_BACKUP_DIR/<timestamp>.home.tar.gz" -C "$OCTO_HOME"
 
 # 11. Re-import the mnemonic (re-derives the identity keys + wallet).
 #     [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
-#     has ONLY Show | Rotate | Revoke. The substrate wallet binary exposes 4
+#     has 9 variants (identity.rs:35): Show | Rotate | Revoke | Register |
+#     Select | List | RotateComplete | RotateAbort | Unlock. The substrate wallet binary exposes 4
 #     subcommands: Init | DeriveCap | Vault | Ask per
 #     crates/octo-wallet/src/bin/octo-wallet.rs:34-66 (no `dev-restore-identity`
 #     binary; `crates/octo-wallet/Cargo.toml` has one `[[bin]]` entry for
@@ -3061,6 +3157,12 @@ cargo build --release --workspace
 
 ## §24 Cross-chain / bridge operations
 
+> ⚠️ **`octo vault transfer` exits 25 today, in every mode.** The steps below
+> that invoke it cannot complete: the transfer role gate is evaluated as
+> pre-flight stage 4 and the production gate denies every DID. See §7 step 6
+> for the mechanism and the pinned tests. The bridge substrate path is a
+> separate route and is not blocked by that gate.
+
 **New operator scenario.** Same-chain vault transfers use `octo vault transfer` (§7). Cross-chain transfers route via the `SlashBridge` substrate (RFC-0863 error pattern reuse; RFC-0855p-b governing RFC). The bridge envelope uses the canonical Borsh-style envelope encoding defined in RFC-0011-u §forward_envelope (`ForwardEnvelope::wire_bytes()` returns canonical bytes; byte-length depends on payload and is reported per build, not pinned to a fixed 80). RFC-0855 itself does not yet carry a `§Wire Format` heading — amend RFC-0855 first if a fixed-length wire envelope is required downstream.
 
 ### Prerequisites
@@ -3086,7 +3188,7 @@ octo network slash-bridge list
 #    VaultAction::Transfer substrate shape (crates/octo-cli/src/commands/vault.rs):
 #      --from <VAULT_ID>          (source vault 64-char lowercase hex; long flag)
 #      --to <VAULT_ID>            (destination vault 64-char lowercase hex; long flag)
-#      --amount <DQA>             (DQA canonical form per RFC-0960-v36 §Wire Form; e.g., "1.000000")
+#      --amount <MICROS>           (INTEGER count of DQA micros, e.g. 1000000 = 1.000000 DQA)
 #      --asset <SYMBOL>           (asset symbol like "OCTO"; resolved against vault registry)
 #      --dest-chain-id <CHAIN>    (REQUIRED for cross-chain; must differ from --from chain)
 #      --memo <TEXT>              (free-text memo; redacted in sinks unless --include-memo)
@@ -3097,7 +3199,7 @@ octo network slash-bridge list
 octo vault transfer \
     --from "$SRC_VAULT_ID" \
     --to "$DEST_VAULT_ID" \
-    --amount 1.000000 \
+    --amount 1000000 \
     --asset "$ASSET_SYMBOL" \
     --dest-chain-id "$DEST_CHAIN_ID" \
     --dry-run
@@ -3106,7 +3208,7 @@ octo vault transfer \
 octo vault transfer \
     --from "$SRC_VAULT_ID" \
     --to "$DEST_VAULT_ID" \
-    --amount 1.000000 \
+    --amount 1000000 \
     --asset "$ASSET_SYMBOL" \
     --dest-chain-id "$DEST_CHAIN_ID" \
     --confirm --confirm-acknowledge
@@ -3457,7 +3559,7 @@ jobs:
           chmod 0700 "$OCTO_HOME"
           echo -n "${{ secrets.CIPHEROCTO_MNEMONIC }}" > /tmp/mnemonic.txt
           #    [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired —
-          #    IdentityAction has ONLY Show | Rotate | Revoke. The substrate
+          #    IdentityAction has 9 variants (identity.rs:35). The substrate
           #    wallet binary exposes ONLY Init | DeriveCap | Vault (no
           #    `dev-restore-identity` binary; `crates/octo-wallet/Cargo.toml`
           #    has one `[[bin]]` entry for `octo-wallet`). CI restores the
@@ -3839,10 +3941,12 @@ octo --mode dev --allow-write capability mint \
 
 ```bash
 # 3. Route the query through a privacy-preserving mesh path.
-#    `quota-router-cli route` accepts `--provider` + `--prompt` only (NOT
+#    The binary is `quota-router`; `quota-router-cli` is the PACKAGE name, not
+#    an executable, so `quota-router-cli route` fails with "command not found".
+#    `quota-router route` accepts `--provider` + `--prompt` only (NOT
 #    `--budget-dqa-micros`, `--routing-mode`). Budget is enforced via the
 #    capability bound at attach time.
-quota-router-cli route \
+quota-router route \
     --prompt /tmp/private-prompt.txt \
     --provider <provider-peer-id-hex>
 # Substrate: quota-router-core RouteArgs (provider + prompt only) per
@@ -3899,7 +4003,9 @@ octo audit list --limit 100 --json \
 ```bash
 # 1. Create a second identity (e.g., for an organisation).
 #    [SUBSTRATE-NEW] `octo identity create` is NOT wired — IdentityAction has
-#    ONLY Show | Rotate | Revoke. Identity creation is via the substrate-level
+#    9 variants (identity.rs:35) — `register`, not `create`. Identity
+#    creation is via `octo identity register` (see §18 step 5b) or the
+#    substrate-level
 #    wallet binary (Init subcommand — see `crates/octo-wallet/src/bin/octo-wallet.rs:34`,
 #    which is the ONLY [[bin]] entry in `crates/octo-wallet/Cargo.toml`).
 #    Workaround for dev mode:
@@ -3915,9 +4021,9 @@ octo-wallet init --node-type self-host --seed-out "$OCTO_HOME/identity/personal.
 # active_signer_for_did at crates/octo-cli/src/commands/identity.rs:575-589).
 
 # 2. List all identities.
-#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
-#    ONLY Show | Rotate | Revoke. Workaround: iterate `octo identity show` per
-#    known DID (each wallet's identities are at $OCTO_HOME/identity/<did>/):
+#    `octo identity list` IS wired (IdentityAction::List). Use it — it is a
+#    strict superset of `show` and is not gated on an active identity:
+#    octo --json identity list | jq -r '.payload.records[].did'
 octo identity show --json   # show the active identity
 ```
 
@@ -4013,9 +4119,9 @@ done
 
 ```bash
 # 1. Capture the current pre-recovery state for comparison.
-#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — IdentityAction has
-#    ONLY Show | Rotate | Revoke. Workaround: snapshot the wallet directory
-#    layout (each identity is at $OCTO_HOME/identity/<did>/).
+#    `octo identity list` IS wired (IdentityAction::List). Snapshot with
+#    octo --json identity list > "$OCTO_BACKUP_DIR/identity-list.json"
+#    (DID, pubkey, lifecycle state and registration time per record).
 #    `-C "$OCTO_HOME" .` keeps member names relative so the archive is
 #    comparable across a rebuild; see the §22 preamble.
 export OCTO_BACKUP_DIR="$HOME/.octo-backup"
@@ -4040,7 +4146,8 @@ chmod 0700 "$OCTO_HOME"
 
 # 3. Re-import the mnemonic (re-derives the identity keys).
 #    [SUBSTRATE-NEW] `octo identity import-mnemonic` is NOT wired — IdentityAction
-#    has ONLY Show | Rotate | Revoke. The substrate wallet binary exposes ONLY
+#    has 9 variants (identity.rs:35): Show | Rotate | Revoke | Register |
+#    Select | List | RotateComplete | RotateAbort | Unlock. The substrate wallet binary exposes ONLY
 #    Init | DeriveCap | Vault (no `dev-restore-identity` binary; `crates/octo-wallet/Cargo.toml`
 #    has one `[[bin]]` entry for `octo-wallet`). Mnemonic restore is via the
 #    substrate API directly: `octo_wallet::IdentityKey::from_seed(bytes)` +
@@ -4162,8 +4269,8 @@ octo vault list --json
 octo mesh peer list --json
 
 # 15. Diff the post-recovery state against the pre-recovery snapshot.
-#    [SUBSTRATE-NEW] `octo identity list` is NOT wired — diff against the
-#    pre-recovery wallet directory snapshot instead.
+#    `octo identity list` IS wired (IdentityAction::List) — diff the
+#    post-recovery output against the pre-recovery identity-list.json.
 #
 #    Every envelope carries `executed_at_unix`, which differs between any two
 #    invocations taken more than a second apart. Diffing whole envelopes
@@ -4347,6 +4454,161 @@ have actually occurred:
 Every scenario that brings up a stack tears its project down on drop,
 including on panic, so a failed run does not leave containers or volumes
 behind for the next one to trip over.
+
+---
+
+### Coverage disposition — every unit, stated
+
+The table below gives **every one of the guide's 36 units** a test
+disposition, so that no unit is silently uncovered. It is machine-checked:
+`guide_unit_dispositions_are_complete` in
+`crates/octo-cli/tests/guide_examples.rs` parses this table, fails if a unit
+exists in the guide but not here, and fails if a disposition names a test
+that does not exist in the tree.
+
+**Counting rules**, stated because the previous count in the audit was wrong
+in both directions:
+
+- A **unit** is a `##` heading matching `§N` or `Appendix …`. Sub-headings
+  are not units. That yields 36 (34 numbered §0–§33, plus two appendices).
+- A unit is **covered** only if an L3 or L4 test _executes_ the behaviour it
+  documents. Citing a `§N` in a test comment does not count — §3 and §5 are
+  covered by tests that never mention their section number, and §7's only
+  L3 reference is a jq string shape, not an execution.
+- **Result: 17 covered, 19 carrying the dispositions below** (derived, not
+  asserted — `guide_unit_dispositions_are_complete` recomputes both numbers
+  from this table on every run). The audit recorded 11/25; its extra
+  uncovered unit was §1, which `l4_audit_switch_denies_writes_despite_an_
+explicit_write_mode` covers directly, and it omitted §27, which this
+  repository's own CI holds.
+
+| unit                                          | disposition | held by / blocker                                                                                                |
+| --------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------- |
+| §0 Operator environment                       | covered     | `l3_missing_home_fails_closed`, `l4_fresh_node_answers_reads_without_writing_a_peer_table`                       |
+| §1 Mode + confirmation cheat-sheet            | covered     | `l4_audit_switch_denies_writes_despite_an_explicit_write_mode`, `l3_write_gate_is_enforced_per_invocation`       |
+| §2 End-to-end scenario flow                   | prose       | an umbrella map; its claims are held by the units it sequences                                                   |
+| §3 Bootstrap a new node                       | covered     | `l3_write_is_visible_to_a_later_process`, `l4_peer_table_survives_a_container_restart`                           |
+| §4 Create + manage operator identity          | covered     | `l3_only_the_canonical_did_wire_form_is_accepted`, `l3_unlock_then_capability_list_returns_zero`                 |
+| §5 Bind mesh peers + verify trust             | covered     | `l4_three_node_full_mesh_converges_on_six_directed_bindings`, `l3_three_nodes_do_not_see_each_others_peers`      |
+| §6 Issue + deliver a capability               | covered     | `l3_capability_mint_then_list_round_trip`                                                                        |
+| §7 Provision a vault + transfer funds         | **blocked** | transfer role gate denies every DID at pre-flight stage 4 — audit §8 R5                                          |
+| §8 Quota routing + marketplace listing        | integration | `route` arg contract; no multi-party path exists                                                                 |
+| §9 Agent marketplace participation            | covered     | `l3_agent_create_then_list_round_trip`, `l3_agent_run_unknown_agent_exits_42`                                    |
+| §10 Capability delivery end-to-end            | covered     | `l3_capability_reaches_its_holder_and_not_the_issuer`                                                            |
+| §11 Reputation + attestation                  | covered     | `l3_attestation_binds_one_identity_to_another`                                                                   |
+| §12 Audit + settlement verification           | covered     | `guide_jq_filters_run_against_real_envelopes` (its Verify step executed end to end)                              |
+| §13 Governance participation                  | covered     | `l3_governance_attest_signing_path_succeeds`, `l3_governance_vote_signing_path_succeeds`                         |
+| §14 Provider network                          | **blocked** | `octo provider {compute,bandwidth,storage,data} register` is not wired — `[SUBSTRATE-NEW]` markers               |
+| §15 Tear down + cleanup                       | covered     | `l3_teardown_removes_every_peer_idempotently`, `l4_teardown_removes_every_volume_and_network_the_scenario_owned` |
+| §16 Cross-reference map                       | prose       | crate map and flag tables held by `guide_non_octo_invocations_resolve` + `guide_flags_all_resolve`               |
+| §17 Troubleshooting                           | prose       | a symptom table, not a procedure                                                                                 |
+| §18 Operator onboarding + first-run checklist | prose       | a checklist; its commands are held per-unit                                                                      |
+| §19 Run a specialized node                    | **blocked** | specialized-node crates are rlib-only; no daemon ships                                                           |
+| §20 Stoolap persistence backend setup         | prose       | a build/dependency walkthrough, nothing to execute                                                               |
+| §21 Transport adapter onboarding              | **blocked** | no adapter daemon ships — see the §21 banner                                                                     |
+| §22 Backup + restore                          | covered     | `l4_wipe_and_restore_recovers_a_dialable_peer_table`                                                             |
+| §23 Substrate migration + upgrade             | **blocked** | no per-crate migration binary exists — `[SUBSTRATE-NEW]` markers                                                 |
+| §24 Cross-chain / bridge operations           | **blocked** | `SlashBridge` route is not CLI-reachable, and §7 is walled — audit §8 R5                                         |
+| §25 Probabilistic verification market         | prose       | describes market semantics, not an operator path                                                                 |
+| §26 Reputation federation                     | **blocked** | federation subcommands are not wired — `[SUBSTRATE-NEW]` markers                                                 |
+| §27 CI/CD pipeline integration                | covered     | `tv_c3_ci_and_nightly_workflows_declare_their_triggers`                                                          |
+| §28 Defence against slashing                  | prose       | describes manifest/config posture, not a procedure                                                               |
+| §29 Hybrid AI + blockchain runtime            | prose       | design intent; no operator surface                                                                               |
+| §30 Privacy-preserving operations             | prose       | policy description, no executable path                                                                           |
+| §31 Multi-tenant / multi-identity             | covered     | `l3_active_identity_switches_between_two_tenants_and_persists`                                                   |
+| §32 Disaster recovery                         | **blocked** | the recovery path's substrate commands are not all wired                                                         |
+| §33 Multi-node verification harness           | covered     | `tv_c3_every_multi_node_target_is_scheduled`                                                                     |
+| Appendix A — Operator flags reference         | covered     | `l3_envelope_exposes_peers_under_payload`, `l3_wrong_envelope_depth_fails_in_two_distinct_ways`                  |
+| Appendix B — Engineering conventions          | prose       | conventions, nothing to execute                                                                                  |
+
+**Reading the dispositions.** `covered` means a test executes it. `prose`
+means the unit is a map, a table, or a convention, and a test would assert
+nothing an operator could act on. `multi-node` means a real two-party scenario
+is warranted and absent — these are the genuine open gaps, and they are the
+units most likely to hide an orchestration defect. **`blocked` is the
+important column**: eight units document a path that cannot run today, and in
+every case the blocker is a substrate gap, not a missing test. No amount of
+test writing closes a `blocked` unit; only wiring does. Each blocker names the
+gap so it is a work item rather than a silent hole.
+
+**§33 is covered twice over.** The row above names the scheduling guard, but the
+harness that guard covers has since been _executed_ rather than counted: all 21
+nightly scenarios run green on real Docker (audit §8 R8). The guard proves every
+scenario is wired to a scheduled run; the run proves they pass. Only the second
+is a statement about the code.
+
+**The `multi-node` column is now empty, and it was empty by mistake.**
+The three units it held — §10, §11, §31 — are now `covered` by
+`e2e_l3_twoparty.rs`. They were dispositioned "wants two parties" on the
+assumption that a two-party scenario needs two **nodes**, and that assumption
+was never tested. It is false.
+
+A party is a **DID**, not a machine. One `$OCTO_HOME` holds several identities
+(`identity register`, then `identity select --did`), and `capability list` is
+scoped to the _active_ DID (`commands/capability.rs` —
+`list_for_holder_disk(&active_did, …)`). Two distinct parties are therefore
+reachable inside a single home, through the real binary, with no docker engine
+at all. The unit under test is the party boundary, and a party boundary does
+not care how many processes or containers it spans.
+
+The strongest evidence is §10's own behaviour, which no amount of reading would
+have predicted: a capability minted for a second identity is **invisible to
+the issuer** and **visible to the holder** after an `identity select`. A
+single-identity test cannot reach that, because there the issuer and the
+holder are the same party and the property is vacuous.
+
+What these tests do NOT establish: anything about cross-process or
+cross-container isolation. That remains the L3/L4 suites' job and is
+unaffected. A docker engine is the right tool for "does this survive process
+and container boundaries", and the wrong one for "are these two parties
+separable".
+
+### What the multi-node layer actually covers
+
+The empty `multi-node` column above is about the _disposition vocabulary_, and
+it would be easy to misread it as "multi-node now covers this guide". It does
+not, and the guide uses **three** test tiers, not two. Naming them is the
+difference between an honest count and a flattering one.
+
+| Tier                 | Suite                                                                                                | Isolation it proves                                                 | Runs in                |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------- |
+| **L4 container**     | `e2e_l4_multinode_docker`, the four quota-router `layer*` suites, `cross_process` — **21 scenarios** | across a **container** boundary                                     | the nightly, 04:17 UTC |
+| **L3 cross-process** | `e2e_l3_multinode` — 28 scenarios                                                                    | across an **OS process** boundary, several `$OCTO_HOME` on one host | `ci.yml` on every PR   |
+| **L3 two-party**     | `e2e_l3_twoparty` — 3 scenarios                                                                      | two **DIDs** separable in one home                                  | `ci.yml` on every PR   |
+
+The last two are not "single-process" and should never be described that way:
+`e2e_l3_multinode` is titled _Level 3: cross-process isolation_ and spawns the
+real `octo` binary in a fresh process for every read and write. Only the L4
+tier crosses a container boundary.
+
+**Counting rule:** a unit has an L4 leg if at least one test named in its row
+belongs to one of the 21 nightly scenarios.
+
+|                               | Units                                                          |
+| ----------------------------- | -------------------------------------------------------------- |
+| Have an **L4 container** leg  | §0, §1, §3, §5, §15, §22 — **6 of 36**                         |
+| Covered, with **no** L4 leg   | §4, §6, §9, §10, §11, §12, §13, §27, §31, §33, App. A — **11** |
+| Covered by L4 **exclusively** | §22 only — every other L4 unit also has an L3 leg              |
+
+All 15 Docker scenarios exercise **one subsystem: the peer table and mesh
+transport** — state and isolation, trust-level and endpoint policy, TCP
+reachability and healing, 3-node convergence, the write gate, and harness
+teardown. The guide's substance — identity, capabilities, agents, delivery,
+attestation, audit verification, governance, multi-tenancy — is held by the
+L3 tiers, not the container tier, because none of it needs a container to be
+meaningful.
+
+The reason is not an oversight. **This guide is mostly about one operator on
+one machine.** Its units are wallets, capabilities, agents, governance and
+audit. The container tier's narrower and genuine value is proving behaviour
+survives a container boundary, which is worth §22 outright and five units
+partially. §10, §11 and §31 are covered _better_ than a nightly scenario would
+cover them: `ci.yml` runs their tests on every pull request.
+
+Eight of the units no test can close are the `**blocked**` column: `provider
+register` unwired, no adapter daemon, no migration binary, no federation
+subcommands. Those are the units where a reader is most likely to be misled,
+and no amount of scenario-writing reaches them — only wiring does.
 
 ---
 

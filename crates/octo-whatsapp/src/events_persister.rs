@@ -135,6 +135,102 @@ pub async fn load_unknown_stats(
     Ok(map)
 }
 
+/// Restrict a regular file to owner-read/write (0600).
+#[cfg(unix)]
+async fn restrict_file_to_owner(file: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = tokio::fs::metadata(file).await?.permissions();
+    if perms.mode() & 0o777 != 0o600 {
+        perms.set_mode(0o600);
+        tokio::fs::set_permissions(file, perms).await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn restrict_file_to_owner(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Restrict a directory to owner-only (0700), synchronously.
+#[cfg(unix)]
+fn restrict_dir_sync(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(dir)?.permissions();
+    if perms.mode() & 0o777 != 0o700 {
+        perms.set_mode(0o700);
+        std::fs::set_permissions(dir, perms)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_sync(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Restrict a directory to owner-only (0700).
+///
+/// `create_dir_all` applies the process umask to newly created directories,
+/// which on a default desktop umask of 022 yields 0755 — world-readable and
+/// world-traversable. It does not touch the mode of a directory that already
+/// exists, so the mode is set explicitly after the fact.
+#[cfg(unix)]
+async fn restrict_dir_to_owner(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = tokio::fs::metadata(dir).await?.permissions();
+    if perms.mode() & 0o777 != 0o700 {
+        perms.set_mode(0o700);
+        tokio::fs::set_permissions(dir, perms).await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn restrict_dir_to_owner(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Create the parent directory of `path`, owner-only.
+///
+/// The events NDJSON holds full inbound message bodies — customer
+/// conversations — so the directory and file must not be group- or
+/// world-readable.
+pub(crate) async fn ensure_private_parent(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+            restrict_dir_to_owner(parent).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Open `path` for append, creating it owner-readable only (0600).
+pub(crate) async fn open_append_private(path: &Path) -> std::io::Result<tokio::fs::File> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        // `tokio::fs::OpenOptions` exposes `mode` as an inherent method on unix,
+        // so no trait import is needed here.
+        opts.mode(0o600);
+    }
+    let f = opts.open(path).await?;
+    // `mode` only applies when the file is created, so an existing file keeps
+    // whatever mode it had.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = f.metadata().await?.permissions();
+        if perms.mode() & 0o777 != 0o600 {
+            perms.set_mode(0o600);
+            tokio::fs::set_permissions(path, perms).await?;
+        }
+    }
+    Ok(f)
+}
+
 /// Persist the in-memory unknown-stats map to disk via
 /// write-temp-then-rename so a crash mid-write leaves the previous
 /// file intact. The map is small (≤ tens of variants); we rewrite
@@ -143,11 +239,7 @@ pub async fn save_unknown_stats(
     path: &Path,
     map: &std::collections::BTreeMap<String, UnknownStats>,
 ) -> Result<(), PersistError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-    }
+    ensure_private_parent(path).await?;
     let tmp = path.with_extension("ndjson.tmp");
     let mut buf = Vec::with_capacity(64 * map.len());
     for s in map.values() {
@@ -156,6 +248,7 @@ pub async fn save_unknown_stats(
     }
     // write+fsync tmp, then rename atomically over the canonical path
     tokio::fs::write(&tmp, &buf).await?;
+    restrict_file_to_owner(&tmp).await?;
     tokio::fs::rename(&tmp, path).await?;
     Ok(())
 }
@@ -585,6 +678,7 @@ impl EventsPersisterHandle {
             if let Some(parent) = p.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent)?;
+                    restrict_dir_sync(parent)?;
                 }
             }
         }
@@ -811,11 +905,7 @@ pub async fn load_initial_events(
     }
     // Make sure the parent exists for any later truncation. The
     // reload itself doesn't need it (the file is already there).
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-    }
+    ensure_private_parent(path).await?;
 
     let bytes = match tokio::fs::read(path).await {
         Ok(b) => b,
@@ -973,12 +1063,8 @@ async fn run_actor(
     // at boot, so the read side is not used here.
     let mut file = match &path {
         Some(p) => {
-            if let Some(parent) = p.parent() {
-                if !parent.as_os_str().is_empty() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-            }
-            Some(OpenOptions::new().create(true).append(true).open(p).await?)
+            ensure_private_parent(p).await?;
+            Some(open_append_private(p).await?)
         }
         None => None,
     };

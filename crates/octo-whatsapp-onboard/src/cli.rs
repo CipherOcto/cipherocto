@@ -65,6 +65,15 @@ pub struct OutputArgs {
     /// Overwrite existing output file.
     #[arg(long)]
     pub force: bool,
+    /// Print the raw FIDO pairing URI when the QR cannot be rendered.
+    ///
+    /// Off by default. Terminal output is routinely captured — CI logs,
+    /// `script`, tmux scrollback, screen shares, bug reports — and the pairing
+    /// URI *is* the secret the phone is about to prove possession of. Off by
+    /// default means an operator who pastes their terminal somewhere does not
+    /// hand over the pairing.
+    #[arg(long)]
+    pub show_secret: bool,
 }
 
 /// Custom value parser for `--groups` (R2-L2 + R3-M2):

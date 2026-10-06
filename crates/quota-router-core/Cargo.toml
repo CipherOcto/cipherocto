@@ -126,7 +126,19 @@ zk-circuit = { path = "../zk-circuit" }
 # constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
 # symbol that was shipped in R2 but had zero non-test callers.
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
-zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
+# ZK proof verification substrate (Layer A crypto home, RFC-0958).
+#
+# **C-1 fix (2026-10-05):** this edge previously carried
+# `features = ["allow-stub-verifier"]`. Because feature flags unify across the
+# dependency graph, that single line put the forgeable BLAKE3 stub verifier
+# into EVERY `cargo build --workspace` — the fail-closed `StubDisabled` arm
+# never compiled in any real binary. The feature is dev/test-only and must
+# never appear on a production dependency edge; `security_regressions.rs`
+# enforces that (guard `c1_stub_verifier_feature_is_dev_only`).
+#
+# Consequence: with no `libstwo_sys.so` present this crate now returns
+# `VerifyError::StubDisabled` instead of accepting a forgeable commitment.
+zk-verifier = { path = "../zk-verifier" }
 
 # For constant-time comparison (master key bypass)
 subtle = "2.6"

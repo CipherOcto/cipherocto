@@ -940,6 +940,15 @@ mod real {
             if auth.governance_pubkey == [0u8; 32] {
                 return Err(ReputationError::GovernanceSignatureInvalid);
             }
+            // Same ed25519 check as the memory store, via the shared helper —
+            // see `auth::verify_governance_signature`.
+            crate::auth::verify_governance_signature(
+                &auth.governance_pubkey,
+                &auth.recorder_id,
+                &auth.reason_hash,
+                &auth.signature,
+                now_unix,
+            )?;
             Ok(())
         }
 

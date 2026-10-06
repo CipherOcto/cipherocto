@@ -102,8 +102,10 @@ pub trait ReputationStore: Send + Sync {
     async fn register_recorder(&self, chain_ref: crate::auth::ChainRef) -> StoreResult<RecorderId>;
 
     /// Verify a suspension authorisation against the on-chain governance
-    /// snapshot. Real signature verification is deferred; this method
-    /// validates shape, freshness, and quorum.
+    /// snapshot. Signature verification is performed by
+    /// `auth::verify_governance_signature`, the single choke point every
+    /// implementation delegates to; this method validates shape, freshness,
+    /// quorum, and the signature.
     async fn verify_governance_suspension(
         &self,
         auth: &SuspensionAuth,

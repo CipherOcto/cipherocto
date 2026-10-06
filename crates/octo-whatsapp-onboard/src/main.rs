@@ -75,7 +75,7 @@ async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> 
     install_rustls_provider();
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_qr(&args);
-    let authenticator = build_passkey_authenticator();
+    let authenticator = build_passkey_authenticator(args.output.show_secret);
     let session = octo_whatsapp_onboard_core::qr_link::run(&core_args, Some(authenticator)).await?;
     run_link(&args.output, session).await
 }
@@ -95,7 +95,7 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
     install_rustls_provider();
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_pair(&args);
-    let authenticator = build_passkey_authenticator();
+    let authenticator = build_passkey_authenticator(args.output.show_secret);
     let session =
         octo_whatsapp_onboard_core::pair_link::run(&core_args, Some(authenticator)).await?;
     run_link(&args.output, session).await
@@ -131,9 +131,10 @@ fn install_rustls_provider() {
 ///   1. primary WA QR (rendered by the adapter) → phone scans
 ///   2. IF server demands passkey → FIDO QR (rendered here)
 fn build_passkey_authenticator(
+    show_secret: bool,
 ) -> std::sync::Arc<dyn octo_adapter_whatsapp::passkey::PasskeyAuthenticator> {
     let qr_display: octo_adapter_whatsapp::passkey::cable::QrDisplayFn = std::sync::Arc::new(
-        |fido_uri: &str| match qrcode::QrCode::new(fido_uri.as_bytes()) {
+        move |fido_uri: &str| match qrcode::QrCode::new(fido_uri.as_bytes()) {
             Ok(qr) => {
                 let rendered = qr
                     .render::<qrcode::render::unicode::Dense1x2>()
@@ -145,9 +146,20 @@ fn build_passkey_authenticator(
                 );
             }
             Err(e) => {
-                eprintln!(
-                    "\nFailed to render FIDO QR ({e}). Raw FIDO:/<digits> URI:\n{fido_uri}\n"
-                );
+                // L-8: the fallback used to print the raw URI unconditionally.
+                // It is the pairing secret, and terminal output is routinely
+                // captured, so it is withheld unless the operator asks for it
+                // explicitly.
+                eprintln!("\nFailed to render FIDO QR ({e}).");
+                if show_secret {
+                    eprintln!("\n--show-secret was given; raw FIDO:/<digits> URI:\n{fido_uri}\n");
+                } else {
+                    eprintln!(
+                        "The pairing URI was withheld: it is the secret the phone \
+                         is about to prove possession of, and terminal output is \
+                         often captured. Re-run with --show-secret to print it."
+                    );
+                }
             }
         },
     );

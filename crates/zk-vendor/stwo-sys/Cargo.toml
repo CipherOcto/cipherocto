@@ -30,6 +30,9 @@ stwo-cairo-prover = { git = "https://github.com/starkware-libs/stwo-cairo.git", 
 stwo-cairo-adapter = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0", package = "stwo-cairo-adapter" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Decode the CASM bytecode hex carried by the program artifact. zk-circuit
+# emits it; see CairoProgramSpec.
+hex = "0.4"
 thiserror = "1.0"
 
 # Pin transitive deps to match stoolap/stwo-plugin/Cargo.lock resolutions:
@@ -38,7 +41,18 @@ thiserror = "1.0"
 # - cairo-vm 3.1.0: newer cairo-vm removed `cairo_vm::stdlib::collections::HashMap`,
 #   which stwo-cairo-adapter still imports.
 ruint = "=1.17.2"
-cairo-vm = "=3.1.0"
+# `cairo-1-hints` selects cairo-vm's typed Cairo 1 hint processor. The
+# builtin processor matches *legacy long-form pythonic* hint sources; the
+# cairo-lang 2.20 renderer emits short canonical strings, so none of them
+# resolve. Without this feature the harness fails with
+# `UnknownHint("memory[ap + -1] = memory[ap + 0] < 4294967296")`.
+cairo-vm = { version = "=3.1.0", features = ["cairo-1-hints"] }
+# Typed CASM hints (`cairo_lang_casm::hints::Hint`) are what
+# Cairo1HintProcessor executes. `serde` makes them (de)serializable so the
+# hint table can cross the zk-circuit -> stwo-sys boundary. Pinned to the
+# same version zk-circuit compiles with: the JSON representation is the
+# cross-crate contract and both sides must render it identically.
+cairo-lang-casm = { version = "=2.20.0", features = ["serde"] }
 
 [profile.release]
 opt-level = 3

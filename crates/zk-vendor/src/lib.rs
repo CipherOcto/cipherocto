@@ -232,6 +232,8 @@ pub enum VendorError {
     ProverNull,
     #[error("stwo-sys returned non-zero exit code {code}")]
     VerifyFailed { code: i32 },
+    #[error("could not copy the proof bytes out of the stwo-sys handle")]
+    ProofBytesUnavailable,
 }
 
 /// Loaded `stwo-sys` library handle. Wraps `libloading::Library` plus the
@@ -255,8 +257,11 @@ pub enum VendorError {
 pub struct StwoSys {
     _lib: Library,
     prove: libloading::Symbol<'static, ProveFn>,
+    prove_from_casm: libloading::Symbol<'static, ProveFromCasmFn>,
     verify: libloading::Symbol<'static, VerifyFn>,
     free_proof: libloading::Symbol<'static, FreeProofFn>,
+    proof_len: libloading::Symbol<'static, ProofLenFn>,
+    proof_copy: libloading::Symbol<'static, ProofCopyFn>,
     /// Serializes all FFI entry points. See the type-level docs.
     call_lock: std::sync::Mutex<()>,
 }
@@ -295,11 +300,22 @@ unsafe impl Sync for StwoSys {}
 type ProveFn =
     unsafe extern "C" fn(*const u8, usize, *const u8, usize, *const u8, usize) -> *mut ProofHandle;
 
+/// `stwo_prove_from_casm` FFI signature: program artifact, run input,
+/// public inputs.
+type ProveFromCasmFn =
+    unsafe extern "C" fn(*const u8, usize, *const u8, usize, *const u8, usize) -> *mut ProofHandle;
+
 /// `stwo_verify` FFI signature.
 type VerifyFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> i32;
 
 /// `stwo_free_proof` FFI signature.
 type FreeProofFn = unsafe extern "C" fn(*mut ProofHandle);
+
+/// `stwo_proof_len` FFI signature.
+type ProofLenFn = unsafe extern "C" fn(*const ProofHandle) -> usize;
+
+/// `stwo_proof_copy` FFI signature.
+type ProofCopyFn = unsafe extern "C" fn(*const ProofHandle, *mut u8, usize) -> usize;
 
 /// Opaque proof handle from `stwo_proof`. We never dereference this on
 /// the Rust side; we only pass the pointer through to `stwo_verify` and
@@ -348,20 +364,52 @@ pub fn try_load(path: &std::path::Path) -> Result<Option<StwoSys>, VendorError> 
                 .map_err(|_| VendorError::SymbolMissing {
                     symbol: "stwo_free_proof",
                 })?;
+        // `stwo_prove_from_casm` runs the circuit and proves the resulting
+        // trace. `stwo_prove` alone would need a `ProverInput` JSON, and
+        // nothing in the workspace can produce one — a `ProverInput` is a
+        // Cairo execution, not a description.
+        let prove_from_casm: libloading::Symbol<ProveFromCasmFn> = lib
+            .get(b"stwo_prove_from_casm\0")
+            .map_err(|_| VendorError::SymbolMissing {
+                symbol: "stwo_prove_from_casm",
+            })?;
+        // The proof has to leave the library as bytes: the handle is opaque
+        // and `stwo_verify` takes bytes. Without these two the only thing
+        // that could cross the boundary was a digest of the caller's input,
+        // which is not a proof.
+        let proof_len: libloading::Symbol<ProofLenFn> =
+            lib.get(b"stwo_proof_len\0")
+                .map_err(|_| VendorError::SymbolMissing {
+                    symbol: "stwo_proof_len",
+                })?;
+        let proof_copy: libloading::Symbol<ProofCopyFn> =
+            lib.get(b"stwo_proof_copy\0")
+                .map_err(|_| VendorError::SymbolMissing {
+                    symbol: "stwo_proof_copy",
+                })?;
 
         // SAFETY: the loaded library defines these symbols; the function
         // pointers are valid for `'static` because the `Library` is held
         // in `StwoSys._lib` and `Drop` releases both atomically.
         let prove_static: libloading::Symbol<'static, ProveFn> = std::mem::transmute(prove);
+        let prove_from_casm_static: libloading::Symbol<'static, ProveFromCasmFn> =
+            std::mem::transmute(prove_from_casm);
         let verify_static: libloading::Symbol<'static, VerifyFn> = std::mem::transmute(verify);
         let free_proof_static: libloading::Symbol<'static, FreeProofFn> =
             std::mem::transmute(free_proof);
+        let proof_len_static: libloading::Symbol<'static, ProofLenFn> =
+            std::mem::transmute(proof_len);
+        let proof_copy_static: libloading::Symbol<'static, ProofCopyFn> =
+            std::mem::transmute(proof_copy);
 
         let sys = StwoSys {
             _lib: lib,
             prove: prove_static,
+            prove_from_casm: prove_from_casm_static,
             verify: verify_static,
             free_proof: free_proof_static,
+            proof_len: proof_len_static,
+            proof_copy: proof_copy_static,
             call_lock: std::sync::Mutex::new(()),
         };
         Ok(Some(sys))
@@ -515,8 +563,95 @@ impl StwoSys {
         Ok(ProofBytes {
             handle,
             commitment,
+            proof: self.read_proof(handle)?,
             free,
         })
+    }
+
+    /// Run the compiled circuit against a witness and prove the resulting
+    /// execution.
+    ///
+    /// `program_json` is the `stwo-sys` `CairoProgramSpec` artifact
+    /// (bytecode + hint table + entrypoint offset), `run_input_json` is the
+    /// circuit's witness, `public` the public inputs.
+    ///
+    /// This is the only path that produces a proof of an actual
+    /// execution. `prove` takes a `ProverInput`, which is a Cairo
+    /// *execution trace*: it can only be built by running the circuit, so
+    /// `prove` is usable only by a caller that already ran the VM.
+    ///
+    /// # Errors
+    ///
+    /// - [`VendorError::ProverNull`]: the FFI returned a null handle
+    ///   (bad program, rejected witness, prover failure).
+    /// - [`VendorError::ProofBytesUnavailable`]: the proof could not be
+    ///   copied out of the handle. Returning here rather than handing back
+    ///   an empty buffer keeps a caller from putting a 0-byte proof on the
+    ///   wire.
+    pub fn prove_from_casm(
+        &self,
+        program_json: &[u8],
+        run_input_json: &[u8],
+        public: &[u8],
+    ) -> Result<ProofBytes, VendorError> {
+        // SAFETY: all three slices are valid for the FFI call duration;
+        // `as_ptr()` on a non-empty slice is non-null and the lengths
+        // match the C ABI. The returned handle is owned here and released
+        // by `ProofBytes::drop`.
+        let _guard = self.ffi_call();
+        let handle = unsafe {
+            (self.prove_from_casm)(
+                program_json.as_ptr(),
+                program_json.len(),
+                run_input_json.as_ptr(),
+                run_input_json.len(),
+                public.as_ptr(),
+                public.len(),
+            )
+        };
+        if handle.is_null() {
+            return Err(VendorError::ProverNull);
+        }
+        let free: FreeFn = *self.free_proof;
+
+        // Sidecar commitment over the inputs. Kept for the API shape the
+        // mint path already depends on; it is *not* the proof and is not
+        // what the verifier checks.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(program_json);
+        hasher.update(public);
+        hasher.update(run_input_json);
+        let commitment: [u8; 32] = *hasher.finalize().as_bytes();
+
+        Ok(ProofBytes {
+            handle,
+            commitment,
+            proof: self.read_proof(handle)?,
+            free,
+        })
+    }
+
+    /// Copy the serialized proof out of an opaque handle.
+    ///
+    /// Two calls: ask for the length, allocate, copy. The handle is owned
+    /// by the caller and immutable for the duration, so the length cannot
+    /// change between the two calls.
+    fn read_proof(&self, handle: *const ProofHandle) -> Result<Vec<u8>, VendorError> {
+        let _guard = self.ffi_call();
+        // SAFETY: `handle` is a live handle returned by `stwo_prove*` and
+        // not yet freed; the FFI contract makes reading it safe.
+        let len = unsafe { (self.proof_len)(handle) };
+        if len == 0 {
+            return Err(VendorError::ProofBytesUnavailable);
+        }
+        let mut buf = vec![0u8; len];
+        // SAFETY: `buf` is `len` writable bytes and `len` came from
+        // `stwo_proof_len` for this same handle.
+        let written = unsafe { (self.proof_copy)(handle, buf.as_mut_ptr(), len) };
+        if written != len {
+            return Err(VendorError::ProofBytesUnavailable);
+        }
+        Ok(buf)
     }
 }
 
@@ -531,9 +666,20 @@ type FreeFn = unsafe extern "C" fn(*mut ProofHandle);
 #[derive(Debug)]
 pub struct ProofBytes {
     handle: *mut ProofHandle,
-    /// BLAKE3 commitment over `(casm || public || witness)`. Stable across
-    /// processes + architectures (Class A determinism).
+    /// BLAKE3 commitment over the inputs. Stable across processes +
+    /// architectures (Class A determinism).
+    ///
+    /// This is a digest of what was *fed in*, not of the proof. It is not
+    /// verifiable and must never be put on the wire in place of
+    /// [`Self::proof`].
     pub commitment: [u8; 32],
+    /// The serialized STARK proof, exactly as `stwo_verify` accepts it.
+    ///
+    /// This is the artifact a verifier needs. Before this field existed,
+    /// callers passed the 32-byte [`Self::commitment`] to `stwo_verify`,
+    /// which could not parse it, so **every real proof was rejected** as
+    /// unparsable — an availability break on top of the soundness gap.
+    pub proof: Vec<u8>,
     free: FreeFn,
 }
 

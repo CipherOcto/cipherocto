@@ -67,8 +67,11 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use cairo_lang_casm::hints::Hint as CasmHintEnum;
 use cairo_lang_sierra::program::Program as SierraProgram;
-use cairo_lang_sierra_to_casm::compiler::{compile as sierra_compile_to_casm, SierraToCasmConfig};
+use cairo_lang_sierra_to_casm::compiler::{
+    compile as sierra_compile_to_casm, CairoProgram as SierraCasmProgram, SierraToCasmConfig,
+};
 use cairo_lang_sierra_to_casm::metadata::calc_metadata_ap_change_only;
 use cairo_lang_sierra_type_size::ProgramRegistryInfo;
 
@@ -90,6 +93,30 @@ pub struct CairoProgram {
     pub bytecode: Vec<String>,
 }
 
+/// One CASM hint, in the form `cairo-vm`'s builtin hint processor
+/// compiles.
+///
+/// The hint table is *not* cosmetic. Cairo 1 hints are executable code
+/// that runs between instructions and enforces constraints the
+/// instruction stream cannot express (`u32`/`u8` range checks,
+/// `split_felt`, segment allocation). A CASM program shipped without its
+/// hints is not merely slower — `cairo-vm` will refuse to run some hints'
+/// targets (memory never initialised) and, where it does not, the
+/// enforced bound silently disappears from the trace. Emitting bytecode
+/// alone is an **unsound** artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CasmHint {
+    /// Word offset (CASM pc) of the instruction the hint executes before.
+    pub pc: usize,
+    /// The typed hint, as emitted by the Cairo compiler.
+    ///
+    /// Typed, not pythonic: `cairo-vm`'s `Cairo1HintProcessor` dispatches
+    /// on this value. The builtin hint processor matches legacy
+    /// long-form pythonic source strings which cairo-lang 2.20 no longer
+    /// renders, so the pythonic form is not usable here.
+    pub hint: CasmHintEnum,
+}
+
 /// CASM bytecode + metadata after compilation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledCircuit {
@@ -101,6 +128,17 @@ pub struct CompiledCircuit {
     /// BLAKE3 hash of the canonical serialization of the CASM bytecode
     /// (64 hex chars; matches RFC-0958 §compiled_casm_hash shape).
     pub compiled_casm_hash: String,
+    /// Hint table, ordered by `pc`. See [`CasmHint`].
+    ///
+    /// Empty for callers that only need the bytecode, but the STARK
+    /// harness must never use bytecode alone.
+    pub hints: Vec<CasmHint>,
+    /// Word offset (CASM pc) of the compiled entrypoint
+    /// (`capability_zk::main`) within [`Self::casm_bytecode`].
+    ///
+    /// Zero would mean "the first word", which for a Cairo **library**
+    /// is `verify_chain`, not `main`. The harness must jump here.
+    pub main_pc: usize,
 }
 
 impl CompiledCircuit {
@@ -202,6 +240,103 @@ pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
     let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
     match cached {
         Ok(c) => Ok(c.compiled_casm_hash.clone()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Self-contained CASM program artifact handed to the STARK prover FFI.
+///
+/// Bytecode alone is not a runnable, sound program. This carries the
+/// three things a VM needs and that a raw `.casm` byte blob omits:
+///
+/// 1. the bytecode,
+/// 2. the hint table (constraints that live outside the instruction
+///    stream),
+/// 3. the entrypoint offset.
+///
+/// # Wire contract
+/// The field names below are a cross-crate ABI shared with
+/// `stwo-sys::CairoProgramSpec`, which deserializes this shape. The two
+/// sides are separate crates (zk-circuit depends on the FFI loader, not
+/// the other way round), so the JSON *shape* is the contract, not a Rust
+/// type. Keep them in step; `stwo-sys` has a test pinning the field
+/// names it expects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessProgram {
+    /// Lowercase hex of the assembled CASM bytecode.
+    pub casm_hex: String,
+    /// Hint table, ordered by `pc`.
+    pub hints: Vec<HarnessHint>,
+    /// Word offset (CASM pc) of the entrypoint within the decoded
+    /// bytecode. This is a word index, not a byte offset.
+    pub main_pc: usize,
+}
+
+/// One hint in [`HarnessProgram`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessHint {
+    /// Word offset (CASM pc) of the instruction the hint runs before.
+    pub pc: usize,
+    /// The typed hint.
+    pub hint: CasmHintEnum,
+}
+
+/// Build the [`HarnessProgram`] artifact for the bundled circuit.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`], plus a failure if the compiled
+/// bytecode is not valid hex (cannot happen for our own emitter; the
+/// check is here so the artifact is never silently wrong).
+pub fn bundled_harness_program() -> Result<HarnessProgram, HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    let c = match cached {
+        Ok(c) => c,
+        Err(e) => return Err(clone_hash_error(e)),
+    };
+    Ok(HarnessProgram {
+        casm_hex: hex::encode(&c.casm_bytecode),
+        hints: c
+            .hints
+            .iter()
+            .map(|h| HarnessHint {
+                pc: h.pc,
+                hint: h.hint.clone(),
+            })
+            .collect(),
+        main_pc: c.main_pc,
+    })
+}
+
+/// Returns the bundled CASM hint table.
+///
+/// **Not optional.** A CASM program without its hints is not the same
+/// program: hints enforce `u32`/`u8` range checks, `split_felt`
+/// decomposition and segment allocation. Any consumer that *runs* the
+/// bytecode (the STARK harness) must carry these alongside it.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_casm_hints() -> Result<&'static [CasmHint], HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.hints.as_slice()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Word offset (CASM pc) of the compiled `capability_zk::main`
+/// entrypoint within [`bundled_casm_bytes`].
+///
+/// Not zero: `cairo` is a Cairo **library**, so its first declared
+/// function (`verify_chain`) occupies offset 0. A harness that starts at
+/// 0 runs the wrong function.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_main_pc() -> Result<usize, HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.main_pc),
         Err(e) => Err(clone_hash_error(e)),
     }
 }
@@ -339,15 +474,15 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
     })?;
 
     // Step 3: parse Sierra IR, lower to CASM, BLAKE3 the bytes.
-    let casm_bytes = sierra_to_casm(&sierra_bytes)?;
+    let lowering = sierra_to_casm(&sierra_bytes)?;
 
-    if casm_bytes.is_empty() {
+    if lowering.bytecode.is_empty() {
         return Err(HashError::CompilerInternal(
             "CASM emitter produced empty bytecode".to_owned(),
         ));
     }
 
-    let compiled_casm_hash = blake3_hex(&casm_bytes);
+    let compiled_casm_hash = blake3_hex(&lowering.bytecode);
 
     Ok(CompiledCircuit {
         program: CairoProgram {
@@ -356,8 +491,10 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
             hints: vec![],
             bytecode: vec![],
         },
-        casm_bytecode: casm_bytes,
+        casm_bytecode: lowering.bytecode,
         compiled_casm_hash,
+        hints: lowering.hints,
+        main_pc: lowering.main_pc,
     })
 }
 
@@ -382,7 +519,7 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
 ///   `CairoProgram { instructions, debug_info, consts_info }`.
 /// - `CairoProgram::assemble().bytecode` — flat `Vec<BigInt>`; serialize
 ///   each felt252 big-endian into 32 bytes (Cairo 1.x CASM wire format).
-fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<Vec<u8>, HashError> {
+fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<CasmLowering, HashError> {
     let program: SierraProgram = serde_json::from_slice(sierra_bytes)
         .map_err(|e| HashError::CompilerInternal(format!("parse Sierra IR: {e}")))?;
 
@@ -420,8 +557,81 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<Vec<u8>, HashError> {
     )
     .map_err(|e| HashError::CompilerInternal(format!("Sierra→CASM compile: {e}")))?;
 
+    // Locate `main` in the *bytecode* before assembling: `main` is not at
+    // offset 0, because a Cairo library puts its first declared function
+    // (`verify_chain`) first. Running from 0 would execute the wrong
+    // function with attacker-chosen arguments.
+    let main_pc = main_entrypoint_pc(&program, &casm_program)?;
+
     let assembled = casm_program.assemble();
-    Ok(felt_vec_to_casm_bytes(&assembled.bytecode))
+
+    // cairo-vm 3.1.0's `HintsCollection` holds at most one hint per pc
+    // (`Program::new_for_proof` takes `HashMap<usize, Vec<HintParams>>`
+    // but `HintsCollection` resolves a single reference). Dropping a hint
+    // would remove a constraint, so refuse instead.
+    let mut hints: Vec<CasmHint> = Vec::with_capacity(assembled.hints.len());
+    for (pc, at_pc) in &assembled.hints {
+        if at_pc.len() != 1 {
+            return Err(HashError::CompilerInternal(format!(
+                "CASM pc {pc} carries {} hints; cairo-vm 3.1.0 resolves exactly one per pc. \
+                 Silently dropping the extras would drop constraints, so this is refused.",
+                at_pc.len()
+            )));
+        }
+        hints.push(CasmHint {
+            pc: *pc,
+            hint: at_pc[0].clone(),
+        });
+    }
+    hints.sort_by_key(|h| h.pc);
+
+    Ok(CasmLowering {
+        bytecode: felt_vec_to_casm_bytes(&assembled.bytecode),
+        hints,
+        main_pc,
+    })
+}
+
+/// Word offset (CASM pc) of the compiled `main` entrypoint in the CASM.
+fn main_entrypoint_pc(
+    program: &SierraProgram,
+    casm: &SierraCasmProgram,
+) -> Result<usize, HashError> {
+    let func = program
+        .funcs
+        .iter()
+        .find(|f| f.id.debug_name.as_deref() == Some(MAIN_SIERRA_FUNC))
+        .ok_or_else(|| {
+            HashError::CompilerInternal(format!(
+                "Sierra program has no `{MAIN_SIERRA_FUNC}` function; \
+                 the compiled artifact would have no entrypoint"
+            ))
+        })?;
+    let stmt = func.entry_point.0;
+    casm.debug_info
+        .sierra_statement_info
+        .get(stmt)
+        .map(|d| d.start_offset)
+        .ok_or_else(|| {
+            HashError::CompilerInternal(format!(
+                "no CASM debug info for Sierra statement {stmt} \
+                 (`{MAIN_SIERRA_FUNC}` entrypoint)"
+            ))
+        })
+}
+
+/// Fully-qualified Sierra name of the circuit entrypoint. Must match the
+/// `cairo` crate name in `cairo/Scarb.toml`.
+const MAIN_SIERRA_FUNC: &str = "capability_zk::main";
+
+/// Everything the Sierra→CASM pass produces.
+struct CasmLowering {
+    /// Assembled bytecode, in the 32-byte big-endian felt wire format.
+    bytecode: Vec<u8>,
+    /// Hint table, ordered by pc.
+    hints: Vec<CasmHint>,
+    /// Word offset (CASM pc) of `main` within the assembled bytecode.
+    main_pc: usize,
 }
 
 /// Serialize a `Vec<BigInt>` (CASM bytecode word stream, one felt252 per
@@ -489,6 +699,12 @@ pub fn compile(program: &CairoProgram) -> Result<CompiledCircuit, HashError> {
         program: program.clone(),
         casm_bytecode: casm_bytes,
         compiled_casm_hash,
+        // This path serializes a hand-built `CairoProgram` descriptor, not
+        // compiled Sierra, so there is no hint table and no entrypoint to
+        // report. Consumers that *run* the bytecode must use
+        // `compile_bundled`, whose output carries both.
+        hints: Vec::new(),
+        main_pc: 0,
     })
 }
 

@@ -47,6 +47,12 @@ tempfile = { workspace = true }
 cairo-lang-sierra = "=2.20.0"
 cairo-lang-sierra-to-casm = "=2.20.0"
 cairo-lang-compiler = "=2.20.0"
+# Typed CASM hints. The bundled artifact ships the hint table alongside
+# the bytecode: without it the bytecode is neither runnable nor a faithful
+# trace. `serde` makes `Hint` (de)serializable so the table can cross into
+# the excluded `stwo-sys` crate. Must stay pinned to the same version
+# `stwo-sys` uses — the JSON rendering is the cross-crate contract.
+cairo-lang-casm = { version = "=2.20.0", features = ["serde"] }
 # Required transitively for `ProgramRegistryInfo` which is the input type
 # to `calc_metadata_ap_change_only` and `compile`. Pulled in by
 # `cairo-lang-sierra-to-casm` already; listed explicitly for auditability.

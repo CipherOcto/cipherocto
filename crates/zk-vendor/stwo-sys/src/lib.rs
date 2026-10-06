@@ -74,6 +74,7 @@ use stwo::core::pcs::PcsConfig;
 // `Program::from_bytes`, `LayoutName` and `CairoArg` to different modules and
 // removed `run_from_entrypoint`; do not follow 3.2 docs here.
 use cairo_vm::types::layout_name::LayoutName;
+use cairo_vm::types::relocatable::MaybeRelocatable;
 use cairo_vm::types::program::Program;
 use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner};
 use cairo_vm::hint_processor::builtin_hint_processor::builtin_hint_processor_definition::BuiltinHintProcessor;
@@ -151,6 +152,24 @@ fn parse_felt(s: &str) -> Option<Felt> {
     } else {
         t.parse::<Felt>().ok()
     }
+}
+
+/// Decode compiled CASM bytecode into the felt-code vector cairo-vm expects.
+///
+/// CASM bytecode packs each instruction as a 63-bit value, big-endian, with one
+/// padding bit, so 8 bytes per felt. The high bit of each 8-byte group is the
+/// padding and is masked off.
+fn casm_bytes_to_felt_code(bytes: &[u8]) -> Vec<MaybeRelocatable> {
+    const FELT_BYTES: usize = 8;
+    const FELT_MASK: u64 = (1u64 << 63) - 1;
+    bytes
+        .chunks(FELT_BYTES)
+        .map(|chunk| {
+            let mut buf = [0u8; FELT_BYTES];
+            buf[..chunk.len()].copy_from_slice(chunk);
+            MaybeRelocatable::Int(Felt::from(u64::from_be_bytes(buf) & FELT_MASK))
+        })
+        .collect()
 }
 
 fn felt_arg(s: &str) -> Option<CairoArg> {
@@ -239,14 +258,33 @@ fn run_cairo_to_prover_input(casm: &[u8], run_input_json: &[u8]) -> Option<Vec<u
         }
     };
 
-    // cairo-vm 3.1.0: `Program::from_bytes` parses CASM bytecode directly.
-    let program = match Program::from_bytes(casm, None) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("stwo-sys: harness: CASM parse failed: {e:?}");
-            return None;
-        }
-    };
+    // cairo-vm 3.1.0 has NO raw-CASM loader: `Program::from_bytes` parses a
+    // compiled-program **JSON**, and `CairoProgram` does not exist in this
+    // version. Upstream stwo-cairo sidesteps this by decompiling into
+    // `cairo_lang_casm::Instruction` and calling its own `program_from_casm`,
+    // which re-encodes via `instruction.assemble().encode()`.
+    //
+    // That re-encode is a no-op round trip: the bytes zk-circuit emits already
+    // ARE the encoded instruction stream. So decode them directly as 63-bit
+    // big-endian bit-packed felts and build the proof program, skipping the
+    // cairo-lang-casm dependency entirely.
+    let felt_code = casm_bytes_to_felt_code(casm);
+    if felt_code.is_empty() {
+        eprintln!("stwo-sys: harness: CASM bytecode is empty");
+        return None;
+    }
+    let program = Program::new_for_proof(
+        vec![],
+        felt_code,
+        0,
+        1,
+        std::collections::HashMap::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    )
+    .ok()?;
 
     let mut runner = match CairoRunner::new(
         &program,
@@ -262,6 +300,14 @@ fn run_cairo_to_prover_input(casm: &[u8], run_input_json: &[u8]) -> Option<Vec<u
             return None;
         }
     };
+
+    // `initialize` sets the program base / exec base. Without it the runner has
+    // no exec segment and `run_from_entrypoint` fails with `NoExecBase`. This
+    // matches upstream stwo-cairo's adapter setup.
+    if let Err(e) = runner.initialize(true) {
+        eprintln!("stwo-sys: harness: runner initialize failed: {e:?}");
+        return None;
+    }
 
     // Entry point 0 is `main`, the only entry point scarb emits for an
     // executable target. `BuiltinHintProcessor::new_empty()` is deliberate and

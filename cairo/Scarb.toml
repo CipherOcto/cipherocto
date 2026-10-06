@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024_07"
 
 [cairo]
-target = { kind = "lib" }
+# Executable (not lib): `main` takes the prover-supplied witness as
+# parameters, which Cairo 2.16 only permits on an executable target. The
+# emitted Sierra path is unchanged (`target/dev/capability_zk.sierra.json`),
+# so crates/zk-circuit's in-process Sierra->CASM pipeline is unaffected.
+target = "executable"
 
 # Toolchain pin: scarb 2.16.0 / cairo 2.16.0.
 # Cairo 1.x standalone `cairo-compile` binary does NOT exist; Cairo 2.x uses

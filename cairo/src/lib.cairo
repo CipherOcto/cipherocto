@@ -99,8 +99,22 @@ mod blake3;
 #[cfg(test)]
 mod ed25519;
 
-/// Number of caveats exercised in the hardcoded TV1 chain.
+/// Number of caveats in the chain. The prover must supply exactly this many
+/// caveat felts, or `stage2_main` panics with `CaveatChainDepthMismatch`.
 pub const CHAIN_DEPTH: u32 = 3;
+
+/// Minimum number of caveats required by RFC-0957 §Caveat Format (">= 3-caveat
+/// chain depth" per mission 0958-b Session 1). A shallower chain is rejected by
+/// `CaveatChainDepthMismatch`.
+pub const CHAIN_DEPTH_MIN: u32 = 3;
+
+/// Felts per `TraceStep`. The harness passes inference-trace steps as a FLAT
+/// felt array (op_code, input_hash, output_hash per step) because the Cairo-VM
+/// entry-point argument encoding in cairo-vm 3.1.0 carries scalars only and
+/// cannot express a nested `Array<TraceStep>`. `stage2_main` regroups them by
+/// this stride. **Keep in lockstep with `build_run_args` in
+/// `crates/zk-vendor/stwo-sys/src/lib.rs`.**
+pub const TRACE_STRIDE: u32 = 3;
 
 /// Public inputs (mirrors `octo_wallet::capability::zk_mint::PublicInputs`).
 #[derive(Drop, Copy)]
@@ -203,17 +217,17 @@ fn hmac_sha256_chain_step(
 // =========================================================================
 //
 // R19 production path: `verify_chain` emits a Poseidon commitment over
-// `[secret_lo, secret_hi, ...caveat_felts]`. The actual HMAC-BLAKE3
-// chain re-derivation happens via STWO hints at proof-generation time
-// (RFC-0958 §Algorithms + design doc). The production STARK entry
+// `[secret_lo, secret_hi, ...caveat_felts]`. The secret and caveat felts are
+// supplied by the prover through `main`'s parameters (see §Input surface above);
+// the HMAC-BLAKE3 chain re-derivation remains unimplemented, so this is a
+// commitment over the witness, not a verification of it. The STARK entry
 // point uses Poseidon because corelib Poseidon is STARK-native (very
 // compact CASM), whereas corelib SHA-256 + the helper byte-packing
 // loops were the dominant CASM cost in the R18 fail-closed path.
 
 /// `verify_chain` sub-circuit: Poseidon commitment over
-/// `[secret_lo, secret_hi, caveat_0, caveat_1, ...]`. The placeholder
-/// caveat felts are hardcoded in `stage2_main`; the real prover injects
-/// them via STWO hints. Returns a single felt252 commitment.
+/// `[secret_lo, secret_hi, caveat_0, caveat_1, ...]`. Both the secret and the
+/// caveat felts are prover-supplied. Returns a single felt252 commitment.
 ///
 /// Soft budget: < 1 KB CASM (corelib poseidon + tiny loop).
 /// AC-4 hard ceiling: ≤ 50 KB serialized / ≤ 1,600 CASM words for the
@@ -236,13 +250,12 @@ pub fn verify_chain(
     poseidon_hash_span(arr.span())
 }
 
-/// `verify_holder_sig` sub-circuit: Ed25519 RFC 8032 holder-sig
-/// commitment. Production path is a lightweight placeholder that binds
-/// the 4 witness commitments (sig_lo, sig_hi, pk_lo, pk_hi) into one
-/// felt252. The actual RFC 8032 Ed25519 verification lives in
-/// `cairo/src/ed25519.cairo` (test-only via `#[cfg(test)] mod ed25519;`;
-/// see `verify_rfc8032_vector_1` test) and runs via STWO hints at
-/// proof-generation time (RFC-0958 §Algorithms).
+/// `verify_holder_sig` sub-circuit: binds four witness commitments
+/// (sig_lo, sig_hi, pk_lo, pk_hi) into one felt252 and asserts the result is
+/// non-zero. This is a **structural binding, not RFC 8032 verification**.
+/// The real Ed25519 verification lives in `cairo/src/ed25519.cairo`
+/// (test-only via `#[cfg(test)] mod ed25519;`) and is still unwired — tracked
+/// by audit finding H-3.
 ///
 /// Soft budget: < 1 KB CASM (simple commitment + assertion).
 pub fn verify_holder_sig(
@@ -262,6 +275,15 @@ pub fn verify_holder_sig(
 /// Soft budget: < 1 KB CASM (corelib poseidon_hash_span + simple loop).
 pub fn verify_inference_fold(steps: @Array<TraceStep>) -> felt252 {
     fold_inference_trace(steps)
+}
+
+/// `verify_inference_fold` over the FLAT trace form (`op, input, output` per
+/// step). Mathematically identical to [`verify_inference_fold`], because
+/// `fold_inference_trace` concatenates exactly those fields in exactly that
+/// order. Taking the flat form lets the entrypoint avoid reconstructing
+/// `TraceStep` structs, which cost enough CASM to breach the AC-4 ceiling.
+pub fn verify_inference_fold_flat(steps: Span<felt252>) -> felt252 {
+    poseidon_hash_span(steps)
 }
 
 // =========================================================================
@@ -295,48 +317,48 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
 //   2. `verify_holder_sig` (Ed25519 RFC 8032 holder-sig commitment)
 //   3. `verify_inference_fold` (Poseidon inference-trace binding)
 //
-// Hardcoded TV1 inputs (the real prover replaces these via hints at
-// proof-generation time). The hardcoded chain mirrors TV1:
-// - cap_root_secret = 0x4242...42 (lo/hi felts)
-// - caveats[0..2] = 3 placeholder felts (real prover injects via hints)
-// - trace[0] = {op_code: 0, input_hash: 0x33*32, output_hash: 0x44*32}
-pub fn main() -> felt252 {
-    stage2_main()
+// # Input surface (RFC-0958 §Algorithms, 2026-10-06)
+//
+// `main` previously took **no parameters** and built `pub_inputs`,
+// `priv_witness`, the caveat felts and the trace steps from hardcoded literals
+// inside `stage2_main`. Nothing could bind a real witness to it, so the program
+// proved Poseidon hashes of constants. Its comments claimed the witness would
+// arrive "via STWO hints at proof-generation time"; STWO is a proof system
+// **over** a Cairo trace and cannot inject values into program execution.
+// Upstream stwo-cairo confirms this — its adapter tests drive the VM with
+// `BuiltinHintProcessor::new_empty()`.
+//
+// RFC-0958 §Algorithms specifies `read_public_inputs()` /
+// `read_private_witness()`. These parameters are that surface.
+//
+// The Rust harness supplies them as `CairoArg` values through
+// `CairoRunner::run_from_entrypoint(entrypoint, args, ...)` — Serde-encoded,
+// so structs and arrays both cross the boundary. See
+// `crates/zk-vendor/src/cairo_harness.rs`.
+pub fn main(
+    pub_inputs: PublicInputs,
+    priv_witness: PrivateWitness,
+    caveat_felts: Array<felt252>,
+    steps_flat: Array<felt252>,
+) -> felt252 {
+    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), steps_flat)
 }
 
 /// Stage-2 main: composition of `verify_chain` + `verify_holder_sig` +
 /// `verify_inference_fold`. Each sub-circuit emits a single felt252
 /// commitment; the composition asserts all three are non-zero, which
 /// is the cryptographic contract that each sub-circuit was correctly
-/// evaluated (the actual cryptographic verification of each sub-circuit
-/// happens via STWO hints at proof-generation time; see the design
-/// doc at `docs/plans/2026-08-05-stage-2-verifier-split.md`).
+/// evaluated.
 ///
-/// Soft budget: < 5 KB CASM (3 sub-circuits × ~1 KB each + composition).
+/// Soft budget: < 5 KB CASM (3 sub-circuits × ~ 1 KB each + composition).
 /// AC-4 hard ceiling: ≤ 50 KB serialized / ≤ 1,600 CASM words for the
 /// WHOLE compiled program.
-pub fn stage2_main() -> felt252 {
-    // ---------- Hardcoded TV1 inputs (real prover injects via hints) ----------
-    let pub_inputs = PublicInputs {
-        ask_id_lo: 0x11111111111111111111111111111111,
-        ask_id_hi: 0x11111111111111111111111111111111,
-        axes_count: 1,
-        cap_root_hash_lo: 0,
-        cap_root_hash_hi: 0,
-        invocation_hash: 0x33333333333333333333333333333333,
-        holder_did: 0x686f6c6465722d766563746f722d747631,
-        current_unix_time: 1_700_000_000,
-        has_output_hash: 1,
-        output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
-    };
-    let priv_witness = PrivateWitness {
-        cap_root_secret_lo: 0x42424242424242424242424242424242,
-        cap_root_secret_hi: 0x42424242424242424242424242424242,
-        caveats_count: CHAIN_DEPTH,
-        discharges_count: 0,
-        inference_trace_present: 1,
-    };
-
+pub fn stage2_main(
+    pub_inputs: PublicInputs,
+    priv_witness: PrivateWitness,
+    caveat_felts: Span<felt252>,
+    steps_flat: Array<felt252>,
+) -> felt252 {
     // ---------- Structural invariants (unchanged from 0958-a) ----------
     assert!(pub_inputs.axes_count < 1000_u32, "AxesCountTooLarge");
     assert!(priv_witness.caveats_count < 256_u32, "CaveatsCountTooLarge");
@@ -346,50 +368,68 @@ pub fn stage2_main() -> felt252 {
     }
     assert!(pub_inputs.current_unix_time < 18446744073709551615_u64, "InvalidUnixTime");
 
-    // ---------- Build placeholder caveat felts (real prover injects via hints) ----------
-    // The caveats are placeholder felts here — the real prover injects
-    // them via STWO hints at proof-generation time. R19 production path
-    // passes felts directly (no ByteArray assembly, no SHA-256 corelib
-    // dependency in main()).
-    let mut caveat_felts: Array<felt252> = array![];
-    caveat_felts.append(0xc0a1); // placeholder for "caveat-0:..."
-    caveat_felts.append(0xc0a2); // placeholder for "caveat-1:..."
-    caveat_felts.append(0xc0a3); // placeholder for "caveat-2:..."
-    assert!(caveat_felts.len() == CHAIN_DEPTH, "CaveatChainDepthMismatch");
+    // ---------- Caveat chain depth ----------
+    // `caveats_count` in the witness MUST agree with the caveat felts actually
+    // supplied. Previously both sides were the same hardcoded constant, so this
+    // assertion could never fail. Now the witness is prover-controlled, so a
+    // prover claiming N caveats must supply exactly N felts.
+    assert!(priv_witness.caveats_count == caveat_felts.len(), "CaveatChainDepthMismatch");
+    assert!(
+        caveat_felts.len() >= CHAIN_DEPTH_MIN, "CaveatChainDepthMismatch"
+    );
 
     // ---------- Sub-circuit 1: Poseidon chain commitment (AC-4 verify_chain) ----------
+    // Now bound to the prover-supplied secret and caveats, not constants.
     let chain_commitment: felt252 = verify_chain(
         priv_witness.cap_root_secret_lo,
         priv_witness.cap_root_secret_hi,
-        caveat_felts.span(),
+        caveat_felts,
     );
     assert!(chain_commitment != 0, "ChainCommitmentZero");
 
     // ---------- Sub-circuit 2: Ed25519 holder-sig (AC-4 verify_holder_sig) ----------
-    // Production placeholder commitments (real RFC 8032 verify lives in
-    // `cairo/src/ed25519.cairo` test-only). The 4 witness felts are
-    // hardcoded non-zero so the structural "sig is bound" assertion
-    // passes; STWO at proof-gen time re-derives the actual commitment
-    // from the real Ed25519 verify() result.
+    // Bind the public inputs the holder signature covers. RFC 8032 verification
+    // still lives in `cairo/src/ed25519.cairo` (test-only) — see audit H-3 — so
+    // this is a structural binding, not a verification.
+    //
+    // A SINGLE Poseidon over all covered public inputs, rather than one per
+    // argument: four separate Poseidon instantiations pushed CASM past the AC-4
+    // ceiling (61888 B / 1934 words vs the 50 KB / 1600 word budget). The four
+    // arguments of `verify_holder_sig` are fed the same commitment, which
+    // preserves the "signature is bound to these inputs" invariant at one
+    // Poseidon's CASM cost.
+    let sig_commitment: felt252 = poseidon_hash_span(
+        array![
+            pub_inputs.holder_did,
+            pub_inputs.ask_id_lo,
+            pub_inputs.ask_id_hi,
+            pub_inputs.cap_root_hash_lo,
+            pub_inputs.cap_root_hash_hi,
+            pub_inputs.invocation_hash,
+        ]
+            .span(),
+    );
     let _holder_sig_commitment: felt252 = verify_holder_sig(
-        0x1234567890abcdef1234567890abcdef, // sig_lo (placeholder)
-        0xfedcba0987654321fedcba0987654321, // sig_hi (placeholder)
-        0xabcdef0123456789abcdef0123456789, // pk_lo  (placeholder)
-        0x9876543210fedcba9876543210fedcba // pk_hi  (placeholder)
+        sig_commitment, sig_commitment, sig_commitment, sig_commitment,
     );
 
     // ---------- Sub-circuit 3: Poseidon inference-trace (AC-4 verify_inference_fold) ----------
-    let mut steps: Array<TraceStep> = array![];
-    steps
-        .append(
-            TraceStep {
-                op_code: 0,
-                input_hash: 0x33333333333333333333333333333333,
-                output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
-            },
-        );
-    let trace_root: felt252 = verify_inference_fold(@steps);
-    assert!(trace_root == pub_inputs.output_hash, "InferenceTraceBindingMismatch");
+    // `steps_flat` is already `[op_0, in_0, out_0, op_1, in_1, out_1, ...]`, which
+    // is EXACTLY the concatenation `fold_inference_trace` produces from
+    // `TraceStep[]`. So folding the flat array directly is the same commitment
+    // without reconstructing structs — and reconstructing them cost enough CASM
+    // to breach the AC-4 ceiling.
+    assert!(steps_flat.len() % TRACE_STRIDE == 0, "TraceStrideMismatch");
+    assert!(steps_flat.len() > 0, "TraceRootZero");
+
+    // The trace root must equal the `output_hash` the prover committed to in
+    // the public inputs. Previously both sides were derived from the same
+    // literals, so this assertion was trivially satisfiable; with a real
+    // witness it is a genuine binding (RFC-0958 §Trace Binding).
+    let trace_root: felt252 = verify_inference_fold_flat(steps_flat.span());
+    if pub_inputs.has_output_hash == 1_u8 {
+        assert!(trace_root == pub_inputs.output_hash, "InferenceTraceBindingMismatch");
+    }
     assert!(trace_root != 0, "TraceRootZero");
 
     1

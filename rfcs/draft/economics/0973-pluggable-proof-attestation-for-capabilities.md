@@ -63,8 +63,9 @@ this RFC introduces. See §Security Considerations.
   Crate Layout to attestation strategies: each strategy lives in its own crate
   and registers through an `init` path (Lifecycle Requirement 1), and is
   discovered by a registration host that is a binary or node crate rather than
-  by core linking it (Lifecycle Requirement 8, Phase 5). The two reference
-  strategies follow it as `octo-cap-zk` and the new `octo-cap-poi`
+  by core linking it (Lifecycle Requirement 8; the host and its links land in
+  Phase 2, the lint keeping it the only such linker in Phase 5). The two
+  reference strategies follow it as `octo-cap-zk` and the new `octo-cap-poi`
 
 **Relationship to RFC-0630.** Proof-of-Inference supplies the _fact_ that
 in-boundary execution attests — it is a consensus mechanism for inference, and
@@ -945,6 +946,22 @@ payload)` pair for the one it inherited. Attenuation is bearer-triggered, so
    choice of attestation to the issuer. An envelope that differs from the
    parent's in either component is a refusal, not a registration.
 
+   **Registration is conditioned on the parent being active.** This is the
+   clause the rule needs most and originally lacked. Revocation and expiry are
+   recorded against the _parent's_ id, while attenuation produces a child under a
+   different one, so a registration that does not consult the parent would let a
+   bearer take a revoked capability, attenuate it, and obtain an active record
+   the revocation never touched. Every dispatch step would then pass: step 0
+   finds a present and unrevoked child, step 0b verifies on the bearer-held root
+   secret, and the carried-forward envelope still holds because the binding
+   target does not move. Narrowing is not the argument here — §Security
+   Considerations gives that one, and it does not reach revocation, because
+   revocation withdraws authority the issuer _did_ grant. So the condition is
+   stated directly: if the parent's record is absent, revoked, or expired at the
+   moment of attenuation, the attenuation is refused and no child record is
+   written. Registration authority is inherited here, and inheriting it is not a
+   licence to extend it to a capability the issuer has withdrawn.
+
 5. Back-compat MUST preserve readability of every capability minted before this
    RFC. A capability carrying no attestation takes the macaroon path, and its
    canonical form MUST NOT change as a result of this RFC.
@@ -1588,6 +1605,13 @@ because the binding target does not change under attenuation (§Root-Secret
 Binding). Both halves are load-bearing: an attenuation that drops the envelope
 fails at production, and one that does not register the child fails at step 0.
 
+**TV14b** — attenuating a capability whose parent record is revoked: the
+attenuation is refused and no child record is written. Without the parent-state
+condition this vector would ACCEPT, because the child carries a new capability
+id the revocation never named, and every subsequent step would pass. This is the
+vector that pins Lifecycle Requirement 4's condition, and it is the one that
+fails an implementation which registers children unconditionally.
+
 **TV15** — capability C's attestation envelope copied onto capability C′: REJECT
 at step 0, because the envelope is inside the hashed canonical form, so C′'s
 capability id changes and no longer resolves. The strategy never runs.
@@ -1755,13 +1779,29 @@ that carries the envelope forward. Without this, every attenuated child is absen
 from the registry and step 0 rejects it — a capability the bearer legitimately
 narrowed becomes unusable.
 
+The registration is conditioned on the parent's record being active at that
+moment, per Lifecycle Requirement 4. Otherwise a revoked or expired capability
+could be attenuated into a fresh, active record under its new id, and the
+revocation would never be consulted again. The check reads the parent's state
+before writing the child's.
+
 ### Phase 2: Enhanced
 
 Land the reference strategy crates — `octo-cap-zk` for
 `root_secret_knowledge` and `octo-cap-poi` (new) for `in_boundary_execution` —
 each starting with no registry entry.
 
-**Also land a second, independent implementation of one relation, for TV16.**
+****Also land the registration host itself, and link the strategy crates from
+it.** The host is the node or binary crate that composes a node, and it is what
+supplies the claimant the allocation-ownership check compares against, so
+registration is not performable until it exists. Core must not stand in for it:
+a Layer-B core crate may not depend on a strategy crate to discover one
+(Lifecycle Requirement 8), and it cannot observe crates at link time, so a
+core-supplied claimant would be exactly the self-asserted identity the check
+exists to reject. The lint that keeps the host the only such linker lands in
+Phase 5; the links land here, because registration owns them.
+
+Also land a second, independent implementation of one relation, for TV16.**
 This is not what the two reference strategies are, and the distinction is the
 whole point of the vector. The reference crates establish two _different_
 relations, so verifying one attestation with each is not determinism across
@@ -1882,6 +1922,16 @@ Lands the two properties this RFC states but that no earlier phase implements:
   strategy crate. The existing lint that keeps mint calls out of a node-type
   path is the pattern to follow.
 
+  The **links** land in Phase 2 rather than here, because registration cannot
+  happen without a host to register from: the claimant that makes the
+  allocation-ownership check meaningful is the crate identity the host observes
+  at link time, so a host that does not yet link a strategy crate cannot supply
+  one. What this phase adds is the lint that keeps the host the only place a
+  strategy crate is linked from — the property that lets the host answer the
+  identity question honestly is exactly the property the lint enforces. Phase 2
+  landing the links without this lint is a window, not a design; landing the
+  host here without the links would leave Phase 2 unable to register at all.
+
 Neither is optional. An acceptance set that is not advertised makes A1
 undetectable, and a registration path that lives in core inverts the dependency
 the layer model forbids — both are claims the RFC otherwise makes on the
@@ -1905,9 +1955,10 @@ strength of nothing.
 - `crates/zk-vendor/stwo-sys/src/lib.rs` — Phase 3 updates the witness-calldata
   layout mirror and extends the layout conformance test to assert every slot and
   the field set, not only the ten currently sampled
-- `crates/octo-wallet-node/Cargo.toml` — the registration host manifest that
-  gains the strategy links in Phase 5; the wallet manifest loses its direct
-  dependency in the same phase
+- `crates/octo-wallet-node/Cargo.toml` — the registration host manifest, which
+  gains the strategy links in Phase 2 (registration cannot happen without a host
+  to register from) and carries the lint that keeps it the only such linker in
+  Phase 5
 - `crates/octo-wallet/Cargo.toml` — gains an `octo-protocol` dependency for
   `PayloadKindId` in the admission trait, in Phase 1 with the trait that needs it
   (the kind declaration is load-bearing, since `required_payload_kinds` has no
@@ -1946,6 +1997,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.30      | 2026-10-07 | Round 31, a third attacker walkthrough, and the first to find a regression introduced by the round before. Adding the macaroon verification to the attested branch created a rejection gate that appeared in no error-table row, carried no operator reason, and had no vector pinning that it ran. The newest and most security-relevant gate in the dispatch was the only one absent from a table whose opening sentence promises every rejection is distinguishable. It now has a row, an explanation, and a vector whose whole purpose is to fail for an implementation that verified only unattested tokens. The step-1 prohibition on minting an attested capability before the dispatch is live was scoped to a phase boundary, while the failure it names is a standing invariant that binds equally at runtime when a node admits attested capabilities with its dispatch switched off. It is now stated as the invariant, with the phase ordering as merely the first way it can be violated. The id allocation record reserved values without binding them, so any crate could claim an id core allocated to a different strategy and serve whatever it liked under a core-sanctioned id. The record now names an owner, registration checks the claim against it, and the vector that previously asserted the weaker behaviour is corrected alongside a new one for the mismatch. And the security argument rested on a premise that the attenuation rule falsified for a whole tree: registry integrity was argued as a record existing only for an issuer-issued capability, while attenuation mandates a bearer-triggered registry write for every child. That write is safe because a child strictly narrows an issuer-approved parent and attenuation cannot create one without such an ancestor, which is now stated rather than left as an apparent contradiction.                                                                                                                                                                                                                                                                                                |
 | v0.31      | 2026-10-07 | Round 32, two attacker walkthroughs over disjoint halves of the design, both held to a raised bar: report only what a careful implementer could plausibly get wrong in a way that matters. The token path came back with nothing, having traced every route by which an attested token could reach acceptance having satisfied a weaker set of checks than a legitimate token of the same kind. Dropping the envelope, transplanting it across capabilities, and pre-RFC truncation all change the capability id and therefore miss the registry at step 0. The strategy path found one, and it was a regression from the previous round: the id-ownership gate compared the record's owner against an identity method the strategy trait does not declare, so a crate reporting whatever the record names would pass unconditionally and the check was decorative. The claimant is now supplied by the registration host, which observes crates at link time and is the only party able to answer honestly, and the guarantee is stated as exactly as strong as that observation rather than more. That reviewer also flagged a fallback with no source: the expectation's bound value for a capability carrying no macaroon field. It now returns the capability id, which is defined and stable rather than absent. And the reviewer correctly identified one passage as describing a risk that does not exist. A decoder tolerating an absent envelope does not open the bypass, because it computes an id matching no registry record and is rejected at step 0 like any pre-RFC node. What such a change removes is the guarantee rather than the refusal, since the refusal would then rest on coincidence rather than on a rule. The passage now says that, which is the more useful warning to leave behind.                                                                                                                                                                                                                                                                                                                                                                |
 | v0.32      | 2026-10-07 | Round 34, looking at the implications of recent changes rather than the changes themselves, since two prior rounds at the raised bar had come back clean. It rejected twelve candidates against the bar and found one real ownership gap. The determinism adversary states its mitigation as a vector, and the determinism vector requires two independently built implementations of the same relation. Phase 2 was named as the owner, on the reasoning that it lands the first two strategy crates. Those crates establish two different relations, so verifying one attestation with each is not determinism across implementations — it is two strategies disagreeing about different facts, which is expected. And at Phase 2 the root-secret strategy still ships with no registry entry, so exactly one of the pair is registrable at all. No other phase builds a duplicate, so the one property rated high for forking acceptance had no carrier in any phase. Phase 2 now owns a second independent implementation of one relation as a separate deliverable, described as a test fixture rather than a shipped strategy, and the vector and the adversary both say why the two reference strategies do not substitute for it. The other twelve candidates were rejected rather than reported, which is the more useful half of that round: a claim the document states plainly, a prohibition an implementer satisfies by building what is written, and a gap in vector coverage where the rule is unambiguous and is one equality check all read as coverage bookkeeping rather than as an implementer error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v0.33      | 2026-10-07 | Round 35, examining the test vectors as a set and the phases against each other. It rejected eleven candidates and found two, both consequences of the two preceding rounds' fixes. Attenuation mandated registering the child under its recomputed id without ever consulting the parent's registry state. Revocation and expiry are recorded against the parent's id and the child's is different, so a bearer could take a revoked capability, attenuate it, and hold an active record the revocation never touched — step 0 would find it present and unrevoked, step 0b would verify on the bearer-held root secret, and the carried-forward envelope would still hold because the binding target does not move. The narrowing argument in the security section does not reach this, since revocation withdraws authority the issuer did grant. Registration is now conditioned on the parent being active, with a vector that ACCEPTs without the condition. Registration was also mandated in a phase that could not perform it. The claimant that makes the allocation-ownership check meaningful is the crate identity the registration host observes at link time, and that host was a later phase's deliverable, so the phase owning registration had no component able to supply the claimant. Core cannot stand in, both because it may not link a strategy crate and because it cannot observe crates at link time. The host and its links move earlier; the lint that keeps the host the only such linker stays where it was, since the links landing first is a window and the host landing without them would leave nothing able to register.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Rounds 3 through 11 are archived under the same convention in the earlier review records; the file named below covers rounds 12 through 26. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it.                                                                                                                                                                                                                                                                                                                            |
 
 ## Related RFCs

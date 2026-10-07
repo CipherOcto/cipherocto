@@ -26,6 +26,14 @@ strategy declares which `PayloadKindId` UUIDs a node must serve in order to
 verify a valid attestation, so "what is proven" and "who may prove it" stay
 separate concerns.
 
+One property governs how all of it must be read, and it is stated here because
+it is the easiest thing to get backwards: **an accepted attestation is not an
+authorisation.** A proof establishes that someone knows a secret, nothing about
+who they are or what they may do. What makes an accepted attestation meaningful
+is that the capability was already issued — the capability registry is an
+authorisation gate the dispatch cannot pass without, and it is not something
+this RFC introduces. See §Security Considerations.
+
 ## Dependencies
 
 **Requires:**
@@ -115,10 +123,14 @@ decision.
 - An operator may restrict the acceptance set. An operator may **not** name a
   strategy the node cannot verify.
 - A strategy crate author may claim an id in the RFC range only via a core
-  allocation. User-range ids are self-allocated and fail closed on any node that
-  has not registered them.
+  allocation. User-range ids are self-allocated, fail closed on any node that
+  has not registered them, and are exclusively claimed — a second crate claiming
+  one already held is refused rather than replacing the incumbent.
 - No actor may weaken a verification outcome. Registry misses, unknown ids, and
   absent attestations are rejections, never downgrades.
+- No actor may extend what the attestation means. A strategy establishes the
+  fact its type id names and nothing further; in particular it cannot confer
+  authority the capability's own registry record does not carry.
 
 ## Specification
 
@@ -312,13 +324,28 @@ Strategies that need registry or catalog access receive an injected
 `&dyn` trait, never a concrete substrate handle, so a strategy crate does not
 acquire a storage dependency it has no use for.
 
+```rust
+pub struct AttestationVerifyCtx<'a> {
+    /// The capability being verified. Never the attestation's own claim about it.
+    pub capability: &'a Capability,
+    /// The attestation bytes, as produced by this strategy's own encoding.
+    pub attestation: &'a [u8],
+    /// What the verifier expects the attestation to establish, derived from
+    /// `capability` and never from `attestation`. Required, not optional.
+    pub expectation: &'a Expectation,
+    /// Read-only policy handles a strategy asked for, as trait objects.
+    pub policy: &'a dyn PolicySource,
+}
+```
+
 **A verifier MUST NOT compare a proof against itself.** An existing
 capability-verification helper accepts an absent expectation and then uses the
 proof's own public inputs as the comparison target, which makes the check
 vacuous. `verify` MUST always receive expectations derived from the capability
 under verification, never from the attestation being checked. A strategy that
-accepts an absent expectation and falls back to the proof's own inputs is
-rejected at registration — see the registration algorithm in §Algorithms.
+accepts an absent expectation and falls back to the proof's own inputs is not
+expressible: the expectation is a required field of the context, not an option,
+so the fallback cannot be written against this trait.
 
 **Outcome.** `AttestationOutcome` is `Satisfied` or `Unsatisfied`, plus an
 optional machine-readable reason for the rejection that is safe to log. It is
@@ -525,20 +552,21 @@ register_strategy(strategies, strategy, allocation_record):
         if strategies.claims(id):
             -> REJECT   # user-range ids are exclusively claimed; the
                         # incumbent is left untouched
-    profile = strategy.admission_profile()
-    if profile is Some:
-        # the soundness figure is computed from parameters at construction, so
-        # there is nothing to check here beyond the type; this is why the
-        # derivation cannot be skipped by a strategy
-        pass
     strategies.insert(id, strategy)
 ```
 
-Registration is where the acceptance gates are, which is why none of them can
-be bypassed by a strategy: the four behaviours pinned to registration — id
-allocation, exclusive user-range claim, the security-figure derivation, and
-refusal of a self-comparing verifier — all execute here rather than at
-verification time, where a strategy could skip them.
+Registration is where the id gates are, which is why neither can be bypassed by
+a strategy: the two behaviours pinned to registration — id allocation and
+exclusive user-range claim — both execute here rather than at verification time,
+where a strategy could skip them.
+
+The remaining two registration-time guarantees are **type properties rather than
+runtime checks**, which is the stronger form. `SecurityFigure` has no public
+constructor, so a soundness figure cannot be asserted independently of prover
+parameters. And `AttestationVerifyCtx` carries the expectation as a required
+field rather than an option, so the self-comparing fallback is not expressible by
+a strategy that takes the context type. Neither needs an algorithm because
+neither has a code path to check.
 
 Boot validation therefore covers three things: resolvability, producing-side
 coverage, and admission budget. An unmeasured cost fails the boot rather than
@@ -871,12 +899,13 @@ structural placeholder. _Impact:_ medium; policy error. _Mitigation:_ stated in
 circuit cost or security figure below its true value, so a node admits it on a
 budget it could not actually afford, or credits soundness it does not carry.
 _Impact:_ medium; admission control is the thing the profile exists to
-enforce, and a self-reported figure is only as good as its honesty.
-_Mitigation:_ the security figure MUST be derivable from the strategy's prover
-parameters rather than asserted, and the derivation is part of registration.
-Cost figures are advisory and are treated as such: they gate admission, they do
-not establish soundness, and an under-reported cost degrades to a node
-discovering its budget exhausted at verification time rather than at boot.
+enforce. _Mitigation:_ the soundness figure is a type property — it has no
+public constructor, so it is computed from prover parameters and cannot be
+asserted independently. Cost figures remain self-reported and are treated as
+advisory: they gate admission, they do not establish soundness, and an
+under-reported cost degrades to a node discovering its budget exhausted during
+verification rather than at boot. A cost the strategy has not measured is
+rejected at boot outright, which is the only case the gate treats as decisive.
 
 ## Economic Analysis
 

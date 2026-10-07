@@ -23,7 +23,7 @@ The same mechanism carries both ZK-based capability types now being defined,
 and any third-party attestation added later, without a central edit. It also
 reconnects attestation to RFC-0871 §Node Role — Payload-Kind Declared: a
 strategy declares which `PayloadKindId` UUIDs a node must serve in order to
-produce a valid attestation, so "what is proven" and "who may prove it" stay
+verify a valid attestation, so "what is proven" and "who may prove it" stay
 separate concerns.
 
 ## Dependencies
@@ -38,12 +38,13 @@ separate concerns.
   reference strategy, and is **amended** by §Root-Secret Binding
 - The capability registry, as a hard authorisation dependency. An accepted
   attestation carries no authority of its own; see §Security Considerations
+- RFC-0008: Deterministic AI Execution Boundary — this RFC carries the execution
+  class mapping it mandates for every RFC
 
 **Optional:**
 
 - RFC-0965: Capability Extension Format — this RFC applies its §Per-Extension
   Crate Layout to attestation strategies
-- RFC-0008: execution-class taxonomy used by §Determinism Requirements
 
 **Relationship to RFC-0630.** Proof-of-Inference supplies the _fact_ that
 in-boundary execution attests — it is a consensus mechanism for inference, and
@@ -53,15 +54,15 @@ re-implementation of it, and this RFC does not amend RFC-0630.
 
 ## Design Goals
 
-| Goal | Target                                                                  | Metric                                                                    |
-| ---- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| G1   | Adding an attestation strategy requires 0 edits to `octo-wallet` core   | strategy crate PR touches no core file                                    |
-| G2   | Unknown attestation id rejected, never downgraded                       | 100% of negative tests reject                                             |
-| G3   | Operator acceptance set is fail-closed against what the node can verify | config naming an unregistered strategy refuses boot                       |
-| G4   | Wallet can verify every capability minted before this RFC               | 100% of the historical token corpus, with byte-identical re-serialisation |
-| G5   | Both reference strategies are instances, not special cases              | 2 strategy crates implementing one trait, one registry                    |
-| G6   | Operator can select non-attested operation without a core change        | config-driven, unit-tested                                                |
-| G7   | A strategy can state its admission cost and soundness                   | profile present and derived for circuit-backed strategies                 |
+| Goal | Target                                                                  | Metric                                                                                          |
+| ---- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| G1   | Adding an attestation strategy requires 0 edits to `octo-wallet` core   | strategy crate PR touches no core file                                                          |
+| G2   | Unknown attestation id rejected, never downgraded                       | 100% of negative tests reject                                                                   |
+| G3   | Operator acceptance set is fail-closed against what the node can verify | config naming an unregistered strategy refuses boot                                             |
+| G4   | Wallet can verify every capability minted before this RFC               | 100% of the historical token corpus, with byte-identical re-serialisation                       |
+| G5   | Both reference strategies are instances, not special cases              | 2 strategy crates implementing one trait, one registry                                          |
+| G6   | Operator can select non-attested operation without a core change        | an acceptance set naming no strategies verifies the full historical corpus on the macaroon path |
+| G7   | A circuit-backed strategy states its admission cost and soundness       | profile present, and its soundness figure traceable to prover parameters                        |
 
 ## Motivation
 
@@ -260,18 +261,33 @@ pub trait AttestationAdmission {
 pub struct Admission {
     pub required_payload_kinds: Vec<PayloadKindId>,
     pub verifier_needs_producing_kinds: bool,
+    /// Circuit budget facts, if the strategy supplies them.
+    pub admission_profile: Option<AdmissionProfile>,
 }
 
 /// Circuit budget facts a strategy states so a node can refuse to admit it
-/// rather than discovering at mint time that it has no headroom.
+/// rather than discovering at verification time that it has no headroom.
 pub struct AdmissionProfile {
     /// In-circuit cost in CASM words, where the attestation is a circuit proof.
-    pub casm_cost_hint_words: u32,
+    pub casm_cost_hint_words: CostFigure,
     /// Security the attestation actually carries, derived from prover
-    /// parameters. A value asserted without a derivation is not admissible:
-    /// the label must follow from the parameters, not precede them.
-    pub security_bits: u32,
+    /// parameters. A strategy supplies the parameters and this figure is
+    /// computed from them, so the value cannot be asserted independently.
+    pub security_bits: SecurityFigure,
 }
+
+/// An in-circuit cost that may not have been measured yet. The unmeasured state
+/// is represented explicitly rather than as a sentinel number, because a
+/// sentinel is indistinguishable from a real measurement of that value.
+pub enum CostFigure {
+    Measured(u32),
+    Unmeasured,
+}
+
+/// Security bits, computed rather than asserted. Construction goes through the
+/// prover parameters, so there is no path by which a strategy supplies a bare
+/// integer.
+pub struct SecurityFigure(u32);
 ```
 
 **Verification context.** `AttestationVerifyCtx` is a borrow-only view carrying
@@ -296,19 +312,21 @@ for why the currently-circuited attestation establishes nothing.
 
 **Reference strategies shipped by this RFC.**
 
-| Strategy                | Establishes                                                      | Source   | Circuit cost                                   | Notes                                       |
-| ----------------------- | ---------------------------------------------------------------- | -------- | ---------------------------------------------- | ------------------------------------------- |
-| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | RFC-0958 | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
-| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630 | unmeasured; deferred to the implementing crate | proof-of-inference trace bound to the token |
+| Strategy                | Establishes                                                      | Source   | Circuit cost                                | Notes                                       |
+| ----------------------- | ---------------------------------------------------------------- | -------- | ------------------------------------------- | ------------------------------------------- |
+| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | RFC-0958 | unmeasured — see §Root-Secret Binding       | one BLAKE3 hop over the secret              |
+| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630 | unmeasured — open, see §Performance Targets | proof-of-inference trace bound to the token |
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
 
 **No cost figure is claimed for either strategy.** An earlier draft of this RFC
 carried a measured word count that turned out to describe a commitment to the
-root secret the token already contains, not the binding below. Until a word
-count is measured on the actual program, the honest entry is "unmeasured". The
-deferral for the second strategy names its owner in §Performance Targets.
+root secret the token already contains, not the binding below. Until a word count
+is measured on the actual program, the honest entry is "unmeasured". The first
+strategy's measurement belongs to Phase 3, which is where the binding work lands;
+the second belongs to whoever implements that crate, and §Performance Targets
+records it as open rather than deferring it to a party this RFC does not name.
 
 #### Root-Secret Binding
 
@@ -435,8 +453,7 @@ verify_capability_attestation(token, node, issuers, strategies):
           if admission.required_payload_kinds is non-empty:
              if not node.serves_all(admission.required_payload_kinds)
                 -> REJECT   # this node cannot verify what it cannot produce
-       # Producing-side coverage is an admission-time question, not a
-       # verification-time one, and is checked at boot rather than per call.
+       # Producing-side coverage is a boot check, in validate_policy above.
     5. outcome = strategy.verify(ctx{capability, attestation, policy})
        if unsatisfied -> REJECT, with a reason
     -> ACCEPT
@@ -458,11 +475,30 @@ carry.
 **Boot-time policy validation.**
 
 ```text
-validate_policy(policy, strategies):
+validate_policy(policy, node, strategies):
     for strategy_id in policy.accept_set:
         if not strategies.contains(strategy_id):
             -> FAIL TO START, naming the offending id
+        admission = strategies.admission_of(strategy_id)
+        # producing-side coverage: the node must be able to produce what it
+        # accepts. This is a boot check, not a per-call one, because it is a
+        # statement about the node rather than about any single attestation.
+        if admission.required_payload_kinds is non-empty:
+            if not node.serves_all(admission.required_payload_kinds):
+                -> FAIL TO START, naming the kinds the node does not serve
+        profile = admission.admission_profile
+        if profile is Some:
+            if profile.casm_cost_hint_words is Unmeasured:
+                -> FAIL TO START, naming the strategy with no measured cost
+            if not node.has_headroom(profile.casm_cost_hint_words,
+                                     profile.security_bits):
+                -> FAIL TO START, naming the exceeded budget
 ```
+
+Boot validation therefore covers three things: resolvability, producing-side
+coverage, and admission budget. An unmeasured cost fails the boot rather than
+passing on a guess, which is why `CostFigure` carries an explicit unmeasured
+state — it is a rejection, not a wildcard.
 
 ### Lifecycle Requirements
 
@@ -472,24 +508,25 @@ validate_policy(policy, strategies):
 2. A node MUST validate its operator policy at boot and refuse to start on an
    unresolvable acceptance entry.
 3. A verifier MUST reject, never downgrade, on an unknown id, an unresolved
-   strategy, a strategy that is disabled because its relation is not yet
-   established, a capability absent from the registry, or a policy mismatch.
-4. **Attenuation MUST NOT strip an attestation silently.** A child of an
-   attested parent either carries an attestation or is rejected at verification;
-   it never takes the unattested path merely because attenuation did not
-   re-attest it. The rule holds in core regardless of which strategy is
-   registered, and it is about the **attestation's presence**, not its scope: a
-   child inherits a parent's attestation as valid rather than losing it silently,
-   and §Root-Secret Binding states why that inheritance is unavoidable when
-   binding to the root secret.
+   strategy, a capability absent from the registry, or a policy mismatch.
+4. **Attenuation MUST carry the attestation envelope forward, or refuse.** The
+   envelope propagates from parent to child at the point the child is minted, so
+   a child of an attested parent cannot exist without one. This is a mint-time
+   rule in core rather than a verification-time one, because at verification the
+   verifier has no way to learn that a parent carried an attestation: it sees
+   only the child, and an attenuation need not name its parent. The rule is
+   about the envelope's **presence**, not its scope — a child inherits its
+   parent's attestation as valid rather than losing it, and §Root-Secret Binding
+   states why that inheritance is unavoidable when binding to the root secret.
 5. Back-compat MUST preserve readability of every capability minted before this
    RFC. A capability carrying no attestation takes the macaroon path, and its
    canonical form MUST NOT change as a result of this RFC.
 6. Strategy implementations MUST be deterministic functions of their inputs.
 7. A node MUST advertise its acceptance set in its node metadata, so that a peer
-   relying on "this node verifies attestations" can detect a node that accepts
-   none. A strategy that is registered but not yet established is excluded from
-   that advertisement, so a node cannot claim to verify what it cannot.
+   relying on "this node verifies proofs" can detect a node that accepts none.
+   Advertising a strategy the node cannot actually verify is a false claim and
+   is prohibited; the advertised set is the acceptance set intersected with what
+   the node can verify.
 8. The registration host MUST be a binary or node crate. A Layer-B core crate
    MUST NOT depend on a Layer-E strategy crate to discover it.
 9. Deferral of any mission gated on a Draft dependency is user-initiated only.
@@ -499,10 +536,22 @@ validate_policy(policy, strategies):
 Registry resolution is a pure lookup on a stable 128-bit key. Verification
 outcomes are a pure function of (capability, attestation, context).
 
-RFC-0008 execution class: registry resolution is Class A, as is attestation
-verification, because verification decides acceptance of a monetary claim.
-Operator acceptance-set selection is Class C — operator-local discretion that no
-other node can observe or be harmed by.
+RFC-0008 execution class:
+
+| Operation                                  | Class | Rationale                                                                                                                                                                                                                             |
+| ------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability registry lookup (authorisation) | A     | Pure lookup on a stable key; decides whether a capability exists at all                                                                                                                                                               |
+| Attestation registry resolution            | A     | Pure lookup on a stable 128-bit key                                                                                                                                                                                                   |
+| `verify`                                   | A     | Decides acceptance of a monetary claim, so must be protocol-deterministic                                                                                                                                                             |
+| Admission gating on declared payload kinds | A     | Rejection decision reached from node state, not from probabilistic output                                                                                                                                                             |
+| Operator acceptance-set selection          | C     | Operator-local configuration. Its **selection** is local; its **effect is not**, because the set is advertised in node metadata and gates dispatch, so the observable consequence is consensus-relevant even though the choice is not |
+| Strategy cost and soundness figures        | B     | Deterministic once the strategy is fixed, and proof-verifiable, but supplied by a third-party crate rather than derived in-protocol                                                                                                   |
+
+The acceptance-set row is deliberately split. The _act of choosing_ is Class C
+and no node can be harmed by another node's choice; the _fact that it is
+observable and enforced_ is what puts its consequences on a Class A path, because
+dispatch step 2 rejects on it and two nodes given the same capability and
+different acceptance sets reach different outcomes by design.
 
 ## Performance Targets
 
@@ -519,13 +568,16 @@ happens to fit. Every change to a ceiling is an explicit, recorded decision with
 its rationale.
 
 **The cost of the `root_secret_knowledge` relation is currently unknown.** The
-in-circuit BLAKE3 module has no production call site and exposes no unkeyed
-hash entry point
-function, so the figure has never been measured on the real program. Owning the
-measurement is Phase 3; until it exists, the strategy table states "unmeasured"
-rather than an estimate. The same applies to `in_boundary_execution`, whose
-measurement is deferred to the crate that will implement it — that crate's owner,
-not this RFC, carries the deferral.
+in-circuit BLAKE3 module has no production call site and exposes no unkeyed hash
+entry point, so the figure has never been measured on the real program. Owning
+the measurement is Phase 3; until it exists, the strategy table states
+"unmeasured" rather than an estimate.
+
+`in_boundary_execution` has the same open question, and it is **open rather than
+deferred**: no party is named as owning it, because this RFC does not create the
+crate that will. Recording it as deferred would be the documented-deferral
+failure mode — a spec owed by nobody. Whoever lands that crate owns the
+measurement, and until then the figure is unstated.
 
 ## Error Handling
 
@@ -635,12 +687,28 @@ rather than silent — see A1.
 
 ### Adversary Analysis
 
+**Adversary test — decision table.** RFC-0008 governs the execution-class
+boundary; this RFC touches the cryptographic binding surface, so the design must
+answer what an adversary controls and where each control is stopped.
+
+| #   | Question                                                 | Answer                                                                                                                                                           |
+| --- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | What can an adversary supply without permission?         | A capability of their own minting, an attestation over it, and an arbitrary circuit witness.                                                                     |
+| 2   | What does each of those reach?                           | The witness reaches the strategy, and the strategy accepts. Nothing else: the capability id does not resolve, so step 0 rejects first.                           |
+| 3   | What stops it?                                           | The capability registry, which is authorisation rather than attestation. The proof is not the control and is never described as one.                             |
+| 4   | What is the residual exposure?                           | Registry write authority, holder identity after transfer, and attestation replay across a shared root secret. All three are stated as limits rather than solved. |
+| 5   | Does accepting a strategy widen what the node can check? | No. Widening requires shipping the strategy, which is a code change and an audited registration. Configuration can narrow only.                                  |
+
+The question this table exists to answer is Q3, because the intuitive answer —
+"the proof stops it" — is wrong. The proof stops nothing on its own.
+
 **A1 — Operator silently downgrades their node's assurance.** The operator sets
 an acceptance set excluding every attested capability, and clients that assume
 "this node verifies proofs" are not warned. _Impact:_ medium. _Mitigation:_ the
 acceptance set is advertised in node metadata (Lifecycle Requirement 7), so a
-mismatch is peer-detectable. A strategy that is registered but not established is
-excluded from the advertisement, so a node cannot claim to verify what it cannot.
+mismatch is peer-detectable. A node advertises the intersection of its acceptance
+set with the strategies it can actually verify, so advertising a set it cannot
+honour is not possible.
 
 **A2 — Attestation id swapped between capabilities.** A holder pairs one
 capability's id with another's attestation. _Impact:_ high if unspecified.
@@ -738,6 +806,17 @@ witness to the token and to nothing else; the holder-signature sub-circuit is a
 structural placeholder. _Impact:_ medium; policy error. _Mitigation:_ stated in
 §Security Considerations, distinct from A9's authorization over-claim.
 
+**A14 — Strategy under-reports its admission profile.** A strategy declares a
+circuit cost or security figure below its true value, so a node admits it on a
+budget it could not actually afford, or credits soundness it does not carry.
+_Impact:_ medium; admission control is the thing the profile exists to
+enforce, and a self-reported figure is only as good as its honesty.
+_Mitigation:_ the security figure MUST be derivable from the strategy's prover
+parameters rather than asserted, and the derivation is part of registration.
+Cost figures are advisory and are treated as such: they gate admission, they do
+not establish soundness, and an under-reported cost degrades to a node
+discovering its budget exhausted at verification time rather than at boot.
+
 ## Economic Analysis
 
 No token emission changes. Attestation choice is a security posture decision
@@ -809,17 +888,20 @@ boot failure, per §Root-Secret Binding.
 `root_secret_knowledge` attestation, absent from the registry: REJECT at dispatch
 step 0. This vector pins that the proof carries no authorisation of its own.
 
-**TV14** — attested parent, attenuated to a child carrying no attestation
-envelope: REJECT at step 1, because the child claims no attestation while its
-parent carried one. Note the converse, which is **accepted**: a child that
-retains its parent's attestation envelope is valid, because the binding target
-does not change under attenuation (§Root-Secret Binding).
+**TV14** — attenuating an attested parent: the resulting child carries the
+envelope forward and verifies, because the binding target does not change under
+attenuation (§Root-Secret Binding). The negative half of Lifecycle Requirement 4
+is that no such child can be minted without the envelope — a mint that drops it
+fails at mint, not at verification.
 
-**TV15** — attestation for capability C presented with a capability C′ minted
-from a **different** root secret: REJECT, because the binding target differs
-between the two tokens. Two capabilities minted from the _same_ root secret
-share a binding target and are NOT separated by this check — see A12, which is
-why root-secret reuse is forbidden at mint time.
+**TV15** — capability C's attestation envelope copied onto capability C′: REJECT
+at step 0, because the envelope is inside the hashed canonical form, so C′'s
+capability id changes and no longer resolves. The strategy never runs.
+
+Two capabilities minted from the **same** root secret are not separated by this
+check, because the binding target is byte-identical across an attenuation tree.
+That is A12, and it is a scope limit of the strategy rather than a rejection the
+dispatch can perform.
 
 ## Alternatives Considered
 
@@ -831,6 +913,15 @@ enums)" exists to prevent, and what RFC-0871 G1 already rejected for node roles.
 **One centrally-mandated attestation.** Rejected. It caps the proof vocabulary
 at whatever the first design decided, which is precisely the constraint the two
 ZK capability types are being built to escape.
+
+**Shipping exactly one reference strategy.** Rejected. One strategy cannot
+distinguish an abstraction that generalises from one that happens to work: a
+mechanism exercised only by a possession-of-secret fact may be a wrapper around
+that single case, and would not be discovered until a third party tried to use it
+for something else. The second strategy exists to make the failure visible
+now, while changing the design is still cheap. It also forces the two to share
+the trait, the registry, and the dispatch, which is where the real test of an
+extension point lives.
 
 **Treat ZK as one more `Authorization` variant.** Rejected as too narrow. It
 models a proof as a way to say "you may do this", which cannot express "this
@@ -879,6 +970,9 @@ traits, and the fail-closed `AttestationRegistry` in `octo-wallet::capability`.
 wallet would invert the dependency: the macaroon's canonical form must carry the
 id, and the macaroon cannot name a wallet type without a cycle. The same
 declaration-once-then-re-export shape already used for `CapabilityClass` applies.
+
+Create the id allocation record: the list of RFC-range attestation ids core
+has allocated. Until it exists the RFC range admits nothing.
 
 Extend the capability canonical form with the attestation envelope, omitted
 entirely when absent, so an un-attested capability serialises byte-identically.
@@ -933,9 +1027,10 @@ Lands the two properties this RFC states but that no earlier phase implements:
 
 - **Node-metadata advertisement** (Lifecycle Requirement 7, A1's only
   mitigation): the node's acceptance set is advertised in its announced node
-  metadata, excluding any strategy that is registered but not established. A
-  test asserts a node accepting no attestations advertises an empty set rather
-  than an absent one.
+  metadata, advertising the acceptance set intersected with what the node can
+  verify. A test asserts a node accepting no attestations advertises an empty set
+  rather than an absent one, and that a configured-but-unverifiable strategy
+  never appears in the advertisement.
 - **Registration host and dependency lint** (Lifecycle Requirement 8): the
   strategy crates are linked from the node or binary crate that composes a node,
   and a CI lint fails the build if a Layer-B core crate gains a dependency on a
@@ -963,9 +1058,13 @@ strength of nothing.
 Strategy crates are reached through registration only. A Layer-B core crate must
 not name a Layer-E strategy crate, so the existing direct dependency is removed
 rather than extended. Removing it requires re-pointing the wallet's ZK mint
-module at the declarations it already re-exports through the macaroon crate —
-`CapabilityClass` and the node-type projection live there — since that module is
-what Phase 1 extends and it would otherwise stop compiling.
+module, which re-exports the strategy crate wholesale and would otherwise stop
+compiling. `CapabilityClass` can be sourced from the macaroon crate, which both
+already depend on. The node-type projection **cannot**: it is declared in the
+strategy crate rather than the macaroon one, and the orphan rule is what forces
+that mirror. Dropping the dependency is therefore a move, not a deletion — the
+projection is declared alongside the strategy trait and re-exported, which is
+Phase 1 work.
 
 ## Future Work
 
@@ -978,11 +1077,11 @@ what Phase 1 extends and it would otherwise stop compiling.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| v0.2    | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| v0.3    | 2026-10-07 | Multi-round adversarial review, five lenses, all findings resolved. Corrects three claims that the code contradicts: the attestation relation is **not** established today (the circuit asserts only that a witness commitment is non-zero, and a conformance test proves an unrelated secret succeeds), the circuit already has `cap_root_hash` public inputs which are **not** the binding target, and the mint path currently discards the witness rather than proving it. Adds the registry as a hard authorisation dependency after establishing that a self-minted capability satisfies the relation unaided, and that only the registry lookup rejects it. Splits the fat strategy trait, removing a fail-open default on a rejection gate. Adds an attenuation rule so a child cannot silently lose an attestation. Declares the RFC-0957 wire amendment and the back-compat encoding it depends on. Adds the attestation payload envelope, which the previous draft never specified. Adds §Error Handling. Retargets §Key Files at the capability canonical form rather than the storage projection. Removes the duplicated §Rationale. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v0.2    | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                    |
+| v0.4    | 2026-10-07 | Third review round. Restores the §RFC-0008 execution class mapping that round 2 removed as redundant: RFC-0008 requires every RFC to carry that table, so deleting it broke a MUST rather than a convention. Splits the acceptance-set class assignment, because its selection is operator-local while its effect is consensus-relevant once advertised in node metadata. Gives the admission cost an explicit unmeasured state, since the struct could not represent the honest answer for a strategy whose cost has not been measured, and makes boot validation actually consume the profile and the declared payload kinds rather than only checking resolvability. Replaces the attenuation rule's verification-time framing with a mint-time one, since a verifier cannot learn that a parent carried an attestation. Adds an adversary for a strategy under-reporting its own admission figures, and a rejection reason for one reference strategy being counted where no owner exists. |
 
 ## Related RFCs
 

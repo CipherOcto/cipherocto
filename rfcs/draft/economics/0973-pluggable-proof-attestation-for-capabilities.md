@@ -42,10 +42,14 @@ this RFC introduces. See §Security Considerations.
   carry the attestation envelope, and declares that amendment here
 - RFC-0871: Specialized Node Protocol Envelope — supplies `PayloadKindId` and the
   served-payload-kind notion a strategy declares its requirement against
-- RFC-0958: ZK Capability Subclass — supplies the `root_secret_knowledge`
-  reference strategy, and is **amended** by §Root-Secret Binding
-- The capability registry, as a hard authorisation dependency. An accepted
-  attestation carries no authority of its own; see §Security Considerations
+- RFC-0958: ZK Capability Subclass — defines the capability class and the
+  circuit this RFC's binding relation applies to, and is **amended** by
+  §Root-Secret Binding. It does not itself define `root_secret_knowledge` as a
+  strategy; that identifier is introduced here
+- The holder registry, as a hard authorisation dependency. It exists today and
+  is keyed by capability id, with an `active` predicate over revocation and
+  expiry. An accepted attestation carries no authority of its own; see
+  §Security Considerations
 - RFC-0008: Deterministic AI Execution Boundary — this RFC carries the execution
   class mapping it mandates for every RFC
 
@@ -296,9 +300,9 @@ pub enum CostFigure {
     Unmeasured,
 }
 
-/// Security bits, computed rather than asserted. There is no public
-/// constructor: a value can only be produced from a strategy's prover
-/// parameters, so a strategy cannot supply a bare integer.
+/// Security bits, computed rather than asserted. No constructor takes a bare
+/// integer: a value can only be produced from a strategy's prover parameters,
+/// so the figure cannot be asserted independently of what it derives from.
 pub struct SecurityFigure(u32);
 
 impl SecurityFigure {
@@ -338,6 +342,14 @@ pub struct AttestationVerifyCtx<'a> {
 }
 ```
 
+`Expectation` is the strategy's own type describing what a valid attestation for
+this capability must establish. It is constructed **from the capability alone**,
+never from the attestation, and that construction rule is the whole content of
+the anti-self-comparison guarantee. `AttestationError` is a strategy-defined
+error type; the dispatch treats every variant identically as a rejection, so the
+variant set is the strategy's business. `ProverParameters` is the existing
+prover configuration type, not a new one.
+
 **A verifier MUST NOT compare a proof against itself.** An existing
 capability-verification helper accepts an absent expectation and then uses the
 proof's own public inputs as the comparison target, which makes the check
@@ -376,6 +388,7 @@ records it as open rather than deferring it to a party this RFC does not name.
 
 ```text
     the witness contains s  such that  BLAKE3(s) == macaroon.root_secret_hash
+    # `root_secret_hash` is the token field's own name and the same value
 ```
 
 `root_secret_hash` is an existing public field of the RFC-0957 macaroon, already
@@ -386,7 +399,8 @@ second hash primitive**. It does require the BLAKE3 permutation to be computed
 **This relation is not established today, and the production path does not reach
 it.** The circuit computes a Poseidon commitment over the witness and asserts
 only that it is non-zero, which any witness satisfies, and a conformance test
-pins exactly that absence by proving successfully with an unrelated secret.
+pins exactly that absence by accepting an unrelated secret as satisfying the
+circuit.
 Separately, the mint path does not execute this circuit at all: it discards the
 witness and proves a different program, so the properties a real proof would
 carry are not being obtained in production either. Until the rejection vector
@@ -473,9 +487,9 @@ the full 32-byte `root_secret_hash`.
 
 ```text
 verify_capability_attestation(token, node, issuers, strategies):
-    # `issuers`   = the capability registry, keyed by capability id
-    # `strategies` = the attestation registry, keyed by attestation type id
-    0. if issuers.lookup(token.capability_id) is absent or not active:
+    # `issuers`   = the holder registry, keyed by capability id, existing today
+    # `strategies` = the attestation registry, keyed by attestation type id, new
+    0. if issuers.lookup_active(token.capability_id, clock) is None:
           -> REJECT   # authorisation precedes attestation; see §Security Considerations
     1. attestation_id = token.attestation_type_id
        if absent:
@@ -499,7 +513,12 @@ verify_capability_attestation(token, node, issuers, strategies):
              if not node.serves_all(admission.required_payload_kinds)
                 -> REJECT   # this node cannot verify what it cannot produce
        # Producing-side coverage is a boot check, in validate_policy below.
-    5. outcome = strategy.verify(ctx{capability, attestation, policy})
+    5. outcome = strategy.verify(ctx{
+            capability:  token,
+            attestation: token.attestation_payload,
+            expectation: Expectation::from(token),   # never from the attestation
+            policy:      node.policy_source(),
+       })
        if unsatisfied -> REJECT, with a reason
     -> ACCEPT
 ```
@@ -524,7 +543,7 @@ validate_policy(policy, node, strategies):
     for strategy_id in policy.accept_set:
         if not strategies.contains(strategy_id):
             -> FAIL TO START, naming the offending id
-        admission = strategies.admission_of(strategy_id)
+        admission = strategies.admission_of(strategies.resolve(strategy_id))
         # producing-side coverage: the node must be able to produce what it
         # accepts. This is a boot check, not a per-call one, because it is a
         # statement about the node rather than about any single attestation.
@@ -548,11 +567,11 @@ register_strategy(strategies, strategy, allocation_record):
     if id is in the RFC range:
         if not allocation_record.contains(id):
             -> REJECT   # no core allocation backs this id
-    else:
-        if strategies.claims(id):
-            -> REJECT   # user-range ids are exclusively claimed; the
-                        # incumbent is left untouched
-    strategies.insert(id, strategy)
+    if strategies.claims(id):
+        -> REJECT   # every id is exclusively claimed, in either range; the
+                    # incumbent is left untouched rather than replaced
+    if not strategies.insert(id, strategy):
+        -> REJECT   # insert never overwrites a claimed id
 ```
 
 Registration is where the id gates are, which is why neither can be bypassed by
@@ -561,9 +580,9 @@ exclusive user-range claim — both execute here rather than at verification tim
 where a strategy could skip them.
 
 The remaining two registration-time guarantees are **type properties rather than
-runtime checks**, which is the stronger form. `SecurityFigure` has no public
-constructor, so a soundness figure cannot be asserted independently of prover
-parameters. And `AttestationVerifyCtx` carries the expectation as a required
+runtime checks**, which is the stronger form. `SecurityFigure` takes no bare
+integer from anywhere, so a soundness figure cannot be asserted independently of
+the prover parameters it derives from. And `AttestationVerifyCtx` carries the expectation as a required
 field rather than an option, so the self-comparing fallback is not expressible by
 a strategy that takes the context type. Neither needs an algorithm because
 neither has a code path to check.
@@ -671,9 +690,12 @@ underlying attestation bytes.
 
 Boot-time rejections, all reported before the node serves: an unresolvable
 strategy id, an acceptance entry whose required payload kinds the node does not
-serve, an unmeasured circuit cost, a cost exceeding the node's budget, and a
-duplicate user-range id claim. Each names the offending strategy, so the
-operator can act rather than merely observe.
+serve, an unmeasured circuit cost, and a cost exceeding the node's budget. Each
+names the offending strategy, so the operator can act rather than merely observe.
+
+Registration refusals are separate and occur earlier, at composition time rather
+than at boot: a duplicate id claim, and an RFC-range id with no core
+allocation.
 
 **A strategy whose relation is not yet established has no registry entry at
 all.** It is not a registered-but-disabled state. Naming one in an acceptance set
@@ -899,9 +921,9 @@ structural placeholder. _Impact:_ medium; policy error. _Mitigation:_ stated in
 circuit cost or security figure below its true value, so a node admits it on a
 budget it could not actually afford, or credits soundness it does not carry.
 _Impact:_ medium; admission control is the thing the profile exists to
-enforce. _Mitigation:_ the soundness figure is a type property — it has no
-public constructor, so it is computed from prover parameters and cannot be
-asserted independently. Cost figures remain self-reported and are treated as
+enforce. _Mitigation:_ the soundness figure is a type property — it accepts no
+bare integer, so it is computed from prover parameters and cannot be asserted
+independently. Cost figures remain self-reported and are treated as
 advisory: they gate admission, they do not establish soundness, and an
 under-reported cost degrades to a node discovering its budget exhausted during
 verification rather than at boot. A cost the strategy has not measured is
@@ -982,7 +1004,8 @@ ACCEPT.
 **TV12** — `root_secret_knowledge` with a witness whose secret does **not** hash
 to `root_secret_hash`: REJECT. This vector is the exit criterion for the binding
 work and is currently **failing**: the circuit asserts only that a commitment
-over the witness is non-zero, so an unrelated secret proves successfully. Until
+over the witness is non-zero, so an unrelated secret is accepted as satisfying
+it. Until
 TV12 holds, the strategy is not registrable and an acceptance set naming it is a
 boot failure, per §Root-Secret Binding.
 
@@ -1126,12 +1149,9 @@ surfaced by its review and are prerequisites for a clean implementation:
 ### Phase 5: Dependency direction and deployment properties
 
 Removes the direct dependency from the Layer-B wallet crate on the strategy
-crate, re-pointing the re-exporting module and moving the node-type projection to
-sit alongside the strategy trait. This is Phase 5 work rather than Phase 1's
-because the lint below fails the build until it is done, so doing it first would
-break the tree.
-
-Lands the two properties this RFC states but that no earlier phase implements:
+crate, re-pointing the re-exporting module. This is Phase 5 work rather than
+Phase 1's because the lint below fails the build until the removal is done, so
+doing it first would break the tree.
 
 Lands the two properties this RFC states but that no earlier phase implements:
 

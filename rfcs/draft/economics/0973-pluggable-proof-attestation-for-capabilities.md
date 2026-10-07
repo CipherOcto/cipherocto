@@ -435,10 +435,10 @@ for why the currently-circuited attestation establishes nothing.
 
 **Reference strategies shipped by this RFC.**
 
-| Strategy                | Establishes                                                      | Source   | Circuit cost                                   | Notes                                       |
-| ----------------------- | ---------------------------------------------------------------- | -------- | ---------------------------------------------- | ------------------------------------------- |
-| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | RFC-0958 | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
-| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630 | unmeasured — Phase 2, see §Performance Targets | proof-of-inference trace bound to the token |
+| Strategy                | Establishes                                                      | Source                                    | Circuit cost                                   | Notes                                       |
+| ----------------------- | ---------------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- | ------------------------------------------- |
+| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | relation in RFC-0958; strategy named here | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
+| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630                                  | unmeasured — Phase 2, see §Performance Targets | proof-of-inference trace bound to the token |
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
@@ -591,9 +591,9 @@ verify_capability_attestation(token, node, issuers, strategies, clock):
             expectation: &core_expectation_for(token),  # never from the attestation
             policy:      node.policy_source(),
        })
-       on Err(_)  -> REJECT, with the error's reason     # a strategy that cannot
-                                                       # decide has not verified
-       if unsatisfied -> REJECT, with a reason
+       on Err(e) -> REJECT, carrying e's reason    # a strategy that cannot decide
+                                                # has not verified anything
+       if outcome is Unsatisfied -> REJECT, with the reason outcome carries
     -> ACCEPT
 ```
 
@@ -717,22 +717,27 @@ state — it is a rejection, not a wildcard.
 Registry resolution is a pure lookup on a stable 128-bit key. Verification
 outcomes are a pure function of (capability, attestation, context).
 
-RFC-0008 execution class:
+### RFC-0008 Execution Class Mapping
 
-| Operation                                  | Class | Rationale                                                                                                                                                                                                                             |
-| ------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Capability registry lookup (authorisation) | A     | Pure lookup on a stable key; decides whether a capability exists at all                                                                                                                                                               |
-| Attestation registry resolution            | A     | Pure lookup on a stable 128-bit key                                                                                                                                                                                                   |
-| `verify`                                   | A     | Decides acceptance of a monetary claim, so must be protocol-deterministic                                                                                                                                                             |
-| Admission gating on declared payload kinds | A     | Rejection decision reached from node state, not from probabilistic output                                                                                                                                                             |
-| Operator acceptance-set selection          | C     | Operator-local configuration. Its **selection** is local; its **effect is not**, because the set is advertised in node metadata and gates dispatch, so the observable consequence is consensus-relevant even though the choice is not |
-| Strategy cost and soundness figures        | B     | Deterministic once the strategy is fixed, and proof-verifiable, but supplied by a third-party crate rather than derived in-protocol                                                                                                   |
+| Operation                                  | Class | Rationale                                                                                                                                                        |
+| ------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability registry lookup (authorisation) | A     | Pure lookup on a stable key; decides whether a capability exists at all                                                                                          |
+| Attestation registry resolution            | A     | Pure lookup on a stable 128-bit key                                                                                                                              |
+| `verify`                                   | A     | Decides acceptance of a monetary claim, so must be protocol-deterministic                                                                                        |
+| Admission gating on declared payload kinds | A     | Rejection decision reached from node state, not from probabilistic output                                                                                        |
+| Operator acceptance-set selection          | C     | Operator-local configuration, non-deterministic by nature, excluded from consensus by RFC-0008                                                                   |
+| Dispatch step 2, reading that set          | A     | Turns node configuration into an accept-or-reject decision on a capability, so it is consensus-relevant and must not be classified with the choice that feeds it |
+| Strategy cost and soundness figures        | B     | Deterministic once the strategy is fixed, and proof-verifiable, but supplied by a third-party crate rather than derived in-protocol                              |
 
-The acceptance-set row is deliberately split. The _act of choosing_ is Class C
-and no node can be harmed by another node's choice; the _fact that it is
-observable and enforced_ is what puts its consequences on a Class A path, because
-dispatch step 2 rejects on it and two nodes given the same capability and
-different acceptance sets reach different outcomes by design.
+The acceptance-set rows are deliberately two, because RFC-0008 excludes Class C
+from any consensus-relevant path and one row claiming both would break that rule.
+The **act of choosing** the set is Class C: non-deterministic by nature,
+operator-local, and no node can be harmed by another node's choice. The **gate
+that reads it** is Class A: it turns that configuration into an accept-or-reject
+decision on a capability. Two nodes given the same capability and different
+acceptance sets reaching different outcomes by design is the intended consequence
+of operator discretion — but it follows from the Class A gate, not from anything
+the Class C choice is allowed to carry.
 
 ## Performance Targets
 
@@ -1126,14 +1131,15 @@ because the binding target does not change under attenuation (§Root-Secret
 Binding). Both halves are load-bearing: an attenuation that drops the envelope
 fails at production, and one that does not register the child fails at step 0.
 
-**TV15**
+**TV15** — capability C's attestation envelope copied onto capability C′: REJECT
+at step 0, because the envelope is inside the hashed canonical form, so C′'s
+capability id changes and no longer resolves. The strategy never runs.
 
 **TV16** — determinism: the same capability and attestation verified by two
 independently built strategy implementations yields the same verdict. A
 single-implementation run cannot satisfy this; the vector requires two builds.
-Phase 1 adds it, and A5 is not closed until it passes. — capability C's attestation envelope copied onto capability C′: REJECT
-at step 0, because the envelope is inside the hashed canonical form, so C′'s
-capability id changes and no longer resolves. The strategy never runs.
+Phase 1 creates the harness and the two fixtures it compares, and A5 is not
+closed until it passes.
 
 Two capabilities minted from the **same** root secret are not separated by this
 check, because the binding target is byte-identical across an attenuation tree.
@@ -1247,13 +1253,13 @@ in the wallet verification path behind macaroon-path back-compat.
 
 For `root_secret_knowledge`:
 
-1. Add `root_secret_hash` to the circuit's public inputs and assert the BLAKE3
-   hop. This is a public-input change, not a token-format change.
-2. **Add an unkeyed entry point to the in-circuit BLAKE3 module.** This is the
+1. **Add an unkeyed entry point to the in-circuit BLAKE3 module.** This is the
    blocking prerequisite and it comes first: the module exposes only keyed-hash
    and HMAC entry points above the compression function, and keyed mode with a
    zero key is not BLAKE3 unkeyed mode, so the relation cannot be expressed with
    what exists today.
+2. Add `root_secret_hash` to the circuit's public inputs and assert the BLAKE3
+   hop. This is a public-input change, not a token-format change.
 3. Slim that module to the unkeyed single-chunk path the relation actually calls.
    It is currently test-gated, and un-gating it in its present shape admits far
    more code than one call requires.
@@ -1356,8 +1362,9 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.4    | 2026-10-07 | Third review round. Restores the execution class mapping RFC-0008 requires that round 2 removed as redundant: RFC-0008 requires every RFC to carry that table, so deleting it broke a MUST rather than a convention. Splits the acceptance-set class assignment, because its selection is operator-local while its effect is consensus-relevant once advertised in node metadata. Gives the admission cost an explicit unmeasured state, since the struct could not represent the honest answer for a strategy whose cost has not been measured, and makes boot validation actually consume the profile and the declared payload kinds rather than only checking resolvability. Replaces the attenuation rule's verification-time framing with a mint-time one, since a verifier cannot learn that a parent carried an attestation. Adds an adversary for a strategy under-reporting its own admission figures, and a rejection reason for one reference strategy being counted where no owner exists.                                                                                                                                                        |
 | v0.5    | 2026-10-07 | Fourth review round. Restores the v0.3 history row, which the previous round's edit had overwritten rather than appended to, leaving the two largest changes in this RFC's history unrecorded. Corrects a false claim that the root id is domain-separated: the asymmetry is deliberate and recorded as such, and only the capability id and chain root apply a separator. Gives the security figure a constructor, without which no strategy could build an admission profile and the budget gate could never run. Adds the registration algorithm, which four requirements pinned to registration had left with no implementing interface. Splits the id-collision adversary into the two cases the range split actually permits, since a user-range id cannot collide with a core allocation. Adds test vectors and operator-visible reasons for the boot-time rejections introduced last round, and assigns the dependency removal to the phase that must precede the lint testing for it.                                                                                                                                                                |
 | v0.6    | 2026-10-07 | Fifth review round, two reviewers in parallel. Both converged independently on a Rust code fence left open across an interposed paragraph, which rendered the admission trait's introduction as Rust source while passing every existing check, and on a security-figure constructor calling a method the pinned prover type does not have. Corrects that registration was required at mint only, leaving every attenuated child absent from the registry because attenuation recomputes the capability id, which contradicted both a stated property and a test vector. Moves the unkeyed in-circuit hash entry point from future work into the phase that depends on it, makes the admission trait mandatory for a cost-only strategy so the budget gate is reachable, defines the policy trait the context names, binds the clock the dispatch reads, and replaces a strategy-owned error type with a core type carrying a strategy-supplied reason. Derives the security figure from the prover's own pinned security parameters rather than from a prover configuration object.                                                                          |
-| v0.7    | 2026-10-07 | Sixth review round. Corrects the naming table's treatment of the wire decoder, which derives the same capability id the mint path computes rather than a fourth distinct value, so the table no longer asserts an ambiguity the substrate does not have. Assigns the second strategy's measurement to the phase that lands its crate, and stops future work reinstating an ownership the performance section declines to name. States what the calldata-layout conformance test currently pins and what this change must extend it to, so an adversary mitigation no longer gates on a test narrower than the one described. Names the conformance test that pins the absent binding, and resolves the one remaining phase disagreement between the key-files list and the phase that owns the dependency removal.                                                                                                                                                                                                                                                                                                                                            |
-| v0.8    | 2026-10-07 | Eighth review round. Records that RFC-0958 specifies a different relation for the same public inputs than this RFC binds, and that the implemented circuit has drifted from RFC-0958 in both respects. The prohibition this RFC previously stated contradicted the RFC it declares as amended; it now states the drift, adopts a narrower relation deliberately, and says adopting it requires amending RFC-0958 rather than adding a strategy beside it. Makes the expectation a core-owned trait, since a Layer-B crate cannot name a third-party type to build the context that carries it. Separates the boot gate from the verification gate so the latter is reachable, and gives the test vector that depends on it a distinct observation point. Adds the mint-path wiring to the phase that gates registration, and the corpus, determinism, and profile items each phase was already named as owning. Corrects proof-of-work bits to field width in three places, adds the missing error arm to dispatch, and gives the allocation gate its own vectors.                                                                                            |
+| v0.7    | 2026-10-07 | Seventh review round. Corrects the naming table's treatment of the wire decoder, which derives the same capability id the mint path computes rather than a fourth distinct value, so the table no longer asserts an ambiguity the substrate does not have. Assigns the second strategy's measurement to the phase that lands its crate, and stops future work reinstating an ownership the performance section declines to name. States what the calldata-layout conformance test currently pins and what this change must extend it to, so an adversary mitigation no longer gates on a test narrower than the one described. Names the conformance test that pins the absent binding, and resolves the one remaining phase disagreement between the key-files list and the phase that owns the dependency removal.                                                                                                                                                                                                                                                                                                                                          |
+| v0.8    | 2026-10-07 | Eighth review round. Records that RFC-0958 specifies a different relation for the same public inputs than this RFC binds, and that the implemented circuit has drifted from RFC-0958 in both respects. The prohibition this RFC previously stated contradicted the RFC it declares as amended; it now states the drift, adopts a narrower relation deliberately, and says adopting it requires amending RFC-0958 rather than adding a strategy beside it. Makes the expectation a core-owned trait, since a Layer-B crate cannot name a third-party type to build the context that carries it. Separates the boot gate from the verification gate so the latter is reachable, and gives the test vector that depends on it a distinct observation point. Adds the mint-path wiring to the phase that gates registration, and the corpus, determinism, and profile items each phase was already named as owning. Corrects three labels that called the proof-of-work bits a field width, adds the missing error arm to dispatch, and gives the allocation gate its own vectors.                                                                                |
+| v0.9    | 2026-10-07 | Ninth review round. Restores a test vector whose body a previous edit had merged into the following one, which had left the adversary that cites it pointing at an empty paragraph. Splits the operator acceptance set into the choice and the dispatch gate that reads it, because RFC-0008 excludes Class C from any consensus-relevant path and one row claiming both broke that rule while the surrounding prose described a split the table did not contain. Names the phase step that supplies the primitive before the step that asserts the hop it supplies, binds and tests the same name in the dispatch algorithm, gives the execution class mapping the standalone heading the template prescribes, disambiguates the strategy table's source column against the dependency list, and corrects a history row that described its own change backwards.                                                                                                                                                                                                                                                                                             |
 
 ## Related RFCs
 

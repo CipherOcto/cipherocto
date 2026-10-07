@@ -1294,9 +1294,15 @@ about what an id means.
 **A3b — A strategy claims an RFC-range id core has not allocated.** _Impact:_
 low; requires a crate already trusted to run. _Mitigation:_ the attestation
 registry carries an allocation record naming which RFC-range ids core has
-allocated, written only by the core maintainer's allocation commit and landed in
-Phase 1. Registration rejects an RFC-range id absent from it. Until that record
-exists, the RFC range admits nothing — the fail-closed state, not an open one.
+allocated **and to which crate**, written only by the core maintainer's
+allocation commit and landed in Phase 1. Registration rejects an RFC-range id
+absent from it, and rejects one present but allocated to a different crate — the
+claimant being the identity the registration host observes at link time, since a
+crate asked to name itself would name whatever the record names. Until that
+record exists, the RFC range admits nothing — the fail-closed state, not an open
+one. The membership half alone is the weaker check and was the one this entry
+originally described: reserving a value without binding it lets any crate claim
+a core-sanctioned id.
 
 **A4 — `verify` panics on adversarial attestation input.** _Impact:_ availability.
 _Mitigation:_ `catch_unwind` at the dispatch boundary converts a Rust panic into
@@ -1519,10 +1525,13 @@ registration fails (A3b).
 **TV7g** — the strategy the allocation record names registers its id:
 registration succeeds, and the id resolves at dispatch.
 
-**TV7h** — a different crate registers an id the record allocates to another
-strategy: registration fails, naming the mismatch. An earlier draft had TV7g
-state only that the id was in the record, which left the ownership half
-unenforced and let any crate claim a core-sanctioned id.
+**TV7h** — a crate whose link-time identity differs from the record's owner
+registers that id: registration fails, naming the mismatch. The vector must vary
+the _host-observed_ identity, not a value the strategy reports about itself —
+a strategy asserting a different identity would pass, and that is the whole
+reason the host supplies the claimant. An earlier draft had TV7g state only that
+the id was in the record, which left the ownership half unenforced and let any
+crate claim a core-sanctioned id.
 
 **TV8** — `verify` panics on adversarial input under an unwinding build: REJECT,
 node survives. See A4 for the abort-build caveat.

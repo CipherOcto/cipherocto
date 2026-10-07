@@ -148,7 +148,8 @@ graph TD
     HasId -->|no| Mac[Macaroon path<br/>RFC-0957]
     Mac --> Accept
     HasId -->|yes| Cfg[Operator config<br/>acceptance set]
-    Cfg --> Reg[AttestationRegistry<br/>octo-wallet::capability]
+    Cfg -->|not accepted here| Reject
+    Cfg -->|accepted| Reg[AttestationRegistry<br/>octo-wallet::capability]
     Reg -->|unknown id| Reject
     Reg -->|registered| S1[RootSecretKnowledge<br/>RFC-0958]
     Reg -->|registered| S2[InBoundaryExecution<br/>RFC-0630]
@@ -157,10 +158,18 @@ graph TD
     S2 --> Req
     S3 --> Req
     Req --> Kinds[Served PayloadKindId set<br/>RFC-0871 node role]
-    Reg --> Verify[verify]
+    Kinds -->|verification needs kinds<br/>the node does not serve| Reject
+    Reg -->|step 5, after the step-4 gate| Verify[verify]
     Verify -->|unsatisfied| Reject
     Verify -->|satisfied| Accept
 ```
+
+The diagram carries both dispatch gates that reject on operator posture rather
+than on the attestation: the acceptance set at step 2, and the step-4
+verification-side coverage check. The step-4 edge into `verify` is drawn as a
+separate edge because a node that fails step 4 never reaches step 5, while both
+draw from the resolved strategy — collapsing them into one path would assert
+that a rejected-at-step-4 node still verifies.
 
 The unauthenticated branch is step 1 of the dispatch and is a first-class
 outcome, not a degenerate one: most capabilities carry no attestation, and a
@@ -312,8 +321,12 @@ pub trait AttestationAdmission {
     /// strategy states that it carries no circuit cost, and it is a claim the
     /// strategy must be true about, so it is written rather than inherited.
     /// A strategy that returns `None` while carrying a proof skips the budget
-    /// gates entirely, which is why LR1 makes implementing this trait
-    /// mandatory for a cost-bearing strategy rather than optional.
+    /// gates entirely. LR1 makes implementing this trait mandatory for a
+    /// cost-bearing strategy, but implementing it is not the same as answering
+    /// it truthfully: nothing in the registry can tell a `None` that means "no
+    /// circuit cost" from one that means "I did not measure mine", so a
+    /// cost-bearing strategy returning `None` is a false claim about itself
+    /// that review must catch rather than a rule the runtime enforces.
     fn admission_profile(&self) -> Option<AdmissionProfile>;
 }
 
@@ -325,7 +338,9 @@ pub struct Admission {
     pub required_payload_kinds: Vec<PayloadKindId>,
     pub verifier_needs_producing_kinds: bool,
     /// Circuit budget facts, or `None` where the strategy declares it carries
-    /// no circuit cost. A strategy that carries a proof must supply one (LR1).
+    /// no circuit cost. A cost-bearing strategy must answer this truthfully;
+    /// the obligation is on the strategy, not on the gate, which cannot tell a
+    /// cost-free claim from an unmeasured one.
     pub admission_profile: Option<AdmissionProfile>,
 }
 
@@ -1142,11 +1157,11 @@ satisfying attestation, registry present: ACCEPT.
 
 **TV4** — TV2 with a registered strategy outside the acceptance set: REJECT.
 
-**TV5b** — a token whose attestation payload exceeds the size bound: rejected
-before dispatch as a decode failure, with no strategy resolved.
-
 **TV5** — a token whose attestation envelope is truncated or unparseable: rejected
 before dispatch, as a decode failure rather than a verification rejection.
+
+**TV5b** — a token whose attestation payload exceeds the size bound: rejected
+before dispatch as a decode failure, with no strategy resolved.
 
 **TV6** — TV2 with an unsatisfying attestation: REJECT.
 
@@ -1334,6 +1349,19 @@ since this is the phase that lands the crate it describes. Land operator policy 
 boot-time validation. Land the dispatch, including the registry lookup at step 0,
 in the wallet verification path behind macaroon-path back-compat.
 
+**This phase also owns registering `in_boundary_execution`.** LR1 requires every
+strategy crate to register, so leaving both crates unregistered with only Phase 3
+naming one would make the second a permanent exemption no phase owns. Unlike
+`root_secret_knowledge`, this strategy's relation — a proof-of-inference trace
+bound to the token, per RFC-0630 — is not waiting on the missing in-circuit
+BLAKE3 entry point, so it has no Phase 3 blocker. Its two preconditions are
+therefore both satisfiable here: the profile measured in this phase, and the
+relation verified against the trace the boundary actually produces. Once both
+hold, register the strategy in the same phase; until then it has no registry
+entry and naming it in an acceptance set fails at boot as unresolvable
+(§Error Handling). Registering it here rather than deferring is what keeps LR1
+unconditional.
+
 ### Phase 3: Root-Secret Binding
 
 For `root_secret_knowledge`:
@@ -1454,6 +1482,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.9    | 2026-10-07 | Ninth review round. Restores a test vector whose body a previous edit had merged into the following one, which had left the adversary that cites it pointing at an empty paragraph. Splits the operator acceptance set into the choice and the dispatch gate that reads it, because RFC-0008 excludes Class C from any consensus-relevant path and one row claiming both broke that rule while the surrounding prose described a split the table did not contain. Names the phase step that supplies the primitive before the step that asserts the hop it supplies, binds and tests the same name in the dispatch algorithm, gives the execution class mapping the standalone heading the template prescribes, disambiguates the strategy table's source column against the dependency list, and corrects a history row that described its own change backwards.                                                                                                                                                                                                                                                                                             |
 | v0.10   | 2026-10-07 | Tenth review round, two reviewers. Restores a note displaced from beside the test vector it qualifies, which the previous round's repair had left under an unrelated one and with no antecedent for its referent. Removes the default that let a strategy return no admission profile and skip both boot gates, so the trait no longer supplies a value that contradicts what it requires. Adds the verifier clock to the assumptions audit and an adversary for it, because the active predicate covers expiry as well as revocation and a bad clock is an authorisation failure on the gate the whole RFC leans on. Gives operator policy the same class treatment the acceptance set received, with the restriction that policy may cause a refusal and never an acceptance. Adds the forward-compatibility consequence, which is fail-closed by accident of the hash rather than by design, and bounds the attestation payload. Corrects the issuer identity in the roles table, which mapped the issuer to the holder, and merges three definitions that had been concatenated into one paragraph.                                                       |
 | v0.11   | 2026-10-07 | Eleventh review round. Repairs damage the previous round's own insertions caused: an opening emphasis marker with no closer, an orphaned emphasis marker, a table row separated from its table by a blank line, and two entries inserted into ordered lists above the entry that should precede them. All four are the same defect as an entry being added without checking where it lands, which is the class the round-9 repair already demonstrated. Adds the phase item and test vector that the size bound introduced in the previous round lacked, since a normative requirement with nothing scheduled behind it is the same gap that produced the unowned corpus and determinism vectors.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| v0.12   | 2026-10-07 | Twelfth review round. Reorders TV5b below TV5, which is the same misplaced-entry defect the previous round's own message claimed to have repaired — the vector was added above the entry it qualifies and above the one whose number it extends. Assigns registration of `in_boundary_execution` to the phase that lands its crate, since Lifecycle Requirement 1 is unconditional and no phase named a second registration, leaving one strategy permanently exempt. Corrects a doc comment that attributed to LR1 a rule LR1 does not contain: LR1 requires implementing the admission trait, not returning a profile, so a cost-bearing strategy answering `None` is a self-description no runtime check can falsify and the obligation is review-enforced. Draws the two dispatch rejection edges the diagram omitted, the acceptance set and the step-4 coverage gate, without which a node failing either gate read as verifying anyway.                                                                                                                                                                                                                |
 
 ## Related RFCs
 

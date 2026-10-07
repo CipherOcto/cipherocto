@@ -66,15 +66,15 @@ re-implementation of it, and this RFC does not amend RFC-0630.
 
 ## Design Goals
 
-| Goal | Target                                                                  | Metric                                                                                          |
-| ---- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| G1   | Adding an attestation strategy requires 0 edits to `octo-wallet` core   | strategy crate PR touches no core file                                                          |
-| G2   | Unknown attestation id rejected, never downgraded                       | 100% of negative tests reject                                                                   |
-| G3   | Operator acceptance set is fail-closed against what the node can verify | config naming an unregistered strategy refuses boot                                             |
-| G4   | Wallet can verify every capability minted before this RFC               | 100% of the historical token corpus, with byte-identical re-serialisation                       |
-| G5   | Both reference strategies are instances, not special cases              | 2 strategy crates implementing one trait, one registry                                          |
-| G6   | Operator can select non-attested operation without a core change        | an acceptance set naming no strategies verifies the full historical corpus on the macaroon path |
-| G7   | A circuit-backed strategy states its admission cost and soundness       | profile present, and its soundness figure traceable to prover parameters                        |
+| Goal | Target                                                                  | Metric                                                                                             |
+| ---- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| G1   | Adding an attestation strategy requires 0 edits to `octo-wallet` core   | strategy crate PR touches no core file                                                             |
+| G2   | Unknown attestation id rejected, never downgraded                       | 100% of negative tests reject                                                                      |
+| G3   | Operator acceptance set is fail-closed against what the node can verify | config naming an unregistered strategy refuses boot                                                |
+| G4   | Wallet can verify every capability minted before this RFC               | 100% of the pre-RFC capability fixtures, re-serialising to identical bytes                         |
+| G5   | Both reference strategies are instances, not special cases              | 2 strategy crates implementing one trait, one registry                                             |
+| G6   | Operator can select non-attested operation without a core change        | an acceptance set naming no strategies verifies the whole pre-RFC fixture set on the macaroon path |
+| G7   | A circuit-backed strategy states its admission cost and soundness       | profile present, and its soundness figure traceable to prover parameters                           |
 
 ## Motivation
 
@@ -241,10 +241,13 @@ pub trait AttestationStrategy: Send + Sync {
     /// every node, or verification is non-deterministic across the fleet.
     fn verify(&self, ctx: &AttestationVerifyCtx<'_>) -> Result<AttestationOutcome, AttestationError>;
 }
+```
 
 **Optional companion: what a node must serve to verify, and what admitting this
-/// strategy costs. A strategy that does not implement this declares no
-/// deployment requirement and no cost.
+strategy costs. A strategy that does not implement this declares no
+deployment requirement and no cost.
+
+```rust
 pub trait AttestationAdmission {
     /// Payload kinds a node must serve to produce a valid attestation.
     /// Empty means the strategy imposes no deployment requirement.
@@ -306,12 +309,15 @@ pub enum CostFigure {
 pub struct SecurityFigure(u32);
 
 impl SecurityFigure {
-    /// Derive the security a configuration actually delivers. This is the only
-    /// way to obtain a value, and it is a function of the parameters rather
-    /// than a claim about them.
+    /// Derive the security the bound prover configuration actually delivers.
+    /// This is the only way to obtain a value. The figure is computed from the
+    /// configured proof-system parameters — field width, blowup factor, and
+    /// query count — rather than claimed, so two strategies on different
+    /// configurations cannot report the same number by assertion.
     #[must_use]
     pub fn from_prover_parameters(params: &ProverParameters) -> Self {
-        Self(params.security_bits())
+        Self(params.field_bits()
+            + params.log_blowup_factor() * params.n_queries())
     }
 
     #[must_use]
@@ -342,12 +348,20 @@ pub struct AttestationVerifyCtx<'a> {
 }
 ```
 
+`PolicySource` is a read-only trait a strategy uses to consult node policy it
+was configured with — for example a threshold or an allow-list. It exposes no
+mutation and no concrete storage, so a strategy cannot reach the substrate
+through it. A strategy that needs nothing from policy receives a handle whose
+methods return `None`.
+
 `Expectation` is the strategy's own type describing what a valid attestation for
 this capability must establish. It is constructed **from the capability alone**,
 never from the attestation, and that construction rule is the whole content of
-the anti-self-comparison guarantee. `AttestationError` is a strategy-defined
-error type; the dispatch treats every variant identically as a rejection, so the
-variant set is the strategy's business. `ProverParameters` is the existing
+the anti-self-comparison guarantee. `AttestationError` is a **core** type carrying an
+opaque, strategy-supplied reason, because it appears in the trait's return
+position and third-party strategies dispatch through one registry — a
+strategy-owned error type could not appear there. The strategy chooses the
+reason; core decides what every variant means, which is rejection. `ProverParameters` is the existing
 prover configuration type, not a new one.
 
 **A verifier MUST NOT compare a proof against itself.** An existing
@@ -356,8 +370,10 @@ proof's own public inputs as the comparison target, which makes the check
 vacuous. `verify` MUST always receive expectations derived from the capability
 under verification, never from the attestation being checked. A strategy that
 accepts an absent expectation and falls back to the proof's own inputs is not
-expressible: the expectation is a required field of the context, not an option,
-so the fallback cannot be written against this trait.
+expressible against the trait: the expectation is a required field of the context
+rather than an option, so the absent case has no representation. A strategy that
+ignores the expectation it is handed remains possible, which is why this is stated
+as a type property plus a review convention rather than as a guarantee alone.
 
 **Outcome.** `AttestationOutcome` is `Satisfied` or `Unsatisfied`, plus an
 optional machine-readable reason for the rejection that is safe to log. It is
@@ -486,7 +502,7 @@ the full 32-byte `root_secret_hash`.
 **Fail-closed dispatch.**
 
 ```text
-verify_capability_attestation(token, node, issuers, strategies):
+verify_capability_attestation(token, node, issuers, strategies, clock):
     # `issuers`   = the holder registry, keyed by capability id, existing today
     # `strategies` = the attestation registry, keyed by attestation type id, new
     0. if issuers.lookup_active(token.capability_id, clock) is None:
@@ -582,10 +598,13 @@ where a strategy could skip them.
 The remaining two registration-time guarantees are **type properties rather than
 runtime checks**, which is the stronger form. `SecurityFigure` takes no bare
 integer from anywhere, so a soundness figure cannot be asserted independently of
-the prover parameters it derives from. And `AttestationVerifyCtx` carries the expectation as a required
-field rather than an option, so the self-comparing fallback is not expressible by
-a strategy that takes the context type. Neither needs an algorithm because
-neither has a code path to check.
+the prover parameters it derives from. And `AttestationVerifyCtx` carries the
+expectation as a required field rather than an option, so the _absent-expectation_
+fallback — the shape where a verifier compares a proof against itself because it
+has nothing to compare it to — cannot be written against this trait. That is the
+narrow claim; the broader one, that no strategy can ignore the expectation it is
+handed, is a convention enforced by review rather than by a type. Neither needs
+an algorithm because neither has a code path to check.
 
 Boot validation therefore covers three things: resolvability, producing-side
 coverage, and admission budget. An unmeasured cost fails the boot rather than
@@ -594,16 +613,22 @@ state — it is a rejection, not a wildcard.
 
 ### Lifecycle Requirements
 
-1. A strategy crate MUST implement `AttestationStrategy`, implement
-   `AttestationAdmission` if it declares any payload-kind requirement, and
-   register in an `init` path. Core MUST NOT be edited to add one.
+1. A strategy crate MUST implement `AttestationStrategy` and register in an
+   `init` path. Core MUST NOT be edited to add one. It MUST ALSO implement
+   `AttestationAdmission` if it declares any payload-kind requirement **or**
+   carries any circuit cost — the trait is where both live, so a cost-only
+   strategy has the same obligation as a kind-requiring one. Leaving the trait
+   unimplemented states that a strategy imposes no requirement and costs
+   nothing, which is a claim the strategy must be true about.
 2. A node MUST validate its operator policy at boot and refuse to start on an
    unresolvable acceptance entry.
 3. A verifier MUST reject, never downgrade, on an unknown id, an unresolved
    strategy, a capability absent from the registry, or a policy mismatch.
-4. **Attenuation MUST carry the attestation envelope forward, or refuse.** The
-   envelope propagates from parent to child at the point the child is minted, so
-   a child of an attested parent cannot exist without one. This is a mint-time
+4. **Attenuation MUST carry the attestation envelope forward and register the
+   child, or refuse.** The envelope propagates from parent to child at the point
+   the child is produced, so a child of an attested parent cannot exist without
+   one. Because attenuation recomputes the capability id, the child is a
+   different registry key and MUST be registered under it in the same operation. This is a mint-time
    rule in core rather than a verification-time one, because at verification the
    verifier has no way to learn that a parent carried an attestation: it sees
    only the child, and an attenuation need not name its parent. The rule is
@@ -767,8 +792,9 @@ Two further limits follow, and neither is fixed by a better proof:
 "was this capability issued", which is what makes acceptance meaningful. It does
 not answer "who is presenting it". Holder identity is a separate binding that
 attenuation does not disturb: a bearer may attenuate, re-sign, and transfer, and
-every dispatch step still passes, because the capability is still issued and the
-root secret is unchanged. That is bearer-token semantics rather than a defect
+every dispatch step still passes — once the child is registered under its own
+capability id, which attenuation changes — because the capability is still issued
+and the root secret is unchanged. That is bearer-token semantics rather than a defect
 here, but it means "the registry authorised this" must not be read as "the
 registry identified the presenter".
 
@@ -848,9 +874,10 @@ the native verifier is a process-level event outside any caller's reach.
 
 **A5 — Strategy verification is non-deterministic.** Two nodes disagree on the
 same attestation. _Impact:_ high; fork in acceptance. _Mitigation:_
-determinism is a trait requirement and is exercised by every negative test
-vector in §Test Vectors, each of which must produce the same outcome on every
-node.
+determinism is a trait requirement, and TV16 pins it across two independently
+built implementations rather than across two calls into one build. The other
+vectors establish rejection on a single implementation, which is a weaker and
+different claim.
 
 **A6 — Attestation stripped by attenuation.** An attested parent is attenuated to
 an unattested child, which then takes the macaroon path as if it carried no
@@ -992,7 +1019,12 @@ fails, and the incumbent is unaffected.
 node survives. See A4 for the abort-build caveat.
 
 **TV9** — historical capability corpus replayed: all accepted, and every
-re-serialised capability id byte-identical to its pre-RFC value.
+re-serialised capability id byte-identical to its pre-RFC value. The corpus is
+the set of capability fixtures checked into the capability crate's test tree,
+captured before this RFC changes the canonical form and pinned by hash so a
+change to it cannot pass silently. Phase 1 captures and freezes it. A corpus
+that does not exist yet is not a passing result: the vector is unsatisfiable
+until the capture lands, and saying so is the point.
 
 **TV10** — strategy declaring `verifier_needs_producing_kinds`, on a node not
 serving the declared kinds: REJECT.
@@ -1013,11 +1045,16 @@ boot failure, per §Root-Secret Binding.
 `root_secret_knowledge` attestation, absent from the registry: REJECT at dispatch
 step 0. This vector pins that the proof carries no authorisation of its own.
 
-**TV14** — attenuating an attested parent: the resulting child carries the
-envelope forward and verifies, because the binding target does not change under
-attenuation (§Root-Secret Binding). The negative half of Lifecycle Requirement 4
-is that no such child can be minted without the envelope — a mint that drops it
-fails at mint, not at verification.
+**TV14** — attenuating an attested parent: the child carries the envelope
+forward and is registered under its post-attenuation capability id, then verifies,
+because the binding target does not change under attenuation (§Root-Secret
+Binding). Both halves are load-bearing: an attenuation that drops the envelope
+fails at production, and one that does not register the child fails at step 0.
+
+**TV16** — determinism: the same capability and attestation verified by two
+independently built strategy implementations yields the same verdict. A
+single-implementation run cannot satisfy this; the vector requires two builds.
+Phase 1 adds it, and A5 is not closed until it passes.
 
 **TV15** — capability C's attestation envelope copied onto capability C′: REJECT
 at step 0, because the envelope is inside the hashed canonical form, so C′'s
@@ -1107,6 +1144,14 @@ envelope. Registering first and attesting second would leave every attested
 capability absent from the registry, because the attestation changes the id the
 registry is keyed on.
 
+The same rule applies to attenuation, which is easy to overlook because it is
+not a mint: extending the caveat chain **recomputes the capability id**, so an
+attenuated child is a different registry key from its parent. Attenuation MUST
+therefore register the child under its post-attenuation id, in the same operation
+that carries the envelope forward. Without this, every attenuated child is absent
+from the registry and step 0 rejects it — a capability the bearer legitimately
+narrowed becomes unusable.
+
 ### Phase 2: Enhanced
 
 Land the reference strategy crates — `octo-cap-zk` for
@@ -1121,17 +1166,22 @@ For `root_secret_knowledge`:
 
 1. Add `root_secret_hash` to the circuit's public inputs and assert the BLAKE3
    hop. This is a public-input change, not a token-format change.
-2. Slim the in-circuit BLAKE3 module to the single-chunk path actually called. The
-   module is currently test-gated; un-gating it in its present shape admits far
-   more code than the one call requires.
-3. Update the witness-calldata layout mirror and extend the layout conformance
+2. **Add an unkeyed entry point to the in-circuit BLAKE3 module.** This is the
+   blocking prerequisite and it comes first: the module exposes only keyed-hash
+   and HMAC entry points above the compression function, and keyed mode with a
+   zero key is not BLAKE3 unkeyed mode, so the relation cannot be expressed with
+   what exists today.
+3. Slim that module to the unkeyed single-chunk path the relation actually calls.
+   It is currently test-gated, and un-gating it in its present shape admits far
+   more code than one call requires.
+4. Update the witness-calldata layout mirror and extend the layout conformance
    test to cover the new fields (A8). The same conformance discipline covers the
    related trap recorded in `docs/architecture/zk-stwo-cairo-executable-recipe.md`,
    where a mismatch between declared and actual builtins produces a proof over
    unintended inputs.
-4. Re-derive the circuit ceiling from the resulting program and record the new
+5. Re-derive the circuit ceiling from the resulting program and record the new
    figure with its rationale (§Performance Targets).
-5. Invert the characterization test that pins the absent binding into a
+6. Invert the characterization test that pins the absent binding into a
    rejection test (TV12), and only then register the strategy.
 
 ### Phase 4: Cross-cutting substrate corrections
@@ -1200,20 +1250,21 @@ Phase 1 work.
 
 - Third-party attestation strategies registering without core edits (G1).
 - RFC-0958 F7 recursive composition to close the proof-size gap, tracked there.
-- An unkeyed in-circuit hash entry point; the current in-circuit module exposes only
-  keyed entry points, which is what blocks §Root-Secret Binding.
+- An in-circuit hash module supporting more than the single unkeyed 32-byte case
+  Phase 3 adds; a longer secret or a different construction would need more of
+  the permutation exposed.
 - Replaying the admission-profile cost figures as measured values once Phase 3 has
   produced them, for the second strategy as well as the first.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| v0.2    | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| v0.3    | 2026-10-07 | Multi-round adversarial review, five lenses, all findings resolved. Corrects three claims that the code contradicts: the attestation relation is **not** established today (the circuit asserts only that a witness commitment is non-zero, and a conformance test proves an unrelated secret succeeds), the circuit already has `cap_root_hash` public inputs which are **not** the binding target, and the mint path currently discards the witness rather than proving it. Adds the registry as a hard authorisation dependency after establishing that a self-minted capability satisfies the relation unaided, and that only the registry lookup rejects it. Splits the fat strategy trait, removing a fail-open default on a rejection gate. Adds an attenuation rule so a child cannot silently lose an attestation. Declares the RFC-0957 wire amendment and the back-compat encoding it depends on. Adds the attestation payload envelope, which the previous draft never specified. Adds §Error Handling. Retargets §Key Files at the capability canonical form rather than the storage projection. Removes the duplicated §Rationale. |
-| v0.4    | 2026-10-07 | Third review round. Restores the §RFC-0008 execution class mapping that round 2 removed as redundant: RFC-0008 requires every RFC to carry that table, so deleting it broke a MUST rather than a convention. Splits the acceptance-set class assignment, because its selection is operator-local while its effect is consensus-relevant once advertised in node metadata. Gives the admission cost an explicit unmeasured state, since the struct could not represent the honest answer for a strategy whose cost has not been measured, and makes boot validation actually consume the profile and the declared payload kinds rather than only checking resolvability. Replaces the attenuation rule's verification-time framing with a mint-time one, since a verifier cannot learn that a parent carried an attestation. Adds an adversary for a strategy under-reporting its own admission figures, and a rejection reason for one reference strategy being counted where no owner exists.                                                                                                                                                   |
-| v0.5    | 2026-10-07 | Fourth review round. Restores the v0.3 history row, which the previous round's edit had overwritten rather than appended to, leaving the two largest changes in this RFC's history unrecorded. Corrects a false claim that the root id is domain-separated: the asymmetry is deliberate and recorded as such, and only the capability id and chain root apply a separator. Gives the security figure a constructor, without which no strategy could build an admission profile and the budget gate could never run. Adds the registration algorithm, which four requirements pinned to registration had left with no implementing interface. Splits the id-collision adversary into the two cases the range split actually permits, since a user-range id cannot collide with a core allocation. Adds test vectors and operator-visible reasons for the boot-time rejections introduced last round, and assigns the dependency removal to the phase that must precede the lint testing for it.                                                                                                                                                   |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v0.2    | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v0.3    | 2026-10-07 | Multi-round adversarial review, five lenses, all findings resolved. Corrects three claims that the code contradicts: the attestation relation is **not** established today (the circuit asserts only that a witness commitment is non-zero, and a conformance test proves an unrelated secret succeeds), the circuit already has `cap_root_hash` public inputs which are **not** the binding target, and the mint path currently discards the witness rather than proving it. Adds the registry as a hard authorisation dependency after establishing that a self-minted capability satisfies the relation unaided, and that only the registry lookup rejects it. Splits the fat strategy trait, removing a fail-open default on a rejection gate. Adds an attenuation rule so a child cannot silently lose an attestation. Declares the RFC-0957 wire amendment and the back-compat encoding it depends on. Adds the attestation payload envelope, which the previous draft never specified. Adds §Error Handling. Retargets the key-files list at the capability canonical form rather than the storage projection. Removes a duplicated rationale section. |
+| v0.4    | 2026-10-07 | Third review round. Restores the execution class mapping RFC-0008 requires that round 2 removed as redundant: RFC-0008 requires every RFC to carry that table, so deleting it broke a MUST rather than a convention. Splits the acceptance-set class assignment, because its selection is operator-local while its effect is consensus-relevant once advertised in node metadata. Gives the admission cost an explicit unmeasured state, since the struct could not represent the honest answer for a strategy whose cost has not been measured, and makes boot validation actually consume the profile and the declared payload kinds rather than only checking resolvability. Replaces the attenuation rule's verification-time framing with a mint-time one, since a verifier cannot learn that a parent carried an attestation. Adds an adversary for a strategy under-reporting its own admission figures, and a rejection reason for one reference strategy being counted where no owner exists.                                                                                                                                                        |
+| v0.5    | 2026-10-07 | Fourth review round. Restores the v0.3 history row, which the previous round's edit had overwritten rather than appended to, leaving the two largest changes in this RFC's history unrecorded. Corrects a false claim that the root id is domain-separated: the asymmetry is deliberate and recorded as such, and only the capability id and chain root apply a separator. Gives the security figure a constructor, without which no strategy could build an admission profile and the budget gate could never run. Adds the registration algorithm, which four requirements pinned to registration had left with no implementing interface. Splits the id-collision adversary into the two cases the range split actually permits, since a user-range id cannot collide with a core allocation. Adds test vectors and operator-visible reasons for the boot-time rejections introduced last round, and assigns the dependency removal to the phase that must precede the lint testing for it.                                                                                                                                                                |
 
 ## Related RFCs
 

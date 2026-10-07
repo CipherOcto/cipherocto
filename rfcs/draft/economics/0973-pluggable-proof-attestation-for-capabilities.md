@@ -149,7 +149,7 @@ graph TD
     Iss -->|absent or inactive| Reject[REJECT]
     Iss -->|present and active| HasId{attestation<br/>id present?}
     HasId -->|no| Mac[Macaroon path<br/>RFC-0957]
-    Mac --> Accept
+    Mac --> Accept[ACCEPT]
     HasId -->|yes| Cfg[Operator config<br/>acceptance set]
     Cfg -->|not accepted here| Reject
     Cfg -->|accepted| Reg[AttestationRegistry<br/>octo-wallet::capability]
@@ -656,17 +656,33 @@ verify_capability_attestation(token, node, issuers, strategies, clock):
        if admission.verifier_needs_producing_kinds:
           if not node.serves_all(admission.required_payload_kinds):
              -> REJECT   # this node cannot verify what it cannot produce
-    5. outcome = strategy.verify(ctx{
+    5. outcome = catch_unwind(|| strategy.verify(ctx{
             capability:  token,
             attestation: token.attestation_payload,
             expectation: &core_expectation_for(token),  # never from the attestation
             policy:      node.policy_source(),
-       })
-       on Err(e) -> REJECT, carrying e's reason    # a strategy that cannot decide
-                                                # has not verified anything
+       }))
+       # The strategy reads its binding target as ctx.expectation.bound_value(),
+       # which for an RFC-0957 capability yields macaroon.root_secret_hash — the
+       # value the relation in §Root-Secret Binding is stated against.
+       #
+       # A panic is a rejection, never an acceptance and never a propagated
+       # fault: a strategy that crashes has verified nothing. Under an
+       # unwinding build the unwind is contained here and becomes Err; under an
+       # abort build it cannot be, so the containment is conditional (A4).
+       on panic      -> REJECT, reason "strategy panicked"
+       on Err(e)     -> REJECT, carrying e's reason    # a strategy that cannot decide
+                                                     # has not verified anything
        if outcome is Unsatisfied -> REJECT, with the reason outcome carries
     -> ACCEPT
 ```
+
+The panic arm is a step of the dispatch, not a wrapper around it. It sits
+beside the `Err` arm rather than outside the call because a strategy that
+panics has produced no outcome at all, and treating that as an ordinary error
+return would let a future implementation map it onto a success variant. Under
+an abort build there is nothing to catch, which is why §Error Handling and A4
+both scope the guarantee rather than assuming it.
 
 Step 0 is load-bearing and is not an optimization. Steps 1–5 can be satisfied by
 an attacker who minted their own capability; only step 0 makes acceptance mean
@@ -874,9 +890,10 @@ underlying attestation bytes.
 The first two rows are the same rejection with different causes, and the reason
 column distinguishes them because an expired capability is an operational
 condition an operator can act on, while an unknown one usually means the token
-was never issued here. The two rows before them are decode failures rather than
-verification outcomes, and are listed so the operator sees the whole set; they
-happen before any strategy is resolved.
+was never issued here. The next two rows after them are decode failures rather
+than verification outcomes, and are listed so the operator sees the whole set;
+they happen before any strategy is resolved, which is why they appear ahead of
+the dispatch steps that follow them in the table.
 
 Boot-time rejections, all reported before the node serves: an unresolvable
 strategy id, an acceptance entry whose required payload kinds the node does not
@@ -992,8 +1009,9 @@ answer what an adversary controls and where each control is stopped.
 | 4   | What is the residual exposure?                           | Registry write authority, holder identity after transfer, and attestation replay across a shared root secret. All three are stated as limits rather than solved. |
 | 5   | Does accepting a strategy widen what the node can check? | No. Widening requires shipping the strategy, which is a code change and an audited registration. Configuration can narrow only.                                  |
 
-The question this table exists to answer is Q3, because the intuitive answer —
-"the proof stops it" — is wrong. The proof stops nothing on its own.
+The question this table exists to answer is its third row — what stops a
+self-minted capability — because the intuitive answer, "the proof stops it", is
+wrong. The proof stops nothing on its own.
 
 **A1 — Operator silently downgrades their node's assurance.** The operator sets
 an acceptance set excluding every attested capability, and clients that assume
@@ -1391,7 +1409,13 @@ narrowed becomes unusable.
 
 Land the reference strategy crates — `octo-cap-zk` for
 `root_secret_knowledge` and `octo-cap-poi` (new) for `in_boundary_execution` —
-with no registry entry at all. Record the
+each starting with no registry entry. Land the dispatch's panic containment
+here (A4, TV8), since this is the phase that lands the dispatch: the `verify`
+call is wrapped in `catch_unwind` and an unwind becomes a rejection, under an
+unwinding build profile. Containment is part of landing the dispatch rather
+than a later hardening step — a dispatch that calls third-party `verify`
+without it has no reachable posture against a panicking strategy, and no later
+phase is named to add it. Record the
 `in_boundary_execution` admission profile here, measured rather than estimated,
 since this is the phase that lands the crate it describes. Land operator policy with
 boot-time validation. Land the dispatch, including the registry lookup at step 0,
@@ -1405,8 +1429,9 @@ bound to the token, per RFC-0630 — is not waiting on the missing in-circuit
 BLAKE3 entry point, so it has no Phase 3 blocker. Its two preconditions are
 therefore both satisfiable here: the profile measured in this phase, and the
 relation verified against the trace the boundary actually produces. Once both
-hold, register the strategy in the same phase; until then it has no registry
-entry and naming it in an acceptance set fails at boot as unresolvable
+hold, register the strategy in the same phase, at which point the phase is
+finished for this strategy; until then it has no registry entry and naming it in
+an acceptance set fails at boot as unresolvable
 (§Error Handling). Registering it here rather than deferring is what keeps LR1
 unconditional.
 
@@ -1535,6 +1560,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.12   | 2026-10-07 | Twelfth review round. Reorders TV5b below TV5, which is the same misplaced-entry defect the previous round's own message claimed to have repaired — the vector was added above the entry it qualifies and above the one whose number it extends. Assigns registration of `in_boundary_execution` to the phase that lands its crate, since Lifecycle Requirement 1 is unconditional and no phase named a second registration, leaving one strategy permanently exempt. Corrects a doc comment that attributed to LR1 a rule LR1 does not contain: LR1 requires implementing the admission trait, not returning a profile, so a cost-bearing strategy answering `None` is a self-description no runtime check can falsify and the obligation is review-enforced. Draws the two dispatch rejection edges the diagram omitted, the acceptance set and the step-4 coverage gate, without which a node failing either gate read as verifying anyway.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v0.13   | 2026-10-07 | Thirteenth review round, internal-consistency lens. Nine findings, all verified against the source before repair. The Summary said a strategy declares payload kinds a node must serve in order to verify, collapsing the producing-side list checked once at boot into the separate verification-side flag checked per call. TV16 fixed only capability and attestation where the determinism section makes the outcome a function of all three, so a strategy permitted to consult policy could never satisfy it as written. The refuse-only rule on policy was normative in the execution class table with nothing implementing, testing, or scheduling it, unlike the two conventions the RFC already labels review-enforced; it is now labelled the same way, with the reason the type cannot carry it. Three symbols were declared and never consumed — the soundness accessor, the expectation's sole method, and the measured-cost arm — and each now names where it is read. The naming table's prose claimed several values and three meanings over a table showing two of each. The strategy table cited RFC-0958 as the source for a relation this RFC deliberately narrows, against a dependency list declaring it amended. Three passages described a strategy as shipping disabled, which the error section explicitly denies is a state that exists. |
 | v0.14   | 2026-10-07 | Fourteenth review round, substrate-verification lens. Eleven claims about the existing codebase checked one at a time against the source. All eleven hold, including the load-bearing ones earlier rounds had already repaired: the unkeyed root-secret hash, the registry lookup the dispatch leans on, the single non-zero assertion in the circuit, the absence of an unkeyed in-circuit hash entry point, the witness discarded by the mint path, and the drift between the relation RFC-0958 specifies and the one the circuit implements. No claim contradicted the code. The lens produced two precision notes, which this round folds in. The conformance test was described as pinning the calldata order; it asserts a length and ten sampled slots, leaving thirteen unasserted, so a transposition among them passes it today — which is why the phase step now requires asserting every slot rather than extending a partial check. And the ZK public input was described as compared against a verifier-held expectation; it is in fact folded into the holder-signature Poseidon alongside other public fields and never compared against the secret, which is precisely why it cannot serve as the binding target.                                                                                                                                   |
+| v0.15   | 2026-10-07 | Fifteenth review round, structural-integrity lens. Seven findings, of which one is false: the reviewer counted twenty fence markers where the file has eighteen, which is nine balanced pairs and no unclosed block. The substantive finding is that the dispatch algorithm omitted the panic arm that three other sections already required — the adversary entry, the error table, and the test vector all describe a panic becoming a rejection, but the document's only normative statement of dispatch behaviour did not, and no phase scheduled it. The arm is now a step of the dispatch rather than a wrapper around it, since a strategy that panics has produced no outcome at all, and the phase that lands the dispatch now owns the containment. Corrects an error-table sentence pointing at rows positioned before the ones it names when they follow, labels the diagram's terminal accept node so it matches every other node, replaces a question label that named nothing with the row it actually refers to, and states the phase-2 registration in a way that does not contradict itself about when the registry entry appears. Routes the binding target through the expectation accessor rather than asserting in a doc comment that a strategy reads it there.                                                                               |
 
 ## Related RFCs
 

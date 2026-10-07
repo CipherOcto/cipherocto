@@ -182,18 +182,25 @@ not a bypass; its values are equally subject to registry lookup.
 codebase, and the binding relation below is only correct for one of them. This
 RFC uses unambiguous names and requires implementations to.
 
-| Name used here                    | Derivation                                                                               | Where it lives                                                          |
-| --------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `macaroon_root_secret_hash`       | `BLAKE3(root_secret)`                                                                    | macaroon field, covered by the capability id                            |
-| `capability_id`                   | `BLAKE3(0x05 ‖ canonical_ser_unsigned(macaroon))`                                        | macaroon field, registry primary key                                    |
-| `cap_root_hash` (ZK public input) | no fixed derivation; supplied per proof and compared against a verifier-held expectation | ZK circuit public inputs                                                |
-| `cap_root_hash` (egress)          | `BLAKE3(domain ‖ wire token)`                                                            | egress request hashing, which also disagrees with its own documentation |
+| Name used here                    | Derivation                                                                               | Where it lives                               |
+| --------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `macaroon_root_secret_hash`       | `BLAKE3(root_secret)`                                                                    | macaroon field, covered by the capability id |
+| `capability_id`                   | `BLAKE3(0x05 ‖ canonical_ser_unsigned(macaroon))`                                        | macaroon field, registry primary key         |
+| `cap_root_hash` (ZK public input) | no fixed derivation; supplied per proof and compared against a verifier-held expectation | ZK circuit public inputs                     |
+| `cap_root_hash` (wire decode)     | `compute_capability_id(macaroon)` — the **same** value as the row above                  | decoding a v1 wire token to its registry key |
 
-The first is the binding target. The second is the registry key. The third and
-fourth are unrelated and merely share the name. The egress derivation is listed
-because the file that computes it documents a different derivation for the same
-identifier, so the ambiguity is already self-contradicting in the substrate and
-is not merely a naming inconvenience.
+The first is the binding target. The second is the registry key. The third is
+unrelated to either and merely shares the name. The fourth is **not a fourth
+value**: the wire decoder derives the same capability id the mint path computes,
+byte-identically, and that equivalence is pinned by a test. It is listed only
+because one identifier carries three meanings across the substrate for two
+distinct values, which is the ambiguity worth eliminating.
+
+A comment in the wire decoder once documented a different derivation for this
+identifier and was corrected; the code was always computing the capability id.
+The name, not the behaviour, is what needs fixing — and renaming is a
+wire-affecting change recorded in §Implementation Phases rather than attempted
+here.
 
 The circuit's existing `cap_root_hash_lo`/`_hi` public inputs carry no fixed
 derivation today: the verifier supplies them as the expectation and compares the
@@ -430,9 +437,9 @@ second hash primitive**. It does require the BLAKE3 permutation to be computed
 
 **This relation is not established today, and the production path does not reach
 it.** The circuit computes a Poseidon commitment over the witness and asserts
-only that it is non-zero, which any witness satisfies, and a conformance test
-pins exactly that absence by accepting an unrelated secret as satisfying the
-circuit.
+only that it is non-zero, which any witness satisfies. A conformance test pins
+exactly that absence: it feeds an unrelated value as the root secret and asserts
+the harness still accepts it, written so that it fails once the binding lands.
 Separately, the mint path does not execute this circuit at all: it discards the
 witness and proves a different program, so the properties a real proof would
 carry are not being obtained in production either. Until the rejection vector
@@ -706,11 +713,10 @@ entry point, so the figure has never been measured on the real program. Owning
 the measurement is Phase 3; until it exists, the strategy table states
 "unmeasured" rather than an estimate.
 
-`in_boundary_execution` has the same open question, and it is **open rather than
-deferred**: no party is named as owning it, because this RFC does not create the
-crate that will. Recording it as deferred would be the documented-deferral
-failure mode — a spec owed by nobody. Whoever lands that crate owns the
-measurement, and until then the figure is unstated.
+`in_boundary_execution` has the same open question, and it belongs to Phase 2,
+which is the phase that lands the crate implementing it. Recording it as deferred
+to some later party would be the documented-deferral failure mode; naming the
+phase that owns it is what makes the obligation real.
 
 ## Error Handling
 
@@ -913,10 +919,12 @@ fixed at the full-width `root_secret_hash` by §Root-Secret Binding, and
 is built by a hand-maintained mirror of the circuit's input struct. A field
 reordering or omission that still type-checks would produce a proof over
 attacker-chosen public inputs, with every hash check internally consistent.
-_Impact:_ high; silent. _Mitigation:_ the layout-mirror conformance test must be
+_Impact:_ high; silent. _Mitigation:_ the calldata-layout conformance test must be
 extended to cover every field the change introduces, not merely re-run on the
 previous shape — a test that passes without exercising the new field is the
-failure, not the safeguard. The related trap recorded in
+failure, not the safeguard. The existing test pins the calldata order against
+the Cairo serialisation layout; it does not yet assert that the field set and
+the circuit's declared inputs agree, so this change needs both. The related trap recorded in
 `docs/architecture/zk-stwo-cairo-executable-recipe.md`, where declared and actual
 builtins diverge, is the same failure mode and is covered by the same discipline.
 
@@ -1191,7 +1199,9 @@ For `root_secret_knowledge`:
    It is currently test-gated, and un-gating it in its present shape admits far
    more code than one call requires.
 4. Update the witness-calldata layout mirror and extend the layout conformance
-   test to cover the new fields (A8). The same conformance discipline covers the
+   test to cover the new fields (A8). The existing test pins field order; this
+   step also makes it assert the field set, since order alone would not catch an
+   input the circuit never declared. The same conformance discipline covers the
    related trap recorded in `docs/architecture/zk-stwo-cairo-executable-recipe.md`,
    where a mismatch between declared and actual builtins produces a proof over
    unintended inputs.
@@ -1258,9 +1268,8 @@ module, which re-exports the strategy crate wholesale and would otherwise stop
 compiling. `CapabilityClass` can be sourced from the macaroon crate, which both
 already depend on. The node-type projection **cannot**: it is declared in the
 strategy crate rather than the macaroon one, and the orphan rule is what forces
-that mirror. Dropping the dependency is therefore a move, not a deletion — the
-projection is declared alongside the strategy trait and re-exported, which is
-Phase 1 work.
+that mirror. Dropping the dependency is therefore a removal plus a re-point,
+both landing in Phase 5 alongside the lint that tests for them.
 
 ## Future Work
 
@@ -1269,8 +1278,8 @@ Phase 1 work.
 - An in-circuit hash module supporting more than the single unkeyed 32-byte case
   Phase 3 adds; a longer secret or a different construction would need more of
   the permutation exposed.
-- Replaying the admission-profile cost figures as measured values once Phase 3 has
-  produced them, for the second strategy as well as the first.
+- Replaying the admission-profile cost figures as measured values, for each
+  strategy in whichever phase owns it.
 
 ## Version History
 
@@ -1281,6 +1290,8 @@ Phase 1 work.
 | v0.3    | 2026-10-07 | Multi-round adversarial review, five lenses, all findings resolved. Corrects three claims that the code contradicts: the attestation relation is **not** established today (the circuit asserts only that a witness commitment is non-zero, and a conformance test proves an unrelated secret succeeds), the circuit already has `cap_root_hash` public inputs which are **not** the binding target, and the mint path currently discards the witness rather than proving it. Adds the registry as a hard authorisation dependency after establishing that a self-minted capability satisfies the relation unaided, and that only the registry lookup rejects it. Splits the fat strategy trait, removing a fail-open default on a rejection gate. Adds an attenuation rule so a child cannot silently lose an attestation. Declares the RFC-0957 wire amendment and the back-compat encoding it depends on. Adds the attestation payload envelope, which the previous draft never specified. Adds §Error Handling. Retargets the key-files list at the capability canonical form rather than the storage projection. Removes a duplicated rationale section. |
 | v0.4    | 2026-10-07 | Third review round. Restores the execution class mapping RFC-0008 requires that round 2 removed as redundant: RFC-0008 requires every RFC to carry that table, so deleting it broke a MUST rather than a convention. Splits the acceptance-set class assignment, because its selection is operator-local while its effect is consensus-relevant once advertised in node metadata. Gives the admission cost an explicit unmeasured state, since the struct could not represent the honest answer for a strategy whose cost has not been measured, and makes boot validation actually consume the profile and the declared payload kinds rather than only checking resolvability. Replaces the attenuation rule's verification-time framing with a mint-time one, since a verifier cannot learn that a parent carried an attestation. Adds an adversary for a strategy under-reporting its own admission figures, and a rejection reason for one reference strategy being counted where no owner exists.                                                                                                                                                        |
 | v0.5    | 2026-10-07 | Fourth review round. Restores the v0.3 history row, which the previous round's edit had overwritten rather than appended to, leaving the two largest changes in this RFC's history unrecorded. Corrects a false claim that the root id is domain-separated: the asymmetry is deliberate and recorded as such, and only the capability id and chain root apply a separator. Gives the security figure a constructor, without which no strategy could build an admission profile and the budget gate could never run. Adds the registration algorithm, which four requirements pinned to registration had left with no implementing interface. Splits the id-collision adversary into the two cases the range split actually permits, since a user-range id cannot collide with a core allocation. Adds test vectors and operator-visible reasons for the boot-time rejections introduced last round, and assigns the dependency removal to the phase that must precede the lint testing for it.                                                                                                                                                                |
+| v0.6    | 2026-10-07 | Fifth review round, two reviewers in parallel. Both converged independently on a Rust code fence left open across an interposed paragraph, which rendered the admission trait's introduction as Rust source while passing every existing check, and on a security-figure constructor calling a method the pinned prover type does not have. Corrects that registration was required at mint only, leaving every attenuated child absent from the registry because attenuation recomputes the capability id, which contradicted both a stated property and a test vector. Moves the unkeyed in-circuit hash entry point from future work into the phase that depends on it, makes the admission trait mandatory for a cost-only strategy so the budget gate is reachable, defines the policy trait the context names, binds the clock the dispatch reads, and replaces a strategy-owned error type with a core type carrying a strategy-supplied reason. Derives the security figure from the prover's own pinned security parameters rather than from a prover configuration object.                                                                          |
+| v0.7    | 2026-10-07 | Sixth review round. Corrects the naming table's treatment of the wire decoder, which derives the same capability id the mint path computes rather than a fourth distinct value, so the table no longer asserts an ambiguity the substrate does not have. Assigns the second strategy's measurement to the phase that lands its crate, and stops future work reinstating an ownership the performance section declines to name. States what the calldata-layout conformance test currently pins and what this change must extend it to, so an adversary mitigation no longer gates on a test narrower than the one described. Names the conformance test that pins the absent binding, and resolves the one remaining phase disagreement between the key-files list and the phase that owns the dependency removal.                                                                                                                                                                                                                                                                                                                                            |
 
 ## Related RFCs
 

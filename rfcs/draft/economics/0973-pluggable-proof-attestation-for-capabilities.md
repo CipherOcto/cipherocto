@@ -405,10 +405,10 @@ for why the currently-circuited attestation establishes nothing.
 
 **Reference strategies shipped by this RFC.**
 
-| Strategy                | Establishes                                                      | Source   | Circuit cost                                | Notes                                       |
-| ----------------------- | ---------------------------------------------------------------- | -------- | ------------------------------------------- | ------------------------------------------- |
-| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | RFC-0958 | unmeasured — see §Root-Secret Binding       | one BLAKE3 hop over the secret              |
-| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630 | unmeasured — open, see §Performance Targets | proof-of-inference trace bound to the token |
+| Strategy                | Establishes                                                      | Source   | Circuit cost                                   | Notes                                       |
+| ----------------------- | ---------------------------------------------------------------- | -------- | ---------------------------------------------- | ------------------------------------------- |
+| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | RFC-0958 | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
+| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630 | unmeasured — Phase 2, see §Performance Targets | proof-of-inference trace bound to the token |
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
@@ -417,9 +417,8 @@ a code change.
 carried a measured word count that turned out to describe a commitment to the
 root secret the token already contains, not the binding below. Until a word count
 is measured on the actual program, the honest entry is "unmeasured". The first
-strategy's measurement belongs to Phase 3, which is where the binding work lands;
-the second belongs to whoever implements that crate, and §Performance Targets
-records it as open rather than deferring it to a party this RFC does not name.
+strategy's measurement belongs to Phase 3, which is where the binding work lands,
+and the second to Phase 2, which is where the crate implementing it lands.
 
 #### Root-Secret Binding
 

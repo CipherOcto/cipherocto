@@ -856,6 +856,8 @@ register_strategy(strategies, strategy, allocation_record):
     if id is in the RFC range:
         if not allocation_record.contains(id):
             -> REJECT   # no core allocation backs this id
+        if allocation_record.owner_of(id) != strategy.identity():
+            -> REJECT   # the id is allocated, but to a different strategy
     if strategies.claims(id):
         -> REJECT   # every id is exclusively claimed, in either range; the
                     # incumbent is left untouched rather than replaced
@@ -1066,6 +1068,7 @@ parse is never authorised, because its capability id cannot be read out of it.
 | Attestation payload over the size bound    | decode failure, before dispatch | payload exceeds the segment limit                        |
 | Capability absent from the registry        | REJECT at dispatch step 0       | unknown or inactive capability                           |
 | Capability expired at the verifier's clock | REJECT at dispatch step 0       | capability no longer active, expired rather than unknown |
+| Macaroon verification fails                | REJECT at dispatch step 0b      | RFC-0957 reason: signature, caveat, or threshold failure |
 | Attestation id absent                      | macaroon path                   | none — this is the normal unattested case                |
 | Attestation id not in acceptance set       | REJECT at step 2                | strategy not accepted here                               |
 | Strategy id unresolved                     | REJECT at step 3                | unknown strategy id                                      |
@@ -1074,7 +1077,14 @@ parse is never authorised, because its capability id cannot be read out of it.
 | `verify` returns an error                  | REJECT at step 5                | strategy-supplied reason, safe to log                    |
 | Panic in `verify` (unwinding build)        | REJECT at step 5                | strategy panicked                                        |
 
-The two step-0 rows are the same rejection with different causes, and the reason
+The three step-0 rows are three different gates in the same authorisation phase —
+the registry lookup, the clock predicate inside it, and the RFC-0957 verification that
+follows. The last is the one that runs on both branches, so a token carrying an
+attestation is rejected here for a bad signature exactly as an unattested one
+is. Its reason is the RFC-0957 failure's own, carried through unchanged rather
+than restated here.
+
+The two registry rows are the same rejection with different causes, and the reason
 column distinguishes them because an expired capability is an operational
 condition an operator can act on, while an unknown one usually means the token
 was never issued here.
@@ -1158,6 +1168,21 @@ self-minted capability and step 0 will pass; the attestation then attests to a
 capability the registry has blessed. Any deployment that grants write authority
 broadly has moved the trust boundary rather than removed it, and this RFC does
 not claim to have closed it.
+
+One write this RFC _does_ mandate deserves naming, because it is the exception
+that proves the premise is not absolute. Lifecycle Requirement 4 requires
+attenuation to register the child under its recomputed capability id, so a
+bearer performing a valid attenuation causes a registry write that no issuer
+performed, and every attenuated id resolves at step 0 on a record the issuer
+never created. That is intended and it is safe, for a reason the requirement
+should not hide behind: the child is a _narrowing_ of a capability the issuer
+did issue, produced by the bearer, and it is strictly less permissive than its
+parent — it carries the parent's caveats plus more. So it grants nothing the
+issuer did not already grant, and the read-path argument above still holds in
+the only sense it is used: an attacker cannot mint a capability, attenuate it
+into existence, and thereby gain authority the issuer never conferred. What is
+absent from the registry is a capability with no issuer-approved ancestor, and
+attenuation cannot create one.
 
 Two further limits follow, and neither is fixed by a better proof:
 
@@ -1430,8 +1455,16 @@ carried by the id rather than by the decoder.
 **TV1** — capability with no attestation id, present and active in the registry:
 accepted on the macaroon path.
 
+**TV1b** — a token carrying an attested capability whose RFC-0957 holder
+signature is forged, registry record present and active: REJECT at step 0b,
+before any strategy is resolved. This is the vector that pins the macaroon
+verification runs on the _attested_ branch: an implementation that verified it
+only for unattested tokens would accept here, and TV2 would still pass. Distinct
+from TV1, which is the same check passing on an unattested capability.
+
 **TV2** — attested capability, registered strategy, in the acceptance set,
-satisfying attestation, registry present: ACCEPT.
+satisfying attestation, registry present, RFC-0957 verification satisfied:
+ACCEPT.
 
 **TV3** — TV2 with a strategy id the node's acceptance set names but the
 attestation registry no longer resolves: REJECT at step 3. This is defence in
@@ -1468,8 +1501,13 @@ fails, and the incumbent is unaffected.
 **TV7f** — a crate registers an RFC-range id that no allocation record names:
 registration fails (A3b).
 
-**TV7g** — a crate registers an id the allocation record names: registration
-succeeds, and the id resolves at dispatch.
+**TV7g** — the strategy the allocation record names registers its id:
+registration succeeds, and the id resolves at dispatch.
+
+**TV7h** — a different crate registers an id the record allocates to another
+strategy: registration fails, naming the mismatch. An earlier draft had TV7g
+state only that the id was in the record, which left the ownership half
+unenforced and let any crate claim a core-sanctioned id.
 
 **TV8** — `verify` panics on adversarial input under an unwinding build: REJECT,
 node survives. See A4 for the abort-build caveat.
@@ -1617,7 +1655,16 @@ id, and the macaroon cannot name a wallet type without a cycle. The same
 declaration-once-then-re-export shape already used for `CapabilityClass` applies.
 
 Create the id allocation record: the list of RFC-range attestation ids core
-has allocated. Until it exists the RFC range admits nothing.
+has allocated, each naming the strategy it is allocated **to** rather than
+carrying the value alone. Until it exists the RFC range admits nothing.
+
+The binding matters as much as the value. A record that named only which ids are
+reserved would stop an id being invented, but any crate could then claim one core
+allocated to a different strategy, both would register, and the second would
+serve whatever it claimed to prove under a core-sanctioned id. Reservation is
+only meaningful if it reserves _for_ something. Registration therefore compares
+the claiming strategy against the record's named owner as well as checking
+membership, and a mismatch is a refusal.
 
 Capture and freeze the pre-RFC capability fixtures as the back-compat corpus
 (TV9). TV16 is **not** claimed here: it needs two independently built strategy
@@ -1648,6 +1695,16 @@ validation, and the registration rule, but mint attaches an envelope only once
 the dispatch is live. Both halves are needed: the wire format can be extended
 before anything is minted into it.
 
+**This is a standing invariant, not a one-time ordering constraint.** The
+prohibition is that a capability carrying an attestation is never accepted
+without that attestation being checked, and a phase boundary is only the first
+case where it binds. It binds equally at runtime, and a node that admits
+attested capabilities while its dispatch is switched off violates it exactly as
+a node in the Phase 1 window does. Scoping the rule to "before Phase 2" would
+leave the runtime gate unguarded by the one section that names the failure, so
+the constraint is stated as the invariant and the phase ordering is merely the
+first way it can be violated.
+
 The same rule applies to attenuation, which is easy to overlook because it is
 not a mint: extending the caveat chain **recomputes the capability id**, so an
 attenuated child is a different registry key from its parent. Attenuation MUST
@@ -1669,8 +1726,15 @@ without it has no reachable posture against a panicking strategy, and no later
 phase is named to add it. Record the
 `in_boundary_execution` admission profile here, measured rather than estimated,
 since this is the phase that lands the crate it describes. Land operator policy with
-boot-time validation. Land the dispatch, including the registry lookup at step 0,
-in the wallet verification path behind macaroon-path back-compat.
+boot-time validation. Land the dispatch, including the registry lookup at step 0
+and the RFC-0957 verification at step 0b, in the wallet verification path.
+
+"Behind macaroon-path back-compat" means a pre-RFC capability still verifies
+exactly as it did, not that the dispatch is nested inside the macaroon path and
+reaches it only on the unattested branch. The relationship is the other way
+round: step 0b calls the macaroon verification on both branches, so the dispatch
+is what invokes it, and back-compat is the property that a token with no
+envelope still completes it.
 
 **This phase also owns registering `in_boundary_execution`.** LR1 requires every
 strategy crate to register, so leaving both crates unregistered with only Phase 3
@@ -1823,6 +1887,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.27      | 2026-10-07 | Rounds 27 and 28. A coordinated propagation sweep checked fourteen core facts against every location restating each and found zero conflicts — the first clean round. An independent round then used a deliberately different lens, because a consistency check structurally cannot see what it is not looking for, and found nine defects the sweep could not have: an outcome type whose rejection reason was optional while the error section promises every rejection is distinguishable; a verifiability predicate used normatively in four places and computed by none; reference strategies that declare no payload kinds, leaving the boot branch and step four with no subject in what this RFC ships; an adversary claiming a vector observes clock skew when it tests only one direction of it; and a byte-compatibility requirement with no carrier, now labelled review-enforced like the two conventions already so labelled. Both lessons are recorded rather than smoothed over: coverage and consistency are separate properties, and a round that proves one has proved nothing about the other.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | v0.28      | 2026-10-07 | Round 29, an attacker walkthrough tracing each adversary and rejection condition through the dispatch steps rather than reading for inconsistency. Four gaps where a stated guarantee is not delivered by the specified mechanism, two of them fail-open paths no earlier lens could see because both are internally consistent. A cost-bearing crate that never implements the admission trait reaches the permissive admission value, answers no profile, and skips both decisive budget gates: the guarantee that an unmeasured cost fails the boot holds only for the encoding that supplies a profile, and the cheaper encoding a dishonest crate would choose is unguarded. Nothing in the algorithm distinguishes a genuine no-cost strategy from a silent cost-bearing one, and the branch now says so. Between the phase that mints attested capabilities and the phase that lands the dispatch, a node holds an envelope it cannot act on and accepts the token down the macaroon path with the attestation never checked — the one failure the authority boundary prohibits outright, and one the id does not catch because a Phase 1 mint registers under the full canonical form and resolves correctly. Phase 1 now attaches an envelope only once the dispatch is live. The id-collision adversary describes a cross-node substitution while its mitigation is per registry, and two nodes can disagree about what one user-range id means while advertising byte-identical sets; that is now a stated scope limit rather than an assumed coverage. And the rule that a rejection reason never carries the attestation bytes is a convention with no gate, now labelled review-enforced alongside the two already so labelled. The finding worth keeping: consistency sweeps and attacker walkthroughs find disjoint classes, and neither substitutes for the other.                                                                                                                                                                                                                                                                                                  |
 | v0.29      | 2026-10-07 | Round 30, a second attacker walkthrough probing what the first one did not construct. It found the most serious defect in this document's review history, and the defect is that the dispatch never ran the macaroon verification on an attested capability at all. The algorithm placed the RFC-0957 path inside the absent-attestation branch, so a token carrying an attestation went from the registry lookup straight through the strategy to ACCEPT with no holder signature, no caveat evaluation, and no threshold check anywhere in the written path. An attacker holding a copied token whose signature had been stripped, or whose caveats were violated, would have been accepted on the strength of a possession proof alone. The verification now runs on both branches as an explicit step between the registry gate and the attestation question, and the diagram was corrected to show it, because the diagram encoded the same omission. The symmetric half of the attenuation rule was also missing: A6 forbids stripping an attestation by attenuating, but nothing forbade an unattested parent producing an attested child, or an attenuation substituting a different attestation for the inherited one. Attenuation is bearer-triggered, so permitting either would let a bearer choose the attestation on their own narrowed capability, while the roles table assigns that choice to the issuer. Carrying forward now means unchanged, and the rule states both directions. Three smaller findings: answering the verification-coverage flag true while naming no kinds makes both coverage gates inert; the expectation's structural claim is narrower than stated, since the context still carries the capability and its envelope; and the soundness figure was described as a type property stronger than a runtime check when a crate supplies its own parameters, so no floor is enforced anywhere. The lesson is the same one round 29 recorded, now with a sharper edge: both prior sweeps proved consistency across every restatement and every adversary, and both missed a path where a capability was accepted with no signature check at all. |
+| v0.30      | 2026-10-07 | Round 31, a third attacker walkthrough, and the first to find a regression introduced by the round before. Adding the macaroon verification to the attested branch created a rejection gate that appeared in no error-table row, carried no operator reason, and had no vector pinning that it ran. The newest and most security-relevant gate in the dispatch was the only one absent from a table whose opening sentence promises every rejection is distinguishable. It now has a row, an explanation, and a vector whose whole purpose is to fail for an implementation that verified only unattested tokens. The step-1 prohibition on minting an attested capability before the dispatch is live was scoped to a phase boundary, while the failure it names is a standing invariant that binds equally at runtime when a node admits attested capabilities with its dispatch switched off. It is now stated as the invariant, with the phase ordering as merely the first way it can be violated. The id allocation record reserved values without binding them, so any crate could claim an id core allocated to a different strategy and serve whatever it liked under a core-sanctioned id. The record now names an owner, registration checks the claim against it, and the vector that previously asserted the weaker behaviour is corrected alongside a new one for the mismatch. And the security argument rested on a premise that the attenuation rule falsified for a whole tree: registry integrity was argued as a record existing only for an issuer-issued capability, while attenuation mandates a bearer-triggered registry write for every child. That write is safe because a child strictly narrows an issuer-approved parent and attenuation cannot create one without such an ancestor, which is now stated rather than left as an apparent contradiction.                                                                                                                                                                                                                                                                                                |
 | v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Rounds 3 through 11 are archived under the same convention in the earlier review records; the file named below covers rounds 12 through 26. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it.                                                                                                                                                                                                                                                                                                                            |
 
 ## Related RFCs

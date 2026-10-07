@@ -530,16 +530,25 @@ impl StwoSys {
         // bytes — silent fraud (prover proves garbage, verifier
         // verifies garbage). Fixed in this commit.
         // M-4: serialize against concurrent FFI entry points.
-        let _guard = self.ffi_call();
-        let handle = unsafe {
-            (self.prove)(
-                casm.as_ptr(),
-                casm.len(),
-                witness.as_ptr(),
-                witness.len(),
-                public.as_ptr(),
-                public.len(),
-            )
+        // **The guard is scoped to the FFI call only.** `ffi_call()` returns a
+        // `std::sync::MutexGuard`, and `Mutex` is not reentrant — so holding
+        // this across `self.read_proof(..)` (which takes the same lock) would
+        // deadlock the calling thread forever. That is not theoretical: this
+        // exact shape shipped, and the end-to-end prove/verify test hung at
+        // ~10% CPU instead of proving. Anything that wants the lock again must
+        // wait for this scope to end first.
+        let handle = {
+            let _guard = self.ffi_call();
+            unsafe {
+                (self.prove)(
+                    casm.as_ptr(),
+                    casm.len(),
+                    witness.as_ptr(),
+                    witness.len(),
+                    public.as_ptr(),
+                    public.len(),
+                )
+            }
         };
         if handle.is_null() {
             return Err(VendorError::ProverNull);
@@ -571,8 +580,9 @@ impl StwoSys {
     /// Run the compiled circuit against a witness and prove the resulting
     /// execution.
     ///
-    /// `program_json` is the `stwo-sys` `CairoProgramSpec` artifact
-    /// (bytecode + hint table + entrypoint offset), `run_input_json` is the
+    /// `program_json` is the `stwo-sys` program artifact: a serialized Cairo
+    /// `Executable` (bytecode + hint table + entrypoints), from
+    /// `zk_circuit::bundled_executable_json()`. `run_input_json` is the
     /// circuit's witness, `public` the public inputs.
     ///
     /// This is the only path that produces a proof of an actual
@@ -598,16 +608,21 @@ impl StwoSys {
         // `as_ptr()` on a non-empty slice is non-null and the lengths
         // match the C ABI. The returned handle is owned here and released
         // by `ProofBytes::drop`.
-        let _guard = self.ffi_call();
-        let handle = unsafe {
-            (self.prove_from_casm)(
-                program_json.as_ptr(),
-                program_json.len(),
-                run_input_json.as_ptr(),
-                run_input_json.len(),
-                public.as_ptr(),
-                public.len(),
-            )
+        // Scoped to the FFI call only — see the note in `prove`. `read_proof`
+        // takes the same non-reentrant lock, so keeping this guard alive
+        // across that call deadlocks.
+        let handle = {
+            let _guard = self.ffi_call();
+            unsafe {
+                (self.prove_from_casm)(
+                    program_json.as_ptr(),
+                    program_json.len(),
+                    run_input_json.as_ptr(),
+                    run_input_json.len(),
+                    public.as_ptr(),
+                    public.len(),
+                )
+            }
         };
         if handle.is_null() {
             return Err(VendorError::ProverNull);

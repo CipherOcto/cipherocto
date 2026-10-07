@@ -46,12 +46,20 @@
 //! The current hard-fail design treats a missing lib as a deployment
 //! failure — CI MUST build the cdylib before claiming AC-3 green.
 //!
-//! Per master plan §8 R12 mitigation: no real STARK round-trip is
-//! exercised here (that requires a valid `CairoProofForRustVerifier`
-//! JSON, which needs a Cairo witness). The test exercises the
-//! libloading + symbol resolution + error-path contract only; full
-//! STARK prove/verify coverage lives in
-//! `crates/quota-router-integration-tests` with fixture JSON.
+//! Per master plan §8 R12 mitigation: the round-trip tests at the bottom of
+//! this file DO exercise a real STARK prove/verify, using the bundled
+//! `Executable` fixture and a satisfying witness. Earlier revisions of this
+//! comment claimed no real round trip was possible here ("would require a
+//! valid `CairoProofForRustVerifier` JSON, which needs a Cairo witness").
+//! That was true only because `run_cairo_to_prover_input` could not build a
+//! `ProverInput` at all; once the Executable ABI landed, the fixture made it
+//! straightforward.
+//!
+//! Those round-trip tests immediately paid for themselves by finding a
+//! **deadlock**: `prove()` and `prove_from_casm()` held the non-reentrant
+//! `ffi_call()` mutex guard across `read_proof()`, which takes the same lock.
+//! Both hung the calling thread forever at ~10% CPU. The Rust-side wrapper
+//! had no test at all before this.
 
 use std::path::PathBuf;
 
@@ -419,4 +427,130 @@ fn prover_input_fallback_observable() {
         let back: WitnessFormat = serde_json::from_str(&s).expect("parse enum");
         assert_eq!(back, fmt, "WitnessFormat round-trip must preserve variant");
     }
+}
+
+// =========================================================================
+// End-to-end: prove_from_casm -> ProofBytes -> verify  (audit C-2)
+// =========================================================================
+//
+// Every other test in this file stops at symbol resolution or an error path.
+// This one exercises the seam the capability **mint** path actually calls:
+// `StwoSys::prove_from_casm` -> `ProofBytes.proof` -> `StwoSys::verify`.
+//
+// It matters because that seam was untested. `run_cairo_to_prover_input` and
+// `stwo_prove_from_casm` are covered by stwo-sys' own unit tests, and
+// `prove_batch_signature` (the mock commitment) is covered by zk-circuit —
+// but the Rust-side wrapper, its argument order, and the handle->bytes copy
+// had no test at all. A wrong argument order or a `ProofBytes` that returned
+// the 32-byte commitment instead of the proof would have been invisible until
+// production. (That was the original C-2 failure mode: `stwo_verify` was handed
+// a 32-byte digest where a STARK transcript was expected.)
+
+/// The bundled `Executable`, byte-identical to the artifact the mint path
+/// ships: `cargo test -p zk-circuit --test dump_casm_fixture -- --ignored`.
+fn capability_executable_json() -> Vec<u8> {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("stwo-sys/tests/fixtures/capability_zk.json");
+    std::fs::read(&p).unwrap_or_else(|e| {
+        panic!(
+            "fixture {} missing ({e}). Regenerate with \
+             `cargo test -p zk-circuit --test dump_casm_fixture -- --ignored`",
+            p.display()
+        )
+    })
+}
+
+/// A witness the circuit accepts. Must stay byte-compatible with
+/// `harness_tests::satisfying_input()` in `stwo-sys/src/lib.rs`; the
+/// stwo-sys tests are the authority if the two ever disagree.
+fn satisfying_run_input() -> Vec<u8> {
+    br#"{
+      "pub_inputs": {
+        "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
+        "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
+        "invocation_hash": "6", "holder_did": "7",
+        "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
+      },
+      "priv_witness": {
+        "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
+        "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
+      },
+      "caveat_felts": ["15", "16", "22"],
+      "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
+    }"#
+    .to_vec()
+}
+
+#[test]
+#[ignore = "requires the nightly-built libstwo_sys.so; run with --include-ignored"]
+fn prove_from_casm_produces_a_real_verifiable_proof() {
+    let lib = require_built_lib();
+    let sys = try_load(&lib)
+        .expect("try_load")
+        .expect("library present (require_built_lib would have panicked otherwise)");
+
+    let program = capability_executable_json();
+    let run_input = satisfying_run_input();
+    let public = b"unused-public-inputs";
+
+    let proof_bytes = sys
+        .prove_from_casm(&program, &run_input, public)
+        .expect("prove_from_casm must succeed on a satisfying witness");
+
+    // The proof must be a real STARK transcript, not the 32-byte input
+    // commitment. This is the exact regression C-2 describes.
+    assert!(
+        proof_bytes.proof.len() > 1_000_000,
+        "expected a real STARK proof, got {} bytes",
+        proof_bytes.proof.len()
+    );
+    assert_ne!(
+        proof_bytes.proof.len(),
+        32,
+        "the handle handed back the 32-byte commitment, not the proof"
+    );
+
+    // And it must verify through the same boundary the verifier uses.
+    sys.verify(&proof_bytes.proof, public)
+        .expect("a genuine proof must verify");
+
+    // Control on the verifier: one flipped bit must be rejected.
+    let mut tampered = proof_bytes.proof.clone();
+    let mid = tampered.len() / 2;
+    tampered[mid] ^= 0x01;
+    assert!(
+        sys.verify(&tampered, public).is_err(),
+        "a tampered proof must be rejected"
+    );
+}
+
+#[test]
+#[ignore = "requires the nightly-built libstwo_sys.so; run with --include-ignored"]
+fn prove_from_casm_returns_error_for_an_unsatisfying_witness() {
+    let lib = require_built_lib();
+    let sys = try_load(&lib).expect("try_load").expect("library present");
+
+    let program = capability_executable_json();
+    // Two caveat felts against CHAIN_DEPTH_MIN = 3 -> the circuit's
+    // CaveatChainDepthMismatch. Through the Executable wrapper this is a hard
+    // VM failure, so the FFI returns a null handle rather than a proof.
+    let mut bad = satisfying_run_input();
+    let needle = br#""caveat_felts": ["15", "16", "22"]"#;
+    let replacement = br#""caveat_felts": ["15", "16"]"#;
+    let text = String::from_utf8(bad.clone()).expect("fixture is utf-8");
+    let at = text
+        .find(std::str::from_utf8(needle).expect("needle utf-8"))
+        .unwrap_or_else(|| panic!("mutation target not found — fixture text changed shape"));
+    let start = at;
+    let end = at + std::str::from_utf8(needle).expect("needle utf-8").len();
+    bad.splice(start..end, replacement.iter().copied());
+    assert_ne!(bad, satisfying_run_input(), "mutation did not apply");
+
+    let err = sys
+        .prove_from_casm(&program, &bad, b"unused")
+        .expect_err("an unsatisfying witness must not produce a proof");
+    assert!(
+        matches!(err, zk_vendor::VendorError::ProverNull),
+        "expected ProverNull, got {err:?}"
+    );
 }

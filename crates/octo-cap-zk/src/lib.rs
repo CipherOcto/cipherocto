@@ -534,7 +534,14 @@ pub fn mint_with_zk_and_signers(
         public_inputs: public_inputs_canon,
         casm_hash,
         casm_version: 1,
-        security_bits: 128,
+        // **Derived, not asserted.** stwo-cairo computes soundness as
+        // `pow_bits + log_blowup_factor * n_queries`, which for the
+        // production parameters is **96**. This used to be hardcoded to 128,
+        // overclaiming the proof's strength — and RFC-0958 §G4 asks for 128.
+        // Both facts are now visible: `stwo_security_bits()` reports what the
+        // parameters actually deliver. Raising it to 128 is a deliberate act
+        // (n_queries 70 -> 102, larger proofs), not a constant edit.
+        security_bits: zk_circuit::stwo_security_bits() as u8,
         // **AC-3 (0958-c):** witness format marker. Defaults to
         // `BytesFallback` because `prove_batch_signature` currently
         // emits raw `canonical_ser` bytes (the AC-3 zk-circuit rewrite
@@ -721,8 +728,44 @@ mod tests {
         let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap();
-        assert_eq!(bundle.security_bits, 128);
+        assert_eq!(bundle.security_bits, zk_circuit::stwo_security_bits() as u8);
         assert_eq!(bundle.output_hash(), pi.output_hash);
+    }
+
+    /// The declared soundness must equal what the prover parameters actually
+    /// deliver. This is the guard against re-introducing a hardcoded `128`:
+    /// RFC-0958 §G4 targets 128-bit soundness, but stwo-cairo's production
+    /// parameters (`pow_bits 26`, `log_blowup_factor 1`, `n_queries 70`) give
+    /// 26 + 1*70 = **96**. The bundle now reports 96.
+    ///
+    /// If this test ever needs to change, the parameters must change with it —
+    /// bumping the declared number alone would be a false claim about the
+    /// proof, which is the defect this guard exists to prevent.
+    #[test]
+    fn declared_security_bits_match_the_prover_parameters() {
+        assert_eq!(zk_circuit::stwo_security_bits(), 96);
+
+        // SelfHost (carries a PoI trace) and Hybrid (no PoI) both mint. Each
+        // needs its own public inputs: Hybrid rejects an `output_hash`, and
+        // SelfHost requires one, so reusing a single `PublicInputs` across
+        // both would fail for a reason unrelated to this guard.
+        let sh = mint_with_zk(
+            NodeType::SelfHost,
+            &sample_witness(NodeType::SelfHost),
+            &sample_public_inputs(NodeType::SelfHost),
+            bundled_casm_hash(),
+        )
+        .expect("selfhost mint");
+        let hy = mint_with_zk(
+            NodeType::Hybrid,
+            &sample_witness(NodeType::Hybrid),
+            &sample_public_inputs(NodeType::Hybrid),
+            bundled_casm_hash(),
+        )
+        .expect("hybrid mint");
+
+        assert_eq!(sh.security_bits, zk_circuit::stwo_security_bits() as u8);
+        assert_eq!(hy.security_bits, zk_circuit::stwo_security_bits() as u8);
     }
 
     #[test]
@@ -801,7 +844,11 @@ mod tests {
         // Batch proof path emits a non-empty stark_proof (32-byte BLAKE3
         // commitment from the mock prover).
         assert_eq!(bundle.stark_proof.len(), 32);
-        assert_eq!(bundle.security_bits, 128);
+        assert_eq!(
+            bundle.security_bits,
+            zk_circuit::stwo_security_bits() as u8,
+            "declared soundness must be derived, not hardcoded"
+        );
         assert_eq!(bundle.casm_hash, casm);
     }
 

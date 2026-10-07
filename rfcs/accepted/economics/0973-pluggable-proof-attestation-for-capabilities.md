@@ -1743,6 +1743,24 @@ unregistered and is registrable only when TV12 passes.
 
 ## Implementation Phases
 
+These phases decompose into five missions per the multi-mission rule in
+`docs/BLUEPRINT.md`, which applies at five phases and over a thousand lines of
+specification. One mission per phase, since each has a distinct prerequisite
+chain and each is independently claimable.
+
+| Phase | Mission                                                    | Depends on |
+| ----- | ---------------------------------------------------------- | ---------- |
+| 1     | `missions/open/0973-v36-attestation-core-substrate.md`     | —          |
+| 2     | `missions/open/0973-v36-a-dispatch-and-strategy-crates.md` | Phase 1    |
+| 3     | `missions/open/0973-v36-b-root-secret-binding.md`          | Phase 2    |
+| 4     | `missions/open/0973-v36-c-substrate-corrections.md`        | Phase 3    |
+| 5     | `missions/open/0973-v36-d-dependency-direction.md`         | Phase 2    |
+
+The chain is ordered and acyclic. Phases 4 and 5 branch off different points
+because they touch different things: Phase 4 corrects substrate facts beside the
+mechanism, Phase 5 makes the dependency direction true in the tree, and only
+Phase 5 needs the dispatch that Phase 2 lands.
+
 ### Phase 1: Core
 
 Land `AttestationTypeId`, the `AttestationStrategy` and `AttestationAdmission`

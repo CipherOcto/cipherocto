@@ -1189,7 +1189,7 @@ pub fn prove_batch_signature(
         // and `public` (canonical-serialized `BatchSigPublicInputs`
         // hex).
         //
-        // For now `trace_steps` is empty + `capability_class` defaults
+        // For now `trace_steps` is empty + `node_type` defaults
         // to `SelfHost` — AC-1 will replace this with the real BLAKE3
         // + Ed25519 trace folding. The witness shape is structurally
         // valid JSON that the upstream STWO parser accepts.
@@ -1199,7 +1199,7 @@ pub fn prove_batch_signature(
             &inputs.message_root,
             &[], // trace_steps: AC-1 will populate
             &public_bytes,
-            zk_vendor::prover_input::CapabilityClassTag::SelfHost,
+            zk_vendor::prover_input::NodeTypeTag::SelfHost,
         );
         // Serialize the witness payload to canonical JSON. If the
         // serialization fails (which would be a bug, not a runtime

@@ -63,7 +63,7 @@
 
 use std::path::PathBuf;
 
-use zk_vendor::prover_input::{CapabilityClassTag, ProverInput, WitnessFormat};
+use zk_vendor::prover_input::{NodeTypeTag, ProverInput, WitnessFormat};
 use zk_vendor::try_load;
 
 /// Resolve the path to `libstwo_sys.so` built by the nightly toolchain
@@ -317,7 +317,7 @@ fn prover_input_json_round_trip() {
         &message_root,
         &[trace_step],
         public_bytes,
-        CapabilityClassTag::SelfHost,
+        NodeTypeTag::SelfHost,
     );
 
     // Serialize → parse round-trip.
@@ -391,7 +391,7 @@ fn prover_input_fallback_observable() {
         &[0x66_u8; 32],
         &[],
         b"public-fallback",
-        CapabilityClassTag::Hybrid,
+        NodeTypeTag::Hybrid,
     );
 
     // Production path: ProverInputJson.

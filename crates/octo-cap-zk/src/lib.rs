@@ -87,13 +87,13 @@ impl NodeType {
 }
 
 /// Capability class (RFC-0958 §Data Structures).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CapabilityClass {
-    /// RFC-0957 v1 macaroon only; no STARK proof.
-    V1,
-    /// RFC-0958 ZK subclass; `proof_bundle` MUST be Some when minted.
-    ZKBearing,
-}
+///
+/// Single declaration lives in `octo_cap_macaroon::CapabilityClass`
+/// (RFC-0206 §Layer B), the capability substrate. This re-export keeps the
+/// historical `octo_cap_zk::CapabilityClass` path working. Do NOT redeclare
+/// the enum here: a third declaration means a third site to edit whenever
+/// RFC-0958 gains a class.
+pub use octo_cap_macaroon::CapabilityClass;
 
 /// Private witness for STARK proof generation (RFC-0958 §Data Structures).
 ///

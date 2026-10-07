@@ -30,7 +30,7 @@
 //!     "signer_roots_hex": ["<hex32>", ...],
 //!     "message_root_hex": "<hex32>",
 //!     "trace_steps_hex": ["<hex32>", ...],
-//!     "capability_class": "SelfHost | Hybrid | Wholesale"
+//!     "node_type": "SelfHost | Hybrid | Wholesale"
 //!   },
 //!   "public": "<canonical_ser(BatchSigPublicInputs) hex>"
 //! }
@@ -112,8 +112,8 @@ pub struct ProverInput {
 ///
 /// `signer_roots_hex` and `trace_steps_hex` are arrays of 32-byte hex
 /// strings; `message_root_hex` is a single 32-byte hex string;
-/// `capability_class` is the verifier-side classifier (matches
-/// `CapabilityClass` in `crates/octo-wallet/src/capability/zk_mint.rs`).
+/// `node_type` is the node-type classifier (matches `NodeType` in
+/// `crates/octo-wallet/src/node.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WitnessPayload {
     /// Hex-encoded `[u8; 32]` signer roots (one per signer; matches
@@ -127,22 +127,30 @@ pub struct WitnessPayload {
     /// Empty when no trace is present (Hybrid / Wholesale paths).
     #[serde(default)]
     pub trace_steps_hex: Vec<String>,
-    /// Capability class discriminator (matches the `CapabilityClass`
-    /// enum on the wallet side).
-    pub capability_class: CapabilityClassTag,
+    /// NodeType discriminator (mirrors `octo_wallet::NodeType`).
+    ///
+    /// `zk-vendor` is a dependency-free vendor shim, so it redeclares the
+    /// three variants rather than importing the wallet type. Keep the variant
+    /// set and the serde representation byte-identical to the wallet's.
+    pub node_type: NodeTypeTag,
 }
 
-/// Capability class discriminator for the witness payload. Mirrors
-/// `CapabilityClass` on the wallet side (SelfHost / Hybrid / Wholesale).
+/// Node type discriminator for the witness payload.
+///
+/// This is a **node-type** tag, NOT a capability class. It was previously
+/// named `CapabilityClassTag` and its doc comment claimed it mirrored the
+/// wallet's `CapabilityClass { V1, ZKBearing }` while actually carrying
+/// `{ SelfHost, Hybrid, Wholesale }` — i.e. `NodeType`. A reader trusting the
+/// name would wire a node type into a capability-class slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CapabilityClassTag {
+pub enum NodeTypeTag {
     SelfHost,
     Hybrid,
     Wholesale,
 }
 
 impl ProverInput {
-    /// Construct a `ProverInput` from raw byte slices + capability class.
+    /// Construct a `ProverInput` from raw byte slices + node type.
     ///
     /// - `casm_bytes`: raw CASM bytecode (will be hex-encoded into
     ///   `program`).
@@ -160,7 +168,7 @@ impl ProverInput {
         message_root: &[u8; 32],
         trace_steps: &[[u8; 32]],
         public_bytes: &[u8],
-        class: CapabilityClassTag,
+        class: NodeTypeTag,
     ) -> Self {
         Self {
             program: hex::encode(casm_bytes),
@@ -168,7 +176,7 @@ impl ProverInput {
                 signer_roots_hex: signer_roots.iter().map(hex::encode).collect(),
                 message_root_hex: hex::encode(message_root),
                 trace_steps_hex: trace_steps.iter().map(hex::encode).collect(),
-                capability_class: class,
+                node_type: class,
             },
             public: hex::encode(public_bytes),
             witness_format: WitnessFormat::ProverInputJson,
@@ -248,7 +256,7 @@ mod tests {
             &message_root,
             &[trace_step],
             public,
-            CapabilityClassTag::SelfHost,
+            NodeTypeTag::SelfHost,
         )
     }
 
@@ -311,10 +319,10 @@ mod tests {
             &message_root,
             &[],
             public,
-            CapabilityClassTag::Hybrid,
+            NodeTypeTag::Hybrid,
         );
         assert_eq!(p.witness.signer_roots_hex.len(), 2);
         assert_eq!(p.witness.trace_steps_hex.len(), 0);
-        assert_eq!(p.witness.capability_class, CapabilityClassTag::Hybrid);
+        assert_eq!(p.witness.node_type, NodeTypeTag::Hybrid);
     }
 }

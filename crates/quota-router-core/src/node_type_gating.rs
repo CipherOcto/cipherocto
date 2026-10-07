@@ -7,23 +7,15 @@
 
 use crate::zk_verify::ZkMintError;
 
-/// NodeType taxonomy (re-exported from octo-wallet via thin newtype for
-/// S05 separation of concerns; RFC-0958 §NodeType).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeType {
-    Wholesale,
-    SelfHost,
-    Hybrid,
-}
-
-impl NodeType {
-    /// Whether this NodeType permits minting ZK-bearing capabilities.
-    /// Wholesale always returns false (fail-closed per RFC-0958 §Adversary A3).
-    #[must_use]
-    pub const fn permits_zk_mint(&self) -> bool {
-        matches!(self, Self::SelfHost | Self::Hybrid)
-    }
-}
+/// NodeType taxonomy.
+///
+/// Canonical declaration is `octo_wallet::NodeType` (RFC-0009 §Node), which
+/// `quota-router-core` already depends on. This was a fourth mirror copy of
+/// the enum; it carried no serde derives and no distinct behaviour, so every
+/// `NodeType` accepted here was silently a DIFFERENT type from the one the
+/// wallet used. Re-exporting the canonical type makes the two structurally
+/// identical, so a mismatch is now a compile error rather than a latent bug.
+pub use octo_wallet::NodeType;
 
 /// Try to mint a ZK capability. Returns Ok if permitted by NodeType gating,
 /// Err if not.

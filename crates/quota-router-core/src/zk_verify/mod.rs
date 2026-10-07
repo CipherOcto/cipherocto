@@ -17,13 +17,12 @@ pub mod capability;
 use serde::{Deserialize, Serialize};
 
 /// ZK capability class (RFC-0958 §Data Structures).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CapabilityClass {
-    /// RFC-0957 v1 macaroon only; no STARK proof.
-    V1,
-    /// RFC-0958 ZK subclass; `proof_bundle` MUST be Some.
-    ZKBearing,
-}
+///
+/// Single declaration lives in `octo_cap_macaroon::CapabilityClass`
+/// (RFC-0206 §Layer B), the capability substrate. This re-export keeps the
+/// historical `quota_router_core::zk_verify::CapabilityClass` path working.
+/// Do NOT redeclare the enum here.
+pub use octo_cap_macaroon::CapabilityClass;
 
 /// Public inputs to the ZK circuit (RFC-0958 §Data Structures).
 ///

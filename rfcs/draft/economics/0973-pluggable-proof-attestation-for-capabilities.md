@@ -308,16 +308,29 @@ pub enum CostFigure {
 /// so the figure cannot be asserted independently of what it derives from.
 pub struct SecurityFigure(u32);
 
+/// The prover parameters security is derived from: field width, log blowup
+/// factor, and query count. Read from the prover's existing pinned values.
+pub struct SecurityParams {
+    pub pow_bits: u32,
+    pub log_blowup_factor: u32,
+    pub n_queries: u32,
+}
+
 impl SecurityFigure {
     /// Derive the security the bound prover configuration actually delivers.
-    /// This is the only way to obtain a value. The figure is computed from the
-    /// configured proof-system parameters — field width, blowup factor, and
-    /// query count — rather than claimed, so two strategies on different
-    /// configurations cannot report the same number by assertion.
+    /// This is the only way to obtain a value, and it is a function of the
+    /// configuration rather than a claim about it, so two strategies on
+    /// different configurations cannot report the same number by assertion.
+    ///
+    /// The formula is the one the proof system documents: field width plus
+    /// log-blowup times query count. The parameters are reached through the
+    /// workspace's existing pinned constants rather than through an accessor
+    /// on the prover type, which exposes public fields and no inherent
+    /// methods; reading a configuration object here would couple this trait to
+    /// one prover build rather than to the parameters themselves.
     #[must_use]
-    pub fn from_prover_parameters(params: &ProverParameters) -> Self {
-        Self(params.field_bits()
-            + params.log_blowup_factor() * params.n_queries())
+    pub fn from_prover_parameters(params: &SecurityParams) -> Self {
+        Self(params.pow_bits + params.log_blowup_factor * params.n_queries)
     }
 
     #[must_use]
@@ -361,8 +374,11 @@ the anti-self-comparison guarantee. `AttestationError` is a **core** type carryi
 opaque, strategy-supplied reason, because it appears in the trait's return
 position and third-party strategies dispatch through one registry — a
 strategy-owned error type could not appear there. The strategy chooses the
-reason; core decides what every variant means, which is rejection. `ProverParameters` is the existing
-prover configuration type, not a new one.
+reason; core decides what every variant means, which is rejection. `SecurityParams` is the
+prover's security-relevant parameters — field width, log blowup factor, and query
+count — read from the workspace's existing pinned constants rather than
+redeclared here, so the figure this RFC computes is the same one the prover
+already reports.
 
 **A verifier MUST NOT compare a proof against itself.** An existing
 capability-verification helper accepts an absent expectation and then uses the

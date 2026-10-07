@@ -46,8 +46,9 @@ this RFC introduces. See §Security Considerations.
 - RFC-0871: Specialized Node Protocol Envelope — supplies `PayloadKindId` and the
   served-payload-kind notion a strategy declares its requirement against
 - RFC-0958: ZK Capability Subclass — defines the capability class and the
-  circuit this RFC's binding relation applies to, and is **amended** by
-  §Root-Secret Binding. It does not itself define `root_secret_knowledge` as a
+  circuit this RFC's binding relation applies to, and is **amended** by the
+  relation adopted in §Data Structures, which is narrower than the one it
+  specifies. It does not itself define `root_secret_knowledge` as a
   strategy; that identifier is introduced here
 - The holder registry, as a hard authorisation dependency. It exists today and
   is keyed by capability id, with an `active` predicate over revocation and
@@ -59,10 +60,11 @@ this RFC introduces. See §Security Considerations.
 **Optional:**
 
 - RFC-0965: Capability Extension Format — this RFC applies its §Per-Extension
-  Crate Layout to attestation strategies: each strategy lives in its own crate,
-  registers through an `init` path, and is discovered by the registration host
-  rather than linked from core (Lifecycle Requirement 8, Phase 5). The two
-  reference strategies follow it as `octo-cap-zk` and the new `octo-cap-poi`
+  Crate Layout to attestation strategies: each strategy lives in its own crate
+  and registers through an `init` path (Lifecycle Requirement 1), and is
+  discovered by a registration host that is a binary or node crate rather than
+  by core linking it (Lifecycle Requirement 8, Phase 5). The two reference
+  strategies follow it as `octo-cap-zk` and the new `octo-cap-poi`
 
 **Relationship to RFC-0630.** Proof-of-Inference supplies the _fact_ that
 in-boundary execution attests — it is a consensus mechanism for inference, and
@@ -157,7 +159,7 @@ graph TD
     Cfg -->|not accepted here| Reject
     Cfg -->|accepted| Reg[AttestationRegistry<br/>octo-wallet::capability]
     Reg -->|unknown id| Reject
-    Reg -->|registered| S1[RootSecretKnowledge<br/>RFC-0958]
+    Reg -->|registered| S1[RootSecretKnowledge<br/>named by this RFC]
     Reg -->|registered| S2[InBoundaryExecution<br/>RFC-0630]
     Reg -->|registered| S3[Third-party crate]
     S1 --> Req[required_payload_kinds]
@@ -177,9 +179,12 @@ separate edge because a node that fails step 4 never reaches step 5, while both
 draw from the resolved strategy — collapsing them into one path would assert
 that a rejected-at-step-4 node still verifies.
 
-The unauthenticated branch is step 1 of the dispatch and is a first-class
+The unattested branch is step 1 of the dispatch and is a first-class
 outcome, not a degenerate one: most capabilities carry no attestation, and a
-token that does is never verified by that path.
+token that does is never verified by that path. It is a branch in the
+attestation sense only — it is reached after step 0, so the capability is
+already registry-authorised, and the macaroon signature is still verified.
+Nothing about it is unauthenticated.
 
 The first gate is the one that makes acceptance mean anything: everything past
 it can be satisfied by an attacker who minted their own capability. See
@@ -216,8 +221,9 @@ unrelated to either and merely shares the name: it is a public input the
 prover supplies, folded into the holder-signature commitment with other public
 fields and never compared against the secret, so it constrains nothing the
 binding relation depends on. RFC-0958 specifies comparing it against the
-derived chain value, and the circuit does not do that — the drift is recorded in
-§Root-Secret Binding. The fourth is **not a fourth
+derived chain value, and the circuit does not do that — that drift is recorded
+in the paragraph immediately below this table and owned by Phase 4. The fourth
+is **not a fourth
 value**: the wire decoder derives the same capability id the mint path computes,
 byte-identically, and that equivalence is pinned by a test. It is listed only
 because one identifier carries two meanings across the substrate for two
@@ -734,9 +740,11 @@ The soundness side is unwrapped through `bits()` rather than read as a struct
 field, which is what keeps `SecurityFigure`'s single constructor the only route
 to a value: there is no second path by which a caller could supply one. The
 unmeasured check above is the guard that makes the bare cost figure safe to
-pass. `Measured` is the arm every reference strategy reaches when its phase
-completes the measurement — `Unmeasured` is the only value constructible today,
-and §Implementation Phases names the phase that replaces it.
+pass. `Measured` is a public variant any strategy may construct, so nothing
+prevents a third-party crate from supplying one today. What is true is narrower:
+neither reference strategy has a measurement yet, which is why both ship
+`Unmeasured` and why §Implementation Phases names the phase that replaces it
+for each.
 
 **Strategy registration.**
 
@@ -755,8 +763,10 @@ register_strategy(strategies, strategy, allocation_record):
 
 Registration is where the id gates are, which is why neither can be bypassed by
 a strategy: the two behaviours pinned to registration — id allocation and
-exclusive user-range claim — both execute here rather than at verification time,
-where a strategy could skip them.
+exclusive claim — both execute here rather than at verification time,
+where a strategy could skip them. Exclusivity covers both ranges, not only the
+user range: an already-held id is refused in either, and the incumbent is left
+untouched.
 
 The remaining two registration-time guarantees are **type properties rather than
 runtime checks**, which is the stronger form. `SecurityFigure` takes no bare
@@ -817,11 +827,15 @@ state — it is a rejection, not a wildcard.
    not by anything in the substrate. It is stated here rather than left implicit
    because the phases read as though they were already authorized to start.
 
-Requirements 1–8 are properties of the implementation and each names the
-algorithm, phase, or gate that carries it. This one is different in kind, which
-is why it carries no such reference and why saying so matters: a reader looking
-for the phase that implements requirement 9 will not find one, and that absence
-is correct.
+Requirements 1–8 are properties of the substrate rather than of this document's
+wording, but they do not each name their carrier the way the algorithms do.
+Requirement 1 lives in the registration algorithm and the init path, 2 in
+`validate_policy`, 3 and 5 in the dispatch, 4 in the mint and attenuation paths
+in core, 6 in the pure-function requirement on `verify`, 7 in the node-metadata
+advertisement, and 8 in the dependency direction Phase 5 removes. Naming them
+here is a convenience, not a guarantee that each has an algorithm of its own —
+several are constraints on how the phases must be built rather than steps
+inside one.
 
 ### Determinism Requirements
 
@@ -1397,6 +1411,9 @@ unregistered and is registrable only when TV12 passes.
 
 Land `AttestationTypeId`, the `AttestationStrategy` and `AttestationAdmission`
 traits, and the fail-closed `AttestationRegistry` in `octo-wallet::capability`.
+Add the wallet's `octo-protocol` dependency here, in the same phase as the
+admission trait: `required_payload_kinds` returns `PayloadKindId`, so the trait
+has no type to name until the dependency exists.
 
 `AttestationTypeId` is declared in `octo-cap-macaroon`, alongside
 `CapabilityClass` and beneath the wallet that consumes it. Declaring it in the
@@ -1504,14 +1521,15 @@ surfaced by its review and are prerequisites for a clean implementation:
   registry that enforces it is a production type with no production call site —
   only its tests instantiate it. The role model this RFC links to treats it
   as a computed projection. Closing that gap is a separate change.
-  values: the circuit declares `cap_root_hash_lo`/`_hi` but never derives them,
-  and asserts only that a Poseidon commitment over the witness is non-zero, so
+- The circuit declares `cap_root_hash_lo`/`_hi` but never derives them, and
+  asserts only that a Poseidon commitment over the witness is non-zero, so
   nothing connects the declared input to the secret. RFC-0958 specifies the
-  derivation and the comparison. Phase 4 records the drift and decides what the
+  derivation and the comparison. Phase 4 records this drift and decides what the
   substrate should do about it, which is not this RFC's to settle: this RFC
   adopts the narrower root-secret binding in §Root-Secret Binding and leaves the
-  declared inputs untouched. The rename is the part Phase 4 does not attempt,
-  since it is wire-affecting.
+  declared inputs untouched. Separately, `cap_root_hash` names several different
+  values across the substrate, and renaming it is wire-affecting, so the rename
+  is the part Phase 4 does not attempt.
 
 ### Phase 5: Dependency direction and deployment properties
 
@@ -1549,8 +1567,10 @@ strength of nothing.
 - `crates/octo-cap-zk/` — reference strategy 1 crate
 - `crates/octo-cap-poi/` — reference strategy 2 crate (new)
 - `crates/octo-wallet/Cargo.toml` — gains an `octo-protocol` dependency for
-  `PayloadKindId` in the admission trait, and loses its direct `octo-cap-zk`
-  dependency in favour of registration
+  `PayloadKindId` in the admission trait, in Phase 1 with the trait that needs it
+  (the kind declaration is load-bearing, since `required_payload_kinds` has no
+  type to name without it), and loses its direct `octo-cap-zk` dependency in
+  favour of registration in Phase 5
 
 Strategy crates are reached through registration only. A Layer-B core crate must
 not name a Layer-E strategy crate, so the existing direct dependency is removed
@@ -1594,6 +1614,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.14   | 2026-10-07 | Fourteenth review round, substrate-verification lens. Eleven claims about the existing codebase checked one at a time against the source. All eleven hold, including the load-bearing ones earlier rounds had already repaired: the unkeyed root-secret hash, the registry lookup the dispatch leans on, the single non-zero assertion in the circuit, the absence of an unkeyed in-circuit hash entry point, the witness discarded by the mint path, and the drift between the relation RFC-0958 specifies and the one the circuit implements. No claim contradicted the code. The lens produced two precision notes, which this round folds in. The conformance test was described as pinning the calldata order; it asserts a length and ten sampled slots, leaving thirteen unasserted, so a transposition among them passes it today — which is why the phase step now requires asserting every slot rather than extending a partial check. And the ZK public input was described as compared against a verifier-held expectation; it is in fact folded into the holder-signature Poseidon alongside other public fields and never compared against the secret, which is precisely why it cannot serve as the binding target.                                                                                                                                                                                                                                                                                                              |
 | v0.15   | 2026-10-07 | Fifteenth review round, structural-integrity lens. Seven findings, of which one is false: the reviewer counted twenty fence markers where the file has eighteen, which is nine balanced pairs and no unclosed block. The substantive finding is that the dispatch algorithm omitted the panic arm that three other sections already required — the adversary entry, the error table, and the test vector all describe a panic becoming a rejection, but the document's only normative statement of dispatch behaviour did not, and no phase scheduled it. The arm is now a step of the dispatch rather than a wrapper around it, since a strategy that panics has produced no outcome at all, and the phase that lands the dispatch now owns the containment. Corrects an error-table sentence pointing at rows positioned before the ones it names when they follow, labels the diagram's terminal accept node so it matches every other node, replaces a question label that named nothing with the row it actually refers to, and states the phase-2 registration in a way that does not contradict itself about when the registry entry appears. Routes the binding target through the expectation accessor rather than asserting in a doc comment that a strategy reads it there.                                                                                                                                                                                                                                                          |
 | v0.16   | 2026-10-07 | Sixteenth review round, algorithm-completeness lens. Six findings, and the round's theme is pointers to obligations that live elsewhere. The specification-to-implementation drift from RFC-0958 was declared as recorded in one section and then, two paragraphs later, as recorded in another, and it was in neither — Phase 4 owned only the rename, so the drift itself that this RFC narrows had no owner in any phase. Phase 4 now owns it explicitly and the two declarations agree. The dispatch's error arm had no row in the error table, in a section whose first sentence promises every rejection is distinguishable to the operator, which also left a policy refusal — the mechanism the refuse-only rule depends on — with no visible reason anywhere. That arm now has its own row, and the three step-5 rows are explained as three distinct failure modes. The deferral requirement is a workflow rule with no code path, and said so nothing, so a reader hunting for the phase that implements it would conclude it was missing; it now states that its absence of a phase is correct, as the other two review-enforced conventions do. A term for the bypass this dispatch prevents was used without ever being defined, and a dependency declared its crate layout as applied while nothing in the document applied it. The strategy table's cost cell pointed at the section that defers the cost question rather than the one that answers it, and asymmetrically against its neighbour, which named its owning phase. |
+| v0.17   | 2026-10-07 | Seventeenth review round, reference-integrity lens. Ten findings, four of them damage the two previous rounds caused. The naming table still pointed at the root-secret section for the RFC-0958 drift that the round before had relocated, so the two declarations did not in fact agree. The dependency list attributed the amendment to a section that does not make it. The note added to the deferral requirement claimed every other requirement names its carrier, which is false of six of the eight, and now names where each one lives instead. And the phase-4 edit merged two list items into one by consuming a bullet marker, leaving an item opening mid-sentence in lower case — the same misplaced-entry class this loop has now repaired in four consecutive rounds. Beyond that, the diagram still credited the strategy to RFC-0958 after the table was corrected, a registration paragraph narrowed exclusivity to the user range against its own algorithm comment, a branch of the dispatch was called unauthenticated when it is reached after the authorisation gate and still signature-verified, a sentence claimed a cost variant was the only constructible one when it is public, and a dependency the admission trait needs was acquired by no phase.                                                                                                                                                                                                                                                            |
 
 ## Related RFCs
 

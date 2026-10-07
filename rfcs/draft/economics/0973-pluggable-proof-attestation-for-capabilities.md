@@ -416,11 +416,11 @@ impl SecurityFigure {
     }
 ```
 
-`bits()` exists because the budget gate compares a figure rather than a token:
-`node.has_headroom` below takes the `SecurityFigure` and reads it through this
-accessor, so the value a node budgets against is the one the prover parameters
-produced. Without it a caller would have to reach into the tuple struct, which
-would be a second, unfenced path to the same number.
+`bits()` exists because the budget gate compares numbers rather than tokens:
+`node.has_headroom` in `validate_policy` below is handed this figure and unwraps
+it through the accessor, so the value a node budgets against is the one the
+prover parameters produced. Without it a caller would have to reach into the
+tuple struct, which would be a second, unfenced path to the same number.
 
 **Verification context.** `AttestationVerifyCtx` is a borrow-only view carrying
 the capability under verification, the attestation bytes, and any read-only

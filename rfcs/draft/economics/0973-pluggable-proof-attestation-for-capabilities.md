@@ -415,13 +415,17 @@ pub trait Expectation {
     /// capability carrying an RFC-0957 macaroon this is
     /// `macaroon.root_secret_hash`, so a strategy reads its binding target
     /// through this accessor rather than reaching into a macaroon type it
-    /// would otherwise not depend on. A capability whose canonical form
-    /// carries no such field is one whose id is its only stable identity, so
-    /// core returns the capability id. That is a defined answer rather than a
-    /// missing one: a strategy whose relation needs a per-token binding can
-    /// read it here without reaching into a token shape it does not know, and
-    /// a capability that does not carry the macaroon field still yields
-    /// something stable rather than nothing.
+    /// would otherwise not depend on.
+    ///
+    /// There is deliberately no fallback for a capability form that carries no
+    /// bindable field, and the obvious candidate is the wrong one. The
+    /// capability id is not a substitute: it hashes the canonical form, and
+    /// the envelope is inside that form, so an expectation returning it would
+    /// be a function of the attestation — a strategy would be comparing a
+    /// value computed from the token against itself, which is the vacuous check
+    /// §Algorithms exists to forbid. A capability with nothing outside its own
+    /// hashed form to bind to therefore has no valid expectation, and minting
+    /// one with an attestation is a refusal rather than a degraded fallback.
     fn bound_value(&self) -> &[u8; 32];
 }
 
@@ -961,6 +965,18 @@ payload)` pair for the one it inherited. Attenuation is bearer-triggered, so
    moment of attenuation, the attenuation is refused and no child record is
    written. Registration authority is inherited here, and inheriting it is not a
    licence to extend it to a capability the issuer has withdrawn.
+
+   The **revocation** half is a record flag and needs no clock. The **expiry**
+   half does, and it introduces a second bearer of the time source: the check at
+   attenuation runs wherever the bearer performs it, not on the verifier, so it
+   reads whatever clock that machine has. That is a different reader from the
+   one A15 covers, and the document should say so rather than let an implementer
+   assume the verifier's assumption covers it. The honest statement is that the
+   expiry half inherits the same untrusted-time exposure as step 0, from a
+   different vantage point, and that a node performing attenuation should use
+   the same clock discipline it applies to dispatch. Whether the child also
+   inherits the parent's lifetime rather than recomputing one is not settled by
+   this RFC and is a capability-format question.
 
 5. Back-compat MUST preserve readability of every capability minted before this
    RFC. A capability carrying no attestation takes the macaroon path, and its
@@ -1908,7 +1924,8 @@ crate, re-pointing the re-exporting module. This is Phase 5 work rather than
 Phase 1's because the lint below fails the build until the removal is done, so
 doing it first would break the tree.
 
-Lands the two properties this RFC states but that no earlier phase implements:
+Lands the two properties this RFC states that no earlier phase fully
+implements — the advertisement, and the lint rather than the host itself:
 
 - **Node-metadata advertisement** (Lifecycle Requirement 7, A1's only
   mitigation): the node's acceptance set is advertised in its announced node
@@ -1916,10 +1933,11 @@ Lands the two properties this RFC states but that no earlier phase implements:
   verify. A test asserts a node accepting no attestations advertises an empty set
   rather than an absent one, and that a configured-but-unverifiable strategy
   never appears in the advertisement.
-- **Registration host and dependency lint** (Lifecycle Requirement 8): the
-  strategy crates are linked from the node or binary crate that composes a node,
-  and a CI lint fails the build if a Layer-B core crate gains a dependency on a
-  strategy crate. The existing lint that keeps mint calls out of a node-type
+- **Registration host and dependency lint** (Lifecycle Requirement 8): the CI
+  lint fails the build if a Layer-B core crate gains a dependency on a strategy
+  crate, and the wallet loses its direct `octo-cap-zk` dependency. The host
+  itself and the links it carries landed in Phase 2, which cannot register
+  without one. The existing lint that keeps mint calls out of a node-type
   path is the pattern to follow.
 
   The **links** land in Phase 2 rather than here, because registration cannot
@@ -1998,6 +2016,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.31      | 2026-10-07 | Round 32, two attacker walkthroughs over disjoint halves of the design, both held to a raised bar: report only what a careful implementer could plausibly get wrong in a way that matters. The token path came back with nothing, having traced every route by which an attested token could reach acceptance having satisfied a weaker set of checks than a legitimate token of the same kind. Dropping the envelope, transplanting it across capabilities, and pre-RFC truncation all change the capability id and therefore miss the registry at step 0. The strategy path found one, and it was a regression from the previous round: the id-ownership gate compared the record's owner against an identity method the strategy trait does not declare, so a crate reporting whatever the record names would pass unconditionally and the check was decorative. The claimant is now supplied by the registration host, which observes crates at link time and is the only party able to answer honestly, and the guarantee is stated as exactly as strong as that observation rather than more. That reviewer also flagged a fallback with no source: the expectation's bound value for a capability carrying no macaroon field. It now returns the capability id, which is defined and stable rather than absent. And the reviewer correctly identified one passage as describing a risk that does not exist. A decoder tolerating an absent envelope does not open the bypass, because it computes an id matching no registry record and is rejected at step 0 like any pre-RFC node. What such a change removes is the guarantee rather than the refusal, since the refusal would then rest on coincidence rather than on a rule. The passage now says that, which is the more useful warning to leave behind.                                                                                                                                                                                                                                                                                                                                                                |
 | v0.32      | 2026-10-07 | Round 34, looking at the implications of recent changes rather than the changes themselves, since two prior rounds at the raised bar had come back clean. It rejected twelve candidates against the bar and found one real ownership gap. The determinism adversary states its mitigation as a vector, and the determinism vector requires two independently built implementations of the same relation. Phase 2 was named as the owner, on the reasoning that it lands the first two strategy crates. Those crates establish two different relations, so verifying one attestation with each is not determinism across implementations — it is two strategies disagreeing about different facts, which is expected. And at Phase 2 the root-secret strategy still ships with no registry entry, so exactly one of the pair is registrable at all. No other phase builds a duplicate, so the one property rated high for forking acceptance had no carrier in any phase. Phase 2 now owns a second independent implementation of one relation as a separate deliverable, described as a test fixture rather than a shipped strategy, and the vector and the adversary both say why the two reference strategies do not substitute for it. The other twelve candidates were rejected rather than reported, which is the more useful half of that round: a claim the document states plainly, a prohibition an implementer satisfies by building what is written, and a gap in vector coverage where the rule is unambiguous and is one equality check all read as coverage bookkeeping rather than as an implementer error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | v0.33      | 2026-10-07 | Round 35, examining the test vectors as a set and the phases against each other. It rejected eleven candidates and found two, both consequences of the two preceding rounds' fixes. Attenuation mandated registering the child under its recomputed id without ever consulting the parent's registry state. Revocation and expiry are recorded against the parent's id and the child's is different, so a bearer could take a revoked capability, attenuate it, and hold an active record the revocation never touched — step 0 would find it present and unrevoked, step 0b would verify on the bearer-held root secret, and the carried-forward envelope would still hold because the binding target does not move. The narrowing argument in the security section does not reach this, since revocation withdraws authority the issuer did grant. Registration is now conditioned on the parent being active, with a vector that ACCEPTs without the condition. Registration was also mandated in a phase that could not perform it. The claimant that makes the allocation-ownership check meaningful is the crate identity the registration host observes at link time, and that host was a later phase's deliverable, so the phase owning registration had no component able to supply the claimant. Core cannot stand in, both because it may not link a strategy crate and because it cannot observe crates at link time. The host and its links move earlier; the lint that keeps the host the only such linker stays where it was, since the links landing first is a window and the host landing without them would leave nothing able to register.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v0.34      | 2026-10-07 | Round 36, run as a verification of the previous round's two fixes plus a further walkthrough. Both fixes verified correct, which is the first time a two-fix sweep has passed intact. It then found that one of those fixes had been undone three rounds earlier. The expectation accessor was given a fallback for a capability form carrying no bindable field, and the fallback was the capability id. But the capability id hashes the canonical form and the envelope is inside that form, so the expectation was a function of the attestation — a strategy would compare a value computed from the token against itself. That is the vacuous check the design forbids, reintroduced through the back door by a repair for a missing source. The fallback is removed rather than replaced, since a capability with nothing outside its own hashed form has no valid expectation and minting one with an attestation is a refusal. A phase attributed to itself the work of a later one, which the previous round had split, and its bullet still described building the host that phase had already moved. The header and bullet now describe the lint, which is what remains. And the parent-state condition introduced a second bearer of the time source without naming it: the revocation half needs no clock, but the expiry half is read wherever the bearer performs the attenuation rather than on the verifier. It inherits the same untrusted-time exposure from a different vantage point, and whether the child inherits the parent's lifetime rather than recomputing one is a capability-format question this RFC does not settle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Rounds 3 through 11 are archived under the same convention in the earlier review records; the file named below covers rounds 12 through 26. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it.                                                                                                                                                                                                                                                                                                                            |
 
 ## Related RFCs

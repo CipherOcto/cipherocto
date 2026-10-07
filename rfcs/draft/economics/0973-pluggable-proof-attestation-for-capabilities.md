@@ -597,10 +597,8 @@ only transitively, through those three. Of the direct three, only `root_secret_h
 candidate binding target at all: the other two cannot be, because they need the
 nonce. `root_id` and `chain[0]` are distinct derivations over the
 mint nonce, and the nonce is deliberately unrecoverable. Binding either would
-require publishing it. BLAKE3 itself is not yet available in-circuit, which is
-recorded in §Performance Targets; the consequences of excluding the other two
-are set out in §Alternatives Considered. The point here is that the exclusion is
-a decision, not an omission.
+require publishing it. The consequences are set out in §Alternatives Considered;
+the point here is that the exclusion is a decision, not an omission.
 
 **`chain[0]` is an assumed root, not a derived one.** RFC-0957's signature
 verification seeds its running capability-id hasher with `chain[0]` taken from
@@ -636,10 +634,10 @@ the full 32-byte `root_secret_hash`.
 **Fail-closed dispatch.**
 
 ```text
-verify_capability_attestation(token, node, issuers, strategies, clock):
-    # `issuers`   = the holder registry, keyed by capability id, existing today
+verify_capability_attestation(token, node, holders, strategies, clock):
+    # `holders`  = the holder registry, keyed by capability id, existing today
     # `strategies` = the attestation registry, keyed by attestation type id, new
-    0. if issuers.lookup_active(token.capability_id, clock) is None:
+    0. if holders.lookup_active(token.capability_id, clock) is None:
           -> REJECT   # authorisation precedes attestation; see §Security Considerations
     1. attestation_id = token.attestation_type_id
        if absent:
@@ -664,15 +662,18 @@ verify_capability_attestation(token, node, issuers, strategies, clock):
        if admission.verifier_needs_producing_kinds:
           if not node.serves_all(admission.required_payload_kinds):
              -> REJECT   # this node cannot verify what it cannot produce
-    5. outcome = catch_unwind(|| strategy.verify(ctx{
-            capability:  token,
-            attestation: token.attestation_payload,
-            expectation: &core_expectation_for(token),  # never from the attestation
-            policy:      node.policy_source(),
-       }))
-       # The strategy reads its binding target as ctx.expectation.bound_value(),
-       # which for an RFC-0957 capability yields macaroon.root_secret_hash — the
-       # value the relation in §Root-Secret Binding is stated against.
+    5. outcome = catch_unwind(AssertUnwindSafe(|| strategy.verify(ctx{
+           capability:  token,
+           attestation: token.attestation_payload,
+           expectation: &core_expectation_for(token),  # never from the attestation
+           policy:      node.policy_source(),
+       })))
+       # The AssertUnwindSafe wrapper is required, not decorative: verify takes
+       # shared references through the context, and the borrow checker will not
+       # let an unwind cross them without it (A4). The strategy reads its
+       # binding target as ctx.expectation.bound_value(), which for an RFC-0957
+       # capability yields macaroon.root_secret_hash — the value the relation in
+       # §Root-Secret Binding is stated against.
        #
        # A panic is a rejection, never an acceptance and never a propagated
        # fault: a strategy that crashes has verified nothing. Under an
@@ -715,14 +716,13 @@ validate_policy(policy, node, strategies):
         if not strategies.contains(strategy_id):
             -> FAIL TO START, naming the offending id
         admission = strategies.admission_of(strategies.resolve(strategy_id))
-        # producing-side coverage: the node must be able to produce what it
-        # accepts. This is a boot check, not a per-call one, because it is a
-        # statement about the node rather than about any single attestation.
         if admission.required_payload_kinds is non-empty:
-            # producing-side only: the node must be able to produce what it
-            # accepts. The verification-side requirement is a different gate and
-            # is deliberately NOT checked here, so that step 4 remains reachable
-            # for a node that boots but cannot verify.
+            # Producing-side only: the node must be able to produce what it
+            # accepts, and this is a boot check rather than a per-call one
+            # because it is a statement about the node rather than about any
+            # single attestation. The verification-side requirement is a
+            # different gate and is deliberately NOT checked here, so that
+            # step 4 remains reachable for a node that boots but cannot verify.
             if not node.serves_all(admission.required_payload_kinds):
                 -> FAIL TO START, naming the kinds the node does not serve
         profile = admission.admission_profile
@@ -1038,13 +1038,13 @@ rather than silent — see A1.
 boundary; this RFC touches the cryptographic binding surface, so the design must
 answer what an adversary controls and where each control is stopped.
 
-| #   | Question                                                 | Answer                                                                                                                                                           |
-| --- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | What can an adversary supply without permission?         | A capability of their own minting, an attestation over it, and an arbitrary circuit witness.                                                                     |
-| 2   | What does each of those reach?                           | The witness reaches the strategy, and the strategy accepts. Nothing else: the capability id does not resolve, so step 0 rejects first.                           |
-| 3   | What stops it?                                           | The capability registry, which is authorisation rather than attestation. The proof is not the control and is never described as one.                             |
-| 4   | What is the residual exposure?                           | Registry write authority, holder identity after transfer, and attestation replay across a shared root secret. All three are stated as limits rather than solved. |
-| 5   | Does accepting a strategy widen what the node can check? | No. Widening requires shipping the strategy, which is a code change and an audited registration. Configuration can narrow only.                                  |
+| #   | Question                                                 | Answer                                                                                                                                                                   |
+| --- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | What can an adversary supply without permission?         | A capability of their own minting, an attestation over it, and a witness satisfying that capability's own relation — not one that satisfies a relation it does not meet. |
+| 2   | What does each of those reach?                           | The witness reaches the strategy, and the strategy accepts. Nothing else: the capability id does not resolve, so step 0 rejects first.                                   |
+| 3   | What stops it?                                           | The capability registry, which is authorisation rather than attestation. The proof is not the control and is never described as one.                                     |
+| 4   | What is the residual exposure?                           | Registry write authority, holder identity after transfer, and attestation replay across a shared root secret. All three are stated as limits rather than solved.         |
+| 5   | Does accepting a strategy widen what the node can check? | No. Widening requires shipping the strategy, which is a code change and an audited registration. Configuration can narrow only.                                          |
 
 The question this table exists to answer is its third row — what stops a
 self-minted capability — because the intuitive answer, "the proof stops it", is
@@ -1614,6 +1614,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.16   | 2026-10-07 | Sixteenth review round, algorithm-completeness lens. Six findings, and the round's theme is pointers to obligations that live elsewhere. The specification-to-implementation drift from RFC-0958 was declared as recorded in one section and then, two paragraphs later, as recorded in another, and it was in neither — Phase 4 owned only the rename, so the drift itself that this RFC narrows had no owner in any phase. Phase 4 now owns it explicitly and the two declarations agree. The dispatch's error arm had no row in the error table, in a section whose first sentence promises every rejection is distinguishable to the operator, which also left a policy refusal — the mechanism the refuse-only rule depends on — with no visible reason anywhere. That arm now has its own row, and the three step-5 rows are explained as three distinct failure modes. The deferral requirement is a workflow rule with no code path, and said so nothing, so a reader hunting for the phase that implements it would conclude it was missing; it now states that its absence of a phase is correct, as the other two review-enforced conventions do. A term for the bypass this dispatch prevents was used without ever being defined, and a dependency declared its crate layout as applied while nothing in the document applied it. The strategy table's cost cell pointed at the section that defers the cost question rather than the one that answers it, and asymmetrically against its neighbour, which named its owning phase. |
 | v0.17   | 2026-10-07 | Seventeenth review round, reference-integrity lens. Ten findings, four of them damage the two previous rounds caused. The naming table still pointed at the root-secret section for the RFC-0958 drift that the round before had relocated, so the two declarations did not in fact agree. The dependency list attributed the amendment to a section that does not make it. The note added to the deferral requirement claimed every other requirement names its carrier, which is false of six of the eight, and now names where each one lives instead. And the phase-4 edit merged two list items into one by consuming a bullet marker, leaving an item opening mid-sentence in lower case — the same misplaced-entry class this loop has now repaired in four consecutive rounds. Beyond that, the diagram still credited the strategy to RFC-0958 after the table was corrected, a registration paragraph narrowed exclusivity to the user range against its own algorithm comment, a branch of the dispatch was called unauthenticated when it is reached after the authorisation gate and still signature-verified, a sentence claimed a cost variant was the only constructible one when it is public, and a dependency the admission trait needs was acquired by no phase.                                                                                                                                                                                                                                                            |
 | v0.18   | 2026-10-07 | Eighteenth review round, run specifically against the damage recent sweeps were causing rather than against inherited defects. Two findings, both self-inflicted, which is the round's real result: replacing a pointer with a positional description instead fixed nothing, since "the paragraph immediately below this table" is not where the drift is recorded either. The pointer is removed rather than re-aimed, because the naming table's own claim — that the ZK public input is never compared against the secret — already carries everything the table needs to say, and the drift has exactly one home. The second is an orphaned sentence in the root-secret section, inserted with no antecedent and splitting a single argument about the mint nonce that the two following sentences then restate. Its referent was the nonce, which is precisely the thing that cannot be in-circuit, so the sentence as written was not merely awkward but wrong. It now points at the section that actually records the unavailable primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| v0.19   | 2026-10-07 | Nineteenth review round, again aimed at self-inflicted damage. Five findings, one of them a direct contradiction of the row above. The previous round's repair of an orphaned sentence replaced it with a pointer to a section that does not record the fact, while the fact itself was stated thirty lines earlier in the same section and never needed the pointer. The sentence is removed rather than re-pointed, which is the second consecutive time the correct repair turned out to be deletion rather than correction — a pattern worth naming, since both times the instinct was to redirect rather than to check whether the claim needed saying at all. Also removes a rationale comment stated twice inside one algorithm block, the outer copy left behind when the inner one was added. Adds to the dispatch the unwind-safety boundary the adversary entry already required but the algorithm omitted, so the normative statement now satisfies its own mitigation. Renames a dispatch parameter from the pre-split registry's name to the holder registry it has meant since the split, because the old name collided with a different actor in the roles table. And disambiguates a decision-table row whose witness claim could be read as contradicting the test vector for a witness that does not satisfy the relation.                                                                                                                                                                                                   |
 
 ## Related RFCs
 

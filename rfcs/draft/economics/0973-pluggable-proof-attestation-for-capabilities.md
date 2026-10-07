@@ -425,8 +425,12 @@ pub trait Expectation {
     /// value computed from the token against itself, which is the vacuous check
     /// §Algorithms exists to forbid. A capability with nothing outside its own
     /// hashed form to bind to therefore has no valid expectation, and minting
-    /// one with an attestation is a refusal rather than a degraded fallback.
-    fn bound_value(&self) -> &[u8; 32];
+    /// one with an attestation is a refusal rather than a degraded fallback — a
+    /// rule Lifecycle Requirement 4 owns, decidable by the issuer, which holds
+    /// the capability form. What the mint rule cannot prevent is a record
+    /// written directly into the registry, and `None` is what the dispatch
+    /// rejects on in that case, rather than having nothing to reject with.
+    fn bound_value(&self) -> Option<&[u8; 32]>;
 }
 
 /// Security bits, computed rather than asserted. No constructor takes a bare
@@ -747,10 +751,19 @@ verify_capability_attestation(token, node, holders, strategies, clock):
        if admission.verifier_needs_producing_kinds:
           if not node.serves_all(admission.required_payload_kinds):
              -> REJECT   # this node cannot verify what it cannot produce
-    5. outcome = catch_unwind(AssertUnwindSafe(|| strategy.verify(ctx{
+    5. expectation = core_expectation_for(token)   # never from the attestation
+       if expectation is None:
+          -> REJECT, reason "no bindable value in this capability form"
+       # Mint refuses to attach an attestation to such a capability, so this is
+       # unreachable through the mint path. It is reachable through a registry
+       # record written directly, which §Security Considerations leaves open, and
+       # the gate has to be defined rather than assumed: without one, the only
+       # failure an implementer could produce is a panic naming the strategy for
+       # a core-side condition.
+    5a. outcome = catch_unwind(AssertUnwindSafe(|| strategy.verify(ctx{
            capability:  token,
            attestation: token.attestation_payload,
-           expectation: &core_expectation_for(token),  # never from the attestation
+           expectation: &expectation,   # the value built above, never the attestation
            policy:      node.policy_source(),
        })))
        # AssertUnwindSafe is required by the borrow checker, but note what it is:
@@ -926,9 +939,19 @@ state — it is a rejection, not a wildcard.
    unresolvable acceptance entry.
 3. A verifier MUST reject, never downgrade, on an unknown id, an unresolved
    strategy, a capability absent from the registry, or a policy mismatch.
-4. **Attenuation MUST carry the attestation envelope forward unchanged and
-   register the child, or refuse.** The envelope propagates from parent to child
-   at the point
+4. **Mint MUST refuse to attach an attestation to a capability form carrying no
+   bindable value, and attenuation MUST carry the attestation envelope forward
+   unchanged and register the child, or refuse.** The mint half is decided by
+   the issuer, which holds the capability form: if the form carries no value
+   outside its own hashed canonical form, an attestation on it could only bind
+   to itself, so the mint is a refusal rather than a degraded token. The second
+   half is the propagation rule for a child that does have one, and it applies
+   to any envelope already present. Both are mint-time rules in core, and both
+   are refusals rather than warnings. Neither interacts with Lifecycle
+   Requirement 5, since a capability carrying no attestation exits at dispatch
+   step 1 and never builds an expectation.
+
+   **Attenuation.** The envelope propagates from parent to child at the point
    the child is produced, so a child of an attested parent cannot exist without
    one. Because attenuation recomputes the capability id, the child is a
    different registry key and MUST be registered under it in the same operation. This is a mint-time
@@ -1116,6 +1139,7 @@ parse is never authorised, because its capability id cannot be read out of it.
 | Strategy id unresolved                     | REJECT at step 3                | unknown strategy id                                      |
 | Verification needs kinds not served        | REJECT at step 4                | node cannot verify what it cannot produce                |
 | Verification unsatisfied                   | REJECT at step 5                | strategy-supplied reason, safe to log                    |
+| No bindable value in the capability form   | REJECT at step 5                | capability carries nothing an attestation could bind to  |
 | `verify` returns an error                  | REJECT at step 5                | strategy-supplied reason, safe to log                    |
 | Panic in `verify` (unwinding build)        | REJECT at step 5                | strategy panicked                                        |
 
@@ -1541,6 +1565,13 @@ before dispatch as a decode failure, with no strategy resolved.
 
 **TV6** — TV2 with an unsatisfying attestation: REJECT.
 
+**TV6b** — an attested token whose capability form carries no bindable value,
+arriving with a registry record written directly rather than minted: REJECT at
+step 5, naming the missing bindable value. Mint refuses this case, so the vector
+writes the record to reach it. It is the vector that fails an implementation
+where the expectation accessor has no way to express absence — such a build has
+nothing to reject with and reports a panic naming the strategy for a core-side
+condition.
 **TV7** — policy names an unregistered strategy: node refuses to start.
 
 **TV7b** — policy accepts a strategy whose required payload kinds the node does
@@ -2017,6 +2048,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.32      | 2026-10-07 | Round 34, looking at the implications of recent changes rather than the changes themselves, since two prior rounds at the raised bar had come back clean. It rejected twelve candidates against the bar and found one real ownership gap. The determinism adversary states its mitigation as a vector, and the determinism vector requires two independently built implementations of the same relation. Phase 2 was named as the owner, on the reasoning that it lands the first two strategy crates. Those crates establish two different relations, so verifying one attestation with each is not determinism across implementations — it is two strategies disagreeing about different facts, which is expected. And at Phase 2 the root-secret strategy still ships with no registry entry, so exactly one of the pair is registrable at all. No other phase builds a duplicate, so the one property rated high for forking acceptance had no carrier in any phase. Phase 2 now owns a second independent implementation of one relation as a separate deliverable, described as a test fixture rather than a shipped strategy, and the vector and the adversary both say why the two reference strategies do not substitute for it. The other twelve candidates were rejected rather than reported, which is the more useful half of that round: a claim the document states plainly, a prohibition an implementer satisfies by building what is written, and a gap in vector coverage where the rule is unambiguous and is one equality check all read as coverage bookkeeping rather than as an implementer error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | v0.33      | 2026-10-07 | Round 35, examining the test vectors as a set and the phases against each other. It rejected eleven candidates and found two, both consequences of the two preceding rounds' fixes. Attenuation mandated registering the child under its recomputed id without ever consulting the parent's registry state. Revocation and expiry are recorded against the parent's id and the child's is different, so a bearer could take a revoked capability, attenuate it, and hold an active record the revocation never touched — step 0 would find it present and unrevoked, step 0b would verify on the bearer-held root secret, and the carried-forward envelope would still hold because the binding target does not move. The narrowing argument in the security section does not reach this, since revocation withdraws authority the issuer did grant. Registration is now conditioned on the parent being active, with a vector that ACCEPTs without the condition. Registration was also mandated in a phase that could not perform it. The claimant that makes the allocation-ownership check meaningful is the crate identity the registration host observes at link time, and that host was a later phase's deliverable, so the phase owning registration had no component able to supply the claimant. Core cannot stand in, both because it may not link a strategy crate and because it cannot observe crates at link time. The host and its links move earlier; the lint that keeps the host the only such linker stays where it was, since the links landing first is a window and the host landing without them would leave nothing able to register.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v0.34      | 2026-10-07 | Round 36, run as a verification of the previous round's two fixes plus a further walkthrough. Both fixes verified correct, which is the first time a two-fix sweep has passed intact. It then found that one of those fixes had been undone three rounds earlier. The expectation accessor was given a fallback for a capability form carrying no bindable field, and the fallback was the capability id. But the capability id hashes the canonical form and the envelope is inside that form, so the expectation was a function of the attestation — a strategy would compare a value computed from the token against itself. That is the vacuous check the design forbids, reintroduced through the back door by a repair for a missing source. The fallback is removed rather than replaced, since a capability with nothing outside its own hashed form has no valid expectation and minting one with an attestation is a refusal. A phase attributed to itself the work of a later one, which the previous round had split, and its bullet still described building the host that phase had already moved. The header and bullet now describe the lint, which is what remains. And the parent-state condition introduced a second bearer of the time source without naming it: the revocation half needs no clock, but the expiry half is read wherever the bearer performs the attenuation rather than on the verifier. It inherits the same untrusted-time exposure from a different vantage point, and whether the child inherits the parent's lifetime rather than recomputing one is a capability-format question this RFC does not settle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| v0.35      | 2026-10-07 | Round 37, which asked a question rather than assigning a lens, and the answer was that a repair from two rounds earlier had no carrier anywhere. The previous round removed a fallback from the expectation accessor on the grounds that a capability form with no bindable value has no valid expectation and minting one with an attestation should be a refusal. That sentence was true, unambiguous, and enforced by nothing. There is no mint algorithm in the document, no lifecycle requirement stating the rule, no error-table row, and no vector — it lived in a doc comment on a type used only on the verification path. Worse, the accessor's return type could not represent the condition it refused: a bare byte array has no absence, so an implementer following the document had no way to build the gate the sentence required, and the only failure such a build could produce at dispatch was a panic naming a third-party strategy for a core-side condition. All five gaps are closed. The refusal belongs to the requirement that owns the mint path and is decidable by the issuer, which holds the capability form. The accessor can express absence, because the mint rule cannot prevent a record written straight into the registry and the security section leaves that open. Dispatch step 5 rejects on it, with an error row and a vector that an implementation without a way to express absence would fail. The reviewer also rejected six candidates against the bar, including the absence of error rows for the mint refusals and a stale fallback description that grep confirmed was in fact correct — the value of that check being that it verified the repair rather than assuming it.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Rounds 3 through 11 are archived under the same convention in the earlier review records; the file named below covers rounds 12 through 26. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it.                                                                                                                                                                                                                                                                                                                            |
 
 ## Related RFCs

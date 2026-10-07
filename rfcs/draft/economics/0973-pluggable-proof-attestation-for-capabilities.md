@@ -1242,9 +1242,8 @@ ACCEPT.
 to `root_secret_hash`: REJECT. This vector is the exit criterion for the binding
 work and is currently **failing**: the circuit asserts only that a commitment
 over the witness is non-zero, so an unrelated secret is accepted as satisfying
-it. Until
-TV12 holds, the strategy is not registrable and an acceptance set naming it is a
-boot failure, per §Root-Secret Binding.
+it. Until TV12 holds, the strategy is not registrable and an acceptance set
+naming it is a boot failure, per §Root-Secret Binding.
 
 **TV13** — a self-minted capability with a self-chosen root secret and a valid
 `root_secret_knowledge` attestation, absent from the registry: REJECT at dispatch

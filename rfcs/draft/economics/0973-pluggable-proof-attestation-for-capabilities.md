@@ -23,8 +23,11 @@ The same mechanism carries both ZK-based capability types now being defined,
 and any third-party attestation added later, without a central edit. It also
 reconnects attestation to RFC-0871 §Node Role — Payload-Kind Declared: a
 strategy declares which `PayloadKindId` UUIDs a node must serve in order to
-verify a valid attestation, so "what is proven" and "who may prove it" stay
-separate concerns.
+**produce** a valid attestation, and separately whether **verification** needs
+that same coverage. The two are distinct gates — the first checked once at boot,
+the second per call — so "what is proven" and "who may prove it" stay separate
+concerns, and a node is not forced into production duty merely because it
+verifies.
 
 One property governs how all of it must be read, and it is stated here because
 it is the easiest thing to get backwards: **an accepted attestation is not an
@@ -158,7 +161,7 @@ graph TD
     S2 --> Req
     S3 --> Req
     Req --> Kinds[Served PayloadKindId set<br/>RFC-0871 node role]
-    Kinds -->|verification needs kinds<br/>the node does not serve| Reject
+    Kinds -->|verification needs unserved kinds| Reject
     Reg -->|step 5, after the step-4 gate| Verify[verify]
     Verify -->|unsatisfied| Reject
     Verify -->|satisfied| Accept
@@ -194,7 +197,7 @@ Unknown in either range means reject. The user range is a naming convenience,
 not a bypass; its values are equally subject to registry lookup.
 
 **Names that collide in the current substrate.** A single identifier,
-`cap_root_hash`, is used for several different 32-byte values across this
+`cap_root_hash`, is used for two unrelated 32-byte values across this
 codebase, and the binding relation below is only correct for one of them. This
 RFC uses unambiguous names and requires implementations to.
 
@@ -209,7 +212,7 @@ The first is the binding target. The second is the registry key. The third is
 unrelated to either and merely shares the name. The fourth is **not a fourth
 value**: the wire decoder derives the same capability id the mint path computes,
 byte-identically, and that equivalence is pinned by a test. It is listed only
-because one identifier carries three meanings across the substrate for two
+because one identifier carries two meanings across the substrate for two
 distinct values, which is the ambiguity worth eliminating.
 
 A comment in the wire decoder once documented a different derivation for this
@@ -367,7 +370,12 @@ pub enum CostFigure {
 /// capability alone. Core-owned so the context can be built without naming a
 /// strategy type; deliberately has no accessor for the attestation.
 pub trait Expectation {
-    /// The bound value this capability's attestation must match.
+    /// The bound value this capability's attestation must match. For a
+    /// capability carrying an RFC-0957 macaroon this is
+    /// `macaroon.root_secret_hash`, so a strategy reads its binding target
+    /// through this accessor rather than reaching into a macaroon type it
+    /// would otherwise not depend on. A capability with no such field yields
+    /// the digest the strategy's own relation is defined against.
     fn bound_value(&self) -> &[u8; 32];
 }
 
@@ -406,8 +414,13 @@ impl SecurityFigure {
     pub fn bits(&self) -> u32 {
         self.0
     }
-}
 ```
+
+`bits()` exists because the budget gate compares a figure rather than a token:
+`node.has_headroom` below takes the `SecurityFigure` and reads it through this
+accessor, so the value a node budgets against is the one the prover parameters
+produced. Without it a caller would have to reach into the tuple struct, which
+would be a second, unfenced path to the same number.
 
 **Verification context.** `AttestationVerifyCtx` is a borrow-only view carrying
 the capability under verification, the attestation bytes, and any read-only
@@ -437,6 +450,18 @@ was configured with — for example a threshold or an allow-list. It exposes no
 mutation and no concrete storage, so a strategy cannot reach the substrate
 through it. A strategy that needs nothing from policy receives a handle whose
 methods return `None`.
+
+**The refuse-only rule on `PolicySource` is a convention enforced by review, not
+by a type.** The type cannot express it: the same `Unsatisfied` outcome covers a
+policy refusal and a failed relation, and nothing distinguishes a strategy that
+consulted policy from one that ignored it. Core can enforce the _narrow_ claim —
+no strategy can reach storage or mutate policy through this handle — but the
+broader claim, that policy may produce a refusal and never an acceptance, is
+something a reviewer confirms by reading `verify`, exactly as the
+ignore-the-expectation convention is (§Algorithms). This is recorded rather than
+left implicit, because a convention with no stated owner is a convention nothing
+checks, and because TV16 depends on it: it is the reason two nodes with
+different policies may legitimately return different verdicts.
 
 `Expectation` is a **core-owned trait**, not a strategy type, because core
 constructs the context and a Layer-B crate cannot name a third-party type to do
@@ -475,10 +500,10 @@ for why the currently-circuited attestation establishes nothing.
 
 **Reference strategies shipped by this RFC.**
 
-| Strategy                | Establishes                                                      | Source                                    | Circuit cost                                   | Notes                                       |
-| ----------------------- | ---------------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- | ------------------------------------------- |
-| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | relation in RFC-0958; strategy named here | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
-| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630                                  | unmeasured — Phase 2, see §Performance Targets | proof-of-inference trace bound to the token |
+| Strategy                | Establishes                                                      | Source                                                               | Circuit cost                                   | Notes                                       |
+| ----------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------- |
+| `root_secret_knowledge` | the bearer knows the macaroon root secret, without disclosing it | narrower than RFC-0958's, which this RFC amends; strategy named here | unmeasured — see §Root-Secret Binding          | one BLAKE3 hop over the secret              |
+| `in_boundary_execution` | the attested inference ran inside the protocol boundary          | RFC-0630                                                             | unmeasured — Phase 2, see §Performance Targets | proof-of-inference trace bound to the token |
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
@@ -515,7 +540,7 @@ carry are not being obtained in production either. Until the rejection vector
 below passes and the mint path is wired to the capability circuit, no
 `root_secret_knowledge` attestation may be registered, and an operator node MUST
 refuse boot if the strategy appears in its acceptance set. The strategy ships
-disabled; registration is Phase 3 work.
+with no registry entry at all; registration is Phase 3 work.
 
 **The BLAKE3 hop MUST be executed by constrained program logic.** An
 attestation whose digest is supplied to the circuit — as a private witness, a
@@ -676,9 +701,17 @@ validate_policy(policy, node, strategies):
             if profile.casm_cost_hint_words is Unmeasured:
                 -> FAIL TO START, naming the strategy with no measured cost
             if not node.has_headroom(profile.casm_cost_hint_words,
-                                     profile.security_bits):
+                                     profile.security_bits.bits()):
                 -> FAIL TO START, naming the exceeded budget
 ```
+
+The soundness side is unwrapped through `bits()` rather than read as a struct
+field, which is what keeps `SecurityFigure`'s single constructor the only route
+to a value: there is no second path by which a caller could supply one. The
+unmeasured check above is the guard that makes the bare cost figure safe to
+pass. `Measured` is the arm every reference strategy reaches when its phase
+completes the measurement — `Unmeasured` is the only value constructible today,
+and §Implementation Phases names the phase that replaces it.
 
 **Strategy registration.**
 
@@ -1237,9 +1270,16 @@ check, because the binding target is byte-identical across an attenuation tree.
 That is A12, and it is a scope limit of the strategy rather than a rejection the
 dispatch can perform.
 
-**TV16** — determinism: the same capability and attestation verified by two
-independently built strategy implementations yields the same verdict. A
-single-implementation run cannot satisfy this; the vector requires two builds.
+**TV16** — determinism: the same capability, attestation, **and context**
+verified by two independently built strategy implementations yields the same
+verdict. A single-implementation run cannot satisfy this; the vector requires
+two builds. The context term is load-bearing rather than pedantic:
+§Determinism Requirements makes the outcome a pure function of all three, and a
+strategy permitted to consult `PolicySource` may legitimately refuse on one
+node's policy and accept on another's. Comparing capability and attestation
+alone would demand agreement the design explicitly withdraws, so this vector
+fixes the context too — which is precisely the narrower claim that keeps the
+wider determinism requirement true.
 Phase 2 lands the strategy crates, so this vector is closed after Phase 2 and A5
 is not closed before it passes.
 
@@ -1296,7 +1336,7 @@ what remains open.
 **Registering `root_secret_knowledge` before its relation holds.** Rejected. It
 would let an operator configure a node to accept an attestation that establishes
 nothing, and every acceptance would be a false positive. The strategy ships
-disabled and is registrable only when TV12 passes.
+unregistered and is registrable only when TV12 passes.
 
 ## Implementation Phases
 
@@ -1342,8 +1382,8 @@ narrowed becomes unusable.
 ### Phase 2: Enhanced
 
 Land the reference strategy crates — `octo-cap-zk` for
-`root_secret_knowledge` and `octo-cap-poi` (new) for `in_boundary_execution` — as
-disabled strategies with no registration entry. Record the
+`root_secret_knowledge` and `octo-cap-poi` (new) for `in_boundary_execution` —
+with no registry entry at all. Record the
 `in_boundary_execution` admission profile here, measured rather than estimated,
 since this is the phase that lands the crate it describes. Land operator policy with
 boot-time validation. Land the dispatch, including the registry lookup at step 0,

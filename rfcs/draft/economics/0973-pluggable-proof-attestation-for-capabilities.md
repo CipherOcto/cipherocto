@@ -178,13 +178,54 @@ pub trait AttestationStrategy: Send + Sync {
 
 **Reference strategies shipped by this RFC.**
 
-| Strategy                | Establishes                                                              | Source   | Circuit cost                                | Notes                                         |
-| ----------------------- | ------------------------------------------------------------------------ | -------- | ------------------------------------------- | --------------------------------------------- |
-| `root_secret_knowledge` | the holder knows the root secret behind the token, without disclosing it | RFC-0958 | **+78 CASM words** (field-native, measured) | the field at issue in RFC-0958 §Desired State |
-| `in_boundary_execution` | the attested inference ran inside the protocol boundary                  | RFC-0630 | measured separately                         | trace fold plus PoI binding                   |
+| Strategy                | Establishes                                                              | Source   | Circuit cost                        | Notes                           |
+| ----------------------- | ------------------------------------------------------------------------ | -------- | ----------------------------------- | ------------------------------- |
+| `root_secret_knowledge` | the holder knows the root secret behind the token, without disclosing it | RFC-0958 | measured — see §Root-Secret Binding | one BLAKE3 hop, no token change |
+| `in_boundary_execution` | the attested inference ran inside the protocol boundary                  | RFC-0630 | measured separately                 | trace fold plus PoI binding     |
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
+
+#### Root-Secret Binding
+
+`root_secret_knowledge` proves exactly one relation:
+
+```text
+    the witness contains s  such that  BLAKE3(s) == token.root_secret_hash
+```
+
+`root_secret_hash` is an existing public field of the RFC-0957 macaroon and is
+already covered by the capability id, so the binding needs **no token format
+change, no new commitment, and no second hash primitive**. The Rust half already
+exists as `derive_root_hash_from_secret`.
+
+**What is deliberately NOT bound.** A capability macaroon has three
+secret-dependent values: `root_secret_hash`, `root_id`, and `chain[0]`. Only the
+first is in-circuit. `root_id` and `chain[0]` are both
+`HMAC-BLAKE3(root_secret, …nonce…)`, and **the nonce is deliberately
+unrecoverable** — it is consumed at mint and never serialized, because a
+recoverable nonce would let a holder regenerate `root_id` and defeat replay
+dedup. Binding either value would require publishing the nonce. That is
+rejected, not deferred.
+
+**`chain[0]` is an assumed root, not a derived one.** RFC-0957
+§verify_signature seeds its running id hasher with `chain[0]` taken from the
+struct and never re-derives it; the chain's integrity runs forward from an
+unverified anchor. This RFC does not change that. It is recorded here so the
+attestation is not read as anchoring the chain: the STARK proves possession of
+the root secret, while the chain remains anchored to an assumed `chain[0]`.
+Closing that is a separate question and is deliberately out of scope.
+
+**Scope of the claim.** This is authentication of _possession_, not
+_authorization_. Satisfying it requires knowing the root secret — which any
+compromise of that secret, or any legitimate holder, provides. No node should
+treat an accepted `root_secret_knowledge` attestation as evidence that the holder
+is the issuer, or as authority beyond what the capability's own caveats permit.
+
+**Truncation.** `root_id` is `HMAC-BLAKE3(root_secret, nonce)[:16]` — 128 bits.
+It is a replay-dedup key and MUST NOT be used as a binding commitment; doing so
+would drop the attestation's soundness floor to 128 bits. The binding target is
+the full 32-byte `root_secret_hash`.
 
 ### Algorithms
 
@@ -259,6 +300,14 @@ Registry resolution <1µs. Verification cost is the strategy's own.
 `casm_cost_hint_words` and `security_bits` let a node refuse to admit a strategy
 it has no budget or headroom for, rather than discovering it at mint time.
 
+**AC-4 is a budget this project sets, not an external limit.** A circuit budget
+that was fixed while the circuit proved nothing is not a target worth
+preserving; it encodes the cost of the absence of the binding. When a strategy's
+binding requires more words than an earlier no-op ceiling allowed, the correct
+response is to re-derive the ceiling from the algorithm, not to select a weaker
+primitive that happens to fit. Every change to a ceiling is an explicit,
+recorded decision with its rationale.
+
 ## Implicit Assumptions Audit
 
 | Assumption                                               | Risk if false                                            | Mitigation                                                                                           |
@@ -314,6 +363,36 @@ determinism is an acceptance criterion and a trait requirement.
 _Mitigation:_ step 1 of the dispatch algorithm rejects an attested class with no
 strategy named, rather than falling through to the V1 path.
 
+**A7 — Binding target truncated to the 16-byte `root_id`.** A prover needs
+knowledge of the root secret; a 128-bit commitment to it is materially weaker
+than the 32-byte `root_secret_hash` and is not what the strategy specifies.
+_Impact:_ medium; weakens rather than breaks. _Mitigation:_ the binding target is
+fixed at the full-width `root_secret_hash` by §Root-Secret Binding, and
+`root_id`'s truncated form is named there as unfit for this use so a later
+"simplification" cannot quietly substitute it.
+
+**A8 — Public-input ordering error in the calldata mirror.** The witness calldata
+is built by a hand-maintained mirror of the circuit's input struct. A field
+reordering or omission that still type-checks would produce a proof over
+attacker-chosen public inputs, with every hash check internally consistent.
+_Impact:_ high; silent. _Mitigation:_ the layout-mirror conformance test is an
+acceptance criterion for any change to the input struct, not a test that merely
+re-runs on the current shape.
+
+**A9 — Attestation read as authorization.** An accepted
+`root_secret_knowledge` attestation is treated as evidence the holder is the
+issuer, or as authority beyond the capability's caveats. _Impact:_ medium;
+policy error rather than a broken primitive. _Mitigation:_ §Root-Secret Binding
+states the possession-not-authorization scope in the specification, so the limit
+travels with the requirement rather than living only in review notes.
+
+**A10 — Chain anchoring assumed from the attestation.** A node treats an accepted
+`root_secret_knowledge` attestation as anchoring the caveat chain, because
+`chain[0]` looks like a secret-derived value. It is not verified, before or
+after this RFC. _Impact:_ medium; an over-claim about what was proved.
+_Mitigation:_ stated explicitly in §Root-Secret Binding as an out-of-scope
+known property, so no later document can inherit the stronger belief.
+
 ## Economic Analysis
 
 No token emission changes. Attestation choice is a security posture decision
@@ -354,6 +433,18 @@ satisfying attestation: ACCEPT.
 **TV10** — strategy declaring `verifier_needs_producing_kinds`, on a node not
 serving them: REJECT.
 
+**TV11** — `root_secret_knowledge` with a witness whose secret hashes to
+`root_secret_hash`: ACCEPT.
+
+**TV12** — `root_secret_knowledge` with a witness whose secret does **not** hash
+to `root_secret_hash`: REJECT. This is the property the circuit currently lacks;
+until it holds, an arbitrary witness proves successfully, and the corresponding
+conformance test characterizes that absence rather than asserting acceptance.
+
+**TV13** — a historical capability whose `root_secret_hash` is unchanged and
+whose attestation id is newly added: same binding verdict as before the id was
+added (the id is covered by the capability id, so it is bound to the token).
+
 ## Alternatives Considered
 
 **Central enum `{V1, ZKBearing, RootSecretKnowledge, InBoundaryExecution, …}`.**
@@ -374,6 +465,24 @@ next year.
 trait there is no way for a node to state what it can verify, so the operator's
 acceptance set cannot be checked against reality.
 
+**Binding `root_id` or `chain[0]` by publishing the mint nonce.** Rejected. Both
+are `HMAC-BLAKE3(root_secret, …nonce…)`, and the nonce's unrecoverability is the
+mechanism protecting `root_id`-based replay dedup. Publishing it to make the
+circuit checkable would trade a live protection for a redundant second binding,
+since `root_secret_hash` already commits to the same secret at full width.
+
+**Proving `root_secret` and `nonce` as private witness values.** Rejected. With
+both secret, a prover may choose any nonce and derive the matching `root_id`, so
+the constraint is satisfied by any knowledge of any root secret and carries no
+per-token binding. It would look like a strengthening and be a weakening.
+
+**A new Poseidon commitment field on the token.** Rejected for
+`root_secret_knowledge`. Poseidon was attractive because it fits the previous
+AC-4 ceiling at a low word count, but the macaroon already commits to the root
+secret twice in the same primitive the rest of the format uses. A third
+commitment in a second primitive buys a field to carry, a domain-separation
+obligation between the two, and no additional security.
+
 ## Implementation Phases
 
 ### Phase 1: Core
@@ -387,6 +496,22 @@ the capability canonical serialization so it participates in `cap_root_hash`.
 Land both reference strategies as `octo-cap-*` crates. Land operator policy with
 boot-time validation. Land the dispatch in the wallet verification path behind
 V1 back-compat behaviour.
+
+### Phase 3: Root-Secret Binding
+
+For `root_secret_knowledge`:
+
+1. Add `root_secret_hash` to the circuit's public inputs and assert the BLAKE3
+   hop. This is a public-input change, not a token-format change.
+2. Slim the in-circuit BLAKE3 module to the single-chunk path actually called. The
+   module is currently test-gated; un-gating it in its present shape admits far
+   more code than the one call requires.
+3. Update the witness-calldata layout mirror and extend the layout conformance
+   test to cover the new fields (A8).
+4. Re-derive the AC-4 ceiling from the resulting program and record the new
+   figure with its rationale (§Performance Targets).
+5. Invert the characterization test that pins the absent binding into a
+   rejection test (TV12).
 
 ## Key Files to Modify
 
@@ -415,9 +540,10 @@ wrapper around a single case.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                               |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| v0.2    | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that AC-4 is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive. |
 
 ## Related RFCs
 

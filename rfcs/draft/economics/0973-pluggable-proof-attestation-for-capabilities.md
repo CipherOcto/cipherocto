@@ -247,7 +247,7 @@ registrations active — the exact substitution A2 describes, silently successfu
 The envelope therefore goes in the hashed canonical form, in the segment that
 existing parsers already read.
 
-****The envelope is size-bounded.** An attestation payload is opaque and
+**The envelope is size-bounded.** An attestation payload is opaque and
 strategy-defined, so without a bound the decode path has no limit on what it will
 accept and hold. The envelope carries a total-length prefix, and a payload
 exceeding the transport's segment limit is a decode failure on that same path as
@@ -257,10 +257,11 @@ which fixes only the requirement that one exists and is enforced on read. Withou
 that, an attacker who can get a token in front of a verifier controls how much
 memory the verifier allocates before deciding anything.
 
-A malformed envelope is a decode failure, not a verification rejection.** The
+A malformed envelope is a decode failure, not a verification rejection. The
 wire form either carries a well-formed pair or an absent marker; a truncated or
 unparseable payload fails before dispatch and is reported as such. §Error
-Handling covers the verification-time rejections only.
+Handling covers verification-time rejections, and records this case as the
+decode-time failure it is rather than as a rejection.
 
 **Capability class is not a wire field.** The capability class is a
 storage-projection and mint-time taxonomy, not a field on the token; the token's
@@ -283,8 +284,8 @@ pub trait AttestationStrategy: Send + Sync {
 }
 ```
 
-**Optional companion: what a node must serve to verify, and what admitting this
-strategy costs. A strategy that does not implement this declares no
+Optional companion trait: what a node must serve to verify, and what admitting
+this strategy costs. A strategy that does not implement this declares no
 deployment requirement and no cost.
 
 ```rust
@@ -804,18 +805,25 @@ Every rejection is fail-closed and distinguishable to the operator. No rejection
 reason is silently coerced into acceptance, and none is logged with the
 underlying attestation bytes.
 
-| Condition                            | Result                    | Operator-visible reason                   |
-| ------------------------------------ | ------------------------- | ----------------------------------------- |
-| Capability absent from the registry  | REJECT at dispatch step 0 | unknown or inactive capability            |
-| Attestation envelope malformed       | REJECT before dispatch    | unparseable attestation envelope          |
-| Attestation id absent                | macaroon path             | none — this is the normal unattested case |
-| Attestation id not in acceptance set | REJECT at step 2          | strategy not accepted here                |
-| Strategy id unresolved               | REJECT at step 3          | unknown strategy id                       |
-| Verification needs kinds not served  | REJECT at step 4          | node cannot verify what it cannot produce |
-| Verification unsatisfied             | REJECT at step 5          | strategy-supplied reason, safe to log     |
-| Panic in `verify` (unwinding build)  | REJECT                    | strategy panicked                         |
+| Condition                                  | Result                          | Operator-visible reason                                  |
+| ------------------------------------------ | ------------------------------- | -------------------------------------------------------- |
+| Capability absent from the registry        | REJECT at dispatch step 0       | unknown or inactive capability                           |
+| Capability expired at the verifier's clock | REJECT at dispatch step 0       | capability no longer active, expired rather than unknown |
+| Attestation envelope malformed             | decode failure, before dispatch | unparseable attestation envelope                         |
+| Attestation payload over the size bound    | decode failure, before dispatch | payload exceeds the segment limit                        |
+| Attestation id absent                      | macaroon path                   | none — this is the normal unattested case                |
+| Attestation id not in acceptance set       | REJECT at step 2                | strategy not accepted here                               |
+| Strategy id unresolved                     | REJECT at step 3                | unknown strategy id                                      |
+| Verification needs kinds not served        | REJECT at step 4                | node cannot verify what it cannot produce                |
+| Verification unsatisfied                   | REJECT at step 5                | strategy-supplied reason, safe to log                    |
+| Panic in `verify` (unwinding build)        | REJECT                          | strategy panicked                                        |
 
-| Capability present but expired at the verifier's clock | REJECT at step 0 | capability no longer active |
+The first two rows are the same rejection with different causes, and the reason
+column distinguishes them because an expired capability is an operational
+condition an operator can act on, while an unknown one usually means the token
+was never issued here. The two rows before them are decode failures rather than
+verification outcomes, and are listed so the operator sees the whole set; they
+happen before any strategy is resolved.
 
 Boot-time rejections, all reported before the node serves: an unresolvable
 strategy id, an acceptance entry whose required payload kinds the node does not
@@ -1051,17 +1059,6 @@ witness to the token and to nothing else; the holder-signature sub-circuit is a
 structural placeholder. _Impact:_ medium; policy error. _Mitigation:_ stated in
 §Security Considerations, distinct from A9's authorization over-claim.
 
-**A15 — Verifier clock skewed or hostile.** The active predicate at step 0
-covers revocation and expiry, so a node whose wall clock disagrees with the
-issuer's reads an expired capability as live and accepts it, or a live one as
-expired and refuses it. _Impact:_ high on the authorisation gate specifically —
-this is a failure of the control the whole RFC leans on, not of the attestation.
-_Mitigation:_ none added here. The time source is the capability format's, this
-RFC introduces none, and both the issuer and the verifier already depend on it.
-Recorded as an assumption and exercised by TV13b so that the exposure is visible
-rather than latent, and because "expires" is a property of the record rather than
-of the attestation, nothing in the strategy layer can compensate for it.
-
 **A14 — Strategy under-reports its admission profile.** A strategy declares a
 circuit cost or security figure below its true value, so a node admits it on a
 budget it could not actually afford, or credits soundness it does not carry.
@@ -1075,6 +1072,17 @@ establish soundness, and an under-reported cost degrades to a node discovering
 its budget exhausted during verification rather than at boot. A cost the strategy
 has not measured is rejected at boot outright, which is the only case the gate
 treats as decisive.
+
+**A15 — Verifier clock skewed or hostile.** The active predicate at step 0
+covers revocation and expiry, so a node whose wall clock disagrees with the
+issuer's reads an expired capability as live and accepts it, or a live one as
+expired and refuses it. _Impact:_ high on the authorisation gate specifically —
+this is a failure of the control the whole RFC leans on, not of the attestation.
+_Mitigation:_ none added here. The time source is the capability format's, this
+RFC introduces none, and both the issuer and the verifier already depend on it.
+Recorded as an assumption and exercised by TV13b so that the exposure is visible
+rather than latent, and because "expires" is a property of the record rather than
+of the attestation, nothing in the strategy layer can compensate for it.
 
 ## Economic Analysis
 
@@ -1134,6 +1142,9 @@ satisfying attestation, registry present: ACCEPT.
 
 **TV4** — TV2 with a registered strategy outside the acceptance set: REJECT.
 
+**TV5b** — a token whose attestation payload exceeds the size bound: rejected
+before dispatch as a decode failure, with no strategy resolved.
+
 **TV5** — a token whose attestation envelope is truncated or unparseable: rejected
 before dispatch, as a decode failure rather than a verification rejection.
 
@@ -1191,6 +1202,11 @@ boot failure, per §Root-Secret Binding.
 `root_secret_knowledge` attestation, absent from the registry: REJECT at dispatch
 step 0. This vector pins that the proof carries no authorisation of its own.
 
+**TV13b** — capability whose lifetime has expired at the verifier's clock:
+REJECT at step 0, reported as no longer active rather than as absent. A node
+whose clock runs behind the issuer's reads the same capability as live; that
+divergence is the clock-skew exposure, and this vector is how it is observed.
+
 **TV14** — attenuating an attested parent: the child carries the envelope
 forward and is registered under its post-attenuation capability id, then verifies,
 because the binding target does not change under attenuation (§Root-Secret
@@ -1205,11 +1221,6 @@ Two capabilities minted from the **same** root secret are not separated by this
 check, because the binding target is byte-identical across an attenuation tree.
 That is A12, and it is a scope limit of the strategy rather than a rejection the
 dispatch can perform.
-
-**TV13b** — capability whose lifetime has expired at the verifier's clock:
-REJECT at step 0, reported as no longer active rather than as absent. A node
-whose clock runs behind the issuer's reads the same capability as live; that
-divergence is the clock-skew exposure, and this vector is how it is observed.
 
 **TV16** — determinism: the same capability and attestation verified by two
 independently built strategy implementations yields the same verdict. A
@@ -1289,13 +1300,16 @@ Create the id allocation record: the list of RFC-range attestation ids core
 has allocated. Until it exists the RFC range admits nothing.
 
 Capture and freeze the pre-RFC capability fixtures as the back-compat corpus
-(TV9), and add the cross-implementation determinism vector (TV16). The latter
-needs two independently built implementations, so it lands once Phase 2 has
-produced strategy crates to build against; Phase 1 creates the harness and the
-two fixtures it compares.
+(TV9). TV16 is **not** claimed here: it needs two independently built strategy
+implementations, and Phase 1 lands no strategy crate, so two fixtures of a single
+build would prove nothing across implementations. The vector belongs to Phase 2,
+which lands the first two.
 
 Extend the capability canonical form with the attestation envelope, omitted
 entirely when absent, so an un-attested capability serialises byte-identically.
+Enforce the size bound on read, on the same path as the malformed-envelope
+failure, so an oversized payload is rejected before any strategy is resolved
+rather than after.
 This phase declares the RFC-0957 wire amendment. Mint MUST register a capability
 under its post-attestation capability id, in the same operation that attaches the
 envelope. Registering first and attesting second would leave every attested
@@ -1439,6 +1453,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.8    | 2026-10-07 | Eighth review round. Records that RFC-0958 specifies a different relation for the same public inputs than this RFC binds, and that the implemented circuit has drifted from RFC-0958 in both respects. The prohibition this RFC previously stated contradicted the RFC it declares as amended; it now states the drift, adopts a narrower relation deliberately, and says adopting it requires amending RFC-0958 rather than adding a strategy beside it. Makes the expectation a core-owned trait, since a Layer-B crate cannot name a third-party type to build the context that carries it. Separates the boot gate from the verification gate so the latter is reachable, and gives the test vector that depends on it a distinct observation point. Adds the mint-path wiring to the phase that gates registration, and the corpus, determinism, and profile items each phase was already named as owning. Corrects three labels that called the proof-of-work bits a field width, adds the missing error arm to dispatch, and gives the allocation gate its own vectors.                                                                                |
 | v0.9    | 2026-10-07 | Ninth review round. Restores a test vector whose body a previous edit had merged into the following one, which had left the adversary that cites it pointing at an empty paragraph. Splits the operator acceptance set into the choice and the dispatch gate that reads it, because RFC-0008 excludes Class C from any consensus-relevant path and one row claiming both broke that rule while the surrounding prose described a split the table did not contain. Names the phase step that supplies the primitive before the step that asserts the hop it supplies, binds and tests the same name in the dispatch algorithm, gives the execution class mapping the standalone heading the template prescribes, disambiguates the strategy table's source column against the dependency list, and corrects a history row that described its own change backwards.                                                                                                                                                                                                                                                                                             |
 | v0.10   | 2026-10-07 | Tenth review round, two reviewers. Restores a note displaced from beside the test vector it qualifies, which the previous round's repair had left under an unrelated one and with no antecedent for its referent. Removes the default that let a strategy return no admission profile and skip both boot gates, so the trait no longer supplies a value that contradicts what it requires. Adds the verifier clock to the assumptions audit and an adversary for it, because the active predicate covers expiry as well as revocation and a bad clock is an authorisation failure on the gate the whole RFC leans on. Gives operator policy the same class treatment the acceptance set received, with the restriction that policy may cause a refusal and never an acceptance. Adds the forward-compatibility consequence, which is fail-closed by accident of the hash rather than by design, and bounds the attestation payload. Corrects the issuer identity in the roles table, which mapped the issuer to the holder, and merges three definitions that had been concatenated into one paragraph.                                                       |
+| v0.11   | 2026-10-07 | Eleventh review round. Repairs damage the previous round's own insertions caused: an opening emphasis marker with no closer, an orphaned emphasis marker, a table row separated from its table by a blank line, and two entries inserted into ordered lists above the entry that should precede them. All four are the same defect as an entry being added without checking where it lands, which is the class the round-9 repair already demonstrated. Adds the phase item and test vector that the size bound introduced in the previous round lacked, since a normative requirement with nothing scheduled behind it is the same gap that produced the unowned corpus and determinism vectors.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ## Related RFCs
 

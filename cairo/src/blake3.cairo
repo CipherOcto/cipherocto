@@ -42,17 +42,23 @@ pub const IV: [u32; 8] = [
     0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 ];
 
-pub const SIGMA: [[u8; 16]; 10] = [
+/// BLAKE3 message schedule (spec §2.7; `MSG_SCHEDULE` in the reference
+/// implementation).
+///
+/// **This is NOT BLAKE2's schedule.** BLAKE2's row 1 is
+/// `[14, 10, 4, 8, 9, 15, 1, 12, …]`; BLAKE3's is
+/// `[2, 6, 3, 10, 7, 0, 4, 13, …]`. An earlier revision of this file carried
+/// the BLAKE2 table (and 10 rows instead of 7). It produced
+/// self-consistent-looking digests that matched nothing, because the module
+/// had no reference vectors. Do not "restore" the BLAKE2 rows.
+pub const SIGMA: [[u8; 16]; 7] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    [14, 10, 4, 8, 9, 15, 1, 12, 13, 6, 5, 0, 2, 11, 3, 7],
-    [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
-    [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8],
-    [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13],
-    [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
-    [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
-    [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
-    [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
-    [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
+    [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
+    [3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1],
+    [10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6],
+    [12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4],
+    [9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7],
+    [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
 ];
 
 // =========================================================================
@@ -362,6 +368,9 @@ fn round_fn(ref v: VState, m: @MState, round_idx: usize) {
 /// `compress(prev_h, m, counter, block_len, flags) -> [u32; 16]`
 pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags: u8) -> [u32; 16] {
     let iv_span = IV.span();
+    let counter_lo: u32 = (counter & 0xFFFFFFFF).try_into().unwrap();
+    let counter_hi: u32 = ((counter / 0x100000000) & 0xFFFFFFFF).try_into().unwrap();
+    let flags_u32: u32 = flags.into();
     let mut v = VState {
         v0: *prev_h.span().at(0),
         v1: *prev_h.span().at(1),
@@ -375,20 +384,19 @@ pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags
         v9: *iv_span.at(1),
         v10: *iv_span.at(2),
         v11: *iv_span.at(3),
-        v12: *iv_span.at(4),
-        v13: *iv_span.at(5),
-        v14: *iv_span.at(6),
-        v15: *iv_span.at(7),
+        // NOTE: words 12..15 are **assigned**, not XORed onto IV[4..8].
+        // The reference implementation builds
+        //   state = [cv[0..8], IV[0..4], counter_low, counter_high,
+        //            block_len, flags]
+        // and never touches IV[4..8] here. XORing them in (as this file used
+        // to) is wrong for every input, and is invisible for any test that
+        // compares two copies of the same mistake — which is exactly what the
+        // first version of the G test did.
+        v12: counter_lo,
+        v13: counter_hi,
+        v14: block_len,
+        v15: flags_u32,
     };
-
-    let counter_lo: u32 = (counter & 0xFFFFFFFF).try_into().unwrap();
-    let counter_hi: u32 = ((counter / 0x100000000) & 0xFFFFFFFF).try_into().unwrap();
-    let flags_u32: u32 = flags.into();
-
-    v.v12 = v.v12 ^ counter_lo;
-    v.v13 = v.v13 ^ counter_hi;
-    v.v14 = v.v14 ^ block_len;
-    v.v15 = v.v15 ^ flags_u32;
 
     round_fn(ref v, @m, 0);
     round_fn(ref v, @m, 1);
@@ -398,33 +406,59 @@ pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags
     round_fn(ref v, @m, 5);
     round_fn(ref v, @m, 6);
 
+    // Words 0..8: `state[i] ^ state[i+8]`.
+    // Words 8..16: `state[i+8] ^ cv[i]` — where `cv` is the chaining value
+    // **as it was on entry**, not the final `state[i]`. Using `state[i]` here
+    // is the classic BLAKE2 shape and is wrong for BLAKE3; it does not affect
+    // the first 8 words (so a root hash alone would not catch it) but it
+    // corrupts every parent / tree node.
+    let cvs = prev_h.span();
     [
-        v.v0 ^ v.v8, v.v1 ^ v.v9, v.v2 ^ v.v10, v.v3 ^ v.v11, v.v4 ^ v.v12, v.v5 ^ v.v13,
-        v.v6 ^ v.v14, v.v7 ^ v.v15, v.v8 ^ v.v0, v.v9 ^ v.v1, v.v10 ^ v.v2, v.v11 ^ v.v3,
-        v.v12 ^ v.v4, v.v13 ^ v.v5, v.v14 ^ v.v6, v.v15 ^ v.v7,
+        v.v0 ^ v.v8,
+        v.v1 ^ v.v9,
+        v.v2 ^ v.v10,
+        v.v3 ^ v.v11,
+        v.v4 ^ v.v12,
+        v.v5 ^ v.v13,
+        v.v6 ^ v.v14,
+        v.v7 ^ v.v15,
+        v.v8 ^ *cvs.at(0),
+        v.v9 ^ *cvs.at(1),
+        v.v10 ^ *cvs.at(2),
+        v.v11 ^ *cvs.at(3),
+        v.v12 ^ *cvs.at(4),
+        v.v13 ^ *cvs.at(5),
+        v.v14 ^ *cvs.at(6),
+        v.v15 ^ *cvs.at(7),
     ]
 }
 
-/// Build MState by reading 16 big-endian u32s from `bytes` starting at
+/// Build MState by reading 16 **little-endian** u32s from `bytes` starting at
 /// `off`. Positions past `bytes.len()` are zero-padded (per spec).
+///
+/// BLAKE3 loads every message word little-endian (spec §2.6, `words` are
+/// `u32::from_le_bytes`). Reading them big-endian silently produces a
+/// self-consistent but wrong hash — which is exactly what happened here:
+/// the module had no reference vectors, so every digest was wrong from the
+/// first block on, and still looked like a plausible hash.
 fn read_block(bytes: @ByteArray, off: usize) -> MState {
     MState {
-        m0: read_u32_be_at(bytes, off + 0),
-        m1: read_u32_be_at(bytes, off + 4),
-        m2: read_u32_be_at(bytes, off + 8),
-        m3: read_u32_be_at(bytes, off + 12),
-        m4: read_u32_be_at(bytes, off + 16),
-        m5: read_u32_be_at(bytes, off + 20),
-        m6: read_u32_be_at(bytes, off + 24),
-        m7: read_u32_be_at(bytes, off + 28),
-        m8: read_u32_be_at(bytes, off + 32),
-        m9: read_u32_be_at(bytes, off + 36),
-        m10: read_u32_be_at(bytes, off + 40),
-        m11: read_u32_be_at(bytes, off + 44),
-        m12: read_u32_be_at(bytes, off + 48),
-        m13: read_u32_be_at(bytes, off + 52),
-        m14: read_u32_be_at(bytes, off + 56),
-        m15: read_u32_be_at(bytes, off + 60),
+        m0: read_u32_le_at(bytes, off + 0),
+        m1: read_u32_le_at(bytes, off + 4),
+        m2: read_u32_le_at(bytes, off + 8),
+        m3: read_u32_le_at(bytes, off + 12),
+        m4: read_u32_le_at(bytes, off + 16),
+        m5: read_u32_le_at(bytes, off + 20),
+        m6: read_u32_le_at(bytes, off + 24),
+        m7: read_u32_le_at(bytes, off + 28),
+        m8: read_u32_le_at(bytes, off + 32),
+        m9: read_u32_le_at(bytes, off + 36),
+        m10: read_u32_le_at(bytes, off + 40),
+        m11: read_u32_le_at(bytes, off + 44),
+        m12: read_u32_le_at(bytes, off + 48),
+        m13: read_u32_le_at(bytes, off + 52),
+        m14: read_u32_le_at(bytes, off + 56),
+        m15: read_u32_le_at(bytes, off + 60),
     }
 }
 
@@ -432,10 +466,20 @@ fn read_block(bytes: @ByteArray, off: usize) -> MState {
 // Public keyed_hash + HMAC-BLAKE3
 // =========================================================================
 
-/// BLAKE3 keyed_hash (BLAKE3 §5.1.4). `key` is 8 u32s (= 32 bytes).
-/// `msg.len()` must be ≤ CHUNK_LEN (1024) — single-chunk only.
+/// BLAKE3 keyed hash, restricted to a **single chunk** (msg ≤ 1024 bytes).
+///
+/// **This function is NOT BLAKE3 for longer inputs.** Multi-chunk messages
+/// need a per-chunk counter and the parent/tree node layer
+/// (`compress`'s words 8..16), neither of which is implemented here. Rather
+/// than return a plausible-but-wrong digest, it asserts: a silently incorrect
+/// hash is far more dangerous than a failed one, and that is exactly how the
+/// five defects this file used to carry stayed invisible.
+///
+/// The macaroon chain's per-step message is `name ‖ caveat_ser ‖ id`; callers
+/// must bound it, which `macaroon_max_chain_step_len` documents.
 pub fn keyed_hash_one_chunk(key: [u32; 8], msg: @ByteArray) -> [u32; 8] {
     let msg_len: usize = msg.len();
+    assert!(msg_len <= CHUNK_LEN, "keyed_hash_one_chunk: message exceeds one chunk");
     let mut state: [u32; 8] = key;
     let mut offset: usize = 0;
 
@@ -453,12 +497,18 @@ pub fn keyed_hash_one_chunk(key: [u32; 8], msg: @ByteArray) -> [u32; 8] {
             (offset + block_len == msg_len)
         };
 
-        let mut flags: u8 = 0;
+        // KEYED_HASH is a flag on **every** block of a keyed hash, not only the
+        // last one. Starting from 0 (as this used to) domain-separated only
+        // the final block, so every preceding block was compressed as if it
+        // belonged to an unkeyed hash. That is invisible for any message that
+        // fits in one block — which is why it survived: every single-block
+        // vector matched while every multi-block one failed.
+        let mut flags: u8 = KEYED_HASH;
         if is_first {
             flags = flags | CHUNK_START;
         }
         if is_last {
-            flags = flags | CHUNK_END | ROOT | KEYED_HASH;
+            flags = flags | CHUNK_END | ROOT;
         }
 
         let m_block: MState = read_block(msg, offset);
@@ -611,4 +661,357 @@ pub fn read_u32_le_at(bytes: @ByteArray, off: usize) -> u32 {
         0
     };
     (b3 * 0x1000000) + (b2 * 0x10000) + (b1 * 0x100) + b0
+}
+
+// =========================================================================
+// Reference-vector parity tests
+// =========================================================================
+//
+// Every vector below was produced by the `blake3` Rust crate
+// (`blake3::keyed_hash`) via
+// `cargo run -p zk-circuit --example blake3_vectors`, and re-verified on the
+// Rust side by `crates/zk-circuit/tests/blake3_parity_vectors.rs`. The key
+// comes from an xorshift64* so that no 4-byte group equals its own
+// byte-reversal — a big-endian / little-endian mix-up cannot pass these.
+//
+// The message lengths walk every boundary the chunking logic has to get
+// right: 0, a short final chunk, exactly one chunk, and then the first
+// message that needs a SECOND chunk. That last one is the vector that
+// catches a chunk counter stuck at 0, which every single-chunk vector
+// above it would happily pass.
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compress, g, keyed_hash_one_chunk, read_block, read_key_le, u32s_le_to_bytes,
+        CHUNK_END,
+        CHUNK_START, IV, KEYED_HASH, ROOT, MState, VState,
+    };
+    use core::array::ArrayTrait;
+
+    fn bytes_to_ba(xs: @Array<u8>) -> ByteArray {
+        let mut ba: ByteArray = "";
+        let mut i: usize = 0;
+        while i < xs.len() {
+            ba.append_byte(*xs.at(i));
+            i += 1;
+        };
+        ba
+    }
+
+    fn repeat_ba(byte: u8, n: usize) -> ByteArray {
+        let mut ba: ByteArray = "";
+        let mut i: usize = 0;
+        while i < n {
+            ba.append_byte(byte);
+            i += 1;
+        };
+        ba
+    }
+
+    /// The shared 32-byte key: xorshift64* seeded with 0x1234_5678_9abc_def0.
+    fn test_key() -> ByteArray {
+        bytes_to_ba(
+            @array![
+                0x3d, 0x85, 0x9f, 0x60, 0xd8, 0xb2, 0x96, 0x47, 0x4b, 0x55, 0xa9, 0xe2, 0x7c, 0xc4,
+                0xf1, 0x3e, 0xc2, 0x02, 0x96, 0x95, 0x40, 0x7e, 0x3b, 0x8b, 0xb4, 0x0c, 0xff, 0x1b,
+                0x5c, 0xcb, 0xd4, 0x04,
+            ],
+        )
+    }
+
+    fn keyed_hash_with_test_key(msg: @ByteArray) -> ByteArray {
+        let key = test_key();
+        u32s_le_to_bytes(keyed_hash_one_chunk(read_key_le(@key), msg))
+    }
+
+    /// Byte-exact compare. Cairo's `assert!` takes a literal format string, so
+    /// the failing vector is identified by the test name rather than the
+    /// message.
+    fn assert_digest(got: @ByteArray, want: @Array<u8>) {
+        let want_ba = bytes_to_ba(want);
+        assert!(got.len() == 32, "digest length wrong");
+        let mut i: usize = 0;
+        while i < 32 {
+            assert!(got.at(i).unwrap() == want_ba.at(i).unwrap(), "blake3 parity mismatch");
+            i += 1;
+        };
+    }
+
+    /// Isolate the G function: the very first operation of round 0 of
+    /// BLAKE3(""), with the canonical state (v[0..8] = v[8..16] = IV,
+    /// v[15] ^= CHUNK_START|CHUNK_END|ROOT) and an all-zero message.
+    /// Expected values produced by `cargo run -p zk-circuit --example
+    /// blake3_gref`. If this fails, the defect is in G / rotate / the state
+    /// layout / SIGMA rather than in the chunking loop.
+    #[test]
+    fn g_first_round_first_column_matches_reference() {
+        let iv_span = IV.span();
+        let mut v = VState {
+            v0: *iv_span.at(0),
+            v1: *iv_span.at(1),
+            v2: *iv_span.at(2),
+            v3: *iv_span.at(3),
+            v4: *iv_span.at(4),
+            v5: *iv_span.at(5),
+            v6: *iv_span.at(6),
+            v7: *iv_span.at(7),
+            v8: *iv_span.at(0),
+            v9: *iv_span.at(1),
+            v10: *iv_span.at(2),
+            v11: *iv_span.at(3),
+            // Per spec: assigned, not XORed onto IV[4..8].
+            v12: 0,
+            v13: 0,
+            v14: 0,
+            v15: (ROOT | CHUNK_START | CHUNK_END).into(),
+        };
+        g(ref v, 0, 4, 8, 12, 0, 0);
+        assert!(v.v0 == 0xeb2778d5, "g: v0");
+        assert!(v.v4 == 0x5a8196b9, "g: v4");
+        assert!(v.v8 == 0x70c46342, "g: v8");
+        assert!(v.v12 == 0xcdd3c1c3, "g: v12");
+    }
+
+    /// For a uniform message every 64-byte block must decode identically.
+    /// This isolates `read_block` / `read_u32_le_at` from the compression
+    /// function entirely.
+    #[test]
+    fn read_block_at_later_offset_matches_first_offset() {
+        let msg = repeat_ba(0x11, 128);
+        let b0 = read_block(@msg, 0);
+        assert!(b0.m0 == 0x11111111, "b0.m0");
+        assert!(b0.m15 == 0x11111111, "b0.m15");
+        let b64 = read_block(@msg, 64);
+        assert!(b64.m0 == 0x11111111, "b64.m0");
+        assert!(b64.m15 == 0x11111111, "b64.m15");
+        assert!(b64.m7 == 0x11111111, "b64.m7");
+    }
+
+    /// Same 128-byte message, but asserting the SECOND block's compress call
+    /// explicitly (offset 64, block_len 64, flags KEYED_HASH|CHUNK_END|ROOT,
+    /// chained off block 0's CV).
+    #[test]
+    fn keyed_hash_second_block_compress_matches_reference() {
+        let key = test_key();
+        let kw = read_key_le(@key);
+        let msg = repeat_ba(0x11, 128);
+        let blk0 = read_block(@msg, 0);
+        let out0 = compress(kw, blk0, 0, 64, KEYED_HASH | CHUNK_START);
+        let o0s = out0.span();
+        let cv: [u32; 8] = [
+            *o0s.at(0), *o0s.at(1), *o0s.at(2), *o0s.at(3), *o0s.at(4), *o0s.at(5), *o0s.at(6),
+            *o0s.at(7),
+        ];
+        let blk1 = read_block(@msg, 64);
+        let out1 = compress(cv, blk1, 0, 64, KEYED_HASH | CHUNK_END | ROOT);
+        let o1s = out1.span();
+        assert!(*o1s.at(0) == 0x7c74c601, "blk1 cv0");
+        assert!(*o1s.at(1) == 0xf57e7c40, "blk1 cv1");
+        assert!(*o1s.at(2) == 0x69b4b933, "blk1 cv2");
+        assert!(*o1s.at(3) == 0xa927a195, "blk1 cv3");
+        assert!(*o1s.at(4) == 0x099bee32, "blk1 cv4");
+        assert!(*o1s.at(5) == 0x15a6ceb7, "blk1 cv5");
+        assert!(*o1s.at(6) == 0x8b9ff8b2, "blk1 cv6");
+        assert!(*o1s.at(7) == 0x98b24a38, "blk1 cv7");
+    }
+
+    /// The chaining value after the FIRST 64-byte block of a 128-byte
+    /// message. Isolates the loop's state hand-off from the final digest: if
+    /// this matches but the 128-byte digest does not, the defect is in the
+    /// loop's flag/block_len choice for the second block.
+    /// Expected values: `TRACE_CV=1 cargo run -p zk-circuit --example
+    /// blake3_chunkmodel`.
+    #[test]
+    fn keyed_hash_intermediate_cv_after_first_block_matches_reference() {
+        let key = test_key();
+        let kw = read_key_le(@key);
+        let msg = repeat_ba(0x11, 128);
+        let blk0 = read_block(@msg, 0);
+        let out = compress(kw, blk0, 0, 64, KEYED_HASH | CHUNK_START);
+        let os = out.span();
+        assert!(*os.at(0) == 0x6c91f9c0, "cv0");
+        assert!(*os.at(1) == 0xa7c4a456, "cv1");
+        assert!(*os.at(2) == 0xe59112e5, "cv2");
+        assert!(*os.at(3) == 0xb2e10b85, "cv3");
+        assert!(*os.at(4) == 0x6c188b45, "cv4");
+        assert!(*os.at(5) == 0x2d821466, "cv5");
+        assert!(*os.at(6) == 0xcc4e83ff, "cv6");
+        assert!(*os.at(7) == 0xe1458411, "cv7");
+    }
+
+    /// Canonical BLAKE3 vector for the **empty, unkeyed** hash. This exercises
+    /// `compress` on its own — IV, SIGMA, G, the round schedule, the flags and
+    /// the output XOR — with none of the keyed-hash chunking loop in the way.
+    /// If this passes but `keyed_hash_empty_matches_reference` fails, the bug
+    /// is in the key/chunk plumbing; if this fails, it is in `compress`.
+    #[test]
+    fn compress_matches_canonical_empty_unkeyed_vector() {
+        let zero = MState {
+            m0: 0,
+            m1: 0,
+            m2: 0,
+            m3: 0,
+            m4: 0,
+            m5: 0,
+            m6: 0,
+            m7: 0,
+            m8: 0,
+            m9: 0,
+            m10: 0,
+            m11: 0,
+            m12: 0,
+            m13: 0,
+            m14: 0,
+            m15: 0,
+        };
+        let cv = compress(IV, zero, 0, 0, CHUNK_START | CHUNK_END | ROOT);
+        let cs = cv.span();
+        let words: [u32; 8] = [
+            *cs.at(0), *cs.at(1), *cs.at(2), *cs.at(3), *cs.at(4), *cs.at(5), *cs.at(6), *cs.at(7),
+        ];
+        let got = u32s_le_to_bytes(words);
+        assert_digest(
+            @got,
+            @array![
+                0xaf, 0x13, 0x49, 0xb9, 0xf5, 0xf9, 0xa1, 0xa6, 0xa0, 0x40, 0x4d, 0xea, 0x36, 0xdc,
+                0xc9, 0x49, 0x9b, 0xcb, 0x25, 0xc9, 0xad, 0xc1, 0x12, 0xb7, 0xcc, 0x9a, 0x93, 0xca,
+                0xe4, 0x1f, 0x32, 0x62,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_empty_matches_reference() {
+        let got = keyed_hash_with_test_key(@"");
+        assert_digest(
+            @got,
+            @array![
+                0x8a, 0xc4, 0xe0, 0x3c, 0x4d, 0x21, 0xdf, 0x35, 0x76, 0x33, 0xea, 0x3f, 0x23, 0x8b,
+                0x09, 0x41, 0x9c, 0x3b, 0x5a, 0x6f, 0x19, 0xc9, 0x2a, 0x3f, 0x2d, 0x5c, 0x97, 0x7e,
+                0x19, 0x62, 0x17, 0x8b,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_one_byte_matches_reference() {
+        let got = keyed_hash_with_test_key(@"a");
+        assert_digest(
+            @got,
+            @array![
+                0x0b, 0xd4, 0x77, 0x9a, 0xd6, 0x41, 0x53, 0xf0, 0x30, 0x43, 0x35, 0xce, 0xa7, 0xf2,
+                0x67, 0xe7, 0x92, 0x34, 0x1f, 0x33, 0xbc, 0x93, 0x56, 0x7c, 0x91, 0x7a, 0x72, 0xbf,
+                0x70, 0x1a, 0x63, 0x2b,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_partial_final_chunk_matches_reference() {
+        let got = keyed_hash_with_test_key(@repeat_ba(0xab, 55));
+        assert_digest(
+            @got,
+            @array![
+                0xf3, 0x66, 0xef, 0x8e, 0x51, 0xb4, 0x99, 0xee, 0xce, 0x37, 0x07, 0x5e, 0xae, 0xb0,
+                0x12, 0xa5, 0x13, 0x4e, 0x1f, 0xcf, 0xa8, 0xd5, 0xc0, 0x7b, 0x1c, 0xbb, 0x21, 0x06,
+                0xfb, 0x3c, 0xbb, 0xe7,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_exactly_one_chunk_matches_reference() {
+        let got = keyed_hash_with_test_key(@repeat_ba(0x5a, 64));
+        assert_digest(
+            @got,
+            @array![
+                0xc3, 0x72, 0x30, 0x93, 0xf7, 0x9e, 0x39, 0x62, 0x1a, 0x02, 0x26, 0x7a, 0x94, 0xb4,
+                0x3b, 0x93, 0x94, 0xb1, 0xb4, 0x4d, 0x72, 0x01, 0x9a, 0x84, 0x37, 0x95, 0x42, 0xfc,
+                0xbe, 0x30, 0x6f, 0xb4,
+            ],
+        );
+    }
+
+    /// The vector that matters most: the first message needing a second chunk.
+    #[test]
+    fn keyed_hash_two_chunks_matches_reference() {
+        let got = keyed_hash_with_test_key(@repeat_ba(0xc3, 65));
+        assert_digest(
+            @got,
+            @array![
+                0x7f, 0x61, 0x55, 0xd7, 0xe7, 0xda, 0x2c, 0xee, 0x97, 0xee, 0x13, 0x59, 0x8a, 0xb8,
+                0x33, 0xe3, 0x98, 0x84, 0x5d, 0xff, 0xeb, 0xce, 0x0e, 0xc3, 0xf1, 0x1b, 0xab, 0xee,
+                0xa9, 0xc4, 0x6c, 0x14,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_two_full_chunks_matches_reference() {
+        let got = keyed_hash_with_test_key(@repeat_ba(0x11, 128));
+        assert_digest(
+            @got,
+            @array![
+                0x01, 0xc6, 0x74, 0x7c, 0x40, 0x7c, 0x7e, 0xf5, 0x33, 0xb9, 0xb4, 0x69, 0x95, 0xa1,
+                0x27, 0xa9, 0x32, 0xee, 0x9b, 0x09, 0xb7, 0xce, 0xa6, 0x15, 0xb2, 0xf8, 0x9f, 0x8b,
+                0x38, 0x4a, 0xb2, 0x98,
+            ],
+        );
+    }
+
+    #[test]
+    fn keyed_hash_three_chunks_matches_reference() {
+        let got = keyed_hash_with_test_key(@repeat_ba(0xfe, 129));
+        assert_digest(
+            @got,
+            @array![
+                0x0e, 0xb8, 0x09, 0xd0, 0x2c, 0x45, 0x58, 0x58, 0x18, 0xba, 0x85, 0xa4, 0xd7, 0xc5,
+                0x78, 0x0e, 0xa0, 0xc8, 0xff, 0x44, 0x21, 0x4c, 0xc5, 0xf7, 0x8f, 0xa7, 0x35, 0x8a,
+                0x13, 0x79, 0x9d, 0x77,
+            ],
+        );
+    }
+
+    /// The shape the macaroon chain actually uses: `name ‖ ser ‖ id`, which is
+    /// 78 bytes here and therefore already spans two chunks.
+    #[test]
+    fn keyed_hash_macaroon_shaped_message_matches_reference() {
+        let key = bytes_to_ba(
+            @array![
+            0x0a, 0xf1, 0x9b, 0x9a, 0x10, 0xe5, 0xb5, 0x77,
+            0x8f, 0x91, 0xa6, 0x93, 0xd9, 0x38, 0xfe, 0x6a,
+            0x7f, 0xf9, 0x97, 0xcd, 0xd8, 0x8b, 0xde, 0x06,
+            0xac, 0x66, 0xef, 0xfc, 0xfb, 0xaa, 0xe0, 0xde,
+        ],
+        );
+
+        let mut msg: ByteArray = "amount_max";
+        msg.append_byte(0x00);
+        msg.append_byte(0x00);
+        msg.append_byte(0x00);
+        msg.append_byte(0x20);
+        let mut i: usize = 0;
+        while i < 32 {
+            msg.append_byte(0x42);
+            i += 1;
+        };
+        i = 0;
+        while i < 32 {
+            msg.append_byte(0x77);
+            i += 1;
+        };
+        assert!(msg.len() == 78, "macaroon_shaped msg length");
+        assert!(key.len() == 32, "macaroon_shaped key length");
+        // MSG_HEX from the generator: 61 6d 6f 75 6e 74 5f 6d 61 78 | 00 00 00 20 | 42*32 | 77*32
+        let got = u32s_le_to_bytes(keyed_hash_one_chunk(read_key_le(@key), @msg));
+        assert_digest(
+            @got,
+            @array![
+                0xae, 0x31, 0x82, 0xf5, 0xfe, 0xc2, 0x21, 0x33, 0x8d, 0x9a, 0x6d, 0x69, 0xff, 0xac,
+                0x53, 0x77, 0x8f, 0x8c, 0x50, 0xaf, 0xa3, 0x27, 0xb8, 0x4d, 0x59, 0x26, 0x18, 0x68,
+                0xb6, 0x8d, 0x42, 0xaa,
+            ],
+        );
+    }
 }

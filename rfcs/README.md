@@ -368,7 +368,7 @@ Once accepted:
 | RFC-0972 (Economics)  | Capability `root_id` Derivation Reconciliation    | Draft               | In-place amendment to RFC-0957 §Mint: spec reconciles to the implemented `root_id` form (no wire change)                          |
 | RFC-0970 (Networking) | Forwarding-Hop Authorization Envelope             | Accepted 2026-08-02 | Forwarding-hop authorization envelope form                                                                                        |
 | RFC-0971 (Networking) | Destination-Node Role Consolidation               | Accepted 2026-08-02 | Consolidates destination-node roles                                                                                               |
-| RFC-0973 (Economics)  | Pluggable Proof Attestation for Capabilities      | Draft               | Attestation strategy trait + fail-closed registry in `octo-wallet`; operator-selected acceptance set; two reference strategies    |
+| RFC-0973 (Economics)  | Pluggable Proof Attestation for Capabilities      | Accepted            | Attestation strategy trait + fail-closed registry in `octo-wallet`; operator-selected acceptance set; two reference strategies    |
 
 ### Archived
 

@@ -52,6 +52,7 @@ The envelope replaces ad-hoc per-node wire formats with a single canonical shape
 - RFC-0971 — Destination-node role consolidation
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG (no cycles): ✓ for Accepted deps. RFC-0008 dependency recorded with assumption above.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites (Mission creation in S5 enforces this)
 > 3. Optional dependencies MUST be documented separately from required: ✓
@@ -59,18 +60,18 @@ The envelope replaces ad-hoc per-node wire formats with a single canonical shape
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| --- | --- | --- |
-| G1 | No central `NodeType` enum constraining future nodes | Adding a new node type = new RFC + new `payload_kind` UUIDs + new `NetworkReceiver` impl. No `octo-transport` changes. |
-| G2 | No central `PayloadKind` enum constraining payload kinds | 128-bit `PayloadKindId` UUID, RFC-allocated ranges + Raw escape hatch |
-| G3 | No central `Authorization` enum without escape hatch | `Authorization` enum has `Raw { discriminator: [u8;16], body: Vec<u8> }` variant for future types |
-| G4 | All identities use canonical DID | 100% of `from_did` fields validated via `octo_ident::CanonicalCodec::parse()` |
-| G5 | Capability IS an authorization | `Authorization::Capability(token)` variant; composition via `Vec<Authorization>` |
-| G6 | Replay defense + TTL | `envelope_id` uniqueness + `nonce` per sender + `expires_at_unix_ms` TTL (millisecond) |
-| G7 | Per-extension crate model | New capability type = own crate, registers via plugin. Wallet core unchanged. |
-| G8 | Wallet as specialized node | Wallet signs via `HsmAdapter`. `IdentityKey::sign()` routes through HSM. Hardware wallets supported. |
-| G9 | Wallet depends on storage = 0 | Wallet asks nodes via envelope. Node answers. No `quota-router-storage` import in `octo-wallet`. |
-| G10 | Backward compatibility | Adding payload_kind UUID = additive. Old nodes fail-closed on unknown kinds (RFC-0965 §3.2). |
+| Goal | Target                                                   | Metric                                                                                                                 |
+| ---- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| G1   | No central `NodeType` enum constraining future nodes     | Adding a new node type = new RFC + new `payload_kind` UUIDs + new `NetworkReceiver` impl. No `octo-transport` changes. |
+| G2   | No central `PayloadKind` enum constraining payload kinds | 128-bit `PayloadKindId` UUID, RFC-allocated ranges + Raw escape hatch                                                  |
+| G3   | No central `Authorization` enum without escape hatch     | `Authorization` enum has `Raw { discriminator: [u8;16], body: Vec<u8> }` variant for future types                      |
+| G4   | All identities use canonical DID                         | 100% of `from_did` fields validated via `octo_ident::CanonicalCodec::parse()`                                          |
+| G5   | Capability IS an authorization                           | `Authorization::Capability(token)` variant; composition via `Vec<Authorization>`                                       |
+| G6   | Replay defense + TTL                                     | `envelope_id` uniqueness + `nonce` per sender + `expires_at_unix_ms` TTL (millisecond)                                 |
+| G7   | Per-extension crate model                                | New capability type = own crate, registers via plugin. Wallet core unchanged.                                          |
+| G8   | Wallet as specialized node                               | Wallet signs via `HsmAdapter`. `IdentityKey::sign()` routes through HSM. Hardware wallets supported.                   |
+| G9   | Wallet depends on storage = 0                            | Wallet asks nodes via envelope. Node answers. No `quota-router-storage` import in `octo-wallet`.                       |
+| G10  | Backward compatibility                                   | Adding payload_kind UUID = additive. Old nodes fail-closed on unknown kinds (RFC-0965 §3.2).                           |
 
 ## Motivation
 
@@ -88,17 +89,17 @@ These gaps are symptoms of a missing layer: the **specialized node protocol enve
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-| --- | --- | --- | --- | --- |
-| Wallet holder | `IdentityKey` (Ed25519) | sign payloads, mint capabilities, attenuate capabilities | persistent across rotations | RFC-0009 §Identity |
-| Wallet device | `HsmAdapter` impl | private-key custody (in-memory / Ledger / YubiHSM / TEE) | device-bound | RFC-0853 §F2 |
-| Specialized node | `NodeEnvelope` handler | dispatch payload_kind → business logic | bound to node deployment | RFC-0870 |
-| Capability issuer | `CapabilityToken::mint` | issue capabilities with caveats | persistent (capabilities outlive issuance) | RFC-0957-A1 |
-| Mesh | `NodeTransport` | route envelopes to peers, dispatch to receivers | per-deployment | octo-transport |
-| Quota router | `QuotaRouterNode` | forward requests, settle inference | bound to node | RFC-0870 |
-| Identity resolver | `IdentityResolver` (NEW) | resolve DID → DID Document | stateless function | RFC-0009 |
-| Reputation anchor | `ReputationAnchorNode` (NEW) | anchor reputation batches, gossip events | bound to node | RFC-0968 |
-| Wallet node | `WalletNode` (NEW) | sign payloads, mint capabilities, advertise crypto services | bound to node | This RFC |
+| Role              | Identifier                   | Authority Scope                                             | Lifecycle                                  | Source/Ref         |
+| ----------------- | ---------------------------- | ----------------------------------------------------------- | ------------------------------------------ | ------------------ |
+| Wallet holder     | `IdentityKey` (Ed25519)      | sign payloads, mint capabilities, attenuate capabilities    | persistent across rotations                | RFC-0009 §Identity |
+| Wallet device     | `HsmAdapter` impl            | private-key custody (in-memory / Ledger / YubiHSM / TEE)    | device-bound                               | RFC-0853 §F2       |
+| Specialized node  | `NodeEnvelope` handler       | dispatch payload_kind → business logic                      | bound to node deployment                   | RFC-0870           |
+| Capability issuer | `CapabilityToken::mint`      | issue capabilities with caveats                             | persistent (capabilities outlive issuance) | RFC-0957-A1        |
+| Mesh              | `NodeTransport`              | route envelopes to peers, dispatch to receivers             | per-deployment                             | octo-transport     |
+| Quota router      | `QuotaRouterNode`            | forward requests, settle inference                          | bound to node                              | RFC-0870           |
+| Identity resolver | `IdentityResolver` (NEW)     | resolve DID → DID Document                                  | stateless function                         | RFC-0009           |
+| Reputation anchor | `ReputationAnchorNode` (NEW) | anchor reputation batches, gossip events                    | bound to node                              | RFC-0968           |
+| Wallet node       | `WalletNode` (NEW)           | sign payloads, mint capabilities, advertise crypto services | bound to node                              | This RFC           |
 
 ### Stateful actors
 
@@ -106,6 +107,44 @@ These gaps are symptoms of a missing layer: the **specialized node protocol enve
 - `QuotaRouterNode` — existing (RFC-0870); extended to use the new envelope
 - `IdentityResolverNode` — new; stateless resolver that responds to `IdentityResolveDid` payload
 - `ReputationAnchorNode` — new; substrate in `crates/octo-reputation/`, network-wired via envelope
+
+### Node Role — Payload-Kind Declared (v1.1 amendment, 2026-10-07)
+
+**This section is the sole normative definition of node role.** RFC-0009 §Node
+previously carried a `NodeType { Wholesale, SelfHost, Hybrid }` enum; that
+taxonomy is removed from RFC-0009 and is not restated here, because this
+RFC's own design goal G1 forbids a central `NodeType` enum (§Alternatives
+Considered records it as REJECTED: "Upgrade-hostile. Adds churn on every new
+node").
+
+Nodes are extended by third parties, so node role is an open set, not a
+closed one.
+
+**Role derivation.** A node's role IS the set of `PayloadKindId` UUIDs it
+serves, returned by `SpecializedNode::served_payload_kinds()`. There is no
+separate role identifier to allocate, collide with, version, or revoke.
+
+**Authority derives from served kinds, it is not asserted.** A node holds
+exactly the authority its served payload kinds confer. RFC-0958 §NodeType
+Gating Matrix keys its ZK-mint rule off the in-boundary inference attestation
+payload kind rather than a role name, so a third-party node that serves the
+attestation kinds acquires the corresponding authority without any core
+change and without a discriminator being allocated for it.
+
+**Discovery.** Peers learn a node's role from its `RouterAnnouncePayload`. An
+announcement is authoritative only when signed by a trusted issuer for the
+declared payload kinds; otherwise it is advisory.
+
+**Fail-closed.** A payload kind a receiver does not serve is rejected, not
+ignored (§Adversary Analysis A5). A node therefore cannot gain capability by
+announcing kinds it does not implement.
+
+**Derived view, not a wire type.** `NodeType` remains available in CLI
+operators, storage records, and operator tooling as a _computed_ projection of
+the served payload kinds. It is NOT a wire discriminator and MUST NOT be used
+as an authorization input: any protocol rule keyed on a role NAME re-imposes
+the central-enum constraint this RFC removed. Protocol rules key on payload
+kinds; role names are for humans and for storage layout.
 
 ## Specification
 
@@ -196,6 +235,7 @@ pub enum Authorization {
 ### Algorithms
 
 **Envelope send:**
+
 1. Build envelope with `from_did = wallet.canonical_did()`
 2. Compute `envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))`
 3. Compute signature preimage: `preimage = blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", envelope_id || from_did_wire || payload).as_bytes()` (32 bytes, domain-separated). Sign via `HsmAdapter::sign(preimage)` → `Authorization::Signature`
@@ -204,6 +244,7 @@ pub enum Authorization {
 6. Send via `NodeTransport::send_best(envelope_bytes, &send_context)`
 
 **Envelope receive (node-side):**
+
 1. Receive via `NodeTransport::dispatch()` → registered `NetworkReceiver`
 2. Validate `from_did` shape via `octo_ident::CanonicalCodec::parse()`
 3. Check `envelope_id` uniqueness (replay defense)
@@ -319,15 +360,15 @@ impl NetworkReceiver for WalletNode {
 
 ### RFC-0008 Execution Class Mapping
 
-| Component | Class | Reason |
-| --- | --- | --- |
-| Envelope serialization | A | Canonical borsh, BLAKE3 hash |
-| `envelope_id` computation | A | BLAKE3 deterministic |
-| DID parsing | A | RFC-0010 canonical |
-| Signature verification | A | ed25519-dalek deterministic |
-| Capability verification | A | RFC-0957 attenuation invariant deterministic |
-| Mesh routing | B | Adapter-dependent |
-| Replay defense | C | Sender behavior |
+| Component                 | Class | Reason                                       |
+| ------------------------- | ----- | -------------------------------------------- |
+| Envelope serialization    | A     | Canonical borsh, BLAKE3 hash                 |
+| `envelope_id` computation | A     | BLAKE3 deterministic                         |
+| DID parsing               | A     | RFC-0010 canonical                           |
+| Signature verification    | A     | ed25519-dalek deterministic                  |
+| Capability verification   | A     | RFC-0957 attenuation invariant deterministic |
+| Mesh routing              | B     | Adapter-dependent                            |
+| Replay defense            | C     | Sender behavior                              |
 
 ### Error Handling
 
@@ -353,25 +394,25 @@ pub enum ProtocolError {
 
 ## Performance Targets
 
-| Operation | Target | Measurement |
-| --- | --- | --- |
-| Envelope serialize (borsh) | < 100 µs for typical 1KB envelope | Bench `serialize_envelope` |
-| DID parse | < 10 µs | Bench `wire_to_raw` |
-| Signature verify (Ed25519) | < 50 µs | Bench `ed25519_dalek::verify` |
-| Envelope hash (BLAKE3-256 of 1KB) | < 5 µs | Bench `blake3::hash` |
-| Capability verify (RFC-0957) | < 1 ms (per RFC-0957 G1) | Bench `verify_capability_token` |
-| End-to-end wallet sign request via mesh | < 100 ms (1-hop local) | Integration test |
+| Operation                               | Target                            | Measurement                     |
+| --------------------------------------- | --------------------------------- | ------------------------------- |
+| Envelope serialize (borsh)              | < 100 µs for typical 1KB envelope | Bench `serialize_envelope`      |
+| DID parse                               | < 10 µs                           | Bench `wire_to_raw`             |
+| Signature verify (Ed25519)              | < 50 µs                           | Bench `ed25519_dalek::verify`   |
+| Envelope hash (BLAKE3-256 of 1KB)       | < 5 µs                            | Bench `blake3::hash`            |
+| Capability verify (RFC-0957)            | < 1 ms (per RFC-0957 G1)          | Bench `verify_capability_token` |
+| End-to-end wallet sign request via mesh | < 100 ms (1-hop local)            | Integration test                |
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-| --- | --- | --- | --- |
-| `octo-ident` is Layer 1 (decades-stable) | All `from_did` fields validated via `octo_ident::CanonicalCodec` | If octo-ident changes shape, all envelopes break | RFC-0010 locks the codec; Layer 1 freeze |
-| `octo-transport::NodeTransport` continues to provide fan-out + fan-in | Envelope routing | If transport semantics change, envelope reception breaks | octo-transport is Layer 1; RFC-0870 already depends on it |
-| Ed25519 remains the canonical signing curve | All signature auth | Curve migration is breaking | RFC-0853 §F1 lists PQC migration as future work |
-| RFC-0957 attenuation invariant holds | `Authorization::Capability` verification | If invariant breaks, capabilities can be weakened | RFC-0957 §3.5 is type-level enforced |
-| Wallet has access to a clock for TTL checks | `expires_at_unix_ms` enforcement | If clock skew, false accept/reject | RFC-0970 §Replay Protection handles skew tolerance |
-| Mesh routing is best-effort | `RecipientRef::Broadcast` | If mesh partition, envelopes may not arrive | Existing gossip retry (RFC-0862) |
+| Assumption                                                            | Where Relied Upon                                                | Blast Radius if False                                    | Mitigation / Status                                       |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------- |
+| `octo-ident` is Layer 1 (decades-stable)                              | All `from_did` fields validated via `octo_ident::CanonicalCodec` | If octo-ident changes shape, all envelopes break         | RFC-0010 locks the codec; Layer 1 freeze                  |
+| `octo-transport::NodeTransport` continues to provide fan-out + fan-in | Envelope routing                                                 | If transport semantics change, envelope reception breaks | octo-transport is Layer 1; RFC-0870 already depends on it |
+| Ed25519 remains the canonical signing curve                           | All signature auth                                               | Curve migration is breaking                              | RFC-0853 §F1 lists PQC migration as future work           |
+| RFC-0957 attenuation invariant holds                                  | `Authorization::Capability` verification                         | If invariant breaks, capabilities can be weakened        | RFC-0957 §3.5 is type-level enforced                      |
+| Wallet has access to a clock for TTL checks                           | `expires_at_unix_ms` enforcement                                 | If clock skew, false accept/reject                       | RFC-0970 §Replay Protection handles skew tolerance        |
+| Mesh routing is best-effort                                           | `RecipientRef::Broadcast`                                        | If mesh partition, envelopes may not arrive              | Existing gossip retry (RFC-0862)                          |
 
 ### Categories to Audit (per BLUEPRINT §Implicit Assumptions Audit)
 
@@ -383,56 +424,63 @@ pub enum ProtocolError {
 
 ## Security Considerations
 
-| Concern | Mitigation |
-| --- | --- |
-| Replay attack | `envelope_id` uniqueness + `nonce` per-(sender, node_type) cache + TTL |
-| Signature forgery | Ed25519 verification per signature; RFC-0970 §Crypto substrate |
-| Capability weakening | RFC-0957 §3.5 attenuation invariant type-level enforced |
-| Cross-domain trust | Each node type declares own trust root via `RouterAnnouncePayload` |
-| TTL skew | Tolerance window per RFC-0970 §Replay Protection |
-| DID spoofing | `octo_ident::CanonicalCodec::parse()` validates canonical wire form |
-| Unknown payload kind | RFC-0965 §3.2 fail-closed pattern (reject unknown kinds, don't silently drop) |
+| Concern                    | Mitigation                                                                       |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| Replay attack              | `envelope_id` uniqueness + `nonce` per-(sender, node_type) cache + TTL           |
+| Signature forgery          | Ed25519 verification per signature; RFC-0970 §Crypto substrate                   |
+| Capability weakening       | RFC-0957 §3.5 attenuation invariant type-level enforced                          |
+| Cross-domain trust         | Each node type declares own trust root via `RouterAnnouncePayload`               |
+| TTL skew                   | Tolerance window per RFC-0970 §Replay Protection                                 |
+| DID spoofing               | `octo_ident::CanonicalCodec::parse()` validates canonical wire form              |
+| Unknown payload kind       | RFC-0965 §3.2 fail-closed pattern (reject unknown kinds, don't silently drop)    |
 | Unknown auth discriminator | `Authorization::Raw` allows forward-compat; fail-closed if no handler registered |
 
 ## Adversary Analysis
 
 **A1 — Replay attack on signed envelope:**
+
 - Threat actor: passive network observer or compromised node forwarding
 - What they gain: re-trigger paid payload (e.g., wallet-sign request), double-spend authorization
 - Adversary action: capture `NodeEnvelope` with valid signature + non-expired TTL; replay it to the same node
 - Defense: `envelope_id` uniqueness cache + `nonce` per-sender cache + TTL
 
 **A2 — Capability forgery:**
+
 - Threat actor: holder of compromised low-tier key attempting unauthorized capability issuance
 - What they gain: ability to mint capabilities without being the registered issuer
 - Adversary action: mint `CapabilityToken` without being the issuer
 - Defense: RFC-0957 §3.5 invariant + Ed25519 sig on token mint
 
 **A3 — Cross-domain trust escalation:**
+
 - Threat actor: compromised identity node operator or misconfigured mesh peer
 - What they gain: cross-domain trust (identity-tier payload executed on quota-tier trust root)
 - Adversary action: send envelope from identity node to quota node with reputation-tier payload
 - Defense: `RouterAnnouncePayload` declares trust root per node type
 
 **A4 — TTL manipulation:**
+
 - Threat actor: sender of envelope with rogue TTL
 - What they gain: indefinite replay window (bypass short-TTL payment expiry)
 - Adversary action: set `expires_at_unix_ms` far in the future
 - Defense: per-node-type TTL ceiling (declared in `RouterAnnouncePayload`)
 
 **A5 — Payload kind spoofing (unknown kind handler):**
+
 - Threat actor: attacker probing for unhandled payload kinds to cause silent drop or crash
 - What they gain: DoS via unhandled kinds, or silent bypass of payload-kind ACLs
 - Adversary action: send envelope with unknown `PayloadKindId`
 - Defense: fail-closed rejection; old nodes reject unknown kinds (RFC-0965 §3.2 pattern)
 
 **A6 — Authorization composition attack:**
+
 - Threat actor: holder of one valid mechanism (e.g., signature) attempting to bypass another (e.g., capability caveat)
 - What they gain: authorize payload that should require multi-mechanism consensus
 - Adversary action: send envelope with `Vec<Authorization>` mixing valid + invalid
 - Defense: ALL authorizations must verify (logical AND, not OR)
 
 **A7 — DID spoofing via legacy form:**
+
 - Threat actor: holder of legacy DID form attempting post-deprecation impersonation
 - What they gain: pass validation by nodes that haven't applied the deprecation window
 - Adversary action: use `did:octo:b<base32>` (legacy) post-deprecation
@@ -451,6 +499,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 ### TV1 — Self-sign envelope with default `InMemorySigner`
 
 **Input:**
+
 - `from_did` = `did:octo:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK` (RFC-0009 canonical)
 - `to_node_id` = `RecipientRef::Direct([0x01; 32])`
 - `payload_kind` = UUID `0x0009:0001:0000:0000:0000:0000:0000:0001` (identity-resolve)
@@ -460,6 +509,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 - `authorization` = `vec![Authorization::Signature { signer_did: <from_did>, sig: <pending> }]`
 
 **Algorithm:**
+
 1. Compute `envelope_unsigned = canonical_ser(NodeEnvelope { envelope_id: [0;32], from_did, to_node_id, payload_kind, payload, authorization: vec![], nonce, expires_at_unix_ms })` (Borsh)
 2. `envelope_id = BLAKE3-256(envelope_unsigned)`
 3. Compute `preimage = blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", envelope_id || from_did_wire || payload).as_bytes()` (32 bytes, domain-separated per §Algorithms step 3)
@@ -468,6 +518,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 6. Final envelope = `NodeEnvelope { envelope_id, from_did, ..., authorization: vec![Authorization::Signature { signer_did: from_did.clone(), sig: signature }] }`
 
 **Expected output (deterministic, byte-exact):**
+
 - `envelope_id` — 32-byte BLAKE3-256 of the unsigned serialization above. Exact bytes verified by test fixture `crates/octo-protocol/tests/tv1_self_sign.rs::assert_envelope_id_byte_exact()`.
 - `sig` — 64-byte Ed25519 signature of `preimage` (32 bytes). Exact bytes verified by test fixture `crates/octo-protocol/tests/tv1_self_sign.rs::assert_signature_byte_exact()`.
 
@@ -489,9 +540,10 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 
 ### TV4 — Receiver accepts envelope with `Vec<Authorization>` containing capability + signature
 
-**Input:** Envelope with `authorization: vec![Authorization::Capability(<concrete RFC-0957 token from fixture `crates/octo-protocol/tests/fixtures/tv4_macaroon.bin` with `PaymentCaveat` and `ValidAfter` caveats>), Authorization::Signature { signer_did: from_did.clone(), sig: <recomputed per §Algorithms step 3 over `envelope_id || from_did_wire || payload`> }]`.
+**Input:** Envelope with `authorization: vec![Authorization::Capability(<concrete RFC-0957 token from fixture `crates/octo-protocol/tests/fixtures/tv4_macaroon.bin`with`PaymentCaveat`and`ValidAfter`caveats>), Authorization::Signature { signer_did: from_did.clone(), sig: <recomputed per §Algorithms step 3 over`envelope_id || from_did_wire || payload`> }]`.
 
 **Expected output:** Receiver validates ALL authorizations (logical AND):
+
 - `Authorization::Capability(token)`: RFC-0957 §3.5 attenuation invariant holds + every caveat satisfied (caveat check is local per RFC-0965 §Caveat type enumeration)
 - `Authorization::Signature`: ed25519 verification over the §Algorithms step-3 preimage passes
 - Both succeed → envelope accepted; payload dispatched to `payload_kind` handler
@@ -526,6 +578,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 **Expected output:** Both implementations, given the same `NodeEnvelope` value, produce a borsh byte string `s` such that `s == borsh::serialize(envelope)` (Rust) AND `s == external_impl_serialize(envelope)` (port). The `envelope_id = BLAKE3-256(s)` is identical across implementations.
 
 The full byte-exact parity is verified by two complementary mechanisms:
+
 1. Hand-computed reference envelopes in `crates/octo-protocol/tests/tv8_reference_envelopes.rs` (3 known-good envelopes with full byte dumps).
 2. Cross-implementation property test with 10,000 random envelopes: `crates/octo-protocol/tests/tv8_property_test.rs`.
 
@@ -543,6 +596,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 ## Implementation Phases
 
 ### Phase 1 — Core envelope (Layer 1 stable)
+
 - `crates/octo-protocol/` new crate
 - `NodeEnvelope`, `PayloadKindId`, `Authorization`, `RecipientRef`, `ProtocolError`
 - borsh serde impls + BLAKE3 envelope_id computation
@@ -550,6 +604,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - Implementation mission: TBD — file under `missions/open/` with slug assigned at promotion-to-Accepted time (slug TBD to avoid pre-naming collision per Round-3 review). RFC-0870 adoption mission `missions/open/0870-b-envelope-adoption.md` consumes this phase.
 
 ### Phase 2 — Wallet node (Layer 2 specialized)
+
 - `crates/octo-wallet-node/` new crate (or fold into `octo-wallet`)
 - `WalletNode` struct + `NetworkReceiver` impl
 - `IdentityKey::sign` routes through `HsmAdapter` (close the gap)
@@ -557,18 +612,21 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - Implementation mission: `missions/open/0009-a-hsm-routing.md` (HSM closure prerequisite); new mission file under `missions/open/` with slug TBD at promotion-to-Accepted time.
 
 ### Phase 3 — Specialized node adoption (per-RFC)
+
 - Quota router adopts envelope — mission `missions/open/0870-b-envelope-adoption.md`
 - Identity resolver node (NEW) — mission TBD at promotion
 - Reputation anchor node (RFC-0968 wiring) — mission TBD at promotion
 - Capability issuer node (RFC-0957-A1 extension) — mission TBD at promotion
 
 ### Phase 4 — Per-extension crate extraction
+
 - `crates/octo-cap-macaroon/` from `crates/octo-wallet/src/capability/macaroon.rs` — mission `missions/open/0957-ext-macaroon-crate.md`
 - `crates/octo-cap-zk/` from `crates/octo-wallet/src/capability/zk_mint.rs` — mission `missions/open/0957-ext-zk-crate.md`
 - `crates/octo-cap-federation/` from `crates/octo-wallet/src/capability/federation.rs` — mission TBD at promotion
 - Each crate registers `CapabilitySpec` via plugin
 
 ### Phase 5 — Paid query (caveat composition)
+
 - New caveat type `PaymentCaveat` (RFC-0965 reserved range 0x1A-0xCF)
 - `RouterAnnouncePayload` declares pricing policy per payload_kind
 - Wallet authorization = `Authorization::Capability(token)` with `PaymentCaveat`
@@ -586,18 +644,18 @@ The full byte-exact parity is verified by two complementary mechanisms:
 
 ## Future Work
 
-| Item | Owner | Schedule | RFC/mission pointer |
-| --- | --- | --- | --- |
-| ZK-authorized requests (RFC-0958 + envelope `Authorization::Proof`) | TBD | post-v2.0 | RFC-0958 + RFC-0957-ext-zk mission |
-| Threshold-MPC for high-value transitions (BLS via `Authorization::ThresholdSignature`) | TBD | post-v2.0 | RFC-0971 destination-node role consolidation |
-| Cross-chain anchoring (specialized node ↔ external chain) | TBD | post-v2.0 | RFC-0968 reputation extension |
-| DID method registration with W3C (RFC-0009 §IA-4) | @mmacedoeu | post-v1.0 | RFC-0009 IA-4 |
-| PQC identity substrate (RFC-0853 §F1) | TBD | post-v2.0 (PQC migration timeline) | RFC-0853 §F1 |
-| Capability delegation chains (wallet → issuer → downstream capability holder) | TBD | post-v2.0 | RFC-0957 §3.5 attenuation extension |
-| Paid query subscription model (pre-paid capacity, drain over time) | TBD | post-v2.0 | Phase 5 mission (file at promotion) |
-| Cross-domain DID resolution (resolver chains across specialized nodes) | TBD | post-v2.0 | RFC-0009 §Future Work |
-| Mesh routing QoS (per-payload-kind priority in `SendContext`) | TBD | post-v2.0 | RFC-0870 transport extension |
-| Wallet-capability announcement extension RFC (extends `RouterAnnouncePayload` with payload_kinds advertised; required for TV5's wallet-specific kind advertisement) | TBD | post-v2.0 | RFC-0871 §Wallet Node Lifecycle TV5 + RFC-0870 §NodeEnvelope Adoption |
+| Item                                                                                                                                                                | Owner      | Schedule                           | RFC/mission pointer                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------- | --------------------------------------------------------------------- |
+| ZK-authorized requests (RFC-0958 + envelope `Authorization::Proof`)                                                                                                 | TBD        | post-v2.0                          | RFC-0958 + RFC-0957-ext-zk mission                                    |
+| Threshold-MPC for high-value transitions (BLS via `Authorization::ThresholdSignature`)                                                                              | TBD        | post-v2.0                          | RFC-0971 destination-node role consolidation                          |
+| Cross-chain anchoring (specialized node ↔ external chain)                                                                                                           | TBD        | post-v2.0                          | RFC-0968 reputation extension                                         |
+| DID method registration with W3C (RFC-0009 §IA-4)                                                                                                                   | @mmacedoeu | post-v1.0                          | RFC-0009 IA-4                                                         |
+| PQC identity substrate (RFC-0853 §F1)                                                                                                                               | TBD        | post-v2.0 (PQC migration timeline) | RFC-0853 §F1                                                          |
+| Capability delegation chains (wallet → issuer → downstream capability holder)                                                                                       | TBD        | post-v2.0                          | RFC-0957 §3.5 attenuation extension                                   |
+| Paid query subscription model (pre-paid capacity, drain over time)                                                                                                  | TBD        | post-v2.0                          | Phase 5 mission (file at promotion)                                   |
+| Cross-domain DID resolution (resolver chains across specialized nodes)                                                                                              | TBD        | post-v2.0                          | RFC-0009 §Future Work                                                 |
+| Mesh routing QoS (per-payload-kind priority in `SendContext`)                                                                                                       | TBD        | post-v2.0                          | RFC-0870 transport extension                                          |
+| Wallet-capability announcement extension RFC (extends `RouterAnnouncePayload` with payload_kinds advertised; required for TV5's wallet-specific kind advertisement) | TBD        | post-v2.0                          | RFC-0871 §Wallet Node Lifecycle TV5 + RFC-0870 §NodeEnvelope Adoption |
 
 > **Note on Future Work table:** per `[[deferred-vs-unspecified]]` rule, Future Work items MUST carry an owner + schedule. Items marked `TBD` will be assigned owners at promotion-to-Accepted time; the table is included now to prevent the "specified-but-unspecified" trap.
 
@@ -625,11 +683,12 @@ Single-mechanism authorization (signature OR capability OR proof) doesn't compos
 
 ## Version History
 
-| Version | Date | Author | Note |
-| --- | --- | --- | --- |
-| v0.1 | 2026-08-08 | @cipherocto + @mmacedoeu | Initial planned RFC. Concept + scope + design goals + dependency graph + Alternatives Considered. Full §Specification, §Data Structures, §Algorithms, §Test Vectors, §Adversary Analysis to be expanded when moved to `rfcs/draft/`. |
-| v0.2 | 2026-08-08 | @cipherocto + @mmacedoeu | **Promoted Planned → Draft.** File moved via `git mv` from `rfcs/planned/networking/0871-specialized-node-protocol-envelope.md` to `rfcs/draft/networking/0871-specialized-node-protocol-envelope.md` (commit `b355cb5b`). Full Draft content added in this follow-up: §Specification (system architecture + data structures with full Rust struct definitions + algorithms with send/receive flows + lifecycle requirements with `SpecializedNode` trait + `WalletNode` impl + determinism requirements + execution class mapping + error handling); §Adversary Analysis (A1-A7 with **threat actor / what they gain / adversary action / defense** structure per round-1 finding); §Test Vectors (TV1-TV8 with deterministic byte-exact reproduction algorithms + domain-separated signing preimage `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", envelope_id || from_did_wire || payload)` + cross-implementation parity assertions + `Clock` injection requirement). Skeleton `(sketch)` markers removed. Line refs in prose replaced with §section or symbol references per `[[no-line-refs-anywhere]]`. RFC-0008 added to §Dependencies with Planned-status assumption note. Ready for multi-round adversarial review per BLUEPRINT §RFC Process. Cross-references amendment commit `a539330d` (RFC v1.1-v2.0 amendments: 0957, 0965, 0969, 0870, 0009, 0010) + mission commit `99de280e` (6 refactor missions: 0009-a, 0010-d, 0870-b, 0957-ext-macaroon, 0957-ext-zk, 0969-a). Round-1 adversarial review fixes folded into this version. |
-| 1.0 | 2026-08-09 | @cipherocto + @mmacedoeu | **Accepted.** Promoted from Draft after 7-round adversarial review per BLUEPRINT §RFC Process. R1: removed `(sketch)` markers + §Test Vectors skeleton → full byte-exact reproduction algorithms + added `Clock` injection requirement; R2: §Adversary Analysis A1–A7 restructured per 5-Question Test template (threat actor / what they gain / adversary action / defense); R3: §Implicit Assumptions Audit added (IA-1 wall-clock skew, IA-2 nonce uniqueness, IA-3 HSM trust, IA-4 payload-kind discrimination); R4: §Lifecycle Requirements added for `SpecializedNode` state machine (Designated / Active / Suspect / Handover / Demoted); R5: §RFC-0008 Execution Class Mapping table added (signature/HMAC = Class A, capability verification = Class A, broadcast_announce = Class A, HSM routing = Class A, Clock = Class A); R6: `WalletNode::broadcast_announce` rewritten to faithfully mirror RFC-0870 §QuotaRouterNode `broadcast_announce` pattern (uses `self.announce_payload` field + `network_key()` HKDF-Expand placeholder, no phantom methods); R7 = DRY for session artifacts. Cross-RFC Consistency Checklist verified: shared types (DID codec RFC-0010, BLAKE3 RFC-0853, macaroon RFC-0957, capability caveat RFC-0965), DAG dependencies (no cycles, RFC-0008 Planned status noted), dual-stake model (no tokenomics touched), execution class mapping (table present). 6 implementation missions filed per §Implementation Phases (Phase 1–5 coverage). File moved via `git mv` from `rfcs/draft/networking/` to `rfcs/accepted/networking/`; cross-references in `rfcs/accepted/process/0010-canonical-did-codec.md` + `docs/research/2026-08-08-specialized-node-protocol-research.md` updated to new path; `rfcs/README.md` index updated. |
+| Version | Date       | Author                   | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-08 | @cipherocto + @mmacedoeu | Initial planned RFC. Concept + scope + design goals + dependency graph + Alternatives Considered. Full §Specification, §Data Structures, §Algorithms, §Test Vectors, §Adversary Analysis to be expanded when moved to `rfcs/draft/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v0.2    | 2026-08-08 | @cipherocto + @mmacedoeu | **Promoted Planned → Draft.** File moved via `git mv` from `rfcs/planned/networking/0871-specialized-node-protocol-envelope.md` to `rfcs/draft/networking/0871-specialized-node-protocol-envelope.md` (commit `b355cb5b`). Full Draft content added in this follow-up: §Specification (system architecture + data structures with full Rust struct definitions + algorithms with send/receive flows + lifecycle requirements with `SpecializedNode` trait + `WalletNode` impl + determinism requirements + execution class mapping + error handling); §Adversary Analysis (A1-A7 with **threat actor / what they gain / adversary action / defense** structure per round-1 finding); §Test Vectors (TV1-TV8 with deterministic byte-exact reproduction algorithms + domain-separated signing preimage `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", envelope_id                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |     | from_did_wire |     | payload)`+ cross-implementation parity assertions +`Clock`injection requirement). Skeleton`(sketch)`markers removed. Line refs in prose replaced with §section or symbol references per`[[no-line-refs-anywhere]]`. RFC-0008 added to §Dependencies with Planned-status assumption note. Ready for multi-round adversarial review per BLUEPRINT §RFC Process. Cross-references amendment commit `a539330d`(RFC v1.1-v2.0 amendments: 0957, 0965, 0969, 0870, 0009, 0010) + mission commit`99de280e` (6 refactor missions: 0009-a, 0010-d, 0870-b, 0957-ext-macaroon, 0957-ext-zk, 0969-a). Round-1 adversarial review fixes folded into this version. |
+| 1.0     | 2026-08-09 | @cipherocto + @mmacedoeu | **Accepted.** Promoted from Draft after 7-round adversarial review per BLUEPRINT §RFC Process. R1: removed `(sketch)` markers + §Test Vectors skeleton → full byte-exact reproduction algorithms + added `Clock` injection requirement; R2: §Adversary Analysis A1–A7 restructured per 5-Question Test template (threat actor / what they gain / adversary action / defense); R3: §Implicit Assumptions Audit added (IA-1 wall-clock skew, IA-2 nonce uniqueness, IA-3 HSM trust, IA-4 payload-kind discrimination); R4: §Lifecycle Requirements added for `SpecializedNode` state machine (Designated / Active / Suspect / Handover / Demoted); R5: §RFC-0008 Execution Class Mapping table added (signature/HMAC = Class A, capability verification = Class A, broadcast_announce = Class A, HSM routing = Class A, Clock = Class A); R6: `WalletNode::broadcast_announce` rewritten to faithfully mirror RFC-0870 §QuotaRouterNode `broadcast_announce` pattern (uses `self.announce_payload` field + `network_key()` HKDF-Expand placeholder, no phantom methods); R7 = DRY for session artifacts. Cross-RFC Consistency Checklist verified: shared types (DID codec RFC-0010, BLAKE3 RFC-0853, macaroon RFC-0957, capability caveat RFC-0965), DAG dependencies (no cycles, RFC-0008 Planned status noted), dual-stake model (no tokenomics touched), execution class mapping (table present). 6 implementation missions filed per §Implementation Phases (Phase 1–5 coverage). File moved via `git mv` from `rfcs/draft/networking/` to `rfcs/accepted/networking/`; cross-references in `rfcs/accepted/process/0010-canonical-did-codec.md` + `docs/research/2026-08-08-specialized-node-protocol-research.md` updated to new path; `rfcs/README.md` index updated. |
+| 1.1     | 2026-10-07 | @mmacedoeu               | **Node role defined here; sole reference.** Added §Node Role — Payload-Kind Declared. This section is now the sole normative definition of node role in the RFC set. Role is the set of `PayloadKindId` UUIDs a node serves (`SpecializedNode::served_payload_kinds()`), announced in `RouterAnnouncePayload`; there is no closed taxonomy. Removes the contradiction with RFC-0871's own G1: this RFC previously forbade a central `NodeType` enum in §Alternatives Considered while RFC-0009 still defined one. Authority derives from the payload kinds a node serves rather than being asserted by a role name, so a third-party node acquires it by serving the in-boundary inference attestation kind, with no discriminator allocated and no core edit. `NodeType` is retained only as a computed projection for CLI, storage records, and operator tooling; it is explicitly not a wire discriminator and not an authorization input. Fail-closed on unknown payload kinds is preserved (§Adversary Analysis A5). RFC-0009 amended in place the same day (v1.2).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Related RFCs
 

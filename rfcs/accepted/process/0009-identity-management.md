@@ -4,7 +4,7 @@
 
 Accepted
 
-> **Promotion note (2026-07-19):** Promoted from `planned/process/0009-identity-management.md` → `draft/process/0009-identity-management.md` as part of S01 wallet foundation work. Substrate scope clarified: this RFC owns the **Ed25519 identity substrate** (identity key format, NodeType, vault, capability key derivation). The **Stark Curve transaction substrate** lives in RFC-0102. Capability token format (macaroon v1, HMAC-BLAKE3) lives in RFC-0957 (substrate availability targeted S02; assumption tracked in §Dependency Validation).
+> **Promotion note (2026-07-19):** Promoted from `planned/process/0009-identity-management.md` → `draft/process/0009-identity-management.md` as part of S01 wallet foundation work. Substrate scope clarified: this RFC owns the **Ed25519 identity substrate** (identity key format, vault, capability key derivation). Node role moved to RFC-0871 on 2026-10-07.. The **Stark Curve transaction substrate** lives in RFC-0102. Capability token format (macaroon v1, HMAC-BLAKE3) lives in RFC-0957 (substrate availability targeted S02; assumption tracked in §Dependency Validation).
 
 ## Authors
 
@@ -18,7 +18,7 @@ Accepted
 
 ## Summary
 
-Define the core identity model for the CipherOcto network. The `Identity` struct in `octo-core` currently has a `public_key: [u8; 32]` placeholder (zeroed). This RFC specifies the full identity lifecycle: key generation, storage, verification, NodeType taxonomy, provider-key vault separation, and capability key derivation.
+Define the core identity model for the CipherOcto network. The `Identity` struct in `octo-core` currently has a `public_key: [u8; 32]` placeholder (zeroed). This RFC specifies the full identity lifecycle: key generation, storage, verification, provider-key vault separation, and capability key derivation. Node role is defined by RFC-0871 §Node Role — Payload-Kind Declared.
 
 ## Why Needed
 
@@ -35,7 +35,7 @@ Without a proper identity specification:
 2. **Key generation is unspecified** — how are keypairs created?
 3. **Verification is impossible** — can't verify signatures without knowing the key format
 4. **Cross-crate contracts are implicit** — no formal interface between octo-core, octo-cli, and octo-registry
-5. **NodeType taxonomy missing** — wholesale, self-host, hybrid node roles unspecified
+5. **Node role taxonomy missing** — node roles were unspecified. Resolved by RFC-0871 §Node Role — Payload-Kind Declared, which derives role from served `PayloadKindId` UUIDs rather than a closed enum (this RFC's original closed-enum answer was removed 2026-10-07).
 6. **Provider keys leak into identity** — no separation between wallet identity and third-party API keys
 
 ## Scope
@@ -46,7 +46,7 @@ Without a proper identity specification:
 - Key generation process (CSPRNG via `OsRng`)
 - Public key serialization / deserialization (multibase)
 - Identity verification (Ed25519 signature verification using public_key)
-- **NodeType taxonomy** — `Wholesale | SelfHost | Hybrid`
+- **Node role** — derived from served payload kinds, defined by RFC-0871 §Node Role — Payload-Kind Declared (not a taxonomy in this RFC)
 - **Provider-key vault** — encrypted storage separate from identity keys (Argon2id + AES-256-GCM)
 - **Capability key derivation** — HKDF-BLAKE3 over identity seed per (audience_did, channel_id)
 - Integration with RFC-0002 (`agent.identity.public_key`)
@@ -143,30 +143,36 @@ Identity.public_key. Since Identity is the source of truth, the comparison is
 implicit. Verification checks (a) DID format, (b) signature validity.
 ```
 
-### Node — NodeType Taxonomy
+### Node — Node Role (moved to RFC-0871, 2026-10-07)
 
-CipherOcto nodes have distinct operational roles that affect capability mint authority:
+**Node role is no longer defined by this RFC.** This section previously
+specified a `NodeType { Wholesale, SelfHost, Hybrid }` enum and the ZK-class
+mint gating rule derived from it. Both are removed.
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum NodeType {
-    /// Wholesale: resells quota purchased from a provider plan.
-    /// CANNOT mint ZK-class capabilities (loud failure).
-    /// Holds provider keys in vault; opaque boundary to provider.
-    Wholesale,
+RFC-0871 §Node Role — Payload-Kind Declared is now the sole normative
+definition of node role. A node's role is the set of `PayloadKindId` UUIDs it
+serves, declared by `SpecializedNode::served_payload_kinds()` and announced in
+`RouterAnnouncePayload`; there is no closed taxonomy to extend.
 
-    /// SelfHost: owns inference infrastructure.
-    /// CAN mint ZK-class capabilities (with PoI proof binding).
-    /// Holds its own model weights; no provider keys in vault.
-    SelfHost,
+Why this RFC previously carried an enum, and why it no longer does:
 
-    /// Hybrid: combines wholesale + self-host roles.
-    /// Optional flag per capability class.
-    Hybrid,
-}
-```
+- The enum was closed at three variants. CipherOcto is extended by third
+  parties who build an unbounded number of node specializations, so any closed
+  set becomes a core edit plus a cross-crate review per new role.
+- RFC-0871 §Design Goals G1 states "No central `NodeType` enum constraining
+  future nodes", and its §Alternatives Considered records the central enum as
+  REJECTED. Two Accepted RFCs previously contradicted each other on this point
+  and neither amended the other. Removing the taxonomy here resolves that
+  contradiction in favour of the open model.
+- The ZK-class mint authority that this enum carried does not disappear with
+  it. RFC-0958 §NodeType Gating Matrix now keys that rule off the in-boundary
+  inference attestation payload kind rather than a role name, which keeps the
+  fail-closed property for wholesale forwarding while letting a third-party
+  node acquire the authority by serving the attestation kinds.
 
-**ZK-class capability gating rule:** Wholesale nodes MUST reject ZK-class capability mint with error `NodeTypeCannotMintZKCap`. Self-host nodes mint ZK-class by default (binds output hash via PoI). Hybrid nodes choose per-capability.
+`NodeType` survives in CLI operators, storage records, and operator tooling as
+a computed projection of the served payload kinds. It is not a wire
+discriminator and is not an authorization input.
 
 ### Vault — Provider-Key Handling
 
@@ -281,6 +287,7 @@ pub trait HsmAdapter: Send + Sync {
 ```
 
 Concrete impls:
+
 - **`InMemorySigner`** — wraps identity seed directly; MVP default; signs in-process
 - **`LedgerSigner`** — production stub for Ledger device via APDU over USB HID; delegates signing to hardware secure element
 - **Future:** `YubiHsmSigner`, `TpmSigner`, `TeeSigner` (per RFC-0853 §F2)
@@ -292,14 +299,16 @@ Concrete impls:
 **Adapter invariant:** the `HsmAdapter::sign` contract guarantees (a) private key never leaves the device; (b) signing is constant-time at the transport layer; (c) public key discoverable via `get_public_key()`. Production adapters MUST enforce all three. `InMemorySigner` does NOT enforce (a) — it is MVP-only and MUST be replaced before production deployment per `crates/octo-wallet/src/hsm.rs:48-51`.
 
 **Performance overhead:**
-| Adapter | Per-sign latency | Notes |
-| --- | --- | --- |
-| `InMemorySigner` | ~10 µs (matches ed25519-dalek baseline) | MVP; no security boundary |
-| `LedgerSigner` | ~50-100 ms (APDU roundtrip + on-device confirmation) | Production; user confirms on-device |
-| `YubiHsmSigner` | ~5-15 ms (USB) | Production; no user interaction |
-| `TpmSigner` | ~1-5 ms (TEE) | Production; no user interaction |
+
+| Adapter          | Per-sign latency                                     | Notes                               |
+| ---------------- | ---------------------------------------------------- | ----------------------------------- |
+| `InMemorySigner` | ~10 µs (matches ed25519-dalek baseline)              | MVP; no security boundary           |
+| `LedgerSigner`   | ~50-100 ms (APDU roundtrip + on-device confirmation) | Production; user confirms on-device |
+| `YubiHsmSigner`  | ~5-15 ms (USB)                                       | Production; no user interaction     |
+| `TpmSigner`      | ~1-5 ms (TEE)                                        | Production; no user interaction     |
 
 **Adversary coverage (added v1.1):**
+
 - **A9 — Host-side seed exfiltration.** Today's direct `ed25519_dalek` access leaves the seed in host memory; cold-boot attack or memory dump reveals the private key. **Defense:** `HsmAdapter` routing; seed exists only inside the secure element.
 - **A10 — Malicious host signs for the user.** Today, any code with host memory access can call `identity_key.sign(...)` without the user's knowledge. **Defense:** `LedgerSigner` requires explicit on-device confirmation per `HsmError::UserRejected`. Hardware wallets give the user veto power.
 
@@ -324,6 +333,7 @@ Today (pre-v1.1) `AudienceId::from_str` accepts any non-empty string (per RFC-00
 **Cross-reference:** RFC-0010 §Future Work F4 mandates this validation at every entry point.
 
 **Reconciliation note (2026-07-19):** Earlier draft of S01 plan §3 Step 5 listed the HKDF pattern as `salt="cipherocto/cap/v1", info=channel_id`. That pattern places the version string in the salt slot, not the info slot, and omits audience DID from IKM. The pattern adopted in this RFC (version in info, audience DID as IKM) is preferred because:
+
 1. Audience unlinkability requires audience DID to participate in derivation — putting it in salt would be semantically wrong (salt should be non-secret random or fixed)
 2. HKDF info strings are designed for protocol/version tagging; using info for `cipherocto/cap/v1/` is conventional
 3. Salt = identity_seed gives per-identity domain separation; salt = `"cipherocto/cap/v1"` would give global salt with no per-identity uniqueness
@@ -339,7 +349,7 @@ S01 plan §3 Step 5 will be updated to match this RFC's pattern during mission c
 
 ## Economic Analysis
 
-**Not Applicable (N/A) for this RFC.** RFC-0009 is a process RFC defining identity substrate (DID, NodeType, vault, capability key derivation); it does not mint, settle, or transfer tokens. OCTO-W economics are governed by RFC-0959 at the marketplace layer.
+**Not Applicable (N/A) for this RFC.** RFC-0009 is a process RFC defining identity substrate (DID, vault, capability key derivation); it does not mint, settle, or transfer tokens. OCTO-W economics are governed by RFC-0959 at the marketplace layer.
 
 **Indirect economics:** identity operations (Ed25519 sign/verify per §Performance Targets; HKDF-BLAKE3 capability key derivation) contribute to node operator's per-invocation compute cost; this is captured at the operator's pricing layer, not at this RFC's layer.
 
@@ -347,28 +357,28 @@ S01 plan §3 Step 5 will be updated to match this RFC's pattern during mission c
 
 > **Reference HW:** modern desktop x86-64 (Intel i7-12700 / AMD Ryzen 7 7700X / Apple M2). Embedded / mobile targets tracked by RFC-0853 §Future Work.
 
-| Operation | Target | Reference HW | Notes |
-|-----------|--------|--------------|-------|
-| Ed25519 keypair generation | ≤ 1 ms / pair | x86-64 desktop | OsRng-backed; `ed25519-dalek` 2.x baseline |
-| Ed25519 sign | ≤ 100 μs / op | x86-64 desktop | Deterministic (RFC 8032); no RNG on hot path |
-| Ed25519 verify | ≤ 200 μs / op | x86-64 desktop | Single-verification; batch-verify ≤ 50 μs/op |
-| DID encoding (multibase) | ≤ 10 μs / encoding | x86-64 desktop | `z` prefix + base58btc |
-| HKDF-BLAKE3 capability key derivation | ≤ 50 μs / derivation | x86-64 desktop | 3 info-block expansion; `BLAKE3` derive-key mode |
-| Vault file read (cold) | ≤ 50 ms / file | NVMe SSD | Includes Argon2id KDF (per RFC-0102 §Performance) |
-| Vault file read (warm cache) | ≤ 1 ms / file | in-memory `HashMap<String, EncryptedBlob>` | Optional acceleration |
-| NodeType lookup (Wholesale / SelfHost / Hybrid) | ≤ 1 μs / lookup | enum match | Const-evaluated at compile time |
+| Operation                                        | Target               | Reference HW                               | Notes                                             |
+| ------------------------------------------------ | -------------------- | ------------------------------------------ | ------------------------------------------------- |
+| Ed25519 keypair generation                       | ≤ 1 ms / pair        | x86-64 desktop                             | OsRng-backed; `ed25519-dalek` 2.x baseline        |
+| Ed25519 sign                                     | ≤ 100 μs / op        | x86-64 desktop                             | Deterministic (RFC 8032); no RNG on hot path      |
+| Ed25519 verify                                   | ≤ 200 μs / op        | x86-64 desktop                             | Single-verification; batch-verify ≤ 50 μs/op      |
+| DID encoding (multibase)                         | ≤ 10 μs / encoding   | x86-64 desktop                             | `z` prefix + base58btc                            |
+| HKDF-BLAKE3 capability key derivation            | ≤ 50 μs / derivation | x86-64 desktop                             | 3 info-block expansion; `BLAKE3` derive-key mode  |
+| Vault file read (cold)                           | ≤ 50 ms / file       | NVMe SSD                                   | Includes Argon2id KDF (per RFC-0102 §Performance) |
+| Vault file read (warm cache)                     | ≤ 1 ms / file        | in-memory `HashMap<String, EncryptedBlob>` | Optional acceleration                             |
+| Served payload-kind lookup (RFC-0871 §Node Role) | ≤ 1 μs / lookup      | 128-bit UUID set membership                | Over `Vec<PayloadKindId>`; no role enum to match  |
 
 ## Compatibility
 
-| Surface | Compatibility Target | Notes |
-|---------|----------------------|-------|
-| W3C DID Core 1.0 | `did:octo:` method (registered with W3C DID Method Registry — pending filing; tracked as IA-4) | `did:octo:z<multibase-b58btc>` |
-| Multibase encoding | `z` prefix + base58btc | RFC 0000 multibase table |
-| Ed25519 signature | RFC 8032 | 64-byte signature; 32-byte public key |
-| HKDF | RFC 5869 + BLAKE3 keyed-hash mode per RFC-0853 | `derive_key(salt, ikm, info, output_len)` |
-| BLAKE3 primitive | RFC-0853 §Specification | `blake3::derive_key` for capability keys |
-| Cross-RFC canonical_ser | RFC-0126 | `canonical_ser` for Identity struct serialization (added 2026-07-20) |
-| Cross-RFC Stark Curve substrate | RFC-0102 | Distinct substrate; same wallet crate hosts both |
+| Surface                         | Compatibility Target                                                                           | Notes                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| W3C DID Core 1.0                | `did:octo:` method (registered with W3C DID Method Registry — pending filing; tracked as IA-4) | `did:octo:z<multibase-b58btc>`                                       |
+| Multibase encoding              | `z` prefix + base58btc                                                                         | RFC 0000 multibase table                                             |
+| Ed25519 signature               | RFC 8032                                                                                       | 64-byte signature; 32-byte public key                                |
+| HKDF                            | RFC 5869 + BLAKE3 keyed-hash mode per RFC-0853                                                 | `derive_key(salt, ikm, info, output_len)`                            |
+| BLAKE3 primitive                | RFC-0853 §Specification                                                                        | `blake3::derive_key` for capability keys                             |
+| Cross-RFC canonical_ser         | RFC-0126                                                                                       | `canonical_ser` for Identity struct serialization (added 2026-07-20) |
+| Cross-RFC Stark Curve substrate | RFC-0102                                                                                       | Distinct substrate; same wallet crate hosts both                     |
 
 ## Test Vectors
 
@@ -427,13 +437,13 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Decision |
-|----------|------|------|----------|
-| **UUID v4** | Universally unique; no coordination | Not self-describing; no public key binding | Rejected — UUIDs don't carry cryptographic identity |
-| **Hash(public_key)** as ID | Deterministic; ID is the public key | No channel separation; loses unlinkability across audiences | Rejected — violates pairwise unlinkability invariant |
-| **W3C DID with `did:octo:` method (chosen)** | Self-describing; multibase encoding supports rotation; W3C-aligned | Requires DID method registration (tracked separately per IA-4) | **SELECTED** |
-| **PGP-style fingerprint** | Established | Not W3C-aligned; rotation requires re-key | Rejected — incompatible with W3C DID Core 1.0 |
-| **Onion address (v3)** | Anonymous | Cryptographic ID bound to onion private key; rotation = new address; no channel binding | Rejected — does not satisfy per-audience unlinkability |
+| Approach                                     | Pros                                                               | Cons                                                                                    | Decision                                               |
+| -------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **UUID v4**                                  | Universally unique; no coordination                                | Not self-describing; no public key binding                                              | Rejected — UUIDs don't carry cryptographic identity    |
+| **Hash(public_key)** as ID                   | Deterministic; ID is the public key                                | No channel separation; loses unlinkability across audiences                             | Rejected — violates pairwise unlinkability invariant   |
+| **W3C DID with `did:octo:` method (chosen)** | Self-describing; multibase encoding supports rotation; W3C-aligned | Requires DID method registration (tracked separately per IA-4)                          | **SELECTED**                                           |
+| **PGP-style fingerprint**                    | Established                                                        | Not W3C-aligned; rotation requires re-key                                               | Rejected — incompatible with W3C DID Core 1.0          |
+| **Onion address (v3)**                       | Anonymous                                                          | Cryptographic ID bound to onion private key; rotation = new address; no channel binding | Rejected — does not satisfy per-audience unlinkability |
 
 ## Rationale
 
@@ -455,10 +465,12 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 - BLAKE3 keyed-hash mode (`derive_key`) is structurally equivalent to HKDF-Expand with stronger security properties (per BLAKE3 §5.4).
 - Capability key derivation already depends on BLAKE3 elsewhere (RFC-0853 §6 Mission Cryptography); HKDF-BLAKE3 reduces crypto diversity.
 
-### Why is NodeType a separate enum rather than a struct field?
+### Why did NodeType stop being an enum in this RFC?
 
-- `NodeType { Wholesale, SelfHost, Hybrid }` is enforced at the type level; downstream code (RFC-0958 §ZK Capability Subclass NodeType gating) can match exhaustively.
-- A struct field (`node_type: String`) would allow arbitrary values; per RFC-0959 §Adversary A2, string-typed enums leak attack surface.
+- It was `{ Wholesale, SelfHost, Hybrid }`, enforced at the type level so RFC-0958 gating could match exhaustively. That closed set cannot absorb third-party node specializations: each new role would be a core edit plus a cross-crate review.
+- RFC-0871 G1 forbids a central `NodeType` enum and its §Alternatives Considered rejects it outright. Keeping a second, contradictory definition in this RFC meant neither RFC's design goal was authoritative.
+- Role is now derived from served `PayloadKindId` UUIDs (RFC-0871 §Node Role — Payload-Kind Declared), which is open by construction and requires no discriminator allocation per role.
+- The original objection to a string field — RFC-0959 §Adversary A2, string-typed enums leak attack surface — still holds, and is now satisfied structurally: an unknown payload kind is rejected fail-closed rather than parsed, so there is no arbitrary-value channel for a string field to open.
 
 ## Future Work
 
@@ -480,14 +492,14 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 
 ## Key Files to Modify
 
-| File | Current State | Action Needed |
-|------|--------------|---------------|
-| `crates/octo-core/src/identity.rs` | `public_key: [0u8; 32]` placeholder | Replace with real Ed25519 via `IdentityKey` newtype from `octo-wallet` |
-| `crates/octo-wallet/src/identity.rs` | (planned, S01) | Define `IdentityKey(Ed25519Keypair)`, `CapabilityKey([u8; 32])`, `derive_capability_key()` |
-| `crates/octo-wallet/src/vault.rs` | (planned, S01) | Define `Vault`, `EncryptedBlob`, `DecryptedHandle`, Argon2id + AES-256-GCM |
-| `crates/octo-wallet/src/node.rs` | (planned, S01) | Define `NodeType { Wholesale, SelfHost, Hybrid }` enum |
-| `crates/octo-cli/src/main.rs` | Creates identity, prints it | Wire to real `octo-wallet init` command |
-| `crates/octo-registry/src/lib.rs` | Gets user identity | Wire to real identity storage |
+| File                                 | Current State                       | Action Needed                                                                                           |
+| ------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `crates/octo-core/src/identity.rs`   | `public_key: [0u8; 32]` placeholder | Replace with real Ed25519 via `IdentityKey` newtype from `octo-wallet`                                  |
+| `crates/octo-wallet/src/identity.rs` | (planned, S01)                      | Define `IdentityKey(Ed25519Keypair)`, `CapabilityKey([u8; 32])`, `derive_capability_key()`              |
+| `crates/octo-wallet/src/vault.rs`    | (planned, S01)                      | Define `Vault`, `EncryptedBlob`, `DecryptedHandle`, Argon2id + AES-256-GCM                              |
+| `crates/octo-wallet/src/node.rs`     | (planned, S01)                      | Derived node-role projection for CLI/storage (authority derives from served payload kinds per RFC-0871) |
+| `crates/octo-cli/src/main.rs`        | Creates identity, prints it         | Wire to real `octo-wallet init` command                                                                 |
+| `crates/octo-registry/src/lib.rs`    | Gets user identity                  | Wire to real identity storage                                                                           |
 
 ## Implementation Phases
 
@@ -500,11 +512,11 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 - [ ] Wire `Identity` struct in `crates/octo-core/src/identity.rs` to real Ed25519 (replace `[u8; 32]` placeholder)
 - [ ] 4 test vectors in `crates/octo-wallet/tests/fixtures/identity/`: TV-1 DID multibase, TV-2 RFC 8032 Ed25519 #1, TV-3 HKDF-BLAKE3 capability key, TV-4 vault race rejection
 
-### Phase 2: Vault + NodeType
+### Phase 2: Vault + Node Role Projection
 
 - [ ] Define `Vault`, `EncryptedBlob`, `DecryptedHandle` in `crates/octo-wallet/src/vault.rs` (Argon2id + AES-256-GCM)
-- [ ] Define `NodeType { Wholesale, SelfHost, Hybrid }` enum in `crates/octo-wallet/src/node.rs`
-- [ ] Capability mint authority gating per NodeType (Wholesale: no ZK; SelfHost: ZK ok; Hybrid: per-cap)
+- [ ] Define the derived node-role projection in `crates/octo-wallet/src/node.rs`, computed from served `PayloadKindId` UUIDs
+- [ ] Capability mint authority gating keyed on the in-boundary inference attestation payload kind (RFC-0958 §NodeType Gating Matrix), not on a role name
 - [ ] `flock(LOCK_EX)`/`flock(LOCK_SH)` semantics on vault file access
 - [ ] `rotate()` API for identity successor linkage (monotonic successor counter)
 - [ ] Mission: `missions/claimed/0102-a-wallet-foundation.md` (S01 — wallet foundation)
@@ -516,12 +528,12 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Node Identity | `DID = did:octo:<multibase(z)-32-bytes>` | Identity attestation; holder of private Ed25519 key | `Designated` → `Active` → `Rotating` → `Revoked` (per §Lifecycle) | This RFC §Identity Struct |
-| NodeType | `enum { Wholesale, SelfHost, Hybrid }` | (a) Capability mint authority (Wholesale: no ZK; SelfHost: ZK ok; Hybrid: per-cap); (b) Provider-key vault contents; (c) Settlement accounting | `Designated` at init; transitions via admin op only | This RFC §Node |
-| Identity Holder | Entity controlling private Ed25519 seed (human or service) | Issue capabilities, rotate identity, decrypt provider vault with passphrase | Stateless w.r.t. protocol; lifecycle owned by holder's OPSEC | This RFC §Vault |
-| Vault | `Vault` instance at `~/.config/cipherocto/vault/<slot>.vault` | Decrypt-and-borrow provider key bytes for one-shot use at egress transform | `Created` at first `put`; `Rotated` on passphrase change | This RFC §Vault |
+| Role            | Identifier                                                    | Authority Scope                                                                                                                                                                               | Lifecycle                                                                         | Source/Ref                                  |
+| --------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------- |
+| Node Identity   | `DID = did:octo:<multibase(z)-32-bytes>`                      | Identity attestation; holder of private Ed25519 key                                                                                                                                           | `Designated` → `Active` → `Rotating` → `Revoked` (per §Lifecycle)                 | This RFC §Identity Struct                   |
+| Node role       | served `PayloadKindId` UUID set                               | (a) Capability mint authority, derived from the in-boundary inference attestation payload kind (RFC-0958 §NodeType Gating Matrix); (b) Provider-key vault contents; (c) Settlement accounting | `Announced` per `RouterAnnouncePayload`; changes take effect on next announcement | RFC-0871 §Node Role — Payload-Kind Declared |
+| Identity Holder | Entity controlling private Ed25519 seed (human or service)    | Issue capabilities, rotate identity, decrypt provider vault with passphrase                                                                                                                   | Stateless w.r.t. protocol; lifecycle owned by holder's OPSEC                      | This RFC §Vault                             |
+| Vault           | `Vault` instance at `~/.config/cipherocto/vault/<slot>.vault` | Decrypt-and-borrow provider key bytes for one-shot use at egress transform                                                                                                                    | `Created` at first `put`; `Rotated` on passphrase change                          | This RFC §Vault                             |
 
 ### Out-of-Scope Roles
 
@@ -584,7 +596,7 @@ This RFC is security-sensitive (key management, encrypted storage, capability to
 
 ## Lifecycle Requirements
 
-This RFC defines one stateful actor: `Identity` (DID-bearing keypair). NodeType is also stateful but transitions are admin-driven only.
+This RFC defines one stateful actor: `Identity` (DID-bearing keypair). Node role is also stateful: it changes when a node's served payload-kind set changes, announced via `RouterAnnouncePayload`.
 
 ### Identity Lifecycle State Machine
 
@@ -598,13 +610,13 @@ stateDiagram-v2
     Revoked --> [*]
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing Requirement |
-|------|----|---------|----------------|--------------|---------------------|
-| Designated | Active | First `mint_capability` or first `vault_put` | Yes | Record `activated_at_unix` in wallet metadata | n/a |
-| Active | Rotating | Holder calls `rotate_identity(successor_key)` | Yes | Emit `IdentityRotated { old_did, new_did }` event; mark old as `successor: new_did` | Holder signs `Ed25519(old_seed, "rotate" \|\| new_pubkey_bytes)` |
-| Rotating | Active | Successor linked (signature valid, timestamp within grace 24h) | Yes | Old identity marked `deprecated`; new identity marked `Active` | Holder signs (same as above) |
-| Active | Revoked | Holder calls `revoke_identity()` (destructive) | Yes | Zeroize private key bytes; emit `IdentityRevoked { did, reason }` event | Holder signs `Ed25519(seed, "revoke")` |
-| Revoked | (terminal) | n/a | n/a | Identity is permanently unusable | n/a |
+| From       | To         | Trigger                                                        | Deterministic? | Side Effects                                                                        | Signing Requirement                                              |
+| ---------- | ---------- | -------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Designated | Active     | First `mint_capability` or first `vault_put`                   | Yes            | Record `activated_at_unix` in wallet metadata                                       | n/a                                                              |
+| Active     | Rotating   | Holder calls `rotate_identity(successor_key)`                  | Yes            | Emit `IdentityRotated { old_did, new_did }` event; mark old as `successor: new_did` | Holder signs `Ed25519(old_seed, "rotate" \|\| new_pubkey_bytes)` |
+| Rotating   | Active     | Successor linked (signature valid, timestamp within grace 24h) | Yes            | Old identity marked `deprecated`; new identity marked `Active`                      | Holder signs (same as above)                                     |
+| Active     | Revoked    | Holder calls `revoke_identity()` (destructive)                 | Yes            | Zeroize private key bytes; emit `IdentityRevoked { did, reason }` event             | Holder signs `Ed25519(seed, "revoke")`                           |
+| Revoked    | (terminal) | n/a                                                            | n/a            | Identity is permanently unusable                                                    | n/a                                                              |
 
 ### Liveness Check
 
@@ -625,30 +637,30 @@ No external liveness check for Identity (off-chain, holder-managed). Vault may e
 
 Per BLUEPRINT.md consistency checklist, every RFC MUST include an RFC-0008 execution class mapping.
 
-| RFC-0009 Component | Execution Class | Justification |
-|--------------------|-----------------|---------------|
-| Ed25519 key generation | **A** (Protocol Deterministic) | OS RNG is the only non-determinism; keypair itself is deterministic given seed. Output is canonical (32 bytes). |
-| Ed25519 signature | **A** | RFC 8032 deterministic signature scheme (no RNG in signing). |
-| Identity canonical_ser | **A** | Must be deterministic for cross-implementation verification. |
-| Argon2id KDF | **B** (Deterministic Off-Chain) | Deterministic given (passphrase, salt, params); cross-implementation verification requires test vectors. |
-| AES-256-GCM encrypt/decrypt | **A** | NIST-standardized, deterministic. |
-| HKDF-BLAKE3 | **A** | RFC 5869 + BLAKE3 RFC 7693; deterministic. |
-| Vault file I/O | **C** (Probabilistic) | Filesystem timing varies; not consensus-relevant. |
-| Capability key derivation | **A** | HKDF is deterministic; same inputs → same output. |
+| RFC-0009 Component          | Execution Class                 | Justification                                                                                                   |
+| --------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Ed25519 key generation      | **A** (Protocol Deterministic)  | OS RNG is the only non-determinism; keypair itself is deterministic given seed. Output is canonical (32 bytes). |
+| Ed25519 signature           | **A**                           | RFC 8032 deterministic signature scheme (no RNG in signing).                                                    |
+| Identity canonical_ser      | **A**                           | Must be deterministic for cross-implementation verification.                                                    |
+| Argon2id KDF                | **B** (Deterministic Off-Chain) | Deterministic given (passphrase, salt, params); cross-implementation verification requires test vectors.        |
+| AES-256-GCM encrypt/decrypt | **A**                           | NIST-standardized, deterministic.                                                                               |
+| HKDF-BLAKE3                 | **A**                           | RFC 5869 + BLAKE3 RFC 7693; deterministic.                                                                      |
+| Vault file I/O              | **C** (Probabilistic)           | Filesystem timing varies; not consensus-relevant.                                                               |
+| Capability key derivation   | **A**                           | HKDF is deterministic; same inputs → same output.                                                               |
 
 **Determinism contract:** Two implementations of §Identity Key Format + §Capability Keys + §Verification MUST produce identical results for the same inputs. Cross-implementation test vectors included in `crates/octo-wallet/tests/fixtures/determin/`.
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Vault passphrase brute force | High (private key exfiltration → identity theft) | Argon2id KDF (m=64MiB, t=3, p=4); 12+ char minimum + dictionary rejection (per §Performance Targets); recommended hardware factor (Phase H) |
-| Capability key derivation collision (unlinkability break) | High (cross-channel correlation of holder activity) | HKDF-BLAKE3 with 3-part info-block; property test across 10K random (audience, channel) pairs; zeroize IKM and output on drop |
-| Ed25519 seed exfiltration via logs/traces | Critical (identity theft) | `SecretKey` zeroize-on-drop; `Debug` impls REDACTED (per project rule: "Debug should not leak in full security related data"); compile-time `#[derive(Zeroize)]`; no `Display` impl |
-| DID method spoofing (`did:octo` not W3C-registered) | Medium (external-facing identity ambiguity) | Mark `did:octo` as CipherOcto-private at MVP; W3C registration tracked separately (IA-4); inbound `did:` parsers validate method = `octo` |
-| Vault file race condition (concurrent put/get) | Medium (data loss or stale read) | `flock(LOCK_EX)` on mutation + `flock(LOCK_SH)` on read; atomic rename (`rename(2)`) on swap; `O_EXCL` semantics during initial write |
-| Identity key rotation race (successor overwrite) | Medium (lost successor linkage; recovery impossible) | Monotonic successor counter; rotation only via dedicated `rotate()` API; refuse rotation if successor counter != expected |
-| HKDF info-block confusion (cross-tenant capability replay) | High (capability theft via re-derivation) | Canonical info-block: `("octo/capability-key/v1", audience, channel)`; reject unversioned info-blocks at runtime |
+| Threat                                                     | Impact                                               | Mitigation                                                                                                                                                                          |
+| ---------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vault passphrase brute force                               | High (private key exfiltration → identity theft)     | Argon2id KDF (m=64MiB, t=3, p=4); 12+ char minimum + dictionary rejection (per §Performance Targets); recommended hardware factor (Phase H)                                         |
+| Capability key derivation collision (unlinkability break)  | High (cross-channel correlation of holder activity)  | HKDF-BLAKE3 with 3-part info-block; property test across 10K random (audience, channel) pairs; zeroize IKM and output on drop                                                       |
+| Ed25519 seed exfiltration via logs/traces                  | Critical (identity theft)                            | `SecretKey` zeroize-on-drop; `Debug` impls REDACTED (per project rule: "Debug should not leak in full security related data"); compile-time `#[derive(Zeroize)]`; no `Display` impl |
+| DID method spoofing (`did:octo` not W3C-registered)        | Medium (external-facing identity ambiguity)          | Mark `did:octo` as CipherOcto-private at MVP; W3C registration tracked separately (IA-4); inbound `did:` parsers validate method = `octo`                                           |
+| Vault file race condition (concurrent put/get)             | Medium (data loss or stale read)                     | `flock(LOCK_EX)` on mutation + `flock(LOCK_SH)` on read; atomic rename (`rename(2)`) on swap; `O_EXCL` semantics during initial write                                               |
+| Identity key rotation race (successor overwrite)           | Medium (lost successor linkage; recovery impossible) | Monotonic successor counter; rotation only via dedicated `rotate()` API; refuse rotation if successor counter != expected                                                           |
+| HKDF info-block confusion (cross-tenant capability replay) | High (capability theft via re-derivation)            | Canonical info-block: `("octo/capability-key/v1", audience, channel)`; reject unversioned info-blocks at runtime                                                                    |
 
 ## Security Considerations
 
@@ -676,39 +688,40 @@ Per BLUEPRINT.md consistency checklist, every RFC MUST include an RFC-0008 execu
 
 Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries with non-trivial blast radius MUST be tracked to closure.
 
-| # | Assumption | Blast Radius | Tracking |
-|---|-----------|--------------|----------|
-| IA-1 | `did:octo:` is a CipherOcto-private DID method; not registered with W3C | External-facing identity resolution may be ambiguous | W3C registration tracked post-MVP |
-| IA-2 | Identity ↔ Stark Curve keypair link is stored in wallet metadata, not in Identity struct | Loss of wallet metadata breaks dual-substrate link | Document backup procedure in wallet user guide |
-| IA-3 | Argon2id parameters (m=64MiB, t=3, p=4) are sufficient against 2026 GPU attacks | If params become insufficient, all vault files at risk | Annual review of OWASP recommendations |
-| IA-4 | Ed25519 is not yet broken by quantum computers | Quantum adversary can derive private key from public key | RFC-0853 §F1 post-quantum migration |
-| IA-5 | `OsRng` on supported platforms is CSPRNG-quality | Compromised RNG = predictable keys | Test OS RNG quality at startup; warn on dev/null entropy |
-| IA-6 | Capability key derivation per (audience, channel) provides sufficient unlinkability | If BLAKE3 PRF assumption breaks, linkability broken | Track BLAKE3 cryptanalysis status |
+| #    | Assumption                                                                               | Blast Radius                                             | Tracking                                                 |
+| ---- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------- |
+| IA-1 | `did:octo:` is a CipherOcto-private DID method; not registered with W3C                  | External-facing identity resolution may be ambiguous     | W3C registration tracked post-MVP                        |
+| IA-2 | Identity ↔ Stark Curve keypair link is stored in wallet metadata, not in Identity struct | Loss of wallet metadata breaks dual-substrate link       | Document backup procedure in wallet user guide           |
+| IA-3 | Argon2id parameters (m=64MiB, t=3, p=4) are sufficient against 2026 GPU attacks          | If params become insufficient, all vault files at risk   | Annual review of OWASP recommendations                   |
+| IA-4 | Ed25519 is not yet broken by quantum computers                                           | Quantum adversary can derive private key from public key | RFC-0853 §F1 post-quantum migration                      |
+| IA-5 | `OsRng` on supported platforms is CSPRNG-quality                                         | Compromised RNG = predictable keys                       | Test OS RNG quality at startup; warn on dev/null entropy |
+| IA-6 | Capability key derivation per (audience, channel) provides sufficient unlinkability      | If BLAKE3 PRF assumption breaks, linkability broken      | Track BLAKE3 cryptanalysis status                        |
 
 ## Dependency Validation
 
 Per BLUEPRINT.md:
 
-| Dependency | Status | Assumption |
-|------------|--------|-----------|
-| RFC-0102 (Wallet Cryptography) | Draft (amended 2026-07-19; promoted to v0.3 2026-07-20 with §Authors, §Maintainers, §Performance Targets, §Compatibility, §Test Vectors) | Must reach Accepted before this RFC Accepted |
-| RFC-0002 (Agent Manifest) | Accepted (assumed; verify at promotion) | None — additive integration |
-| RFC-0126 (Deterministic Serialization) | Accepted (canonical_ser substrate for Identity struct serialization; added 2026-07-20) | None — additive integration |
-| RFC-0949 (Enterprise SSO) | Accepted | None — additive integration |
-| RFC-0957 (Capability Token Format) | **Draft** (S02 work; authored 2026-07-19) | **Assumption: RFC-0957 will reach Accepted before this RFC's full implementation lands.** RFC-0957 must define `Ed25519Signature` holder sig type compatible with this RFC's `holder_sign`. |
+| Dependency                             | Status                                                                                                                                   | Assumption                                                                                                                                                                                  |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0102 (Wallet Cryptography)         | Draft (amended 2026-07-19; promoted to v0.3 2026-07-20 with §Authors, §Maintainers, §Performance Targets, §Compatibility, §Test Vectors) | Must reach Accepted before this RFC Accepted                                                                                                                                                |
+| RFC-0002 (Agent Manifest)              | Accepted (assumed; verify at promotion)                                                                                                  | None — additive integration                                                                                                                                                                 |
+| RFC-0126 (Deterministic Serialization) | Accepted (canonical_ser substrate for Identity struct serialization; added 2026-07-20)                                                   | None — additive integration                                                                                                                                                                 |
+| RFC-0949 (Enterprise SSO)              | Accepted                                                                                                                                 | None — additive integration                                                                                                                                                                 |
+| RFC-0957 (Capability Token Format)     | **Draft** (S02 work; authored 2026-07-19)                                                                                                | **Assumption: RFC-0957 will reach Accepted before this RFC's full implementation lands.** RFC-0957 must define `Ed25519Signature` holder sig type compatible with this RFC's `holder_sign`. |
 
 ## Version History
 
-| Version | Date | Status | Author | Notes |
-|---------|------|--------|--------|-------|
-| 0.1 | 2026-03-03 | Planned | @cipherocto | Initial placeholder; identified 4 open questions |
-| 0.2 | 2026-07-19 | Draft (promoted) | @cipherocto (session-01 wallet foundation work) | Added §Identity Key Format, §Node, §Vault, §Capability Keys; resolved open questions (DID, multibase(z), rotation via successor, substrate split); added §Adversary Analysis (5-Question Test, 5 findings), §Lifecycle Requirements, §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit, §Dependency Validation |
-| 0.3 | 2026-07-20 | Draft (acceptance-prep) | @mmacedoeu | Pre-acceptance fixes (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers; stripped `§` prefix from all mandatory section H2/H3 (was non-standard); added §Performance Targets (8-row latency table), §Compatibility (8-row surface table incl. RFC-0126 canonical_ser + RFC-0853 BLAKE3), §Test Vectors (TV-1 DID multibase, TV-2 RFC 8032 Ed25519 #1, TV-3 HKDF-BLAKE3 capability key, TV-4 vault race rejection); added Cross-RFC dependency to RFC-0126 (Deterministic Serialization) |
-| 0.4 | 2026-07-20 | Draft (review-fix) | @mmacedoeu | Review R1 fixes: added §Alternatives Considered (5-row table: UUID v4 / hash(pubkey) / DID chosen / PGP fingerprint / Onion address); added §Rationale (4 sub-sections: Ed25519 over secp256k1, multibase(z) over base64url, HKDF-BLAKE3 over HKDF-SHA256, NodeType as enum); added §Future Work (5 items: PQC identity substrate per RFC-0853 §F1, DID method registration IA-4, hierarchical attenuation, hardware wallet Phase H, MPC Phase I); renamed §Key Files → §Key Files to Modify + §Implementation Reference → §Implementation Phases per BLUEPRT template conventions. |
-| 0.5 | 2026-07-20 | Draft (review-fix) | @mmacedoeu | Review R2 fix: added §Economic Analysis (N/A — process RFC defining identity substrate; no direct token mint/settlement; OCTO-W economics governed by RFC-0959 at marketplace layer). |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                | Status                  | Author                                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1        | 2026-03-03                                                                                                                                                                                                                                                                                                                                                                                          | Planned                 | @cipherocto                                     | Initial placeholder; identified 4 open questions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 0.2        | 2026-07-19                                                                                                                                                                                                                                                                                                                                                                                          | Draft (promoted)        | @cipherocto (session-01 wallet foundation work) | Added §Identity Key Format, §Node, §Vault, §Capability Keys; resolved open questions (DID, multibase(z), rotation via successor, substrate split); added §Adversary Analysis (5-Question Test, 5 findings), §Lifecycle Requirements, §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit, §Dependency Validation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 0.3        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (acceptance-prep) | @mmacedoeu                                      | Pre-acceptance fixes (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers; stripped `§` prefix from all mandatory section H2/H3 (was non-standard); added §Performance Targets (8-row latency table), §Compatibility (8-row surface table incl. RFC-0126 canonical_ser + RFC-0853 BLAKE3), §Test Vectors (TV-1 DID multibase, TV-2 RFC 8032 Ed25519 #1, TV-3 HKDF-BLAKE3 capability key, TV-4 vault race rejection); added Cross-RFC dependency to RFC-0126 (Deterministic Serialization)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 0.4        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (review-fix)      | @mmacedoeu                                      | Review R1 fixes: added §Alternatives Considered (5-row table: UUID v4 / hash(pubkey) / DID chosen / PGP fingerprint / Onion address); added §Rationale (4 sub-sections: Ed25519 over secp256k1, multibase(z) over base64url, HKDF-BLAKE3 over HKDF-SHA256, NodeType as enum); added §Future Work (5 items: PQC identity substrate per RFC-0853 §F1, DID method registration IA-4, hierarchical attenuation, hardware wallet Phase H, MPC Phase I); renamed §Key Files → §Key Files to Modify + §Implementation Reference → §Implementation Phases per BLUEPRT template conventions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 0.5        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (review-fix)      | @mmacedoeu                                      | Review R2 fix: added §Economic Analysis (N/A — process RFC defining identity substrate; no direct token mint/settlement; OCTO-W economics governed by RFC-0959 at marketplace layer).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
-| 1.0 | 2026-08-03 | Accepted (audit) | @mmacedoeu | Audit pass: stripped `(Process)`/`(Numeric)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Adversarial Review threat table (template §651 requirement); restructured §Implementation Phases to Phase 1 / Phase 2 with `- [ ]` checkboxes (template §693 requirement); added §Related Use Cases + §Appendices (template §731, §735). |
-| 1.1 | 2026-08-08 | Accepted (amendment) | @cipherocto + @mmacedoeu | **HSM routing + canonical DID validation requirements.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Two amendments: (1) **HSM routing**: all `IdentityKey::sign` paths in `octo-wallet` MUST route through `Arc<dyn HsmAdapter>` (defined in `crates/octo-wallet/src/hsm.rs`) rather than direct `ed25519-dalek::SigningKey` access. This enables hardware wallet support (Ledger, YubiHSM, TEE) for capability mint + Ask signing + capability attenuation. Foundation mission: `missions/open/0009-a-hsm-routing.md`. (2) **Canonical DID validation**: `AudienceId::from_str` (and every other `AudienceId::new(String)` constructor) MUST call `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Defense against DID spoofing via arbitrary string substitution. Companion mission: `missions/open/0010-d-wallet-audience-validation.md` (RFC-0010 §Future Work F4). Both amendments are additive (no wire-format change); production parity preserved via `InMemorySigner` default impl. Per RFC-0871 §Implementation Phase 2. |
+| 1.0        | 2026-08-03                                                                                                                                                                                                                                                                                                                                                                                          | Accepted (audit)        | @mmacedoeu                                      | Audit pass: stripped `(Process)`/`(Numeric)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Adversarial Review threat table (template §651 requirement); restructured §Implementation Phases to Phase 1 / Phase 2 with `- [ ]` checkboxes (template §693 requirement); added §Related Use Cases + §Appendices (template §731, §735).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.1        | 2026-08-08                                                                                                                                                                                                                                                                                                                                                                                          | Accepted (amendment)    | @cipherocto + @mmacedoeu                        | **HSM routing + canonical DID validation requirements.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Two amendments: (1) **HSM routing**: all `IdentityKey::sign` paths in `octo-wallet` MUST route through `Arc<dyn HsmAdapter>` (defined in `crates/octo-wallet/src/hsm.rs`) rather than direct `ed25519-dalek::SigningKey` access. This enables hardware wallet support (Ledger, YubiHSM, TEE) for capability mint + Ask signing + capability attenuation. Foundation mission: `missions/open/0009-a-hsm-routing.md`. (2) **Canonical DID validation**: `AudienceId::from_str` (and every other `AudienceId::new(String)` constructor) MUST call `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Defense against DID spoofing via arbitrary string substitution. Companion mission: `missions/open/0010-d-wallet-audience-validation.md` (RFC-0010 §Future Work F4). Both amendments are additive (no wire-format change); production parity preserved via `InMemorySigner` default impl. Per RFC-0871 §Implementation Phase 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.2        | 2026-10-07                                                                                                                                                                                                                                                                                                                                                                                          | Accepted (amendment)    | @mmacedoeu                                      | **Node role removed from this RFC; RFC-0871 is the sole reference.** The `NodeType { Wholesale, SelfHost, Hybrid }` enum and the ZK-class mint gating rule derived from it are REMOVED from §Node, which is retitled §Node — Node Role (moved to RFC-0871, 2026-10-07). Rationale: CipherOcto is extended by third parties who build an unbounded number of node specializations, and a closed three-variant enum turns every new role into a core edit plus a cross-crate review. RFC-0871 G1 already stated "No central `NodeType` enum constraining future nodes" and its §Alternatives Considered recorded the enum as REJECTED, so two Accepted RFCs were in direct contradiction and neither amended the other; this amendment resolves it in favour of the open model. Role is now derived from the served `PayloadKindId` UUID set (RFC-0871 §Node Role — Payload-Kind Declared), so authority derives from the in-boundary inference attestation payload kind instead of a role name and a third-party node acquires it by serving those kinds. Fail-closed behaviour is preserved: an unknown payload kind is rejected rather than ignored, which also disposes of the RFC-0959 §Adversary A2 arbitrary-value concern that motivated the enum. `NodeType` remains as a computed projection for CLI, storage records, and operator tooling, explicitly not a wire discriminator and not an authorization input. Also updated: §Scope, §Performance Targets, §Rationale (retitled from "Why is NodeType a separate enum"), §Roles and Authorities, §Key Files to Modify, §Implementation Phases, §Determinism Requirements stateful-actor note, §Economic Analysis, and the §Status promotion note. In-place amendment; no separate amendment RFC filed. |
 
 ## Related Use Cases
 
@@ -730,13 +743,13 @@ enum IdentityLifecycle {
 }
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| Designated | Active | First successful sign | Yes | Emit identity activation event | Self-signature |
-| Active | Rotating | `rotate()` API call | Yes | Generate successor keypair; emit rotation event | Old key + new key co-sign |
-| Rotating | Active | Grace period elapsed (default 7 days) | Yes | Old key marked legacy; new key takes over | Old key co-sign on handover |
-| Active | Revoked | User-initiated revoke OR governance vote | Yes | Vault sealed; capability tokens invalidated | Self-signature + governance envelope |
-| Rotating | Revoked | Abort rotation (user choice) | Yes | New key destroyed; old key remains Active | Old key self-signature |
+| From       | To       | Trigger                                  | Deterministic? | Side Effects                                    | Signing                              |
+| ---------- | -------- | ---------------------------------------- | -------------- | ----------------------------------------------- | ------------------------------------ |
+| Designated | Active   | First successful sign                    | Yes            | Emit identity activation event                  | Self-signature                       |
+| Active     | Rotating | `rotate()` API call                      | Yes            | Generate successor keypair; emit rotation event | Old key + new key co-sign            |
+| Rotating   | Active   | Grace period elapsed (default 7 days)    | Yes            | Old key marked legacy; new key takes over       | Old key co-sign on handover          |
+| Active     | Revoked  | User-initiated revoke OR governance vote | Yes            | Vault sealed; capability tokens invalidated     | Self-signature + governance envelope |
+| Rotating   | Revoked  | Abort rotation (user choice)             | Yes            | New key destroyed; old key remains Active       | Old key self-signature               |
 
 ### B. Test Vector Sources
 

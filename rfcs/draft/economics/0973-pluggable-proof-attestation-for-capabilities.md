@@ -187,7 +187,7 @@ RFC uses unambiguous names and requires implementations to.
 | `macaroon_root_secret_hash`       | `BLAKE3(root_secret)`                                                                    | macaroon field, covered by the capability id |
 | `capability_id`                   | `BLAKE3(0x05 ‖ canonical_ser_unsigned(macaroon))`                                        | macaroon field, registry primary key         |
 | `cap_root_hash` (ZK public input) | no fixed derivation; supplied per proof and compared against a verifier-held expectation | ZK circuit public inputs                     |
-| `cap_root_hash` (wire decode)     | `compute_capability_id(macaroon)` — the **same** value as the row above                  | decoding a v1 wire token to its registry key |
+| `cap_root_hash` (wire decode)     | `compute_capability_id(macaroon)` — the **same** value as `capability_id`                | decoding a v1 wire token to its registry key |
 
 The first is the binding target. The second is the registry key. The third is
 unrelated to either and merely shares the name. The fourth is **not a fourth
@@ -202,12 +202,28 @@ The name, not the behaviour, is what needs fixing — and renaming is a
 wire-affecting change recorded in §Implementation Phases rather than attempted
 here.
 
-The circuit's existing `cap_root_hash_lo`/`_hi` public inputs carry no fixed
-derivation today: the verifier supplies them as the expectation and compares the
-proof against them. They are therefore **not** the target of §Root-Secret Binding
-and MUST NOT be rebound to it. An implementation that binds the relation against
-those fields asserts a preimage nobody holds. The binding target is
-`macaroon_root_secret_hash`, carried as its own public inputs.
+**RFC-0958 specifies a different relation for these inputs, and the code has
+drifted from it.** RFC-0958 declares `cap_root_hash` as `BLAKE3(root_secret)` and
+specifies in-circuit re-derivation of the whole caveat chain ending at that
+value. The implemented circuit does neither: it declares the inputs, never
+derives them, and asserts only that a Poseidon commitment over the witness is
+non-zero. This is a pre-existing specification-to-implementation drift, not a
+property this RFC introduces, and it is recorded in §Implementation Phases
+rather than resolved here.
+
+What this RFC does with the drift is narrow and deliberate. It binds
+**`macaroon_root_secret_hash`**, carried as its own public inputs, and leaves the
+existing `cap_root_hash_lo`/`_hi` fields alone. It also does not adopt RFC-0958's
+full chain re-derivation: that relation is the whole chain, and binding the root
+hop alone is the narrower claim this RFC makes. Both choices are narrower than
+what RFC-0958 specifies, so adopting them requires amending RFC-0958's relation
+rather than merely adding a strategy beside it — which is why RFC-0958 appears
+here as amended and not as merely consulted.
+
+An implementation that binds the root-secret hash against the existing
+`cap_root_hash` fields would be asserting a relation about whichever derivation
+the circuit's consumer chose, which is precisely the ambiguity the table above
+exists to remove.
 
 **Attestation payload.** The attestation id names a strategy; the attestation
 itself is an opaque, strategy-defined byte string whose encoding belongs to the
@@ -310,13 +326,22 @@ pub enum CostFigure {
     Unmeasured,
 }
 
+/// What a valid attestation for a capability must establish, derived from the
+/// capability alone. Core-owned so the context can be built without naming a
+/// strategy type; deliberately has no accessor for the attestation.
+pub trait Expectation {
+    /// The bound value this capability's attestation must match.
+    fn bound_value(&self) -> &[u8; 32];
+}
+
 /// Security bits, computed rather than asserted. No constructor takes a bare
 /// integer: a value can only be produced from a strategy's prover parameters,
 /// so the figure cannot be asserted independently of what it derives from.
 pub struct SecurityFigure(u32);
 
-/// The prover parameters security is derived from: field width, log blowup
-/// factor, and query count. Read from the prover's existing pinned values.
+/// The prover parameters security is derived from: proof-of-work bits in the
+/// Fiat-Shamir channel, log blowup factor, and query count. Read from the
+/// prover's existing pinned values.
 pub struct SecurityParams {
     pub pow_bits: u32,
     pub log_blowup_factor: u32,
@@ -329,8 +354,8 @@ impl SecurityFigure {
     /// configuration rather than a claim about it, so two strategies on
     /// different configurations cannot report the same number by assertion.
     ///
-    /// The formula is the one the proof system documents: field width plus
-    /// log-blowup times query count. The parameters are reached through the
+    /// The formula is the one the proof system documents: proof-of-work bits
+    /// plus log-blowup times query count. The parameters are reached through the
     /// workspace's existing pinned constants rather than through an accessor
     /// on the prover type, which exposes public fields and no inherent
     /// methods; reading a configuration object here would couple this trait to
@@ -361,8 +386,10 @@ pub struct AttestationVerifyCtx<'a> {
     /// The attestation bytes, as produced by this strategy's own encoding.
     pub attestation: &'a [u8],
     /// What the verifier expects the attestation to establish, derived from
-    /// `capability` and never from `attestation`. Required, not optional.
-    pub expectation: &'a Expectation,
+    /// `capability` and never from `attestation`. Required, not optional, and a
+    /// core-owned trait object rather than a strategy's concrete type: core
+    /// builds this context and must not name a third-party type to do it.
+    pub expectation: &'a dyn Expectation,
     /// Read-only policy handles a strategy asked for, as trait objects.
     pub policy: &'a dyn PolicySource,
 }
@@ -374,16 +401,19 @@ mutation and no concrete storage, so a strategy cannot reach the substrate
 through it. A strategy that needs nothing from policy receives a handle whose
 methods return `None`.
 
-`Expectation` is the strategy's own type describing what a valid attestation for
-this capability must establish. It is constructed **from the capability alone**,
-never from the attestation, and that construction rule is the whole content of
-the anti-self-comparison guarantee. `AttestationError` is a **core** type carrying an
+`Expectation` is a **core-owned trait**, not a strategy type, because core
+constructs the context and a Layer-B crate cannot name a third-party type to do
+that. Its single method states the anti-self-comparison rule structurally: the
+expectation is derived from the capability and is given no accessor for the
+attestation, so a strategy holding one cannot read the attestation's own claim
+back out of it. A strategy that needs its own richer expectation shape reads the
+capability through `ctx.capability` and interprets it under its own rules. `AttestationError` is a **core** type carrying an
 opaque, strategy-supplied reason, because it appears in the trait's return
 position and third-party strategies dispatch through one registry — a
 strategy-owned error type could not appear there. The strategy chooses the
 reason; core decides what every variant means, which is rejection. `SecurityParams` is the
-prover's security-relevant parameters — field width, log blowup factor, and query
-count — read from the workspace's existing pinned constants rather than
+prover's security-relevant parameters — proof-of-work bits, log blowup factor, and
+query count — read from the workspace's existing pinned constants rather than
 redeclared here, so the figure this RFC computes is the same one the prover
 already reports.
 
@@ -483,9 +513,12 @@ attestation strength to narrow with caveats must bind to a value that changes
 along the chain, which is exactly what §Root-Secret Binding rules out for the
 nonce-derived fields.
 
-**What is deliberately NOT bound.** A capability macaroon has three
-secret-dependent values: `root_secret_hash`, `root_id`, and `chain[0]`. Only the
-first is in-circuit. `root_id` and `chain[0]` are distinct derivations over the
+**What is deliberately NOT bound.** A capability macaroon has three values
+whose derivation takes the root secret as input directly: `root_secret_hash`,
+`root_id`, and `chain[0]`. The capability id and `chain[1..]` are secret-dependent
+only transitively, through those three. Of the direct three, only
+`root_secret_hash` is in-circuit — and not yet, since §Root-Secret Binding above
+records that nothing is. `root_id` and `chain[0]` are distinct derivations over the
 mint nonce, and the nonce is deliberately unrecoverable. Binding either would
 require publishing it. The consequences are set out in §Alternatives Considered;
 the point here is that the exclusion is a decision, not an omission.
@@ -539,24 +572,27 @@ verify_capability_attestation(token, node, issuers, strategies, clock):
     3. strategy = strategies.resolve(attestation_id)
        if unresolved -> REJECT   # includes user-range ids never registered
     4. admission = strategies.admission_of(strategy)
-       # a strategy not implementing AttestationAdmission yields an Admission with
-       # empty kinds, verifier_needs_producing_kinds = false, and no admission
-       # profile. The value is always present, so this gate always runs.
-       # Production and verification have different needs. A node that does not
-       # serve the required kinds cannot PRODUCE a valid attestation, but may
-       # still verify one, unless the strategy says verification needs more
-       # than production. So the gate is:
+       # A strategy not implementing AttestationAdmission yields an Admission with
+       # empty kinds and verifier_needs_producing_kinds = false. The value is
+       # always present, so this gate always runs.
+       #
+       # Boot already required the node to serve these kinds in order to produce.
+       # This step is the *verification-side* requirement, which boot cannot
+       # check because it depends on the strategy, not the node: a strategy that
+       # declares verification needs producing capability causes a reject here
+       # for a node whose production coverage changed after boot. The gate is
+       # therefore reachable, and is distinct from the boot check above.
        if admission.verifier_needs_producing_kinds:
-          if admission.required_payload_kinds is non-empty:
-             if not node.serves_all(admission.required_payload_kinds)
-                -> REJECT   # this node cannot verify what it cannot produce
-       # Producing-side coverage is a boot check, in validate_policy below.
+          if not node.serves_all(admission.required_payload_kinds):
+             -> REJECT   # this node cannot verify what it cannot produce
     5. outcome = strategy.verify(ctx{
             capability:  token,
             attestation: token.attestation_payload,
-            expectation: Expectation::from(token),   # never from the attestation
+            expectation: &core_expectation_for(token),  # never from the attestation
             policy:      node.policy_source(),
        })
+       on Err(_)  -> REJECT, with the error's reason     # a strategy that cannot
+                                                       # decide has not verified
        if unsatisfied -> REJECT, with a reason
     -> ACCEPT
 ```
@@ -565,9 +601,11 @@ Step 0 is load-bearing and is not an optimization. Steps 1–5 can be satisfied 
 an attacker who minted their own capability; only step 0 makes acceptance mean
 anything.
 
-Step 3 is load-bearing for a different reason: the operator's acceptance set is
-intersected with what the node can actually verify, so a config naming an
-unregistered strategy fails at boot rather than at redemption.
+Step 3 is load-bearing for a different reason: without it, a node could accept a
+token whose strategy it has no implementation for and reach step 5 with
+nothing to call. The boot-time counterpart is the resolvability check in
+`validate_policy`, which rejects the configuration rather than the token — the
+two are not the same gate, and an acceptance set cannot change between them.
 
 Step 1 has no attested-class exception. A token carrying an attestation id is
 attested, full stop; it never falls back to the macaroon path, and a token
@@ -586,6 +624,10 @@ validate_policy(policy, node, strategies):
         # accepts. This is a boot check, not a per-call one, because it is a
         # statement about the node rather than about any single attestation.
         if admission.required_payload_kinds is non-empty:
+            # producing-side only: the node must be able to produce what it
+            # accepts. The verification-side requirement is a different gate and
+            # is deliberately NOT checked here, so that step 4 remains reachable
+            # for a node that boots but cannot verify.
             if not node.serves_all(admission.required_payload_kinds):
                 -> FAIL TO START, naming the kinds the node does not serve
         profile = admission.admission_profile
@@ -971,9 +1013,11 @@ structural placeholder. _Impact:_ medium; policy error. _Mitigation:_ stated in
 circuit cost or security figure below its true value, so a node admits it on a
 budget it could not actually afford, or credits soundness it does not carry.
 _Impact:_ medium; admission control is the thing the profile exists to
-enforce. _Mitigation:_ the soundness figure is a type property — it accepts no
-bare integer, so it is computed from prover parameters and cannot be asserted
-independently. Cost figures remain self-reported and are treated as
+enforce. _Mitigation:_ the soundness figure is not a bare integer — it is computed by a
+formula over a declared parameter set, so two strategies cannot report the same
+number by typing one in. A strategy can still declare parameters that flatter
+it, which is why the figure is only as trustworthy as the strategy supplying
+them and why it is advisory rather than a gate on soundness. Cost figures remain self-reported and are treated as
 advisory: they gate admission, they do not establish soundness, and an
 under-reported cost degrades to a node discovering its budget exhausted during
 verification rather than at boot. A cost the strategy has not measured is
@@ -1038,6 +1082,12 @@ refuses to start, naming the budget.
 **TV7e** — a second crate registers a user-range id already claimed: registration
 fails, and the incumbent is unaffected.
 
+**TV7f** — a crate registers an RFC-range id that no allocation record names:
+registration fails (A3b).
+
+**TV7g** — a crate registers an id the allocation record names: registration
+succeeds, and the id resolves at dispatch.
+
 **TV8** — `verify` panics on adversarial input under an unwinding build: REJECT,
 node survives. See A4 for the abort-build caveat.
 
@@ -1049,8 +1099,10 @@ change to it cannot pass silently. Phase 1 captures and freezes it. A corpus
 that does not exist yet is not a passing result: the vector is unsatisfiable
 until the capture lands, and saying so is the point.
 
-**TV10** — strategy declaring `verifier_needs_producing_kinds`, on a node not
-serving the declared kinds: REJECT.
+**TV10** — strategy declaring `verifier_needs_producing_kinds`, verified on a
+node whose serving set changed after boot so that it no longer serves the declared
+kinds: REJECT at step 4, at verification time. Distinct from TV7b, which is the
+same mismatch observed at boot and is a refusal to start.
 
 **TV11** — `root_secret_knowledge` with a witness whose secret hashes to the
 capability's `root_secret_hash`, on a node where the strategy is established:
@@ -1074,12 +1126,12 @@ because the binding target does not change under attenuation (§Root-Secret
 Binding). Both halves are load-bearing: an attenuation that drops the envelope
 fails at production, and one that does not register the child fails at step 0.
 
+**TV15**
+
 **TV16** — determinism: the same capability and attestation verified by two
 independently built strategy implementations yields the same verdict. A
 single-implementation run cannot satisfy this; the vector requires two builds.
-Phase 1 adds it, and A5 is not closed until it passes.
-
-**TV15** — capability C's attestation envelope copied onto capability C′: REJECT
+Phase 1 adds it, and A5 is not closed until it passes. — capability C's attestation envelope copied onto capability C′: REJECT
 at step 0, because the envelope is inside the hashed canonical form, so C′'s
 capability id changes and no longer resolves. The strategy never runs.
 
@@ -1159,6 +1211,12 @@ declaration-once-then-re-export shape already used for `CapabilityClass` applies
 Create the id allocation record: the list of RFC-range attestation ids core
 has allocated. Until it exists the RFC range admits nothing.
 
+Capture and freeze the pre-RFC capability fixtures as the back-compat corpus
+(TV9), and add the cross-implementation determinism vector (TV16). The latter
+needs two independently built implementations, so it lands once Phase 2 has
+produced strategy crates to build against; Phase 1 creates the harness and the
+two fixtures it compares.
+
 Extend the capability canonical form with the attestation envelope, omitted
 entirely when absent, so an un-attested capability serialises byte-identically.
 This phase declares the RFC-0957 wire amendment. Mint MUST register a capability
@@ -1179,7 +1237,9 @@ narrowed becomes unusable.
 
 Land the reference strategy crates — `octo-cap-zk` for
 `root_secret_knowledge` and `octo-cap-poi` (new) for `in_boundary_execution` — as
-disabled strategies with no registration entry. Land operator policy with
+disabled strategies with no registration entry. Record the
+`in_boundary_execution` admission profile here, measured rather than estimated,
+since this is the phase that lands the crate it describes. Land operator policy with
 boot-time validation. Land the dispatch, including the registry lookup at step 0,
 in the wallet verification path behind macaroon-path back-compat.
 
@@ -1206,7 +1266,12 @@ For `root_secret_knowledge`:
    unintended inputs.
 5. Re-derive the circuit ceiling from the resulting program and record the new
    figure with its rationale (§Performance Targets).
-6. Invert the characterization test that pins the absent binding into a
+6. **Wire the mint path to the capability circuit.** It currently discards the
+   witness and proves a different program, so no property a real proof would
+   carry is obtained in production. Until this lands, an attestation could be
+   correctly verified and still never produced by the mint path, which is the
+   other half of the registration precondition alongside TV12.
+7. Invert the characterization test that pins the absent binding into a
    rejection test (TV12), and only then register the strategy.
 
 ### Phase 4: Cross-cutting substrate corrections
@@ -1214,8 +1279,9 @@ For `root_secret_knowledge`:
 Out of scope for this RFC's own mechanism, and recorded here because they were
 surfaced by its review and are prerequisites for a clean implementation:
 
-- `NodeType` is retained in the wallet as the mint-time ZK gate and is keyed by a
-  registry that exists only in tests. The role model this RFC links to treats it
+- `NodeType` is retained in the wallet as the mint-time ZK gate, and the class
+  registry that enforces it is a production type with no production call site —
+  only its tests instantiate it. The role model this RFC links to treats it
   as a computed projection. Closing that gap is a separate change.
 - `cap_root_hash` names several different values in the current substrate. See
   the table in §Data Structures. Renaming is a wire-affecting change and is not
@@ -1277,8 +1343,8 @@ both landing in Phase 5 alongside the lint that tests for them.
 - An in-circuit hash module supporting more than the single unkeyed 32-byte case
   Phase 3 adds; a longer secret or a different construction would need more of
   the permutation exposed.
-- Replaying the admission-profile cost figures as measured values, for each
-  strategy in whichever phase owns it.
+- Nothing here reopens the cost measurements already owned by named phases; it
+  exists for work no phase covers.
 
 ## Version History
 
@@ -1291,6 +1357,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.5    | 2026-10-07 | Fourth review round. Restores the v0.3 history row, which the previous round's edit had overwritten rather than appended to, leaving the two largest changes in this RFC's history unrecorded. Corrects a false claim that the root id is domain-separated: the asymmetry is deliberate and recorded as such, and only the capability id and chain root apply a separator. Gives the security figure a constructor, without which no strategy could build an admission profile and the budget gate could never run. Adds the registration algorithm, which four requirements pinned to registration had left with no implementing interface. Splits the id-collision adversary into the two cases the range split actually permits, since a user-range id cannot collide with a core allocation. Adds test vectors and operator-visible reasons for the boot-time rejections introduced last round, and assigns the dependency removal to the phase that must precede the lint testing for it.                                                                                                                                                                |
 | v0.6    | 2026-10-07 | Fifth review round, two reviewers in parallel. Both converged independently on a Rust code fence left open across an interposed paragraph, which rendered the admission trait's introduction as Rust source while passing every existing check, and on a security-figure constructor calling a method the pinned prover type does not have. Corrects that registration was required at mint only, leaving every attenuated child absent from the registry because attenuation recomputes the capability id, which contradicted both a stated property and a test vector. Moves the unkeyed in-circuit hash entry point from future work into the phase that depends on it, makes the admission trait mandatory for a cost-only strategy so the budget gate is reachable, defines the policy trait the context names, binds the clock the dispatch reads, and replaces a strategy-owned error type with a core type carrying a strategy-supplied reason. Derives the security figure from the prover's own pinned security parameters rather than from a prover configuration object.                                                                          |
 | v0.7    | 2026-10-07 | Sixth review round. Corrects the naming table's treatment of the wire decoder, which derives the same capability id the mint path computes rather than a fourth distinct value, so the table no longer asserts an ambiguity the substrate does not have. Assigns the second strategy's measurement to the phase that lands its crate, and stops future work reinstating an ownership the performance section declines to name. States what the calldata-layout conformance test currently pins and what this change must extend it to, so an adversary mitigation no longer gates on a test narrower than the one described. Names the conformance test that pins the absent binding, and resolves the one remaining phase disagreement between the key-files list and the phase that owns the dependency removal.                                                                                                                                                                                                                                                                                                                                            |
+| v0.8    | 2026-10-07 | Eighth review round. Records that RFC-0958 specifies a different relation for the same public inputs than this RFC binds, and that the implemented circuit has drifted from RFC-0958 in both respects. The prohibition this RFC previously stated contradicted the RFC it declares as amended; it now states the drift, adopts a narrower relation deliberately, and says adopting it requires amending RFC-0958 rather than adding a strategy beside it. Makes the expectation a core-owned trait, since a Layer-B crate cannot name a third-party type to build the context that carries it. Separates the boot gate from the verification gate so the latter is reachable, and gives the test vector that depends on it a distinct observation point. Adds the mint-path wiring to the phase that gates registration, and the corpus, determinism, and profile items each phase was already named as owning. Corrects proof-of-work bits to field width in three places, adds the missing error arm to dispatch, and gives the allocation gate its own vectors.                                                                                            |
 
 ## Related RFCs
 

@@ -201,15 +201,20 @@ not a bypass; its values are equally subject to registry lookup.
 codebase, and the binding relation below is only correct for one of them. This
 RFC uses unambiguous names and requires implementations to.
 
-| Name used here                    | Derivation                                                                               | Where it lives                               |
-| --------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `macaroon_root_secret_hash`       | `BLAKE3(root_secret)`                                                                    | macaroon field, covered by the capability id |
-| `capability_id`                   | `BLAKE3(0x05 ‖ canonical_ser_unsigned(macaroon))`                                        | macaroon field, registry primary key         |
-| `cap_root_hash` (ZK public input) | no fixed derivation; supplied per proof and compared against a verifier-held expectation | ZK circuit public inputs                     |
-| `cap_root_hash` (wire decode)     | `compute_capability_id(macaroon)` — the **same** value as `capability_id`                | decoding a v1 wire token to its registry key |
+| Name used here                    | Derivation                                                                                                           | Where it lives                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `macaroon_root_secret_hash`       | `BLAKE3(root_secret)`                                                                                                | macaroon field, covered by the capability id |
+| `capability_id`                   | `BLAKE3(0x05 ‖ canonical_ser_unsigned(macaroon))`                                                                    | macaroon field, registry primary key         |
+| `cap_root_hash` (ZK public input) | no fixed derivation; supplied per proof, and folded into the holder-signature Poseidon alongside other public fields | ZK circuit public inputs                     |
+| `cap_root_hash` (wire decode)     | `compute_capability_id(macaroon)` — the **same** value as `capability_id`                                            | decoding a v1 wire token to its registry key |
 
 The first is the binding target. The second is the registry key. The third is
-unrelated to either and merely shares the name. The fourth is **not a fourth
+unrelated to either and merely shares the name: it is a public input the
+prover supplies, folded into the holder-signature commitment with other public
+fields and never compared against the secret, so it constrains nothing the
+binding relation depends on. RFC-0958 specifies comparing it against the
+derived chain value, and the circuit does not do that — the drift is recorded in
+§Root-Secret Binding. The fourth is **not a fourth
 value**: the wire decoder derives the same capability id the mint path computes,
 byte-identically, and that equivalence is pinned by a test. It is listed only
 because one identifier carries two meanings across the substrate for two
@@ -1061,9 +1066,13 @@ attacker-chosen public inputs, with every hash check internally consistent.
 _Impact:_ high; silent. _Mitigation:_ the calldata-layout conformance test must be
 extended to cover every field the change introduces, not merely re-run on the
 previous shape — a test that passes without exercising the new field is the
-failure, not the safeguard. The existing test pins the calldata order against
-the Cairo serialisation layout; it does not yet assert that the field set and
-the circuit's declared inputs agree, so this change needs both. The related trap recorded in
+failure, not the safeguard. The existing test is weaker than a description of
+"pins the order" suggests: it asserts the total calldata length and then ten
+sampled index-to-value pairs, leaving the other thirteen slots unasserted, so a
+transposition among those slots passes it today. It does not assert that the
+field set and the circuit's declared inputs agree either. Both gaps close in the
+same step, and the length-plus-samples shape is the reason a partial fix would
+not have been enough. The related trap recorded in
 `docs/architecture/zk-stwo-cairo-executable-recipe.md`, where declared and actual
 builtins diverge, is the same failure mode and is covered by the same discipline.
 
@@ -1416,12 +1425,14 @@ For `root_secret_knowledge`:
    It is currently test-gated, and un-gating it in its present shape admits far
    more code than one call requires.
 4. Update the witness-calldata layout mirror and extend the layout conformance
-   test to cover the new fields (A8). The existing test pins field order; this
-   step also makes it assert the field set, since order alone would not catch an
-   input the circuit never declared. The same conformance discipline covers the
-   related trap recorded in `docs/architecture/zk-stwo-cairo-executable-recipe.md`,
-   where a mismatch between declared and actual builtins produces a proof over
-   unintended inputs.
+   test to cover the new fields (A8). The existing test asserts the calldata
+   length and ten sampled slots, leaving thirteen unasserted and the field set
+   unchecked. This step makes it assert **every** slot, since a transposition
+   among the unasserted ones passes today, and also assert the field set, since
+   order alone would not catch an input the circuit never declared. The same
+   conformance discipline covers the related trap recorded in
+   `docs/architecture/zk-stwo-cairo-executable-recipe.md`, where a mismatch
+   between declared and actual builtins produces a proof over unintended inputs.
 5. Re-derive the circuit ceiling from the resulting program and record the new
    figure with its rationale (§Performance Targets).
 6. **Wire the mint path to the capability circuit.** It currently discards the
@@ -1523,6 +1534,7 @@ both landing in Phase 5 alongside the lint that tests for them.
 | v0.11   | 2026-10-07 | Eleventh review round. Repairs damage the previous round's own insertions caused: an opening emphasis marker with no closer, an orphaned emphasis marker, a table row separated from its table by a blank line, and two entries inserted into ordered lists above the entry that should precede them. All four are the same defect as an entry being added without checking where it lands, which is the class the round-9 repair already demonstrated. Adds the phase item and test vector that the size bound introduced in the previous round lacked, since a normative requirement with nothing scheduled behind it is the same gap that produced the unowned corpus and determinism vectors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | v0.12   | 2026-10-07 | Twelfth review round. Reorders TV5b below TV5, which is the same misplaced-entry defect the previous round's own message claimed to have repaired — the vector was added above the entry it qualifies and above the one whose number it extends. Assigns registration of `in_boundary_execution` to the phase that lands its crate, since Lifecycle Requirement 1 is unconditional and no phase named a second registration, leaving one strategy permanently exempt. Corrects a doc comment that attributed to LR1 a rule LR1 does not contain: LR1 requires implementing the admission trait, not returning a profile, so a cost-bearing strategy answering `None` is a self-description no runtime check can falsify and the obligation is review-enforced. Draws the two dispatch rejection edges the diagram omitted, the acceptance set and the step-4 coverage gate, without which a node failing either gate read as verifying anyway.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v0.13   | 2026-10-07 | Thirteenth review round, internal-consistency lens. Nine findings, all verified against the source before repair. The Summary said a strategy declares payload kinds a node must serve in order to verify, collapsing the producing-side list checked once at boot into the separate verification-side flag checked per call. TV16 fixed only capability and attestation where the determinism section makes the outcome a function of all three, so a strategy permitted to consult policy could never satisfy it as written. The refuse-only rule on policy was normative in the execution class table with nothing implementing, testing, or scheduling it, unlike the two conventions the RFC already labels review-enforced; it is now labelled the same way, with the reason the type cannot carry it. Three symbols were declared and never consumed — the soundness accessor, the expectation's sole method, and the measured-cost arm — and each now names where it is read. The naming table's prose claimed several values and three meanings over a table showing two of each. The strategy table cited RFC-0958 as the source for a relation this RFC deliberately narrows, against a dependency list declaring it amended. Three passages described a strategy as shipping disabled, which the error section explicitly denies is a state that exists. |
+| v0.14   | 2026-10-07 | Fourteenth review round, substrate-verification lens. Eleven claims about the existing codebase checked one at a time against the source. All eleven hold, including the load-bearing ones earlier rounds had already repaired: the unkeyed root-secret hash, the registry lookup the dispatch leans on, the single non-zero assertion in the circuit, the absence of an unkeyed in-circuit hash entry point, the witness discarded by the mint path, and the drift between the relation RFC-0958 specifies and the one the circuit implements. No claim contradicted the code. The lens produced two precision notes, which this round folds in. The conformance test was described as pinning the calldata order; it asserts a length and ten sampled slots, leaving thirteen unasserted, so a transposition among them passes it today — which is why the phase step now requires asserting every slot rather than extending a partial check. And the ZK public input was described as compared against a verifier-held expectation; it is in fact folded into the holder-signature Poseidon alongside other public fields and never compared against the secret, which is precisely why it cannot serve as the binding target.                                                                                                                                   |
 
 ## Related RFCs
 

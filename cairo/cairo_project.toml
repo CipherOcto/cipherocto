@@ -1,0 +1,12 @@
+# cairo-lang project config.
+#
+# `Scarb.toml` is the build orchestrator's manifest and remains the entrypoint
+# for `scarb build` / `scarb cairo-test`. This file exists because
+# `cairo_lang_executable::compile::compile_executable` -> `setup_project` reads
+# a `cairo_project.toml` (`ProjectConfig::from_directory`) and does NOT
+# understand Scarb manifests.
+#
+# It is additive: scarb ignores it, and the two files agree on the crate name
+# and root. See docs/architecture/zk-stwo-cairo-executable-recipe.md.
+[crate_roots]
+capability_zk = "src"

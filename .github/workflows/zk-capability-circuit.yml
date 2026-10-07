@@ -69,12 +69,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+      - name: Install scarb 2.20.0 (Cairo 2.x build orchestrator)
         # Required by `bundled_casm_hash()` invoked transitively from the
         # zk_vectors integration tests via `capability::zk_mint::*` paths.
         # Same pin as `casm-snapshot` job.
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.20.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           scarb --version
       - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2 (R4 F-25 — dropped --features full)
@@ -91,12 +91,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+      - name: Install scarb 2.20.0 (Cairo 2.x build orchestrator)
         # Required by `bundled_casm_hash()` invoked transitively from the
         # wire_v2_roundtrip tests via `capability::zk_mint::proof_bundle_wire_roundtrip`
         # and related paths.
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.20.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           scarb --version
       - name: Run wire v2 4-segment round-trip (R4 F-25 — dropped --features full)
@@ -111,19 +111,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
-        # **Session 2 toolchain pin (2026-08-04):** scarb 2.16.0 / cairo 2.16.0 /
-        # sierra 1.7.0. The standalone `cairo-compile` binary is gone in
-        # Cairo 2.x — scarb is the only real compile route. The
-        # `cairo-lang-sierra-to-casm 2.20.0` Rust crate (linked into
+      - name: Install scarb 2.20.0 (Cairo 2.x build orchestrator)
+        # **Session 2 toolchain pin (2026-08-04), bumped to scarb 2.20.0 on
+        # 2026-10-07:** scarb 2.20.0 / cairo 2.20.0 / sierra 1.9.3. The bump
+        # aligns the corelib (v2.20.0) with the cairo-lang 2.20 crates and is
+        # the version that understands the Cairo executable ABI; see
+        # docs/architecture/zk-stwo-cairo-executable-recipe.md. Kept in step
+        # with the repo-root `.tool-versions`. The standalone `cairo-compile`
+        # binary is gone in Cairo 2.x — scarb is the only real compile route.
+        # The `cairo-lang-sierra-to-casm 2.20.0` Rust crate (linked into
         # `zk-circuit`) consumes the scarb-emitted Sierra IR and lowers
         # it to CASM in-process.
         #
         # The session-1 install attempted `pip install cairo-lang==0.14.0.1`
         # for a standalone `cairo-compile` binary; that path is a Cairo
-        # 1.x legacy and does NOT match the scarb 2.16.0 toolchain. Dropped.
+        # 1.x legacy and does NOT match the scarb 2.20.0 toolchain. Dropped.
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.20.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           scarb --version
       - name: Run CASM BLAKE3 snapshot test (Sierra→CASM in-process pipeline)
@@ -176,12 +180,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+      - name: Install scarb 2.20.0 (Cairo 2.x build orchestrator)
         # Required by `bundled_casm_hash()` invoked by the 3 bench tests
         # (`proof_gen_latency_self_host_under_2s_10k_trace`,
         # `verify_latency_under_100ms`, `proof_size_50_to_500kb`).
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.20.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           scarb --version
       - name: Run #[ignore] perf gates (proof-gen <2s, verify <100ms, size 50-500KB)
@@ -219,7 +223,7 @@ jobs:
       # Round 4 review F-27 (2026-08-05): `cargo fuzz run` requires the
       # nightly toolchain (uses `-Z` unstable flags). The build job uses
       # stable; this job installs nightly explicitly. Toolchain pin matches
-      # the scarb 2.16.0 + cairo 2.16.0 + sierra 1.7.0 pin referenced in
+      # the scarb 2.20.0 + cairo 2.20.0 + sierra 1.9.3 pin referenced in
       # the `casm-snapshot` job at line 90.
       - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz (stable-compatible; pin a matching nightly)

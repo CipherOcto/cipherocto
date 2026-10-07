@@ -1,18 +1,23 @@
-# stwo-sys uses nightly toolchain because STWO 2.1.0 + cairo-air +
-# stwo-cairo require nightly-only feature flags (`iter_array_chunks`,
-# `portable_simd`, `slice_ptr_get`). The cipherocto workspace stays
+# stwo-sys uses a nightly toolchain because STWO 2.3.0 + cairo-air +
+# stwo-cairo require nightly-only feature flags (`portable_simd`,
+# `iter_array_chunks`, `raw_slice_split`). The cipherocto workspace stays
 # stable-rust (MSRV 1.75.0); only stwo-sys opts into nightly.
 #
-# Toolchain pin matches stoolap/stwo-plugin/rust-toolchain.toml exactly
-# so we share the same upstream resolution. Newer nightlies (post 2025-07)
-# stabilized `iter_array_chunks`, breaking the `#![feature(...)]` line in
-# stwo 2.1.0's lib.rs.
+# Toolchain pin matches stwo-cairo v1.3.0's declared
+# NIGHTLY_VERSION (.github/workflows/cairo-ci.yaml). Upstream has no
+# rust-toolchain.toml of its own, so the pin has to be mirrored here.
+#
+# Do NOT move to a newer nightly without checking stwo's `#![feature]`
+# lines: `iter_array_chunks` was stabilised in nightlies after 2025-07,
+# and a toolchain where it is stable breaks the build outright.
+#
+# See docs/architecture/zk-stwo-cairo-executable-recipe.md.
 #
 # cargo automatically picks this toolchain when invoked from this directory:
-#   cargo +nightly-2025-06-23 build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml
+#   cargo build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml
 # Or simply `cd crates/zk-vendor/stwo-sys && cargo build --release` and cargo
 # will read this file.
 [toolchain]
-channel = "nightly-2025-06-23"
+channel = "nightly-2026-01-15"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

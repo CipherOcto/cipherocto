@@ -4,21 +4,25 @@ version = "0.1.0"
 edition = "2024_07"
 
 [cairo]
-# Executable (not lib): `main` takes the prover-supplied witness as
-# parameters, which Cairo 2.16 only permits on an executable target. The
-# emitted Sierra path is unchanged (`target/dev/capability_zk.sierra.json`),
-# so crates/zk-circuit's in-process Sierra->CASM pipeline is unaffected.
-target = "executable"
-
-# Toolchain pin: scarb 2.16.0 / cairo 2.16.0.
-# Cairo 1.x standalone `cairo-compile` binary does NOT exist; Cairo 2.x uses
-# scarb as the build orchestrator. The compiled artifact at
+# NOTE: the former `target = "executable"` field is gone. scarb >= 2.20 warns
+# `unknown manifest field 'cairo.target'` and never wired the executable
+# plugin into `scarb build` anyway -- only `scarb execute` enables it.
+#
+# The executable wrapper is now produced where it is actually consumed:
+# `crates/zk-circuit` calls `cairo_lang_executable::compile::compile_executable`
+# against this crate, which requires `#[executable]` on `main` (see
+# `main` in src/lib.cairo) and yields the wrapper + Standalone/Bootloader
+# entrypoints that `stwo-sys` runs. See
+# docs/zk/stwo-cairo-executable-recipe.md.
+#
+# Toolchain pin: scarb 2.20.0 / cairo 2.20.0, pinned by the repo-root
+# .tool-versions. The compiled artifact at
 # `target/dev/capability_zk.sierra.json` is deterministic across runs of
 # the same scarb + source combination.
 #
 # Mission 0958-b S1: `cairo_test` dev-dep enables inline `#[test]`
-# attributes for `scarb cairo-test`. Without it, scarb rejects the
-# `#[test]` macro as "Unsupported attribute".
+# attributes for `scarb cairo-test`. Without it, scarb rejects
+# the `#[test]` macro as "Unsupported attribute".
 
 [dev-dependencies]
-cairo_test = "=2.16.0"
+cairo_test = "=2.20.0"

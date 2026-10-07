@@ -20,7 +20,7 @@
 //! **Hard-fail policy:** this test does NOT skip silently. If `scarb` is
 //! missing, the test panics with an actionable message. Local dev and CI
 //! must both have scarb installed (CI workflow
-//! `.github/workflows/zk-capability-circuit.yml` installs scarb 2.16.0).
+//! `.github/workflows/zk-capability-circuit.yml` installs scarb 2.20.0).
 //!
 //! **Reference:** RFC-0958 §CASM Hash Drift Detection.
 
@@ -56,11 +56,11 @@ fn run_scarb_build(project: &Path) -> PathBuf {
             // scarb is available — proceed.
         }
         Ok(_) => panic!(
-            "scarb --version exited non-zero. Install scarb 2.16.0 (https://docs.swmansion.com/scarb/). \
+            "scarb --version exited non-zero. Install scarb 2.20.0 (https://docs.swmansion.com/scarb/). \
              Mission 0958-a Session 1 requires scarb to produce Sierra IR."
         ),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => panic!(
-            "scarb not in PATH. Install scarb 2.16.0 (https://docs.swmansion.com/scarb/). \
+            "scarb not in PATH. Install scarb 2.20.0 (https://docs.swmansion.com/scarb/). \
              Mission 0958-a Session 1 requires scarb to produce Sierra IR."
         ),
         Err(e) => panic!("failed to spawn scarb: {e}"),
@@ -442,7 +442,16 @@ fn casm_bytes_under_50kb_after_stage2_split() {
 /// (Round 18 fix F-122 — `max_bytecode_size` measures CASM words,
 /// NOT Sierra statements or serialized bytes).
 ///
-/// **Status:** GREEN as of R19 closure. CASM word count = 1,318.
+/// **Status:** GREEN as of R19 closure. Current CASM word count = **1,522**
+/// (measured 2026-10-07). The earlier figure of 1,318 predates the dual
+/// entrypoint (`main` + the `#[cfg(feature: "executable")]`
+/// `executable_main`), which added ~200 words.
+///
+/// **Headroom is 78 words.** That is the binding constraint on any further
+/// circuit work: an in-circuit re-derivation of `cap_root_hash` would need
+/// BLAKE3 plus `ByteArray`/felt packing, which is what made the pre-R19
+/// program ~8,500 words. Budget changes must amend the AC-4 ceiling
+/// explicitly, not be absorbed by trimming elsewhere.
 #[test]
 fn casm_words_under_1600_after_stage2() {
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");

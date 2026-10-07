@@ -45,10 +45,10 @@
 //!
 //! ## Toolchain pin
 //!
-//! - **scarb** 2.16.0 / **cairo** 2.16.0 / **sierra** 1.7.0
+//! - **scarb** 2.20.0 / **cairo** 2.20.0 / **sierra** 1.9.3
 //! - **cairo-lang-* Rust crates** 2.20.0 (the Sierra→CASM in-process pass)
 //!
-//! The Sierra JSON emitted by scarb 2.16.0 declares `"version": 1`; the
+//! The Sierra JSON emitted by scarb 2.20.0 declares `"version": 1`; the
 //! `cairo_lang_sierra 2.20.0` deserializer accepts that version. Two
 //! independent `scarb build` runs may produce JSON bytes that differ
 //! (salsa UUIDs in `id` fields); the CASM pass canonicalizes through the
@@ -68,6 +68,17 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use cairo_lang_casm::hints::Hint as CasmHintEnum;
+use cairo_lang_compiler::db::{validate_corelib, RootDatabase};
+use cairo_lang_compiler::diagnostics::DiagnosticsReporter;
+use cairo_lang_executable::compile::{compile_executable, ExecutableConfig};
+use cairo_lang_executable::executable::{EntryPointKind, Executable};
+
+/// Re-exported so downstream consumers (and the fixture generator) can find the
+/// entrypoint without adding their own `cairo-lang-executable` dependency.
+pub use cairo_lang_executable::executable::EntryPointKind as ExecutableEntryPointKind;
+use cairo_lang_executable_plugin::executable_plugin_suite;
+use cairo_lang_filesystem::cfg::{Cfg, CfgSet};
+use cairo_lang_filesystem::db::init_dev_corelib;
 use cairo_lang_sierra::program::Program as SierraProgram;
 use cairo_lang_sierra_to_casm::compiler::{
     compile as sierra_compile_to_casm, CairoProgram as SierraCasmProgram, SierraToCasmConfig,
@@ -222,7 +233,7 @@ pub static BUNDLED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = 
 /// # Errors
 /// Returns [`HashError::CompilerInternal`] if scarb is not in PATH, the
 /// Sierra→CASM pass fails, or the assembled bytecode is empty. Install
-/// scarb 2.16.0 + cairo-lang-* 2.20.0 (Cargo handles the Rust crates).
+/// scarb 2.20.0 + cairo-lang-* 2.20.0 (Cargo handles the Rust crates).
 pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
     let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
     match cached {
@@ -306,6 +317,171 @@ pub fn bundled_harness_program() -> Result<HarnessProgram, HashError> {
         main_pc: c.main_pc,
     })
 }
+
+/// Path to the Cairo corelib `src/` matching this crate's cairo-lang version.
+///
+/// `cairo_lang_executable::compile::prepare_db` would call `detect_corelib()`,
+/// which searches for a `corelib/src` directory relative to
+/// `CARGO_MANIFEST_DIR`, the current executable and the cwd. That search fails
+/// outright unless a developer has hand-symlinked one, and when it does succeed
+/// it can pick up whatever corelib happens to sit next to the binary. We
+/// resolve it explicitly instead.
+///
+/// Order:
+///   1. `$CIPHEROCTO_CAIRO_CORELIB`
+///   2. scarb's registry cache, exact version match against cairo-lang's
+///      `CORELIB_VERSION` (the corelib ships with scarb, so any environment
+///      that can already run `scarb build` can satisfy this)
+fn resolve_corelib() -> Result<std::path::PathBuf, HashError> {
+    if let Ok(p) = std::env::var("CIPHEROCTO_CAIRO_CORELIB") {
+        let p = std::path::PathBuf::from(p);
+        if p.join("array.cairo").exists() {
+            return Ok(p);
+        }
+        return Err(HashError::CompilerInternal(format!(
+            "CIPHEROCTO_CAIRO_CORELIB={} is not a corelib src directory (no array.cairo)",
+            p.display()
+        )));
+    }
+
+    let want = cairo_lang_filesystem::db::CORELIB_VERSION;
+    let cache = std::env::var("SCARB_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".cache/scarb/registry/std"))
+        })
+        .map_err(|e| HashError::CompilerInternal(format!("locate scarb corelib cache: {e}")))?;
+
+    let p = cache.join(format!("v{want}")).join("core").join("src");
+    if p.join("array.cairo").exists() {
+        return Ok(p);
+    }
+    Err(HashError::CompilerInternal(format!(
+        "cairo corelib v{want} not found at {}. Run `scarb build` in cairo/ once to \
+         populate scarb's cache, or set CIPHEROCTO_CAIRO_CORELIB.",
+        p.display()
+    )))
+}
+
+/// Compile the bundled circuit to a Cairo **`Executable`** — the artifact
+/// `stwo-sys` actually proves.
+///
+/// This is not a re-encoding of the Sierra: `compile_executable` runs
+/// cairo-lang's executable compiler, which wraps `executable_main` in the
+/// generated Standalone header and emits the `Standalone` / `Bootloader`
+/// entrypoints. The wrapper is what carries the entrypoint's arguments as
+/// calldata; a consumer that instead hand-builds a stack frame is running a
+/// program that never calls the circuit. See
+/// `docs/architecture/zk-stwo-cairo-executable-recipe.md`.
+pub fn bundled_executable() -> Result<Executable, HashError> {
+    let corelib = resolve_corelib()?;
+    let project = cairo_project_root();
+    if !project.join("cairo_project.toml").exists() {
+        return Err(HashError::CompilerInternal(format!(
+            "cairo_project.toml missing at {}; compile_executable reads a cairo-lang \
+             project config, not a Scarb manifest",
+            project.display()
+        )));
+    }
+
+    // Built by hand rather than via `prepare_db`, which does not set the cfg the
+    // circuit gates `#[executable]` behind.
+    let mut builder = RootDatabase::builder();
+    builder
+        .skip_auto_withdraw_gas()
+        .with_cfg(CfgSet::from_iter([
+            Cfg::kv("gas", "disabled"),
+            Cfg::kv("feature", EXECUTABLE_FEATURE),
+        ]))
+        .with_default_plugin_suite(executable_plugin_suite());
+    let mut db = builder
+        .build()
+        .map_err(|e| HashError::CompilerInternal(format!("cairo database: {e}")))?;
+    init_dev_corelib(&mut db, corelib);
+    validate_corelib(&db)
+        .map_err(|e| HashError::CompilerInternal(format!("cairo corelib: {e}")))?;
+
+    let result = compile_executable(
+        &mut db,
+        &project,
+        Some(EXECUTABLE_SIERRA_FUNC),
+        DiagnosticsReporter::stderr(),
+        ExecutableConfig::default(),
+    )
+    .map_err(|e| HashError::CompilerInternal(format!("compile_executable: {e}")))?;
+
+    let exec = Executable::new(result.compiled_function);
+    if exec.program.bytecode.is_empty() {
+        return Err(HashError::CompilerInternal(
+            "executable emitter produced empty bytecode".to_owned(),
+        ));
+    }
+    if !exec
+        .entrypoints
+        .iter()
+        .any(|e| matches!(e.kind, EntryPointKind::Standalone))
+    {
+        return Err(HashError::CompilerInternal(format!(
+            "executable has no Standalone entrypoint (got {:?}); the STWO harness runs \
+             that entrypoint, not the wrapped function",
+            exec.entrypoints.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        )));
+    }
+    Ok(exec)
+}
+
+/// The [`Executable`] artifact as JSON — the wire form `stwo-sys` deserializes.
+///
+/// Shipped as the upstream type rather than a hand-rolled
+/// `{casm_hex, hints, main_pc}` mirror: the JSON *shape* of a
+/// hand-rolled contract can drift silently between the two crates, and the
+/// failure mode is a program that runs without calling the circuit.
+pub fn bundled_executable_json() -> Result<String, HashError> {
+    let exec = bundled_executable()?;
+    serde_json::to_string(&exec)
+        .map_err(|e| HashError::CompilerInternal(format!("serialize executable: {e}")))
+}
+
+/// Canonical byte encoding of an `Executable`'s bytecode: one 32-byte
+/// big-endian word per felt, the same shape the CASM wire format used.
+///
+/// Fixed-width so the encoding is injective — a variable-width big-endian
+/// encoding would make the commitment ambiguous.
+fn executable_bytecode_bytes(exec: &Executable) -> Result<Vec<u8>, HashError> {
+    let mut out = Vec::with_capacity(exec.program.bytecode.len() * 32);
+    for w in &exec.program.bytecode {
+        // CASM words are 63-bit felts, so the sign is always Plus; the
+        // magnitude is what we encode.
+        let (_sign, be) = w.to_bytes_be();
+        if be.len() > 32 {
+            return Err(HashError::CompilerInternal(format!(
+                "executable bytecode word exceeds 32 bytes ({}); felt is not representable",
+                be.len()
+            )));
+        }
+        out.extend(std::iter::repeat_n(0u8, 32 - be.len()));
+        out.extend_from_slice(&be);
+    }
+    Ok(out)
+}
+
+/// BLAKE3 of the executable bytecode, hex.
+///
+/// This is the program-artifact commitment a verifier checks before trusting a
+/// proof. It covers the **wrapper** as well as the circuit, so a wrapper that
+/// disagrees with the prover's expectation changes the commitment.
+pub fn bundled_executable_hash() -> Result<String, HashError> {
+    let exec = bundled_executable()?;
+    Ok(blake3_hex(&executable_bytecode_bytes(&exec)?))
+}
+
+/// The cfg the circuit gates `#[executable]` behind, and the entrypoint
+/// cairo-lang wraps. Kept next to each other because they must agree: if the
+/// feature is off, `compile_executable` finds zero executable functions and
+/// fails with "no executable function found".
+const EXECUTABLE_FEATURE: &str = "executable";
+const EXECUTABLE_SIERRA_FUNC: &str = "capability_zk::executable_main";
 
 /// Returns the bundled CASM hint table.
 ///
@@ -403,14 +579,14 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
         Ok(out) if out.status.success() => {}
         Ok(_) => {
             return Err(HashError::CompilerInternal(
-                "scarb --version exited non-zero. Install scarb 2.16.0 \
+                "scarb --version exited non-zero. Install scarb 2.20.0 \
                  (https://docs.swmansion.com/scarb/)"
                     .to_owned(),
             ));
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(HashError::CompilerInternal(
-                "scarb not in PATH. Install scarb 2.16.0 \
+                "scarb not in PATH. Install scarb 2.20.0 \
                  (https://docs.swmansion.com/scarb/)"
                     .to_owned(),
             ));
@@ -486,7 +662,7 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
 
     Ok(CompiledCircuit {
         program: CairoProgram {
-            version: "2.16.0".to_owned(),
+            version: "2.20.0".to_owned(),
             identifier: "capability_zk_v1".to_owned(),
             hints: vec![],
             bytecode: vec![],
@@ -818,6 +994,43 @@ pub use zk_verifier::ProverError;
 /// Maximum batch size (RFC-0958 batch signature — bounded for Fiat-
 /// Shamir transcript determinism + verifier memory bound).
 pub const MAX_BATCH_SIGNERS: usize = 256;
+
+// -------------------------------------------------------------------------
+// STWO prover parameters — single source of truth
+// -------------------------------------------------------------------------
+//
+// These mirror `stwo-sys::default_prover_params()`, which in turn mirrors
+// stwo-cairo v1.3.0's **production** defaults
+// (`stwo_cairo_prover/crates/prover/src/prover.rs:303`). They are declared
+// here, in a stable-Rust crate that every consumer already depends on, so the
+// advertised soundness of a `ProofBundle` is *derived* rather than asserted.
+//
+// **Why this exists.** `ProofBundle.security_bits` was hardcoded to `128`,
+// while the parameters actually used yield **96**. RFC-0958 §Design Goals G4
+// asks for "128-bit STARK security (configurable 96-bit for Hybrid mode)", so
+// the declared value was both wrong about the proof and unmet against the
+// RFC. A declared security level that is not computed from the parameters is
+// exactly the kind of claim this audit exists to remove.
+
+/// Proof-of-work bits in the STWO Fiat-Shamir channel.
+pub const STWO_POW_BITS: u32 = 26;
+/// FRI blowup factor as a log2; `2^log_blowup_factor` = rate.
+pub const STWO_LOG_BLOWUP_FACTOR: u32 = 1;
+/// Number of FRI queries.
+pub const STWO_N_QUERIES: u32 = 70;
+
+/// Soundness in bits, per stwo-cairo's documented formula
+/// `security_bits = pow_bits + log_blowup_factor * n_queries`.
+///
+/// This is **96**, not the 128 that RFC-0958 G4 targets and that
+/// `ProofBundle` used to hardcode. Reaching 128 requires raising
+/// [`STWO_N_QUERIES`] to 102 at the same blowup — which enlarges every proof,
+/// and proofs are already far above the RFC's 50–500 KB target. Raising it is
+/// a deliberate act with a measured cost, not a constant to bump.
+#[must_use]
+pub const fn stwo_security_bits() -> u32 {
+    STWO_POW_BITS + STWO_LOG_BLOWUP_FACTOR * STWO_N_QUERIES
+}
 
 /// Generate a batch signature proof (RFC-0958 capability ZK subclass +
 /// RFC-0962 §9 ZK proof integration).

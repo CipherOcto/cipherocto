@@ -117,7 +117,12 @@ pub const CHAIN_DEPTH_MIN: u32 = 3;
 pub const TRACE_STRIDE: u32 = 3;
 
 /// Public inputs (mirrors `octo_wallet::capability::zk_mint::PublicInputs`).
-#[derive(Drop, Copy)]
+///
+/// `Serde` is required by the Cairo executable ABI: the `#[executable]`
+/// wrapper on `main` receives a flat `Array<felt252>` of calldata and
+/// deserializes it into this struct. Without it the function cannot be
+/// compiled as an executable at all.
+#[derive(Drop, Copy, Serde)]
 pub struct PublicInputs {
     pub ask_id_lo: felt252,
     pub ask_id_hi: felt252,
@@ -132,7 +137,9 @@ pub struct PublicInputs {
 }
 
 /// Private witness (mirrors `octo_wallet::capability::zk_mint::PrivateWitness`).
-#[derive(Drop, Copy)]
+///
+/// `Serde` is required by the Cairo executable ABI — see [`PublicInputs`].
+#[derive(Drop, Copy, Serde)]
 pub struct PrivateWitness {
     pub cap_root_secret_lo: felt252,
     pub cap_root_secret_hi: felt252,
@@ -204,9 +211,7 @@ fn concat_bytes(a: @ByteArray, b: @ByteArray) -> ByteArray {
 /// Poseidon over felt252 via `verify_chain`. This helper is preserved
 /// for scarb cairo-test coverage during the AC-4 fail-closed window.
 #[cfg(test)]
-fn hmac_sha256_chain_step(
-    prev: @ByteArray, key: @ByteArray, caveat: @ByteArray,
-) -> [u32; 8] {
+fn hmac_sha256_chain_step(prev: @ByteArray, key: @ByteArray, caveat: @ByteArray) -> [u32; 8] {
     let msg: ByteArray = concat_bytes(prev, caveat);
     let full: ByteArray = concat_bytes(key, @msg);
     core::sha256::compute_sha256_byte_array(@full)
@@ -335,6 +340,40 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
 // `CairoRunner::run_from_entrypoint(entrypoint, args, ...)` — Serde-encoded,
 // so structs and arrays both cross the boundary. See
 // `crates/zk-vendor/src/cairo_harness.rs`.
+// `#[cfg]` strips the *whole item*, so gating `main` itself would delete the
+// entrypoint from every non-executable build — including the `scarb build`
+// Sierra that `crates/zk-circuit`'s transitional CASM path still reads. Hence
+// two one-line entrypoints over the same logic:
+//
+//   * `main`            — always compiled. Plain entrypoint.
+//   * `executable_main` — compiled only with `feature: "executable"`, which
+//                         `crates/zk-circuit` sets when it builds the STWO
+//                         artifact. This is the one cairo-lang wraps.
+//
+// `#[executable]` makes cairo-lang emit the wrapper entrypoint that carries
+// the function's arguments as flat `Array<felt252>` calldata. It is the whole
+// reason the STWO harness cannot hand-build a stack frame: the compiled
+// program's real entrypoint is the generated Standalone header
+// (`ap += builtins.len(); call rel 4; jmp rel 0`) at offset 0, not this
+// function.
+//
+// Gated on a feature because only `scarb execute` and
+// `cairo_lang_executable::compile::compile_executable` enable the executable
+// plugin; `scarb build`, `scarb cairo-test` and plain cairo-lang consumers use
+// the default plugin suite, which rejects the raw attribute outright
+// ("Unsupported attribute"). Do NOT declare the feature in Scarb.toml — that
+// would let `scarb build -F executable` reproduce the failing build.
+#[cfg(feature: "executable")]
+#[executable]
+pub fn executable_main(
+    pub_inputs: PublicInputs,
+    priv_witness: PrivateWitness,
+    caveat_felts: Array<felt252>,
+    steps_flat: Array<felt252>,
+) -> felt252 {
+    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), steps_flat)
+}
+
 pub fn main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
@@ -374,16 +413,12 @@ pub fn stage2_main(
     // assertion could never fail. Now the witness is prover-controlled, so a
     // prover claiming N caveats must supply exactly N felts.
     assert!(priv_witness.caveats_count == caveat_felts.len(), "CaveatChainDepthMismatch");
-    assert!(
-        caveat_felts.len() >= CHAIN_DEPTH_MIN, "CaveatChainDepthMismatch"
-    );
+    assert!(caveat_felts.len() >= CHAIN_DEPTH_MIN, "CaveatChainDepthMismatch");
 
     // ---------- Sub-circuit 1: Poseidon chain commitment (AC-4 verify_chain) ----------
     // Now bound to the prover-supplied secret and caveats, not constants.
     let chain_commitment: felt252 = verify_chain(
-        priv_witness.cap_root_secret_lo,
-        priv_witness.cap_root_secret_hi,
-        caveat_felts,
+        priv_witness.cap_root_secret_lo, priv_witness.cap_root_secret_hi, caveat_felts,
     );
     assert!(chain_commitment != 0, "ChainCommitmentZero");
 
@@ -400,12 +435,8 @@ pub fn stage2_main(
     // Poseidon's CASM cost.
     let sig_commitment: felt252 = poseidon_hash_span(
         array![
-            pub_inputs.holder_did,
-            pub_inputs.ask_id_lo,
-            pub_inputs.ask_id_hi,
-            pub_inputs.cap_root_hash_lo,
-            pub_inputs.cap_root_hash_hi,
-            pub_inputs.invocation_hash,
+            pub_inputs.holder_did, pub_inputs.ask_id_lo, pub_inputs.ask_id_hi,
+            pub_inputs.cap_root_hash_lo, pub_inputs.cap_root_hash_hi, pub_inputs.invocation_hash,
         ]
             .span(),
     );
@@ -443,8 +474,8 @@ pub fn stage2_main(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHAIN_DEPTH, TraceStep, fold_inference_trace, hmac_sha256_chain_step, verify_chain,
-        verify_holder_sig, verify_inference_fold,
+        CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep, fold_inference_trace,
+        hmac_sha256_chain_step, stage2_main, verify_chain, verify_holder_sig, verify_inference_fold,
     };
 
     #[test]
@@ -479,7 +510,9 @@ mod tests {
             0x42424242424242424242424242424242,
             array![0xc0a1, 0xc0a2, 0xc0a4].span(),
         );
-        assert!(_c1 != _c2, "verify_chain avalanche: distinct caveat felt produces distinct commitment");
+        assert!(
+            _c1 != _c2, "verify_chain avalanche: distinct caveat felt produces distinct commitment",
+        );
     }
 
     #[test]
@@ -541,5 +574,34 @@ mod tests {
     fn chain_depth_constant_is_three() {
         // Mission AC: ≥3 caveat chain depth exercised.
         assert!(CHAIN_DEPTH == 3, "chain depth must be 3 per TV1");
+    }
+
+    #[test]
+    #[ignore]
+    fn harness_witness_is_satisfying() {
+        // DIAGNOSTIC: the exact witness the Rust STWO harness feeds. If this
+        // panics, the harness is rejecting a witness the circuit would accept,
+        // and the STWO-harness return-value gate is over-strict.
+        let pi = PublicInputs {
+            ask_id_lo: 1,
+            ask_id_hi: 2,
+            axes_count: 1,
+            cap_root_hash_lo: 4,
+            cap_root_hash_hi: 5,
+            invocation_hash: 6,
+            holder_did: 7,
+            current_unix_time: 1700000000,
+            has_output_hash: 0,
+            output_hash: 0,
+        };
+        let pw = PrivateWitness {
+            cap_root_secret_lo: 11,
+            cap_root_secret_hi: 12,
+            caveats_count: 3,
+            discharges_count: 0,
+            inference_trace_present: 1,
+        };
+        let r = stage2_main(pi, pw, array![15, 16, 22].span(), array![17, 18, 19]);
+        assert!(r == 1, "harness witness must satisfy every circuit assertion");
     }
 }

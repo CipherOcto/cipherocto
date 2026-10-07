@@ -31,6 +31,22 @@ hex = "0.4"
 # calls from clobbering each other's `target/dev/` output.
 tempfile = { workspace = true }
 
+# Cairo executable ABI. This is what produces the *provable* program artifact:
+# `compile_executable` wraps `executable_main` in the Standalone header
+# (`ap += builtins.len(); call rel 4; jmp rel 0`) at offset 0 and delivers the
+# entrypoint's arguments as calldata through hints, instead of leaving them to
+# be hand-built as a stack frame by the consumer.
+#
+# `executable_plugin_suite` is required because only it registers the
+# `executable_raw` attribute; `compile_executable` filters on it and returns an
+# empty list otherwise. `filesystem` provides `Cfg`/`CfgSet` (to turn the
+# circuit's `#[cfg(feature: "executable")]` gate on) and `init_dev_corelib`.
+#
+# See docs/architecture/zk-stwo-cairo-executable-recipe.md.
+cairo-lang-executable = "=2.20.0"
+cairo-lang-executable-plugin = "=2.20.0"
+cairo-lang-filesystem = "=2.20.0"
+
 # Cairo 2.x Sierra→CASM in-process pass (Session 2; mission 0958-a
 # Phase B.2). `cairo_lang_compiler` is pulled in transitively via
 # `cairo_lang_sierra` extensions + `ProgramRegistry` setup, but we

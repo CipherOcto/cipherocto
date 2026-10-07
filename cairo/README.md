@@ -13,7 +13,7 @@ This mission lands the **Cairo 2.x source rewrite + scarb build pipeline
 + in-process Sierra→CASM pass** (mission 0958-a Phase B.2; commits
 `ae4dc4f8` Session 1 + `9c996fba` Sessions 2 + 3 redo):
 
-- `cairo/Scarb.toml` — scarb 2.16.0 project manifest
+- `cairo/Scarb.toml` — scarb 2.20.0 project manifest
 - `cairo/src/lib.cairo` — Cairo 2.x source (structs, `assert!` macro, lib target)
 - `crates/zk-circuit/tests/casm_snapshot.rs` — Rust smoke test that invokes
   `scarb build`, parses the Sierra IR, drives the in-process
@@ -44,14 +44,14 @@ CASM bytecode → BLAKE3 hash → bundled_casm_hash()
 
 ## Toolchain pin
 
-- **scarb** 2.16.0 (matches `~/.asdf/installs/scarb/2.16.0`)
-- **cairo** 2.16.0 (embedded in scarb 2.16.0)
+- **scarb** 2.20.0 (matches `~/.asdf/installs/scarb/2.20.0`)
+- **cairo** 2.20.0 (embedded in scarb 2.20.0)
 - **cairo-lang-sierra** 2.20.0 (Rust crates — Cargo handles dependency
   resolution; pin in `crates/zk-circuit/Cargo.toml`)
 - **cairo-lang-sierra-to-casm** 2.20.0 (Rust crates — Cargo handles
   dependency resolution)
 - Install scarb: https://docs.swmansion.com/scarb/download.html
-- Or via asdf: `asdf plugin add scarb && asdf install scarb 2.16.0`
+- Or via asdf: `asdf plugin add scarb && asdf install scarb 2.20.0`
 - Local dev must have scarb installed; the Rust smoke test hard-panics
   with an actionable message if scarb is missing.
 
@@ -74,7 +74,7 @@ The Rust smoke test (`crates/zk-circuit/tests/casm_snapshot.rs`) verifies:
 ## CI
 
 The CI workflow `.github/workflows/zk-capability-circuit.yml` (LANDED
-2026-07-31 per R3 fix-up `0e0c3ee9`) installs scarb 2.16.0 via asdf +
+2026-07-31 per R3 fix-up `0e0c3ee9`) installs scarb 2.20.0 via asdf +
 runs the in-process Sierra→CASM pass under CI. The smoke test fails
 loudly without scarb — no silent skip.
 

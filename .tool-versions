@@ -1,0 +1,15 @@
+# Local toolchain pin for this repo.
+#
+# scarb 2.20.0 aligns the corelib (v2.20.0) with the cairo-lang 2.20 crates
+# used by crates/zk-circuit and crates/zk-vendor/stwo-sys, and is the version
+# that understands the Cairo executable ABI. See
+# docs/architecture/zk-stwo-cairo-executable-recipe.md.
+#
+# CI does not use asdf: it installs scarb directly in
+# .github/workflows/{zk-capability-circuit,ci,coverage}.yml, so those pins
+# must be kept in step with this file.
+#
+# Only `scarb` is listed. asdf resolves each tool independently and falls
+# through to the global ~/.tool-versions for anything omitted here, so the
+# repo file does not shadow your personal Cairo tooling.
+scarb 2.20.0

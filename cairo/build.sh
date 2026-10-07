@@ -18,15 +18,15 @@
 # produces the Sierra IR AND the downstream crate produces the CASM via the
 # in-process `cairo-lang-sierra-to-casm` 2.20.0 pass.
 #
-# Toolchain pin: scarb 2.16.0 / cairo 2.16.0.
+# Toolchain pin: scarb 2.20.0 / cairo 2.20.0.
 # CI installs scarb via asdf per master plan §8 Risk #6.
 
 set -euo pipefail
 
 if ! command -v scarb >/dev/null 2>&1; then
     echo "ERROR: scarb not found in PATH" >&2
-    echo "Install scarb 2.16.0: https://docs.swmansion.com/scarb/download.html" >&2
-    echo "Or via asdf: asdf plugin add scarb && asdf install scarb 2.16.0" >&2
+    echo "Install scarb 2.20.0: https://docs.swmansion.com/scarb/download.html" >&2
+    echo "Or via asdf: asdf plugin add scarb && asdf install scarb 2.20.0" >&2
     exit 1
 fi
 

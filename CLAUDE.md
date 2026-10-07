@@ -92,6 +92,7 @@ Key documentation is in `/docs`:
 
 - `01-foundation/whitepaper/v0.1-draft.md` - Comprehensive whitepaper covering the trust & reputation architecture, autonomous market layer, and data sovereignty via data flagging
 - `04-tokenomics/token-design.md` - Detailed multi-token economy design with role-based tokens (OCTO sovereign token + specialized role tokens)
+- `architecture/zk-stwo-cairo-executable-recipe.md` - **How to compile a Cairo circuit into a real STWO proof.** The recipe for the Cairo executable ABI (`compile_executable` → `Executable::new` → `Program::new_for_proof` → calldata via `CairoHintProcessor.user_args` → `adapt` → `prove_cairo` → `verify_cairo`), the verified toolchain versions, and the two undocumented traps: `PublicSegmentContext` must mirror the _declared_ program builtins, and a Cairo `assert!` does not trap under cairo-vm. Also required by Stoolap — see §Relating this to Stoolap in that doc.
 
 ## Core Architectural Concepts
 

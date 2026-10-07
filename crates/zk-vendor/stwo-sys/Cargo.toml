@@ -17,41 +17,50 @@ name = "stwo_sys"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Real STWO deps (matches stoolap/stwo-plugin/Cargo.toml pattern).
-# These compile on nightly via per-crate rust-toolchain.toml. Cipherocto
-# workspace stays stable; STWO is loaded at runtime via libloading from
-# zk-vendor. See crates/zk-vendor/stwo-sys/README.md.
-cairo-air = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0" }
-# Pin to exact version 2.1.0: stwo-cairo v1.1.0 was built against stwo 2.1.0;
-# newer 2.x versions renamed FriConfig.line_fold_step → fold_step, breaking
-# the cairo-serialize crate at compile time. Matches stoolap/stwo-plugin.
-stwo = "=2.1.0"
-stwo-cairo-prover = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0", package = "stwo-cairo-prover" }
-stwo-cairo-adapter = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0", package = "stwo-cairo-adapter" }
+# Real STWO deps. Version bumps (2026-10-07) are required, not cosmetic:
+#
+# - stwo-cairo v1.1.0 -> v1.3.0. v1.1.0 pins `cairo-vm = "3.0.0"` and
+#   re-exports `cairo_vm::stdlib::collections::HashMap`, a module cairo-vm
+#   3.2.0 DELETED. That is what forced the 3.1.0 pin below. v1.3.0 replaced
+#   that re-export with `use std::collections::HashMap` and pins cairo-vm
+#   3.2.0, so the pin is no longer load-bearing. Also moves stwo 2.1.0 ->
+#   2.3.0 and adds starknet-types-core 0.2.4.
+# - cairo-vm 3.1.0 -> 3.2.0. Adds the `cairo_run` module used by this crate
+#   and makes `final_pc` public.
+#
+# See docs/architecture/zk-stwo-cairo-executable-recipe.md.
+cairo-air = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.3.0" }
+stwo = "=2.3.0"
+stwo-cairo-prover = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.3.0", package = "stwo-cairo-prover" }
+stwo-cairo-adapter = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.3.0", package = "stwo-cairo-adapter" }
+# `PublicSegmentContext` is re-exported here, and the prover needs
+# `PreProcessedTraceVariant` for `ProverParameters`.
+stwo-cairo-common = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.3.0", package = "stwo-cairo-common" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# Decode the CASM bytecode hex carried by the program artifact. zk-circuit
-# emits it; see CairoProgramSpec.
 hex = "0.4"
 thiserror = "1.0"
 
-# Pin transitive deps to match stoolap/stwo-plugin/Cargo.lock resolutions:
-# - ruint 1.17.2: newer ruint requires rustc 1.90+ which stabilizes
-#   `iter_array_chunks` (breaking stwo 2.1.0's feature flag).
-# - cairo-vm 3.1.0: newer cairo-vm removed `cairo_vm::stdlib::collections::HashMap`,
-#   which stwo-cairo-adapter still imports.
+# Pin transitive deps to match stwo-cairo v1.3.0's own Cargo.lock:
+# ruint 1.17.2 — newer ruint requires a rustc new enough that
+# `iter_array_chunks` is stabilised, which breaks stwo's `#![feature]`.
 ruint = "=1.17.2"
 # `cairo-1-hints` selects cairo-vm's typed Cairo 1 hint processor. The
 # builtin processor matches *legacy long-form pythonic* hint sources; the
 # cairo-lang 2.20 renderer emits short canonical strings, so none of them
 # resolve. Without this feature the harness fails with
 # `UnknownHint("memory[ap + -1] = memory[ap + 0] < 4294967296")`.
-cairo-vm = { version = "=3.1.0", features = ["cairo-1-hints"] }
-# Typed CASM hints (`cairo_lang_casm::hints::Hint`) are what
-# Cairo1HintProcessor executes. `serde` makes them (de)serializable so the
-# hint table can cross the zk-circuit -> stwo-sys boundary. Pinned to the
-# same version zk-circuit compiles with: the JSON representation is the
-# cross-crate contract and both sides must render it identically.
+cairo-vm = { version = "=3.2.0", features = ["cairo-1-hints"] }
+
+# The Cairo executable ABI. `cairo_lang_executable` provides the upstream
+# `Executable` type that is the program artifact; `cairo_lang_runner`
+# provides `build_hints_dict` / `CairoHintProcessor`, which is how the
+# circuit's arguments reach the VM (as calldata through hints, NOT on the
+# stack). Pinned to 2.20.0 — the same version zk-circuit compiles with:
+# `Executable` round-trips through serde and is the cross-crate contract.
+cairo-lang-executable = "=2.20.0"
+cairo-lang-runner = "=2.20.0"
+cairo-lang-utils = "=2.20.0"
 cairo-lang-casm = { version = "=2.20.0", features = ["serde"] }
 
 [profile.release]

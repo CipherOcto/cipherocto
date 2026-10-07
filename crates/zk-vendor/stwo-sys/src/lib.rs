@@ -47,12 +47,12 @@
 #![allow(unsafe_code)] // FFI shim requires unsafe blocks
 
 use cairo_air::CairoProofForRustVerifier;
-use stwo::core::vcs_lifted::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher};
-use stwo_cairo_adapter::ProverInput;
-use stwo_cairo_prover::prover::{prove_cairo, ChannelHash, ProverParameters};
-use cairo_air::PreProcessedTraceVariant;
 use stwo::core::fri::FriConfig;
 use stwo::core::pcs::PcsConfig;
+use stwo::core::vcs_lifted::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher};
+use stwo_cairo_adapter::ProverInput;
+use stwo_cairo_common::preprocessed_columns::preprocessed_trace::PreProcessedTraceVariant;
+use stwo_cairo_prover::prover::{prove_cairo, ChannelHash, ProverParameters};
 
 // ---- Cairo-VM harness (audit C-2 remediation, 2026-10-06) ----
 //
@@ -65,25 +65,30 @@ use stwo::core::pcs::PcsConfig;
 //
 // The circuit now takes its witness as `main` parameters (see
 // `cairo/src/lib.cairo` §Input surface). The harness below closes the loop:
-// CASM bytes + serialized witness -> run the VM -> `adapt()` -> `ProverInput`.
+// `Executable` artifact + serialized witness -> run the VM -> `adapt()` ->
+// `ProverInput`.
 //
 // This lives in `stwo-sys` rather than `zk-vendor` because `cairo-vm` and
 // `stwo-cairo-adapter` are nightly-only dependencies of the excluded cdylib
 // crate; `zk-vendor` must stay on stable rust.
-// Import paths are pinned to cairo-vm **3.1.0** (see Cargo.toml). 3.2.x moved
-// `Program::from_bytes`, `LayoutName` and `CairoArg` to different modules and
-// removed `run_from_entrypoint`; do not follow 3.2 docs here.
+// Import paths are pinned to cairo-vm **3.2.0** (see Cargo.toml). This crate
+// was previously on 3.1.0, where `Program::from_bytes`, `LayoutName` and
+// `CairoArg` lived in different modules and `run_from_entrypoint` existed;
+// 3.2.0 moved/removed them. When bumping further, check those three against
+// the new tree rather than assuming either layout.
+// Cairo executable ABI (see docs/architecture/zk-stwo-cairo-executable-recipe.md).
+// `Executable` is the program artifact; `build_hints_dict` / `CairoHintProcessor`
+// are how the circuit's arguments reach the VM, as calldata through hints rather
+// than on the stack.
+use cairo_lang_executable::executable::EntryPointKind;
+use cairo_lang_runner::{build_hints_dict, Arg, CairoHintProcessor};
+use cairo_vm::cairo_run::{cairo_run_program_with_initial_scope, CairoRunConfig};
+use cairo_vm::types::exec_scope::ExecutionScopes;
 use cairo_vm::types::layout_name::LayoutName;
-use cairo_vm::types::relocatable::MaybeRelocatable;
-use cairo_lang_casm::hints::Hint as CasmHint;
-use cairo_vm::hint_processor::cairo_1_hint_processor::hint_processor::Cairo1HintProcessor;
-use cairo_vm::serde::deserialize_program::{ApTracking, FlowTrackingData, HintParams};
-use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::program::Program;
-use cairo_vm::vm::runners::cairo_runner::{CairoRunner, RunResources};
+use cairo_vm::types::relocatable::MaybeRelocatable;
 use cairo_vm::Felt252 as Felt;
 
-use std::collections::HashMap;
 use std::os::raw::c_char;
 
 /// Opaque proof handle returned by `stwo_prove`. We hold the JSON-encoded
@@ -94,11 +99,19 @@ pub struct ProofHandle {
     bytes: Vec<u8>,
 }
 
-/// The four arguments `capability_zk::main` accepts, mirrored from
-/// `cairo/src/lib.cairo`. Serde field order MUST match the Cairo struct
-/// declaration order, because `CairoArg::Composed` serializes positionally.
+/// The four arguments the capability circuit entry point accepts, mirrored
+/// from `cairo/src/lib.cairo`. Serde field order MUST match the Cairo struct
+/// declaration order, because the executable ABI deserializes calldata
+/// positionally.
 ///
-/// Mirrors `zk-circuit`'s `PublicInputs` / `PrivateWitness` / `TraceStep`.
+/// The Rust-side producer of this JSON is `octo_cap_zk` (which owns the
+/// mint-path `PublicInputs` / `PrivateWitness` / `TraceStep` types). These
+/// are deliberately *not* shared types: this crate is a nightly cdylib that
+/// `zk-vendor` loads dynamically, so a shared crate could not be a
+/// dependency of both without making stable consumers require nightly.
+/// The mirror is pinned by the `calldata_matches_cairo_serde_layout` and
+/// `calldata_rejects_unparsable_felt` tests below, plus
+/// `zk_circuit::build_cairo_run_input`'s emitter test.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PublicInputsArg {
@@ -158,446 +171,187 @@ fn parse_felt(s: &str) -> Option<Felt> {
     }
 }
 
-/// Decode compiled CASM bytecode into the felt-code vector cairo-vm expects.
+/// The program artifact: a real Cairo **`Executable`**, serialized.
 ///
-/// The wire format is one **32-byte big-endian** word per felt, which is
-/// what `zk_circuit::felt_vec_to_casm_bytes` emits (`to_signed_bytes_be`
-/// left-padded to 32). CASM instructions are 63-bit values, so every
-/// word fits in the low 8 bytes and the top 24 are zero padding.
+/// This is the upstream `cairo_lang_executable::executable::Executable` type
+/// itself — bytecode, the typed hint table, and the entrypoint list — not a
+/// hand-rolled mirror. That matters: the executable wrapper is what carries
+/// `main`'s arguments as calldata, and a wrapper that silently disagrees with
+/// the harness produces a program that runs *something* without ever reaching
+/// the circuit. Using the upstream type removes that whole class of wire
+/// drift.
 ///
-/// Reading 8-byte chunks here instead is a silent corruption, not an
-/// error: it yields ~4x the felts, shifts every instruction by 24 bytes,
-/// and produces a program that decodes into garbage words. The earlier
-/// symptom was `InconsistentMemory` at the very first stack write.
-fn casm_bytes_to_felt_code(bytes: &[u8]) -> Option<Vec<MaybeRelocatable>> {
-    const FELT_BYTES: usize = 32;
-    if bytes.is_empty() || bytes.len() % FELT_BYTES != 0 {
-        eprintln!(
-            "stwo-sys: harness: CASM length {} is not a multiple of {FELT_BYTES}",
-            bytes.len()
-        );
-        return None;
-    }
-    Some(
-        bytes
-            .chunks(FELT_BYTES)
-            .map(|w| {
-                let mut b = [0u8; FELT_BYTES];
-                b.copy_from_slice(w);
-                MaybeRelocatable::Int(Felt::from_bytes_be(&b))
-            })
-            .collect(),
-    )
-}
+/// Produced by `zk_circuit::bundled_executable_json()`. See
+/// `docs/architecture/zk-stwo-cairo-executable-recipe.md`.
+pub type CairoProgramSpec = cairo_lang_executable::executable::Executable;
 
-/// A compiled CASM program together with everything a VM needs to run it.
+/// Width, in felts, of one serialized `TraceStep`.
 ///
-/// This mirrors `zk_circuit::HarnessProgram` field-for-field. The two live
-/// in separate crates (zk-circuit depends on the FFI loader, not the
-/// reverse), so the JSON shape is the contract.
-///
-/// ## Why this is not just a byte blob
-///
-/// A raw `.casm` is missing two things that are load-bearing:
-///
-/// - **Hints.** Cairo 1 hints are executable code between instructions.
-///   They allocate segments (`memory[ap] = segments.add()`) and enforce
-///   the `u32` / `u8` / `u64` range checks that the instruction stream
-///   cannot express. Without them the VM cannot even reach `main`, and
-///   where it does run, the enforced bound is missing from the trace —
-///   which is an unsoundness, not a performance issue.
-/// - **The entrypoint offset.** `cairo` is a Cairo *library*, so offset 0
-///   is `verify_chain`. Starting there runs the wrong function on
-///   attacker-supplied arguments.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-pub struct CairoProgramSpec {
-    /// Lowercase hex of the assembled CASM bytecode.
-    pub casm_hex: String,
-    /// Hint table, ordered by `pc`.
-    pub hints: Vec<CairoProgramHint>,
-    /// Word offset (CASM pc) of the entrypoint within the decoded
-    /// bytecode. This is a word index, not a byte offset.
-    pub main_pc: usize,
-}
-
-/// One hint in [`CairoProgramSpec`].
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-pub struct CairoProgramHint {
-    /// Word offset (CASM pc) of the instruction the hint runs before.
-    pub pc: usize,
-    /// The typed hint, as emitted by the Cairo compiler.
-    ///
-    /// Typed, not pythonic: `Cairo1HintProcessor` dispatches on the
-    /// `cairo_lang_casm::hints::Hint` value itself, while cairo-vm's
-    /// builtin processor matches legacy long-form pythonic source
-    /// strings that the 2.20 renderer no longer produces.
-    pub hint: CasmHint,
-}
-
-/// Builtins the capability circuit declares as implicit parameters.
-///
-/// `GasBuiltin` is deliberately absent: cairo-vm's layout has no gas
-/// builtin runner, so naming it in `Program::builtins` makes
-/// `initialize_builtins(false)` fail with `MissingBuiltin`. The circuit's
-/// gas counter is supplied as the plain value in [`INITIAL_GAS`].
-const PROGRAM_BUILTINS: [BuiltinName; 2] = [BuiltinName::range_check, BuiltinName::poseidon];
-
-/// Gas counter handed to the circuit at entry.
-///
-/// The compiled circuit is produced with `gas_usage_check: false`, so gas
-/// is not metered; the slot still has to hold a value large enough that
-/// the emitted `withdraw_gas` calls do not underflow. `u64::MAX` is the
-/// same "unmetered" sentinel cairo-vm's own Cairo 1 entrypoint path uses.
-const INITIAL_GAS: u64 = u64::MAX;
-
-/// Build the `Program::new_for_proof` hint map.
-///
-/// One `HintParams` per pc: cairo-vm's `HintsCollection` resolves a
-/// single hint reference per pc, so a pc carrying more than one hint is
-/// a silent constraint loss rather than a recoverable error. Producers
-/// (`zk_circuit::sierra_to_casm`) reject that case before it reaches here.
-fn hint_params(hints: &[CairoProgramHint]) -> HashMap<usize, Vec<HintParams>> {
-    hints
-        .iter()
-        .map(|h| {
-            (
-                h.pc,
-                vec![HintParams {
-                    // `Cairo1HintProcessor::compile_hint` parses this as a
-                    // pc and looks the real hint up in its own table, so the
-                    // code field carries the pc, not the hint text.
-                    code: h.pc.to_string(),
-                    accessible_scopes: Vec::new(),
-                    flow_tracking_data: FlowTrackingData {
-                        ap_tracking: ApTracking::default(),
-                        reference_ids: HashMap::new(),
-                    },
-                }],
-            )
-        })
-        .collect()
-}
-
-/// Build the typed hint processor the runner dispatches to.
-fn hint_processor(hints: &[CairoProgramHint]) -> Cairo1HintProcessor {
-    Cairo1HintProcessor::new(
-        &hints
-            .iter()
-            .map(|h| (h.pc, vec![h.hint.clone()]))
-            .collect::<Vec<_>>(),
-        RunResources::default(),
-        false,
-    )
-}
-
-/// The felt stride of one `TraceStep` in `steps_flat`. Must match
-/// `TRACE_STRIDE` in `cairo/src/lib.cairo`.
+/// Mirrors `cairo/src/lib.cairo::TRACE_STRIDE`.
 const TRACE_STRIDE: usize = 3;
 
-/// Number of stack words the compiled `main` reads, and the count of
-/// plain felts among them (the other four are relocatables).
+/// Serialize the harness's typed input into the flat `Array<felt252>` calldata
+/// the executable wrapper deserializes.
 ///
-/// This is measured from the compiled artifact, not assumed. `main`'s
-/// Sierra statements name their frame cells, and they are:
-/// `RangeCheck` `[fp-24]`, `GasBuiltin` `[fp-23]`, `Poseidon` `[fp-22]`,
-/// `PublicInputs` `[fp-21 .. fp-12]` (one cell per field),
-/// `PrivateWitness` `[fp-11 .. fp-7]`, `caveat_felts` `[fp-6], [fp-5]`,
-/// `steps_flat` `[fp-4], [fp-3]`.
+/// Layout, in `main`'s declaration order:
 ///
-/// Earlier iterations of this harness assumed a 5-word stack built from
-/// Scarb's Serde wrapper. That wrapper is not what `target =
-/// "executable"` emits here: the entrypoint takes its parameters
-/// *already decomposed*, so the arrays arrive as `(start, end)` pairs and
-/// the structs arrive unboxed. Getting this wrong produced
-/// `RelocatableSubUsizeNegOffset((Relocatable { segment_index: 1,
-/// offset: 7 }, 24))` — the VM reading `[fp-24]` out of a 7-slot frame.
-const ENTRY_STACK_WORDS: usize = 22;
-
-/// Felt cells of the entry stack that hold a value, not a pointer:
-/// 10 public + 5 private.
-const ENTRY_STACK_FELTS: usize = 15;
-
-/// Flatten the witness into the felt cells the entrypoint expects, in
-/// declaration order.
+/// ```text
+/// [ PublicInputs(10) , PrivateWitness(5) , [len, caveats…] , [len, steps_flat…] ]
+/// ```
 ///
-/// ## Field order and widths
+/// Cairo's `Serde` for a struct is a **plain member sequence** — no header, no
+/// offsets — and `ArraySerde` is `[len, elems…]` with the element pointer at
+/// `elems[0]` (`core/src/array.cairo`).
 ///
-/// `PublicInputs` and `PrivateWitness` (see `cairo/src/lib.cairo`) are
-/// taken **one field per stack cell**, in declaration order. Every member
-/// is a `felt252`, `u32`, `u64` or `u8`; all four are felt-based and
-/// occupy exactly one cell. There is **no** Serde length prefix and
-/// **no** offset table on this path — see [`ENTRY_STACK_WORDS`].
-///
-/// A wrong field order or width does not silently pass: `u8` / `u32` /
-/// `u64` fields are range-checked by CASM hints, so a value that does not
-/// fit aborts the run.
-fn flatten_witness(input: &CairoRunInput) -> Option<Vec<MaybeRelocatable>> {
+/// `steps_flat` is the flat `[op, input, output]` encoding the circuit folds
+/// directly, which is why the step fields are flattened here rather than
+/// reconstructed as structs.
+fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     let p = &input.pub_inputs;
     let w = &input.priv_witness;
 
-    // Fail fast on the same invariant the circuit asserts
-    // (`stage2_main`: "CaveatChainDepthMismatch"), so the caller gets a
-    // clear diagnostic instead of a VM panic.
-    if input.caveat_felts.len() != w.caveats_count as usize {
-        return None;
-    }
-
-    let mut flat: Vec<MaybeRelocatable> = Vec::with_capacity(ENTRY_STACK_FELTS);
+    let mut out = Vec::with_capacity(
+        15 + 2 + input.caveat_felts.len() + 1 + input.steps.len() * TRACE_STRIDE,
+    );
 
     // PublicInputs — declaration order from `cairo/src/lib.cairo`.
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.ask_id_lo)?));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.ask_id_hi)?));
-    flat.push(MaybeRelocatable::Int(Felt::from(p.axes_count)));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.cap_root_hash_lo)?));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.cap_root_hash_hi)?));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.invocation_hash)?));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.holder_did)?));
-    flat.push(MaybeRelocatable::Int(Felt::from(p.current_unix_time)));
-    flat.push(MaybeRelocatable::Int(Felt::from(p.has_output_hash)));
-    flat.push(MaybeRelocatable::Int(parse_felt(&p.output_hash)?));
+    out.push(parse_felt(&p.ask_id_lo)?);
+    out.push(parse_felt(&p.ask_id_hi)?);
+    out.push(Felt::from(p.axes_count));
+    out.push(parse_felt(&p.cap_root_hash_lo)?);
+    out.push(parse_felt(&p.cap_root_hash_hi)?);
+    out.push(parse_felt(&p.invocation_hash)?);
+    out.push(parse_felt(&p.holder_did)?);
+    out.push(Felt::from(p.current_unix_time));
+    out.push(Felt::from(p.has_output_hash));
+    out.push(parse_felt(&p.output_hash)?);
 
-    // PrivateWitness — declaration order from `cairo/src/lib.cairo`.
-    flat.push(MaybeRelocatable::Int(parse_felt(&w.cap_root_secret_lo)?));
-    flat.push(MaybeRelocatable::Int(parse_felt(&w.cap_root_secret_hi)?));
-    flat.push(MaybeRelocatable::Int(Felt::from(w.caveats_count)));
-    flat.push(MaybeRelocatable::Int(Felt::from(w.discharges_count)));
-    flat.push(MaybeRelocatable::Int(Felt::from(w.inference_trace_present)));
+    // PrivateWitness — declaration order.
+    out.push(parse_felt(&w.cap_root_secret_lo)?);
+    out.push(parse_felt(&w.cap_root_secret_hi)?);
+    out.push(Felt::from(w.caveats_count));
+    out.push(Felt::from(w.discharges_count));
+    out.push(Felt::from(w.inference_trace_present));
 
-    debug_assert_eq!(flat.len(), ENTRY_STACK_FELTS);
-    Some(flat)
-}
-
-/// Load a felt slice into a fresh segment and return its `(start, end)`.
-fn segment_pair(
-    runner: &mut CairoRunner,
-    data: &[MaybeRelocatable],
-) -> Option<(MaybeRelocatable, MaybeRelocatable)> {
-    let start = runner.vm.segments.add();
-    runner.vm.segments.load_data(start, data).ok()?;
-    let end = (start + data.len()).ok()?;
-    Some((
-        MaybeRelocatable::RelocatableValue(start),
-        MaybeRelocatable::RelocatableValue(end),
-    ))
-}
-
-/// Build the 22-word entrypoint stack. See [`ENTRY_STACK_WORDS`] for the
-/// derivation and the cell assignment.
-fn build_entry_stack(
-    runner: &mut CairoRunner,
-    input: &CairoRunInput,
-) -> Option<Vec<MaybeRelocatable>> {
-    let flat = flatten_witness(input)?;
-
-    let mut caveat_data: Vec<MaybeRelocatable> =
-        Vec::with_capacity(input.caveat_felts.len());
+    // caveat_felts: Array<felt252> = [len, elems…].
+    out.push(Felt::from(input.caveat_felts.len()));
     for c in &input.caveat_felts {
-        caveat_data.push(MaybeRelocatable::Int(parse_felt(c)?));
+        out.push(parse_felt(c)?);
     }
 
-    let mut step_data: Vec<MaybeRelocatable> =
-        Vec::with_capacity(input.steps.len() * TRACE_STRIDE);
+    // steps_flat: Array<felt252> = [len, elems…], stride TRACE_STRIDE.
+    let flat_len = input.steps.len() * TRACE_STRIDE;
+    out.push(Felt::from(flat_len));
     for st in &input.steps {
-        step_data.push(MaybeRelocatable::Int(parse_felt(&st.op_code)?));
-        step_data.push(MaybeRelocatable::Int(parse_felt(&st.input_hash)?));
-        step_data.push(MaybeRelocatable::Int(parse_felt(&st.output_hash)?));
+        out.push(parse_felt(&st.op_code)?);
+        out.push(parse_felt(&st.input_hash)?);
+        out.push(parse_felt(&st.output_hash)?);
     }
 
-    let (caveat_start, caveat_end) = segment_pair(runner, &caveat_data)?;
-    let (step_start, step_end) = segment_pair(runner, &step_data)?;
-
-    let builtin_base = |name: BuiltinName| -> Option<MaybeRelocatable> {
-        runner
-            .vm
-            .builtin_runners
-            .iter()
-            .find(|b| b.name() == name)
-            .map(|b| MaybeRelocatable::from((b.base() as isize, 0)))
-    };
-
-    Some(assemble_entry_stack(
-        builtin_base(BuiltinName::range_check)?,
-        builtin_base(BuiltinName::poseidon)?,
-        flat,
-        (caveat_start, caveat_end),
-        (step_start, step_end),
-    ))
+    Some(out)
 }
 
-/// Order the entry stack. Split out from [`build_entry_stack`] so the
-/// 22-cell shape is assertable without standing up a VM.
-fn assemble_entry_stack(
-    range_check_base: MaybeRelocatable,
-    poseidon_base: MaybeRelocatable,
-    flat: Vec<MaybeRelocatable>,
-    caveats: (MaybeRelocatable, MaybeRelocatable),
-    steps: (MaybeRelocatable, MaybeRelocatable),
-) -> Vec<MaybeRelocatable> {
-    let mut stack = Vec::with_capacity(ENTRY_STACK_WORDS);
-    stack.push(range_check_base);
-    stack.push(MaybeRelocatable::Int(Felt::from(INITIAL_GAS)));
-    stack.push(poseidon_base);
-    stack.extend(flat);
-    stack.push(caveats.0);
-    stack.push(caveats.1);
-    stack.push(steps.0);
-    stack.push(steps.1);
-    debug_assert_eq!(stack.len(), ENTRY_STACK_WORDS);
-    stack
-}
-
-/// Execute compiled CASM against a serialized witness and produce the
-/// `ProverInput` that STWO consumes.
+/// Execute the compiled Executable against a serialized witness and produce
+/// the `ProverInput` that STWO consumes.
 ///
-/// Returns the JSON-encoded `ProverInput`, or `None` on any failure (bad
-/// CASM, VM panic in the circuit, argument-shape mismatch, or an
-/// adapter error). Callers distinguish these only by the stderr diagnostic.
+/// Returns the JSON-encoded `ProverInput`, or `None` on any failure — malformed
+/// JSON, an unparsable felt, a circuit assertion failure, or an adapter error.
+///
+/// **Why a failed assertion is a hard error here.** A Cairo 2.x `assert!`
+/// compiles into a call to `core::panics::panic`, which writes its payload and
+/// *returns through the caller*; cairo-vm's `VirtualMachineError` has no
+/// `Panic` variant, so calling the bare `main` directly yields an ordinary
+/// `ProverInput` for a rejected witness. The executable wrapper closes that
+/// hole: it checks the panic flag and fails with
+/// `ASSERT_EQ instruction failed: 0 != 1`. Gating on the *run result* is
+/// therefore a real check, not a formality — and it is what makes the
+/// positive control in `harness_accepts_a_satisfying_witness` meaningful.
 fn run_cairo_to_prover_input(spec: &CairoProgramSpec, run_input_json: &[u8]) -> Option<Vec<u8>> {
-    let input: CairoRunInput = match serde_json::from_slice(run_input_json) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("stwo-sys: harness: bad run-input JSON: {e}");
-            return None;
-        }
-    };
+    let input: CairoRunInput = serde_json::from_slice(run_input_json).ok()?;
+    let calldata = build_calldata(&input)?;
 
-    // CASM -> encoded instruction stream -> felt code (see casm_bytes_to_felt_code).
-    let casm = match hex::decode(&spec.casm_hex) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("stwo-sys: harness: casm_hex is not hex: {e}");
-            return None;
-        }
-    };
-    let felt_code = match casm_bytes_to_felt_code(&casm) {
-        Some(f) => f,
-        None => return None,
-    };
-    if felt_code.is_empty() {
-        eprintln!("stwo-sys: harness: CASM bytecode is empty");
-        return None;
-    }
-    if spec.main_pc >= felt_code.len() {
-        eprintln!(
-            "stwo-sys: harness: entrypoint pc {} is past the end of the {}-word program",
-            spec.main_pc,
-            felt_code.len()
-        );
-        return None;
-    }
-    let program_len = felt_code.len();
+    let entrypoint = spec
+        .entrypoints
+        .iter()
+        .find(|e| matches!(e.kind, EntryPointKind::Standalone))?;
+
+    // The wrapper header is `ap += builtins.len(); call rel 4; jmp rel 0`; the
+    // `call`'s return address is `offset + 4`, and that is where the trace ends.
+    let data: Vec<MaybeRelocatable> = spec
+        .program
+        .bytecode
+        .iter()
+        .map(Felt::from)
+        .map(MaybeRelocatable::from)
+        .collect();
+    let (hints, string_to_hint) = build_hints_dict(&spec.program.hints);
+
     let program = Program::new_for_proof(
-        PROGRAM_BUILTINS.to_vec(),
-        felt_code,
-        0,
-        program_len,
-        hint_params(&spec.hints),
+        entrypoint.builtins.clone(),
+        data,
+        entrypoint.offset,
+        entrypoint.offset + 4,
+        hints,
         Default::default(),
         Default::default(),
-        Default::default(),
+        vec![],
         None,
     )
     .ok()?;
 
-    let mut runner = match CairoRunner::new(
+    // Arguments cross the boundary as calldata through the hint processor, NOT
+    // on the stack. `user_args` is one inner `Vec<Arg>` per *user parameter*;
+    // the wrapper has exactly one (the calldata array).
+    let mut hint_processor = CairoHintProcessor {
+        runner: None,
+        user_args: vec![vec![Arg::Array(
+            calldata.into_iter().map(Arg::Value).collect(),
+        )]],
+        string_to_hint,
+        starknet_state: Default::default(),
+        run_resources: Default::default(),
+        syscalls_used_resources: Default::default(),
+        no_temporary_segments: false,
+        markers: Default::default(),
+        panic_traceback: Default::default(),
+    };
+
+    // ProofModeCanonical is what produces the canonical public memory the
+    // verifier checks: `[initial_ap - 2] == initial_ap`, `[initial_ap - 1] == 0`.
+    let runner = cairo_run_program_with_initial_scope(
         &program,
-        LayoutName::all_cairo_stwo,
-        None,
-        true,
-        true,
-        true,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("stwo-sys: harness: runner creation failed: {e:?}");
-            return None;
-        }
-    };
+        &CairoRunConfig {
+            trace_enabled: true,
+            relocate_trace: false,
+            layout: LayoutName::all_cairo_stwo,
+            fill_holes: true,
+            proof_mode: true,
+            disable_trace_padding: true,
+            ..Default::default()
+        },
+        &mut hint_processor,
+        ExecutionScopes::new(),
+    )
+    .ok()?;
 
-    // NOT `runner.initialize(true)`: that also runs
-    // `initialize_main_entrypoint`, which writes a proof-mode initial
-    // stack at `[exec_base+0..]` with `fp = exec_base + 2`. Writing the
-    // real entrypoint stack afterwards then collides on already-accessed
-    // memory (`InconsistentMemory`). Builtins and segments are exactly
-    // what `initialize` would do before that point.
-    if let Err(e) = runner.initialize_builtins(false) {
-        eprintln!("stwo-sys: harness: builtin init failed: {e:?}");
-        return None;
-    }
-    runner.initialize_segments(None);
+    let mut prover_input = stwo_cairo_adapter::adapter::adapt(&runner).ok()?;
 
-    let stack = match build_entry_stack(&mut runner, &input) {
-        Some(s) => s,
-        None => {
-            eprintln!(
-                "stwo-sys: harness: could not marshal witness (bad felt, or caveats_count {} \
-                 disagrees with {} supplied caveat felts)",
-                input.priv_witness.caveats_count,
-                input.caveat_felts.len()
-            );
-            return None;
-        }
-    };
-
-    // `initialize_function_entrypoint` returns the end-of-program pc,
-    // which is otherwise private on the runner. Jump to `main_pc`, not 0:
-    // offset 0 is `verify_chain`, the first function of the Cairo library.
-    let end = match runner.initialize_function_entrypoint(
-        spec.main_pc,
-        stack,
-        MaybeRelocatable::from(0),
-    ) {
-        Ok(e) => e,
-        Err(err) => {
-            eprintln!("stwo-sys: harness: entrypoint setup failed: {err:?}");
-            return None;
-        }
-    };
-    runner.initialize_vm().ok()?;
-    let mut hint_processor = hint_processor(&spec.hints);
-    if let Err(e) = runner.run_until_pc(end, &mut hint_processor) {
-        eprintln!("stwo-sys: harness: circuit execution failed: {e:?}");
-        return None;
-    }
-
-    // Gate on the circuit's return value. This is not belt-and-braces: it is
-    // the ONLY failure signal available.
+    // `adapt()` hardcodes `PublicSegmentContext::bootloader_context()` (its own
+    // `TODO(spapini): take this from the input`), which is `[true; 11]`. That is
+    // wrong twice over here:
     //
-    // cairo-vm 3.1.0's `VirtualMachineError` has no `Panic` variant (see
-    // `vm/errors/vm_errors.rs`: RunnerError, Memory, Math, TracerError,
-    // MainScopeError, Other — and none of them is a Cairo panic). A Cairo 2.x
-    // `assert!` compiles to a call into `core::panics::panic`, which writes
-    // its payload and *returns through the caller* instead of trapping. A
-    // failed assertion therefore runs to completion and produces a perfectly
-    // ordinary `ProverInput`.
+    // 1. `LayoutName::all_cairo_stwo` has NINE builtins — no ecdsa, no keccak —
+    //    so zipping 9 real ranges against 11 names mislabels every segment from
+    //    `bitwise` onward and lands poseidon's cells on `ec_op`.
+    // 2. The prover reads `n = count(present)` segment start pointers off the
+    //    stack, and cairo-vm only pushes pointers for `program.builtins` — not
+    //    every builtin the layout instantiates.
     //
-    // Without this gate `axes_count = 5000` (must trip `AxesCountTooLarge`),
-    // a 2-deep caveat chain, and a trace that does not fold to the committed
-    // `output_hash` all "prove" successfully.
-    //
-    // `main` returns `1` on the success path (`stage2_main` ends in `1`), so
-    // anything else means the circuit did not complete.
-    match runner.vm.get_return_values(1) {
-        Ok(vals) if vals == [MaybeRelocatable::Int(Felt::from(1))] => {}
-        Ok(vals) => {
-            eprintln!(
-                "stwo-sys: harness: circuit did not return its success value                  (expected 1, got {vals:?}); a Cairo assert! does not trap under cairo-vm,                  so this is how a rejected witness is detected"
-            );
-            return None;
-        }
-        Err(e) => {
-            eprintln!("stwo-sys: harness: cannot read the circuit return value: {e}");
-            return None;
-        }
-    }
-
-    let prover_input: ProverInput = match stwo_cairo_adapter::adapter::adapt(&runner) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("stwo-sys: harness: adapt failed: {e:?}");
-            return None;
-        }
-    };
+    // So the context must mirror the *declared* entrypoint builtins. Getting
+    // this wrong surfaces as `ECDSA segment is not empty` (case 1) or
+    // `Builtin segment start doesn't match claim` (case 2).
+    prover_input.public_segment_context =
+        stwo_cairo_adapter::PublicSegmentContext::new(&entrypoint.builtins);
 
     serde_json::to_vec(&prover_input).ok()
 }
@@ -610,12 +364,20 @@ fn run_cairo_to_prover_input(spec: &CairoProgramSpec, run_input_json: &[u8]) -> 
 /// plain `stwo_prove` remains for callers that already hold a
 /// `ProverInput`.
 ///
-/// `program_json` is the [`CairoProgramSpec`] shape:
-/// `{ "casm_hex": "...", "hints": [{"pc": 0, "code": "..."}], "main_pc": 379 }`.
+/// `program_json` is the [`CairoProgramSpec`] shape, i.e. a JSON-encoded
+/// upstream `cairo_lang_executable::executable::Executable`: a bytecode
+/// word vector, a hint table, and an entrypoint table naming each
+/// entrypoint's offset and *declared* builtins. The bundled circuit is
+/// emitted by `cargo test -p zk-circuit --test dump_casm_fixture -- --ignored`.
 ///
-/// It is a [`CairoProgramSpec`] rather than raw CASM bytes because both the
-/// hint table and the entrypoint offset are required for a correct
-/// execution; see that type's documentation.
+/// It is the upstream `Executable` rather than a hand-rolled mirror because
+/// the entrypoint wrapper (`Executable::new` emits `ap += builtins.len();
+/// call rel 4; jmp rel 0;`) and the argument-delivery ABI are the compiler's
+/// contract, not ours; mirroring them is how the wire shape drifts out from
+/// under the prover. Note that the `PublicSegmentContext` must be built from
+/// the entrypoint's *declared* builtins, not the runner's layout-wide set —
+/// the prover reads segment pointers off the stack and cairo-vm only pushes
+/// pointers for `program.builtins`.
 ///
 /// `run_input_json` is the `CairoRunInput` shape:
 /// `{ "pub_inputs": {...}, "priv_witness": {...}, "caveat_felts": [...], "steps": [...] }`
@@ -721,7 +483,8 @@ fn default_prover_params() -> ProverParameters {
                 log_last_layer_degree_bound: 0,
                 log_blowup_factor: 1,
                 n_queries: 70,
-                line_fold_step: 1,
+                // Named `line_fold_step` in stwo 2.1.0; renamed by stwo 2.3.0.
+                fold_step: 1,
             },
             lifting_log_size: None,
         },
@@ -739,9 +502,9 @@ fn default_prover_params() -> ProverParameters {
 /// the proof JSON-encoded as `CairoProofForRustVerifier<Blake2sMerkleHasher>`.
 ///
 /// `casm` and `public` are accepted for ABI parity with the stub; the
-/// real STWO proof is bound to the witness + ProverInput alone (CASM hash
-/// + public inputs are checked by the cipherocto wrapper BEFORE calling
-/// the FFI).
+/// real STWO proof is bound to the witness and `ProverInput` alone. The CASM
+/// hash and the public inputs are checked by the cipherocto wrapper BEFORE
+/// calling the FFI.
 ///
 /// # Safety
 ///
@@ -777,10 +540,8 @@ pub unsafe extern "C" fn stwo_prove(
         };
 
         // Generate proof via real STWO.
-        let proof = match prove_cairo::<Blake2sMerkleChannel>(
-            prover_input,
-            default_prover_params(),
-        ) {
+        let proof = match prove_cairo::<Blake2sMerkleChannel>(prover_input, default_prover_params())
+        {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("stwo-sys: prove_cairo failed: {e:?}");
@@ -789,8 +550,7 @@ pub unsafe extern "C" fn stwo_prove(
         };
 
         // Convert to verifier-compatible format + JSON-encode for FFI.
-        let proof_for_verifier: CairoProofForRustVerifier<Blake2sMerkleHasher> =
-            proof.into();
+        let proof_for_verifier: CairoProofForRustVerifier<Blake2sMerkleHasher> = proof.into();
         let json_bytes = match serde_json::to_vec(&proof_for_verifier) {
             Ok(b) => b,
             Err(e) => {
@@ -939,7 +699,10 @@ mod tests {
         let s = unsafe { std::ffi::CStr::from_ptr(v) };
         let text = s.to_str().unwrap();
         assert!(text.starts_with("stwo-sys"));
-        assert!(text.contains("real STWO"), "version string should advertise real STWO impl");
+        assert!(
+            text.contains("real STWO"),
+            "version string should advertise real STWO impl"
+        );
     }
 
     #[test]
@@ -963,9 +726,7 @@ mod tests {
         let empty: &[u8] = &[];
         let public = b"unused";
         // SAFETY: pointers are valid for the call duration.
-        let ret = unsafe {
-            stwo_verify(empty.as_ptr(), 0, public.as_ptr(), public.len())
-        };
+        let ret = unsafe { stwo_verify(empty.as_ptr(), 0, public.as_ptr(), public.len()) };
         assert_eq!(ret, 1, "empty proof should return Err (1)");
     }
 
@@ -977,44 +738,40 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod harness_tests {
     use super::*;
 
-    /// Load the compiled circuit artifact the workspace pipeline emits:
-    /// CASM bytecode + hint table + entrypoint offset.
-    ///
-    /// Regenerate with
-    /// `cargo test -p zk-circuit --test dump_casm_fixture -- --ignored`.
-    fn fixture_spec() -> CairoProgramSpec {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capability_zk.json");
-        let raw = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("fixture {} missing: {e}", path.display()));
-        serde_json::from_slice(&raw)
-            .unwrap_or_else(|e| panic!("fixture {} is not a CairoProgramSpec: {e}", path.display()))
+    /// Raw bytes of the bundled `Executable` fixture — the exact artifact the
+    /// mint path hands the FFI.
+    fn fixture_bytes() -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/capability_zk.json");
+        std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {} missing: {e}", path.display()))
     }
 
-    /// The harness must turn CASM + a serialized witness into a real
-    /// The VM really runs the compiled circuit on the supplied witness.
+    fn fixture_spec() -> CairoProgramSpec {
+        let raw = fixture_bytes();
+        serde_json::from_slice(&raw).unwrap_or_else(|e| {
+            panic!(
+                "fixture is not a Cairo Executable: {e}. Regenerate with \
+                 `cargo test -p zk-circuit --test dump_casm_fixture -- --ignored`"
+            )
+        })
+    }
+
+    /// A witness that satisfies **every** `stage2_main` assertion.
     ///
-    /// `main_pc`, the 22-cell frame and the typed hint table all have to be
-    /// right for this to reach `run_until_pc` at all, so reaching the
-    /// return-value gate proves the execution happened rather than being
-    /// short-circuited.
+    /// This is not an assumption: `cairo/src/lib.cairo::tests::harness_witness_is_satisfying`
+    /// runs `stage2_main` on these exact values under `scarb cairo-test` and
+    /// asserts it returns `1`.
     ///
-    /// The witness used here is deliberately *unsatisfying*: its
-    /// `cap_root_hash` is not the Poseidon commitment over
-    /// `(secret_lo, secret_hi, caveats)`, so the circuit panics and the
-    /// gate rejects it. Producing a satisfying witness needs a Poseidon
-    /// capability-root implementation, which the workspace does not have
-    /// (no crate here implements the Starknet Poseidon permutation). Until
-    /// one exists there is no positive fixture for this harness, and
-    /// [`harness_rejects_uncommitted_capability_root`] carries the proof
-    /// that the harness is fail-closed in its absence.
-    #[test]
-    fn harness_executes_the_compiled_circuit_and_gates_on_its_result() {
-        let spec = fixture_spec();
-        let run_input = r#"{
+    /// * `axes_count = 1` (< 1000)
+    /// * `caveats_count = 3` == `caveat_felts.len()`, and `>= CHAIN_DEPTH_MIN` (3)
+    /// * `has_output_hash = 0`, so the trace-root binding comparison is not armed
+    /// * one `TraceStep` → `steps_flat.len() == 3 == TRACE_STRIDE`, non-zero
+    fn satisfying_input() -> String {
+        r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
             "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
@@ -1025,216 +782,119 @@ mod harness_tests {
             "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
             "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
           },
-          "caveat_felts": ["15", "16", "17"],
-          "steps": [{"op_code":"18","input_hash":"19","output_hash":"20"}]
-        }"#;
-        assert!(
-            run_cairo_to_prover_input(&spec, run_input.as_bytes()).is_none(),
-            "a witness whose cap_root_hash is not the commitment must be rejected"
-        );
+          "caveat_felts": ["15", "16", "22"],
+          "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
+        }"#
+        .to_owned()
     }
 
-    /// A Cairo `assert!` does not trap under cairo-vm 3.1.0.
+    /// The satisfying witness with individual JSON fields replaced, so each
+    /// mutation test changes exactly one thing.
     ///
-    /// `VirtualMachineError` has no `Panic` variant, so a failed assertion
-    /// returns through the caller and the run completes normally. The
-    /// harness therefore *cannot* rely on `run_until_pc` erroring; it reads
-    /// the circuit's result instead. This test pins that behaviour for the
-    /// capability-root assertion specifically, because it is the assertion
-    /// every realistic witness fails until a Poseidon implementation lands.
-    #[test]
-    fn harness_rejects_uncommitted_capability_root() {
-        // Same witness as the execution test: cap_root_hash (4, 5) is not
-        // Poseidon(11, 12, 15, 16, 17). Distinct return values were observed
-        // for witnesses that trip different assertions, so the gate really
-        // is observing the circuit's outcome rather than failing blind.
-        assert!(run_with(&[], &[]).is_none());
+    /// The replacement text is spliced in **verbatim, including quotes**. The
+    /// schema is mixed — `axes_count` / `caveats_count` are JSON numbers, but
+    /// every felt field is a JSON *string* — so a felt override must be
+    /// written `"cap_root_secret_lo", "\"987654321\""`. Writing the bare
+    /// number yields `"cap_root_secret_lo": 987654321`, which fails to
+    /// deserialize and is rejected as a parse error rather than as the
+    /// circuit rejection the test is trying to provoke.
+    fn input_with(overrides: &[(&str, &str)]) -> String {
+        let mut json = satisfying_input();
+        for (k, v) in overrides {
+            let needle = format!("\"{k}\":");
+            let start = json
+                .find(needle.as_str())
+                .unwrap_or_else(|| panic!("no key {k}"))
+                + needle.len();
+            let end = json[start..]
+                .find([',', '\n'])
+                .map_or(json.len(), |i| start + i);
+            json.replace_range(start..end, v);
+        }
+        json
     }
 
-    /// The harness must REJECT a witness whose declared caveat count disagrees
-    /// with the felts supplied. This calls the real marshaller, so the guard
-    /// lives where the behaviour is.
-    #[test]
-    fn harness_rejects_caveat_count_mismatch() {
-        let mismatched = r#"{
-          "pub_inputs": {"ask_id_lo":"0","ask_id_hi":"0","axes_count":1,
-            "cap_root_hash_lo":"0","cap_root_hash_hi":"0","invocation_hash":"0",
-            "holder_did":"0","current_unix_time":0,"has_output_hash":0,"output_hash":"0"},
-          "priv_witness": {"cap_root_secret_lo":"0","cap_root_secret_hi":"0",
-            "caveats_count":3,"discharges_count":0,"inference_trace_present":1},
-          "caveat_felts": ["0xc0a1", "0xc0a2"],
-          "steps": [{"op_code":"0","input_hash":"0","output_hash":"0"}]
-        }"#;
-        let input: CairoRunInput = serde_json::from_str(mismatched).expect("parses");
-        assert_eq!(input.caveat_felts.len(), 2);
-        assert_eq!(input.priv_witness.caveats_count, 3);
-        assert!(
-            flatten_witness(&input).is_none(),
-            "declared 3 caveats but supplied 2 felts must be rejected"
-        );
+    // ------------------------------------------------------------------
+    // POSITIVE CONTROL
+    // ------------------------------------------------------------------
 
-        // Mutation control: the same witness with the count agreeing must be
-        // accepted. Without this the guard above could pass for the wrong
-        // reason (e.g. a parse failure) and prove nothing.
-        let agreed = mismatched.replace(
-            r#""caveats_count":3"#,
-            r#""caveats_count":2"#,
-        );
-        let input: CairoRunInput = serde_json::from_str(&agreed).expect("parses");
-        assert!(
-            flatten_witness(&input).is_some(),
-            "matching counts must flatten"
-        );
-    }
-
-    /// The flat encoding is the ABI. If this drifts from the corelib/compiler
-    /// rules documented on `flatten_witness`, every proof silently binds the
-    /// wrong witness, so pin the exact layout.
-    #[test]
-    fn flatten_witness_matches_cairo_serde_layout() {
-        let run_input = r#"{
-          "pub_inputs": {
-            "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 3,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-            "invocation_hash": "6", "holder_did": "7",
-            "current_unix_time": 8, "has_output_hash": 9, "output_hash": "10"
-          },
-          "priv_witness": {
-            "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
-            "caveats_count": 2, "discharges_count": 13, "inference_trace_present": 14
-          },
-          "caveat_felts": ["15", "16"],
-          "steps": [{"op_code":"17","input_hash":"18","output_hash":"19"}]
-        }"#;
-        let input: CairoRunInput = serde_json::from_str(run_input).expect("parses");
-        let flat = flatten_witness(&input).expect("flattens");
-
-        let felts: Vec<Felt> = flat
-            .iter()
-            .map(|m| match m {
-                MaybeRelocatable::Int(f) => *f,
-                MaybeRelocatable::RelocatableValue(r) => {
-                    panic!("witness felts must be plain integers, got relocatable {r:?}")
-                }
-            })
-            .collect();
-
-        assert_eq!(felts.len(), ENTRY_STACK_FELTS, "flat length: {felts:?}");
-        let expected: Vec<Felt> = [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, // PublicInputs
-            11, 12, 2, 13, 14, // PrivateWitness
-        ]
-        .into_iter()
-        .map(Felt::from)
-        .collect();
-        assert_eq!(
-            felts, expected,
-            "flat layout must be the 15 struct fields in declaration order"
-        );
-    }
-
-    /// A malformed felt must be rejected, not coerced to zero. `parse_felt`
-    /// returning `None` is the only path that keeps a bad witness from being
-    /// proven over.
-    #[test]
-    fn flatten_witness_rejects_unparsable_felt() {
-        let run_input = r#"{
-          "pub_inputs": {
-            "ask_id_lo": "not-a-felt", "ask_id_hi": "2", "axes_count": 3,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-            "invocation_hash": "6", "holder_did": "7",
-            "current_unix_time": 8, "has_output_hash": 9, "output_hash": "10"
-          },
-          "priv_witness": {
-            "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
-            "caveats_count": 0, "discharges_count": 0, "inference_trace_present": 0
-          },
-          "caveat_felts": [],
-          "steps": [{"op_code":"17","input_hash":"18","output_hash":"19"}]
-        }"#;
-        let input: CairoRunInput = serde_json::from_str(run_input).expect("parses");
-        assert!(flatten_witness(&input).is_none());
-    }
-
-    /// The entry stack must be exactly 22 cells, in the order the compiled
-    /// `main` reads them at `[fp-24 .. fp-3]`. If this drifts the VM reads
-    /// past the frame and aborts — or, worse, reads the wrong field into a
-    /// cryptographic check.
-    #[test]
-    fn entry_stack_is_22_cells_with_arrays_as_pointer_pairs() {
-        let run_input = r#"{
-          "pub_inputs": {
-            "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 3,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-            "invocation_hash": "6", "holder_did": "7",
-            "current_unix_time": 8, "has_output_hash": 9, "output_hash": "10"
-          },
-          "priv_witness": {
-            "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
-            "caveats_count": 0, "discharges_count": 13, "inference_trace_present": 14
-          },
-          "caveat_felts": [],
-          "steps": [{"op_code":"17","input_hash":"18","output_hash":"19"}]
-        }"#;
-        let input: CairoRunInput = serde_json::from_str(run_input).expect("parses");
-        let flat = flatten_witness(&input).expect("flattens");
-
-        let rc = MaybeRelocatable::from((3, 0));
-        let pl = MaybeRelocatable::from((4, 0));
-        let cav = (
-            MaybeRelocatable::RelocatableValue((5, 0).into()),
-            MaybeRelocatable::RelocatableValue((5, 0).into()),
-        );
-        let steps = (
-            MaybeRelocatable::RelocatableValue((6, 0).into()),
-            MaybeRelocatable::RelocatableValue((6, 3).into()),
-        );
-
-        let stack = assemble_entry_stack(rc.clone(), pl.clone(), flat, cav.clone(), steps.clone());
-        assert_eq!(stack.len(), 22, "entry stack must be 22 cells");
-        assert_eq!(stack[0], rc, "[fp-24] RangeCheck");
-        assert_eq!(stack[2], pl, "[fp-22] Poseidon");
-        assert_eq!(stack[3], MaybeRelocatable::Int(Felt::from(1)), "[fp-21] ask_id_lo");
-        assert_eq!(stack[12], MaybeRelocatable::Int(Felt::from(10)), "[fp-12] output_hash");
-        assert_eq!(stack[13], MaybeRelocatable::Int(Felt::from(11)), "[fp-11] secret_lo");
-        assert_eq!(stack[17], MaybeRelocatable::Int(Felt::from(14)), "[fp-7] trace_present");
-        assert_eq!(stack[18], cav.0, "[fp-6] caveat_felts start");
-        assert_eq!(stack[19], cav.1, "[fp-5] caveat_felts end");
-        assert_eq!(stack[20], steps.0, "[fp-4] steps_flat start");
-        assert_eq!(stack[21], steps.1, "[fp-3] steps_flat end");
-    }
-
-    /// End-to-end soundness round trip: prove the trace the harness produced
-    /// and verify it with the real STWO verifier. This is the property C-2 is
-    /// about — the commitment must be over an execution, and that execution
-    /// must satisfy the circuit's assertions.
+    /// **The positive control.** A witness the circuit accepts must be accepted
+    /// by the harness.
     ///
-    /// **Blocked, two independent reasons, both outside this crate.**
-    ///
-    /// 1. No satisfying witness exists yet. The circuit checks
-    ///    `cap_root_hash == Poseidon(secret, caveats)` and no crate in this
-    ///    workspace implements the Starknet Poseidon permutation, so no
-    ///    witness can be built that passes.
-    /// 2. `stwo_cairo_prover::create_cairo_claim_generator`
-    ///    (`crates/prover/src/witness/cairo.rs:74-95`) requires the Cairo 0
-    ///    canonical public-memory layout: `[initial_ap - 2] == initial_ap`,
-    ///    `[initial_ap - 1] == 0`, and the builtin segment pointers at
-    ///    `[initial_ap .. initial_ap + N]`. cairo-vm 3.1.0 only produces that
-    ///    from `initialize_main_entrypoint`, which is private, and whose
-    ///    `fp` is `exec_base + 2` — far too small to host the 22-word
-    ///    argument frame the compiled `main` reads at `[fp-24 .. fp-3]`. The
-    ///    only public entrypoint path for passing stack arguments,
-    ///    `initialize_function_entrypoint`, writes `[return_fp,
-    ///    fresh_segment]` into `[fp-2, fp-1]` instead, which is what the
-    ///    prover asserts against.
-    ///
-    /// Kept (ignored) so the shape of the required change stays visible.
+    /// This is the test whose absence made every `harness_rejects_*` test below
+    /// worthless: an `assert!(...is_none())` is satisfied by a harness that
+    /// rejects *everything*, including one that never runs the circuit. Without
+    /// an acceptance test those guards prove nothing.
     #[test]
-    #[ignore = "blocked: no satisfying witness (no Poseidon impl) and stwo-cairo-prover requires the Cairo0 canonical layout"]
-    fn harness_proof_verifies_and_tampered_trace_does_not() {
+    fn harness_accepts_a_satisfying_witness() {
         let spec = fixture_spec();
+        let json = satisfying_input();
+        let prover_input = run_cairo_to_prover_input(&spec, json.as_bytes())
+            .expect("a circuit-satisfying witness must produce a ProverInput");
 
-        let run_input = r#"{
+        let parsed: ProverInput =
+            serde_json::from_slice(&prover_input).expect("ProverInput round-trips");
+        assert!(
+            !parsed.public_memory_addresses.is_empty(),
+            "a real execution has public memory; an empty set means the trace \
+             was never populated"
+        );
+        assert!(parsed.pc_count > 0, "a real execution has program counters");
+    }
+
+    /// **Characterization test for the circuit's current soundness envelope.**
+    ///
+    /// `stage2_main` computes `chain_commitment = Poseidon(secret_lo,
+    /// secret_hi, *caveat_felts)` and asserts only that it is non-zero
+    /// (`cairo/src/lib.cairo`). It never relates that commitment to the
+    /// public `cap_root_hash`. So the secret and the caveat felts are pure
+    /// witness: swapping them for arbitrary values yields a different,
+    /// equally valid execution.
+    ///
+    /// This test asserts that on purpose. It is the machine-checkable form
+    /// of audit finding C-2's residual gap, and it makes the limit visible
+    /// to anyone reading the harness instead of only in prose. **When the
+    /// circuit gains the real macaroon chain re-derivation, this test will
+    /// start failing** — that failure is the point: it is the signal that
+    /// the binding is real and the harness (and the audit record) must be
+    /// updated to match.
+    #[test]
+    fn harness_accepts_an_unrelated_secret_because_the_circuit_does_not_bind_it() {
+        let spec = fixture_spec();
+        assert!(
+            run_cairo_to_prover_input(
+                &spec,
+                input_with(&[("cap_root_secret_lo", "\"987654321\"")]).as_bytes()
+            )
+            .is_some(),
+            "the chain commitment is witness-only, so an unrelated secret still \
+             proves — pinning that gap so strengthening the circuit breaks this test"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Rejection tests — each is meaningful only together with the control above
+    // ------------------------------------------------------------------
+
+    /// `stage2_main`: `assert!(pub_inputs.axes_count < 1000, "AxesCountTooLarge")`.
+    #[test]
+    fn harness_rejects_axes_count_over_limit() {
+        let spec = fixture_spec();
+        assert!(
+            run_cairo_to_prover_input(&spec, input_with(&[("axes_count", "5000")]).as_bytes())
+                .is_none(),
+            "axes_count 5000 must trip AxesCountTooLarge"
+        );
+    }
+
+    /// `stage2_main`: `assert!(caveat_felts.len() >= CHAIN_DEPTH_MIN)`.
+    ///
+    /// The mutation is structural — a 2-felt caveat array — so `caveats_count`
+    /// is lowered to match, keeping the depth check as the only thing broken.
+    #[test]
+    fn harness_rejects_shallow_caveat_chain() {
+        let spec = fixture_spec();
+        let json = r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
             "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
@@ -1246,131 +906,147 @@ mod harness_tests {
             "caveats_count": 2, "discharges_count": 0, "inference_trace_present": 1
           },
           "caveat_felts": ["15", "16"],
-          "steps": [{"op_code":"17","input_hash":"18","output_hash":"19"}]
+          "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
         }"#;
-
-        let json = run_cairo_to_prover_input(&spec, run_input.as_bytes())
-            .expect("harness must produce a ProverInput");
-        let prover_input: ProverInput = serde_json::from_slice(&json).expect("round-trips");
-
-        let proof = prove_cairo::<Blake2sMerkleChannel>(
-            prover_input,
-            default_prover_params(),
-        )
-        .expect("prove_cairo must succeed on a valid execution");
-        let proof: CairoProofForRustVerifier<Blake2sMerkleHasher> = proof.into();
-
-        let json_proof = serde_json::to_vec(&proof).expect("proof serializes");
-        let ret = unsafe {
-            stwo_verify(json_proof.as_ptr(), json_proof.len(), [0u8].as_ptr(), 1)
-        };
-        assert_eq!(ret, 0, "a genuine proof must verify");
-
-        // Tamper: flip a byte of the serialized proof. A verifier that accepts
-        // this is not verifying anything.
-        let mut tampered = json_proof.clone();
-        let mid = tampered.len() / 2;
-        tampered[mid] ^= 0x01;
-        let ret = unsafe {
-            stwo_verify(tampered.as_ptr(), tampered.len(), [0u8].as_ptr(), 1)
-        };
-        assert_eq!(ret, 1, "a tampered proof must be rejected");
-    }
-
-    /// Helper: run the circuit with a witness that is valid in every respect
-    /// except the fields named in `pub_inputs` / `priv_witness`.
-    fn run_with(pub_over: &[(&str, &str)], priv_over: &[(&str, &str)]) -> Option<Vec<u8>> {
-        let spec = fixture_spec();
-        let run_input = r#"{
-          "pub_inputs": {
-            "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-            "invocation_hash": "6", "holder_did": "7",
-            "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
-          },
-          "priv_witness": {
-            "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
-            "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
-          },
-          "caveat_felts": ["15", "16", "17"],
-          "steps": [{"op_code":"18","input_hash":"19","output_hash":"20"}]
-        }"#;
-        let mut json = run_input.to_owned();
-        for (k, v) in pub_over.iter().chain(priv_over.iter()) {
-            let needle = format!("\"{k}\":");
-            let start = json.find(&needle).unwrap_or_else(|| panic!("no key {k}")) + needle.len();
-            let end = json[start..].find([',', '\n']).map(|i| start + i).unwrap_or(json.len());
-            json.replace_range(start..end, v);
-        }
-        run_cairo_to_prover_input(&spec, json.as_bytes())
-    }
-
-    /// Mutation control for the rejection tests below.
-    ///
-    /// Every one of them asserts `is_none()`. Without a witness that
-    /// *passes*, that assertion is satisfiable by a harness that rejects
-    /// everything — including a broken one that never runs the circuit at
-    /// all. The control that would rule that out needs a satisfying
-    /// witness, i.e. a Poseidon capability root, which this workspace does
-    /// not have.
-    ///
-    /// What stands in for it: the harness reaches the return-value gate and
-    /// *reads a circuit-dependent value from it* — a broken harness that
-    /// bailed earlier could not produce the distinct values observed for
-    /// distinct assertions. See
-    /// `harness_executes_the_compiled_circuit_and_gates_on_its_result`.
-
-    /// The circuit must reject `axes_count >= 1000`
-    /// (`stage2_main`: "AxesCountTooLarge").
-    #[test]
-    fn harness_rejects_axes_count_over_limit() {
-        assert!(
-            run_with(&[("axes_count", "5000")], &[]).is_none(),
-            "axes_count 5000 must trip AxesCountTooLarge"
-        );
-    }
-
-    /// The circuit must reject `caveat_felts.len() < CHAIN_DEPTH_MIN`
-    /// (`stage2_main`: "CaveatChainDepthMismatch", `CHAIN_DEPTH_MIN = 3`).
-    #[test]
-    fn harness_rejects_shallow_caveat_chain() {
-        let json = String::from(
-            r#"{
-              "pub_inputs": {
-                "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-                "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-                "invocation_hash": "6", "holder_did": "7",
-                "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
-              },
-              "priv_witness": {
-                "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
-                "caveats_count": 2, "discharges_count": 0, "inference_trace_present": 1
-              },
-              "caveat_felts": ["15", "16"],
-              "steps": [{"op_code":"18","input_hash":"19","output_hash":"20"}]
-            }"#,
-        );
-        let spec = fixture_spec();
         assert!(
             run_cairo_to_prover_input(&spec, json.as_bytes()).is_none(),
-            "a 2-deep caveat chain must trip CaveatChainDepthMismatch"
+            "a 2-deep caveat chain must trip CaveatChainDepthMismatch (CHAIN_DEPTH_MIN = 3)"
         );
     }
 
-    /// The circuit must reject a trace that does not fold to the committed
-    /// `output_hash` (`stage2_main`: "InferenceTraceBindingMismatch").
-    ///
-    /// `has_output_hash = 1` arms the comparison; `output_hash` is a value
-    /// the trace cannot produce.
+    /// `stage2_main`: `assert!(trace_root == pub_inputs.output_hash)` once
+    /// `has_output_hash` arms the comparison.
     #[test]
     fn harness_rejects_unbound_inference_trace() {
+        let spec = fixture_spec();
         assert!(
-            run_with(
-                &[("has_output_hash", "1"), ("output_hash", "\"12345\"")],
-                &[]
+            run_cairo_to_prover_input(
+                &spec,
+                input_with(&[("has_output_hash", "1"), ("output_hash", "\"12345\"")]).as_bytes()
             )
             .is_none(),
-            "a trace that does not fold to output_hash must be rejected"
+            "a trace that cannot fold to output_hash must be rejected"
         );
+    }
+
+    /// A `caveats_count` that disagrees with the felts actually supplied.
+    #[test]
+    fn harness_rejects_caveat_count_mismatch() {
+        let spec = fixture_spec();
+        assert!(
+            run_cairo_to_prover_input(&spec, input_with(&[("caveats_count", "4")]).as_bytes())
+                .is_none(),
+            "declaring 4 caveats while supplying 3 felts must be rejected"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Calldata marshalling
+    // ------------------------------------------------------------------
+
+    /// The calldata layout is the circuit's ABI. Getting it wrong produces a
+    /// program that runs without ever calling the circuit, so it is pinned.
+    #[test]
+    fn calldata_matches_cairo_serde_layout() {
+        let input: CairoRunInput = serde_json::from_str(&satisfying_input()).unwrap();
+        let c = build_calldata(&input).expect("build");
+
+        // 10 PublicInputs + 5 PrivateWitness + [len=3, 3 caveats]
+        //                       + [len=3, 3 step felts]
+        assert_eq!(c.len(), 10 + 5 + 4 + 4, "calldata length");
+        assert_eq!(c[0], Felt::from(1), "ask_id_lo");
+        assert_eq!(c[2], Felt::from(1), "axes_count");
+        assert_eq!(c[9], Felt::from(0), "output_hash");
+        assert_eq!(c[10], Felt::from(11), "cap_root_secret_lo");
+        assert_eq!(c[12], Felt::from(3), "caveats_count");
+        assert_eq!(c[15], Felt::from(3), "caveat_felts length cell");
+        assert_eq!(c[16], Felt::from(15), "caveat_felts[0]");
+        assert_eq!(c[18], Felt::from(22), "caveat_felts[2]");
+        assert_eq!(c[19], Felt::from(3), "steps_flat length cell");
+        assert_eq!(c[22], Felt::from(19), "steps_flat[2]");
+    }
+
+    /// A felt that is neither decimal nor hex must be rejected, not coerced.
+    #[test]
+    fn calldata_rejects_unparsable_felt() {
+        let input: CairoRunInput =
+            serde_json::from_str(&satisfying_input().replace("\"15\"", "\"not-a-felt\"")).unwrap();
+        assert!(
+            build_calldata(&input).is_none(),
+            "an unparsable felt must not be silently coerced"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // The C-2 property
+    // ------------------------------------------------------------------
+
+    /// End-to-end soundness round trip across the **real FFI surface**:
+    /// `stwo_prove_from_casm` -> `stwo_proof_len` -> `stwo_proof_copy` ->
+    /// `stwo_verify`.
+    ///
+    /// This is the property C-2 is about. Driving `stwo_prove_from_casm`
+    /// (rather than the inner `run_cairo_to_prover_input` helper) means the
+    /// test covers the entire production chain across the FFI boundary:
+    /// `Executable` JSON -> calldata -> Cairo VM run -> `adapt()` ->
+    /// `prove_cairo` -> handle -> bytes -> real STWO verifier.
+    ///
+    /// The commitment must be over an execution of the real circuit, and a
+    /// full STARK proof — not a digest of the inputs — must cross the handle
+    /// boundary. The C-2 defect was exactly that last part: the handle
+    /// exposed 32 bytes of input digest, so `stwo_verify` rejected every
+    /// real proof as unparsable. The `proof_len` floor below pins that
+    /// regression shut.
+    ///
+    /// The tamper check is the control on the verifier: a verifier that
+    /// accepts a mutated proof is not verifying anything.
+    ///
+    /// Slow (~1 min): proving 440 program counters through STWO.
+    #[test]
+    fn harness_proof_verifies_and_tampered_proof_does_not() {
+        // Raw `Executable` JSON — the exact bytes the mint path hands the FFI.
+        let program_json = fixture_bytes();
+        let run_input_json = satisfying_input();
+
+        // Prove through the FFI entry point, exactly as zk-vendor calls it.
+        // SAFETY: all pointers are to live buffers for the call duration.
+        let handle = unsafe {
+            stwo_prove_from_casm(
+                program_json.as_ptr(),
+                program_json.len(),
+                run_input_json.as_ptr(),
+                run_input_json.len(),
+                [0u8].as_ptr(),
+                1,
+            )
+        };
+        assert!(
+            !handle.is_null(),
+            "stwo_prove_from_casm must succeed on a valid execution"
+        );
+
+        // SAFETY: `handle` is a live pointer just returned by `stwo_prove_from_casm`.
+        let len = unsafe { stwo_proof_len(handle) };
+        assert!(
+            len > 1_000_000,
+            "the handle must carry a STARK proof, not an input digest \
+             (C-2 regression: got {len} bytes)"
+        );
+
+        let mut bytes = vec![0u8; len];
+        // SAFETY: `dst` has exactly `len` writable bytes and `handle` is live.
+        let copied = unsafe { stwo_proof_copy(handle, bytes.as_mut_ptr(), len) };
+        assert_eq!(copied, len, "proof copy must be complete");
+        // SAFETY: the handle is released immediately below on every path.
+        unsafe { stwo_free_proof(handle) };
+
+        let ret = unsafe { stwo_verify(bytes.as_ptr(), bytes.len(), [0u8].as_ptr(), 1) };
+        assert_eq!(ret, 0, "a genuine proof must verify");
+
+        let mut tampered = bytes.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0x01;
+        let ret = unsafe { stwo_verify(tampered.as_ptr(), tampered.len(), [0u8].as_ptr(), 1) };
+        assert_eq!(ret, 1, "a tampered proof must be rejected");
     }
 }

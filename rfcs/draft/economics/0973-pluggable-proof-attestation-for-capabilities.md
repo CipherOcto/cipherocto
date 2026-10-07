@@ -445,10 +445,10 @@ impl SecurityFigure {
 ```
 
 `bits()` exists because the budget gate compares numbers rather than tokens:
-`node.has_headroom` in `validate_policy` below is handed this figure and unwraps
-it through the accessor, so the value a node budgets against is the one the
-prover parameters produced. Without it a caller would have to reach into the
-tuple struct, which would be a second, unfenced path to the same number.
+`node.has_headroom` in `validate_policy` below is handed the cost figure and the
+unwrapped security bits, and this accessor is the only way to get that second
+value out. Without it a caller would have to reach into the tuple struct, which
+would be a second, unfenced path to the same number.
 
 **Verification context.** `AttestationVerifyCtx` is a borrow-only view carrying
 the capability under verification, the attestation bytes, and any read-only
@@ -521,10 +521,14 @@ rather than an option, so the absent case has no representation. A strategy that
 ignores the expectation it is handed remains possible, which is why this is stated
 as a type property plus a review convention rather than as a guarantee alone.
 
-**Outcome.** `AttestationOutcome` is `Satisfied` or `Unsatisfied`, plus an
-optional machine-readable reason for the rejection that is safe to log. It is
-never `Satisfied` on an unresolved or skipped check — see §Root-Secret Binding
-for why the currently-circuited attestation establishes nothing.
+**Outcome.** `AttestationOutcome` is `Satisfied` or `Unsatisfied`, the latter
+carrying a machine-readable reason that is safe to log. The reason is **required
+on rejection, not optional** — §Error Handling promises every rejection is
+distinguishable to the operator, and a rejection without a reason would be
+exactly the indistinguishable case that promise rules out. There is no reason on
+`satisfied`, because there is nothing to explain. It is never `Satisfied` on an
+unresolved or skipped check — see §Root-Secret Binding for why the
+currently-circuited attestation establishes nothing.
 
 **Reference strategies shipped by this RFC.**
 
@@ -535,6 +539,22 @@ for why the currently-circuited attestation establishes nothing.
 
 Both are instances of one mechanism. A third-party strategy is a third row, not
 a code change.
+
+**Neither reference strategy declares payload kinds.** Both return an empty
+`required_payload_kinds` and answer `false` for `verifier_needs_producing_kinds`,
+and that is a decision rather than an omission: the root-secret relation is a
+pure computation over the token, needing no node capability, and the in-boundary
+trace is verified against material the node already holds. So neither imposes a
+deployment requirement on an operator.
+
+The consequence is worth stating, because it is otherwise invisible: with both
+reference strategies declaring nothing, the producing-side boot branch and
+step 4 have no subject in what this RFC ships. The gates, TV7b, and TV10 are
+exercised by a fixture strategy that does declare kinds, and they exist for
+third-party strategies rather than for these two. A mechanism with no subject is
+not dead code — a third-party crate declaring kinds is the ordinary case — but
+it does mean neither reference strategy tests that path, and this RFC does not
+claim otherwise.
 
 **No cost figure is claimed for either strategy.** An earlier draft of this RFC
 carried a measured word count that turned out to describe a commitment to the
@@ -640,6 +660,16 @@ the value is covered by the capability id and by the registry primary key. Any
 work under this RFC that touches that derivation MUST preserve byte-compatibility
 or be an explicit, separately-recorded breaking change.
 
+That MUST is review-enforced rather than runtime-enforced, and there is no gate
+that could enforce it: the derivation happens in the capability crate, upstream
+of everything this RFC specifies, and a change to it would not fail any test in
+the strategy layer — it would simply invalidate every capability already issued.
+The carriers are TV9, which freezes the pre-RFC corpus by hash so a change to
+the canonical form cannot pass silently, and the wire-format freeze this RFC
+depends on rather than modifies. A reviewer confirming the rule is the safeguard,
+which is the same posture as the refuse-only policy rule and the
+ignore-the-expectation convention.
+
 **Truncation.** `root_id` is a 16-byte truncation of a keyed hash — 128 bits.
 It is a replay-dedup key and MUST NOT be used as a binding commitment; doing so
 would drop the attestation's soundness floor to 128 bits. The binding target is
@@ -685,12 +715,15 @@ verify_capability_attestation(token, node, holders, strategies, clock):
            expectation: &core_expectation_for(token),  # never from the attestation
            policy:      node.policy_source(),
        })))
-       # The AssertUnwindSafe wrapper is required, not decorative: verify takes
-       # shared references through the context, and the borrow checker will not
-       # let an unwind cross them without it (A4). The strategy reads its
-       # binding target as ctx.expectation.bound_value(), which for an RFC-0957
-       # capability yields macaroon.root_secret_hash — the value the relation in
-       # §Root-Secret Binding is stated against.
+       # AssertUnwindSafe is required by the borrow checker, but note what it is:
+       # an assertion the compiler cannot check, not a proof that the closure
+       # left no inconsistent state. It discharges a compile-time obligation and
+       # leaves the runtime question open, which is why A4 scopes the whole
+       # guarantee to an unwinding build.
+       #
+       # The strategy reads its binding target as ctx.expectation.bound_value(),
+       # which for an RFC-0957 capability yields macaroon.root_secret_hash — the
+       # value the relation in §Root-Secret Binding is stated against.
        #
        # A panic is a rejection, never an acceptance and never a propagated
        # fault: a strategy that crashes has verified nothing. Under an
@@ -856,6 +889,17 @@ state — it is a rejection, not a wildcard.
    than falsehood and is the accepted consequence of advertising at all, since
    recomputing per verification would mean the advertisement tracked a moving
    target rather than describing the node.
+
+   **Verifiability predicate.** "What the node can verify" means, for a
+   resolved strategy: the registry resolves it **and**, when it declares
+   `verifier_needs_producing_kinds`, the node serves every kind in its
+   `required_payload_kinds`. That is exactly the condition step 4 evaluates per
+   call, so the advertisement and the dispatch gate cannot disagree about which
+   strategies a node claims. It is written here because four places depend on
+   it and none of them is an algorithm — the advertisement is computed from the
+   strategy's own admission values plus `node.serves_all`, both of which the
+   dispatch already uses.
+
 8. The registration host MUST be a binary or node crate. A Layer-B core crate
    MUST NOT depend on a Layer-E strategy crate to discover it.
 9. Deferral of any mission gated on a Draft dependency is user-initiated only.
@@ -1247,8 +1291,10 @@ expired and refuses it. _Impact:_ high on the authorisation gate specifically �
 this is a failure of the control the whole RFC leans on, not of the attestation.
 _Mitigation:_ none added here. The time source is the capability format's, this
 RFC introduces none, and both the issuer and the verifier already depend on it.
-Recorded as an assumption and exercised by TV13b so that the exposure is visible
-rather than latent, and because "expires" is a property of the record rather than
+Recorded as an assumption and visible rather than latent: TV13b exercises the
+rejection path, and the accept-side skew — an expired capability read as live —
+is recorded as uncovered because testing it needs a clock this RFC does not
+control. And because "expires" is a property of the record rather than
 of the attestation, nothing in the strategy layer can compensate for it.
 
 ## Economic Analysis
@@ -1380,9 +1426,16 @@ naming it is a boot failure, per §Root-Secret Binding.
 step 0. This vector pins that the proof carries no authorisation of its own.
 
 **TV13b** — capability whose lifetime has expired at the verifier's clock:
-REJECT at step 0, reported as no longer active rather than as absent. A node
-whose clock runs behind the issuer's reads the same capability as live; that
-divergence is the clock-skew exposure, and this vector is how it is observed.
+REJECT at step 0, reported as no longer active rather than as absent.
+
+This vector observes one direction of the skew only: an expired capability read
+as still active would be **accepted**, and that accept-side case — the one A15
+rates high on the authorisation gate — has no vector here, because this RFC
+fixes no time source and so has nothing to inject skew with. Testing it means
+standing up a node whose `Clock` disagrees with the issuer's, which is a
+harness capability rather than a mechanism this RFC specifies. What TV13b does
+pin is the rejection path and its distinct reason. The accept-side exposure is
+recorded as an assumption and left visible rather than claimed as covered.
 
 **TV14** — attenuating an attested parent: the child carries the envelope
 forward and is registered under its post-attenuation capability id, then verifies,
@@ -1671,16 +1724,18 @@ both landing in Phase 5 alongside the lint that tests for them.
 
 ## Version History
 
-| Version    | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1       | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| v0.2       | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it. |
+| Version    | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1       | 2026-10-07 | Initial Draft. `AttestationStrategy` trait, fail-closed registry, operator acceptance set, two reference strategies. Rewritten from a narrower framing that treated proof attestation as an authorization mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| v0.2       | 2026-10-07 | §Root-Secret Binding fixes the `root_secret_knowledge` relation to one BLAKE3 hop against the existing `root_secret_hash`, after the earlier +78-word field-native figure was found to describe a commitment to the same secret already present in the token. Records that `root_id` and `chain[0]` are unbindable without exposing the mint nonce, that `chain[0]` is an assumed rather than derived root, and that the claim is possession not authorization (A7–A10). §Performance Targets records that the circuit ceiling is a project-set budget to be re-derived from the algorithm rather than a limit that dictates the primitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| v0.27      | 2026-10-07 | Rounds 27 and 28. A coordinated propagation sweep checked fourteen core facts against every location restating each and found zero conflicts — the first clean round. An independent round then used a deliberately different lens, because a consistency check structurally cannot see what it is not looking for, and found nine defects the sweep could not have: an outcome type whose rejection reason was optional while the error section promises every rejection is distinguishable; a verifiability predicate used normatively in four places and computed by none; reference strategies that declare no payload kinds, leaving the boot branch and step four with no subject in what this RFC ships; an adversary claiming a vector observes clock skew when it tests only one direction of it; and a byte-compatibility requirement with no carrier, now labelled review-enforced like the two conventions already so labelled. Both lessons are recorded rather than smoothed over: coverage and consistency are separate properties, and a round that proves one has proved nothing about the other.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| v0.3-v0.26 | 2026-10-07 | Twenty-four adversarial review rounds, ~300 findings, all verified against the source before repair. Rounds 3 through 11 are archived under the same convention in the earlier review records; the file named below covers rounds 12 through 26. Per-round detail is archived in `docs/reviews/rfc-0973-adversarial-review-rounds-12-26.md`, per `docs/BLUEPRINT.md`, which places it in gitignored scratchpads rather than here. The substantive changes those rounds produced: the attestation relation was found not to be established in the current circuit, so the strategy ships unregistered behind a gate rather than shipping as working; the capability registry is established as a hard authorisation dependency, since an accepted attestation is possession and not authorisation; the binding target is fixed to one BLAKE3 hop against a field the token already carries, with the in-circuit primitive named as the blocking prerequisite and the circuit ceiling re-derived from the algorithm rather than treated as an external limit; RFC-0958's specified relation is recorded as drifted from, owned by a named phase, and deliberately narrowed here rather than inherited; the admission budget gate is decisive on an unmeasured cost and an exceeded budget rather than advisory; the dispatch carries panic containment and unwind safety, which three other sections had required and the algorithm omitted entirely; and every obligation is assigned to a phase or labelled as review-enforced, because an unowned requirement was the single most common defect found. From round 22 the findings stopped being design defects and became bookkeeping: a fact stated in five to eight places, one repaired, the rest left stale. That is the cost of a document stating each fact everywhere rather than a defect in it. |
 
 ## Related RFCs
 
 - RFC-0008: Deterministic AI Execution Boundary — source of the execution-class
   taxonomy this RFC's §RFC-0008 Execution Class Mapping applies
+- RFC-0009: identity substrate — precedent for removing an enum from the specification while the implementation retains it as a gate (§Motivation)
 - RFC-0630: Proof of Inference — source of the in-boundary execution fact
 - RFC-0871: Specialized Node Protocol Envelope
 - RFC-0957: Capability Token Format — **amended** by this RFC

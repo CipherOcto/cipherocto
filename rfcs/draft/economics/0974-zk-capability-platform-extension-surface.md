@@ -1,0 +1,558 @@
+# RFC-0974 (Economics): ZK Capability Platform — Relation Survey and Macaroon Extension-Surface Amendment
+
+## Status
+
+Draft
+
+> **Note:** This is an **in-place amendment** to RFC-0957 and RFC-0958. It does NOT
+> renumber. It adds no new wire format and no new caveat variant. It closes the
+> extension surface that RFC-0965 §Out of Scope explicitly deferred, and records
+> which ZK relations the current circuit substrate can and cannot express.
+
+## Authors
+
+- Author: @mmacedoeu
+- Contributor: @mmacedoeu
+
+## Maintainers
+
+- Maintainer: @mmacedoeu
+
+## Summary
+
+Two findings drive this RFC.
+
+**First, the macaroon has a half-built extension surface.** A third party can add a
+caveat type today — `Caveat` is `#[non_exhaustive]` with a `Raw` escape hatch and a
+domain-separated name. A third party cannot supply the logic that decides whether
+that caveat holds. There is no `CaveatEvaluator` trait, and evaluation is hardcoded
+across the core: 664 `Caveat::` match sites in 37 files, plus an
+`evaluate_first_party` loop inside the circuit itself. RFC-0965 §Out of Scope
+declined this on the record ("Caveat verification algorithms. This RFC defines
+encoding only."), and nothing since has picked it up. **This gap exists
+independently of cryptography and blocks third parties today.**
+
+**Second, the ZK relations that exist are the cheapest and weakest kind.** RFC-0958
+§Algorithms specifies six circuit steps. Three of them — holder Ed25519 verify, the
+HMAC-BLAKE3 macaroon chain re-derivation, and discharge chain re-derivation — require
+reimplementing a native primitive inside the field. In-circuit BLAKE3 was measured
+at 17,628 CASM words against a 1,600-word ceiling (RFC-0973 §Performance Targets), so
+those three steps are roughly an order of magnitude over budget. What the circuit
+actually implements today is a **commitment-binding** relation: it hashes private
+witness material and asserts the result matches a public input. That is a different
+and much weaker thing than the validity check the spec text describes.
+
+The amendment adds one trait (`CaveatEvaluator`) and one obligation (a relation must
+declare its class). Everything else in this RFC is the survey that motivated it.
+
+## Why Needed
+
+The stated goal is to maximize ZK as a **library / platform / protocol for third
+parties to build on**. Platform value is not a function of how many relations exist;
+it is a function of how cheaply an outsider adds one. Measured against that goal, the
+binding constraint is not cryptography at all — it is that the authorization decision
+for a caveat has no extension point.
+
+## Scope
+
+### In Scope
+
+- Classification of every ZK relation this platform can express, by what each
+  requires of the prover and verifier.
+- The derived third-party extension surface, and the one gap that blocks it.
+- Amendment to RFC-0957 §Verify-Time Extension: `CaveatEvaluator` trait + registry.
+- Amendment to RFC-0958 §Algorithms: relation-class declaration, and an explicit
+  statement of which specified steps are unimplemented.
+- Where a Poseidon-optimized macaroon fits, and the axis on which it must be
+  prototyped to be informative.
+
+### Out of Scope
+
+- Any change to the macaroon chain primitive on the wire. §Poseidon Macaroon
+  recommends a measurement; it does not specify a format.
+- Any new caveat variant, any new wire segment, any `HolderRecord` schema change.
+- Circom / R1CS / Groth16 backends. The substrate is Cairo + STWO.
+- Implementing the `CaveatEvaluator` registry. This RFC specifies it; a mission does.
+
+## Dependencies
+
+**Requires:**
+
+- RFC-0957 — Capability Token Format (amended here)
+- RFC-0958 — ZK Capability Subclass (amended here)
+- RFC-0965 — Capability Extension Format (this RFC supplies its §Out of Scope item)
+
+**Companions:**
+
+- RFC-0973 — Pluggable Proof Attestation for Capabilities (source of the measured
+  circuit ceilings and the `AttestationStrategy` registry this amendment mirrors)
+- RFC-0630 — Proof-of-Inference Consensus (the PoI relation)
+
+## Design Goals
+
+| Goal                                                   | Target                                                                               | Metric                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------- |
+| **G1: Outsiders can add a caveat that actually works** | Add caveat type + evaluator from one external crate, zero core edits                 | No `octo-cap-macaroon` commit required        |
+| **G2: Every ZK relation declares its class**           | No relation reaches `Accepted` without a class declaration                           | `class` field present on all registered types |
+| **G3: Unverifiable means rejected, not assumed**       | An unregistered evaluator rejects; a commitment never stands in for a validity check | Fuzz + boot-validation coverage               |
+| **G4: Spec text matches built circuit**                | No spec'd circuit step is described as implemented when it is not                    | Step-by-step implementation matrix            |
+
+## The Survey
+
+### Classification axis: what the relation requires
+
+The useful way to sort ZK relations is not by feature area but by **what the relation
+demands of the proof system**. Three classes dominate this platform, and the classes
+are ordered by cost, not by value.
+
+| Class                     | Relation shape                                                       | Requires                                    | Cost measured          | Verdict          |
+| ------------------------- | -------------------------------------------------------------------- | ------------------------------------------- | ---------------------- | ---------------- |
+| **A. Commitment-binding** | `H(private_witness) == public_input`                                 | One hash. No validity check.                | 27 words / 1,588 words | **Affordable**   |
+| **B. Native-primitive**   | Re-derive an existing chain or verify an existing signature in-field | The native primitive, in Cairo              | 17,628 words (BLAKE3)  | **Unaffordable** |
+| **C. Accumulator**        | Prove membership/consistency against an authenticated structure      | A STARK-friendly accumulator + its verifier | Not measured — no code | **Unexplored**   |
+
+The critical distinction is between **binding** and **validity**, and it is invisible
+in the current spec text. In a class A relation the prover chooses the public input.
+Asserting `H(secret) == public_input` proves the prover knows a preimage of
+`public_input` — which is a real statement, and is worth exactly as much as the rule
+that determines who chose `public_input`. If the verifier derived that value from the
+macaroon, the proof binds the macaroon. If the prover supplied it, the proof binds
+nothing but itself.
+
+This is the single question to ask of every relation in this space: **which fields are
+verifier-supplied rather than prover-supplied?**
+
+```mermaid
+graph TD
+    A[Relation proposed] --> B{Does it need a native<br/>primitive in-circuit?}
+    B -->|No| C{Is any public input<br/>verifier-derived?}
+    C -->|Yes| D[Class A binding,<br/>meaningful]
+    C -->|No, all prover-supplied| E[Class A binding,<br/>vacuous]
+    B -->|Yes| F{Is a STARK-friendly<br/>equivalent available?}
+    F -->|Yes| G[Class B viable,<br/>substitute primitive]
+    F -->|No| H[Class B<br/>unaffordable]
+```
+
+### Class A — commitment-binding: what exists
+
+Three relations are in this class and all three are implemented.
+
+- **PoI trace binding** (`octo-cap-poi`, `cairo/src/lib.cairo` §verify_inference_fold_flat).
+  The trace is folded to a root and asserted equal to a public `output_hash`. Measured
+  at 27 words — the fold is already in the baseline. Host/circuit parity is proven.
+- **Root-secret knowledge** (RFC-0973 §Root-Secret Binding). The BLAKE3 form measured
+  17,628 words and was **rejected**; the Poseidon form measured 1,588 words and fits.
+  It is deliberately left **unregistered**, fail-closed, until the strategy earns it.
+- **Holder-signature binding.** Currently a commitment, not a signature check.
+
+Note the root-secret result asymmetry, because it is the most transferable lesson in
+the survey: **the same relation costs 17,628 words or 1,588 words depending only on
+which hash is chosen.** Relation cost here is dominated by primitive choice. A survey
+that groups by feature area will mispredict every cost.
+
+### Class B — native-primitive: specified but not built
+
+RFC-0958 §Algorithms specifies three steps that are class B.
+
+| Step | Requirement                                                 | Built status                                    |
+| ---- | ----------------------------------------------------------- | ----------------------------------------------- |
+| 1    | Ed25519 verify over public inputs                           | **Not built.** Commitment over the key material |
+| 2    | HMAC-BLAKE3 macaroon chain re-derivation to `cap_root_hash` | **Not built.** Non-zero commitment assertion    |
+| 4    | Discharge macaroon chain re-derivation                      | **Not built**                                   |
+
+The circuit's chain step asserts `chain_commitment != 0`. That assertion cannot fail,
+so it constrains nothing. This is recorded here rather than in an implementation note
+because **the spec text reads as though these checks exist.** A careful implementer
+reading RFC-0958 §Algorithms and then reading `cairo/src/lib.cairo` will conclude the
+circuit is incomplete; that is correct, but the RFC does not say so.
+
+### Class C — accumulator: where the new use cases are
+
+Every genuinely new capability a ZK layer could offer lives here, and nothing is
+built.
+
+- **Sharded vault-balance proof** (RFC-0963 §Open Questions). Per-shard MMR proof
+  plus cross-shard inclusion. No code.
+- **MMR recursive aggregation** (RFC-0650 §Aggregation Circuit Definition). Bagged
+  aggregation circuit. Draft.
+- **Merkle inclusion / consistency.** RFC-6962 BLAKE3 roots exist in the network
+  crate; no in-circuit proof. Note the impedance mismatch — a BLAKE3 Merkle tree
+  requires BLAKE3 in-circuit, which is the class B cost wall again. **A ZK-friendly
+  accumulator is a precondition, not a detail.**
+- **Non-equivocation, nullifiers, reputation and stake proofs, vote proofs.** Not
+  found anywhere in the repository.
+
+Class C is where the platform thesis lives. Non-equivocation in particular is a
+relation a macaroon **cannot express at all** today: the macaroon proves a bearer
+holds an attenuation right, and says nothing about whether that bearer will show it to
+two different verifiers. That is a capability property, not a credential property, and
+it is the clearest example of ZK adding a use case rather than making an existing one
+cheaper.
+
+### The extension surface, and its one hole
+
+The substrate already has the right shape. `AttestationStrategy` (RFC-0973) is a trait
+with a 128-bit `type_id`, a pure `verify`, fail-closed `StrategyNotFound`, an
+allocation record binding RFC-range ids to owning crates, and a registry. Third-party
+ZK relations have a real home.
+
+| Extension point                             | Exists  | Form                                                      |
+| ------------------------------------------- | ------- | --------------------------------------------------------- |
+| ZK proof strategy                           | Yes     | `AttestationStrategy` + `AttestationRegistry`             |
+| Operator policy over strategy acceptance    | Yes     | `PolicySource`                                            |
+| Deployment admission (cost + payload kinds) | Yes     | `AttestationAdmission`                                    |
+| **Caveat predicate evaluation**             | **No**  | Hardcoded in 37 files and in-circuit                      |
+| **Caveat subsumption / attenuation**        | **No**  | Hardcoded `parent_caveat_implies`                         |
+| Proof backend selection                     | Partial | `ProofTypeRegistry` stores metadata, no callable verifier |
+
+The hole is the row in bold. `octo-cap-macaroon` declares 19 traits; not one of them
+evaluates a caveat predicate. They are substrate adapters (`VaultLookup`, `Clock`,
+`ChannelProvider`) and registry plumbing.
+
+The consequence is sharper than "an extension point is missing":
+
+> A third party mints a `Raw` caveat. Nobody can evaluate it. The catalog does not
+> register the name, `set_subsumes_with_registry` fails closed, and the capability is
+> **rejected**. The extension surface currently lets outsiders add types that are
+> guaranteed to be refused.
+
+For a platform, that is the whole problem in one sentence. It is also independent of
+ZK — a third party cannot add a plain `Caveat::EscrowBalance` either.
+
+## Specification
+
+### Amendment 1 — `CaveatEvaluator` (RFC-0957 §Verify-Time Extension)
+
+Add a trait mirroring `AttestationStrategy`'s shape: core owns the trait and the
+refusal type, never an implementation; resolution is a pure fail-closed lookup; and
+the registry is built at the boot site. Consistency matters here — a platform with
+two different extension idioms is worse than one.
+
+**The key is the existing name string, not a new id type.** This is a deliberate
+departure from `AttestationStrategy`'s 128-bit `AttestationTypeId`, and it is the
+one design choice in this amendment that deserves its own defence. A caveat already
+carries a wire-level name — the `RawCaveat.name` that `is_raw_name_registered` keys
+on today. Minting a parallel `CaveatTypeId` would be a second identifier derivation
+for a concept that already has one, carrying its own allocation record and its own
+cross-implementation compatibility burden (RFC-0958 §Inter-Implementation
+Compatibility makes independent implementations mandatory for Class A determinism).
+Core variants key on their RFC-0964 short tag; `Raw` keys on the caller's name. A
+third party adds an evaluable caveat with **no edit to this crate**.
+
+```rust
+/// Decides whether a caveat holds for a proposed operation.
+///
+/// Core owns the trait and never an implementation. There is no default
+/// evaluator and no fallback: a caveat with no registered evaluator refuses.
+///
+/// `evaluate` MUST be a pure function of (ctx, evaluator state). The same
+/// inputs must produce the same outcome on every node, or verification
+/// diverges across the fleet — a consensus failure, not a policy difference.
+pub trait CaveatEvaluator: Send + Sync {
+    /// Registry key. A core variant's RFC-0964 short tag, or the
+    /// `RawCaveat.name` the holder minted with.
+    fn key(&self) -> &str;
+
+    /// Operation facts this evaluator needs. Refused with `MissingFact` when
+    /// absent, *before* `evaluate` runs.
+    fn required_facts(&self) -> &[&str] { &[] }
+
+    /// Whether this evaluator accepts a `Caveat::Raw` under its key.
+    /// Defaults to `false`. See rule 4.
+    fn handles_raw(&self) -> bool { false }
+
+    /// Evaluate the predicate. `Err` refuses.
+    fn evaluate(&self, ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal>;
+}
+
+/// Core-owned. An extension crate cannot construct a refusal reason for a
+/// caveat type it does not own.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CaveatRefusal {
+    /// No evaluator registered under this key. Fail-closed.
+    EvaluatorNotFound(String),
+    /// The operation does not carry a declared-required fact. Distinguished
+    /// from `Violated` because this is a wiring problem at the redemption
+    /// site, not the predicate doing its job.
+    MissingFact { key: String, evaluator: String },
+    /// A `Raw` caveat arrived under a core caveat name and the registered
+    /// evaluator does not accept raw caveats. The spoofing guard.
+    KeyCollision { key: String },
+    /// The evaluator refused, and this is why.
+    Violated { evaluator: String, detail: Cow<'static, str> },
+}
+
+/// Per-call facts only. Anything an evaluator needs across calls — a vault
+/// lookup, a balance reader — belongs in the evaluator itself, constructed at
+/// registration: the side that owns the data owns the access to it.
+pub struct CaveatEvalCtx<'a> {
+    pub caveat: &'a Caveat,
+    pub operation: &'a ProposedOperation,
+    pub clock: &'a dyn Clock,
+}
+```
+
+**Operations are an open fact bag.** `ProposedOperation` is a typed-value map keyed
+by name, not a struct with named fields. A struct would need a core edit every time
+an evaluator needs a fact nobody anticipated — an edit to a crate third parties
+already depend on, which is precisely the coupling this amendment exists to remove.
+The set of facts an operation can carry is decided by whoever builds the operation,
+because that is the party that knows. This mirrors the `CanonicalContext::Bytes |
+Structured` split in RFC-0965 §RedemptionContext.
+
+**Resolution rules.**
+
+1. Resolution is a pure lookup on the key. No fallback, no default evaluator, and an
+   unregistered key refuses with `EvaluatorNotFound`.
+2. A `Caveat` variant with **no** evaluator registered MUST refuse. This is already
+   the behaviour for `Raw` via `is_raw_name_registered`; the registry generalises it
+   from a name-string allowlist to a per-type evaluator.
+3. A declared-required fact that the operation does not carry MUST refuse with
+   `MissingFact`, **before** the evaluator runs. An evaluator that reads an absent
+   fact and decides it means "absent" is making that call silently, and the resulting
+   outcome cannot be traced back to a wiring mistake at the redemption site.
+4. A `Caveat::Raw` whose name collides with a core caveat name MUST refuse with
+   `KeyCollision` unless the evaluator sets `handles_raw`. Without this, minting
+   `Raw { name: "vault", .. }` reaches an evaluator written for `Caveat::Vault`,
+   which may then approve on the strength of bytes it does not understand.
+5. Composition is logical AND over the authenticated caveat order. Evaluation fails
+   fast on the first refusal in set order, so the reported reason is deterministic.
+6. The evaluator is **not** trusted to widen. It answers a predicate; it cannot
+   return authority. Attenuation monotonicity continues to be enforced by
+   `parent_caveat_implies`, which is a separate concern.
+
+**Registering a core key is permitted and reported.** Shadowing a core caveat name is
+the migration path for moving built-ins off hardcoded logic, so it is allowed — but
+`register` returns `shadows_core_caveat` and the registry exposes
+`core_shadowing_keys`, so an operator can see at boot which built-in checks their
+configuration has taken over.
+
+**On the division of labour.** Evaluation and subsumption are deliberately different
+operations with different extension needs. Subsumption is a **conservative
+one-sided** relation — `parent ⊇ child` — so a missing implementation can safely
+refuse, and a wrong implementation can only ever be too strict in the safe
+direction... except it cannot, because subsumption governs whether an attenuation
+chain is legitimate. An externally supplied subsumption rule that returns `true`
+falsely forges a delegation. **Subsumption therefore does not get an extension
+point.** It stays core-owned and hardcoded, and third parties extend evaluation
+instead. If a use case genuinely needs external subsumption, the correct answer is a
+new RFC that changes the delegation trust model, not a trait that lets a crate assert
+`true`.
+
+### Amendment 2 — relation-class declaration (RFC-0958 §Algorithms)
+
+Every `AttestationStrategy` MUST declare its class. This is the mechanism that stops
+a class A commitment from being reviewed, described, or accepted as if it were a
+validity check.
+
+| Class           | May be described as                         | May **not** be described as |
+| --------------- | ------------------------------------------- | --------------------------- |
+| A — binding     | "proves knowledge of a preimage of X"       | "verifies the macaroon"     |
+| B — native      | "re-derives / verifies in-circuit"          | —                           |
+| C — accumulator | "proves membership / consistency against R" | —                           |
+
+A class A strategy MUST additionally declare, per public input, whether the value is
+**verifier-derived** or **prover-supplied**. A prover-supplied public input in a
+class A relation is a self-description and MUST be named as such in the strategy's
+documentation.
+
+### Amendment 3 — implementation matrix (RFC-0958 §Algorithms)
+
+Add the table in §Class B above to the RFC, so the spec states which steps are
+built. This is a documentation amendment with no behavioural content and it is
+included because the alternative is a recurring misreading.
+
+### The `evaluate_first_party` obligation
+
+RFC-0958 §Algorithms step 3 loops `evaluate_first_party(caveat, pub_inputs)` inside
+the circuit. That loop is hardcoded and **must become registry dispatch**, for the same
+reason the host side must: a third-party caveat that the circuit cannot evaluate is a
+caveat that cannot appear in any ZK-bearing capability. Without this, Amendment 1
+gives third parties a working host-side evaluator and a silently unusable in-circuit
+one — a split that is worse than a clean absence, because it fails only at proof time.
+
+The circuit registry is keyed by the same key as the host registry. An
+evaluator that claims a key but has no circuit implementation MUST be refused at
+registration, not discovered at proving.
+
+### Implementation Status
+
+Amendment 1 is **built**. It lives in `crates/octo-cap-macaroon/src/caveat/evaluator.rs`,
+with `Caveat::evaluator_key` as the key derivation. Amendments 2 and 3 are
+documentation-only against RFC-0958 and are not yet applied to that RFC's text.
+
+Recorded deviations from the shape first proposed above, all deliberate:
+
+1. **String key, not `AttestationTypeId`.** As defended in Amendment 1. Core-key
+   detection is derived from `CaveatName::from_short_tag` rather than a
+   hand-written list, so a new core variant is covered automatically instead of
+   silently unregistered.
+2. **`MissingFact` and `KeyCollision` added** to the refusal enum after writing the
+   draft text. Both exist because the alternative is a silent decision: an evaluator
+   reading an absent fact, or a `Raw` caveat quietly reaching a core evaluator.
+3. **Per-call context only.** The evaluator holds its own substrate dependencies.
+   A design giving the context a fixed set of substrate references would have
+   re-centralised the coupling this amendment removes.
+4. **`Arc<T>` blanket impl** over the trait, so a caller holding a pre-built trait
+   object can register it without downcasting or duplicating.
+5. **`BeforeEvaluator` ships as a reference implementation** and is deliberately
+   **not wired into any existing verify path.** It proves the core-key path end to
+   end with no behavioural change; migrating the scattered core checks is follow-on
+   work and is not a prerequisite for third parties.
+
+Validation: 28 new unit tests; crate lib suite 317 → 345, all passing, all
+integration suites unchanged; clippy `-D warnings` clean on `--all-targets
+--all-features`; `octo-wallet` and `octo-wallet-node` build unchanged. No existing
+byte-exact test vector moved.
+
+## Poseidon Macaroon
+
+### Where it fits
+
+Poseidon is the only candidate primitive that makes class B step 2 affordable at all,
+and this is a real result rather than a preference. The measured spread is stark:
+BLAKE3 in-circuit is 17,628 words, Poseidon is 1,588, against a 1,600-word ceiling.
+Same relation, same witness shape, eleven-fold difference from primitive choice
+alone.
+
+### Where it does not fit as a drop-in
+
+**Poseidon is a hash, not a MAC.** A macaroon chain step is
+`chain[i+1] = MAC(chain[i], caveat_i)` — keyed, and the key changes every step. The
+parked Poseidon work does **not** implement this: it computes
+`poseidon_hash(root_secret, caveats)` as a single commitment and asserts it is
+non-zero. That is a binding relation, not a chain re-derivation.
+
+This matters for the differential prototype. The +66-word figure was measured for a
+**hash**. A Poseidon-based MAC is a different construction with a different cost:
+
+- The standard Hades round structure is tuned for **hashing**. MAC security requires
+  more full rounds — commonly roughly double the standard count — because hashing
+  assumes the attacker cannot control the full input while MACing assumes it can.
+- So the true cost of a Poseidon macaroon is **not** the measured 1,588 words, and
+  the number that would carry into a budget is unmeasured.
+- Additionally, an in-circuit MAC over a changing key needs key absorption each
+  step, which is where most of the real work sits.
+
+**Do not quote the +66-word result as the cost of a Poseidon macaroon.** It is the
+cost of a Poseidon preimage check. The distinction is exactly the one a careful
+implementer would get wrong, and it is the one that decides whether the design fits
+the budget.
+
+### The two-substitution finding
+
+Even with a working Poseidon MAC, steps 1 and 4 stay in the native class. Step 1 is
+Ed25519, which is not made cheap by anything about Poseidon. It needs a **separate**
+substitution — a STARK-friendly curve the Cairo toolchain supports natively.
+
+So the honest cost model for RFC-0958 is **two independent primitive substitutions**,
+in different families, to different specs, with independent migration paths:
+
+```mermaid
+graph LR
+    subgraph Steps1and4["Class B — signature"]
+        S1[Step 1 Ed25519] --> S4[Step 4 discharge sigs]
+        S1 -.needs.-> F[STARK-friendly curve<br/>e.g. Pallas-Vesta / Baby Jubjub]
+    end
+    subgraph Step2["Class B — chain"]
+        S2[Step 2 macaroon chain] --> P[Poseidon-based MAC<br/>more full rounds<br/>than hashing]
+    end
+    F --> C[All three under ceiling?]
+    P --> C
+```
+
+Neither substitution alone gets RFC-0958 §Algorithms under its own
+§Performance Targets.
+
+### The axis to vary
+
+The prototype should therefore vary the **MAC construction**, not the primitive alone.
+Varying only the primitive produces a two-point sample that lower-bounds the
+variation space rather than characterizing it, and the two axes most likely to be
+confused are:
+
+1. **primitive** — BLAKE3 vs Poseidon vs others.
+2. **MAC construction over that primitive** — direct keyed use vs sponge vs
+   Feistel vs multi-round absorption. This is the axis the +66-word figure silently
+   fixed at one value.
+3. **public-input provenance** — which fields the verifier derives. This is the axis
+   that determines whether any of it means anything, and it is orthogonal to both.
+
+A prototype that varies (1) alone cannot answer the question. A prototype that varies
+(1) and (3) but holds (2) fixed will report a number that does not transfer.
+
+## Alternatives Considered
+
+**Amend RFC-0958 only, leave RFC-0957 alone.** Rejected: the caveat-evaluator gap is
+in the host verification path, which RFC-0957 owns, and it blocks third parties with
+no ZK involvement at all. ZK-specific framing would misfile the fix.
+
+**Make `AttestationStrategy` cover caveats.** Rejected: conflates two genuinely
+different lifecycles. An attestation is a proof attached to a capability, verified
+after the chain. A caveat is a predicate that constitutes the authority. Merging them
+would mean a strategy could evaluate authority, which breaks Amendment 1's
+"evaluation is a decision, never a grant" rule.
+
+**Let third parties supply subsumption too.** Rejected, and it is the tempting
+option. Subsumption returning `true` forges a delegation chain; it cannot fail safe
+in the way evaluation can. Keeping it core-owned costs third parties nothing today
+because they cannot reach it safely anyway.
+
+**Do the survey, propose no amendment.** Rejected: the survey's central finding is a
+gap that is cheap to close now and expensive after extensions land. An extension
+surface designed after the fact is a rewrite of everything built on it.
+
+**Force Poseidon in as the macaroon primitive.** Rejected: it is a wire change to
+every capability, on the strength of a hash measurement that does not measure a MAC.
+The correct next step is to measure a MAC.
+
+## Consequences
+
+1. **No wire change.** No token minted under RFC-0957 or RFC-0958 changes. No
+   `HolderRecord`, `StoolapHolderRegistry`, or `StoolapSpendLedger` schema change.
+   Every existing byte-exact test vector stays valid.
+2. **Two extension idioms become one.** `CaveatEvaluator` deliberately mirrors
+   `AttestationStrategy` — same id type, same registry shape, same fail-closed rule.
+3. **Additive.** `CaveatEvaluator` registration is optional. A node registering no
+   evaluators behaves exactly as today: every caveat with no core evaluator refuses.
+4. **The class declaration is a review instrument.** It does not change any runtime
+   behaviour; it changes what a strategy is allowed to be described as.
+5. **RFC-0958's circuit is further from its spec text than this RFC makes it.** This
+   RFC records that. It does not close the gap.
+
+## Acceptance Criteria
+
+- [x] `CaveatEvaluator` trait, `CaveatRefusal`, `CaveatEvalCtx` specified in
+      RFC-0957 §Verify-Time Extension, with the six resolution rules.
+- [x] Subsumption explicitly excluded from the extension point, with the
+      false-`true` delegation-forgery rationale recorded.
+- [x] `ProposedOperation` specified as an open fact bag, not a fixed struct.
+- [x] `CaveatEvaluatorRegistry` built, with exclusive registration, shadow
+      reporting, and fail-closed resolution.
+- [ ] RFC-0958 §Algorithms carries the implementation matrix marking steps 1, 2 and 4
+      as not built.
+- [ ] RFC-0958 relation-class declaration (`A`/`B`/`C`) plus per-field
+      verifier-derived vs prover-supplied declaration for class A.
+- [ ] `evaluate_first_party` documented as a registry-dispatch obligation, with the
+      registration-time refusal for evaluators lacking a circuit implementation.
+- [x] §Poseidon Macaroon records that Poseidon is a hash and the measured figure is
+      not a MAC cost, so no future RFC quotes it as one.
+- [x] No existing byte-exact test vector changes.
+- [x] `BeforeEvaluator` reference implementation, not wired into any verify path.
+- [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
+      migration path that is never exercised is a second extension idiom.
+
+## References
+
+- RFC-0957 — Capability Token Format (§Mint, §Wire Format, §Verify-Time Extension,
+  §Attenuation Invariant)
+- RFC-0958 — ZK Capability Subclass (§Algorithms, §Performance Targets,
+  §Inter-Implementation Compatibility)
+- RFC-0965 — Capability Extension Format (§Open Questions, §Out of Scope)
+- RFC-0973 — Pluggable Proof Attestation for Capabilities (§Root-Secret Binding,
+  §Performance Targets, §Alternatives Considered)
+- RFC-0972 — Capability `root_id` Derivation Reconciliation (in-place amendment
+  precedent)
+- RFC-0963 — Resource Shard Routing (§Open Questions)
+- RFC-0630 — Proof-of-Inference Consensus (§Proof Structure)
+- RFC-0650 — Proof Aggregation Protocol (§Aggregation Circuit Definition)

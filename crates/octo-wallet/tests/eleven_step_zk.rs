@@ -77,7 +77,18 @@ fn eleven_step_batch_zk_round_trip() {
         "mock prover emits 32-byte commitment"
     );
     assert_eq!(bundle.casm_hash, casm);
-    assert_eq!(bundle.security_bits, 128);
+    // Derived, not hardcoded. This used to pin 128, which is what
+    // `ProofBundle` claimed before the advertised soundness was recomputed from
+    // the prover parameters. The actual parameters yield 96, and that value is
+    // pinned once at its source in `octo-cap-zk`
+    // (`declared_security_bits_match_the_prover_parameters`). Asserting the
+    // derived value here keeps this test about the 11-step round trip rather
+    // than duplicating a security figure it does not own.
+    assert_eq!(
+        u32::from(bundle.security_bits),
+        zk_circuit::stwo_security_bits(),
+        "declared soundness must be derived from the prover parameters, not hardcoded"
+    );
 
     // Mock-prover round-trip: re-derive the `zk_verifier::PublicInputs`
     // the prover saw, then confirm the proof bytes match.

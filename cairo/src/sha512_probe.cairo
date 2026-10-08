@@ -1,40 +1,56 @@
-//! Guard: corelib's SHA-512 cannot be used inside the capability circuit.
+//! Guard: corelib's SHA-512 can be enabled in the circuit, and enabling it
+//! still buys nothing.
 //!
-//! This module exists so the finding is not re-litigated. Every one of these
-//! tests PASSES, which is the point: corelib SHA-512 works perfectly under
-//! `scarb cairo-test`, and that green result is exactly what makes it dangerous.
+//! This module exists so the finding is not re-litigated either way. The
+//! mechanical question has a clean yes. The soundness question has a clean no,
+//! and the no does not depend on the yes.
 //!
-//! What `core::sha512::compute_sha512_byte_array` actually does (corelib
-//! `sha2_64_core::compute_sha2_64_u64_array`) is:
+//! **It works.** `ExecutableConfig { allow_syscalls: true, .. }` lifts
+//! `compile_executable`'s refusal, corelib SHA-512 compiles into the circuit,
+//! `cairo-lang-runner`'s `CairoHintProcessor` services the call through the
+//! real Starknet syscall handler, and a full STARK prove-and-verify passes with
+//! the syscall in the program — 434 s, tampered-proof rejection included. So
+//! "can we turn it on" was the wrong thing to be uncertain about.
+//!
+//! **It proves nothing anyway.** The syscall does not lower to an instruction.
+//! `build_syscalls` emits:
 //!
 //! ```cairo
-//! let mut state = sha512_state_handle_init(initial_state);
-//! while let Some(chunk) = input.multi_pop_front() {
-//!     state = starknet::syscalls::sha512_process_block_syscall(state, *chunk).unwrap_syscall();
-//! }
-//! sha512_state_handle_digest(state)
+//! hint StarknetHint::SystemCall { system: original_system };
+//! let updated_gas_builtin = *(system++);
+//! let response = *(system++);   // the digest comes back out of memory here
 //! ```
 //!
-//! The compression function is not written in Cairo. It lives in the Starknet
-//! OS and is reached by syscall. Three consequences, all verified:
+//! The digest is written into memory by a host-side Pythonic hint and read back
+//! under a plain `assert`. That assert is the only constraint on it, and it
+//! constrains the read to match the write the hint performed. The value is
+//! therefore whatever the prover's handler returned.
 //!
-//! 1. **`#[executable]` refuses it outright.** `cairo-lang-executable`'s
-//!    `compile_executable` walks the Sierra libfunc declarations and bails on
-//!    any whose generic id ends in `_syscall`, because syscalls are not proved
-//!    in executables. `sha512_process_block_syscall` matches. Wiring
-//!    `compute_sha512_byte_array` into `main` puts that libfunc in the program.
-//! 2. **A syscall result is unconstrained.** Even with `allow_syscalls`, the
-//!    prover chooses the returned digest. The STARK would constrain nothing
-//!    about SHA-512, so the proof would attest nothing about the signature.
-//! 3. **It costs almost nothing and proves almost nothing.** Measured with the
-//!    real RFC 8032 verifier compiled in, adding corelib SHA-512 took the
-//!    program from 44,443 to 44,975 CASM words: 532 words of call and return
-//!    plumbing wrapped around a value nobody constrained.
+//! The proof statement cannot repair this. `ProverInput` is
+//! `{ state_transitions, memory, pc_count, public_memory_addresses,
+//! builtin_segments, public_segment_context }` — there is no hint field
+//! anywhere in it. The verifier commits to the trace and the memory and never
+//! sees which handler produced a cell.
 //!
-//! The way step 1 gets a challenge hash is `verify_with_challenge` in
-//! `ed25519.cairo`, where the verifier recomputes `SHA-512(R || A || M) mod L`
-//! in Rust and passes it in as a public input. Those three quantities are public
-//! in Ed25519 anyway, so nothing is exposed.
+//! **Cost, for the record.** A one-byte message (two blocks) took the circuit
+//! from 3,004 to 5,107 CASM words, so about 1,052 words per block. The real
+//! challenge input `R || A || M` is roughly 200 bytes, so about 4,200 words.
+//! That buys a value the prover chose.
+//!
+//! **And it is redundant anyway.** The challenge hash does not belong in the
+//! circuit at all. `h = SHA-512(R || A || M) mod L` is public in Ed25519, so
+//! the verifier recomputes it in Rust and passes it in; `verify_with_challenge`
+//! in `ed25519.cairo` does that and the circuit only range-checks `h < L`. The
+//! syscall path would re-derive a number the verifier already had, at a cost
+//! the direct path does not have.
+//!
+//! **Not all corelib hashes are affected, and the split is the useful part.**
+//! Every non-Poseidon hash is a syscall — `Keccak`, `Sha256ProcessBlock` and
+//! `Sha512ProcessBlock` all lower through `build_syscalls`. Poseidon lowers to
+//! `build_poseidon_permutation` and Pedersen likewise: pure CASM, no hint,
+//! no syscall. That is why the committed chain already hashes with Poseidon
+//! under `allow_syscalls: false`, and it is the reason Poseidon is the right
+//! primitive to reach for rather than a syscall-backed hash.
 
 #[cfg(test)]
 mod tests {
@@ -59,10 +75,8 @@ mod tests {
 
     /// The primitives a hand-written SHA-512 would need are all present:
     /// `u64` carries a native `BitXor`, and a widening add with carry is one
-    /// `u256` add plus a comparison. This is why option "write SHA-512 in
-    /// Cairo" was costed rather than dismissed — it is buildable, and it is
-    /// still the wrong answer, for the reason recorded at the top of this file
-    /// and measured in RFC-0958 §Holder Signature Verification.
+    /// `u256` add plus a comparison. So the real question for in-circuit
+    /// SHA-512 was cost, never feasibility.
     #[test]
     fn the_primitives_for_a_handwritten_sha512_are_available() {
         let a: u64 = 0xf0f0;

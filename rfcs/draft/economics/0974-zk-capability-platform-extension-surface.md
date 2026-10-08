@@ -606,31 +606,77 @@ sha512_state_handle_digest(state)
 ```
 
 The compression function is not written in Cairo. It lives in the Starknet OS and
-is reached by syscall. Three consequences, all verified rather than reasoned:
+is reached by syscall.
 
-- **`#[executable]` refuses it.** `compile_executable` walks the Sierra libfunc
-  declarations and bails on any whose generic id ends in `_syscall`, because
-  syscalls are not proved in executables. Compiling the circuit with
-  `compute_sha512_byte_array` reachable from `main` puts exactly one such libfunc
-  in the program — `sha512_process_block_syscall` — and the build is refused.
-- **A syscall result is unconstrained.** Even with `allow_syscalls`, the prover
-  chooses the returned digest. The STARK would constrain nothing about SHA-512,
-  so the proof would attest nothing about the signature while still looking
-  complete.
-- **It passes `scarb cairo-test`.** The primitive is correct — the FIPS 180-4
-  vectors reproduce — and green tests under the Cairo test runner are exactly
-  what makes it a trap. Nothing in that runner distinguishes "hash that a proof
-  can check" from "hash that a host supplies".
+**The mechanical question has a clean yes.** An earlier revision of this section
+said `#[executable]` refuses it and stopped there. That was half the story, and
+the half that invited the question. Setting `allow_syscalls: true` lifts the
+refusal — `compile_executable` bails on any libfunc whose generic id ends in
+`_syscall` only when that flag is unset. With it set, corelib SHA-512 compiles
+into the circuit, `cairo-lang-runner`'s `CairoHintProcessor` services the call
+through the real Starknet syscall handler, and a full STARK prove-and-verify
+**passes with the syscall in the program** — 434 s, tampered-proof rejection
+included. Cost, a one-byte message, two blocks: 3,004 → 5,107 CASM words, about
+1,052 words per block, so roughly 4,200 words for the real ~200-byte challenge
+input.
 
-Cost, measured: adding corelib SHA-512 to a program that already contained the
-real RFC 8032 verifier moved it from **44,443 to 44,975 CASM words**. 532 words
-of call and return plumbing wrapped around a value nobody constrained.
+So the gate is a flag, not a wall, and it was the wrong thing to be uncertain
+about. What remains is the question the flag cannot answer.
 
-`cairo/src/sha512_probe.cairo` is kept as a permanent guard so this is not
-re-litigated. It also records that the primitives for a hand-written SHA-512 are
-all present — `u64` has a native `BitXor`, and a widening add with carry is one
-`u256` add plus a comparison. "Write SHA-512 in Cairo" was therefore costed, not
-dismissed.
+#### Why turning it on still buys nothing
+
+The syscall does not lower to an instruction. `build_syscalls` emits:
+
+```cairo
+hint StarknetHint::SystemCall { system: original_system };
+let updated_gas_builtin = *(system++);
+let response = *(system++);   // the digest comes back out of memory here
+```
+
+The digest is written into memory by a host-side Pythonic hint and read back
+under a plain `assert`. That `assert` is the only constraint on it, and all it
+constrains is that the read matches the write the hint just performed. The value
+is whatever the prover's handler returned.
+
+No amount of proving fixes this, because the proof never sees the handler.
+`ProverInput` is `{ state_transitions, memory, pc_count, public_memory_addresses,
+builtin_segments, public_segment_context }` — **there is no hint field anywhere
+in it**. The verifier commits to the trace and the memory and never learns which
+handler produced a cell. A proof produced with an honest SHA-512 handler and one
+produced with a handler returning zeros are the same kind of object to it.
+
+And it is redundant regardless. The challenge hash does not belong in the
+circuit: `h = SHA-512(R || A || M) mod L` is **public in Ed25519**, so the
+verifier recomputes it in Rust and passes it in, and `verify_with_challenge` in
+`cairo/src/ed25519.cairo` does exactly that. The syscall path would re-derive a
+number the verifier already had, at a cost the direct path does not have, to
+produce a value the prover chose.
+
+`cairo/src/sha512_probe.cairo` is kept as a permanent guard so this is settled in
+both directions: the flag works, and it is still the wrong answer.
+
+#### The split that does matter
+
+Not every corelib hash is affected, and where the line falls is the reusable
+finding. Every hash that corelib did not design for the felt lowers through
+`build_syscalls` — `Keccak`, `Sha256ProcessBlock` and `Sha512ProcessBlock` are
+all on that list, alongside the storage and contract syscalls.
+
+Poseidon does not. It lowers to `build_poseidon_permutation`, and Pedersen
+likewise: pure CASM, no hint, no syscall. That is why the committed chain already
+hashes with Poseidon under `allow_syscalls: false`, and it is why Poseidon — not
+a syscall-backed hash — is the primitive to reach for.
+
+This also reframes why Ed25519 is expensive. It is not that the circuit cannot
+hash cheaply; it is that Ed25519 mandates a 256-bit-output hash, which does not
+fit the felt252 field, forcing an expensive native-field implementation. A
+signature built on Poseidon would be cheap here for the same reason the chain
+already is.
+
+The primitives for a hand-written SHA-512 are all present — `u64` has a native
+`BitXor`, and a widening add with carry is one `u256` add plus a comparison — so
+"write SHA-512 in Cairo" was costed rather than dismissed, and is still the wrong
+answer, for the reason above.
 
 #### The reduction problem is real, and it disappears
 
@@ -660,13 +706,18 @@ CASM is:
 | Program                              | Words      | Serialized |
 | ------------------------------------ | ---------- | ---------- |
 | Circuit as committed                 | 3,004      | 93.88 KB   |
+| + corelib SHA-512 via syscall        | 5,107      | 156 KB     |
 | + conformant `verify_with_challenge` | **44,443** | 1.36 MB    |
-| + corelib SHA-512 (unconstrained)    | 44,975     | 1.37 MB    |
 
-That is **13.8× the entire current circuit**, **12.4× over the AC-4 ceiling of
-110 KB**, and **2.7× past the top of G3's 50–500 KB band**. Verification latency
-(G2, <100 ms) and proof generation (G1, <2 s) are worse, because the cost is a
-longer trace, not a slower hash.
+The two rows answer different questions, and reading them together is the point.
+The syscall row is what step 1 costs _if_ the challenge hash is computed in the
+circuit — about 4,200 words extrapolated to the real ~200-byte input, and it
+would be sound only if the hash were checked, which it cannot be. The
+`verify_with_challenge` row is the whole conformant verifier with the challenge
+supplied from outside: 44,443 words, **13.8× the entire current circuit**, **12.4×
+over the AC-4 ceiling of 110 KB**, and **2.7× past the top of G3's 50–500 KB
+band**. Verification latency (G2, <100 ms) and proof generation (G1, <2 s) are
+worse, because the cost is a longer trace, not a slower hash.
 
 The driver is two scalar multiplications over GF(2²⁵⁵−19) on `u256` limbs. SHA-512
 and the reduction are the cheap part of this problem. One cheap win is available

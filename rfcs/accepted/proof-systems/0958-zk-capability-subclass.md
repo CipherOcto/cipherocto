@@ -286,9 +286,17 @@ fn main() -> felt252 {
     //      - The challenge hash `SHA-512(R || A || M) mod L` is supplied by the
     //        verifier as a public input rather than computed in-circuit. R, A
     //        and M are public in Ed25519, so nothing is exposed, and the
-    //        512-to-253-bit reduction disappears. corelib's SHA-512 cannot be
-    //        used: it is `sha512_process_block_syscall`, and `compile_executable`
-    //        refuses any `*_syscall` libfunc.
+    //        512-to-253-bit reduction disappears.
+    //
+    //        corelib's SHA-512 is not an alternative. It is
+    //        `sha512_process_block_syscall`, which lowers to a host-side hint
+    //        plus a memory read, so the digest is whatever the prover's handler
+    //        returned. Setting `allow_syscalls: true` does make it compile and
+    //        prove — measured end to end — but the proof statement has no hint
+    //        field, so a handler returning zeros yields the same kind of proof.
+    //        It also costs about 1,052 CASM words per block. Poseidon, by
+    //        contrast, lowers to pure CASM and is what this circuit already
+    //        uses.
     //      - Promoting this step is a decision about STWO parameters and about
     //        which primitive occupies the holder-signature slot, not about
     //        finishing an implementation. See RFC-0974 §Step 1.

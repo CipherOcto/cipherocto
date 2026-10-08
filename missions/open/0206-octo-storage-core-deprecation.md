@@ -34,6 +34,14 @@ Forward drop-fork trigger). Covers:
   `0206-octo-storage-core-deprecation` sister-mission pair;
   execution requires both missions green together.
 
+## Claim pairing
+
+This mission is one half of a sister pair. It shares its deliverable
+with `0205-stoolap-fork-retirement`, which owns the RFC-0205 half of
+the same drop-fork retirement. Claim one and you must claim the other
+in the same session, because both halves edit the same `Cargo.toml`
+handle dependency and both must land green together.
+
 ## Acceptance Criterion
 
 Mission complete when:

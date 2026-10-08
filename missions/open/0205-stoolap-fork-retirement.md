@@ -34,6 +34,14 @@ retired. Covers four sub-tasks:
   drop-fork trigger. RFC-0206 §Compatibility Forward references this
   retirement bullet.
 
+## Claim pairing
+
+This mission is one half of a sister pair. It shares its deliverable
+with `0206-octo-storage-core-deprecation`, which owns the RFC-0206 half
+of the same drop-fork retirement. Claim one and you must claim the
+other in the same session, because both halves edit the same
+`Cargo.toml` handle dependency and both must land green together.
+
 ## Acceptance Criterion
 
 Mission complete when:

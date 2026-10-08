@@ -23,7 +23,7 @@ Voting weight is `sqrt(stake) * cosigners`, where `cosigners` is the count of cr
 
 ## Acceptance Criteria
 
-- [ ] `voting_weight = sqrt(stake) * cosigners` formula in `crates/octo-network/src/election/quadratic.rs`
+- [ ] `voting_weight = sqrt(stake) * cosigners` formula in `crates/octo-network/src/mon/quadratic.rs`
 - [ ] `cosigners` count from `CoordinatorRecord::cosignatures` field
 - [ ] Used for DAO and Federated governance models
 - [ ] Centralized governance: ignores voting weight
@@ -31,23 +31,33 @@ Voting weight is `sqrt(stake) * cosigners`, where `cosigners` is the count of cr
 - [ ] Documentation: why quadratic (anti-plutocracy), why cosigners (anti-Sybil)
 - [ ] Documentation: comparison with linear voting and pure quadratic voting
 
-
 ### Implementation Guide
 
-Reference: `crates/octo-network/src/election/quadratic.rs` (new).
-
+Reference: `crates/octo-network/src/mon/quadratic.rs` (new).
 
 ### Type Coverage
 
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `voting_weight = sqrt(stake) * cosigners` formula | This mission |
-| `crates/octo-network/src/election/quadratic.rs` | This mission |
-| Per-governance-model weight application | This mission |
+| RFC-0855p-b Type                                  | Implemented By |
+| ------------------------------------------------- | -------------- |
+| `voting_weight = sqrt(stake) * cosigners` formula | This mission   |
+| `crates/octo-network/src/mon/quadratic.rs`        | This mission   |
+| Per-governance-model weight application           | This mission   |
+
+### Symbol disambiguation
+
+`voting_weight` here is the **coordinator-election** weight owned by
+`octo-network`. It is a distinct symbol from the **governance-tally**
+`voting_weight` that RFC-0013 declares as a frozen Layer A pure
+function of `octo-governance-core`. The two have different signatures
+and different callers, and live in different crates, so they never
+collide at compile time. This mission does not redefine, override, or
+substitute the RFC-0013 symbol, and RFC-0013 owns its definition.
+Any future refactor that unifies the two must go through RFC-0013.
 
 ## Dependencies
 
 Depends on:
+
 - RFC-0855 §13 (Token Economics Integration) being Accepted
 - RFC-0855p-b status: Accepted
 
@@ -61,7 +71,7 @@ Depends on:
 
 ## Location
 
-`crates/octo-network/src/election/quadratic.rs` (new).
+`crates/octo-network/src/mon/quadratic.rs` (new).
 
 ## Complexity
 

@@ -644,8 +644,8 @@ pub fn stage2_main(
 mod tests {
     use super::{
         CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep, fold_inference_trace,
-        hmac_sha256_chain_step, stage2_main, verify_chain, verify_holder_sig, verify_inference_fold,
-        TRACE_STRIDE,
+        hmac_sha256_chain_step, poseidon_mac, stage2_main, verify_chain,
+        verify_holder_sig, verify_inference_fold, TRACE_STRIDE,
     };
 
     /// REGRESSION: a full 32-byte digest must survive the trace encoding.
@@ -820,6 +820,7 @@ mod tests {
             axes_count: 1,
             cap_root_hash_lo: 4,
             cap_root_hash_hi: 5,
+            chain_tip_lo: 77,
             invocation_hash: 6,
             holder_did: 7,
             current_unix_time: 1700000000,
@@ -835,5 +836,67 @@ mod tests {
         };
         let r = stage2_main(pi, pw, array![15, 16, 22].span(), array![17, 18, 19]);
         assert!(r == 1, "harness witness must satisfy every circuit assertion");
+    }
+
+    // ------------------------------------------------------------------
+    // Host/circuit parity for `poseidon_mac`.
+    //
+    // These constants are asserted IDENTICALLY by
+    // `substrate_poseidon::tests::poseidon_mac_matches_the_circuit_vectors`
+    // in `octo-cap-macaroon`. Two independent implementations of a MAC that
+    // silently drift still both run and still produce plausible values — the
+    // exact failure mode a hand-written MAC is most prone to. Pinning both
+    // sides to the same vectors makes divergence a test failure instead of a
+    // chain tip that never matches.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn poseidon_mac_parity_empty_message() {
+        let mac = poseidon_mac(1, array![].span());
+        assert!(
+            mac
+                == 0x046e86a3387dd91b36e4c3bd6bdcd1ff021bee5c909188d42b7d76f27819de98,
+            "parity divergence: empty message"
+        );
+    }
+
+    #[test]
+    fn poseidon_mac_parity_single_felt() {
+        let mac = poseidon_mac(42, array![7].span());
+        assert!(
+            mac
+                == 0x016c51efb49c3462f9e32810075ce52b3327d25b7802fa10313a71d72846056d,
+            "parity divergence: single felt"
+        );
+    }
+
+    #[test]
+    fn poseidon_mac_parity_three_felts() {
+        let mac = poseidon_mac(0xdead, array![1, 2, 3].span());
+        assert!(
+            mac
+                == 0x037523d4d4d0875dc9931199b83dd31a074bcdb4a21a5f2098020afd219f659b,
+            "parity divergence: three felts"
+        );
+    }
+
+    #[test]
+    fn poseidon_mac_parity_domain_sized_key() {
+        let mac = poseidon_mac(
+            0xffffffffffffffff, array![0xffffffffffffffff, 0].span(),
+        );
+        assert!(
+            mac == 0x06bd32a5ce3f2513b62f1d02a7ef8128e148bfca2f1514deeef096d46058224d,
+            "parity divergence: domain-sized key"
+        );
+    }
+
+    #[test]
+    fn poseidon_mac_is_order_sensitive() {
+        // A MAC that ignores message order would let a prover permute the
+        // caveat chain and satisfy the tip.
+        let a = poseidon_mac(9, array![1, 2].span());
+        let b = poseidon_mac(9, array![2, 1].span());
+        assert!(a != b, "the MAC must bind caveat order");
     }
 }

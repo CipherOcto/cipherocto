@@ -64,6 +64,7 @@ pub mod hex_id_32;
 pub mod macaroon;
 pub mod signer;
 pub mod substrate;
+pub mod substrate_poseidon;
 pub mod token;
 pub mod wire;
 

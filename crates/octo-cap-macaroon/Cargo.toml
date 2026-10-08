@@ -13,6 +13,14 @@ crate-type = ["rlib"]
 # BLAKE3 keyed-hash primitive (Layer A per RFC-0853 §1.1) — used for
 # HMAC-BLAKE3 = blake3::keyed_hash per RFC-0957 §Algorithms.
 blake3 = "1.5"
+# Poseidon over felt252 (Layer A) — the STARK-native MAC used for the
+# verifier-bound caveat chain in `substrate::poseidon`. Not a substitute for
+# BLAKE3: the credential chain stays HMAC-BLAKE3 per RFC-0957 §Algorithms, and
+# this exists so a ZK circuit can re-derive the same value without paying for
+# BLAKE3 in-field (measured 17,628 CASM words against 2,182 for Poseidon).
+# Same crate the Cairo toolchain uses, which is what makes host/circuit parity
+# possible rather than assumed.
+starknet-crypto = "0.8"
 # hex for Debug redaction output (does NOT appear in wire form; safe).
 hex = "0.4"
 # Serde derives for Caveat + Macaroon + CapabilityCatalog (RFC-0126 canonical ser).

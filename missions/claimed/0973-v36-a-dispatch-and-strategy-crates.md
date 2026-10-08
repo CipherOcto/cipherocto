@@ -1,6 +1,6 @@
 # 0973-v36-a-dispatch-and-strategy-crates — Dispatch algorithm, operator policy, registration host, reference strategies, determinism fixture
 
-**Status:** Open
+**Status:** Claimed — @mmacedoeu (agent), 2026-10-07
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 2: Enhanced
 **Substrate:** `octo-wallet` (dispatch, boot validation, wallet verification entry point) + `octo-wallet-node` (registration host) + one new strategy crate (`octo-cap-poi`) and one existing crate gaining a strategy (`octo-cap-zk`)
 **Depends on:** Mission `0973-v36-attestation-core-substrate` — provides `AttestationTypeId`, both traits, `Admission`, `AdmissionProfile`, `CostFigure`, `SecurityFigure`, `Expectation`, `PolicySource`, `AttestationVerifyCtx`, `AttestationOutcome`, the envelope wire form and its decode bounds, and the allocation record with its named owner.
@@ -212,7 +212,7 @@ traffic.
 
 ## Claimant
 
-@
+@mmacedoeu (agent, 2026-10-07) — autonomous implementation, PR(s) for human review per BLUEPRINT.md Agent Workflow.
 
 ## Pull Request
 

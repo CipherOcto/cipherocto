@@ -1,6 +1,6 @@
 # 0973-v36-c-substrate-corrections — Capability class projection and the recorded specification drift
 
-**Status:** Open
+**Status:** Claimed — @mmacedoeu (agent), 2026-10-07
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 4: Cross-cutting substrate corrections
 **Substrate:** `octo-wallet` (capability class), the RFC document itself (drift record)
 **Depends on:** Mission `0973-v36-b-root-secret-binding` — this phase is cross-cutting and lands after the mechanism is whole.
@@ -113,7 +113,7 @@ proposed fix for either item would, it is out of scope for this mission.
 
 ## Claimant
 
-@
+@mmacedoeu (agent, 2026-10-07) — autonomous implementation, PR(s) for human review per BLUEPRINT.md Agent Workflow.
 
 ## Pull Request
 

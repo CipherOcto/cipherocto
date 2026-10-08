@@ -1,6 +1,6 @@
 # 0973-v36-attestation-core-substrate — Attestation type, strategy traits, fail-closed registry, envelope wire form, mint and attenuation rules
 
-**Status:** Open
+**Status:** Claimed — @mmacedoeu (agent), 2026-10-07
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 1: Core
 **Substrate:** `octo-cap-macaroon` (envelope, `AttestationTypeId`) + `octo-wallet::capability` (traits, registry)
 **Depends on:** nothing. This is the base mission of the RFC-0973 set.
@@ -226,7 +226,7 @@ mechanism, not an assertion.
 
 ## Claimant
 
-@
+@mmacedoeu (agent, 2026-10-07) — autonomous implementation, PR(s) for human review per BLUEPRINT.md Agent Workflow.
 
 ## Pull Request
 

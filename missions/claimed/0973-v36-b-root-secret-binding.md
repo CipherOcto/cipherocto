@@ -1,6 +1,6 @@
 # 0973-v36-b-root-secret-binding — In-circuit unkeyed BLAKE3, the binding assertion, calldata conformance, mint wiring, strategy registration
 
-**Status:** Open
+**Status:** Claimed — @mmacedoeu (agent), 2026-10-07
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 3: Root-Secret Binding
 **Substrate:** `cairo/src/blake3.cairo`, `cairo/src/lib.cairo`, `crates/zk-vendor/stwo-sys` (excluded from the workspace), `crates/octo-cap-zk`, `crates/zk-circuit` (the ceiling assertion and the parity vectors)
 **Depends on:** Mission `0973-v36-a-dispatch-and-strategy-crates` — provides the `octo-cap-zk` crate, the registration host, and a dispatch that can actually reject.
@@ -207,7 +207,7 @@ base mission checks.
 
 ## Claimant
 
-@
+@mmacedoeu (agent, 2026-10-07) — autonomous implementation, PR(s) for human review per BLUEPRINT.md Agent Workflow.
 
 ## Pull Request
 

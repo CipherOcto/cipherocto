@@ -1,6 +1,6 @@
 # 0973-v36-d-dependency-direction — Layer-B to Layer-E dependency removal, node-metadata advertisement, registration lint
 
-**Status:** Open
+**Status:** Claimed — @mmacedoeu (agent), 2026-10-07
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 5: Dependency direction and deployment properties
 **Substrate:** `octo-wallet/Cargo.toml`, `octo-wallet-node`, node metadata, CI lint
 **Depends on:** Mission `0973-v36-a-dispatch-and-strategy-crates` — provides the registration host and the strategy links this mission removes the wallet's direct dependency in favour of.
@@ -176,7 +176,7 @@ do so after the module is re-pointed.
 
 ## Claimant
 
-@
+@mmacedoeu (agent, 2026-10-07) — autonomous implementation, PR(s) for human review per BLUEPRINT.md Agent Workflow.
 
 ## Pull Request
 

@@ -123,6 +123,8 @@ use core::traits::{Into, TryInto};
 // mandates while the primitive is unavailable.
 #[cfg(test)]
 mod blake3;
+#[cfg(test)]
+mod sha512_probe;
 /// RFC 8032 Ed25519 verifier — **not conformant**, and deliberately test-only.
 ///
 /// The challenge hash `SHA-512(R || A || M) mod L` is computed with **BLAKE3**,

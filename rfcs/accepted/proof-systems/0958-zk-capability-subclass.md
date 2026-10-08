@@ -274,6 +274,24 @@ fn main() -> felt252 {
 
     // 1. Verify holder signature (Ed25519). holder_sig is private witness (R1 C1 fix);
     //    STARK proves signature was checked without revealing it.
+    //
+    //    IMPLEMENTATION STATUS: the conformant verifier exists and is pinned
+    //    against three RFC 8032 §7.1 vectors as `verify_with_challenge`, but it
+    //    is NOT wired into `main`, and must not be at the current parameters.
+    //    Measured at 44,443 CASM words — 13.8x the committed circuit, 12.4x the
+    //    AC-4 ceiling of 110 KB, and 2.7x past the top of G3's band. The cost is
+    //    two scalar multiplications over GF(2^255-19), not SHA-512.
+    //
+    //    Two corollaries the pseudocode above does not show:
+    //      - The challenge hash `SHA-512(R || A || M) mod L` is supplied by the
+    //        verifier as a public input rather than computed in-circuit. R, A
+    //        and M are public in Ed25519, so nothing is exposed, and the
+    //        512-to-253-bit reduction disappears. corelib's SHA-512 cannot be
+    //        used: it is `sha512_process_block_syscall`, and `compile_executable`
+    //        refuses any `*_syscall` libfunc.
+    //      - Promoting this step is a decision about STWO parameters and about
+    //        which primitive occupies the holder-signature slot, not about
+    //        finishing an implementation. See RFC-0974 §Step 1.
     let holder_sig = priv_witness.holder_sig;
     let msg = canonical_ser(pub_inputs.holder_did || pub_inputs.ask_id || pub_inputs.cap_root_hash);
     let holder_pk = did_resolve_pubkey(pub_inputs.holder_did);

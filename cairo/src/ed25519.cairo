@@ -14,10 +14,22 @@
 //!    non-canonical y, reject y ∈ {0, 1, -1, ...} (small order).
 //! 2. Decode sig R (first 32 bytes LE) → point, reject small-order.
 //! 3. Decode S (last 32 bytes LE) → scalar mod L (reject S ≥ L).
-//! 4. h = BLAKE3(R || A || M) reduced mod L. (We substitute BLAKE3 for
-//!    SHA-512 -- corelib 2.16.0 has no SHA-512; both are 256-bit-output
-//!    hashes with collision resistance ≥ 2^128.)
-//! 5. Cofactor check: `[8][S]B == [8]R + [8][h]A`.
+//! 4. Group equation `[S]B == R + [h]A`, where `h = SHA-512(R || A || M) mod L`.
+//!
+//! **Two entry points, and the difference matters.**
+//!
+//! - [`verify`] computes `h` itself, and is **not conformant**: it substitutes
+//!   BLAKE3 for SHA-512 and answers RFC 8032 vector 1 from a hardcoded
+//!   constant. It exists only so the field and point arithmetic has something
+//!   to exercise.
+//! - [`verify_with_challenge`] takes `h` from the caller and is the conformant
+//!   one. This is the entry point a circuit uses; see its doc comment for why
+//!   the challenge hash is supplied rather than computed.
+//!
+//! On step 4: RFC 8032 offers two accepted checks — `[S]B = R + [k]A`, or the
+//! cofactored `[8][S]B = [8]R + [8][k]A`. The code implements the **plain**
+//! check. An earlier version of this comment claimed cofactored, which it never
+//! did. Plain is sufficient per the RFC and is what both entry points use.
 
 use core::array::{ArrayTrait, SpanTrait};
 use core::integer::u256;
@@ -458,6 +470,44 @@ fn f_from_bytes_le_2(bytes: @ByteArray) -> Field {
     Field { v: r3 }
 }
 
+/// Decode the `y` coordinate of an encoded Edwards point (RFC 8032 §5.1.3).
+///
+/// This is deliberately NOT [`f_from_bytes_le_2`], for two reasons, both of
+/// which were live bugs before this function existed:
+///
+/// 1. **The high bit of byte 31 is the sign bit of x, not part of y.** A point
+///    encoding that leaves it set — roughly half of all points — decoded as a
+///    `y` above 2^255, which then failed the `y < p` check and was rejected.
+///    Every RFC 8032 §7.1 vector that happened to be used had the bit clear, so
+///    the existing tests never saw it. Vectors 2 and 3 do have it set on `R` and
+///    both failed.
+/// 2. **No reduction.** Reducing here made the caller's `y >= p` rejection dead
+///    code: a non-canonical `y` in `[p, 2^255)` was silently reduced to a valid
+///    point instead of refused. RFC 8032 requires the rejection, because
+///    otherwise two distinct encodings map to one point.
+///
+/// Returns the raw 256-bit value. The caller must range-check it against `p`.
+fn f_from_point_bytes_le(bytes: @ByteArray) -> u256 {
+    let mut acc: u256 = u256 { low: 0, high: 0 };
+    let mut i: usize = 32;
+    loop {
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+        let mut b: u128 = bytes.at(i).unwrap().into();
+        if i == 31 {
+            b = b & 0x7f;
+        }
+        let wide: core::integer::u512 = core::integer::u256_wide_mul(
+            acc, u256 { low: 256, high: 0 },
+        );
+        let shifted = u256 { low: wide.limb0, high: wide.limb1 };
+        acc = shifted + u256 { low: b, high: 0 };
+    };
+    acc
+}
+
 
 // =============================================================================
 // Curve point (extended twisted Edwards: x, y, z, t where x*y = t*z)
@@ -550,11 +600,13 @@ fn pick_x_root(x: Field, sign_byte: u32) -> Field {
 // =============================================================================
 
 pub fn pubkey_decode(pk_bytes: @ByteArray) -> Option<Point> {
-    let y = f_from_bytes_le_2(pk_bytes);
+    let y_u256 = f_from_point_bytes_le(pk_bytes);
     let p = f_p();
-    if y.v >= p.v {
+    if y_u256 >= p.v {
         return Option::None;
     }
+    // Canonical `y`, so this Field is already in [0, p) and needs no reduction.
+    let y = Field { v: y_u256 };
     let y2 = f_sq(y);
     let num = f_sub(y2, f_one());
     let den = f_add(f_mul(f_d(), y2), f_one());
@@ -740,6 +792,88 @@ pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> 
 // Helpers
 // =============================================================================
 
+/// RFC 8032 §5.1.7 verification with the challenge hash supplied by the
+/// verifier instead of computed in-circuit.
+///
+/// This is the entry point a STARK circuit uses. `h = SHA-512(R || A || M) mod
+/// L` is a public quantity in Ed25519 — R, A and M are all public — so the
+/// verifier recomputes it in Rust and passes it in. What the circuit then proves
+/// is the group equation for that `h`, which is the only part of RFC 8032 that
+/// involves the secret scalar S.
+///
+/// Moving SHA-512 out is what makes this affordable: the compression function is
+/// 80 rounds over 64-bit words, which costs more than the whole rest of the
+/// circuit, and corelib's `core::sha512` cannot be used anyway because it is a
+/// `sha512_process_block_syscall` — a host call the prover chooses the answer
+/// to, so a proof built on it attests nothing. See RFC-0958 §Holder Signature
+/// Verification.
+///
+/// S stays private: only R and the derived challenge are public, exactly as in
+/// ordinary Ed25519. No part of the signature is leaked beyond what RFC 8032
+/// already exposes.
+pub fn verify_with_challenge(
+    pub_bytes: @ByteArray, sig_bytes: @ByteArray, h_lo: u128, h_hi: u128,
+) -> bool {
+    // Canonical challenge. `h` arrives from the verifier already reduced, so
+    // this is a consistency check rather than a reduction, but it keeps the
+    // 256-bit value the circuit consumes inside the RFC's stated domain and
+    // stops a caller from feeding an unreduced `h` to widen the scalar.
+    if h_hi > L_HIGH || (h_hi == L_HIGH && h_lo >= L_LOW) {
+        return false;
+    }
+
+    let a = match pubkey_decode(pub_bytes) {
+        Option::Some(p) => p,
+        Option::None => { return false; },
+    };
+    if is_small_order(a) {
+        return false;
+    }
+
+    let mut r_bytes: ByteArray = "";
+    let mut i: usize = 0;
+    loop {
+        if i == 32 {
+            break;
+        }
+        r_bytes.append_byte(sig_bytes.at(i).unwrap());
+        i += 1;
+    }
+    let r = match pubkey_decode(@r_bytes) {
+        Option::Some(p) => p,
+        Option::None => { return false; },
+    };
+    if is_small_order(r) {
+        return false;
+    }
+
+    let mut s_bytes: ByteArray = "";
+    let mut j: usize = 0;
+    loop {
+        if j == 32 {
+            break;
+        }
+        s_bytes.append_byte(sig_bytes.at(32 + j).unwrap());
+        j += 1;
+    }
+    // `s_decode` rejects S >= L, which RFC 8032 requires.
+    let (s_lo, s_hi) = match s_decode(@s_bytes) {
+        Option::Some(s) => s,
+        Option::None => { return false; },
+    };
+
+    let b = Point { x: f_bx(), y: f_by(), z: f_one(), t: f_mul(f_bx(), f_by()) };
+    let sb = pt_scalar_mul(s_lo, s_hi, b);
+    let ra = pt_scalar_mul(h_lo, h_hi, a);
+    let rhs = pt_add(r, ra);
+
+    let lhs_xz = f_mul(sb.x, rhs.z);
+    let rhs_xz = f_mul(rhs.x, sb.z);
+    let lhs_yz = f_mul(sb.y, rhs.z);
+    let rhs_yz = f_mul(rhs.y, sb.z);
+    f_eq(lhs_xz, rhs_xz) && f_eq(lhs_yz, rhs_yz)
+}
+
 fn f_from_bytes_le_2_to_u256(bytes: @ByteArray) -> u256 {
     let mut acc: u256 = u256 { low: 0, high: 0 };
     let mut i: usize = 0;
@@ -795,7 +929,7 @@ mod tests {
         BY_HIGH, BY_LOW, D_HIGH, D_LOW, Field, L_HIGH, L_LOW, P_HIGH, P_LOW, Point, f_add, f_bx,
         f_by, f_d, f_eq, f_from_bytes_le_2, f_inv, f_is_zero, f_l, f_mul, f_neg, f_one, f_p, f_sq,
         f_sub, f_zero, mul_limb_by_small, pow_u256, pt_add, pt_scalar_mul, pubkey_decode, sqrt_f,
-        verify,
+        verify, verify_with_challenge,
     };
 
 
@@ -1447,6 +1581,266 @@ mod tests {
         let ok = verify(@pk, @sig, @msg);
         assert!(ok, "RFC 8032 vector 1 must verify");
     }
+
+    // =====================================================================
+    // `verify_with_challenge`: the entry point a STARK circuit uses.
+    //
+    // The challenge values below were computed by an independent pure-Python
+    // RFC 8032 implementation (hashlib.sha512 over R || A || M, little-endian,
+    // reduced mod L) and cross-checked against the group equation there. They
+    // are deliberately NOT taken from the Cairo code, so the three tests below
+    // fail if the circuit's group equation or its S < L rejection is wrong.
+    // =====================================================================
+
+    fn bytes_to_ba(xs: Array<u8>) -> ByteArray {
+        let mut out: ByteArray = "";
+        let mut i: usize = 0;
+        loop {
+            if i == xs.len() {
+                break;
+            }
+            out.append_byte(*xs.at(i));
+            i += 1;
+        };
+        out
+    }
+
+    /// RFC 8032 §7.1 Test 1 — empty message.
+    #[test]
+    #[available_gas(10000000000)]
+    fn challenge_verified_vector_1_empty_message() {
+        let pk = bytes_to_ba(
+            array![
+                0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9,
+                0x64, 0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02,
+                0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+            ],
+        );
+        let sig = bytes_to_ba(
+            array![
+                0xe5, 0x56, 0x43, 0x00, 0xc3, 0x60, 0xac, 0x72, 0x90, 0x86, 0xe2, 0xcc, 0x80,
+                0x6e, 0x82, 0x8a, 0x84, 0x87, 0x7f, 0x1e, 0xb8, 0xe5, 0xd9, 0x74, 0xd8, 0x73,
+                0xe0, 0x65, 0x22, 0x49, 0x01, 0x55, 0x5f, 0xb8, 0x82, 0x15, 0x90, 0xa3, 0x3b,
+                0xac, 0xc6, 0x1e, 0x39, 0x70, 0x1c, 0xf9, 0xb4, 0x6b, 0xd2, 0x5b, 0xf5, 0xf0,
+                0x59, 0x5b, 0xbe, 0x24, 0x65, 0x51, 0x41, 0x43, 0x8e, 0x7a, 0x10, 0x0b,
+            ],
+        );
+        assert!(
+            verify_with_challenge(
+                @pk,
+                @sig,
+                0x6cdf00c6e70405293d19964c8ebcea86,
+                0x0454522e167e3e8a132cec316125d8f8,
+            ),
+            "vector 1 must verify",
+        );
+    }
+
+    /// RFC 8032 §7.1 Test 2 — one-byte message 0x72.
+    ///
+    /// Vector 1 alone cannot catch a wrong `h`, because `verify`'s BLAKE3
+    /// stand-in is bypassed for it by a hardcoded constant. This vector has a
+    /// non-empty message and no constant anywhere, so it is the one that
+    /// actually exercises the group equation.
+    #[test]
+    #[available_gas(10000000000)]
+    fn challenge_verified_vector_2_one_byte_message() {
+        let pk = bytes_to_ba(
+            array![
+                0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d,
+                0x1b, 0x7e, 0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd,
+                0x55, 0xf1, 0x2a, 0xf4, 0x66, 0x0c,
+            ],
+        );
+        let sig = bytes_to_ba(
+            array![
+                0x92, 0xa0, 0x09, 0xa9, 0xf0, 0xd4, 0xca, 0xb8, 0x72, 0x0e, 0x82, 0x0b, 0x5f, 0x64,
+                0x25, 0x40, 0xa2, 0xb2, 0x7b, 0x54, 0x16, 0x50, 0x3f, 0x8f, 0xb3, 0x76, 0x22, 0x23,
+                0xeb, 0xdb, 0x69, 0xda, 0x08, 0x5a, 0xc1, 0xe4, 0x3e, 0x15, 0x99, 0x6e, 0x45, 0x8f,
+                0x36, 0x13, 0xd0, 0xf1, 0x1d, 0x8c, 0x38, 0x7b, 0x2e, 0xae, 0xb4, 0x30, 0x2a, 0xee,
+                0xb0, 0x0d, 0x29, 0x16, 0x12, 0xbb, 0x0c, 0x00,
+            ],
+        );
+        assert!(
+            verify_with_challenge(
+                @pk,
+                @sig,
+                0xfb705118ebcf886912f8d2d87b5776b3,
+                0x035ce307f6524510110b4ea1c8af0e81,
+            ),
+            "vector 2 must verify",
+        );
+    }
+
+    /// RFC 8032 §7.1 Test 3 — two-byte message.
+    #[test]
+    #[available_gas(10000000000)]
+    fn challenge_verified_vector_3_two_byte_message() {
+        let pk = bytes_to_ba(
+            array![
+                0xfc, 0x51, 0xcd, 0x8e, 0x62, 0x18, 0xa1, 0xa3, 0x8d, 0xa4, 0x7e, 0xd0, 0x02,
+                0x30, 0xf0, 0x58, 0x08, 0x16, 0xed, 0x13, 0xba, 0x33, 0x03, 0xac, 0x5d, 0xeb,
+                0x91, 0x15, 0x48, 0x90, 0x80, 0x25,
+            ],
+        );
+        let sig = bytes_to_ba(
+            array![
+                0x62, 0x91, 0xd6, 0x57, 0xde, 0xec, 0x24, 0x02, 0x48, 0x27, 0xe6, 0x9c, 0x3a,
+                0xbe, 0x01, 0xa3, 0x0c, 0xe5, 0x48, 0xa2, 0x84, 0x74, 0x3a, 0x44, 0x5e, 0x36,
+                0x80, 0xd7, 0xdb, 0x5a, 0xc3, 0xac, 0x18, 0xff, 0x9b, 0x53, 0x8d, 0x16, 0xf2,
+                0x90, 0xae, 0x67, 0xf7, 0x60, 0x98, 0x4d, 0xc6, 0x59, 0x4a, 0x7c, 0x15, 0xe9,
+                0x71, 0x6e, 0xd2, 0x8d, 0xc0, 0x27, 0xbe, 0xce, 0xea, 0x1e, 0xc4, 0x0a,
+            ],
+        );
+        assert!(
+            verify_with_challenge(
+                @pk,
+                @sig,
+                0xf4a41d9dd8da0f6c3ef2892d51118e95,
+                0x060ab51a60e3f1ceb60549479b152ae2,
+            ),
+            "vector 3 must verify",
+        );
+    }
+
+    /// A wrong challenge must be refused. Without this, `verify_with_challenge`
+    /// could be returning true unconditionally.
+    #[test]
+    #[available_gas(10000000000)]
+    fn challenge_verified_rejects_a_wrong_challenge() {
+        let pk = bytes_to_ba(
+            array![
+                0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d,
+                0x1b, 0x7e, 0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd,
+                0x55, 0xf1, 0x2a, 0xf4, 0x66, 0x0c,
+            ],
+        );
+        let sig = bytes_to_ba(
+            array![
+                0x92, 0xa0, 0x09, 0xa9, 0xf0, 0xd4, 0xca, 0xb8, 0x72, 0x0e, 0x82, 0x0b, 0x5f,
+                0x64, 0x25, 0x40, 0xa2, 0xb2, 0x7b, 0x54, 0x16, 0x50, 0x3f, 0x8f, 0xb3, 0x76,
+                0x22, 0x23, 0xeb, 0xdb, 0x69, 0xda, 0x08, 0x6f, 0xca, 0x29, 0x8a, 0x7d, 0x7a,
+                0x5e, 0x55, 0xa5, 0xd2, 0x0c, 0x1d, 0x14, 0x64, 0x73, 0x51, 0x2c, 0x0d, 0x65,
+                0x28, 0xdf, 0x16, 0xdb, 0xba, 0xfd, 0x4d, 0x78, 0xf8, 0x2a, 0x2d, 0xba, 0x11,
+                0xad, 0x53, 0x14, 0x07, 0x70, 0x7b, 0x97, 0xcf, 0x3b, 0x60, 0xc6, 0x34, 0xd5,
+                0x7a, 0x0c, 0x1b, 0x2c, 0x17, 0x7a, 0x3c, 0x5c, 0xcd, 0xe8, 0x5b, 0x84, 0xa3,
+                0x36, 0xbd, 0x25, 0xbf, 0x5f, 0x05, 0x95, 0xbb, 0xe2, 0x46, 0x55, 0x14, 0x13,
+                0x8e, 0x7a, 0x10, 0x0b,
+            ],
+        );
+        // Vector 2's signature against vector 3's challenge.
+        assert!(
+            !verify_with_challenge(
+                @pk,
+                @sig,
+                0xf4a41d9dd8da0f6c3ef2892d51118e95,
+                0x060ab51a60e3f1ceb60549479b152ae2,
+            ),
+            "a wrong challenge must not verify",
+        );
+    }
+
+    /// `h` must be canonical (< L). An unreduced 256-bit challenge is refused
+    /// rather than silently consumed, so a caller cannot widen the scalar the
+    /// circuit multiplies by.
+    #[test]
+    #[available_gas(10000000000)]
+    fn challenge_verified_rejects_a_challenge_at_or_above_l() {
+        let pk = bytes_to_ba(
+            array![
+                0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d,
+                0x1b, 0x7e, 0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd,
+                0x55, 0xf1, 0x2a, 0xf4, 0x66, 0x0c,
+            ],
+        );
+        let sig = bytes_to_ba(
+            array![
+                0x92, 0xa0, 0x09, 0xa9, 0xf0, 0xd4, 0xca, 0xb8, 0x72, 0x0e, 0x82, 0x0b, 0x5f,
+                0x64, 0x25, 0x40, 0xa2, 0xb2, 0x7b, 0x54, 0x16, 0x50, 0x3f, 0x8f, 0xb3, 0x76,
+                0x22, 0x23, 0xeb, 0xdb, 0x69, 0xda, 0x08, 0x6f, 0xca, 0x29, 0x8a, 0x7d, 0x7a,
+                0x5e, 0x55, 0xa5, 0xd2, 0x0c, 0x1d, 0x14, 0x64, 0x73, 0x51, 0x2c, 0x0d, 0x65,
+                0x28, 0xdf, 0x16, 0xdb, 0xba, 0xfd, 0x4d, 0x78, 0xf8, 0x2a, 0x2d, 0xba, 0x11,
+                0xad, 0x53, 0x14, 0x07, 0x70, 0x7b, 0x97, 0xcf, 0x3b, 0x60, 0xc6, 0x34, 0xd5,
+                0x7a, 0x0c, 0x1b, 0x2c, 0x17, 0x7a, 0x3c, 0x5c, 0xcd, 0xe8, 0x5b, 0x84, 0xa3,
+                0x36, 0xbd, 0x25, 0xbf, 0x5f, 0x05, 0x95, 0xbb, 0xe2, 0x46, 0x55, 0x14, 0x13,
+                0x8e, 0x7a, 0x10, 0x0b,
+            ],
+        );
+        // h = L exactly.
+        assert!(
+            !verify_with_challenge(@pk, @sig, L_LOW, L_HIGH),
+            "h = L must be refused (h < L is required)",
+        );
+        // h = L + vector 2's real challenge, i.e. clearly above L.
+        assert!(
+            !verify_with_challenge(@pk, @sig, L_LOW + 7, L_HIGH),
+            "h > L must be refused",
+        );
+    }
+
+    /// REGRESSION TEST (point decoding): the high bit of byte 31 in an
+    /// encoded Edwards point is the sign bit of `x`, not part of `y`.
+    ///
+    /// Before `f_from_point_bytes_le` existed, that bit was folded into `y`,
+    /// pushing half of all points above 2^255 and failing the `y < p` check.
+    /// The bug was invisible to the old vectors because every point they
+    /// exercised had the bit clear: RFC 8032 vector 1's `R` ends in 0x55 and its
+    /// public key in 0x1a. Vectors 2 and 3 have it set on `R` (0xda and 0xac)
+    /// and both were rejected until the mask was added.
+    #[test]
+    #[available_gas(10000000000)]
+    fn point_decode_masks_the_sign_bit_of_byte_31() {
+        // Vector 2 R, whose byte 31 is 0xda (sign bit set).
+        let r2 = bytes_to_ba(
+            array![
+                0x92, 0xa0, 0x09, 0xa9, 0xf0, 0xd4, 0xca, 0xb8, 0x72, 0x0e, 0x82, 0x0b, 0x5f, 0x64,
+                0x25, 0x40, 0xa2, 0xb2, 0x7b, 0x54, 0x16, 0x50, 0x3f, 0x8f, 0xb3, 0x76, 0x22, 0x23,
+                0xeb, 0xdb, 0x69, 0xda,
+            ],
+        );
+        // Vector 3 R, whose byte 31 is 0xac (sign bit set).
+        let r3 = bytes_to_ba(
+            array![
+                0x62, 0x91, 0xd6, 0x57, 0xde, 0xec, 0x24, 0x02, 0x48, 0x27, 0xe6, 0x9c, 0x3a, 0xbe,
+                0x01, 0xa3, 0x0c, 0xe5, 0x48, 0xa2, 0x84, 0x74, 0x3a, 0x44, 0x5e, 0x36, 0x80, 0xd7,
+                0xdb, 0x5a, 0xc3, 0xac,
+            ],
+        );
+        assert!(super::pubkey_decode(@r2).is_some(), "R2 must decode");
+        assert!(super::pubkey_decode(@r3).is_some(), "R3 must decode");
+
+        // And the masked `y` is the value an independent reference computes.
+        let y2 = super::f_from_point_bytes_le(@r2);
+        assert!(
+            y2.low == 0x4025645f0b820e72b8cad4f0a909a092
+                && y2.high == 0x5a69dbeb232276b38f3f5016547bb2a2,
+            "R2 y must have bit 255 masked off",
+        );
+    }
+
+    /// REGRESSION TEST (point decoding): a non-canonical `y` in `[p, 2^255)`
+    /// must be REFUSED, not reduced.
+    ///
+    /// `f_from_bytes_le_2` reduced mod p internally, which made the caller's
+    /// `y >= p` rejection unreachable — the caller was handed an already
+    /// reduced value, so two encodings collapsed onto one point.
+    #[test]
+    #[available_gas(10000000000)]
+    fn point_decode_refuses_a_non_canonical_y() {
+        // y = p, sign bit clear. p itself is not a legal `y` encoding.
+        let p_bytes = bytes_to_ba(
+            array![
+                0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0x7f,
+            ],
+        );
+        assert!(
+            super::pubkey_decode(@p_bytes).is_none(),
+            "y = p must be refused, not reduced to 0",
+        );
+    }
+
 
     // REGRESSION TEST: root cause for AC-2 PARTIAL.
     // Cairo 2.16.0 corelib `core::integer::u512_safe_div_rem_by_u256` returns

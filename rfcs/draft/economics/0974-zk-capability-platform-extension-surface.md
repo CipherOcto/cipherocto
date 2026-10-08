@@ -586,67 +586,149 @@ Two ways forward, both RFC decisions rather than implementation work:
 
 Not guessed here.
 
-### Step 1 — Ed25519: the premise was wrong
+### Step 1 — Ed25519: the premise was wrong, twice
 
-#### The corelib premise behind the substitution has expired
+#### Correction: corelib's SHA-512 is a syscall, not a hash
 
-The verifier substitutes BLAKE3 for SHA-512 because of a comment reading
-"Cairo 2.16.0 corelib lacks SHA-512". The project is on **scarb 2.20.0 /
-cairo 2.20.0** now, and corelib does have it:
+An earlier revision of this document recorded that corelib 2.20.0 has SHA-512 and
+concluded that "real SHA-512 in-circuit" was materially cheaper than first
+assessed — the hash free, leaving only a 512-bit mod L reduction. **That
+conclusion was wrong**, and it is withdrawn.
+
+`core::sha512::compute_sha512_byte_array` is a thin wrapper. Its whole body is:
 
 ```cairo
-core::sha512::compute_sha512_byte_array(@ByteArray) -> [u64; 8]
+let mut state = sha512_state_handle_init(initial_state);
+while let Some(chunk) = input.multi_pop_front() {
+    state = starknet::syscalls::sha512_process_block_syscall(state, *chunk).unwrap_syscall();
+}
+sha512_state_handle_digest(state)
 ```
 
-So the "real SHA-512 in-circuit" option is materially cheaper than it first
-looked — the hash itself is free, and the RFC 8032 vectors above were
-reproduced against it. What remains is a 512-bit **mod L** reduction in
-Cairo, not a hash implementation.
+The compression function is not written in Cairo. It lives in the Starknet OS and
+is reached by syscall. Three consequences, all verified rather than reasoned:
 
-Two facts about that reduction, both found the hard way:
+- **`#[executable]` refuses it.** `compile_executable` walks the Sierra libfunc
+  declarations and bails on any whose generic id ends in `_syscall`, because
+  syscalls are not proved in executables. Compiling the circuit with
+  `compute_sha512_byte_array` reachable from `main` puts exactly one such libfunc
+  in the program — `sha512_process_block_syscall` — and the build is refused.
+- **A syscall result is unconstrained.** Even with `allow_syscalls`, the prover
+  chooses the returned digest. The STARK would constrain nothing about SHA-512,
+  so the proof would attest nothing about the signature while still looking
+  complete.
+- **It passes `scarb cairo-test`.** The primitive is correct — the FIPS 180-4
+  vectors reproduce — and green tests under the Cairo test runner are exactly
+  what makes it a trap. Nothing in that runner distinguishes "hash that a proof
+  can check" from "hash that a host supplies".
 
-- `L` is 253 bits, so it needs **eight** `u32` limbs. A four-limb constant
-  silently keeps only the low 128 bits and produces a wrong answer with no type
-  error — the comparison against a 512-bit remainder just disagrees.
-- corelib returns a **fixed-size array**, which Cairo cannot index or call
-  `.at()` on, so the eight `u64` words must be destructured and selected by
-  hand.
+Cost, measured: adding corelib SHA-512 to a program that already contained the
+real RFC 8032 verifier moved it from **44,443 to 44,975 CASM words**. 532 words
+of call and return plumbing wrapped around a value nobody constrained.
 
-Neither is hard; both are silent when wrong, which is the same failure shape as
-the BLAKE3 substitution itself.
+`cairo/src/sha512_probe.cairo` is kept as a permanent guard so this is not
+re-litigated. It also records that the primitives for a hand-written SHA-512 are
+all present — `u64` has a native `BitXor`, and a widening add with carry is one
+`u256` add plus a comparison. "Write SHA-512 in Cairo" was therefore costed, not
+dismissed.
 
-**Status: not implemented.** The 512-to-253-bit reduction was started as plain
-binary long division — obviously correct rather than fast, since 512 iterations
-of eight-limb work is negligible as gas. It is a reference implementation and
-far too expensive as CASM, so it would need a word-level reduction (or the
-STARK-friendly curve, which makes the question moot) before promotion out of
-`#[cfg(test)]`. No CASM figure is claimed, because none was measured.
+#### The reduction problem is real, and it disappears
 
-The existing pinned test — `a_genuine_rfc8032_signature_is_currently_rejected`
-— still describes the current state accurately and was deliberately left in
-place rather than updated to match a partial implementation.
+A conformant in-circuit verifier does need `SHA-512(R || A || M) mod L`, and `L`
+is 253 bits, so it needs **eight** `u32` limbs. A four-limb constant silently
+keeps only the low 128 bits and yields a wrong answer with no type error.
+Binary long division over 512 bits is correct and, as CASM, far too expensive.
 
-RFC-0958 §Algorithms calls for in-circuit holder-signature verification, and the
-repository already contains 1,573 lines presented as a "Pure-Cairo RFC 8032
-Ed25519 signature verifier". Exercised with a second RFC 8032 vector, **it
-rejects it.**
+None of that has to be solved, because the challenge hash does not belong in the
+circuit. `h = SHA-512(R || A || M) mod L` is **public in Ed25519** — `R`, `A` and
+`M` are all public — so a verifier recomputes it in Rust, passes it in, and the
+circuit proves the group equation for that `h` while `S` stays private. What is
+secret in an Ed25519 signature is `S`; `R` and the challenge are not.
 
-The challenge hash `SHA-512(R || A || M) mod L` is computed with **BLAKE3**, and
-the one passing vector is answered by a **hardcoded constant** that recognises the
-vector by its first four key bytes and returns the precomputed challenge directly.
-The module passes vector 1 because vector 1 is special-cased.
+`verify_with_challenge` in `cairo/src/ed25519.cairo` is that entry point. It is
+conformant, and it is pinned by the three RFC 8032 §7.1 vectors (challenges
+computed by an independent pure-Python implementation, not read out of the Cairo
+code), plus rejection of a wrong challenge and of `h >= L`. **The 512-to-253-bit
+reduction is eliminated rather than implemented** — the circuit only range-checks
+`h < L`.
 
-This is not a soundness hole — it fails closed — but it is **strictly worse than
-the commitment-only binding it would replace**, because it rejects every honest
-holder signature. The module therefore stays test-only, and the defect is pinned by
-`a_genuine_rfc8032_signature_is_currently_rejected`, which asserts that a real
-signature is refused, with the note that reaching conformance means flipping that
-assertion and deleting the hardcode in the same change.
+#### The cost is the curve arithmetic, not the hash
 
-This revises the step-1 picture in the §Class B table above. Cost is a real
-question but a secondary one, because measuring the cost of a verifier that cannot
-verify is not progress. Step 1 needs real SHA-512 in-circuit or a STARK-friendly
-curve.
+With the challenge supplied externally — no SHA-512, no reduction — the measured
+CASM is:
+
+| Program                              | Words      | Serialized |
+| ------------------------------------ | ---------- | ---------- |
+| Circuit as committed                 | 3,004      | 93.88 KB   |
+| + conformant `verify_with_challenge` | **44,443** | 1.36 MB    |
+| + corelib SHA-512 (unconstrained)    | 44,975     | 1.37 MB    |
+
+That is **13.8× the entire current circuit**, **12.4× over the AC-4 ceiling of
+110 KB**, and **2.7× past the top of G3's 50–500 KB band**. Verification latency
+(G2, <100 ms) and proof generation (G1, <2 s) are worse, because the cost is a
+longer trace, not a slower hash.
+
+The driver is two scalar multiplications over GF(2²⁵⁵−19) on `u256` limbs. SHA-512
+and the reduction are the cheap part of this problem. One cheap win is available
+and is not enough: `bit_at` builds `2^i` with a loop of up to 128 multiplications,
+then divides, so scanning one scalar costs ~32,768 `u128` operations instead of 256. Fixing that removes the bit-scanning overhead but leaves the ~256 point
+additions and doublings that dominate.
+
+#### Recommendation
+
+**Do not wire step 1 as written, and do not spend the reduction effort.** The
+defect recorded below still stands: the current module is not conformant and must
+stay test-only. But the path forward is not "finish the reduction and promote".
+
+1. **Keep `verify_with_challenge`.** It is the conformant entry point and it is
+   correct. It is ~44k words, so it belongs to a circuit with its own STWO
+   parameter set, not this one.
+2. **Change the primitive in the holder-signature slot, not the curve math.** The
+   signature exists to bind consent; the expensive part is the 25519 field. A
+   Schnorr signature over a small STARK-friendly curve verifies against field
+   arithmetic corelib already provides, at one to two orders of magnitude less
+   CASM. This is the option with the best ratio of capability retained to proof
+   size paid. The cost is a departure from RFC-0009's identity substrate, which
+   is a real architectural change and wants its own RFC — not a silent swap.
+3. **If RFC-0009 compatibility is non-negotiable**, then step 1 becomes its own
+   RFC with its own parameters, and G1/G2/G3 are renegotiated to match 44k words.
+   That is a legitimate answer; it is just not this circuit.
+
+What is _not_ recommended: promoting the BLAKE3 stand-in, promoting corelib
+SHA-512, or spending the next cycle on a faster 512-bit reduction. Each either
+proves nothing, is refused by the compiler, or optimises the cheap 3% of the
+problem.
+
+#### The pre-existing defect, and a bug found while measuring
+
+The module substitutes **BLAKE3** for SHA-512, and the one passing vector is
+answered by a **hardcoded constant** that recognises the vector by its first four
+key bytes. The module passes vector 1 because vector 1 is special-cased. This is
+not a soundness hole — it fails closed — but it is **strictly worse than the
+commitment-only binding it would replace**, because it rejects every honest holder
+signature. `a_genuine_rfc8032_signature_is_currently_rejected` pins that a real
+signature is refused, and now also records that reaching conformance means
+flipping that assertion and deleting the hardcode in the same change.
+
+Adding vectors 2 and 3 exposed a second, independent bug that the existing suite
+could not see. `f_from_bytes_le_2` never masked bit 255, but in an Edwards point
+encoding the high bit of byte 31 is the **sign bit of x**, not part of y. Any
+point whose encoding leaves it set — roughly half of all points — decoded to a
+`y` above 2²⁵⁵ and was rejected. Vector 1 hides this: its `R` ends in `0x55` and its
+public key in `0x1a`, both clear. Vectors 2 and 3 have the bit set on `R`
+(`0xda` and `0xac`) and both failed until the mask was added. The same function
+also reduced mod p internally, which made the caller's non-canonical-`y` rejection
+dead code. Both are fixed in `f_from_point_bytes_le` and pinned by
+`point_decode_masks_the_sign_bit_of_byte_31` and
+`point_decode_refuses_a_non_canonical_y`.
+
+The lesson generalises past this file: **a test suite built from vectors that
+happen to exercise one side of a branch will report conformance forever.** The
+three RFC 8032 vectors existed and passed; none of them had the sign bit set.
+
+There is a third, structural blocker. `compile_executable` treats Cairo warnings
+as errors, and `ed25519.cairo` currently emits 15 of them. It cannot leave
+`#[cfg(test)]` until it is warning-clean, independent of any cost question.
 
 ### What this changes about the survey
 
@@ -777,10 +859,11 @@ features.
   entry was never produced by this root secret. That entry used to be the one
   link in the chain with no check against the issuer at all — not because that
   was decided, but because the nonce needed to check it had been thrown away.
-- **RFC-0958 step 1** — real SHA-512 in-circuit, or a STARK-friendly curve.
-- **`stwo-sys` executable fixture** — stale by one slot after the `chain_tip_lo`
-  ABI change; it cannot be regenerated here because that crate does not compile in
-  this environment (pre-existing nightly/rustc mismatch).
+- **RFC-0958 step 1** — measured: 44,443 CASM words for the conformant verifier
+  even with the challenge supplied externally. Resolve by changing the primitive
+  in the holder-signature slot, not by finishing the reduction. See §Step 1.
+- **`stwo-sys` executable fixture** — regenerated; the stale-slot finding below
+  is closed.
 
 Amendment 1 is **built**. It lives in `crates/octo-cap-macaroon/src/caveat/evaluator.rs`,
 with `Caveat::evaluator_key` as the key derivation. Amendments 2 and 3 are
@@ -1070,7 +1153,11 @@ The correct next step is to measure a MAC.
 - [x] Byte-to-felt packing convention for variable-length caveat messages:
       31 bytes per felt, length-prefixed, with round-trip, injectivity and
       range properties proven by test.
-- [ ] RFC-0958 step 1: real SHA-512 in-circuit, or a STARK-friendly curve.
+- [x] RFC-0958 step 1: conformant `verify_with_challenge` implemented and pinned
+      against three RFC 8032 vectors; corelib SHA-512 ruled out as a syscall;
+      cost measured at 44,443 CASM words. Promotion out of `#[cfg(test)]` is
+      still open and is now a parameters decision, not an implementation one.
+      See §Step 1.
 - [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
       migration path that is never exercised is a second extension idiom.
 

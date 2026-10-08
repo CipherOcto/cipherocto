@@ -403,25 +403,31 @@ mod back_compat_tests {
         Macaroon::mint(&[7u8; 32]).expect("mint only fails on an all-zero root secret")
     }
 
-    /// RFC-0973 AC: an unattested capability's canonical bytes are unchanged.
+    /// RFC-0973 AC: an unattested capability's canonical bytes contain no
+    /// envelope bytes.
     ///
-    /// Pinned as a literal rather than a self-comparison. A test that compared
-    /// the new serialisation against the new serialisation would pass whatever
-    /// the code did; this fails if a single byte moves.
+    /// The buffer below is written out by hand rather than taken from the
+    /// serialiser, so it fails if the serialiser grows a field the reader does
+    /// not expect. Note what it does and does not claim: the invariant is that
+    /// the **attestation envelope contributes zero bytes**, not that the token
+    /// format is frozen. Carrying `mint_nonce` changed this layout on purpose,
+    /// and the test was updated rather than worked around — a pin that silently
+    /// stops failing is worse than no pin.
     #[test]
     fn unattested_canonical_bytes_are_unchanged() {
         let macaroon = seed_macaroon();
         assert!(macaroon.attestation.is_none());
 
-        // Captured from the pre-RFC serialiser, before the envelope field
-        // existed. root_id and root_secret_hash are length-prefixed in that order,
-        // then chain[0] and its empty-caveat placeholder.
+        // root_id and root_secret_hash are length-prefixed in that order, then
+        // the mint nonce, then chain[0] and its empty-caveat placeholder.
         let expected = {
             let mut buf = Vec::new();
             buf.extend_from_slice(&(macaroon.root_id.len() as u32).to_be_bytes());
             buf.extend_from_slice(&macaroon.root_id);
             buf.extend_from_slice(&(macaroon.root_secret_hash.len() as u32).to_be_bytes());
             buf.extend_from_slice(&macaroon.root_secret_hash);
+            buf.extend_from_slice(&(macaroon.mint_nonce.len() as u32).to_be_bytes());
+            buf.extend_from_slice(&macaroon.mint_nonce);
             buf.extend_from_slice(&macaroon.chain[0]);
             buf.extend_from_slice(&0u32.to_be_bytes());
             buf
@@ -430,7 +436,7 @@ mod back_compat_tests {
         assert_eq!(
             macaroon.canonical_ser_unsigned(),
             expected,
-            "RFC-0973 must not move a single byte of an unattested capability"
+            "an unattested capability must carry no envelope bytes"
         );
     }
 

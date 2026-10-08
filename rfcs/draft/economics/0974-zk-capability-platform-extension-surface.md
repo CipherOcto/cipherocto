@@ -680,15 +680,18 @@ features.
   verify and needs re-minting. `capability_id`, `root_secret_hash` and
   `macaroon_id` deliberately stayed on BLAKE3.
 
-- **The prover cannot obtain the mint nonce.** This surfaced only once the
-  chain was actually rewired. `mint` generates the nonce and discards it, so
-  `chain[0]` is not recomputable from the token — by the circuit, by
-  `verify_signature`, or by anyone else. The circuit takes the nonce as witness,
-  which works, but nothing currently _supplies_ it. Until the nonce is carried
-  on the token (a further `canonical_ser_unsigned` change, hence a further id
-  change) or is held beside the root secret by the prover, the ZK path cannot be
-  driven end to end. This is now the real blocker for steps 2 and 4, and it is
-  a token-format decision rather than a cryptographic one.
+- **The mint nonce is now carried on the token.** This was the blocker and it is
+  closed. `mint` used to discard the nonce, so `chain[0]` was not recomputable
+  by anyone — not the circuit, not `verify_signature` — and the prover had no
+  way to supply the witness the chain is seeded from. `Macaroon::mint_nonce`
+  fixes that, and it sits inside `canonical_ser_unsigned` so swapping it changes
+  the derived id. Without that, two tokens differing only in nonce would share
+  an id, which is the malleability the id exists to prevent.
+- **Carrying it bought more than the ZK path.** `verify_signature` no longer
+  _trusts_ `chain[0]`: it re-derives it and refuses a token whose root chain
+  entry was never produced by this root secret. That entry used to be the one
+  link in the chain with no check against the issuer at all — not because that
+  was decided, but because the nonce needed to check it had been thrown away.
 - **RFC-0958 step 1** — real SHA-512 in-circuit, or a STARK-friendly curve.
 - **`stwo-sys` executable fixture** — stale by one slot after the `chain_tip_lo`
   ABI change; it cannot be regenerated here because that crate does not compile in
@@ -969,6 +972,10 @@ The correct next step is to measure a MAC.
 - [x] Host-side `derive_chain_tip` / `chain_seed` / `chain_step` built, with the
       id-split and chain-entry decode decisions proven by test, and pinned to the
       circuit by a shared chain-tip literal over a realistic witness.
+- [x] The mint nonce carried on the token, inside `canonical_ser_unsigned`. This
+      makes `chain[0]` recomputable by anyone holding the token, which both
+      unblocks the prover for step 2 and lets `verify_signature` re-derive
+      `chain[0]` instead of trusting it.
 - [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
       **Done**, with one gap that only appeared once it was rewired: the mint
       nonce is discarded at mint time, so no prover can supply it and `chain[0]`

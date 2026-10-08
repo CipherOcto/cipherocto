@@ -121,6 +121,24 @@ fn u32_len(n: usize) -> [u8; 4] {
 pub struct Macaroon {
     /// Unique 16-byte identifier (per mint).
     pub root_id: MacaroonId,
+    /// The 16-byte mint nonce `chain[0]` is derived from.
+    ///
+    /// Carried on the token because `chain[0]` is otherwise not recomputable:
+    /// `root_id` is a one-way summary of this value, so a verifier holding only
+    /// the token and the root secret cannot rebuild `chain[0]`. That matters
+    /// for the RFC-0958 ZK circuit, which must re-derive the chain from
+    /// witness material, and for anyone auditing the mint.
+    ///
+    /// It is inside `canonical_ser_unsigned`, so swapping it changes the
+    /// derived `id` and is detected. It is not a secret — `root_id` and
+    /// `chain[0]` are already public on the token, and neither can be inverted
+    /// to the root secret.
+    ///
+    /// Deliberately NOT `#[serde(default)]`. A token missing this field is
+    /// malformed, and defaulting it to zero would produce a token that parses
+    /// cleanly and then fails at verification — a silent decision rather than a
+    /// refusal at the boundary.
+    pub mint_nonce: [u8; 16],
     /// BLAKE3 hash of the root secret — embedded in the token so the verifier
     /// can confirm the root secret they hold matches without leaking it.
     pub root_secret_hash: [u8; 32],
@@ -159,6 +177,7 @@ impl std::fmt::Debug for Macaroon {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Macaroon")
             .field("root_id", &"[REDACTED 16 bytes]")
+            .field("mint_nonce", &"[REDACTED 16 bytes]")
             .field("root_secret_hash", &"[REDACTED 32 bytes]")
             .field("id", &"[REDACTED 32 bytes]")
             .field("chain_len", &self.chain.len())
@@ -205,6 +224,7 @@ impl Macaroon {
 
         let mut macaroon = Self {
             root_id,
+            mint_nonce: nonce,
             root_secret_hash,
             id: [0u8; 32], // placeholder — overwritten below
             chain: vec![felt_to_chain_bytes(chain0)],
@@ -227,6 +247,7 @@ impl Macaroon {
     /// **Format (interleaved chain + producer-caveat):**
     /// ```text
     ///   u32(16) | root_id | u32(32) | root_secret_hash
+    /// | u32(16) | mint_nonce
     /// | chain[0] | u32(0)
     /// | chain[1] | u32(|caveat_0|) | caveat_0
     /// | chain[2] | u32(|caveat_1|) | caveat_1
@@ -239,7 +260,13 @@ impl Macaroon {
     /// processed `chain[0..=i] + caveat_0..=i-1`, and `chain[i]` is the
     /// last entry added. Length-prefixed per field to prevent
     /// concatenation-collision attacks (see
-    /// `crates/quota-router-sm-engine/src/envelope.rs:224`).
+    /// `crates/quota-router-sm-engine/src/envelope.rs`).
+    ///
+    /// `mint_nonce` is inside the canonical form, and it has to be: it is what
+    /// `chain[0]` is derived from, and `chain[0]` is trusted rather than
+    /// recomputed. Left out of the hash, two tokens differing only in their
+    /// nonce would share an id, which is exactly the malleability the id is
+    /// meant to prevent.
     #[must_use]
     pub fn canonical_ser_unsigned(&self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -247,6 +274,8 @@ impl Macaroon {
         buf.extend_from_slice(&self.root_id);
         buf.extend_from_slice(&u32_len(self.root_secret_hash.len()));
         buf.extend_from_slice(&self.root_secret_hash);
+        buf.extend_from_slice(&u32_len(self.mint_nonce.len()));
+        buf.extend_from_slice(&self.mint_nonce);
         // Interleave chain entries with their producer caveats.
         // chain[0] has no producer (it's the mint-time state) — use u32(0)
         // as the empty-caveat placeholder.
@@ -380,13 +409,29 @@ impl Macaroon {
         h.update(&self.root_id);
         h.update(&u32_len(self.root_secret_hash.len()));
         h.update(&self.root_secret_hash);
+        h.update(&u32_len(self.mint_nonce.len()));
+        h.update(&self.mint_nonce);
 
         // Step 0: mint-time state (chain = [chain[0]], caveats = []).
         //
-        // `chain[0]` is TRUSTED, not re-derived: the mint nonce that produced it
-        // is not stored on the token, so no verifier holding only the token and
-        // the root secret can recompute it. That is a property of the format,
-        // not an oversight — see `Macaroon::mint`.
+        // `chain[0]` is now RE-DERIVED rather than trusted. It used to be
+        // assumed, because the mint nonce it depends on was discarded at mint
+        // time and nothing could rebuild it. Carrying `mint_nonce` on the token
+        // removes that excuse, and trusting it left the root chain entry
+        // unchecked — a token's first entry was never proven to come from the
+        // root secret at all.
+        let mut seed_bytes = Vec::with_capacity(MACAR_ID_DOMAIN.len() + 16);
+        seed_bytes.extend_from_slice(MACAR_ID_DOMAIN.as_bytes());
+        seed_bytes.extend_from_slice(&self.mint_nonce);
+        let (secret_lo, secret_hi) = split_felts(root_secret);
+        let expected_root = felt_to_chain_bytes(chain_seed(
+            secret_lo,
+            secret_hi,
+            &bytes_to_felts(&seed_bytes),
+        ));
+        if expected_root != self.chain[0] {
+            return Err(MacaroonError::ChainEntryMismatch(0));
+        }
         h.update(&self.chain[0]);
         h.update(&u32_len(0)); // empty producer for chain[0]
         let mut prev_chain =
@@ -911,6 +956,15 @@ pub enum MacaroonError {
     #[error("chain entry {0} is not a canonical field element (malformed token)")]
     ChainEntryNotCanonical(usize),
 
+    /// `chain[0]` did not re-derive from the root secret and the token's own
+    /// `mint_nonce`.
+    ///
+    /// This entry used to be trusted outright, since nothing could recompute it.
+    /// Carrying the nonce made the check possible, and skipping it left a
+    /// token's root chain entry unproven against the issuer's root secret.
+    #[error("chain[0] does not derive from this root secret and mint nonce")]
+    ChainEntryMismatch(usize),
+
     #[error("root secret does not match embedded hash")]
     RootSecretMismatch,
 
@@ -1003,6 +1057,72 @@ impl CapabilityCatalog for InMemoryCatalog {
 
 #[cfg(test)]
 mod tests {
+    /// The gap this field closed.
+    ///
+    /// `mint` used to discard the nonce, so `chain[0]` could not be rebuilt
+    /// from the token by anyone. Not the circuit, not `verify_signature`. The
+    /// prover for RFC-0958 step 2 therefore had no way to supply the witness
+    /// the chain is seeded from, which made the ZK path undrivable.
+    #[test]
+    fn chain_zero_is_recomputable_from_the_token_alone() {
+        let secret = [0x11; 32];
+        let m = Macaroon::mint(&secret).expect("mint");
+
+        let mut seed_bytes = Vec::new();
+        seed_bytes.extend_from_slice(MACAR_ID_DOMAIN.as_bytes());
+        seed_bytes.extend_from_slice(&m.mint_nonce);
+        let (lo, hi) = split_felts(&secret);
+        let rebuilt = felt_to_chain_bytes(chain_seed(lo, hi, &bytes_to_felts(&seed_bytes)));
+
+        assert_eq!(rebuilt, m.chain[0], "chain[0] must rebuild from the token");
+        assert_eq!(
+            macaroon_id(&secret, &m.mint_nonce),
+            m.root_id,
+            "root_id must rebuild from the carried nonce"
+        );
+    }
+
+    /// `verify_signature` no longer takes `chain[0]` on faith.
+    ///
+    /// It used to, because the nonce was gone. It does not need to any more,
+    /// and an unchecked root chain entry means a token's first entry is never
+    /// proven against the issuer's root secret.
+    #[test]
+    fn a_forged_chain_zero_is_rejected() {
+        let secret = [0x22; 32];
+        let m = Macaroon::mint(&secret).expect("mint");
+        m.verify_signature(&secret).expect("genuine token verifies");
+
+        let mut forged = m.clone();
+        forged.chain[0] = [0xab; 32];
+        // Recompute the id so the token is internally consistent and only the
+        // chain[0] check can catch it.
+        forged.id = compute_capability_id(&forged);
+        assert_eq!(
+            forged.verify_signature(&secret),
+            Err(MacaroonError::ChainEntryMismatch(0)),
+            "a substituted chain[0] must be refused, not absorbed"
+        );
+    }
+
+    /// The nonce is inside `canonical_ser_unsigned`, so it cannot be swapped
+    /// without changing the id.
+    #[test]
+    fn swapping_the_mint_nonce_changes_the_id() {
+        let secret = [0x33; 32];
+        let m = Macaroon::mint(&secret).expect("mint");
+        let mut swapped = m.clone();
+        swapped.mint_nonce = [0x99; 16];
+        assert_ne!(
+            compute_capability_id(&swapped),
+            m.id,
+            "the nonce must be covered by the capability id"
+        );
+        // And a token carrying a foreign nonce does not verify, because its
+        // chain[0] no longer derives from the root secret.
+        assert!(swapped.verify_signature(&secret).is_err());
+    }
+
     use super::*;
     use crate::caveat::{Caveat, ProviderId, UnixTimeSecs};
     use serde_json;

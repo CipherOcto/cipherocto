@@ -14,8 +14,8 @@
 Superseded (was Open 2026-06-16 → moved to `missions/archived/superseded/` 2026-07-26 per BLUEPRINT Mission Lifecycle supersession procedure)
 
 ## RFC
-RFC-0100: AI Quota Marketplace Protocol *(historical reference only)*
-RFC-0101: Quota Router Agent Specification *(historical reference only)*
+RFC-0900: AI Quota Marketplace Protocol *(historical reference only)*
+RFC-0901: Quota Router Agent Specification *(historical reference only)*
 RFC-0102: Wallet Cryptography Specification *(historical reference only)*
 
 **Superseded by RFC-0968** (Accepted 2026-07-25).

@@ -2,13 +2,13 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed (2026-08-06); **v0.1 re-evaluation amendments 2026-08-06** (per re-evaluation of stale substrate description + RFC-0100 ghost + dependency classification).
+Closed (Band A — 2026-08-06). Claimed (2026-08-06); **v0.1 re-evaluation amendments 2026-08-06** (per re-evaluation of stale substrate description + RFC-0900 dependency classification).
 
 ## RFC
 
 - **Primary:** RFC-0958 (Proof Systems): ZK Capability Subclass — the actual ZK substrate
 - **Secondary:** RFC-0102 (Numeric): Wallet Cryptography Specification — Accepted
-- **Ghost reference (RFC-0100: AI Quota Marketplace Protocol):** does NOT exist as a published RFC in `rfcs/{draft,accepted,planned}/`. Intent documented in `docs/use-cases/enhanced-quota-router-gateway.md` + `docs/use-cases/hybrid-ai-blockchain-runtime.md`. Either RFC-0100 is planned-but-not-authored or the mission text predates the RFC renumbering. **Flagged as doc bug; deferred to a future RFC-0100 authoring pass.**
+- **Quoted but not governing:** RFC-0900 (Economics): AI Quota Marketplace Protocol. This RFC exists at `rfcs/accepted/economics/0900-ai-quota-marketplace.md`; it was renumbered from RFC-0100 and the mission text predates that renumbering. It is recorded here for traceability only and governs nothing in this mission. The original note calling it a ghost is retired.
 
 ## Substrate (verified 2026-08-06)
 

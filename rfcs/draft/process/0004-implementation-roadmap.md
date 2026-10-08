@@ -234,8 +234,8 @@ Objective: Build the compute market and data economy.
 | -------- | --------------------- | -------- |
 | RFC-0918 | Inference Task Market | Required |
 | RFC-0133 | Dataset Integrity     | Required |
-| RFC-0100 | AI Quota Marketplace  | Required |
-| RFC-0101 | Quota Router Agent    | Required |
+| RFC-0900 | AI Quota Marketplace  | Required |
+| RFC-0901 | Quota Router Agent    | Required |
 | RFC-0115 | Verification Markets  | Required |
 
 #### Parallel Tracks

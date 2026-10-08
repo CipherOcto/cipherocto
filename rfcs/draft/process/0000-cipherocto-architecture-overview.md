@@ -245,8 +245,8 @@ graph TD
 
 | RFC      | Purpose               | Status   |
 | -------- | --------------------- | -------- |
-| RFC-0100 | AI Quota Marketplace  | Complete |
-| RFC-0101 | Quota Router          | Complete |
+| RFC-0900 | AI Quota Marketplace  | Complete |
+| RFC-0901 | Quota Router          | Complete |
 | RFC-0115 | Verification Markets  | Complete |
 | RFC-0124 | Proof Market          | Complete |
 | RFC-0125 | Model Liquidity Layer | Complete |

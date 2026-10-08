@@ -541,8 +541,8 @@ None - new functionality.
 
 ## Related RFCs
 
-- RFC-0100 (Economics): AI Quota Marketplace Protocol
-- RFC-0101 (Economics): Quota Router Agent Specification
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
 
 ## References
 

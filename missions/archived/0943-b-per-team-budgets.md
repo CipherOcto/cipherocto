@@ -6,7 +6,14 @@ Open
 
 ## RFC
 
-RFC-0943 (Economics): Per-User/Team Rate Limits & Budgets
+RFC-0943 (Economics)
+
+> **Numbering note.** RFC-0943 was never authored. Git history contains no
+> RFC file with this number under any category, so this mission was filed
+> against a specification that does not exist. No current RFC carries this
+> title, so the governing specification is unconfirmed. The mission body,
+> not any RFC, is the only surviving record of the intended scope.
+> : Per-User/Team Rate Limits & Budgets
 
 ## Dependencies
 

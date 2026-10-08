@@ -6,7 +6,14 @@ Open
 
 ## RFC
 
-RFC-0945 (Economics): User Management API
+RFC-0945 (Economics)
+
+> **Numbering note.** RFC-0945 was never authored. Git history contains no
+> RFC file with this number under any category, so this mission was filed
+> against a specification that does not exist. No current RFC carries this
+> title, so the governing specification is unconfirmed. The mission body,
+> not any RFC, is the only surviving record of the intended scope.
+> : User Management API
 
 ## Context
 

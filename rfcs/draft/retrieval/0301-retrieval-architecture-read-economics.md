@@ -566,7 +566,7 @@ By separating **storage economics** from **retrieval economics**, the network en
 
 **Related RFCs**:
 
-- RFC-0100 (Economics): AI Quota Marketplace Protocol
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
 - RFC-0103 (Numeric/Math): Unified Vector-SQL Storage
 - RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
 - RFC-0113 (Retrieval): Retrieval Gateway & Query Routing

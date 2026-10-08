@@ -4,8 +4,8 @@
 Completed
 
 ## RFC
-RFC-0100: AI Quota Marketplace Protocol
-RFC-0101: Quota Router Agent Specification
+RFC-0900: AI Quota Marketplace Protocol
+RFC-0901: Quota Router Agent Specification
 RFC-0102: Wallet Cryptography Specification
 
 ## Acceptance Criteria

@@ -7,12 +7,21 @@ covered auth + rate-limit + concurrent (5 tests). Phase 2 covers
 upstream-fault injection (mock upstream via `wiremock`).
 
 7 fault-injection tests in `crates/quota-router-core/tests/e2e_wiremock_faults.rs`
-+ 4 surgical `proxy.rs` fixes for production 502/503 alignment.
+
+- 4 surgical `proxy.rs` fixes for production 502/503 alignment.
 
 ## RFC
 
 RFC-0933 (Infrastructure): Rate Limiting
 RFC-0943 (Infrastructure): Team Budget
+
+> **Numbering note.** RFC-0943 was never authored. Git history contains no
+> RFC file with this number under any category, so this mission cited a
+> specification that does not exist. The team budget rule this mission
+> pins its 402 behaviour to is not traceable to any current RFC, and no
+> current RFC carries the Team Budget title. The mission body is the only
+> surviving record of the intended rule.
+
 RFC-0917 (Economics): Mode Gate
 
 ## Dependencies
@@ -27,22 +36,22 @@ RFC-0917 (Economics): Mode Gate
 
 - [x] Add `wiremock` as a `[dev-dependencies]` to quota-router-core
 - [x] `start_proxy_with_mock_upstream()` helper — starts proxy
-  pointing at `wiremock::MockServer` instead of real opengateway
+      pointing at `wiremock::MockServer` instead of real opengateway
 - [x] **502 BAD_GATEWAY on upstream timeout** — wiremock delays
-  response 5s; assert 502
+      response 5s; assert 502
 - [x] **502 BAD_GATEWAY on upstream 500** — wiremock returns 500;
-  assert 502 (proxy wraps)
+      assert 502 (proxy wraps)
 - [x] **502 BAD_GATEWAY on upstream connection refused** —
-  proxy points at unused port; assert 502
+      proxy points at unused port; assert 502
 - [x] **402 PAYMENT_REQUIRED on zero balance** — `Balance::new(0)`
-  + any request returns 402 (pinned to RFC-0943 team budget)
+  - any request returns 402 (pinned to the team budget rule recorded in §RFC; see the numbering note there)
 - [x] **503 SERVICE_UNAVAILABLE on provider pool empty** —
-  dispatch_map with no entry for the requested model; assert 503
+      dispatch_map with no entry for the requested model; assert 503
 - [x] **Streaming response shape** — wiremock streams 3 SSE
-  events; assert proxy forwards them + appends [DONE]
+      events; assert proxy forwards them + appends [DONE]
 - [x] **Provider fallback on upstream failure** — upstream 500
-  surfaces as 502 (no-fallback config; fallback dance pinned
-  by `proxy.rs` lib tests)
+      surfaces as 502 (no-fallback config; fallback dance pinned
+      by `proxy.rs` lib tests)
 
 ### proxy.rs surgical fixes (4 sites)
 
@@ -56,7 +65,7 @@ RFC-0917 (Economics): Mode Gate
 ### Verification
 
 - [x] All 7 new wiremock tests pass under
-  `cargo test --features full --test e2e_wiremock_faults` (~7s total)
+      `cargo test --features full --test e2e_wiremock_faults` (~7s total)
 - [x] No regression on existing 13 e2e_proxy tests (all pass)
 - [x] All 1723 lib tests pass
 - [x] Clippy passes with zero warnings (`cargo clippy -p quota-router-core --features full --all-targets -- -D warnings`)
@@ -74,6 +83,7 @@ cc-cascade (auto-landed via cascade pick order)
 ## Notes
 
 Key files:
+
 - `crates/quota-router-core/Cargo.toml` — added `wiremock = "0.6"` to `[dev-dependencies]`
 - `crates/quota-router-core/tests/e2e_wiremock_faults.rs` — NEW test file (7 tests)
 - `crates/quota-router-core/src/proxy.rs` — 4 surgical fixes (3× 500→502 Err arms + 503 guard)
@@ -104,10 +114,10 @@ test pins the SSE event forwarding contract instead.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
+| Version | Date       | Change                                                                                                                     |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------- |
 | v0.2    | 2026-08-13 | LANDED. 7 wiremock fault-injection tests pass. 4 proxy.rs fixes. 1723 lib + 13 e2e_proxy + 7 wiremock green. Clippy clean. |
-| v0.1    | 2026-08-13 | Mission filed. proxy-strong-scenarios follow-on. 6-8 fault-injection tests scoped. |
+| v0.1    | 2026-08-13 | Mission filed. proxy-strong-scenarios follow-on. 6-8 fault-injection tests scoped.                                         |
 
 Last Updated: 2026-08-13
 Version: 0.2

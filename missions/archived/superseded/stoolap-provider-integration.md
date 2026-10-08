@@ -4,8 +4,8 @@
 Open
 
 ## RFC
-RFC-0100: AI Quota Marketplace Protocol
-RFC-0101: Quota Router Agent Specification
+RFC-0900: AI Quota Marketplace Protocol
+RFC-0901: Quota Router Agent Specification
 
 ## Blockers / Dependencies
 
@@ -75,8 +75,8 @@ quota-router provider stoolap proofs
 
 | Component | Change |
 |-----------|--------|
-| RFC-0101 | Add StoolapProvider to provider types |
-| RFC-0101 | Add verifyProof() to unified schema |
+| RFC-0901 | Add StoolapProvider to provider types |
+| RFC-0901 | Add verifyProof() to unified schema |
 
 ## Implementation Notes
 

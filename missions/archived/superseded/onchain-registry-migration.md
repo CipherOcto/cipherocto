@@ -4,7 +4,7 @@
 Open
 
 ## RFC
-RFC-0100: AI Quota Marketplace Protocol
+RFC-0900: AI Quota Marketplace Protocol
 RFC-0102: Wallet Cryptography Specification
 
 ## Blockers / Dependencies

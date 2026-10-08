@@ -451,6 +451,48 @@ Validation: 8 new classification unit tests plus 2 redemption regression tests;
 `octo-cap-macaroon` lib suite 345 → 353; `redemption_subgraph` 18 → 20; the
 security-regression guard 39 pass.
 
+### Second migration step — the extension pass
+
+The first step made redemption consult the registry for third-party caveats. That
+surfaced a scoping problem worth stating, because the naive fix is wrong.
+
+`evaluate_all` refuses any caveat with no registered evaluator, which is correct
+when the registry is sole authority — but a capability will typically also carry
+core caveats that no evaluator claims. Running `evaluate_all` on a mixed set would
+refuse every one of them.
+
+The naive fix is to skip unclaimed caveats. **That is a fail-open hole**, and it is
+exactly what Amendment 1 exists to prevent. So there are two functions, and the
+distinction is the contract:
+
+| Function              | Unclaimed caveat | Use when                                   |
+| --------------------- | ---------------- | ------------------------------------------ |
+| `evaluate_all`        | **refuses**      | The registry is the sole authority         |
+| `evaluate_registered` | **skips**        | The registry contributes beside core gates |
+
+`evaluate_registered` is only safe as one half of a pair. The other half is
+already in place: a caveat the registry does not own is either core-classified
+(checked by a core gate) or refused by `set_subsumes_with_registry`, which fails
+closed on any unregistered `Raw` name. Both are covered by tests that assert the
+same input produces _opposite_ outcomes under the two functions.
+
+The first live consumer is redemption's time gate, which now runs two passes — the
+exhaustive core classification, then the registry over everything it did not claim.
+That is what makes a third-party expiry caveat actually enforced rather than merely
+evaluable, and the clock-less entry point refuses it too rather than guessing.
+
+Also added: `evaluate_registered`, three core evaluators covering the dependency
+shapes a third party will copy — clock-only (`BeforeEvaluator`), operation-fact
+(`ModelEvaluator`), and substrate-backed (`VaultEvaluator`). The last is the one
+that matters most for the platform goal: the evaluator holds its own `VaultLookup`,
+so a stateful third-party caveat consults storage without the core crate learning
+anything about it.
+
+Validation: 12 new evaluator tests, `redemption_subgraph` 20 → 23 (including a
+third-party deadline enforced end to end, plus a control proving an *un*claimed
+caveat gains no deadline), `octo-cap-macaroon` lib 353 → 365, security-regression
+guard repointed at the new wiring and still 39.
+
 ## Poseidon Macaroon
 
 ### Where it fits

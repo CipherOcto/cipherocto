@@ -1015,22 +1015,39 @@ fn h4_redemption_evaluates_time_caveats_before_anything_else() {
     // if someone also kept them — and a whole-gate deletion is silent.
     let src = strip_comments(&read("crates/octo-wallet/src/capability/redemption.rs"));
 
-    let at = fn_body(&src, "pub fn redeem_capability_at");
+    let at = fn_body(&src, "pub fn redeem_capability_at_with");
     let dense_at = dense(at);
     assert!(
-        dense_at.contains("time_caveats_admit(cap,now_unix)?;"),
-        "H-4: `redeem_capability_at` must evaluate time caveats before the \
+        dense_at.contains("time_caveats_admit(cap,evaluators,now_unix)?;"),
+        "H-4: `redeem_capability_at_with` must evaluate time caveats before the \
          policy lookup, so an expired capability fails for the right reason."
+    );
+
+    // The clock-aware entry point must still route through it rather than
+    // gaining a second, weaker time path of its own.
+    let thin = dense(fn_body(&src, "pub fn redeem_capability_at("));
+    assert!(
+        thin.contains(
+            "redeem_capability_at_with(cap,catalog,&CaveatEvaluatorRegistry::empty(),now_unix)"
+        ),
+        "H-4: `redeem_capability_at` must delegate to `redeem_capability_at_with` \
+         with an empty registry, so there is one time-evaluation path."
     );
 
     // The clock-less entry point must refuse a time-bearing capability rather
     // than wave it through.
-    let clockless = fn_body(&src, "pub fn redeem_capability");
+    let clockless = dense(fn_body(&src, "pub fn redeem_capability_with"));
     assert!(
-        dense(clockless).contains("time_caveat_bounds"),
-        "H-4: `redeem_capability` must refuse a capability carrying a time \
+        clockless.contains("time_caveat_bounds"),
+        "H-4: `redeem_capability_with` must refuse a capability carrying a time \
          caveat. Without a `now` there is no honest answer to 'is this still \
          valid?', and delegating with now=0 would accept a window spanning 0."
+    );
+    assert!(
+        clockless.contains("evaluators.resolve("),
+        "H-4: the clock-less refusal must also cover a third-party caveat with a \
+         registered evaluator. The core classifier cannot read a third-party \
+         caveat, so skipping it here would reopen the hole the core pass closes."
     );
 }
 
@@ -1084,8 +1101,15 @@ fn h4_every_time_bearing_caveat_variant_is_covered() {
          refusal and the evaluation cannot drift apart"
     );
     assert!(
-        raw.contains("time_caveats_admit(cap, now_unix)?"),
+        raw.contains("time_caveats_admit(cap, evaluators, now_unix)?"),
         "H-4: the clock-aware entry point must delegate to the shared evaluator"
+    );
+    // The extension pass must exist, or a third-party expiry caveat works in
+    // the registry and is then ignored by redemption.
+    assert!(
+        raw.contains("evaluate_registered("),
+        "H-4: redemption must consult registered third-party evaluators, or an \
+         extension caveat that carries a deadline redeems unevaluated"
     );
 }
 

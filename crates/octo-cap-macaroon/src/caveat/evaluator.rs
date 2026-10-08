@@ -605,36 +605,205 @@ pub fn evaluate_one(
 // Reference implementation
 // ---------------------------------------------------------------------------
 
-/// Expiry evaluator for [`Caveat::Before`], on a seconds granularity.
+/// Evaluate only the caveats this registry owns, skipping the rest.
 ///
-/// Ships as the reference shape for a core-keyed evaluator and as the first
-/// step of moving core caveats off hardcoded logic. It is **additive** — nothing
-/// in the existing verify path calls it yet — so registering it changes no
-/// behaviour on its own.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct BeforeEvaluator;
+/// # Fail-closed composition — read this before using it
+///
+/// Unlike [`evaluate_all`], this function **skips** a caveat with no registered
+/// evaluator instead of refusing it. That is correct only as one half of a pair,
+/// and the caller must supply the other half:
+///
+/// - A caveat the registry does not own is either **core-classified** (a core
+///   gate checks it — e.g. [`crate::caveat::Caveat::time_bounds`]) or is
+///   **refused** by `set_subsumes_with_registry`, which fails closed on any
+///   unregistered `Raw` name.
+/// - A caveat the registry does own **must** be registered, or this function
+///   skips it silently.
+///
+/// So a caller must run the core gates and the registry together. Running this
+/// alone would let an unregistered third-party caveat through — which is
+/// precisely the failure [`evaluate_all`] exists to prevent.
+///
+/// Use [`evaluate_all`] instead when the registry is the sole authority and
+/// every caveat on the capability is expected to have an evaluator.
+///
+/// # Errors
+/// The first refusal in caveat order among the caveats this registry owns.
+pub fn evaluate_registered(
+    registry: &CaveatEvaluatorRegistry,
+    caveats: &[Caveat],
+    operation: &ProposedOperation,
+    clock: &dyn Clock,
+) -> Result<(), CaveatRefusal> {
+    for caveat in caveats {
+        if registry.resolve(&caveat.evaluator_key()).is_none() {
+            continue;
+        }
+        evaluate_one(registry, caveat, operation, clock)?;
+    }
+    Ok(())
+}
 
-impl CaveatEvaluator for BeforeEvaluator {
-    fn key(&self) -> &str {
-        "before"
+/// Core evaluators, one per dependency shape a third party is likely to copy.
+///
+/// They exist for two reasons: each is a worked example of the shape it
+/// represents, and registering one exercises the core-key path so a third party
+/// building their first evaluator has a passing reference.
+pub mod core {
+    use super::*;
+    use crate::caveat::Caveat;
+
+    /// Clock-only evaluator. The simplest shape: one fact of state, the clock,
+    /// supplied per call.
+    ///
+    /// Superseded by [`crate::caveat::Caveat::time_bounds`] for core caveats,
+    /// which needs no evaluator at all. Retained because it is the shortest
+    /// possible worked example of the trait.
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct BeforeEvaluator;
+
+    impl CaveatEvaluator for BeforeEvaluator {
+        fn key(&self) -> &str {
+            "before"
+        }
+        fn evaluate(&self, ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal> {
+            let Some(Caveat::Before(deadline)) = Some(ctx.caveat) else {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "before".to_owned(),
+                    detail: "caveat is not a Before variant".into(),
+                });
+            };
+            // `Before` carries seconds; the clock speaks milliseconds.
+            let now_secs = ctx.clock.unix_millis() / 1_000;
+            if now_secs <= *deadline {
+                Ok(())
+            } else {
+                Err(CaveatRefusal::Violated {
+                    evaluator: "before".to_owned(),
+                    detail: Cow::Owned(format!("expired: now {now_secs} > deadline {deadline}")),
+                })
+            }
+        }
     }
 
-    fn evaluate(&self, ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal> {
-        let Some(Caveat::Before(deadline)) = Some(ctx.caveat) else {
-            return Err(CaveatRefusal::Violated {
-                evaluator: "before".to_owned(),
-                detail: "caveat is not a Before variant".into(),
-            });
-        };
-        // `Before` carries seconds; the clock speaks milliseconds.
-        let now_secs = ctx.clock.unix_millis() / 1_000;
-        if now_secs <= *deadline {
+    /// Operation-fact evaluator. Reads a fact the operation producer supplied.
+    ///
+    /// This is the shape that makes operation-scoped caveats expressible: the
+    /// evaluator holds no substrate handle at all, it just reads the proposed
+    /// operation.
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct ModelEvaluator;
+
+    impl CaveatEvaluator for ModelEvaluator {
+        fn key(&self) -> &str {
+            "model"
+        }
+        fn required_facts(&self) -> &[&str] {
+            &[fact_key::MODEL]
+        }
+        fn evaluate(&self, ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal> {
+            let Some(Caveat::Model(allowed)) = Some(ctx.caveat) else {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "model".to_owned(),
+                    detail: "caveat is not a Model variant".into(),
+                });
+            };
+            let Some(requested) = ctx
+                .operation
+                .fact(fact_key::MODEL)
+                .and_then(OperationFact::as_str)
+            else {
+                // Unreachable in practice: `required_facts` gated this. Kept as
+                // a refusal rather than an unwrap so the trait stays total for
+                // an evaluator whose gate is bypassed.
+                return Err(CaveatRefusal::MissingFact {
+                    key: fact_key::MODEL.to_owned(),
+                    evaluator: "model".to_owned(),
+                });
+            };
+            if allowed == requested {
+                Ok(())
+            } else {
+                Err(CaveatRefusal::Violated {
+                    evaluator: "model".to_owned(),
+                    detail: Cow::Owned(format!(
+                        "model {requested:?} is not the permitted {allowed:?}"
+                    )),
+                })
+            }
+        }
+    }
+
+    /// Substrate-dependent evaluator. Holds its own lookup handle.
+    ///
+    /// This is the shape that makes *stateful* third-party caveats expressible:
+    /// an evaluator constructed with its storage dependency can consult the
+    /// substrate without the core crate knowing anything about it. The
+    /// dependency lives on the evaluator, not on the context, so adding a
+    /// substrate-backed caveat type requires no change here.
+    #[derive(Clone)]
+    pub struct VaultEvaluator {
+        lookup: Arc<dyn crate::vault_lookup::VaultLookup>,
+    }
+
+    impl VaultEvaluator {
+        /// Construct against a vault row source.
+        #[must_use]
+        pub fn new(lookup: Arc<dyn crate::vault_lookup::VaultLookup>) -> Self {
+            Self { lookup }
+        }
+    }
+
+    impl std::fmt::Debug for VaultEvaluator {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("VaultEvaluator").finish_non_exhaustive()
+        }
+    }
+
+    impl CaveatEvaluator for VaultEvaluator {
+        fn key(&self) -> &str {
+            "vault"
+        }
+        fn required_facts(&self) -> &[&str] {
+            &[fact_key::CHAIN_ID]
+        }
+        fn evaluate(&self, ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal> {
+            let Some(Caveat::Vault(vault_id)) = Some(ctx.caveat) else {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "vault".to_owned(),
+                    detail: "caveat is not a Vault variant".into(),
+                });
+            };
+            let Some(OperationFact::Hash32(op_chain)) = ctx.operation.fact(fact_key::CHAIN_ID)
+            else {
+                return Err(CaveatRefusal::MissingFact {
+                    key: fact_key::CHAIN_ID.to_owned(),
+                    evaluator: "vault".to_owned(),
+                });
+            };
+            let Some(row) = self.lookup.lookup_vault(vault_id) else {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "vault".to_owned(),
+                    detail: Cow::Owned(format!("no vault row for {}", hex::encode(vault_id))),
+                });
+            };
+            if row.chain_id != *op_chain {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "vault".to_owned(),
+                    detail: Cow::Owned(format!(
+                        "vault is bound to chain {} but the operation targets {}",
+                        hex::encode(row.chain_id),
+                        hex::encode(op_chain)
+                    )),
+                });
+            }
+            if !row.is_active {
+                return Err(CaveatRefusal::Violated {
+                    evaluator: "vault".to_owned(),
+                    detail: Cow::Owned(format!("vault {} is not active", hex::encode(vault_id))),
+                });
+            }
             Ok(())
-        } else {
-            Err(CaveatRefusal::Violated {
-                evaluator: "before".to_owned(),
-                detail: Cow::Owned(format!("expired: now {now_secs} > deadline {deadline}")),
-            })
         }
     }
 }
@@ -644,6 +813,52 @@ mod tests {
     use super::*;
     use crate::caveat::CaveatName;
     use crate::clock::FixedClock;
+    use crate::vault_lookup::{VaultLookup, VaultRowSnapshot};
+    use std::collections::BTreeMap;
+
+    struct StubVaults(BTreeMap<[u8; 32], VaultRowSnapshot>);
+
+    impl VaultLookup for StubVaults {
+        fn lookup_vault(&self, vault_id: &[u8; 32]) -> Option<VaultRowSnapshot> {
+            self.0.get(vault_id).copied()
+        }
+    }
+
+    fn vaults(rows: &[([u8; 32], [u8; 32], bool)]) -> Arc<dyn VaultLookup> {
+        Arc::new(StubVaults(
+            rows.iter()
+                .map(|(id, chain, active)| {
+                    (
+                        *id,
+                        VaultRowSnapshot {
+                            chain_id: *chain,
+                            is_active: *active,
+                        },
+                    )
+                })
+                .collect(),
+        ))
+    }
+
+    fn vault_reg(rows: &[([u8; 32], [u8; 32], bool)]) -> CaveatEvaluatorRegistry {
+        let mut r = CaveatEvaluatorRegistry::empty();
+        r.register(core::VaultEvaluator::new(vaults(rows))).unwrap();
+        r
+    }
+
+    fn model_reg() -> CaveatEvaluatorRegistry {
+        let mut r = CaveatEvaluatorRegistry::empty();
+        r.register(core::ModelEvaluator).unwrap();
+        r
+    }
+
+    fn chain_op(id: [u8; 32]) -> ProposedOperation {
+        op().with(fact_key::CHAIN_ID, OperationFact::Hash32(id))
+    }
+
+    fn model_op(m: &str) -> ProposedOperation {
+        op().with(fact_key::MODEL, OperationFact::Text(m.to_owned()))
+    }
 
     fn op() -> ProposedOperation {
         ProposedOperation::empty()
@@ -911,7 +1126,7 @@ mod tests {
 
     fn before_reg() -> CaveatEvaluatorRegistry {
         let mut r = CaveatEvaluatorRegistry::empty();
-        r.register(BeforeEvaluator).unwrap();
+        r.register(core::BeforeEvaluator).unwrap();
         r
     }
 
@@ -951,7 +1166,11 @@ mod tests {
         // A core-keyed evaluator reports that it takes over a built-in check,
         // so boot-time reporting can surface it.
         let mut r = CaveatEvaluatorRegistry::empty();
-        assert!(r.register(BeforeEvaluator).unwrap().shadows_core_caveat);
+        assert!(
+            r.register(core::BeforeEvaluator)
+                .unwrap()
+                .shadows_core_caveat
+        );
         assert_eq!(r.core_shadowing_keys().collect::<Vec<_>>(), vec!["before"]);
     }
 
@@ -1050,5 +1269,168 @@ mod tests {
         let r = CaveatEvaluatorRegistry::default();
         assert!(r.is_empty());
         assert_eq!(r.core_shadowing_keys().count(), 0);
+    }
+
+    // --- operation-fact evaluator (core::ModelEvaluator) --------------------
+
+    #[test]
+    fn model_evaluator_accepts_the_permitted_model() {
+        let r = model_reg();
+        assert!(evaluate_one(
+            &r,
+            &Caveat::Model("gpt-4".to_owned()),
+            &model_op("gpt-4"),
+            &FixedClock::new(0)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn model_evaluator_refuses_another_model() {
+        let r = model_reg();
+        assert!(evaluate_one(
+            &r,
+            &Caveat::Model("gpt-4".to_owned()),
+            &model_op("claude-3"),
+            &FixedClock::new(0)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn model_evaluator_gates_on_the_declared_fact() {
+        let r = model_reg();
+        assert_eq!(
+            evaluate_one(
+                &r,
+                &Caveat::Model("gpt-4".to_owned()),
+                &op(),
+                &FixedClock::new(0)
+            ),
+            Err(CaveatRefusal::MissingFact {
+                key: fact_key::MODEL.to_owned(),
+                evaluator: "model".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn model_evaluator_refuses_a_wrong_variant() {
+        let r = model_reg();
+        assert!(evaluate_one(
+            &r,
+            &Caveat::Before(100),
+            &model_op("gpt-4"),
+            &FixedClock::new(0)
+        )
+        .is_err());
+    }
+
+    // --- substrate evaluator (core::VaultEvaluator) -------------------------
+    //
+    // This is the shape that makes stateful third-party caveats expressible: the
+    // evaluator owns its storage handle, so no context field or core edit is
+    // needed to consult the substrate.
+
+    #[test]
+    fn vault_evaluator_accepts_an_active_vault_on_the_right_chain() {
+        let r = vault_reg(&[([1u8; 32], [9u8; 32], true)]);
+        assert!(evaluate_one(
+            &r,
+            &Caveat::Vault([1u8; 32]),
+            &chain_op([9u8; 32]),
+            &FixedClock::new(0)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn vault_evaluator_refuses_a_chain_mismatch() {
+        let r = vault_reg(&[([1u8; 32], [9u8; 32], true)]);
+        let err = evaluate_one(
+            &r,
+            &Caveat::Vault([1u8; 32]),
+            &chain_op([8u8; 32]),
+            &FixedClock::new(0),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("chain"), "got: {err}");
+    }
+
+    #[test]
+    fn vault_evaluator_refuses_an_inactive_vault() {
+        let r = vault_reg(&[([1u8; 32], [9u8; 32], false)]);
+        let err = evaluate_one(
+            &r,
+            &Caveat::Vault([1u8; 32]),
+            &chain_op([9u8; 32]),
+            &FixedClock::new(0),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not active"), "got: {err}");
+    }
+
+    #[test]
+    fn vault_evaluator_refuses_a_missing_row() {
+        let r = vault_reg(&[]);
+        let err = evaluate_one(
+            &r,
+            &Caveat::Vault([1u8; 32]),
+            &chain_op([9u8; 32]),
+            &FixedClock::new(0),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no vault row"), "got: {err}");
+    }
+
+    #[test]
+    fn vault_evaluator_gates_on_the_chain_id_fact() {
+        let r = vault_reg(&[([1u8; 32], [9u8; 32], true)]);
+        assert_eq!(
+            evaluate_one(&r, &Caveat::Vault([1u8; 32]), &op(), &FixedClock::new(0)),
+            Err(CaveatRefusal::MissingFact {
+                key: fact_key::CHAIN_ID.to_owned(),
+                evaluator: "vault".to_owned(),
+            })
+        );
+    }
+
+    // --- evaluate_registered: the scoped-skip contract -----------------------
+
+    #[test]
+    fn evaluate_registered_skips_caveats_the_registry_does_not_own() {
+        // The contract: skipping is permitted here, unlike `evaluate_all`,
+        // because the core gates own every unclaimed caveat.
+        let r = model_reg();
+        let set = vec![
+            Caveat::Model("gpt-4".to_owned()),
+            raw("vendor.example/x", ""),
+        ];
+        assert!(evaluate_registered(&r, &set, &model_op("gpt-4"), &FixedClock::new(0)).is_ok());
+    }
+
+    #[test]
+    fn evaluate_registered_still_refuses_a_caveat_it_does_own() {
+        let r = model_reg();
+        let set = vec![Caveat::Model("gpt-4".to_owned())];
+        assert!(evaluate_registered(&r, &set, &model_op("other"), &FixedClock::new(0)).is_err());
+    }
+
+    #[test]
+    fn evaluate_all_refuses_what_evaluate_registered_skips() {
+        // The pairing that makes skipping safe: same input, opposite outcomes.
+        // `evaluate_all` treats the registry as sole authority,
+        // `evaluate_registered` treats it as a contributor beside the core gates.
+        let r = model_reg();
+        let set = vec![
+            Caveat::Model("gpt-4".to_owned()),
+            raw("vendor.example/x", ""),
+        ];
+        assert_eq!(
+            evaluate_all(&r, &set, &model_op("gpt-4"), &FixedClock::new(0)),
+            Err(CaveatRefusal::EvaluatorNotFound(
+                "vendor.example/x".to_owned()
+            ))
+        );
     }
 }

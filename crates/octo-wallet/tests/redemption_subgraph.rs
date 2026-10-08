@@ -8,8 +8,8 @@
 use octo_determin::Dqa;
 use octo_wallet::capability::caveat::Caveat;
 use octo_wallet::capability::redemption::{
-    redeem_capability, redeem_capability_at, redeem_capability_token, PolicyCatalog,
-    RedemptionError,
+    redeem_capability, redeem_capability_at, redeem_capability_at_with, redeem_capability_token,
+    redeem_capability_with, PolicyCatalog, RedemptionError,
 };
 use octo_wallet::capability::CapabilityToken;
 use octo_wallet::identity::IdentityKey;
@@ -585,5 +585,133 @@ fn h4_clock_less_redemption_refuses_a_before_only_capability() {
     assert!(
         matches!(err, RedemptionError::OutsideValidityWindow { .. }),
         "the clock-less path accepted a Before-bearing capability: {err:?}"
+    );
+}
+
+/// A third-party caveat whose evaluator carries a deadline.
+///
+/// `Caveat::time_bounds` returns `None` for `Raw` — core cannot know whether
+/// opaque bytes hold a deadline. So before the extension pass, this capability
+/// redeemed indefinitely. The whole point of the registry is that a third party
+/// can supply exactly this logic, so redemption must consult it.
+struct VendorExpiry;
+
+impl octo_cap_macaroon::caveat::evaluator::CaveatEvaluator for VendorExpiry {
+    fn key(&self) -> &'static str {
+        "vendor.example/expiry"
+    }
+    fn evaluate(
+        &self,
+        ctx: &octo_cap_macaroon::caveat::evaluator::CaveatEvalCtx<'_>,
+    ) -> Result<(), octo_cap_macaroon::caveat::evaluator::CaveatRefusal> {
+        use octo_cap_macaroon::caveat::evaluator::CaveatRefusal;
+        let deadline = match ctx.caveat {
+            Caveat::Raw(r) => std::str::from_utf8(&r.value)
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok()),
+            _ => None,
+        };
+        let Some(deadline) = deadline else {
+            return Err(CaveatRefusal::Violated {
+                evaluator: "vendor.example/expiry".to_owned(),
+                detail: "unparsable deadline".into(),
+            });
+        };
+        let now = ctx.clock.unix_millis() / 1_000;
+        if now <= deadline {
+            Ok(())
+        } else {
+            Err(CaveatRefusal::Violated {
+                evaluator: "vendor.example/expiry".to_owned(),
+                detail: format!("vendor token expired at {deadline}").into(),
+            })
+        }
+    }
+}
+
+#[test]
+fn a_third_party_deadline_caveat_is_enforced_at_redemption() {
+    use octo_cap_macaroon::caveat::evaluator::CaveatEvaluatorRegistry;
+
+    let org = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
+    let cap = time_capability(
+        org.policy_id,
+        &[Caveat::Raw(octo_cap_macaroon::caveat::RawCaveat {
+            name: "vendor.example/expiry".to_owned(),
+            value: b"2000".to_vec(),
+        })],
+    );
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org);
+
+    let mut evaluators = CaveatEvaluatorRegistry::empty();
+    evaluators.register(VendorExpiry).unwrap();
+
+    // Anti-vacuity: inside the vendor deadline it redeems.
+    redeem_capability_at_with(&cap, &catalog, &evaluators, 1_999)
+        .expect("a vendor-deadline capability inside its window must redeem");
+
+    // And past it, the registered evaluator refuses.
+    let err = redeem_capability_at_with(&cap, &catalog, &evaluators, 2_001).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        matches!(err, RedemptionError::OutsideValidityWindow { .. }),
+        "a vendor-expired capability redeemed: {msg}"
+    );
+    assert!(
+        msg.contains("vendor.example/expiry"),
+        "the refusal must name the third-party evaluator, got: {msg}"
+    );
+}
+
+#[test]
+fn an_unregistered_vendor_caveat_does_not_gain_a_deadline() {
+    // Control for the test above. With no evaluator registered the deadline
+    // bytes are just bytes, and the capability redeems — which is correct:
+    // `set_subsumes_with_registry` is what refuses an unclaimed `Raw` name, and
+    // this test is about the time gate not inventing enforcement on its own.
+    let org = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
+    let cap = time_capability(
+        org.policy_id,
+        &[Caveat::Raw(octo_cap_macaroon::caveat::RawCaveat {
+            name: "vendor.example/unclaimed".to_owned(),
+            value: b"2000".to_vec(),
+        })],
+    );
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org);
+
+    redeem_capability_at_with(
+        &cap,
+        &catalog,
+        &octo_cap_macaroon::caveat::evaluator::CaveatEvaluatorRegistry::empty(),
+        9_999,
+    )
+    .expect("an unclaimed caveat must not be treated as time-bearing");
+}
+
+#[test]
+fn clock_less_redemption_refuses_a_registered_vendor_caveat() {
+    use octo_cap_macaroon::caveat::evaluator::CaveatEvaluatorRegistry;
+
+    let org = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
+    let cap = time_capability(
+        org.policy_id,
+        &[Caveat::Raw(octo_cap_macaroon::caveat::RawCaveat {
+            name: "vendor.example/expiry".to_owned(),
+            value: b"2000".to_vec(),
+        })],
+    );
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org);
+
+    let mut evaluators = CaveatEvaluatorRegistry::empty();
+    evaluators.register(VendorExpiry).unwrap();
+
+    // The clock-less path has no `now`, so it must refuse rather than guess.
+    let err = redeem_capability_with(&cap, &catalog, &evaluators).unwrap_err();
+    assert!(
+        matches!(err, RedemptionError::OutsideValidityWindow { .. }),
+        "clock-less redemption accepted a registered third-party caveat: {err:?}"
     );
 }

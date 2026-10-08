@@ -41,6 +41,10 @@ use thiserror::Error;
 
 use super::caveat::Caveat;
 use super::CapabilityToken;
+use octo_cap_macaroon::caveat::evaluator::{
+    evaluate_registered, CaveatEvaluatorRegistry, ProposedOperation,
+};
+use octo_cap_macaroon::clock::FixedClock;
 
 /// Capability redemption against a policy catalog (RFC-0967 §5).
 ///
@@ -138,17 +142,51 @@ pub fn redeem_capability(
     cap: &CapabilityToken,
     catalog: &dyn PolicyCatalog,
 ) -> Result<(), RedemptionError> {
+    redeem_capability_with(cap, catalog, &CaveatEvaluatorRegistry::empty())
+}
+
+/// [`redeem_capability`] with a registry of third-party caveat evaluators.
+///
+/// A caveat carrying a registered evaluator is consulted even though the core
+/// classifier does not consider it time-bearing, so a third-party expiry caveat
+/// is enforced here rather than redeemed through.
+///
+/// # Errors
+/// As [`redeem_capability`], plus any refusal from a registered evaluator.
+pub fn redeem_capability_with(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+    evaluators: &CaveatEvaluatorRegistry,
+) -> Result<(), RedemptionError> {
     // H-4: this entry point has no clock, so it cannot evaluate a deadline.
     // Rather than let an expired capability redeem, it refuses outright when a
     // time caveat is present. Capabilities with no time caveat are unaffected —
     // there is nothing time-dependent about them.
+    //
+    // The registry is consulted too: a third-party caveat the core classifier
+    // cannot read may still be time-bearing, and skipping it here would open
+    // exactly the hole this function closes for core caveats.
     if let Some(bound) = cap.macaroon.caveats.iter().find_map(time_caveat_bounds) {
         return Err(RedemptionError::OutsideValidityWindow {
             now_unix: 0,
             reason: format!("clock-less redemption refused; capability has {bound}"),
         });
     }
-    redeem_capability_at(cap, catalog, 0)
+    if !evaluators.is_empty()
+        && cap
+            .macaroon
+            .caveats
+            .iter()
+            .any(|c| evaluators.resolve(&c.evaluator_key()).is_some())
+    {
+        return Err(RedemptionError::OutsideValidityWindow {
+            now_unix: 0,
+            reason: "clock-less redemption refused; capability carries a \
+                     third-party caveat with a registered evaluator"
+                .to_owned(),
+        });
+    }
+    redeem_capability_at_with(cap, catalog, evaluators, 0)
 }
 
 /// The validity window a caveat imposes, as a human-readable description, or
@@ -162,19 +200,50 @@ fn time_caveat_bounds(caveat: &Caveat) -> Option<String> {
 
 /// Does every time-bearing caveat on the capability admit `now_unix`?
 ///
+/// Two passes, and the split is deliberate.
+///
+/// **Core pass.** Every caveat is classified by [`Caveat::time_bounds`], whose
+/// match is exhaustive, so a core time-bearing variant cannot be missed here.
+///
+/// **Extension pass.** A caveat the core classifier says is *not* time-bearing
+/// may still carry a deadline, if it is a third-party caveat with a registered
+/// [`CaveatEvaluator`]. Those are evaluated against the clock. Without this
+/// pass a third-party expiry caveat would be silently ignored by redemption
+/// even though its evaluator works everywhere else.
+///
+/// Only caveats with a registered evaluator reach the extension pass, so this
+/// cannot become a fail-open path for caveats nobody claims: an unregistered
+/// third-party caveat is still refused by `set_subsumes_with_registry`.
+///
 /// Evaluated before any policy lookup, so an expired capability is rejected for
 /// the reason that actually applies rather than incidentally failing a later
 /// check.
-fn time_caveats_admit(cap: &CapabilityToken, now_unix: u64) -> Result<(), RedemptionError> {
+fn time_caveats_admit(
+    cap: &CapabilityToken,
+    evaluators: &CaveatEvaluatorRegistry,
+    now_unix: u64,
+) -> Result<(), RedemptionError> {
     for caveat in &cap.macaroon.caveats {
-        let Some(bounds) = caveat.time_bounds() else {
-            continue;
-        };
-        bounds
-            .admit(now_unix)
-            .map_err(|reason| RedemptionError::OutsideValidityWindow { now_unix, reason })?;
+        if let Some(bounds) = caveat.time_bounds() {
+            bounds
+                .admit(now_unix)
+                .map_err(|reason| RedemptionError::OutsideValidityWindow { now_unix, reason })?;
+        }
     }
-    Ok(())
+
+    if evaluators.is_empty() {
+        return Ok(());
+    }
+
+    // The registry speaks milliseconds; redemption speaks Unix seconds.
+    let clock = FixedClock::new(now_unix.saturating_mul(1_000));
+    let empty = ProposedOperation::empty();
+    evaluate_registered(evaluators, &cap.macaroon.caveats, &empty, &clock).map_err(|e| {
+        RedemptionError::OutsideValidityWindow {
+            now_unix,
+            reason: format!("registered caveat evaluator refused: {e}"),
+        }
+    })
 }
 
 /// Redeem a capability against a policy catalog at a known instant
@@ -197,7 +266,20 @@ pub fn redeem_capability_at(
     catalog: &dyn PolicyCatalog,
     now_unix: u64,
 ) -> Result<(), RedemptionError> {
-    time_caveats_admit(cap, now_unix)?;
+    redeem_capability_at_with(cap, catalog, &CaveatEvaluatorRegistry::empty(), now_unix)
+}
+
+/// [`redeem_capability_at`] with a registry of third-party caveat evaluators.
+///
+/// # Errors
+/// As [`redeem_capability_at`], plus any refusal from a registered evaluator.
+pub fn redeem_capability_at_with(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+    evaluators: &CaveatEvaluatorRegistry,
+    now_unix: u64,
+) -> Result<(), RedemptionError> {
+    time_caveats_admit(cap, evaluators, now_unix)?;
     redeem_shape_and_policy(cap, catalog)
 }
 
@@ -335,4 +417,19 @@ pub fn redeem_capability_token(
     cap.verify_holder_sig()
         .map_err(|e| RedemptionError::HolderSig(e.to_string()))?;
     redeem_capability(cap, catalog)
+}
+
+/// [`redeem_capability_token`] with a registry of third-party caveat evaluators.
+///
+/// # Errors
+/// As [`redeem_capability_token`], plus any refusal from a registered
+/// evaluator.
+pub fn redeem_capability_token_with(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+    evaluators: &CaveatEvaluatorRegistry,
+) -> Result<(), RedemptionError> {
+    cap.verify_holder_sig()
+        .map_err(|e| RedemptionError::HolderSig(e.to_string()))?;
+    redeem_capability_with(cap, catalog, evaluators)
 }

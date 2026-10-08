@@ -4,6 +4,14 @@
 
 Closed (2026-08-11) — Claimed (2026-07-23) — LANDED.
 
+> **Drift-closure note.** This status was set to Closed and LANDED by a
+> drift audit that did not tick the acceptance checkboxes, so the boxes below are
+> still open even though the work is declared landed. The AC-1 substrate was
+> independently confirmed: all nine named variants, Vault, Permission, ValidRange,
+> MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory and PolicyReference, are
+> present in `crates/octo-cap-macaroon/src/caveat/mod.rs`. Per-AC verification was
+> not re-run here, so treat the boxes as unverified rather than as met.
+
 ## RFC
 
 - RFC-0965 (Economics): Capability Extension Format

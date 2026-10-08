@@ -475,7 +475,10 @@ fn satisfying_run_input() -> Vec<u8> {
         "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
         "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
       },
+      "mint_felts": ["41", "42"],
       "caveat_felts": ["15", "16", "22"],
+      "caveat_widths": ["1", "1", "1"],
+      "prev_ids": ["51", "52", "53", "54", "55", "56"],
       "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
     }"#
     .to_vec()

@@ -160,14 +160,36 @@ pub struct TraceStepArg {
 }
 
 /// Everything the harness needs to execute the circuit: the public inputs, the
-/// private witness, the caveat felts, and the inference trace steps. Passed as
-/// a single JSON object so the ABI stays one buffer.
+/// private witness, the chain witness arrays, and the inference trace steps.
+/// Passed as a single JSON object so the ABI stays one buffer.
+///
+/// **The three chain arrays are `#[serde(default)]` and that is safe only
+/// because the circuit fails closed on them.** An absent `mint_felts` derives
+/// `chain[0]` without the nonce, which cannot match the verifier-supplied tip;
+/// absent `prev_ids` trips `CaveatIdDepthMismatch`. Defaulting keeps existing
+/// JSON producers working while any *semantically* wrong value is still refused
+/// inside the program. What is NOT acceptable is the deserializer silently
+/// absorbing an array in the wrong position, which is why
+/// `the_calldata_layout_matches_the_cairo_main_signature` reads the Cairo
+/// source rather than trusting this comment.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CairoRunInput {
     pub pub_inputs: PublicInputsArg,
     pub priv_witness: PrivateWitnessArg,
+    /// `bytes_to_felts(MACAR_ID_DOMAIN ‖ mint_nonce)` — folded into the chain seed.
+    #[serde(default)]
+    pub mint_felts: Vec<String>,
+    /// The packed caveat messages, concatenated. Length-prefixed per caveat.
+    #[serde(default)]
     pub caveat_felts: Vec<String>,
+    /// Felt width of each caveat, in the same order as `caveat_felts`.
+    #[serde(default)]
+    pub caveat_widths: Vec<String>,
+    /// Two felts per caveat: the `capability_id` in force at that step, split
+    /// into two 128-bit halves.
+    #[serde(default)]
+    pub prev_ids: Vec<String>,
     pub steps: Vec<TraceStepArg>,
 }
 
@@ -215,12 +237,23 @@ const TRACE_STRIDE: usize = 5;
 /// Layout, in `main`'s declaration order:
 ///
 /// ```text
-/// [ PublicInputs(10) , PrivateWitness(5) , [len, caveats…] , [len, steps_flat…] ]
+/// [ PublicInputs(11) , PrivateWitness(5)
+/// , [len, mint_felts…] , [len, caveat_felts…] , [len, caveat_widths…]
+/// , [len, prev_ids…] , [len, steps_flat…] ]
 /// ```
 ///
 /// Cairo's `Serde` for a struct is a **plain member sequence** — no header, no
 /// offsets — and `ArraySerde` is `[len, elems…]` with the element pointer at
 /// `elems[0]` (`core/src/array.cairo`).
+///
+/// The array order is the part that rots silently. Adding a parameter to the
+/// Cairo entry point shifts every array after it, and a deserializer handed the
+/// old shape does not error — it reads a length cell as a value and carries on.
+/// That is exactly how a proof ends up over attacker-chosen inputs with every
+/// internal check self-consistent, which is what
+/// `the_calldata_layout_matches_the_cairo_main_signature` exists to stop. It
+/// reads `cairo/src/lib.cairo` rather than trusting this comment, because a
+/// comment and a test that agree with each other catch nothing.
 ///
 /// `steps_flat` is the flat `[op, input, output]` encoding the circuit folds
 /// directly, which is why the step fields are flattened here rather than
@@ -230,7 +263,17 @@ fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     let w = &input.priv_witness;
 
     let mut out = Vec::with_capacity(
-        15 + 2 + input.caveat_felts.len() + 1 + input.steps.len() * TRACE_STRIDE,
+        16
+            + 1
+            + input.mint_felts.len()
+            + 1
+            + input.caveat_felts.len()
+            + 1
+            + input.caveat_widths.len()
+            + 1
+            + input.prev_ids.len()
+            + 1
+            + input.steps.len() * TRACE_STRIDE,
     );
 
     // PublicInputs — declaration order from `cairo/src/lib.cairo`.
@@ -253,10 +296,17 @@ fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     out.push(Felt::from(w.discharges_count));
     out.push(Felt::from(w.inference_trace_present));
 
-    // caveat_felts: Array<felt252> = [len, elems…].
-    out.push(Felt::from(input.caveat_felts.len()));
-    for c in &input.caveat_felts {
-        out.push(parse_felt(c)?);
+    // Chain witness arrays, in `main`'s order. Each is [len, elems…].
+    for array in [
+        &input.mint_felts,
+        &input.caveat_felts,
+        &input.caveat_widths,
+        &input.prev_ids,
+    ] {
+        out.push(Felt::from(array.len()));
+        for cell in array {
+            out.push(parse_felt(cell)?);
+        }
     }
 
     // steps_flat: Array<felt252> = [len, elems…], stride TRACE_STRIDE.
@@ -789,14 +839,17 @@ mod harness_tests {
     /// asserts it returns `1`.
     ///
     /// * `axes_count = 1` (< 1000)
-    /// * `caveats_count = 3` == `caveat_felts.len()`, and `>= CHAIN_DEPTH_MIN` (3)
+    /// * `caveats_count = 3` == the caveat count the chain walk sees
     /// * `has_output_hash = 0`, so the trace-root binding comparison is not armed
-    /// * one `TraceStep` → `steps_flat.len() == 3 == TRACE_STRIDE`, non-zero
+    /// * one `TraceStep` → `steps_flat.len() == 5 == TRACE_STRIDE`, non-zero
+    ///
+    /// The chain arrays are the shape `build_cairo_run_input` emits: two mint
+    /// felts, three caveat felts, one width each, and two id felts per caveat.
     fn satisfying_input() -> String {
         r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "6",
+            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "240762416164593195965731284530788510451429005798628693311909781404607892050",
             "invocation_hash": "6", "holder_did": "7",
             "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
           },
@@ -804,7 +857,10 @@ mod harness_tests {
             "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
             "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
           },
+          "mint_felts": ["41", "42"],
           "caveat_felts": ["15", "16", "22"],
+          "caveat_widths": ["1", "1", "1"],
+          "prev_ids": ["51", "52", "53", "54", "55", "56"],
           "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
         }"#
         .to_owned()
@@ -864,33 +920,30 @@ mod harness_tests {
         assert!(parsed.pc_count > 0, "a real execution has program counters");
     }
 
-    /// **Characterization test for the circuit's current soundness envelope.**
+    /// Audit finding C-2 is **closed**, and this is the test that says so.
     ///
-    /// `stage2_main` computes `chain_commitment = Poseidon(secret_lo,
-    /// secret_hi, *caveat_felts)` and asserts only that it is non-zero
-    /// (`cairo/src/lib.cairo`). It never relates that commitment to the
-    /// public `cap_root_hash`. So the secret and the caveat felts are pure
-    /// witness: swapping them for arbitrary values yields a different,
-    /// equally valid execution.
+    /// This used to be a characterization test asserting the opposite: the
+    /// circuit computed a witness-only chain commitment, asserted only that it
+    /// was non-zero, and so accepted an unrelated root secret. It was written to
+    /// fail once the circuit gained the real macaroon chain re-derivation —
+    /// "that failure is the point".
     ///
-    /// This test asserts that on purpose. It is the machine-checkable form
-    /// of audit finding C-2's residual gap, and it makes the limit visible
-    /// to anyone reading the harness instead of only in prose. **When the
-    /// circuit gains the real macaroon chain re-derivation, this test will
-    /// start failing** — that failure is the point: it is the signal that
-    /// the binding is real and the harness (and the audit record) must be
-    /// updated to match.
+    /// The re-derivation is here now: the derived chain tip must equal the
+    /// verifier-supplied `chain_tip_lo`. Changing the root secret changes the
+    /// seed, so the derived tip moves and no proof can be produced. The test is
+    /// inverted rather than deleted, because the property it now asserts is the
+    /// one the audit asked for and it should stay visible in the harness.
     #[test]
-    fn harness_accepts_an_unrelated_secret_because_the_circuit_does_not_bind_it() {
+    fn harness_refuses_an_unrelated_root_secret() {
         let spec = fixture_spec();
         assert!(
             run_cairo_to_prover_input(
                 &spec,
                 input_with(&[("cap_root_secret_lo", "\"987654321\"")]).as_bytes()
             )
-            .is_some(),
-            "the chain commitment is witness-only, so an unrelated secret still \
-             proves — pinning that gap so strengthening the circuit breaks this test"
+            .is_none(),
+            "an unrelated root secret must not satisfy the chain: the derived \
+             tip has to equal the verifier-supplied chain_tip_lo"
         );
     }
 
@@ -919,7 +972,7 @@ mod harness_tests {
         let json = r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "6",
+            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "240762416164593195965731284530788510451429005798628693311909781404607892050",
             "invocation_hash": "6", "holder_did": "7",
             "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
           },
@@ -927,7 +980,10 @@ mod harness_tests {
             "cap_root_secret_lo": "11", "cap_root_secret_hi": "12",
             "caveats_count": 2, "discharges_count": 0, "inference_trace_present": 1
           },
+          "mint_felts": ["41", "42"],
           "caveat_felts": ["15", "16"],
+          "caveat_widths": ["1", "1"],
+          "prev_ids": ["51", "52", "53", "54"],
           "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
         }"#;
         assert!(
@@ -977,18 +1033,23 @@ mod harness_tests {
     /// produces a proof over attacker-chosen inputs with every internal hash
     /// check self-consistent.
     ///
-    /// Layout for `TRACE_STRIDE = 5`:
+    /// Layout for the satisfying witness:
     ///
     /// ```text
-    /// [ PublicInputs(10) , PrivateWitness(5) , [len, caveats…] , [len, steps…] ]
-    ///  = 10 + 5 + (1+3) + (1 + 1*5) = 25
+    /// [ PublicInputs(11) , PrivateWitness(5)
+    /// , [1+2 mint] , [1+3 caveats] , [1+3 widths] , [1+6 prev_ids] , [1+5 steps] ]
+    ///  = 11 + 5 + 3 + 4 + 4 + 7 + 6 = 40
     /// ```
+    ///
+    /// The total alone is not enough, which is why every slot is asserted:
+    /// `chain_tip_lo` was once inserted at index 5 without touching this test,
+    /// which kept "passing" only because it was already red on the length.
     #[test]
     fn calldata_matches_cairo_serde_layout() {
         let input: CairoRunInput = serde_json::from_str(&satisfying_input()).unwrap();
         let c = build_calldata(&input).expect("build");
 
-        assert_eq!(c.len(), 25, "calldata length: 10 + 5 + 4 + 6");
+        assert_eq!(c.len(), 40, "calldata length: 11 + 5 + 3 + 4 + 4 + 7 + 6");
 
         // PublicInputs — every field, in declaration order.
         assert_eq!(c[0], Felt::from(1), "ask_id_lo");
@@ -996,32 +1057,122 @@ mod harness_tests {
         assert_eq!(c[2], Felt::from(1), "axes_count");
         assert_eq!(c[3], Felt::from(4), "cap_root_hash_lo");
         assert_eq!(c[4], Felt::from(5), "cap_root_hash_hi");
-        assert_eq!(c[5], Felt::from(6), "invocation_hash");
-        assert_eq!(c[6], Felt::from(7), "holder_did");
-        assert_eq!(c[7], Felt::from(1_700_000_000u64), "current_unix_time");
-        assert_eq!(c[8], Felt::from(0), "has_output_hash");
-        assert_eq!(c[9], Felt::from(0), "output_hash");
+        assert_eq!(
+            c[5],
+            "240762416164593195965731284530788510451429005798628693311909781404607892050"
+                .parse::<Felt>()
+                .expect("chain tip literal"),
+            "chain_tip_lo"
+        );
+        assert_eq!(c[6], Felt::from(6), "invocation_hash");
+        assert_eq!(c[7], Felt::from(7), "holder_did");
+        assert_eq!(c[8], Felt::from(1_700_000_000u64), "current_unix_time");
+        assert_eq!(c[9], Felt::from(0), "has_output_hash");
+        assert_eq!(c[10], Felt::from(0), "output_hash");
 
         // PrivateWitness — every field.
-        assert_eq!(c[10], Felt::from(11), "cap_root_secret_lo");
-        assert_eq!(c[11], Felt::from(12), "cap_root_secret_hi");
-        assert_eq!(c[12], Felt::from(3), "caveats_count");
-        assert_eq!(c[13], Felt::from(0), "discharges_count");
-        assert_eq!(c[14], Felt::from(1), "inference_trace_present");
+        assert_eq!(c[11], Felt::from(11), "cap_root_secret_lo");
+        assert_eq!(c[12], Felt::from(12), "cap_root_secret_hi");
+        assert_eq!(c[13], Felt::from(3), "caveats_count");
+        assert_eq!(c[14], Felt::from(0), "discharges_count");
+        assert_eq!(c[15], Felt::from(1), "inference_trace_present");
 
-        // caveat_felts: [len, elems…].
-        assert_eq!(c[15], Felt::from(3), "caveat_felts length cell");
-        assert_eq!(c[16], Felt::from(15), "caveat_felts[0]");
-        assert_eq!(c[17], Felt::from(16), "caveat_felts[1]");
-        assert_eq!(c[18], Felt::from(22), "caveat_felts[2]");
+        // Chain witness arrays, `main`'s order, each [len, elems…].
+        assert_eq!(c[16], Felt::from(2), "mint_felts length cell");
+        assert_eq!(c[17], Felt::from(41), "mint_felts[0]");
+        assert_eq!(c[18], Felt::from(42), "mint_felts[1]");
+
+        assert_eq!(c[19], Felt::from(3), "caveat_felts length cell");
+        assert_eq!(c[20], Felt::from(15), "caveat_felts[0]");
+        assert_eq!(c[21], Felt::from(16), "caveat_felts[1]");
+        assert_eq!(c[22], Felt::from(22), "caveat_felts[2]");
+
+        assert_eq!(c[23], Felt::from(3), "caveat_widths length cell");
+        assert_eq!(c[24], Felt::from(1), "caveat_widths[0]");
+        assert_eq!(c[25], Felt::from(1), "caveat_widths[1]");
+        assert_eq!(c[26], Felt::from(1), "caveat_widths[2]");
+
+        assert_eq!(c[27], Felt::from(6), "prev_ids length cell = 2 per caveat");
+        assert_eq!(c[28], Felt::from(51), "prev_ids[0]");
+        assert_eq!(c[29], Felt::from(52), "prev_ids[1]");
 
         // steps_flat: [len, elems…], one step of TRACE_STRIDE = 5.
-        assert_eq!(c[19], Felt::from(5), "steps_flat length cell = 1 step * stride 5");
-        assert_eq!(c[20], Felt::from(17), "step[0].op_code");
-        assert_eq!(c[21], Felt::from(18), "step[0].input_hash_lo");
-        assert_eq!(c[22], Felt::from(0), "step[0].input_hash_hi");
-        assert_eq!(c[23], Felt::from(19), "step[0].output_hash_lo");
-        assert_eq!(c[24], Felt::from(0), "step[0].output_hash_hi");
+        assert_eq!(c[34], Felt::from(5), "steps_flat length cell = 1 step * stride 5");
+        assert_eq!(c[35], Felt::from(17), "step[0].op_code");
+        assert_eq!(c[36], Felt::from(18), "step[0].input_hash_lo");
+        assert_eq!(c[37], Felt::from(0), "step[0].input_hash_hi");
+        assert_eq!(c[38], Felt::from(19), "step[0].output_hash_lo");
+        assert_eq!(c[39], Felt::from(0), "step[0].output_hash_hi");
+    }
+
+    /// The layout is pinned against the Cairo **source**, not against a
+    /// hand-maintained index table.
+    ///
+    /// The previous conformance test asserted `c[15]`, `c[16]`, … and so on, all
+    /// hand-written. It passed happily while `main` grew three parameters,
+    /// because a comment and a test that agree with each other catch nothing.
+    /// Adding `mint_felts`, `caveat_widths` and `prev_ids` to the Cairo entry
+    /// point shifted every array after them and this crate was still emitting
+    /// the old shape — a deserializer fed the wrong layout does not error, it
+    /// reads a length cell as a value.
+    ///
+    /// So this parses `main`'s actual parameter list out of the Cairo file and
+    /// asserts it against the order `build_calldata` emits. `include_str!` is
+    /// resolved at build time, so it cannot go stale without a rebuild.
+    #[test]
+    fn the_calldata_layout_matches_the_cairo_main_signature() {
+        let cairo = include_str!("../../../../cairo/src/lib.cairo");
+
+        let tail = cairo
+            .split_once("pub fn main(")
+            .expect("cairo/src/lib.cairo must declare `pub fn main`")
+            .1;
+        let params = tail
+            .split_once(')')
+            .expect("`main` parameter list must close")
+            .0;
+
+        let names: Vec<&str> = params
+            .split(',')
+            .filter_map(|p| p.split(':').next())
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "pub_inputs",
+                "priv_witness",
+                "mint_felts",
+                "caveat_felts",
+                "caveat_widths",
+                "prev_ids",
+                "steps_flat",
+            ],
+            "the Cairo entry point's parameter list changed; `build_calldata` \
+             emits calldata positionally, so every array after the insertion \
+             point is now misaligned"
+        );
+
+        // `executable_main` is the entrypoint cairo-lang actually wraps, so a
+        // divergence between the two entrypoints is just as fatal.
+        let exe_tail = cairo
+            .split_once("pub fn executable_main(")
+            .expect("cairo/src/lib.cairo must declare `pub fn executable_main`")
+            .1;
+        let exe_params = exe_tail.split_once(')').expect("parameter list must close").0;
+        let exe_names: Vec<&str> = exe_params
+            .split(',')
+            .filter_map(|p| p.split(':').next())
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        assert_eq!(
+            exe_names, names,
+            "`executable_main` and `main` must take the same arguments; \
+             cairo-lang wraps the former"
+        );
     }
 
     /// The field SET, not only the order.
@@ -1045,12 +1196,14 @@ mod harness_tests {
         let two: CairoRunInput = serde_json::from_str(&two_json).expect("parse two steps");
         let c2 = build_calldata(&two).expect("build two steps");
 
-        assert_eq!(c1.len(), 25, "one step");
-        assert_eq!(c2.len(), 25 + TRACE_STRIDE, "a second step widens by exactly one stride");
-        assert_eq!(c2[19], Felt::from(10), "steps_flat length cell = 2 steps * stride 5");
-        assert_eq!(c2[20], Felt::from(17), "step[0] is unchanged");
-        assert_eq!(c2[25], Felt::from(20), "step[1].op_code");
-        assert_eq!(c2[29], Felt::from(24), "step[1].output_hash_hi");
+        // 11 PublicInputs + 5 PrivateWitness + 4 chain arrays (2+3+3+6 cells plus
+        // one length cell each) + 1 steps length cell + 1 step of stride 5.
+        assert_eq!(c1.len(), 40, "one step");
+        assert_eq!(c2.len(), 40 + TRACE_STRIDE, "a second step widens by exactly one stride");
+        assert_eq!(c2[34], Felt::from(10), "steps_flat length cell = 2 steps * stride 5");
+        assert_eq!(c2[35], Felt::from(17), "step[0] is unchanged");
+        assert_eq!(c2[40], Felt::from(20), "step[1].op_code");
+        assert_eq!(c2[44], Felt::from(24), "step[1].output_hash_hi");
     }
 
     /// A real 32-byte digest must now be expressible.
@@ -1061,9 +1214,12 @@ mod harness_tests {
     /// half is 16 bytes, far below the ~251-bit modulus.
     #[test]
     fn a_real_thirty_two_byte_digest_now_parses() {
+        // `0x` is required: `parse_felt` only treats a string as hex when it is
+        // prefixed, so the previous unprefixed fixture was parsed as decimal,
+        // failed, and the test passed only because it was already red.
         let json = satisfying_input().replace(
             r#""input_hash_lo": "18", "input_hash_hi": "0""#,
-            r#""input_hash_lo": "33333333333333333333333333333333", "input_hash_hi": "ffffffffffffffffffffffffffffffff""#,
+            r#""input_hash_lo": "0x33333333333333333333333333333333", "input_hash_hi": "0xffffffffffffffffffffffffffffffff""#,
         );
         let input: CairoRunInput = serde_json::from_str(&json).expect("parse");
         assert!(

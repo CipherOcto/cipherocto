@@ -204,7 +204,12 @@ pub trait AttestationStrategy: Send + Sync {
 /// Optional companion: what a node must serve to verify, and what admitting
 /// this strategy costs. A strategy that does not implement this declares no
 /// deployment requirement and no cost.
-pub trait AttestationAdmission {
+///
+/// `Send + Sync` matches `AttestationStrategy` and is required in practice: the
+/// registry is held in an `Arc` on a `VerifyContext` that crosses threads. A
+/// registration holding a non-`Sync` admission side would make the whole
+/// registry non-`Sync` and unusable from the verification path.
+pub trait AttestationAdmission: Send + Sync {
     /// Payload kinds a node must serve to produce a valid attestation.
     /// Empty means the strategy imposes no deployment requirement.
     fn required_payload_kinds(&self) -> &[PayloadKindId] {
@@ -377,7 +382,7 @@ impl AllocationRecord {
 /// default strategy, and an unregistered id rejects.
 #[derive(Clone, Default)]
 pub struct AttestationRegistry {
-    strategies: BTreeMap<AttestationTypeId, Arc<dyn AttestationStrategy>>,
+    strategies: BTreeMap<AttestationTypeId, Registration>,
 }
 
 impl AttestationRegistry {
@@ -405,6 +410,7 @@ impl AttestationRegistry {
     pub fn register_strategy(
         &mut self,
         strategy: Arc<dyn AttestationStrategy>,
+        admission: Option<Arc<dyn AttestationAdmission>>,
         claimant: &str,
         allocations: &AllocationRecord,
     ) -> Result<AttestationTypeId, RegisterError> {
@@ -430,13 +436,29 @@ impl AttestationRegistry {
             }
         }
 
-        self.strategies.insert(type_id, strategy);
+        self.strategies.insert(
+            type_id,
+            Registration {
+                strategy,
+                admission,
+            },
+        );
         Ok(type_id)
     }
 
     /// Resolve an id to its strategy. Fail-closed: `None` means reject.
     #[must_use]
     pub fn resolve(&self, type_id: &AttestationTypeId) -> Option<&Arc<dyn AttestationStrategy>> {
+        self.strategies.get(type_id).map(|r| &r.strategy)
+    }
+
+    /// Resolve the full registration, including its admission side.
+    ///
+    /// This is what the dispatch reads at step 4. Resolving to the bare strategy
+    /// and reconstructing a `Registration` with `admission: None` would make the
+    /// coverage gate read the permissive value for every strategy, which is the
+    /// vacuous-check failure the trait split exists to prevent.
+    pub fn resolve_registration(&self, type_id: &AttestationTypeId) -> Option<&Registration> {
         self.strategies.get(type_id)
     }
 
@@ -609,7 +631,7 @@ mod tests {
         let mut reg = AttestationRegistry::empty();
         let allocs = AllocationRecord::empty();
         let err = reg
-            .register_strategy(Arc::new(Yes), "octo-cap-zk", &allocs)
+            .register_strategy(Arc::new(Yes), None, "octo-cap-zk", &allocs)
             .unwrap_err();
         assert_eq!(err, RegisterError::NotAllocated(rfc_id(1)));
         assert!(reg.is_empty());
@@ -621,7 +643,7 @@ mod tests {
         allocs.allocate(rfc_id(1), "octo-cap-zk");
         let mut reg = AttestationRegistry::empty();
         let err = reg
-            .register_strategy(Arc::new(Yes), "octo-cap-poi", &allocs)
+            .register_strategy(Arc::new(Yes), None, "octo-cap-poi", &allocs)
             .unwrap_err();
         assert_eq!(
             err,
@@ -639,7 +661,7 @@ mod tests {
         allocs.allocate(rfc_id(1), "octo-cap-zk");
         let mut reg = AttestationRegistry::empty();
         assert_eq!(
-            reg.register_strategy(Arc::new(Yes), "octo-cap-zk", &allocs)
+            reg.register_strategy(Arc::new(Yes), None, "octo-cap-zk", &allocs)
                 .unwrap(),
             rfc_id(1)
         );
@@ -663,7 +685,7 @@ mod tests {
         let mut reg = AttestationRegistry::empty();
         let allocs = AllocationRecord::empty();
         assert!(reg
-            .register_strategy(Arc::new(User), "anybody", &allocs)
+            .register_strategy(Arc::new(User), None, "anybody", &allocs)
             .is_ok());
     }
 
@@ -672,10 +694,10 @@ mod tests {
         let mut allocs = AllocationRecord::empty();
         allocs.allocate(rfc_id(1), "octo-cap-zk");
         let mut reg = AttestationRegistry::empty();
-        reg.register_strategy(Arc::new(Yes), "octo-cap-zk", &allocs)
+        reg.register_strategy(Arc::new(Yes), None, "octo-cap-zk", &allocs)
             .unwrap();
         let err = reg
-            .register_strategy(Arc::new(Yes), "octo-cap-zk", &allocs)
+            .register_strategy(Arc::new(Yes), None, "octo-cap-zk", &allocs)
             .unwrap_err();
         assert_eq!(err, RegisterError::AlreadyRegistered(rfc_id(1)));
         assert_eq!(reg.len(), 1);
@@ -1030,5 +1052,1013 @@ mod rule_tests {
     fn plain_mint_never_attaches_an_envelope() {
         let m = mac();
         assert!(m.attestation.is_none());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch (RFC-0973 §Algorithms)
+// ---------------------------------------------------------------------------
+
+/// The operator's set of accepted attestation types.
+///
+/// An **empty set is a permitted operator choice**, not a misconfiguration.
+/// Running a node that verifies no attestations is a real weakening — such a
+/// node relies entirely on the RFC-0957 macaroon path and inherits its custody
+/// properties — and the mitigation is that it is visible rather than silent. A
+/// node therefore starts with an empty set and advertises it, rather than
+/// refusing to start.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AcceptanceSet {
+    ids: Vec<AttestationTypeId>,
+}
+
+impl AcceptanceSet {
+    /// An empty set. The node accepts no attestations, and says so.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Build from an explicit list, de-duplicated in first-seen order.
+    #[must_use]
+    pub fn from_ids(ids: impl IntoIterator<Item = AttestationTypeId>) -> Self {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = Vec::new();
+        for id in ids {
+            if seen.insert(id) {
+                out.push(id);
+            }
+        }
+        Self { ids: out }
+    }
+
+    /// Whether this type is accepted here.
+    #[must_use]
+    pub fn accepts(&self, type_id: &AttestationTypeId) -> bool {
+        self.ids.contains(type_id)
+    }
+
+    /// The accepted ids.
+    #[must_use]
+    pub fn ids(&self) -> &[AttestationTypeId] {
+        &self.ids
+    }
+
+    /// Whether the set accepts nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+}
+
+/// A policy that accepts everything the set already accepted.
+///
+/// Only the refuse-only direction is implemented. A `PolicySource` can decline
+/// an attestation or decline to decide it, and never widen acceptance — a policy
+/// that could permit something the acceptance set excluded would move the
+/// operator's decision from one place to two.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PermissivePolicy;
+
+impl PolicySource for PermissivePolicy {
+    fn accepts(&self, _type_id: &AttestationTypeId) -> bool {
+        true
+    }
+
+    fn validate(&self, _ctx: &AttestationVerifyCtx<'_>) -> Result<(), AttestationError> {
+        Ok(())
+    }
+}
+
+/// One rejection from the dispatch, one row per gate.
+///
+/// Variants are separate rather than collapsed into a reason string so an
+/// operator can tell them apart: an unsatisfying attestation is the strategy
+/// reaching a verdict, an error is the strategy declining to reach one, and a
+/// panic is the strategy not returning at all.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum DispatchRejection {
+    /// Step 0. Unknown capability, or inactive for any reason.
+    #[allow(clippy::enum_variant_names)]
+    UnknownOrInactiveCapability {
+        /// Whether the cause was expiry rather than absence.
+        expired: bool,
+    },
+    /// Step 0b. The RFC-0957 verification failed. Carries its own reason.
+    MacaroonVerification(String),
+    /// Step 2. The operator does not accept this strategy here.
+    NotAcceptedHere(AttestationTypeId),
+    /// Step 3. No strategy is registered for this id.
+    UnknownStrategy(AttestationTypeId),
+    /// Step 4. This node cannot verify what it cannot produce.
+    CannotVerifyWhatItCannotProduce,
+    /// Step 5. The form carries nothing an attestation could bind to.
+    NoBindableValue,
+    /// Step 5. The strategy reached a verdict and the relation does not hold.
+    Unsatisfied(String),
+    /// Step 5. The strategy declined to reach a verdict.
+    StrategyError(String),
+    /// Step 5. The strategy did not return at all (unwinding builds only).
+    StrategyPanicked,
+}
+
+impl fmt::Display for DispatchRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownOrInactiveCapability { expired: true } => {
+                f.write_str("capability no longer active, expired rather than unknown")
+            }
+            Self::UnknownOrInactiveCapability { expired: false } => {
+                f.write_str("unknown or inactive capability")
+            }
+            Self::MacaroonVerification(reason) => {
+                write!(f, "RFC-0957 reason: {reason}")
+            }
+            Self::NotAcceptedHere(id) => write!(f, "strategy not accepted here: {id}"),
+            Self::UnknownStrategy(id) => write!(f, "unknown strategy id: {id}"),
+            Self::CannotVerifyWhatItCannotProduce => {
+                f.write_str("node cannot verify what it cannot produce")
+            }
+            Self::NoBindableValue => {
+                f.write_str("capability carries nothing an attestation could bind to")
+            }
+            Self::Unsatisfied(reason) => write!(f, "verification unsatisfied: {reason}"),
+            Self::StrategyError(reason) => write!(f, "strategy could not decide: {reason}"),
+            Self::StrategyPanicked => f.write_str("strategy panicked"),
+        }
+    }
+}
+
+impl std::error::Error for DispatchRejection {}
+
+/// What the node can serve, for the verification-side coverage gate at step 4.
+pub trait PayloadCoverage {
+    /// Whether the node serves every one of these payload kinds.
+    fn serves_all(&self, kinds: &[PayloadKindId]) -> bool;
+}
+
+/// The dispatch's view of the node.
+pub trait NodeView {
+    /// The operator acceptance set.
+    fn accept_set(&self) -> &AcceptanceSet;
+    /// What the node can serve.
+    fn coverage(&self) -> &dyn PayloadCoverage;
+    /// The operator policy.
+    fn policy(&self) -> &dyn PolicySource;
+}
+
+/// Everything the dispatch reads besides the capability itself.
+pub struct DispatchInputs<'a> {
+    /// Whether the capability is present and active. Step 0.
+    pub lookup_active: bool,
+    /// Whether the capability is present at all, used only to tell "expired"
+    /// from "unknown" in the reason.
+    pub present: bool,
+    /// The RFC-0957 verification result. Step 0b.
+    pub macaroon_ok: std::result::Result<(), String>,
+    /// The attestation registry. Step 3.
+    pub registry: &'a AttestationRegistry,
+    /// The node. Steps 2 and 4.
+    pub node: &'a dyn NodeView,
+    /// The expectation, built by core from the capability and never from the
+    /// attestation. `None` is the step-5 gate.
+    pub expectation: Option<Box<dyn Expectation + 'a>>,
+}
+
+impl fmt::Debug for DispatchInputs<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DispatchInputs")
+            .field("lookup_active", &self.lookup_active)
+            .field("present", &self.present)
+            .field("macaroon_ok", &self.macaroon_ok.is_ok())
+            .field(
+                "expectation",
+                &self.expectation.as_ref().map(|_| "<dyn Expectation>"),
+            )
+            .finish()
+    }
+}
+
+/// The fail-closed dispatch, in the RFC's order.
+///
+/// Steps 0 and 0b run on **both** branches. An attested capability is still a
+/// capability: the attestation is an additional check layered on top of the ones
+/// the token format already defines, never a replacement. Running it only for
+/// unattested tokens would accept a copied token whose signature was stripped,
+/// on the strength of a possession proof alone.
+///
+/// Step 0 is load-bearing rather than an optimization. Steps 1 to 5 can be
+/// satisfied by an attacker who minted their own capability; only step 0 makes
+/// acceptance mean anything.
+///
+/// # Errors
+/// One [`DispatchRejection`] per gate, each distinguishable to the operator.
+pub fn verify_capability_attestation(
+    capability: &octo_cap_macaroon::macaroon::Macaroon,
+    inputs: &DispatchInputs<'_>,
+) -> Result<AttestationOutcome, DispatchRejection> {
+    // Step 0. Authorisation precedes attestation.
+    if !inputs.lookup_active {
+        return Err(DispatchRejection::UnknownOrInactiveCapability {
+            expired: inputs.present,
+        });
+    }
+
+    // Step 0b. Runs on BOTH branches and is not optional on the attested one.
+    if let Err(reason) = &inputs.macaroon_ok {
+        return Err(DispatchRejection::MacaroonVerification(reason.clone()));
+    }
+
+    // Step 1. An absent attestation id accepts, having already run step 0b.
+    let Some(envelope) = capability.attestation.as_ref() else {
+        return Ok(AttestationOutcome::Satisfied);
+    };
+    let type_id = envelope.type_id;
+
+    // Step 2. The operator acceptance set.
+    if !inputs.node.accept_set().accepts(&type_id) {
+        return Err(DispatchRejection::NotAcceptedHere(type_id));
+    }
+
+    // Step 3. Strategy resolution, fail-closed.
+    let Some(registration) = inputs.registry.resolve_registration(&type_id) else {
+        return Err(DispatchRejection::UnknownStrategy(type_id));
+    };
+    let strategy = &registration.strategy;
+
+    // Step 4. The verification-side coverage gate, reachable per call. Boot
+    // deliberately does not evaluate it, so this stays reachable for a node
+    // whose coverage changed after boot.
+    let admission = admission_of(registration);
+    if admission.verifier_needs_producing_kinds
+        && !inputs
+            .node
+            .coverage()
+            .serves_all(&admission.required_payload_kinds)
+    {
+        return Err(DispatchRejection::CannotVerifyWhatItCannotProduce);
+    }
+
+    // Step 5. The expectation comes from the capability, never the attestation.
+    // Mint refuses to attach an attestation to a form with nothing to bind to,
+    // so this is unreachable through the mint path and reachable only through a
+    // registry record written directly. The gate is still defined rather than
+    // assumed, so the failure is a rejection and not a panic naming the strategy.
+    let Some(expectation) = inputs.expectation.as_deref() else {
+        return Err(DispatchRejection::NoBindableValue);
+    };
+
+    let ctx = AttestationVerifyCtx {
+        capability,
+        envelope,
+        expectation,
+        policy: inputs.node.policy(),
+    };
+
+    // Step 5a. The panic arm is a step of the dispatch, not a wrapper around it:
+    // it sits beside the Err arm because a strategy that panics has produced no
+    // outcome at all, and mapping that onto an ordinary error would let a future
+    // implementation turn it into a success.
+    //
+    // AssertUnwindSafe discharges a compile-time obligation and leaves the
+    // runtime question open, so this containment is conditional on an unwinding
+    // build (RFC-0973 A4).
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| strategy.verify(&ctx)));
+
+    match outcome {
+        Err(_panic) => Err(DispatchRejection::StrategyPanicked),
+        Ok(Err(e)) => Err(DispatchRejection::StrategyError(e.to_string())),
+        Ok(Ok(AttestationOutcome::Unsatisfied { reason })) => {
+            Err(DispatchRejection::Unsatisfied(reason))
+        }
+        Ok(Ok(AttestationOutcome::Satisfied)) => Ok(AttestationOutcome::Satisfied),
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use octo_cap_macaroon::macaroon::Macaroon;
+    use octo_protocol::payload_kind::PayloadKindId;
+
+    fn tid(n: u8) -> AttestationTypeId {
+        let mut b = [0u8; 16];
+        b[15] = n;
+        AttestationTypeId::from_bytes(b)
+    }
+
+    fn user_tid(n: u8) -> AttestationTypeId {
+        let mut b = [0x80u8; 16];
+        b[15] = n;
+        AttestationTypeId::from_bytes(b)
+    }
+
+    fn mac() -> Macaroon {
+        Macaroon::mint(&[11u8; 32]).unwrap()
+    }
+
+    struct Node {
+        set: AcceptanceSet,
+        serves: bool,
+        policy: PermissivePolicy,
+    }
+    impl PayloadCoverage for Node {
+        fn serves_all(&self, _kinds: &[PayloadKindId]) -> bool {
+            self.serves
+        }
+    }
+    impl NodeView for Node {
+        fn accept_set(&self) -> &AcceptanceSet {
+            &self.set
+        }
+        fn coverage(&self) -> &dyn PayloadCoverage {
+            self
+        }
+        fn policy(&self) -> &dyn PolicySource {
+            &self.policy
+        }
+    }
+
+    fn node(ids: Vec<AttestationTypeId>) -> Node {
+        Node {
+            set: AcceptanceSet::from_ids(ids),
+            serves: false,
+            policy: PermissivePolicy,
+        }
+    }
+
+    struct Expect;
+    impl Expectation for Expect {
+        fn bindable_value(&self, _ctx: &AttestationVerifyCtx<'_>) -> Option<Vec<u8>> {
+            Some(vec![0x11; 32])
+        }
+    }
+
+    /// Always accepts.
+    struct Ok1(AttestationTypeId);
+    impl AttestationStrategy for Ok1 {
+        fn type_id(&self) -> AttestationTypeId {
+            self.0
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Satisfied)
+        }
+    }
+
+    /// Verdict: relation does not hold.
+    struct Unsat(AttestationTypeId);
+    impl AttestationStrategy for Unsat {
+        fn type_id(&self) -> AttestationTypeId {
+            self.0
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Unsatisfied {
+                reason: "does not hold".to_owned(),
+            })
+        }
+    }
+
+    /// Declines to decide.
+    struct Errs(AttestationTypeId);
+    impl AttestationStrategy for Errs {
+        fn type_id(&self) -> AttestationTypeId {
+            self.0
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Err(AttestationError::StrategyRefused {
+                reason: "cannot decide".to_owned(),
+            })
+        }
+    }
+
+    /// Does not return.
+    struct Panicky(AttestationTypeId);
+    impl AttestationStrategy for Panicky {
+        fn type_id(&self) -> AttestationTypeId {
+            self.0
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            panic!("strategy exploded");
+        }
+    }
+
+    /// Needs producing kinds the node does not serve.
+    struct NeedsProducing(AttestationTypeId);
+    impl AttestationStrategy for NeedsProducing {
+        fn type_id(&self) -> AttestationTypeId {
+            self.0
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Satisfied)
+        }
+    }
+    static NEEDED_KINDS: [PayloadKindId; 1] = [PayloadKindId::from_bytes([1u8; 16])];
+
+    impl AttestationAdmission for NeedsProducing {
+        fn required_payload_kinds(&self) -> &[PayloadKindId] {
+            &NEEDED_KINDS
+        }
+        fn verifier_needs_producing_kinds(&self) -> bool {
+            true
+        }
+        fn admission_profile(&self) -> Option<AdmissionProfile> {
+            Some(AdmissionProfile::default())
+        }
+    }
+
+    fn registry_with(
+        s: Arc<dyn AttestationStrategy>,
+        a: Option<Arc<dyn AttestationAdmission>>,
+    ) -> AttestationRegistry {
+        let id = s.type_id();
+        let mut allocs = AllocationRecord::empty();
+        // RFC-range ids need an owner before they can be claimed at all.
+        allocs.allocate(id, "test");
+        let mut reg = AttestationRegistry::empty();
+        reg.register_strategy(s, a, "test", &allocs).unwrap();
+        reg
+    }
+
+    fn attested(id: AttestationTypeId) -> Macaroon {
+        let mut m = mac();
+        attach_envelope(&mut m, AttestationEnvelope::new(id, vec![1, 2, 3]), true).unwrap();
+        m
+    }
+
+    fn inputs<'a>(
+        registry: &'a AttestationRegistry,
+        node: &'a Node,
+        expectation: Option<Box<dyn Expectation + 'a>>,
+    ) -> DispatchInputs<'a> {
+        DispatchInputs {
+            lookup_active: true,
+            present: true,
+            macaroon_ok: Ok(()),
+            registry,
+            node,
+            expectation,
+        }
+    }
+
+    // --- step 0 ---
+
+    #[test]
+    fn step0_rejects_an_inactive_capability_before_anything_else() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![]);
+        let mut i = inputs(&reg, &n, Some(Box::new(Expect)));
+        i.lookup_active = false;
+        i.present = false;
+        // Even with a perfect macaroon result and an accepted id, step 0 wins.
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::UnknownOrInactiveCapability { expired: false }
+        );
+    }
+
+    #[test]
+    fn step0_distinguishes_expired_from_unknown() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![]);
+        let mut i = inputs(&reg, &n, Some(Box::new(Expect)));
+        i.lookup_active = false;
+        i.present = true;
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::UnknownOrInactiveCapability { expired: true }
+        );
+    }
+
+    // --- step 0b: the gate that had no carrier ---
+
+    #[test]
+    fn step0b_runs_on_the_attested_branch_too() {
+        // A forged macaroon on an ATTESTED token must reject. If 0b ran only for
+        // unattested tokens, this would pass, which is the whole defect.
+        let reg = registry_with(Arc::new(Ok1(tid(1))), None);
+        let n = node(vec![tid(1)]);
+        let mut i = inputs(&reg, &n, Some(Box::new(Expect)));
+        i.macaroon_ok = Err("holder signature failed".to_owned());
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::MacaroonVerification("holder signature failed".to_owned())
+        );
+    }
+
+    #[test]
+    fn step0b_runs_on_the_unattested_branch() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![]);
+        let mut i = inputs(&reg, &n, Some(Box::new(Expect)));
+        i.macaroon_ok = Err("caveat violated".to_owned());
+        assert_eq!(
+            verify_capability_attestation(&mac(), &i).unwrap_err(),
+            DispatchRejection::MacaroonVerification("caveat violated".to_owned())
+        );
+    }
+
+    // --- step 1 ---
+
+    #[test]
+    fn an_unattested_capability_accepts_after_0b() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert!(verify_capability_attestation(&mac(), &i)
+            .unwrap()
+            .is_satisfied());
+    }
+
+    // --- step 2 ---
+
+    #[test]
+    fn step2_rejects_a_type_outside_the_acceptance_set() {
+        let reg = registry_with(Arc::new(Ok1(tid(1))), None);
+        let n = node(vec![]); // accepts nothing: a permitted, visible choice
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::NotAcceptedHere(tid(1))
+        );
+    }
+
+    // --- step 3 ---
+
+    #[test]
+    fn step3_is_fail_closed_for_an_unregistered_id() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![tid(9)]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(9)), &i).unwrap_err(),
+            DispatchRejection::UnknownStrategy(tid(9))
+        );
+    }
+
+    // --- step 4: reads the real admission, not a permissive stand-in ---
+
+    #[test]
+    fn step4_rejects_when_the_node_cannot_verify_what_it_cannot_produce() {
+        let s = Arc::new(NeedsProducing(tid(1)));
+        let reg = registry_with(s.clone(), Some(s as Arc<dyn AttestationAdmission>));
+        let n = node(vec![tid(1)]); // NoCoverage serves nothing
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::CannotVerifyWhatItCannotProduce
+        );
+    }
+
+    #[test]
+    fn step4_passes_when_the_node_serves_the_kinds() {
+        let s = Arc::new(NeedsProducing(tid(1)));
+        let reg = registry_with(s.clone(), Some(s as Arc<dyn AttestationAdmission>));
+        let mut n = node(vec![tid(1)]);
+        n.serves = true;
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert!(verify_capability_attestation(&attested(tid(1)), &i)
+            .unwrap()
+            .is_satisfied());
+    }
+
+    /// A strategy that omits the admission trait yields the permissive value, so
+    /// the gate does not fire. This is the fail-open path Lifecycle Requirement 1
+    /// closes by review rather than at runtime.
+    #[test]
+    fn a_strategy_without_the_admission_trait_does_not_trip_step4() {
+        let reg = registry_with(Arc::new(Ok1(tid(1))), None);
+        let n = node(vec![tid(1)]); // NoCoverage
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert!(verify_capability_attestation(&attested(tid(1)), &i)
+            .unwrap()
+            .is_satisfied());
+    }
+
+    // --- step 5 ---
+
+    #[test]
+    fn step5_rejects_a_form_with_no_bindable_value() {
+        let reg = registry_with(Arc::new(Ok1(tid(1))), None);
+        let n = node(vec![tid(1)]);
+        let i = inputs(&reg, &n, None); // no expectation
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::NoBindableValue
+        );
+    }
+
+    #[test]
+    fn an_unsatisfying_attestation_carries_the_strategys_reason() {
+        let reg = registry_with(Arc::new(Unsat(tid(1))), None);
+        let n = node(vec![tid(1)]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::Unsatisfied("does not hold".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_error_is_distinguishable_from_an_unsatisfied_verdict() {
+        let reg = registry_with(Arc::new(Errs(tid(1))), None);
+        let n = node(vec![tid(1)]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        // A strategy that cannot decide has not verified anything, and the
+        // operator needs to tell that apart from a strategy reaching a verdict.
+        assert!(matches!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::StrategyError(_)
+        ));
+    }
+
+    #[test]
+    fn a_panic_becomes_a_rejection_not_a_propagated_fault() {
+        let reg = registry_with(Arc::new(Panicky(tid(1))), None);
+        let n = node(vec![tid(1)]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(tid(1)), &i).unwrap_err(),
+            DispatchRejection::StrategyPanicked
+        );
+    }
+
+    // --- user-range ids follow the same fail-closed path ---
+
+    #[test]
+    fn an_unregistered_user_range_id_rejects_rather_than_defaulting() {
+        let reg = AttestationRegistry::empty();
+        let n = node(vec![user_tid(5)]);
+        let i = inputs(&reg, &n, Some(Box::new(Expect)));
+        assert_eq!(
+            verify_capability_attestation(&attested(user_tid(5)), &i).unwrap_err(),
+            DispatchRejection::UnknownStrategy(user_tid(5))
+        );
+    }
+
+    #[test]
+    fn acceptance_set_de_duplicates() {
+        let s = AcceptanceSet::from_ids([tid(1), tid(1), tid(2)]);
+        assert_eq!(s.ids().len(), 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Boot validation (RFC-0973 §Algorithms, `validate_policy`)
+// ---------------------------------------------------------------------------
+
+/// What a node can serve, and what it has budget for, at boot.
+pub trait NodeCapability {
+    /// Whether the node serves this payload kind in order to produce.
+    fn serves(&self, kind: &PayloadKindId) -> bool;
+    /// Whether the node has headroom for a circuit of this many words at this
+    /// security level.
+    fn has_headroom(&self, casm_words: u64, security_bits: u64) -> bool;
+}
+
+/// A boot-time refusal.
+///
+/// Every variant names the offending strategy, and the two kinds-and-budget
+/// failures additionally name what was missing or exceeded, since the strategy
+/// alone would not tell an operator whether to serve a kind or raise a budget.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum BootRefusal {
+    /// An acceptance entry names a strategy that does not resolve.
+    UnresolvableStrategy(AttestationTypeId),
+    /// The node does not serve a payload kind the strategy requires in order to
+    /// produce.
+    MissingPayloadKind {
+        /// The strategy that needs it.
+        strategy: AttestationTypeId,
+        /// The kind the node does not serve.
+        missing: PayloadKindId,
+    },
+    /// The strategy's circuit cost is not measured.
+    ///
+    /// Decisive: the node refuses rather than passing on a guess.
+    UnmeasuredCost(AttestationTypeId),
+    /// The strategy's measured cost exceeds the node's budget.
+    BudgetExceeded {
+        /// The strategy that exceeds it.
+        strategy: AttestationTypeId,
+        /// Words the strategy needs.
+        required: u64,
+    },
+}
+
+impl fmt::Display for BootRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnresolvableStrategy(id) => write!(f, "{id}: not a resolvable strategy"),
+            Self::MissingPayloadKind { strategy, missing } => {
+                write!(
+                    f,
+                    "{strategy}: does not serve required payload kind {missing:?}"
+                )
+            }
+            Self::UnmeasuredCost(id) => write!(f, "{id}: circuit cost is unmeasured"),
+            Self::BudgetExceeded { strategy, required } => {
+                write!(f, "{strategy}: needs {required} CASM words, over budget")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BootRefusal {}
+
+/// Validate the operator's policy against what the node can actually serve.
+///
+/// Runs before the node serves anything. Four refusals, each decisive:
+///
+/// 1. an acceptance entry naming an unresolvable strategy,
+/// 2. a required payload kind the node does not serve — the **producing** side,
+/// 3. an unmeasured circuit cost,
+/// 4. a measured cost over budget.
+///
+/// The verification-side requirement is a *different* gate and is deliberately
+/// **not** checked here, so dispatch step 4 stays reachable for a node that boots
+/// but cannot verify. Boot answers "what must this node produce"; step 4 answers
+/// "what must it check".
+///
+/// A strategy omitting the admission trait skips both budget gates. That is the
+/// fail-open path Lifecycle Requirement 1 closes by review rather than at
+/// runtime, and it is why [`register_strategy`] records the admission side.
+///
+/// # Errors
+/// The first [`BootRefusal`] encountered, in the order above.
+pub fn validate_policy(
+    accept_set: &AcceptanceSet,
+    registry: &AttestationRegistry,
+    node: &dyn NodeCapability,
+) -> Result<(), BootRefusal> {
+    for type_id in accept_set.ids() {
+        // 1. Resolvability.
+        let Some(registration) = registry.resolve_registration(type_id) else {
+            return Err(BootRefusal::UnresolvableStrategy(*type_id));
+        };
+
+        // The admission side is absent when the strategy omits the trait. Both
+        // budget gates are then skipped, which is the documented fail-open path.
+        let Some(admission) = registration.admission.as_deref() else {
+            continue;
+        };
+
+        // 2. Producing-side coverage. Runs only when kinds are non-empty.
+        for kind in admission.required_payload_kinds() {
+            if !node.serves(kind) {
+                return Err(BootRefusal::MissingPayloadKind {
+                    strategy: *type_id,
+                    missing: *kind,
+                });
+            }
+        }
+
+        // 3 and 4. The budget gates.
+        let Some(profile) = admission.admission_profile() else {
+            continue;
+        };
+        match profile.casm_cost_hint_words {
+            CostFigure::Unmeasured => {
+                return Err(BootRefusal::UnmeasuredCost(*type_id));
+            }
+            CostFigure::Measured(words) => {
+                if !node.has_headroom(words, profile.security_bits.bits()) {
+                    return Err(BootRefusal::BudgetExceeded {
+                        strategy: *type_id,
+                        required: words,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod boot_tests {
+    use super::*;
+    use octo_protocol::payload_kind::PayloadKindId;
+
+    fn tid(n: u8) -> AttestationTypeId {
+        let mut b = [0u8; 16];
+        b[15] = n;
+        AttestationTypeId::from_bytes(b)
+    }
+
+    fn kind(n: u8) -> PayloadKindId {
+        PayloadKindId::from_bytes([n; 16])
+    }
+
+    struct Nodecap {
+        serves: bool,
+        budget: u64,
+    }
+    impl NodeCapability for Nodecap {
+        fn serves(&self, _k: &PayloadKindId) -> bool {
+            self.serves
+        }
+        fn has_headroom(&self, casm_words: u64, _bits: u64) -> bool {
+            casm_words <= self.budget
+        }
+    }
+
+    struct Profile {
+        id: AttestationTypeId,
+        kinds: Vec<PayloadKindId>,
+        cost: CostFigure,
+    }
+    impl AttestationStrategy for Profile {
+        fn type_id(&self) -> AttestationTypeId {
+            self.id
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Satisfied)
+        }
+    }
+    impl AttestationAdmission for Profile {
+        fn required_payload_kinds(&self) -> &[PayloadKindId] {
+            &self.kinds
+        }
+        fn admission_profile(&self) -> Option<AdmissionProfile> {
+            Some(AdmissionProfile {
+                casm_cost_hint_words: self.cost,
+                security_bits: SecurityFigure::from_prover_parameters(128),
+            })
+        }
+    }
+
+    /// Register one strategy with a matching admission side.
+    ///
+    /// Both arcs are built from the SAME parameters. Registering a strategy with
+    /// a differently-configured admission object would make the gates read a
+    /// stand-in rather than the strategy's own claim.
+    fn registry_for(
+        id: AttestationTypeId,
+        kinds: Vec<PayloadKindId>,
+        cost: CostFigure,
+    ) -> AttestationRegistry {
+        let mut allocs = AllocationRecord::empty();
+        allocs.allocate(id, "test");
+        let s: Arc<dyn AttestationStrategy> = Arc::new(Profile {
+            id,
+            kinds: kinds.clone(),
+            cost,
+        });
+        let a: Arc<dyn AttestationAdmission> = Arc::new(Profile { id, kinds, cost });
+        let mut reg = AttestationRegistry::empty();
+        reg.register_strategy(s, Some(a), "test", &allocs).unwrap();
+        reg
+    }
+
+    #[test]
+    fn boot_refuses_an_unresolvable_acceptance_entry() {
+        let reg = AttestationRegistry::empty();
+        let set = AcceptanceSet::from_ids([tid(3)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        assert_eq!(
+            validate_policy(&set, &reg, &node).unwrap_err(),
+            BootRefusal::UnresolvableStrategy(tid(3))
+        );
+    }
+
+    #[test]
+    fn boot_refuses_a_missing_payload_kind_by_name() {
+        let reg = registry_for(tid(1), vec![kind(4)], CostFigure::Measured(10));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: false,
+            budget: u64::MAX,
+        };
+        assert_eq!(
+            validate_policy(&set, &reg, &node).unwrap_err(),
+            BootRefusal::MissingPayloadKind {
+                strategy: tid(1),
+                missing: kind(4)
+            }
+        );
+    }
+
+    #[test]
+    fn boot_refuses_an_unmeasured_cost_rather_than_guessing() {
+        let reg = registry_for(tid(1), vec![], CostFigure::Unmeasured);
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        assert_eq!(
+            validate_policy(&set, &reg, &node).unwrap_err(),
+            BootRefusal::UnmeasuredCost(tid(1))
+        );
+    }
+
+    #[test]
+    fn boot_refuses_a_cost_over_budget_and_names_the_figure() {
+        let reg = registry_for(tid(1), vec![], CostFigure::Measured(5000));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: 1000,
+        };
+        assert_eq!(
+            validate_policy(&set, &reg, &node).unwrap_err(),
+            BootRefusal::BudgetExceeded {
+                strategy: tid(1),
+                required: 5000
+            }
+        );
+    }
+
+    #[test]
+    fn a_satisfied_policy_boots() {
+        let reg = registry_for(tid(1), vec![kind(4)], CostFigure::Measured(500));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: 1000,
+        };
+        assert!(validate_policy(&set, &reg, &node).is_ok());
+    }
+
+    /// The producing-side gate must not consume the verification-side gate, or
+    /// boot would answer a question step 4 owns.
+    #[test]
+    fn boot_does_not_evaluate_the_verification_side_requirement() {
+        struct VerifyOnly(AttestationTypeId);
+        impl AttestationStrategy for VerifyOnly {
+            fn type_id(&self) -> AttestationTypeId {
+                self.0
+            }
+            fn verify(
+                &self,
+                _c: &AttestationVerifyCtx<'_>,
+            ) -> Result<AttestationOutcome, AttestationError> {
+                Ok(AttestationOutcome::Satisfied)
+            }
+        }
+        impl AttestationAdmission for VerifyOnly {
+            // Produces nothing, but needs a node that also produces in order to
+            // verify. Boot must pass this; step 4 is where it bites.
+            fn required_payload_kinds(&self) -> &[PayloadKindId] {
+                &[]
+            }
+            fn verifier_needs_producing_kinds(&self) -> bool {
+                true
+            }
+            fn admission_profile(&self) -> Option<AdmissionProfile> {
+                Some(AdmissionProfile::default())
+            }
+        }
+
+        let id = tid(2);
+        let mut allocs = AllocationRecord::empty();
+        allocs.allocate(id, "test");
+        let s: Arc<dyn AttestationStrategy> = Arc::new(VerifyOnly(id));
+        let a: Arc<dyn AttestationAdmission> = Arc::new(VerifyOnly(id));
+        let mut reg = AttestationRegistry::empty();
+        reg.register_strategy(s, Some(a), "test", &allocs).unwrap();
+
+        let set = AcceptanceSet::from_ids([id]);
+        let node = Nodecap {
+            serves: false,
+            budget: u64::MAX,
+        };
+        assert!(
+            validate_policy(&set, &reg, &node).is_ok(),
+            "boot must leave the verification-side gate to step 4"
+        );
+    }
+
+    /// An empty acceptance set is a permitted choice, not a boot failure.
+    #[test]
+    fn an_empty_acceptance_set_boots() {
+        let reg = AttestationRegistry::empty();
+        let set = AcceptanceSet::empty();
+        let node = Nodecap {
+            serves: false,
+            budget: 0,
+        };
+        assert!(validate_policy(&set, &reg, &node).is_ok());
+        assert!(set.is_empty());
     }
 }

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use quota_router_storage::Clock;
 use quota_router_storage::HolderRegistry;
 
+use super::attestation::{AcceptanceSet, AttestationRegistry, PermissivePolicy, PolicySource};
 use super::wire::{compute_cap_root_hash_from_wire, deserialize_wire, WireError};
 use super::CapabilityToken;
 
@@ -20,6 +21,14 @@ use super::CapabilityToken;
 pub struct VerifyContext {
     clock: Arc<dyn Clock>,
     registry: Arc<dyn HolderRegistry>,
+    /// RFC-0973: the attestation registry. `None` means no attestation
+    /// subsystem is configured, which is fail-closed for an attested token and
+    /// a no-op for an unattested one.
+    strategies: Option<Arc<AttestationRegistry>>,
+    /// RFC-0973: the operator acceptance set read at dispatch step 2.
+    accept_set: Arc<AcceptanceSet>,
+    /// RFC-0973: the operator policy the dispatch calls.
+    policy: Arc<dyn PolicySource>,
 }
 
 impl std::fmt::Debug for VerifyContext {
@@ -27,14 +36,63 @@ impl std::fmt::Debug for VerifyContext {
         f.debug_struct("VerifyContext")
             .field("clock", &"<dyn Clock>")
             .field("registry", &"<dyn HolderRegistry>")
+            .field(
+                "strategies",
+                &self.strategies.as_ref().map_or("none", |_| "some"),
+            )
+            .field("accept_set", &self.accept_set)
+            .field("policy", &"<dyn PolicySource>")
             .finish()
     }
 }
 
 impl VerifyContext {
     /// Canonical constructor: `with_registry(clock, registry)`.
+    ///
+    /// RFC-0973: a context built this way has no attestation registry and an
+    /// empty acceptance set. That is fail-closed for an attested token — an
+    /// attestation id cannot resolve — and a no-op for an unattested one, so
+    /// pre-RFC callers keep working unchanged.
     pub fn with_registry(clock: Arc<dyn Clock>, registry: Arc<dyn HolderRegistry>) -> Self {
-        Self { clock, registry }
+        Self {
+            clock,
+            registry,
+            strategies: None,
+            accept_set: Arc::new(AcceptanceSet::empty()),
+            policy: Arc::new(PermissivePolicy),
+        }
+    }
+
+    /// Attach the RFC-0973 attestation subsystem.
+    ///
+    /// This is what makes the dispatch reachable from the production
+    /// verification path rather than only from its own tests.
+    #[must_use]
+    pub fn with_attestations(
+        mut self,
+        strategies: Arc<AttestationRegistry>,
+        accept_set: AcceptanceSet,
+        policy: Arc<dyn PolicySource>,
+    ) -> Self {
+        self.strategies = Some(strategies);
+        self.accept_set = Arc::new(accept_set);
+        self.policy = policy;
+        self
+    }
+
+    /// The attestation registry, when one is configured.
+    pub fn strategies(&self) -> Option<&Arc<AttestationRegistry>> {
+        self.strategies.as_ref()
+    }
+
+    /// The operator acceptance set.
+    pub fn accept_set(&self) -> &AcceptanceSet {
+        self.accept_set.as_ref()
+    }
+
+    /// The operator policy.
+    pub fn policy(&self) -> &Arc<dyn PolicySource> {
+        &self.policy
     }
 
     /// Access the clock.
@@ -73,6 +131,13 @@ pub enum VerifyError {
     Macaroon(String),
     #[error("holder signature failed: {0}")]
     HolderSig(String),
+    /// RFC-0973: the attestation dispatch refused.
+    ///
+    /// The inner reason is operator-visible and must never carry attestation
+    /// bytes. That is a convention enforced by review, not by a type: the
+    /// reason is strategy-supplied and core carries it verbatim.
+    #[error("attestation refused: {0}")]
+    Attestation(#[from] crate::capability::attestation::DispatchRejection),
 }
 
 /// High-level helper: compute cap_root_hash, look up the holder record,
@@ -118,11 +183,139 @@ pub fn verify_with_resolve(
         .verify_holder_sig()
         .map_err(|e| VerifyError::HolderSig(format!("{e}")))?;
 
+    // RFC-0973: the attestation dispatch runs HERE, inside the production entry
+    // point, after the macaroon path has cleared. This is what makes the dispatch
+    // reachable in production rather than only from its own tests.
+    //
+    // An unattested token has no envelope and returns immediately, so every
+    // pre-RFC capability verifies exactly as it did before.
+    verify_attestation_for_verified_token(ctx, &token.macaroon)?;
+
     Ok(VerifiedToken {
         token,
         cap_root_hash,
     })
 }
+
+// ---------------------------------------------------------------------------
+// RFC-0973: the dispatch, reachable from the production entry point
+// ---------------------------------------------------------------------------
+
+/// RFC-0957 expectation: the binding target is the full 32-byte
+/// `root_secret_hash`.
+///
+/// Never the capability id. The id hashes the canonical form the envelope sits
+/// inside, so an expectation returning it would be a function of the
+/// attestation, and the strategy would be comparing a token against itself.
+struct MacaroonRootSecretExpectation;
+
+impl super::attestation::Expectation for MacaroonRootSecretExpectation {
+    fn bindable_value(
+        &self,
+        ctx: &super::attestation::AttestationVerifyCtx<'_>,
+    ) -> Option<Vec<u8>> {
+        Some(ctx.capability.root_secret_hash.to_vec())
+    }
+}
+
+/// The wallet verification path serves no payload kinds. See
+/// [`WalletNodeView::coverage`].
+static WALLET_COVERAGE: WalletCoverage = WalletCoverage;
+
+struct WalletCoverage;
+
+impl super::attestation::PayloadCoverage for WalletCoverage {
+    fn serves_all(&self, _kinds: &[octo_protocol::payload_kind::PayloadKindId]) -> bool {
+        false
+    }
+}
+
+struct WalletNodeView<'a> {
+    accept_set: &'a super::attestation::AcceptanceSet,
+    policy: &'a dyn super::attestation::PolicySource,
+}
+
+impl super::attestation::NodeView for WalletNodeView<'_> {
+    fn accept_set(&self) -> &super::attestation::AcceptanceSet {
+        self.accept_set
+    }
+    /// The wallet's holder registry carries no payload-kind coverage, so this
+    /// path serves nothing. A strategy that needs producing kinds therefore
+    /// fails step 4 here rather than being waved through, which is the
+    /// fail-closed direction.
+    fn coverage(&self) -> &dyn super::attestation::PayloadCoverage {
+        &WALLET_COVERAGE
+    }
+    fn policy(&self) -> &dyn super::attestation::PolicySource {
+        self.policy
+    }
+}
+
+/// Run the RFC-0973 attestation dispatch for a token that has already cleared
+/// the macaroon path.
+///
+/// Step 0 and step 0b have already run inside
+/// [`verify_with_resolve`] — the registry lookup, the active check, and the
+/// holder-signature verify — which is exactly the ordering the RFC requires.
+/// This function supplies them to the dispatch as the results they already are,
+/// so the gate order is preserved without the macaroon checks being run twice
+/// or being skippable.
+///
+/// An unattested token returns `Ok`, having already been verified.
+///
+/// # Errors
+/// One `DispatchRejection` per remaining gate.
+pub fn verify_attestation_for_verified_token(
+    ctx: &VerifyContext,
+    macaroon: &octo_cap_macaroon::macaroon::Macaroon,
+) -> Result<(), crate::capability::attestation::DispatchRejection> {
+    use crate::capability::attestation::{
+        verify_capability_attestation, AttestationOutcome, DispatchInputs,
+    };
+
+    // No registry configured means no attestation subsystem. Fail-closed for an
+    // attested token, a no-op for an unattested one.
+    let Some(registry) = ctx.strategies() else {
+        return match macaroon.attestation {
+            None => Ok(()),
+            Some(_) => Err(
+                crate::capability::attestation::DispatchRejection::UnknownStrategy(
+                    macaroon.attestation.as_ref().map_or_else(
+                        || octo_cap_macaroon::attestation::AttestationTypeId::from_bytes([0; 16]),
+                        |e| e.type_id,
+                    ),
+                ),
+            ),
+        };
+    };
+
+    let expectation: Box<dyn super::attestation::Expectation + '_> =
+        Box::new(MacaroonRootSecretExpectation);
+
+    let node = WalletNodeView {
+        accept_set: ctx.accept_set(),
+        policy: ctx.policy().as_ref(),
+    };
+    let inputs = DispatchInputs {
+        lookup_active: true,
+        present: true,
+        macaroon_ok: Ok(()),
+        registry,
+        node: &node,
+        expectation: Some(expectation),
+    };
+
+    match verify_capability_attestation(macaroon, &inputs) {
+        Ok(AttestationOutcome::Satisfied) => Ok(()),
+        Ok(AttestationOutcome::Unsatisfied { reason }) => {
+            Err(crate::capability::attestation::DispatchRejection::Unsatisfied(reason))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Re-export so callers reach the dispatch through the one entry point.
+pub use super::attestation::AcceptanceSet as Rfc0973AcceptanceSet;
 
 #[cfg(test)]
 mod tests {

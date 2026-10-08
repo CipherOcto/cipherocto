@@ -105,15 +105,15 @@ reference strategies plus a fixture that lets determinism be measured at all.
 
 ## Acceptance Criteria
 
-- [ ] Step 0b runs on both branches — a forged macaroon on an attested token
+- [x] Step 0b runs on both branches — a forged macaroon on an attested token
       rejects
-- [ ] Step 5 rejects when the capability form carries no bindable value, with
+- [x] Step 5 rejects when the capability form carries no bindable value, with
       its own visible reason rather than a panic naming the strategy
-- [ ] The strategy call is wrapped in `catch_unwind` inside `AssertUnwindSafe`
-- [ ] A panic becomes a rejection, not a propagated fault
-- [ ] Boot refuses an unresolvable strategy id, a missing payload kind, an
+- [x] The strategy call is wrapped in `catch_unwind` inside `AssertUnwindSafe`
+- [x] A panic becomes a rejection, not a propagated fault
+- [x] Boot refuses an unresolvable strategy id, a missing payload kind, an
       unmeasured cost, and an exceeded budget — each naming what was missing
-- [ ] The producing-side branch does not consume the verification-side gate
+- [x] The producing-side branch does not consume the verification-side gate
 - [ ] The registration host is a binary or node crate, not core
 - [ ] Strategy crates are linked from the host
 - [ ] `in_boundary_execution` is registered with the profile measured in this
@@ -126,11 +126,11 @@ reference strategies plus a fixture that lets determinism be measured at all.
       acceptance set**. Refusing to start is not the behaviour: running a node
       that verifies nothing is a permitted operator choice, and the mitigation
       is that it is visible rather than silent, not that it is impossible
-- [ ] The dispatch is reachable from the wallet's verification path, not only
+- [x] The dispatch is reachable from the wallet's verification path, not only
       from its own tests: `VerifyContext` gains the registry and acceptance-set
       slots and `VerifyError` gains the attestation reason, so an attested token
       presented to the production entry point goes through the dispatch
-- [ ] The operator policy, its acceptance-set type, and the `PolicySource`
+- [x] The operator policy, its acceptance-set type, and the `PolicySource`
       implementation the dispatch calls are all owned by this mission
 
 ### Type Coverage
@@ -181,7 +181,9 @@ enforces that as a lint.
 cargo fmt --all -- --check
 cargo clippy -p octo-wallet -p octo-wallet-node -p octo-cap-zk -p octo-cap-poi --all-targets --all-features -- -D warnings
 cargo test -p octo-wallet --lib capability
-cargo test -p octo-wallet --test dispatch_tv
+# `dispatch_tv` is RFC-0969's gateway dispatch, a different artifact.
+# The RFC-0973 dispatch vectors live here.
+cargo test -p octo-wallet --test attestation_dispatch
 ```
 
 The dispatch is Class A under the execution-class mapping, so `verify` decides
@@ -217,3 +219,43 @@ traffic.
 ## Pull Request
 
 #
+
+## Implementation notes (Phase 2, part 1)
+
+Landed the dispatch, boot validation, the operator policy and acceptance-set
+types, and the production wiring. The strategy crates and the determinism
+fixture are still open — see below.
+
+**The registry was changed to store the full `Registration`, not a bare
+strategy.** Phase 1 registered `Arc<dyn AttestationStrategy>`, which left the
+dispatch reconstructing a `Registration` with `admission: None` at step 4. That
+would have made the coverage gate read the permissive value for every strategy
+and therefore never fire — a vacuous check of exactly the kind this RFC is
+about. `resolve_registration` is now the accessor step 4 uses, and
+`register_strategy` takes the admission side as a second argument.
+
+**Step 0 and step 0b run before the dispatch body, inside
+`verify_with_resolve`.** The registry lookup, the active check, and the
+holder-signature verify are the same work the dispatch's step 0 and 0b call for,
+so they are performed once in the production entry point and passed to the
+dispatch as the results they already are. The gate order is preserved without
+the macaroon checks being skippable or run twice.
+
+**No wire fixture was needed for the production-path proof.** A test that
+built a full wire token would prove the fixture, not the wiring. The integration
+test drives `verify_attestation_for_verified_token` on a real `VerifyContext`
+and asserts the refusals, which is the property in question.
+
+**Boot's producing-side gate is asserted not to consume the verification-side
+gate.** A strategy that produces nothing but needs a producing node to verify
+boots successfully and is refused later, at step 4. Collapsing the two would
+make step 4 unreachable.
+
+### Still open in this mission
+
+- The `octo-cap-poi` crate and the `root_secret_knowledge` strategy in
+  `octo-cap-zk`
+- The determinism fixture, a second implementation of one relation
+- The registration host in `octo-wallet-node` and the strategy links it carries
+- `in_boundary_execution`'s measured profile
+- The back-compat corpus re-verification

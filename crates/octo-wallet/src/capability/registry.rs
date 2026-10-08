@@ -6,6 +6,50 @@
 //! 3. CI lint forbids `mint_with_zk` calls in `NodeType::Wholesale` paths
 //!
 //! This module provides layer 2.
+//!
+//! # STATUS: NO PRODUCTION CALL SITE (RFC-0973 §Phase 4, decided)
+//!
+//! **Layer 2 does not run in production.** As of this decision, every
+//! instantiation of [`CapabilityClassRegistry`] is in a test — this module's own
+//! `mod tests`, or `tests/zk_vectors.rs`. No production code path constructs one,
+//! so the Wholesale registration rule below is **not enforced at runtime**.
+//!
+//! The Wholesale fail-closed property therefore rests on layers 1 and 3 only:
+//! the `mint_with_zk` guard, which does run, and the CI lint. That is enough to
+//! hold the property today, but it is worth being exact about which layer is
+//! carrying it, because this type reads like an enforced gate and is not one.
+//!
+//! ## Why it is documented rather than wired
+//!
+//! RFC-0973 §Phase 4 owns the decision between promoting this to a real call
+//! site and documenting the projection. **Documented, deliberately.** Two
+//! reasons:
+//!
+//! 1. The gap is **pre-existing**. It is not introduced by RFC-0973 and fixing
+//!    it is not this RFC's to do. Landing a call site here would be an
+//!    unrelated behavioural change to a years-stable Layer B type, in a phase
+//!    whose subject is attestation.
+//!
+//! 2. Wiring it correctly needs a decision that has not been made. A registry
+//!    keyed by `node_did` is **stored** state — someone must own it, decide its
+//!    lifetime, and decide who may write to it. RFC-0973's own role model treats
+//!    the capability class as a **computed projection** rather than stored state.
+//!    Until that ownership question is settled, wiring the registry would mean
+//!    inventing an authority and storing derived data in it.
+//!
+//! ## What this means for a reader
+//!
+//! Do not treat the `WholesaleCannotRegisterZK` rule below as a runtime
+//! guarantee. It is a validated invariant that production currently does not
+//! exercise. If a future phase needs the rule enforced, it needs a call site
+//! **and** the ownership decision above — not just the constructor.
+//!
+//! ## Interaction with mission `0973-v36-d-dependency-direction`
+//!
+//! `NodeType` is declared in `octo-cap-zk`, not in the macaroon crate, so the
+//! wallet's `to_zk_node_type` projection has nothing to re-point at once the
+//! wallet's dependency on `octo-cap-zk` is removed. That mission owns the
+//! disposition. Do not read "retained in the wallet" as settled.
 
 use std::collections::HashMap;
 
@@ -22,6 +66,9 @@ pub struct RegistryEntry {
 }
 
 /// CapabilityClass registry (layer 2 of Wholesale fail-closed defense).
+///
+/// **No production call site** — see the module documentation. This type is a
+/// validated invariant that production does not currently exercise.
 #[derive(Debug, Default)]
 pub struct CapabilityClassRegistry {
     entries: HashMap<String, RegistryEntry>,
@@ -35,6 +82,8 @@ impl CapabilityClassRegistry {
 
     /// Register a (node_did, node_type) → CapabilityClass mapping.
     /// Returns Err if Wholesale node is registered with ZKBearing.
+    ///
+    /// **Not enforced at runtime** — see the module documentation.
     pub fn register(
         &mut self,
         node_did: impl Into<String>,

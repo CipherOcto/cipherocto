@@ -1958,6 +1958,26 @@ surfaced by its review and are prerequisites for a clean implementation:
   registry that enforces it is a production type with no production call site —
   only its tests instantiate it. The role model this RFC links to treats it
   as a computed projection. Closing that gap is a separate change.
+
+#### Phase 4 decision on the capability-class gap
+
+**Decision: documented as a projection, deliberately not wired.** Recorded in
+`octo_wallet::capability::registry` beside the type itself.
+
+`CapabilityClassRegistry` has no production call site: every instantiation is in
+a test. The Wholesale fail-closed property therefore rests on the `mint_with_zk`
+guard (which does run) and the CI lint, not on this registry's
+`WholesaleCannotRegisterZK` rule. The gap is **pre-existing** — RFC-0973 does
+not introduce it — and wiring the registry would require an ownership decision
+that has not been made: a registry keyed by `node_did` is stored state, someone
+must own it and decide its lifetime, and this RFC's role model treats the
+capability class as a _computed projection_ rather than stored state. Inventing
+that authority is not a Phase 4 change to make while landing an attestation
+mechanism.
+
+A reader of that type must not treat the rule as a runtime guarantee. It is a
+validated invariant production does not currently exercise.
+
 - The circuit declares `cap_root_hash_lo`/`_hi` but never derives them, and
   asserts only that a Poseidon commitment over the witness is non-zero, so
   nothing connects the declared input to the secret. RFC-0958 specifies the
@@ -1967,6 +1987,57 @@ surfaced by its review and are prerequisites for a clean implementation:
   declared inputs untouched. Separately, `cap_root_hash` names two unrelated
   values across the substrate, and renaming it is wire-affecting, so the rename
   is the part Phase 4 does not attempt.
+
+#### Phase 4 decision on the `cap_root_hash` drift
+
+**Decision: the declared inputs stay untouched, and the derivation stays
+unimplemented.** Recorded here so the drift has an owner and a reader can tell an
+absent decision from a settled one.
+
+The circuit's `cap_root_hash_lo`/`_hi` are declared, never derived, and the only
+binding assertion over the witness is a non-zero check on a Poseidon commitment.
+A prover therefore supplies both the secret and the declared hash, and every
+check is satisfied by construction. Nothing about the token is proven.
+
+This is not fixable inside RFC-0973, for the same reason §Root-Secret Binding
+gives: the fix requires computing a cryptographic hash by constrained program
+logic over felt-constrained words, and that has been measured. Phase 3 measured
+it at **17,628 CASM words against a 1,600-word ceiling** (550.88 KB against
+50 KB), which is why `root_secret_knowledge` is unregistered rather than
+registered against an unimplemented derivation. Adding the derivation without
+adding the primitive would produce a circuit that looks bound and is not — the
+non-zero-commitment failure mode this RFC exists to stop repeating.
+
+**Owner: RFC-0958.** The relation `BLAKE3(root_secret) == cap_root_hash` is
+RFC-0958's, and the circuit that would have to derive it is RFC-0958's. The
+cost question is settled (§Performance Targets — the primitive is measured and
+rejected for now) but the _correctness_ gap is not: a proof from this circuit
+does not bind the token, and RFC-0958's §Adversary A3 depends on it doing so.
+Closing that requires either an affordable primitive or a different one, both of
+which are RFC-0958 work.
+
+**What a reader must not conclude.** The presence of `cap_root_hash_lo`/`_hi` in
+the public inputs is not a claim that they are bound. They are inputs, and the
+prover chooses them.
+
+#### Phase 4 decision on the rename
+
+**The rename is explicitly out of scope, and its absence is not an oversight.**
+
+`cap_root_hash` names two unrelated 32-byte values:
+
+| Site                    | What it actually is                                                   |
+| ----------------------- | --------------------------------------------------------------------- |
+| ZK circuit public input | no fixed derivation, supplied per proof                               |
+| wire decode             | `compute_capability_id(macaroon)` — the same value as `capability_id` |
+
+Renaming is wire-affecting: the wire-decode site derives a registry key, so a
+rename that changed the value would invalidate every stored capability key, and
+a rename that changed only the name would still be a wire-format break for any
+consumer matching on it. RFC-0973 neither needs nor wants that. The name
+collision is recorded in the table above so a reader who reaches for
+`cap_root_hash` on either site knows which value they are holding, which is the
+whole reason the table exists.
 
 ### Phase 5: Dependency direction and deployment properties
 

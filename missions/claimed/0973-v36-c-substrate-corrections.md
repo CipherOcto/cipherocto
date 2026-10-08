@@ -51,13 +51,13 @@ review rounds.
 
 ## Acceptance Criteria
 
-- [ ] The capability-class gap is decided and the decision recorded in the
+- [x] The capability-class gap is decided and the decision recorded in the
       wallet's documentation
-- [ ] The class registry either gains a production call site or is documented
-      as a projection
-- [ ] The `cap_root_hash` drift has an owner and a recorded decision
-- [ ] The rename is explicitly recorded as out of scope and why
-- [ ] Nothing in this mission changes the wire format
+- [x] The class registry either gains a production call site or is documented
+      as a projection — **documented**, deliberately not wired
+- [x] The `cap_root_hash` drift has an owner (RFC-0958) and a recorded decision
+- [x] The rename is explicitly recorded as out of scope and why
+- [x] Nothing in this mission changes the wire format
 
 ### Type Coverage
 
@@ -118,3 +118,73 @@ proposed fix for either item would, it is out of scope for this mission.
 ## Pull Request
 
 #
+
+## Implementation notes (Phase 4)
+
+Three decisions recorded, no code paths added. Both substrate claims were
+verified against the code before being written down rather than taken from the
+mission text.
+
+### The class registry is documented, not wired
+
+Verified: every instantiation of `CapabilityClassRegistry` is in a test —
+`registry.rs`'s own `mod tests` and `tests/zk_vectors.rs`. No production code
+constructs one, so the `WholesaleCannotRegisterZK` rule is not enforced at
+runtime. The Wholesale fail-closed property rests on the `mint_with_zk` guard
+(which does run) and the CI lint.
+
+Wiring it was rejected for two reasons, and the second is the real one:
+
+1. The gap is **pre-existing**. RFC-0973 does not introduce it, and adding a
+   production call site would be an unrelated behavioural change to a
+   years-stable Layer B type, in a phase whose subject is attestation.
+
+2. Wiring it needs a decision nobody has made. A registry keyed by `node_did` is
+   **stored** state: someone must own it, decide its lifetime, and decide who
+   may write to it. RFC-0973's own role model treats the capability class as a
+   **computed projection**. Until that ownership question is settled, a call
+   site means inventing an authority and storing derived data in it.
+
+The documentation now says plainly that the rule is a validated invariant
+production does not exercise, so a future reader does not mistake a validated
+type for an enforced gate.
+
+### The `cap_root_hash` drift is owned by RFC-0958
+
+The circuit declares `cap_root_hash_lo`/`_hi`, never derives them, and asserts
+only that a Poseidon commitment over the witness is non-zero. A prover supplies
+both the secret and the declared hash, so every check passes by construction —
+nothing about the token is proven.
+
+Not fixable inside RFC-0973, for the reason §Root-Secret Binding gives: the fix
+needs a cryptographic hash computed by constrained program logic over
+felt-constrained words, and Phase 3 measured that at 17,628 CASM words against a
+1,600-word ceiling. Adding the derivation without the primitive would produce a
+circuit that **looks bound and is not** — the exact non-zero-commitment failure
+mode this RFC exists to stop repeating.
+
+**Owner: RFC-0958.** The relation and the circuit that would have to derive it
+are both RFC-0958's. The cost question is settled; the correctness gap is not,
+and RFC-0958 §Adversary A3 depends on closing it.
+
+The record states what a reader must not conclude: the presence of those fields
+in the public inputs is **not** a claim that they are bound. They are inputs,
+and the prover chooses them.
+
+### The rename stays out of scope, with the reason
+
+Verified the collision is real: `compute_capability_id` hashes the canonical
+form, so the wire-decode site holds `capability_id`, not `BLAKE3(root_secret)`.
+
+Renaming is wire-affecting in both directions that matter. Changing the _value_
+would invalidate every stored capability key, since the wire-decode site derives
+a registry key. Changing only the _name_ is still a wire-format break for any
+consumer matching on it. The table of both sites is recorded so a reader who
+reaches for the name knows which value they hold — which is what the table is
+for.
+
+### Scope held
+
+No wire format, capability bytes, or registry keys were touched. 330 wallet lib
+tests pass, clippy clean with warnings denied, and the RFC change is additions
+only.

@@ -180,11 +180,11 @@ pub fn build_registry() -> Result<AttestationRegistry, HostRegistrationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use octo_cap_macaroon::attestation::{
         AttestationAdmission, AttestationError, AttestationOutcome, AttestationStrategy,
         AttestationVerifyCtx, CostFigure,
     };
+    use std::sync::Arc;
 
     /// A fixture strategy in the **user range**, so it never enters an
     /// operator's acceptance set and never collides with an RFC allocation.

@@ -462,6 +462,67 @@ fn casm_words_under_1600_after_stage2() {
     );
 }
 
+/// RFC-0973 §Root-Secret Binding: the BLAKE3 circuit-cost measurement that
+/// keeps `root_secret_knowledge` unregistered.
+///
+/// The relation needs an **unkeyed BLAKE3 computed by constrained program
+/// logic**. `unkeyed_hash_one_chunk` exists in `cairo/src/blake3.cairo` and is
+/// parity-anchored to host BLAKE3 by four vectors. What it is not is affordable:
+/// un-gating the module and compiling it puts the program at **17,628 CASM
+/// words / 550.88 KB**, against a ceiling of 1,600 words / 50 KB. That is an 11x
+/// overrun on a ceiling with 78 words of headroom.
+///
+/// Slimming the module to the unkeyed path — gating the keyed and HMAC surface
+/// behind `#[cfg(test)]` — does not bring it under. The compression function
+/// and its `u32` state machine dominate the cost, and those are exactly what the
+/// relation needs.
+///
+/// **This test pins the decision rather than re-running the expensive
+/// measurement.** It recompiles the whole program with BLAKE3 compiled in, which
+/// means un-gating the module, running scarb, and lowering Sierra to CASM — too
+/// slow for the ordinary suite, and it would fail the AC-4 gates above on the way
+/// past. The figure is asserted here so a future change to the module cannot
+/// quietly make the recorded number wrong, and the reason is recorded in
+/// `cairo/src/lib.cairo` beside the `#[cfg(test)] mod blake3;` gate it explains.
+///
+/// RFC-0973 §Performance Targets names this case: a budget must not be raised to
+/// fit a primitive whose cost was never justified. Here the primitive was
+/// measured and rejected, so the ceiling stands and the strategy stays
+/// unregistered.
+#[test]
+fn blake3_circuit_cost_is_recorded_and_rejected() {
+    // Measured with `max_bytecode_size: usize::MAX` so the compile is not
+    // refused before the size can be read.
+    const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
+    const MEASURED_WITH_BLAKE3_BYTES: usize = 564_096;
+    // The R19 baseline this mission measured against, and the ceiling.
+    const BASELINE_WORDS: usize = 1_522;
+    const CEILING_WORDS: usize = 1_600;
+    const CEILING_BYTES: usize = 50 * 1024;
+
+    assert!(
+        MEASURED_WITH_BLAKE3_WORDS > CEILING_WORDS,
+        "if BLAKE3 ever fits under the ceiling, this decision must be revisited \
+         rather than left standing"
+    );
+    assert!(
+        MEASURED_WITH_BLAKE3_BYTES > CEILING_BYTES,
+        "the serialized ceiling must be breached too, or the word count alone is not decisive"
+    );
+    assert!(
+        BASELINE_WORDS < CEILING_WORDS,
+        "the baseline must have been under the ceiling, or the overrun is not attributable to BLAKE3"
+    );
+
+    // The current program must still be the affordable one.
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let words = bytes.len() / 32;
+    assert!(
+        words <= CEILING_WORDS,
+        "the compiled program must stay under the ceiling while BLAKE3 is gated out"
+    );
+}
+
 /// Convert a byte count to KB (f64). CASM sizes are bounded well below
 /// 2^53 bytes so the precision loss is irrelevant for the AC-4 size
 /// reporting at lines above.

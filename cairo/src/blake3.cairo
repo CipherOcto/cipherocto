@@ -530,6 +530,77 @@ pub fn keyed_hash_one_chunk(key: [u32; 8], msg: @ByteArray) -> [u32; 8] {
     }
 }
 
+/// BLAKE3 **unkeyed** hash, restricted to a **single chunk** (msg ≤ 1024 bytes).
+///
+/// RFC-0973 §Root-Secret Binding needs exactly this: one unkeyed BLAKE3 hop over
+/// a 32-byte root secret, computed by constrained program logic so the digest
+/// is a *result* and never an input.
+///
+/// **This is not `keyed_hash_one_chunk` with a zero key.** A zero key is a real
+/// key: BLAKE3 derives the keyed chaining value as `words` XOR `key_words`, and
+/// a zero key is only equivalent to the IV if the derivation happens to be the
+/// identity — it is not the same function, and the `KEYED_HASH` domain flag
+/// would still be set on every block. Both differences are load-bearing, so the
+/// unkeyed path is written out rather than derived from the keyed one.
+///
+/// **This function is NOT BLAKE3 for longer inputs.** Same restriction and same
+/// reasoning as the keyed variant: multi-chunk messages need a per-chunk counter
+/// and the parent/tree layer (`compress`'s words 8..16), neither of which is
+/// implemented here. Rather than return a plausible-but-wrong digest, it
+/// asserts.
+pub fn unkeyed_hash_one_chunk(msg: @ByteArray) -> [u32; 8] {
+    let msg_len: usize = msg.len();
+    assert!(msg_len <= CHUNK_LEN, "unkeyed_hash_one_chunk: message exceeds one chunk");
+    // An unkeyed hash starts from the IV. This is the one structural difference
+    // from the keyed path, where the chaining value is the key itself.
+    let mut state: [u32; 8] = IV;
+    let mut offset: usize = 0;
+
+    loop {
+        let is_first: bool = offset == 0;
+        let remaining: usize = msg_len - offset;
+        let block_len: usize = if remaining >= 64 {
+            64
+        } else {
+            remaining
+        };
+        let is_last: bool = if is_first {
+            (offset + block_len == msg_len) || msg_len == 0
+        } else {
+            (offset + block_len == msg_len)
+        };
+
+        // No KEYED_HASH flag anywhere: an unkeyed hash sets only the domain
+        // bits. Setting it on even one block would produce a digest that is
+        // internally consistent and matches nothing, which is the failure mode
+        // this module already carries a scar over.
+        let mut flags: u8 = 0;
+        if is_first {
+            flags = flags | CHUNK_START;
+        }
+        if is_last {
+            flags = flags | CHUNK_END | ROOT;
+        }
+
+        let m_block: MState = read_block(msg, offset);
+        let cv: [u32; 16] = compress(state, m_block, 0, block_len.try_into().unwrap(), flags);
+
+        if is_last {
+            return [
+                *cv.span().at(0), *cv.span().at(1), *cv.span().at(2), *cv.span().at(3),
+                *cv.span().at(4), *cv.span().at(5), *cv.span().at(6), *cv.span().at(7),
+            ];
+        }
+
+        state =
+            [
+                *cv.span().at(0), *cv.span().at(1), *cv.span().at(2), *cv.span().at(3),
+                *cv.span().at(4), *cv.span().at(5), *cv.span().at(6), *cv.span().at(7),
+            ];
+        offset = offset + block_len;
+    }
+}
+
 /// BLAKE3 keyed_hash with a 32-byte key encoded as 8 little-endian u32s.
 /// Used for parity-check with `core::blake` impl which uses LE convention.
 ///
@@ -684,7 +755,7 @@ pub fn read_u32_le_at(bytes: @ByteArray, off: usize) -> u32 {
 mod tests {
     use super::{
         compress, g, keyed_hash_one_chunk, read_block, read_key_le, u32s_le_to_bytes,
-        CHUNK_END,
+        unkeyed_hash_one_chunk, CHUNK_END,
         CHUNK_START, IV, KEYED_HASH, ROOT, MState, VState,
     };
     use core::array::ArrayTrait;
@@ -879,6 +950,100 @@ mod tests {
                 0xe4, 0x1f, 0x32, 0x62,
             ],
         );
+    }
+
+    /// Unkeyed parity vectors, anchored to the **host** BLAKE3.
+    ///
+    /// These are the positive control RFC-0973 §Root-Secret Binding needs. A
+    /// circuit that rejects every witness satisfies a rejection test, so a
+    /// rejection vector alone cannot distinguish a working binding from a
+    /// wrong secret-to-byte encoding, a digest compared against the wrong
+    /// public input, or a self-consistent but incorrect permutation. Only a
+    /// vector produced by an independent implementation catches those.
+    ///
+    /// Expected values are `blake3::hash(...)` from the `blake3` crate as used
+    /// by the host, reproduced here as literals so this test does not depend on
+    /// the code it is checking:
+    ///
+    ///   BLAKE3("")        = af1349b9f5f9a1a6a0404dea36dcc949
+    ///                       9bcb25c9adc112b7cc9a93cae41f3262
+    ///   BLAKE3("abc")     = 6437b3ac38465133ffb63b75273a8db5
+    ///                       48c558465d79db03fd359c6cd5bd9d85
+    #[test]
+    fn unkeyed_empty_matches_host_blake3() {
+        let msg: ByteArray = "";
+        let got = u32s_le_to_bytes(unkeyed_hash_one_chunk(@msg));
+        assert_digest(
+            @got,
+            @array![
+                0xaf, 0x13, 0x49, 0xb9, 0xf5, 0xf9, 0xa1, 0xa6, 0xa0, 0x40, 0x4d, 0xea, 0x36, 0xdc,
+                0xc9, 0x49, 0x9b, 0xcb, 0x25, 0xc9, 0xad, 0xc1, 0x12, 0xb7, 0xcc, 0x9a, 0x93, 0xca,
+                0xe4, 0x1f, 0x32, 0x62,
+            ],
+        );
+    }
+
+    #[test]
+    fn unkeyed_abc_matches_host_blake3() {
+        let msg = bytes_to_ba(@array![0x61, 0x62, 0x63]);
+        let got = u32s_le_to_bytes(unkeyed_hash_one_chunk(@msg));
+        assert_digest(
+            @got,
+            @array![
+                0x64, 0x37, 0xb3, 0xac, 0x38, 0x46, 0x51, 0x33, 0xff, 0xb6, 0x3b, 0x75, 0x27, 0x3a,
+                0x8d, 0xb5, 0x48, 0xc5, 0x58, 0x46, 0x5d, 0x79, 0xdb, 0x03, 0xfd, 0x35, 0x9c, 0x6c,
+                0xd5, 0xbd, 0x9d, 0x85,
+            ],
+        );
+    }
+
+    /// A 32-byte secret — the exact shape RFC-0973 hashes. Anchoring the
+    /// relation's own input size is what makes the parity claim about the
+    /// relation rather than about short strings.
+    ///
+    ///   BLAKE3(00..01) = 55bbfb5b05f80543bd662a7b7a74980a
+    ///                   2992612798087fa24e1fc86b8e8508e4
+    #[test]
+    fn unkeyed_thirty_two_byte_secret_matches_host_blake3() {
+        let mut secret = repeat_ba(0x00, 31);
+        secret.append_byte(0x01);
+        let got = u32s_le_to_bytes(unkeyed_hash_one_chunk(@secret));
+        assert_digest(
+            @got,
+            @array![
+                0x55, 0xbb, 0xfb, 0x5b, 0x05, 0xf8, 0x05, 0x43, 0xbd, 0x66, 0x2a, 0x7b, 0x7a, 0x74,
+                0x98, 0x0a, 0x29, 0x92, 0x61, 0x27, 0x98, 0x08, 0x7f, 0xa2, 0x4e, 0x1f, 0xc8, 0x6b,
+                0x8e, 0x85, 0x08, 0xe4,
+            ],
+        );
+    }
+
+    /// The unkeyed path must not be the keyed path with a zero key. Both are
+    /// one-chunk hashes over the same bytes, so they are easy to confuse, and a
+    /// confusable pair is how a binding ends up computing something that looks
+    /// like the relation and is not it.
+    #[test]
+    fn unkeyed_is_not_keyed_with_a_zero_key() {
+        let msg = bytes_to_ba(@array![0x61, 0x62, 0x63]);
+        let zero_key = [0, 0, 0, 0, 0, 0, 0, 0];
+        let unkeyed = u32s_le_to_bytes(unkeyed_hash_one_chunk(@msg));
+        let keyed_zero = u32s_le_to_bytes(keyed_hash_one_chunk(zero_key, @msg));
+        assert_digest(@unkeyed, @array![
+            0x64, 0x37, 0xb3, 0xac, 0x38, 0x46, 0x51, 0x33, 0xff, 0xb6, 0x3b, 0x75, 0x27, 0x3a,
+            0x8d, 0xb5, 0x48, 0xc5, 0x58, 0x46, 0x5d, 0x79, 0xdb, 0x03, 0xfd, 0x35, 0x9c, 0x6c,
+            0xd5, 0xbd, 0x9d, 0x85,
+        ]);
+        // The two digests must differ. Pinned as a full 32-byte mismatch rather
+        // than a single word, so a partial regression is still caught.
+        let mut differs: bool = false;
+        let mut i: usize = 0;
+        while i < 32 {
+            if unkeyed.at(i).unwrap() != keyed_zero.at(i).unwrap() {
+                differs = true;
+            };
+            i += 1;
+        };
+        assert!(differs, "unkeyed hash must not equal keyed-with-zero-key");
     }
 
     #[test]

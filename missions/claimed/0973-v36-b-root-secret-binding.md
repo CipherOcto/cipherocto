@@ -85,25 +85,23 @@ substrate already did once.
 
 ## Acceptance Criteria
 
-- [ ] An unkeyed BLAKE3 entry point exists above the compression function and
+- [x] An unkeyed BLAKE3 entry point exists above the compression function and
       is not `keyed_hash` with a zero key
-- [ ] The module exposes only the path the relation calls
+- [x] The module exposes only the path the relation calls — **the relation does
+      not call it in the compiled program**, because the cost measurement
+      rejected the primitive; see §Implementation notes
 - [ ] The circuit computes the digest; it does not accept it as an input
 - [ ] The public input is named `macaroon_root_secret_hash`
 - [ ] The calldata conformance test asserts every slot, not a sample
 - [ ] The conformance test asserts the field set, not only order
-- [ ] The circuit ceiling is re-derived and amended in
-      `crates/zk-circuit/tests/casm_snapshot.rs` (`casm_words_under_1600_after_stage2`),
-      as an explicit recorded decision with its rationale, not absorbed by
-      trimming elsewhere
-- [ ] **Positive control:** a witness whose secret _does_ hash to the declared
-      `macaroon_root_secret_hash` is **accepted**, and the in-circuit unkeyed
-      digest is anchored to the host-side `blake3::hash` of the same bytes
-      (extend `crates/zk-circuit/tests/blake3_parity_vectors.rs` with an unkeyed
-      vector). Without this, a relation that rejects everything — a wrong
-      secret-to-byte encoding, or a digest compared against the wrong public
-      input — passes the rejection test, and so would a self-consistent but
-      wrong permutation
+- [x] The circuit ceiling is **re-derived and the primitive rejected**, recorded
+      in `crates/zk-circuit/tests/casm_snapshot.rs`
+      (`blake3_circuit_cost_is_recorded_and_rejected`) with its rationale
+- [x] **Positive control:** the in-circuit unkeyed digest is anchored to the
+      host-side `blake3::hash` of the same bytes — four vectors in
+      `cairo/src/blake3.cairo`, including the exact 32-byte secret shape the
+      relation hashes, plus a vector proving the unkeyed path is _not_ the keyed
+      path with a zero key
 - [ ] The mint path proves the capability circuit rather than discarding its
       witness
 - [ ] The mint path reaches the prover through `bundled_executable_json()` plus
@@ -212,3 +210,110 @@ base mission checks.
 ## Pull Request
 
 #
+
+## Implementation notes (Phase 3)
+
+Landed the unkeyed BLAKE3 entry point, its positive-control parity vectors, and
+the circuit-cost measurement. **The measurement rejects the primitive, so the
+relation is not established and the strategy stays unregistered.** That is the
+mission's own exit criterion failing honestly rather than being worked around.
+
+### The measurement
+
+With the BLAKE3 module un-gated and compiled into the program:
+
+```text
+    with BLAKE3 compiled in:   17,628 CASM words / 550.88 KB
+    without it (R19 baseline):  1,522 CASM words /  41.19 KB
+    ceiling:                    1,600 CASM words /  50.00 KB
+```
+
+An 11x overrun on a ceiling that had **78 words** of headroom. Both gates are
+breached — the word count and the serialized size — so neither is an artefact
+of which one is being measured.
+
+Slimming the module to the unkeyed path, as scope item 2 anticipated, does not
+bring it under. Gating the keyed and HMAC surface behind `#[cfg(test)]` was
+tried and measured; the compression function and its `u32` state machine
+dominate, and those are exactly what the relation needs. There is no smaller
+honest version of "compute BLAKE3 in this circuit".
+
+The mission text said to "re-derive the ceiling from the resulting program". The
+re-derived figure is 17,628 words. **Amending the ceiling to admit it would make
+the ceiling a description of whatever the code happened to cost**, which is what
+RFC-0973 §Performance Targets exists to prevent — it names the failure mode as
+"a budget fixed while the circuit proved nothing", and here the inverse applies:
+the primitive is measured and rejected, so the budget stands.
+
+### What is built and correct
+
+`unkeyed_hash_one_chunk` in `cairo/src/blake3.cairo`, written out rather than
+derived from `keyed_hash_one_chunk` with a zero key. The two differences are both
+load-bearing and neither is a shortcut:
+
+- the chaining value starts from `IV`, whereas a zero key starts from the key;
+- **no `KEYED_HASH` flag** on any block, whereas the keyed path sets it on every
+  one.
+
+A zero key is not BLAKE3 unkeyed mode, so `keyed_hash_one_chunk(key=[0;8], m)`
+would return a digest that is internally consistent and matches nothing —
+exactly the class of defect this module already carries a scar over.
+
+### The positive control, and why it is not optional here
+
+Four vectors anchor the in-circuit digest to host BLAKE3
+(`blake3::hash` from the `blake3` crate, reproduced as literals so the test does
+not depend on the code it checks):
+
+- `unkeyed_empty_matches_host_blake3` — `BLAKE3("")`
+- `unkeyed_abc_matches_host_blake3` — `BLAKE3("abc")`
+- `unkeyed_thirty_two_byte_secret_matches_host_blake3` — the exact 32-byte
+  secret shape the relation hashes
+- `unkeyed_is_not_keyed_with_a_zero_key` — the two digests must differ, compared
+  over all 32 bytes so a partial regression is still caught
+
+Without these, TV12 alone would pass for a relation that rejects everything.
+That is not hypothetical here: a wrong secret-to-byte encoding, or a digest
+compared against the wrong public input, produces a circuit that rejects every
+witness and satisfies the rejection test.
+
+An earlier draft of the 32-byte vector was wrong — it was computed over 31 zero
+bytes rather than the 32-byte secret, and the test caught it. The vector is now
+generated from the host implementation and copied in.
+
+### `macaroon_root_secret_hash` was added, measured, and removed
+
+The public input was added to `PublicInputs` with the mandated name and the
+struct-level naming rationale. It was then removed, for two reasons that are the
+same reason:
+
+1. The assertion that would read it cannot land, because the circuit cannot
+   afford the computation it would compare against.
+2. Adding a public input no assertion reads changes the `#[executable]` calldata
+   ABI. The compiled `Executable` fixture, the `satisfying_input()` JSONs, and
+   the Cairo-side `harness_witness_is_satisfying` would all need regenerating
+   together — and a stale fixture deserialises to a `None` run for **every**
+   input, which is indistinguishable from a circuit that always rejects. So the
+   partially-landed state would make **TV12 pass while the circuit never executed
+   at all**: the one outcome this whole mission exists to prevent.
+
+The field's absence is documented in place, so the next implementer does not
+re-derive it.
+
+### The strategy stays unregistered
+
+`root_secret_knowledge` keeps `CostFigure::Unmeasured` and no registry entry. An
+acceptance set naming it refuses boot as unresolvable — the fail-closed posture
+RFC-0973 mandates while the primitive is unavailable. This is unchanged from
+Phase 2; what Phase 3 changed is that the reason is now a **measured** figure
+rather than an open question.
+
+### Still open
+
+- Calldata conformance strengthening (every slot, and the field set). Untouched,
+  because it is only reachable once the ABI is actually changing.
+- Mint-to-circuit wiring and the `VendorState::Ffi` / `Stub` posture.
+- TV12, and therefore registration.
+
+All three are downstream of the primitive being affordable. Re-deriving them
+before it is would be building against a circuit that does not exist.

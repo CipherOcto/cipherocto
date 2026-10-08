@@ -94,6 +94,33 @@ use core::traits::{Into, TryInto};
 // now imported into production main()). The cryptographic chain
 // re-derivation still happens via STWO hints at proof-generation time
 // per the design doc.
+// RFC-0973 §Root-Secret Binding needs an unkeyed BLAKE3 computed by
+// constrained program logic, and `unkeyed_hash_one_chunk` exists for it.
+//
+// The module STAYS test-gated. Un-gating it was measured
+// (RFC-0973 §Performance Targets) and the answer is decisive:
+//
+//     with BLAKE3 compiled in:  17,628 CASM words / 550.88 KB
+//     without it (R19 baseline):  1,522 CASM words /  41.19 KB
+//     ceiling:                    1,600 CASM words /  50.00 KB
+//
+// An 11x overrun on a ceiling that had 78 words of headroom. This is
+// the "budget fixed while the circuit proved nothing" case RFC-0973
+// §Performance Targets names, except inverted: here the primitive is
+// measured and *rejected*, rather than the budget being raised to fit
+// it. Raising the ceiling to admit it would make the ceiling a
+// description of whatever the code happened to cost.
+//
+// Slimming the module to the unkeyed path alone (gating the keyed and
+// HMAC surface) did not bring it under: the compression function and
+// its u32 state machine dominate, and they are what the relation needs.
+// The measured figure is pinned by
+// `zk-circuit`'s `blake3_casm_cost_is_recorded_in_mission_b`.
+//
+// So the entry point is built, correct, and parity-anchored to host
+// BLAKE3 — and the circuit does not call it. `root_secret_knowledge`
+// stays unregistered, which is the same fail-closed posture the RFC
+// mandates while the primitive is unavailable.
 #[cfg(test)]
 mod blake3;
 #[cfg(test)]
@@ -134,6 +161,22 @@ pub struct PublicInputs {
     pub current_unix_time: u64,
     pub has_output_hash: u8,
     pub output_hash: felt252,
+    // RFC-0973 §Root-Secret Binding would add `macaroon_root_secret_hash`
+    // here — the public input the `root_secret_knowledge` relation is
+    // checked against, named for the token field it carries without
+    // reusing that field's own name.
+    //
+    // It is NOT added. The field was added, compiled, and measured, and
+    // the measurement is recorded above: an in-circuit BLAKE3 costs
+    // 17,628 CASM words against a 1,600-word ceiling. Adding a public
+    // input that no assertion reads is not a partial step toward the
+    // binding — it is a calldata ABI change with a stale fixture behind
+    // it, and a stale fixture deserialises to a `None` run for every
+    // input, which is indistinguishable from a circuit that always
+    // rejects.
+    //
+    // The field is named here so the next implementer does not have to
+    // re-derive why it is absent.
 }
 
 /// Private witness (mirrors `octo_wallet::capability::zk_mint::PrivateWitness`).

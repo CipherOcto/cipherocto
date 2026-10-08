@@ -170,6 +170,19 @@ pub struct PublicInputs {
     pub axes_count: u32,
     pub cap_root_hash_lo: felt252,
     pub cap_root_hash_hi: felt252,
+    /// Low half of the verifier-supplied macaroon CHAIN TIP, i.e. the last
+    /// element of `macaroon.chain`.
+    ///
+    /// Deliberately a separate field from `cap_root_hash`. That value is
+    /// `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))` — a
+    /// hash over the serialised token, NOT a re-derivable chain tip. Asserting
+    /// the chain against it can never succeed for any token, which is why the
+    /// first version of `verify_chain_against_tip` was wrong.
+    ///
+    /// The verifier reads the tip straight off the token it is checking, so it
+    /// is genuinely verifier-supplied. The prover must show a preimage under
+    /// the chain MAC to satisfy the equality.
+    pub chain_tip_lo: felt252,
     pub invocation_hash: felt252,
     pub holder_did: felt252,
     pub current_unix_time: u64,
@@ -574,7 +587,7 @@ pub fn stage2_main(
         priv_witness.cap_root_secret_lo,
         priv_witness.cap_root_secret_hi,
         caveat_felts,
-        pub_inputs.cap_root_hash_lo,
+        pub_inputs.chain_tip_lo,
     );
     assert!(chain_tip != 0, "ChainCommitmentZero");
 

@@ -40,7 +40,7 @@ fn satisfying_run_input() -> Vec<u8> {
       "pub_inputs": {
         "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
         "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
-        "invocation_hash": "6", "holder_did": "7",
+        "chain_tip_lo": "77", "invocation_hash": "6", "holder_did": "7",
         "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
       },
       "priv_witness": {

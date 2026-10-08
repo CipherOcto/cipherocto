@@ -520,7 +520,7 @@ fn blake3_circuit_cost_is_recorded_and_rejected() {
 
     const {
         // The STARK-native chain re-derivation, measured.
-        const MEASURED_CHAIN_WORDS: usize = 2_181;
+        const MEASURED_CHAIN_WORDS: usize = 2_182;
         const MEASURED_CHAIN_BYTES: usize = 69_792;
         // The RFC-0957 native chain, measured and rejected.
         const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
@@ -571,8 +571,8 @@ fn blake3_circuit_cost_is_recorded_and_rejected() {
         "the compiled program must stay under its ceiling, got {words} words"
     );
     assert!(
-        words <= 2_181,
-        "the circuit grew past its recorded measurement of 2181 words (now {words}); \
+        words <= 2_182,
+        "the circuit grew past its recorded measurement of 2182 words (now {words}); \
          re-measure and record the new figure"
     );
 }

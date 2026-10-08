@@ -120,6 +120,9 @@ pub struct PublicInputsArg {
     pub axes_count: u32,
     pub cap_root_hash_lo: String,
     pub cap_root_hash_hi: String,
+    /// Low half of the macaroon chain tip, hex-encoded felt. Must match the
+    /// declaration order in `cairo/src/lib.cairo`.
+    pub chain_tip_lo: String,
     pub invocation_hash: String,
     pub holder_did: String,
     pub current_unix_time: u64,
@@ -236,6 +239,7 @@ fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     out.push(Felt::from(p.axes_count));
     out.push(parse_felt(&p.cap_root_hash_lo)?);
     out.push(parse_felt(&p.cap_root_hash_hi)?);
+    out.push(parse_felt(&p.chain_tip_lo)?);
     out.push(parse_felt(&p.invocation_hash)?);
     out.push(parse_felt(&p.holder_did)?);
     out.push(Felt::from(p.current_unix_time));
@@ -792,7 +796,7 @@ mod harness_tests {
         r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
+            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "6",
             "invocation_hash": "6", "holder_did": "7",
             "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
           },
@@ -915,7 +919,7 @@ mod harness_tests {
         let json = r#"{
           "pub_inputs": {
             "ask_id_lo": "1", "ask_id_hi": "2", "axes_count": 1,
-            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5",
+            "cap_root_hash_lo": "4", "cap_root_hash_hi": "5", "chain_tip_lo": "6",
             "invocation_hash": "6", "holder_did": "7",
             "current_unix_time": 1700000000, "has_output_hash": 0, "output_hash": "0"
           },

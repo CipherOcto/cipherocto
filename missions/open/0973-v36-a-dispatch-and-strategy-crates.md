@@ -2,7 +2,7 @@
 
 **Status:** Open
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 2: Enhanced
-**Substrate:** `octo-wallet` (dispatch, boot validation) + `octo-wallet-node` (registration host) + two new strategy crates
+**Substrate:** `octo-wallet` (dispatch, boot validation, wallet verification entry point) + `octo-wallet-node` (registration host) + one new strategy crate (`octo-cap-poi`) and one existing crate gaining a strategy (`octo-cap-zk`)
 **Depends on:** Mission `0973-v36-attestation-core-substrate` — provides `AttestationTypeId`, both traits, `Admission`, `AdmissionProfile`, `CostFigure`, `SecurityFigure`, `Expectation`, `PolicySource`, `AttestationVerifyCtx`, `AttestationOutcome`, the envelope wire form and its decode bounds, and the allocation record with its named owner.
 
 ## Scope
@@ -61,12 +61,27 @@ reference strategies plus a fixture that lets determinism be measured at all.
    the only such linker is mission D.
 
 4. **Reference strategy crates** — `octo-cap-zk` (`root_secret_knowledge`) and
-   `octo-cap-poi` (`in_boundary_execution`, new). Both start with no registry
-   entry. Neither declares payload kinds and both answer `false` for
-   `verifier_needs_producing_kinds`, which is a decision: the root-secret
-   relation is a pure computation over the token and the in-boundary trace is
-   verified against material the node already holds, so neither imposes a
-   deployment requirement on an operator.
+   `octo-cap-poi` (`in_boundary_execution`, new).
+
+   These are not in the same state. `crates/octo-cap-zk` **already exists**
+   (the RFC-0958 ZK capability subclass, with its mint API, `ProofBundle` and
+   `ZkMintError`); this mission **extends** it with the `root_secret_knowledge`
+   strategy rather than creating it, and a second crate of that name would
+   collide. `crates/octo-cap-poi` does not exist and is created here.
+
+   Both start with no registry entry. Neither declares payload kinds and both
+   answer `false` for `verifier_needs_producing_kinds`, which is a decision:
+   the root-secret relation is a pure computation over the token and the
+   in-boundary trace is verified against material the node already holds, so
+   neither imposes a deployment requirement on an operator.
+
+   `octo-cap-zk` **does** carry a circuit cost, so it implements
+   `AttestationAdmission` and answers `admission_profile` with
+   `CostFigure::Unmeasured` — not `None`. A `None` means "this strategy carries
+   no circuit cost", which would be a false claim about a proof-bearing crate
+   and would skip both budget gates at boot. `Unmeasured` is what makes the
+   gate decisive on an unknown cost. `octo-cap-poi` carries no proof, so it
+   either omits the trait or answers `None`; both are truthful and equivalent.
 
    Register `in_boundary_execution` in this phase once its profile is measured
    and its relation is verified against the trace the boundary actually
@@ -75,7 +90,9 @@ reference strategies plus a fixture that lets determinism be measured at all.
 
 5. **Measured profiles** — record the `in_boundary_execution` admission profile
    here, measured rather than estimated, since this is the phase that lands the
-   crate it describes.
+   crate it describes. For `octo-cap-zk` this phase records the **`Unmeasured`**
+   profile described above; the measured value lands in mission C, which is the
+   phase that builds the real prover path.
 
 6. **Determinism fixture** — a second, independent implementation of _one_
    relation, as a test fixture rather than a shipped strategy, registered under
@@ -99,27 +116,41 @@ reference strategies plus a fixture that lets determinism be measured at all.
 - [ ] The producing-side branch does not consume the verification-side gate
 - [ ] The registration host is a binary or node crate, not core
 - [ ] Strategy crates are linked from the host
-- [ ] `in_boundary_execution` is registered with a measured profile
+- [ ] `in_boundary_execution` is registered with the profile measured in this
+      phase, and `root_secret_knowledge` implements `AttestationAdmission`
+      answering `CostFigure::Unmeasured` rather than `None`
 - [ ] `root_secret_knowledge` ships unregistered
 - [ ] Neither reference strategy declares payload kinds
 - [ ] A second implementation of one relation exists as a fixture
-- [ ] A node accepting no attestations is refused, not started
+- [ ] A node accepting no attestations **starts and advertises an empty
+      acceptance set**. Refusing to start is not the behaviour: running a node
+      that verifies nothing is a permitted operator choice, and the mitigation
+      is that it is visible rather than silent, not that it is impossible
+- [ ] The dispatch is reachable from the wallet's verification path, not only
+      from its own tests: `VerifyContext` gains the registry and acceptance-set
+      slots and `VerifyError` gains the attestation reason, so an attested token
+      presented to the production entry point goes through the dispatch
+- [ ] The operator policy, its acceptance-set type, and the `PolicySource`
+      implementation the dispatch calls are all owned by this mission
 
 ### Type Coverage
 
-| RFC item                                                    | Implemented by                  |
-| ----------------------------------------------------------- | ------------------------------- |
-| `verify_capability_attestation`                             | This mission                    |
-| `validate_policy`                                           | This mission                    |
-| `register_strategy` execution                               | This mission (declared in base) |
-| `octo-cap-zk` reference strategy                            | This mission                    |
-| `octo-cap-poi` reference strategy                           | This mission                    |
-| Registration host and strategy links                        | This mission                    |
-| Determinism fixture (second implementation of one relation) | This mission                    |
-| `in_boundary_execution` measured profile                    | This mission                    |
-| Back-compat corpus re-verification                          | This mission                    |
-| Node-metadata advertisement                                 | Mission D                       |
-| Dependency-direction lint                                   | Mission D                       |
+| RFC item                                                          | Implemented by                  |
+| ----------------------------------------------------------------- | ------------------------------- |
+| `verify_capability_attestation`                                   | This mission                    |
+| `validate_policy`                                                 | This mission                    |
+| `register_strategy` execution                                     | This mission (declared in base) |
+| `octo-cap-zk` reference strategy (extends the **existing** crate) | This mission                    |
+| `octo-cap-poi` reference strategy (new crate)                     | This mission                    |
+| Operator policy type and its `PolicySource` implementation        | This mission                    |
+| Acceptance-set type read by step 2 and by boot validation         | This mission                    |
+| `Admission` value construction for a strategy without the trait   | This mission                    |
+| Registration host and strategy links                              | This mission                    |
+| Determinism fixture (second implementation of one relation)       | This mission                    |
+| `in_boundary_execution` measured profile                          | This mission                    |
+| Back-compat corpus re-verification                                | This mission                    |
+| Node-metadata advertisement                                       | Mission D                       |
+| Dependency-direction lint                                         | Mission D                       |
 
 ### Test Vectors
 
@@ -129,8 +160,11 @@ This mission closes: **TV1**, **TV1b**, **TV2**, **TV3**, **TV4**, **TV6**,
 
 ## Layer direction
 
-- `octo-wallet` — Layer B years-stable substrate. The dispatch is new code in
-  `octo-wallet::capability` and touches no existing type.
+- `octo-wallet` — Layer B years-stable substrate. The dispatch itself is new code
+  in `octo-wallet::capability`, but landing it in the real verification path
+  does modify two existing types: `VerifyContext` gains the registry and
+  acceptance-set slots and `VerifyError` gains the attestation reason. Both are
+  additive fields and variants, so the change is backward compatible.
 - `octo-wallet-node` — Layer D deployment crate. It composes the node and links
   strategy crates; it is the registration host.
 - `octo-cap-zk`, `octo-cap-poi`, and the fixture — Layer E user extensions.

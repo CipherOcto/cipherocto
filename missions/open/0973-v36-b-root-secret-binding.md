@@ -2,7 +2,7 @@
 
 **Status:** Open
 **RFC:** RFC-0973 (Economics): Pluggable Proof Attestation for Capabilities — §Implementation Phases §Phase 3: Root-Secret Binding
-**Substrate:** `cairo/src/blake3.cairo`, `cairo/src/lib.cairo`, `crates/zk-vendor/stwo-sys`, `crates/octo-cap-zk`
+**Substrate:** `cairo/src/blake3.cairo`, `cairo/src/lib.cairo`, `crates/zk-vendor/stwo-sys` (excluded from the workspace), `crates/octo-cap-zk`, `crates/zk-circuit` (the ceiling assertion and the parity vectors)
 **Depends on:** Mission `0973-v36-a-dispatch-and-strategy-crates` — provides the `octo-cap-zk` crate, the registration host, and a dispatch that can actually reject.
 
 ## Scope
@@ -48,26 +48,40 @@ substrate already did once.
    executable recipe, where declared and actual builtins diverge, is the same
    failure mode under the same discipline.
 
-5. **Re-derive the circuit ceiling** from the resulting program and record the
+5. **Regenerate the compiled fixture and the Cairo-side witness.** Adding a
+   public input changes the `#[executable]` calldata ABI, so three artifacts
+   move together and none of them is optional:
+
+   - `crates/zk-vendor/stwo-sys/tests/fixtures/capability_zk.json`, the
+     pre-generated `Executable` every harness test loads;
+   - the `satisfying_input()` JSONs that feed it;
+   - the Cairo-side `harness_witness_is_satisfying`, which asserts
+     `stage2_main == 1` over the same values.
+
+   A stale fixture deserialises to a `None` run for **every** input, which is
+   indistinguishable from a circuit that always rejects — so TV12 would pass
+   while the circuit never executed at all. Regenerate rather than hand-edit.
+
+6. **Re-derive the circuit ceiling** from the resulting program and record the
    figure with its rationale. BLAKE3 over felt-constrained words is not a
    field-native operation, so its cost is not comparable to the Poseidon figure
    that motivated an earlier draft. The ceiling is a project-set budget, so it
    is re-derived from the algorithm rather than treated as an external limit
    that dictates the primitive.
 
-6. **Wire the mint path** to the capability circuit. It currently discards its
+7. **Wire the mint path** to the capability circuit. It currently discards its
    witness and proves a different program, so no property a real proof would
    carry is obtained in production. Until this lands, an attestation could be
    correctly verified and still never produced — the other half of the
    registration precondition alongside TV12.
 
-7. **Invert the characterization test.** The existing test pins the _absent_
+8. **Invert the characterization test.** The existing test pins the _absent_
    binding: it asserts a harness accepts an unrelated secret because the circuit
    does not bind it. Invert it into a rejection test (TV12) — the same setup,
    asserting the harness now _rejects_ the unrelated secret — and only then
    register the strategy.
 
-8. **Register `root_secret_knowledge`**, once both TV12 and the mint wiring hold.
+9. **Register `root_secret_knowledge`**, once both TV12 and the mint wiring hold.
 
 ## Acceptance Criteria
 
@@ -78,13 +92,34 @@ substrate already did once.
 - [ ] The public input is named `macaroon_root_secret_hash`
 - [ ] The calldata conformance test asserts every slot, not a sample
 - [ ] The conformance test asserts the field set, not only order
-- [ ] The circuit ceiling is re-derived and recorded with its rationale
+- [ ] The circuit ceiling is re-derived and amended in
+      `crates/zk-circuit/tests/casm_snapshot.rs` (`casm_words_under_1600_after_stage2`),
+      as an explicit recorded decision with its rationale, not absorbed by
+      trimming elsewhere
+- [ ] **Positive control:** a witness whose secret _does_ hash to the declared
+      `macaroon_root_secret_hash` is **accepted**, and the in-circuit unkeyed
+      digest is anchored to the host-side `blake3::hash` of the same bytes
+      (extend `crates/zk-circuit/tests/blake3_parity_vectors.rs` with an unkeyed
+      vector). Without this, a relation that rejects everything — a wrong
+      secret-to-byte encoding, or a digest compared against the wrong public
+      input — passes the rejection test, and so would a self-consistent but
+      wrong permutation
 - [ ] The mint path proves the capability circuit rather than discarding its
       witness
+- [ ] The mint path reaches the prover through `bundled_executable_json()` plus
+      `prove_from_casm` under `VendorState::Ffi`, and its behaviour under
+      `VendorState::Stub` is stated explicitly (fail closed, or an
+      explicitly-marked non-proof) rather than left to the existing stub
 - [ ] TV12 passes: a witness whose secret does not hash to the root-secret
       hash is rejected
 - [ ] Only then is `root_secret_knowledge` registered
-- [ ] Before registration, an acceptance set naming it fails at boot
+- [ ] Registration also requires its `admission_profile.casm_cost_hint_words` to
+      become `CostFigure::Measured(<measured words>)`, replacing the RFC's
+      "unmeasured — Phase 3" row. Registering it while it still answers
+      `Unmeasured` buys nothing, because a node naming it would still refuse to
+      start
+- [ ] **After** registration, an acceptance set naming it no longer fails at
+      boot
 
 ### Type Coverage
 
@@ -122,7 +157,25 @@ Not closed here: **TV13b**, which belongs to mission A's clock coverage, and
 
 ```bash
 cargo fmt --all -- --check
-cargo test -p zk-vendor --lib calldata_matches_cairo_serde_layout
+
+# stwo-sys is EXCLUDED from the workspace (nightly-only build), so -p zk-vendor
+# resolves to a package that does not contain this test and the filter matches
+# nothing while still exiting 0. Address it by manifest path.
+cargo test --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml \
+  calldata_matches_cairo_serde_layout
+
+# unkeyed parity vector anchoring the in-circuit digest to host BLAKE3
+cargo test -p zk-circuit --test blake3_parity_vectors
+
+# the circuit ceiling assertion this mission amends
+cargo test -p zk-circuit --test casm_snapshot
+
+# regenerate the compiled Executable fixture after the calldata ABI changes
+cargo test -p zk-circuit --test dump_casm_fixture -- --ignored
+
+# the Cairo-side witness assertion over the same values
+scarb cairo-test
+
 cargo test -p octo-cap-zk --lib
 ```
 

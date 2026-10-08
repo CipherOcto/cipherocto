@@ -14,8 +14,34 @@ layer model forbids. Both are otherwise claims the RFC makes on the strength of
 nothing.
 
 1. **Remove the direct dependency** from the Layer-B wallet crate on the
-   strategy crate, re-pointing the re-exporting module. Strategy crates are
-   reached through registration only.
+   strategy crate. Strategy crates are reached through registration only.
+
+   This is a removal **plus** a re-point, and the two halves are not the same
+   shape:
+
+   - **Re-pointable.** `capability/zk_mint.rs`'s `pub use octo_cap_zk::*`
+     shim and `capability/registry.rs`'s `CapabilityClass` import (point at
+     `octo_cap_macaroon::CapabilityClass`, which `octo-cap-zk` already
+     re-exports).
+   - **Not re-pointable.** The node-type projection. `NodeType` is declared in
+     `octo-cap-zk`, _not_ in the macaroon crate, so `to_zk_node_type` has
+     nothing to point at once the dependency is gone — the orphan rule is
+     exactly why the mirror exists. Its disposition is a **decision this
+     mission must make and record**: delete it as dead code with the
+     rationale, or move the mint-time ZK gate somewhere it can still reach a
+     strategy. Silently dropping it would dispose of the wallet-side carrier of
+     the RFC-0958 §NodeType mint gate, and it contradicts mission C, which
+     asserts `NodeType` is retained in the wallet as that gate. Reconcile the
+     two in this mission.
+
+   The blast radius is wider than the shim file: `capability/mod.rs`
+   re-exports the wallet's whole public ZK mint API from it
+   (`mint_with_zk`, `ProofBundle`, `PublicInputs`, `PrivateWitness`,
+   `ZkMintError`, `proof_bundle_to_wire`, …), and six integration test files
+   import the shim or the crate directly. Each must be re-pointed, moved, or
+   given a sanctioned dependency — see item 3 for whether a
+   `[dev-dependencies]` edge is permitted, because that decision determines
+   where those tests live.
 
    This is last rather than first because the lint below fails the build until
    the removal is done, so doing it earlier breaks the tree. The wallet reaches
@@ -46,8 +72,17 @@ nothing.
    fails at boot rather than at advertisement.
 
 3. **Dependency lint.** A CI check fails the build if a Layer-B core crate gains
-   a dependency on a strategy crate. The existing lint that keeps mint calls out
-   of a node-type path is the pattern to follow.
+   a dependency on a strategy crate **to discover or register it**. The existing
+   lint that keeps mint calls out of a node-type path is the pattern to follow.
+
+   The qualifier is load-bearing, and this mission must state the dependency
+   tables the lint scans — `[dependencies]` only, or `[dependencies]` plus
+   `[dev-dependencies]` — and why. Without that decision the lint has two
+   plausible wrong builds, both consistent with "a dependency": scanning
+   `[dependencies]` only, which tolerates a dev-edge that re-opens the property
+   in the test suite; or scanning both, which fires on the wallet's own ZK
+   tests and gets "fixed" with an exemption that quietly re-opens it. Decide
+   first, then let the decision determine where the wallet's ZK tests live.
 
    The lint is the property that makes the registration host trustworthy: the
    host is the only place a strategy crate is linked from, which is exactly why
@@ -58,7 +93,16 @@ nothing.
 ## Acceptance Criteria
 
 - [ ] The wallet crate no longer depends directly on a strategy crate
-- [ ] The re-exporting module is re-pointed
+- [ ] The re-pointable carriers are re-pointed: the `zk_mint` shim and the
+      `registry.rs` `CapabilityClass` import
+- [ ] The node-type projection's disposition is decided and recorded, and
+      reconciled with mission C's claim that `NodeType` remains the wallet's
+      mint-time ZK gate
+- [ ] The wallet's public ZK mint API in `capability/mod.rs` is re-pointed, and
+      each of the six ZK integration test files is re-pointed, moved, or given
+      the sanctioned dependency chosen in item 3
+- [ ] The lint's dependency-table scope is stated explicitly, and the wallet is
+      not exempted from the lint by that scope
 - [ ] Strategy crates are reached through registration only
 - [ ] A node advertising nothing is distinguishable from one advertising an
       empty set

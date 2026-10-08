@@ -19,6 +19,14 @@ review rounds.
    tests instantiate it. The role model this RFC links to treats the class as a
    computed projection rather than stored state.
 
+   **Note the interaction with mission D.** `NodeType` is declared in
+   `octo-cap-zk`, not in the macaroon crate, so mission D's removal of the
+   wallet→strategy dependency cannot re-point the wallet's `to_zk_node_type`
+   projection — it has nothing to point at. D owns deciding that projection's
+   disposition. If D deletes it, the sentence above is no longer true and the
+   mint-time gate needs a home; do not treat "retained in the wallet" as a
+   settled fact this mission may rely on.
+
    Decide and record: either promote the registry to a real call site, or make
    the projection explicit so nothing reads it as authoritative. The gap is
    pre-existing and is not this RFC's to fix, but it is a place where the

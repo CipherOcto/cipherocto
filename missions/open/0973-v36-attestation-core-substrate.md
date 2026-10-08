@@ -17,18 +17,30 @@ produces the substrate the later missions build on.
    Same declare-once-then-re-export shape `CapabilityClass` already uses.
 
 2. **Traits** in `octo-wallet::capability`:
-   `AttestationStrategy` (`type_id`, `verify`, `admission_profile`),
+   `AttestationStrategy` (`type_id`, `verify`) and the optional companion
    `AttestationAdmission` (`required_payload_kinds`,
-   `verifier_needs_producing_kinds`). Neither carries a default: absence is a
-   claim the strategy must be true about, so it is written rather than
-   inherited.
+   `verifier_needs_producing_kinds`, `admission_profile`). The split matters:
+   `admission_profile` belongs to the **admission** trait, not the strategy
+   trait, so a strategy that implements neither is distinguishable from one
+   that implements the admission trait and answers `None`. Neither trait
+   carries a default: absence is a claim the strategy must be true about, so it
+   is written rather than inherited.
 
 3. **Supporting types** — `Admission`, `AdmissionProfile`, `CostFigure`
    (`Measured` / `Unmeasured`), `SecurityFigure` (no bare-integer
    constructor), `SecurityParams`, `Expectation`, `PolicySource`,
-   `AttestationVerifyCtx` (expectation required, not optional),
-   `AttestationOutcome` (`Satisfied` / `Unsatisfied`, reason **required** on
-   rejection).
+   `AttestationError`, `AttestationVerifyCtx` (expectation required, not
+   optional), `AttestationOutcome` (`Satisfied` / `Unsatisfied`, reason
+   **required** on rejection). `AttestationError` is core-owned because
+   `verify` returns it — a strategy in an extension crate cannot construct an
+   error type it does not own.
+
+   `Admission` is always present at the dispatch and boot sites, built from the
+   strategy's own admission values when it implements `AttestationAdmission` and
+   from the permissive value when it does not. There is no `Option<Admission>`
+   at those sites: an absent profile and a permissive strategy must not be the
+   same value, or a cost-bearing crate that never implements the trait would be
+   indistinguishable from a genuine no-cost one and would skip both gates.
 
 4. **`AttestationRegistry`** — fail-closed. Resolution is a pure lookup on a
    stable 128-bit key. Add the wallet's `octo-protocol` dependency here, in the
@@ -97,7 +109,10 @@ produces the substrate the later missions build on.
       wallet, no dependency cycle
 - [ ] Both traits land with no defaults; absence means "declared no
       requirement", not "unspecified"
-- [ ] `SecurityFigure` has no constructor taking a bare integer
+- [ ] `SecurityFigure` has no constructor taking a bare integer: the field is
+      private, `from_prover_parameters` is the only way in, and `bits()` is the
+      only way out, so a caller cannot read the value as a struct field and
+      supply it another way
 - [ ] `AttestationVerifyCtx.expectation` is a required field, not an `Option`
 - [ ] `AttestationOutcome` carries a reason on rejection, and none on
       satisfaction
@@ -132,6 +147,7 @@ produces the substrate the later missions build on.
 | `Expectation` (trait)              | This mission   |
 | `PolicySource` (trait)             | This mission   |
 | `AttestationVerifyCtx`             | This mission   |
+| `AttestationError`                 | This mission   |
 | `AttestationOutcome`               | This mission   |
 | Id allocation record               | This mission   |
 | Envelope wire form + decode bounds | This mission   |
@@ -149,8 +165,13 @@ Deferred, and accounted for rather than unlisted:
 
 ### Test Vectors
 
-This mission closes: **TV5**, **TV5b**, **TV6b** (mint side), **TV9**, **TV14**,
-**TV14b**, **TV15**, **TV7e**, **TV7f**.
+This mission closes: **TV5**, **TV5b**, **TV6b** (mint side), **TV9**,
+**TV15**, **TV7e**, **TV7f**.
+
+**TV14** is split here. The half this mission can run is the mint-side gate:
+refusal happens before a hash relation is ever evaluated. The verification half
+is closed by mission A, which is where `AttestationVerifyCtx` is built and the
+acceptance set read.
 
 The registration-refusal vectors **TV7g** and **TV7h** are declared here because
 the gate is declared here, but they are only _runnable_ once mission A lands the
@@ -165,7 +186,10 @@ relation and belongs to mission A.
   and the envelope are additive to the canonical form; the unattested form
   stays byte-identical.
 - `octo-wallet` — Layer B years-stable substrate. New module in
-  `octo-wallet::capability`; no existing type is modified.
+  `octo-wallet::capability`. No existing capability type changes shape. The
+  mint and attenuation call sites in `octo-cap-macaroon` **are** modified, by
+  design: they gain the type-id and envelope parameters, and refusing them is
+  the whole point of the mint rule.
 - No strategy crate exists yet, so nothing here depends on Layer E. That is the
   point of landing the substrate first.
 

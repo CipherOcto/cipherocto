@@ -541,10 +541,50 @@ re-derivable chain tip. The assertion could never succeed for any real token. It
 now binds to a dedicated `chain_tip_lo` public input carrying the last element of
 `macaroon.chain`, which the verifier reads off the token directly.
 
-### Step 4 — discharge chains: blocked behind step 2's host side
+### Step 4 — discharge chains: there is no chain
 
-Same primitive, so it is mechanical once the host chain is adopted. Nothing to
-build separately; recorded rather than reported as missing work.
+This was recorded as "mechanical once the host chain is adopted". That was
+wrong, and checking it is what found the real answer: **step 4 has no subject in
+this codebase.**
+
+RFC-0958 §Algorithms step 4 reads "verify discharges' HMAC chains (each
+channel's root secret resolved in witness)". Three facts, all verifiable:
+
+1. Every channel provider emits `chain: vec![[0u8; 32]]` — a single **zero
+   placeholder** entry. Escrow, revocation and rate-limit alike.
+2. Nothing reads `DischargeMacaroon::chain` anywhere in the tree.
+   `verify_discharges` hands the discharge to the channel provider, which decides
+   from its own live ledger.
+3. `EscrowDischargeProvider::mint_discharge` documents the design directly: "the
+   discharge macaroon does NOT carry a signature chain (the channel operator is
+   trusted to mint)".
+
+The circuit's `discharges_count` matches: it is bounds-checked (`< 256`) and
+never used to verify anything.
+
+So discharge validity is a **trust** property — the channel operator is trusted,
+and the provider's current state decides — not a signature property. There is
+nothing for a circuit to re-derive. Implementing step 4 as written would mean
+re-deriving an all-zero chain and asserting it equals an all-zero chain, which
+is the same defect step 2 had: an assertion that cannot fail.
+
+This is pinned by
+`discharge::tests::discharge_chains_are_placeholders_and_nothing_consumes_them`,
+which forges a three-entry chain and shows verification still passes. If
+discharges ever grow a real chain, that test fails and is rewritten rather than
+deleted.
+
+Two ways forward, both RFC decisions rather than implementation work:
+
+- **Amend RFC-0958 §Algorithms step 4** to describe what the format actually
+  does — discharge validity is checked against operator state at verification
+  time and is out of scope for the circuit — which is the honest reading.
+- **Add a discharge signature chain to RFC-0957 §Discharge**, so discharges
+  become verifiable without the operator's live state. That is a format change
+  on the same scale as the capability chain swap, and it changes the trust model
+  rather than the encoding.
+
+Not guessed here.
 
 ### Step 1 — Ed25519: the premise was wrong
 
@@ -573,11 +613,18 @@ curve.
 ### What this changes about the survey
 
 The §Class B row asserting three steps are "not built" was accurate but
-understated. The accurate statement is stronger: step 1 was _built and wrong_, and
-steps 2 and 4 were _built and vacuous_. Both failure modes are invisible to a test
-suite — one passes because of a hardcoded vector, the other because it asserts a
-condition that cannot fail. Neither would have failed loudly, which is the same
-lesson as §What migrating the first core check uncovered, one layer up.
+understated. The accurate statement is stronger, and each of the three fails
+differently:
+
+- **Step 1 was built and wrong** — the verifier is not RFC 8032 conformant.
+- **Step 2 was built and vacuous** — the assertion could not fail.
+- **Step 4 was built against something that does not exist** — discharges have
+  no signature chain, only a zero placeholder nobody reads.
+
+All three are invisible to a test suite: one passes because of a hardcoded
+vector, one because it asserts a condition that cannot fail, and one because the
+thing it checks is never populated. None would have failed loudly, which is the
+same lesson as §What migrating the first core check uncovered, one layer up.
 
 Validation: 82 Cairo tests, 378 Rust lib tests, 12 CASM snapshot tests, clippy
 clean with `-D warnings` on all targets and all features.
@@ -976,10 +1023,12 @@ The correct next step is to measure a MAC.
       makes `chain[0]` recomputable by anyone holding the token, which both
       unblocks the prover for step 2 and lets `verify_signature` re-derive
       `chain[0]` instead of trusting it.
-- [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
-      **Done**, with one gap that only appeared once it was rewired: the mint
-      nonce is discarded at mint time, so no prover can supply it and `chain[0]`
-      is not recomputable by anyone. See §Remaining gaps.
+- [x] Host chain adopts the Poseidon MAC, unblocking step 2 end to end. The gap
+      that only appeared once it was rewired — the mint nonce being discarded,
+      leaving no prover able to supply `chain[0]` — is closed.
+- [ ] Step 4 is **not mechanical**, contrary to the earlier note here. There is
+      no discharge signature chain to re-derive. See §Step 4 — discharge chains:
+      there is no chain.
 - [x] Byte-to-felt packing convention for variable-length caveat messages:
       31 bytes per felt, length-prefixed, with round-trip, injectivity and
       range properties proven by test.

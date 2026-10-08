@@ -1154,6 +1154,69 @@ mod tests {
         token
     }
 
+    /// RFC-0958 §Algorithms step 4 has no subject in this codebase.
+    ///
+    /// The step reads "verify discharges' HMAC chains (each channel's root
+    /// secret resolved in witness)". There is no such chain to re-derive:
+    ///
+    /// 1. Every channel provider emits `chain: vec![[0u8; 32]]` — one zero
+    ///    placeholder entry.
+    /// 2. Nothing reads `DischargeMacaroon::chain` anywhere. `verify_discharges`
+    ///    hands the discharge to the channel provider, which decides from its
+    ///    own live state.
+    /// 3. `EscrowDischargeProvider::mint_discharge` says so outright: "the
+    ///    discharge macaroon does NOT carry a signature chain (the channel
+    ///    operator is trusted to mint)".
+    ///
+    /// The circuit's `discharges_count` is likewise only bounds-checked
+    /// (`< 256`), never used to verify anything.
+    ///
+    /// **This test exists so step 4 cannot be "implemented" against the
+    /// placeholder by accident.** A re-derivation over an all-zero chain would
+    /// assert nothing — precisely the defect step 2 was found to have, where an
+    /// assertion could not fail. If discharges ever grow a real chain, this
+    /// test should fail and be rewritten, not deleted.
+    #[test]
+    fn discharge_chains_are_placeholders_and_nothing_consumes_them() {
+        // (1) The providers that mint real discharges all emit a zero chain.
+        let holder_did = octo_ident::test_helpers::sample_did(211);
+        let mut minter = EscrowDischargeProvider::new();
+        minter.set_balance(&holder_did, EscrowBalance(1_000_000));
+        let req = DischargeRequest {
+            token: &test_token(&holder_did, Vec::new()),
+            holder_did: &holder_did,
+            // The escrow provider reads the amount to settle as a 16-byte
+            // big-endian u128 from the context.
+            context: &1000u128.to_be_bytes(),
+        };
+        let minted = minter.mint_discharge(&req).expect("escrow mint");
+        assert_eq!(
+            minted.chain,
+            vec![[0u8; 32]],
+            "escrow still emits a placeholder chain"
+        );
+
+        // (2) Verification succeeds with an arbitrarily wrong chain, which is
+        // only possible because nothing consults it. If a real chain is added,
+        // this fails and the RFC step becomes implementable.
+        let mut provider = EscrowDischargeProvider::new();
+        provider.set_balance(&holder_did, EscrowBalance(1_000_000));
+        let mut registry = ChannelProviderRegistry::default();
+        registry.register(provider);
+
+        let mut forged = minted;
+        forged.chain = vec![[0xde; 32], [0xad; 32], [0xbe; 32]];
+        let mut token = test_token(&holder_did, vec![Caveat::ThirdParty("escrow".to_owned())]);
+        token.discharges.push(forged);
+
+        let mut contexts = HashMap::new();
+        contexts.insert("escrow".to_owned(), 1000u128.to_be_bytes().to_vec());
+        verify_discharges(&token, &registry, &contexts).expect(
+            "a discharge with a forged chain still verifies, because the chain \
+             is not part of discharge validity",
+        );
+    }
+
     const DUMMY_DISCHARGE: DischargeMacaroon = DischargeMacaroon {
         channel: String::new(),
         root_secret_hash: [0; 32],

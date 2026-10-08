@@ -1,6 +1,6 @@
 # Mission: 0905-a — Structured Logging
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/proxy.rs` (`if let Some(ref lg) = logger { ... }` block emitting `LogEvent` via `StructuredLogger::request_completed` / `request_failed`), `proxy.rs` `with_logger` builder, `proxy.rs` `rfc0905_tests::with_logger_attaches_handle` tokio test. All 11 ACs now checked. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit. Mission predates RFC-0944 (`tracing::info!` at proxy.rs) — the two coexist: tracing emits span-based human-readable logs (RFC-0944 contract), StructuredLogger emits NDJSON `LogEvent` records (RFC-0905 contract).
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/proxy.rs` (`if let Some(ref lg) = logger { ... }` block emitting `LogEvent` via `StructuredLogger::request_completed` / `request_failed`), `proxy.rs` `with_logger` builder, `proxy.rs` `rfc0905_tests::with_logger_attaches_handle` tokio test. All 11 ACs now checked. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit. Mission predates RFC-0905 (`tracing::info!` at proxy.rs) — the two coexist: tracing emits span-based human-readable logs (RFC-0905 contract), StructuredLogger emits NDJSON `LogEvent` records (RFC-0905 contract).
 
 ## Status
 
@@ -23,7 +23,7 @@ None
 - [x] Implement async buffered writer with configurable buffer size and flush interval
 - [x] Implement log sampling with configurable `sample_rate`
 - [x] Add `LogConfig` to `config.rs` (level, format, sample_rate, buffer_size, flush_interval_ms)
-- [x] Integrate structured logging into `proxy.rs` for request/response events (RFC-0905 NDJSON side-channel; coexists with RFC-0944 `tracing::info!` at proxy.rs)
+- [x] Integrate structured logging into `proxy.rs` for request/response events (RFC-0905 NDJSON side-channel; coexists with the pre-existing `tracing::info!` calls at proxy.rs)
 - [x] Never-log list: Authorization, X-API-Key, Cookie headers
 - [x] Clippy passes with zero warnings
 - [x] All existing tests pass

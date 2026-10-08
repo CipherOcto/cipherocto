@@ -3044,7 +3044,7 @@ Round 8 closes the final two convergence questions:
 Round 9 closes the final five convergence questions:
 
 1. **`AttestorAuthInvalid` variant added.** `ReputationError::AttestorAuthInvalid` (0x27) is the explicit error class for `AttestorAuth` governance signature verification failure. `register_attestor` returns `AttestorAuthInvalid` when the signature does not verify over `BLAKE3(BLAKE3_REPUTATION_ATTESTOR_DOMAIN || registration.attestor_did || registration.pubkey || registration.requested_at_unix)`. The §13 error code table has 40 unique assignments across `0x01..0x28`.
-2. **Slash shadow-write formula dropped from mission; defer to RFC §7.** The Phase 2 acceptance criterion in `missions/open/0968-reputation-persistence-blocked.md` formerly listed `score_delta = -1.0/(1+slash_count)` as the slash-mapping formula. The mission now references RFC-0968 §7 slash mapping (`severity = 1`, `severity_total += 1`); the §7 table is the authoritative mapping rule.
+2. **Slash shadow-write formula dropped from mission; defer to RFC §7.** The Phase 2 acceptance criterion in `missions/claimed/0968-reputation-persistence.md` formerly listed `score_delta = -1.0/(1+slash_count)` as the slash-mapping formula. The mission now references RFC-0968 §7 slash mapping (`severity = 1`, `severity_total += 1`); the §7 table is the authoritative mapping rule.
 3. **`RotationState` deprecated; `reputation_rotations` is canonical.** §2.1 now refers to the `reputation_rotations` table (defined in the v005 migration) as the persistence layer for `RotationReceipt`. The previous `RotationState` table name is removed; §15 lifecycle coverage already uses `reputation_rotations` as the explicit table reference.
 4. **`AttestorAuth.signature` is `[u8; 64]` for consistency.** `AttestorAuth.signature` is now `[u8; 64]` (fixed-size ed25519), matching `RetentionAuth.signature`. The previous `Vec<u8>` form was inconsistent with the fixed-size signature requirement and required a runtime length check before ed25519 verification.
 5. **`AttestorAuth` references sibling `AttestorRegistration`.** The signed message is reconstructed from the sibling `AttestorRegistration` struct (`attestor_did`, `pubkey`, `requested_at_unix`). The struct doc note records that callers MUST carry both structs together; `register_attestor` reconstructs the digest from the registration fields.
@@ -3298,7 +3298,7 @@ v2.2-r12 is a targeted conformance round. It does not introduce new behavior; it
 - **M1 (MEDIUM):** The literal `"resume"` sub-tag is removed from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment. The signed payload is now stated consistently as `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)` everywhere it appears. File:line — `rfcs/draft/economics/0968-reputation-registry.md` (comment) and (`ResumeProof` prose).
 - **L1 (LOW):** Round 11 Notes now states the trait/impl alignment is being delivered by v2.2-r12 rather than describing the prior v2.1-r11 release as already conforming. File:line — `rfcs/draft/economics/0968-reputation-registry.md`.
 
-Round 12 does not touch the use case, mission, or research docs. Per the task constraints, those doc-propagation items (Round 11 entries in `docs/use-cases/reputation-persistence.md`, `missions/open/0968-reputation-persistence-blocked.md`, and `docs/research/2026-07-24-reputation-persistence-research.md`) are deferred to the caller.
+Round 12 does not touch the use case, mission, or research docs. Per the task constraints, those doc-propagation items (Round 11 entries in `docs/use-cases/reputation-persistence.md`, `missions/claimed/0968-reputation-persistence.md`, and `docs/research/2026-07-24-reputation-persistence-research.md`) are deferred to the caller.
 
 ### Round 13 Notes
 
@@ -3313,7 +3313,7 @@ v2.4-r14 is a Round 13 doc-propagation conformance round. It closes one HIGH and
 
 - **H1 (HIGH):** §3 `verify_governance_suspension` impl body had a path bug: `msg.extend_from_slice(proof.recorder_id.0.as_bytes())` referenced the `Did` newtype directly, but `Did::as_bytes()` does not exist (`Did` is a `pub struct Did(String)` with no `as_bytes` method). The correct path is `proof.recorder_id.0.0.as_bytes()` — `recorder_id.0` is a `Did`, and `recorder_id.0.0` is the inner `String`, which has `.as_bytes()`. This matches the §3 `resume_recorder` impl which uses `recorder_id.0.0.as_bytes()` correctly. File:line — `rfcs/draft/economics/0968-reputation-registry.md`.
 - **Doc propagation (HIGH):** `docs/use-cases/reputation-persistence.md` and carried the Round 12 digest form `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder.0 || reason_hash || now_unix)` (no `governance_pubkey`). Both have been updated to the Round 13 form `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || governance_pubkey || now_unix)`. The Round 10 H1 bullet has been retitled "Round 10 H1 + Round 13 H1" and the verification order description has been corrected to match the Round 13 impl: snapshot freshness → digest + ed25519 signature verification (against `proof.governance_pubkey`) → `lookup_at_snapshot` (Round 7 H4 defense-in-depth).
-- **Doc propagation (HIGH):** `missions/open/0968-reputation-persistence-blocked.md` acceptance criterion carried the Round 12 digest form. It has been updated to the Round 13 form, and the inline citation now reads "Round 10 H1 + Round 13 H1".
+- **Doc propagation (HIGH):** `missions/claimed/0968-reputation-persistence.md` acceptance criterion carried the Round 12 digest form. It has been updated to the Round 13 form, and the inline citation now reads "Round 10 H1 + Round 13 H1".
 
 Round 14 makes no design changes; it only propagates the Round 13 governance-suspension digest form into the verify impl path and the two downstream docs.
 
@@ -3336,7 +3336,7 @@ v3.0-r15 is a major architectural change: switch `f64` to `octo_determin::Dfp` (
 
 Cross-file propagation:
 
-- `missions/open/0968-reputation-persistence-blocked.md`: `update_ewma returns Result<f64, _>` → `Result<octo_determin::Dfp, _>` (Phase 1 acceptance); EWMA test vector line and "Why v1.1 DFP upgrade" Notes paragraph rewritten; cargo dep added to Mission Phase 1 acceptance; `f64::EPSILON * samples` equivalence-test entry dropped.
+- `missions/claimed/0968-reputation-persistence.md`: `update_ewma returns Result<f64, _>` → `Result<octo_determin::Dfp, _>` (Phase 1 acceptance); EWMA test vector line and "Why v1.1 DFP upgrade" Notes paragraph rewritten; cargo dep added to Mission Phase 1 acceptance; `f64::EPSILON * samples` equivalence-test entry dropped.
 - `docs/use-cases/reputation-persistence.md`: "Round 2 M14 DFP upgrade path" bullet replaced with "v1.0 uses `octo_determin::Dfp` per RFC-0104. Cross-replica determinism is achieved at the type level."
 - `docs/research/2026-07-24-reputation-persistence-research.md`: "f64 caveat" paragraph replaced; "f64 cross-platform variance" risk row rewritten.
 - `missions/claimed/0968a-reputation-anchoring.md`: v3.0-r15 cross-reference added.
@@ -3421,10 +3421,10 @@ v3.3-r18 is a Round 17 follow-up + cross-file propagation round. It closes 12 CR
 
 **Cross-file propagation applied:**
 
-- **(C7)** `missions/open/0968-reputation-persistence-blocked.md`: "RFC-0104 recommended for cross-replica EWMA in v1.1" → "RFC-0104 REQUIRED; v1.0 uses `octo_determin::Dfp`".
-- **(C8)** `missions/open/0968-reputation-persistence-blocked.md`: `Dfp::from_f64(0.961 ± ε_dfp)` → `Dfp::from_f64(0.961)` with explicit "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison" annotation.
-- **(C9)** `missions/open/0968-reputation-persistence-blocked.md`: `Dfp::to_bytes()` / `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&d).to_bytes()`.
-- **(C10)** `missions/open/0968-reputation-persistence-blocked.md`: `0x28..=0xFF reserved for future variants` → `0x29..=0xFF reserved for future variants` (since `ScoreEncodingInvalid = 0x28`).
+- **(C7)** `missions/claimed/0968-reputation-persistence.md`: "RFC-0104 recommended for cross-replica EWMA in v1.1" → "RFC-0104 REQUIRED; v1.0 uses `octo_determin::Dfp`".
+- **(C8)** `missions/claimed/0968-reputation-persistence.md`: `Dfp::from_f64(0.961 ± ε_dfp)` → `Dfp::from_f64(0.961)` with explicit "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison" annotation.
+- **(C9)** `missions/claimed/0968-reputation-persistence.md`: `Dfp::to_bytes()` / `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&d).to_bytes()`.
+- **(C10)** `missions/claimed/0968-reputation-persistence.md`: `0x28..=0xFF reserved for future variants` → `0x29..=0xFF reserved for future variants` (since `ScoreEncodingInvalid = 0x28`).
 - **(C11)** `docs/use-cases/reputation-persistence.md`: `0x28..=0xFF reserved` → `0x29..=0xFF reserved`.
 - **(C12)** `missions/claimed/0968a-reputation-anchoring.md`: "anchor 24-byte DFP directly into RFC-0955 reputation:u64" → "anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (32-byte digest) into the RFC-0955 `reputation:blake3_digest` field" (a 24-byte BLOB does not fit in `reputation:u64`).
 

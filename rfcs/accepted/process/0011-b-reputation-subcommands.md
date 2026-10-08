@@ -565,7 +565,7 @@ The reputation read surface decomposes into one companion implementation mission
 - `crates/octo-cli/src/redact.rs` — NO CHANGE (parent `OctoCliRedactor` already covers all redaction patterns; `show` is a no-op for the redactor per §7.7)
 - `crates/octo-cli/Cargo.toml` — MODIFY, add `octo-reputation` + `octo-determin` deps
 
-> Per parent §Key Files to Modify convention, all SUBSTRATE work is filed as a mission YAML at `missions/claimed/0011-b-reputation-show.md` and tracked separately from this RFC. The RFC declares intent; the mission declares work.
+> Per parent §Key Files to Modify convention, all SUBSTRATE work is filed as a mission YAML at `missions/archived/completed/0011-b-reputation-subcommands.md` and tracked separately from this RFC. The RFC declares intent; the mission declares work.
 
 ## Future Work
 

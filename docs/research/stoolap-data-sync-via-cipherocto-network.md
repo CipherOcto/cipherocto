@@ -765,7 +765,7 @@ The networking category is 0800–0899; storage is 0200–0299. This protocol si
 
 ### 10.1 Base mission
 
-`missions/open/0862-stoolap-data-sync-base.md`
+`missions/archived/0862-base-stoolap-data-sync-core.md`
 
 Acceptance criteria:
 
@@ -855,7 +855,7 @@ Alternatives that should also be considered (deferred to F1):
 
 ### 11.3 Open missions
 
-3. **After RFC acceptance**, open the base mission `missions/open/0862-stoolap-data-sync-base.md` and the 9 sub-missions from §10.2.
+3. **After RFC acceptance**, open the base mission `missions/archived/0862-base-stoolap-data-sync-core.md` and the 9 sub-missions from §10.2.
 
 ### 11.4 Adversarial review
 

@@ -149,28 +149,28 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
 
 ## Test Vectors
 
-- TV-VP11: `PaymentEventProducer` — happy-path mint issuance → log row
+- TV-VP13: `PaymentEventProducer` — happy-path mint issuance → log row
   inserted + `cache:projection:<vault>` envelope emitted; subscriber
   invalidates cache entry
-- TV-VP12: `SettlementEventProducer` — wrapped `SettlementEventRepository::insert`
+- TV-VP14: `SettlementEventProducer` — wrapped `SettlementEventRepository::insert`
   fires insert + envelope atomically within one Stoolap txn (verify via
   Stoolap txn log inspection)
-- TV-VP13: `BurnEventProducer` — `BurnEventRef::consume` produces log
+- TV-VP15: `BurnEventProducer` — `BurnEventRef::consume` produces log
   insert with `ZERO_VAULT_ID` sentinel + envelope after nonce observation
-- TV-VP14: 1000-concurrent-producer race — `drain_lock` enforces serial
+- TV-VP16: 1000-concurrent-producer race — `drain_lock` enforces serial
   queue; no concurrent `log.insert` calls observable
-- TV-VP15: tri-invariant violation — `validate_pre_insert` returns
+- TV-VP17: tri-invariant violation — `validate_pre_insert` returns
   `Err(ProducerError::TriInvariantViolation)`; producer's `produce`
   short-circuits BEFORE `log.insert`; log row count unchanged
-- TV-VP15a: `produce()` returns `TransferEventRef` (NOT `()`) on success;
+- TV-VP17a: `produce()` returns `TransferEventRef` (NOT `()`) on success;
   caller has the inserted event reference for downstream consumers
-- TV-VP16: subscriber running before producer — process init order
+- TV-VP18: subscriber running before producer — process init order
   enforces subscriber task alive before any `produce` call
-- TV-VP17: subscriber wildcard `cache:projection:*` matches all per-vault
+- TV-VP19: subscriber wildcard `cache:projection:*` matches all per-vault
   channels; envelope deserialization round-trip preserves all fields
-- TV-VP18: `produce` override that skips `validate_pre_insert` is REJECTED
+- TV-VP20: `produce` override that skips `validate_pre_insert` is REJECTED
   by clippy lint or compile-time bound
-- TV-VP19: subscriber envelope handler calls `VaultBalanceCache::invalidate`
+- TV-VP21: subscriber envelope handler calls `VaultBalanceCache::invalidate`
   correctly for `source_kind = Cache` (no-op) and `FreshLogScan`/`EpochRebuild`
   (drops entry)
 

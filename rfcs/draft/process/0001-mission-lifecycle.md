@@ -67,7 +67,7 @@ This RFC provides the governance framework for mission-based execution.
 ### Mission File Format
 
 ```yaml
-# missions/0001-add-mission-lifecycle.md
+# rfcs/draft/process/0001-mission-lifecycle.md
 
 id: "0001"
 title: "Add Mission Lifecycle"

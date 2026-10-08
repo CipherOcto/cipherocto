@@ -184,7 +184,7 @@ Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
 - **Sibling:** `missions/claimed/0105-x-s4-deferred-codemod-sites.md`
   (LANDED 2026-08-18) — covers in-memory u128→Dqa migration;
   0900-d1 covers substrate column promotion
-- **Sibling:** `missions/claimed/0862-c9-micro-octo-w-canonical-alias.md`
+- **Sibling:** `missions/retired/0862-c9-micro-octow-type-unification.md`
   (LANDED 2026-08-17) — canonical `MicroOctoW` alias
 - **Pattern:** `crates/octo-vault/src/vault_id_unchecked` two-tier
   `HashMap<ChainId, HashMap<...>>` pattern — design reference for

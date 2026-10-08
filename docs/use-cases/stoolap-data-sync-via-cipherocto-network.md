@@ -216,16 +216,16 @@ Implementation in stoolap fork:
 
 Under the new `RFC-0862`:
 
-- `missions/open/0862-stoolap-data-sync-base.md` — base mission; types `SyncEnvelopeType`, `SyncSummary`, `SyncSegment`, `WalTailChunk`, `NodeStatus`, `NodeId`, `PeerId`, `SyncTransport` trait, `SyncEngine` struct.
-- `missions/open/0862a-stoolap-data-sync-wal-tail.md` — WAL-tail streaming (Approach B).
-- `missions/open/0862b-stoolap-data-sync-merkle-summary.md` — Per-table segment Merkle summary + anti-entropy handshake (Approach D).
-- `missions/open/0862c-stoolap-data-sync-snapshot-segment.md` — Snapshot segment request/response, LZ4, CRC32, parallel download.
-- `missions/open/0862d-stoolap-data-sync-ocrypt-bind.md` — OCrypt integration, mission key derivation, AAD binding, AuthChallenge/AuthResponse.
-- `missions/open/0862e-stoolap-data-sync-replay-cache-persistence.md` — Persist `ReplayCache` to disk for restart survival.
-- `missions/open/0862f-stoolap-data-sync-multi-peer.md` — N readers via DGP `GossipObject` `object_type=0x0008 SnapshotFragment`.
-- `missions/open/0862g-stoolap-data-sync-cross-carrier.md` — Multi-carrier propagation (NativeP2P + Webhook + one social adapter).
-- `missions/open/0862h-stoolap-data-sync-property-tests.md` — Property tests (LSN monotonicity, heartbeat-loss, key-isolation, rate-limit).
-- `missions/open/0862i-stoolap-data-sync-raft-overlay.md` — (Phase 4 future) Raft/Paxos overlay for quorum replication.
+- `missions/archived/0862-base-stoolap-data-sync-core.md` — base mission; types `SyncEnvelopeType`, `SyncSummary`, `SyncSegment`, `WalTailChunk`, `NodeStatus`, `NodeId`, `PeerId`, `SyncTransport` trait, `SyncEngine` struct.
+- `missions/archived/0862a-wal-tail-streamer.md` — WAL-tail streaming (Approach B).
+- `missions/archived/0862b-merkle-segment-summary.md` — Per-table segment Merkle summary + anti-entropy handshake (Approach D).
+- `missions/archived/0862c-snapshot-segment-indexer.md` — Snapshot segment request/response, LZ4, CRC32, parallel download.
+- `missions/archived/0862d-ocrypt-mission-key-ring.md` — OCrypt integration, mission key derivation, AAD binding, AuthChallenge/AuthResponse.
+- `missions/archived/0862e-replay-cache-persistence.md` — Persist `ReplayCache` to disk for restart survival.
+- `missions/archived/0862f-multi-peer-via-dgp.md` — N readers via DGP `GossipObject` `object_type=0x0008 SnapshotFragment`.
+- `missions/archived/0862g-cross-carrier-sync.md` — Multi-carrier propagation (NativeP2P + Webhook + one social adapter).
+- `missions/archived/0862h-property-tests.md` — Property tests (LSN monotonicity, heartbeat-loss, key-isolation, rate-limit).
+- `missions/archived/0862i-raft-overlay.md` — (Phase 4 future) Raft/Paxos overlay for quorum replication.
 
 ---
 

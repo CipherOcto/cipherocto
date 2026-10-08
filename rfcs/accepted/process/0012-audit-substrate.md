@@ -495,7 +495,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 - `rfcs/draft/process/0012-audit-substrate.md` — this file (Draft)
 - `rfcs/accepted/process/0011-a-audit-subcommands.md` — append layer-model note + VH row (companion amendment, see §Implementation Phases Phase 3)
 - `docs/07-developers/octo-cli-implementation-guide.md` — add §Audit Substrate Mapping (RFC-0011-a names → substrate names)
-- `missions/open/0012-audit-core-extraction.md` — NEW mission (RFC-Accept gated per BLUEPRINT.md §RFC Acceptance Process)
+- `missions/archived/completed/0012-audit-substrate-extraction.md` — NEW mission (RFC-Accept gated per BLUEPRINT.md §RFC Acceptance Process)
 
 ### SUBSTRATE (Phase 1)
 

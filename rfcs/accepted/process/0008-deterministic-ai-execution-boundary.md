@@ -487,14 +487,14 @@ EXPECTED:
 
 ### Phase 2: Execution Class Amendment Sweep (NEW)
 
-- [ ] Mission `0008-execution-class-amendments` filed at `missions/open/0008-execution-class-amendments.md`
+- [ ] Mission `0008-execution-class-amendments` filed. NOT YET FILED — this AC's original text named `missions/open/0008-execution-class-amendments.md`, a path that has never existed in git history. Filing this mission is the outstanding work.
 - [ ] 68 currently-missing accepted RFCs gain §RFC-0008 Execution Class Mapping table (one RFC amendment per RFC; ~3-5 days)
 - [ ] Each amendment RFC carries rationale per A/B/C taxonomy
 - [ ] Class C operations physically separated to `octo-ai-exploratory` crate (mission `0008-class-c-sandbox`)
 
 ### Phase 3: Linter Enforcement
 
-- [ ] Mission `0008-class-c-linter` filed at `missions/open/0008-class-c-linter.md`
+- [ ] Mission `0008-class-c-linter` filed. NOT YET FILED — this AC's original text named `missions/open/0008-class-c-linter.md`, a path that has never existed in git history. Filing this mission is the outstanding work.
 - [ ] `crates/octo-policy/src/class_lint.rs` implements `assert_class` + `verify_class_a_reproducibility` CI integration
 - [ ] CI gate: PR introducing Class C operation into consensus-path crate blocks merge
 

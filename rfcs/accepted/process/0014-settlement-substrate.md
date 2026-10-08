@@ -717,7 +717,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 
 - `rfcs/draft/process/0014-settlement-substrate.md` — this file (Draft)
 - `rfcs/accepted/process/0011-a-audit-subcommands.md` — append layer-model note + VH row (companion amendment)
-- `missions/open/0014-settlement-core-extraction.md` — NEW mission (RFC-Accept gated)
+- `missions/archived/completed/0014-settlement-substrate-extraction.md` — NEW mission (RFC-Accept gated)
 
 ### SUBSTRATE (Phase 1)
 

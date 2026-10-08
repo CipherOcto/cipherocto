@@ -573,7 +573,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 
 - `rfcs/draft/process/0013-governance-substrate.md` — this file (Draft)
 - `rfcs/accepted/process/0011-g-governance-subcommands.md` — append layer-model note + VH row (companion amendment)
-- `missions/open/0013-governance-core-extraction.md` — NEW mission (RFC-Accept gated)
+- `missions/archived/completed/0013-governance-substrate-extraction.md` — NEW mission (RFC-Accept gated)
 
 ### SUBSTRATE (Phase 1)
 

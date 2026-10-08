@@ -72,7 +72,7 @@ Each adapter crate:
 - New: `crates/octo-cap-macaroon-vault-storage/Cargo.toml` + `src/lib.rs` + `tests/register_roundtrip.rs`
 - New: `crates/octo-matrix-session-store-storage/Cargo.toml` + `src/lib.rs` + `tests/register_roundtrip.rs`
 - New: `crates/octo-policy-storage/Cargo.toml` + `src/lib.rs` + `tests/register_roundtrip.rs`
-- Move: `missions/open/0206-004-adapter-crates.md` → `missions/retired/0206-004-adapter-crates-v21.md` (split per R3 structural analysis)
+- Move: `missions/retired/0206-004-adapter-crates-v21.md` → `missions/retired/0206-004-adapter-crates-v21.md` (split per R3 structural analysis)
 
 ## Cross-references
 

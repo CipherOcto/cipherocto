@@ -588,6 +588,44 @@ Not guessed here.
 
 ### Step 1 — Ed25519: the premise was wrong
 
+#### The corelib premise behind the substitution has expired
+
+The verifier substitutes BLAKE3 for SHA-512 because of a comment reading
+"Cairo 2.16.0 corelib lacks SHA-512". The project is on **scarb 2.20.0 /
+cairo 2.20.0** now, and corelib does have it:
+
+```cairo
+core::sha512::compute_sha512_byte_array(@ByteArray) -> [u64; 8]
+```
+
+So the "real SHA-512 in-circuit" option is materially cheaper than it first
+looked — the hash itself is free, and the RFC 8032 vectors above were
+reproduced against it. What remains is a 512-bit **mod L** reduction in
+Cairo, not a hash implementation.
+
+Two facts about that reduction, both found the hard way:
+
+- `L` is 253 bits, so it needs **eight** `u32` limbs. A four-limb constant
+  silently keeps only the low 128 bits and produces a wrong answer with no type
+  error — the comparison against a 512-bit remainder just disagrees.
+- corelib returns a **fixed-size array**, which Cairo cannot index or call
+  `.at()` on, so the eight `u64` words must be destructured and selected by
+  hand.
+
+Neither is hard; both are silent when wrong, which is the same failure shape as
+the BLAKE3 substitution itself.
+
+**Status: not implemented.** The 512-to-253-bit reduction was started as plain
+binary long division — obviously correct rather than fast, since 512 iterations
+of eight-limb work is negligible as gas. It is a reference implementation and
+far too expensive as CASM, so it would need a word-level reduction (or the
+STARK-friendly curve, which makes the question moot) before promotion out of
+`#[cfg(test)]`. No CASM figure is claimed, because none was measured.
+
+The existing pinned test — `a_genuine_rfc8032_signature_is_currently_rejected`
+— still describes the current state accurately and was deliberately left in
+place rather than updated to match a partial implementation.
+
 RFC-0958 §Algorithms calls for in-circuit holder-signature verification, and the
 repository already contains 1,573 lines presented as a "Pure-Cairo RFC 8032
 Ed25519 signature verifier". Exercised with a second RFC 8032 vector, **it

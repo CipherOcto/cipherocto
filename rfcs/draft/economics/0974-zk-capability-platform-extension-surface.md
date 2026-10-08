@@ -431,6 +431,56 @@ lib 365 → 370, `octo-wallet-node` 39 → 41, `octo-cap-poi` 12 and `octo-cap-z
 unchanged. Clippy clean with warnings denied on all targets and all features across
 all five touched crates.
 
+### Amendment 5 — migrate the core vault check onto the registry
+
+`VaultEvaluator` existed but nothing called it, which is the failure mode
+Amendment 1 warns about: an extension surface that is never exercised becomes a
+second, parallel idiom beside the hardcoded logic it was meant to replace.
+
+`verify_for_vault_op` was the last real core evaluation path with no third-party
+home. It is now joined by `verify_for_vault_op_with`, which dispatches **every**
+caveat on the capability and on each `WrappedOnly` ancestor through the registry,
+not only the vault ones. A third-party caveat on an inherited chain is therefore
+evaluated rather than skipped.
+
+**One body could not be kept, and the reason is architectural, not stylistic.**
+Registrations are `'static`, so a registry cannot hold the `&dyn VaultLookup` that
+`verify_for_vault_op` takes. An evaluator owns its substrate dependency by
+construction — that is exactly the property a third party needs — so forcing a
+single body would have meant either leaking the borrow or changing the public
+signature. Both cost more than they buy.
+
+So the two paths coexist, kept honest by a **differential guard** rather than by
+hope: `vault_op_paths_agree_on_every_outcome` runs both over the same capability
+across accept, missing row, chain mismatch, inactive vault, and the
+chainless-parent refusal, and asserts they decide identically. That is the honest
+form of a migration: not by rewriting a pinned path, but by proving the new path
+equivalent until the old one can be deleted.
+
+Two boundaries were preserved deliberately:
+
+- **`WrappedChainHasNoVault` still means what it said.** RFC-0965 §3.7 states the
+  chainless-parent rule in terms of `Caveat::Vault` specifically. Widening it to
+  "some caveat was evaluated" would change a security invariant rather than
+  generalise one, so it runs before dispatch and is unchanged.
+- **`collect_chain_caveats` is the single chain walk.** `collect_vault_caveats` is
+  now a filter over it, so the cycle, depth and missing-parent rules exist in
+  exactly one place rather than two.
+
+Refusals from the registry surface as one opaque `CaveatRefused` variant by design
+— an extension crate must not be able to forge a precise vault error. The legacy
+path still yields `VaultRowMissing` / `ChainMismatch` / `VaultNotActive`, so
+callers pattern-matching on those are unaffected.
+
+A third test pins the payoff: a `vendor.example/approval` caveat the hardcoded
+path has no vocabulary for is invisible to it and binding on the registry path.
+That is the difference between an extension surface and a documentation promise.
+
+Validation: 3 new migration-guard tests; `octo-cap-macaroon` lib 370 → 373, and the
+pinned `tv_0957_verify_time` / `tv_c1_verify_time` vectors pass unmodified.
+`octo-cap-macaroon-vault` integration tests green. Clippy clean with warnings
+denied on all targets and all features.
+
 ### Implementation Status
 
 Amendment 1 is **built**. It lives in `crates/octo-cap-macaroon/src/caveat/evaluator.rs`,

@@ -483,11 +483,19 @@ impl Macaroon {
         op_chain_id: &[u8; 32],
         vault_lookup: &dyn crate::vault_lookup::VaultLookup,
     ) -> Result<(), crate::VaultVerifyError> {
-        // Steps 1 + 2: standard chain re-derivation + wrapped-chain integrity.
+        // Deliberately NOT a thin wrapper over `verify_for_vault_op_with`.
+        // Registrations are `'static`, so a registry cannot hold the borrowed
+        // lookup this signature takes — an evaluator owns its substrate handle
+        // by construction. Forcing one body would mean either leaking the borrow
+        // or changing this signature, and both cost more than they buy.
+        //
+        // The two bodies are therefore kept in step by a differential guard
+        // (`vault_op_paths_agree_on_every_outcome`), which is the honest way to
+        // migrate a pinned path: not by rewriting it, but by proving the new
+        // path decides identically until the old one can be deleted.
         self.verify_signature(root_secret)?;
         check_wrapped_chain(self, catalog)?;
 
-        // Step 3: walk self + WrappedOnly ancestors, collect every Caveat::Vault.
         let vault_caveats = collect_vault_caveats(self, catalog)?;
         if vault_caveats.is_empty() {
             return Err(VaultVerifyError::WrappedChainHasNoVault);
@@ -504,6 +512,72 @@ impl Macaroon {
                 return Err(VaultVerifyError::VaultNotActive { vault_id });
             }
         }
+
+        if let Some(parent_caveats) = expected_parent {
+            let all_match =
+                super::caveat::set_subsumes_with_registry(parent_caveats, &self.caveats, |name| {
+                    catalog.is_raw_name_registered(name)
+                });
+            if !all_match {
+                return Err(MacaroonError::AttenuationViolation.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::verify_for_vault_op`] with a registry of caveat evaluators.
+    ///
+    /// This is the forward path, and the only one where a third-party caveat has
+    /// any effect. Every caveat on the capability and on each `WrappedOnly`
+    /// ancestor is dispatched through the registry.
+    ///
+    /// The chain id is injected as an operation fact because it is the one fact
+    /// every vault-aware evaluator needs; other facts are the caller's to supply
+    /// by constructing evaluators that read them.
+    ///
+    /// # Errors
+    /// As [`Self::verify_for_vault_op`], plus
+    /// [`crate::VaultVerifyError::CaveatRefused`] when a registered evaluator
+    /// refuses a caveat.
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify_for_vault_op_with(
+        &self,
+        root_secret: &[u8; 32],
+        catalog: &dyn CapabilityCatalog,
+        expected_parent: Option<&[Caveat]>,
+        op_chain_id: &[u8; 32],
+        evaluators: &crate::caveat::evaluator::CaveatEvaluatorRegistry,
+        clock: &dyn crate::clock::Clock,
+    ) -> Result<(), crate::VaultVerifyError> {
+        // Steps 1 + 2: standard chain re-derivation + wrapped-chain integrity.
+        self.verify_signature(root_secret)?;
+        check_wrapped_chain(self, catalog)?;
+
+        // Step 3: walk self + WrappedOnly ancestors, collecting every caveat
+        // rather than only the vault ones. The registry decides which of them
+        // it owns, so a third-party caveat on an inherited chain is evaluated
+        // rather than ignored.
+        let chain_caveats = collect_chain_caveats(self, catalog)?;
+
+        // The chainless-parent rule, unchanged and checked before dispatch. It is
+        // stated in terms of `Caveat::Vault` specifically, not "some caveat was
+        // evaluated", so widening it to third-party caveats would change a
+        // security invariant rather than generalise one.
+        if !chain_caveats.iter().any(|c| matches!(c, Caveat::Vault(_))) {
+            return Err(VaultVerifyError::WrappedChainHasNoVault);
+        }
+
+        let operation = crate::caveat::evaluator::ProposedOperation::empty().with(
+            crate::caveat::evaluator::fact_key::CHAIN_ID,
+            crate::caveat::evaluator::OperationFact::Hash32(*op_chain_id),
+        );
+        crate::caveat::evaluator::evaluate_registered(
+            evaluators,
+            &chain_caveats,
+            &operation,
+            clock,
+        )
+        .map_err(|e| crate::VaultVerifyError::CaveatRefused { key: e.to_string() })?;
 
         // Step 4: attenuation subsumption against expected_parent (if provided).
         if let Some(parent_caveats) = expected_parent {
@@ -748,17 +822,34 @@ fn collect_vault_caveats(
     macaroon: &Macaroon,
     catalog: &dyn CapabilityCatalog,
 ) -> Result<Vec<[u8; 32]>, VaultVerifyError> {
+    Ok(collect_chain_caveats(macaroon, catalog)?
+        .into_iter()
+        .filter_map(|c| match c {
+            Caveat::Vault(vault_id) => Some(vault_id),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Every caveat on the macaroon and on each `WrappedOnly` ancestor, in walk
+/// order.
+///
+/// The single chain walk, collecting **all** caveats rather than only
+/// `Caveat::Vault`. The registry then decides which of them it owns, so a
+/// third-party caveat on an inherited chain is evaluated rather than skipped.
+/// [`collect_vault_caveats`] is a filter over this, so the cycle, depth and
+/// missing-parent rules exist in exactly one place.
+fn collect_chain_caveats(
+    macaroon: &Macaroon,
+    catalog: &dyn CapabilityCatalog,
+) -> Result<Vec<Caveat>, VaultVerifyError> {
     let mut out = Vec::new();
     let mut visited: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
     let mut current: Macaroon = macaroon.clone();
     let mut depth: u8 = 1;
     visited.insert(current.id);
 
-    for c in &current.caveats {
-        if let Caveat::Vault(vault_id) = c {
-            out.push(*vault_id);
-        }
-    }
+    out.extend(current.caveats.iter().cloned());
 
     loop {
         if depth > MAX_WRAPPED_DEPTH {
@@ -776,11 +867,7 @@ fn collect_vault_caveats(
         let Some(parent) = catalog.lookup(&parent_id) else {
             return Err(MacaroonError::WrappedParentNotFound { parent_id }.into());
         };
-        for c in &parent.caveats {
-            if let Caveat::Vault(vault_id) = c {
-                out.push(*vault_id);
-            }
-        }
+        out.extend(parent.caveats.iter().cloned());
         current = parent;
     }
 }
@@ -2106,4 +2193,225 @@ mod tests {
     /// investigation so future reviews don't re-surface it.
     #[allow(dead_code)]
     fn _wrapped_cycle_investigation_note() {}
+
+    // --- the vault-op registry migration guard -------------------------------
+    //
+    // `verify_for_vault_op` (hardcoded, precise error variants) and
+    // `verify_for_vault_op_with` (registry dispatch) decide the same question by
+    // two implementations. Two implementations of one rule is exactly the
+    // "parallel abstraction" the crate's principles forbid, and the only
+    // defence is a differential guard that fails when they disagree.
+    //
+    // This is the migration in miniature: the registry path is exercised and
+    // proven equivalent, so the hardcoded one can be deleted the day the
+    // borrowed `&dyn VaultLookup` signature stops being load-bearing.
+
+    /// Owned vault rows, so a `VaultEvaluator` can hold one — registrations are
+    /// `'static`, which is why the registry path takes a borrow-free lookup and
+    /// the legacy path cannot be made to delegate.
+    struct StubRows(std::collections::HashMap<[u8; 32], crate::vault_lookup::VaultRowSnapshot>);
+
+    impl crate::vault_lookup::VaultLookup for StubRows {
+        fn lookup_vault(
+            &self,
+            vault_id: &[u8; 32],
+        ) -> Option<crate::vault_lookup::VaultRowSnapshot> {
+            self.0.get(vault_id).copied()
+        }
+    }
+
+    fn stub_rows(vault_id: [u8; 32], chain: [u8; 32], active: bool) -> StubRows {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            vault_id,
+            crate::vault_lookup::VaultRowSnapshot {
+                chain_id: chain,
+                is_active: active,
+            },
+        );
+        StubRows(m)
+    }
+
+    fn vault_registry(rows: StubRows) -> crate::caveat::evaluator::CaveatEvaluatorRegistry {
+        let mut r = crate::caveat::evaluator::CaveatEvaluatorRegistry::empty();
+        r.register(crate::caveat::evaluator::core::VaultEvaluator::new(
+            std::sync::Arc::new(rows),
+        ))
+        .unwrap();
+        r
+    }
+
+    /// Build a macaroon carrying `caveats`, minting then attenuating in order.
+    fn mac_with(secret: &[u8; 32], caveats: &[Caveat], catalog: &InMemoryCatalog) -> Macaroon {
+        let mut m = Macaroon::mint(secret).unwrap();
+        for c in caveats {
+            m = m.attenuate(c.clone(), catalog).unwrap();
+        }
+        m
+    }
+
+    /// The two paths must agree on every outcome: accept, missing row, chain
+    /// mismatch, inactive vault, and the chainless-parent refusal.
+    #[test]
+    fn vault_op_paths_agree_on_every_outcome() {
+        let secret = [0x11u8; 32];
+        let vault_id = [0x22u8; 32];
+        let chain = [0x33u8; 32];
+        let other = [0x44u8; 32];
+        let catalog = InMemoryCatalog::default();
+
+        struct Case {
+            name: &'static str,
+            rows: StubRows,
+            op_chain: [u8; 32],
+            expect_accept: bool,
+        }
+        let cases = [
+            Case {
+                name: "active vault on the operation chain accepts",
+                rows: stub_rows(vault_id, chain, true),
+                op_chain: chain,
+                expect_accept: true,
+            },
+            Case {
+                name: "vault on another chain refuses",
+                rows: stub_rows(vault_id, other, true),
+                op_chain: chain,
+                expect_accept: false,
+            },
+            Case {
+                name: "inactive vault refuses",
+                rows: stub_rows(vault_id, chain, false),
+                op_chain: chain,
+                expect_accept: false,
+            },
+            Case {
+                name: "missing vault row refuses",
+                rows: stub_rows([0xEEu8; 32], chain, true),
+                op_chain: chain,
+                expect_accept: false,
+            },
+        ];
+
+        for case in cases {
+            let m = mac_with(&secret, &[Caveat::Vault(vault_id)], &catalog);
+            let legacy = m.verify_for_vault_op(&secret, &catalog, None, &case.op_chain, &case.rows);
+            let registry_path = m.verify_for_vault_op_with(
+                &secret,
+                &catalog,
+                None,
+                &case.op_chain,
+                &vault_registry(case.rows),
+                &crate::clock::SystemClock,
+            );
+            assert_eq!(
+                legacy.is_ok(),
+                case.expect_accept,
+                "legacy path disagreed with the case expectation: {}",
+                case.name
+            );
+            assert_eq!(
+                registry_path.is_ok(),
+                legacy.is_ok(),
+                "the two vault-op paths disagree on: {}",
+                case.name
+            );
+        }
+    }
+
+    /// The chainless-parent refusal must fire on both paths, and it must fire
+    /// because there is no vault caveat rather than because a registry was
+    /// empty — otherwise the guard would be testing its own wiring.
+    #[test]
+    fn vault_op_paths_agree_when_no_vault_ancestor_exists() {
+        let secret = [0x55u8; 32];
+        let catalog = InMemoryCatalog::default();
+        let rows = stub_rows([0x22u8; 32], [0x33u8; 32], true);
+        // A capability with no Caveat::Vault at all.
+        let m = mac_with(&secret, &[Caveat::Model("m".to_owned())], &catalog);
+
+        let legacy = m.verify_for_vault_op(&secret, &catalog, None, &[0x33u8; 32], &rows);
+        let registry_path = m.verify_for_vault_op_with(
+            &secret,
+            &catalog,
+            None,
+            &[0x33u8; 32],
+            &vault_registry(rows),
+            &crate::clock::SystemClock,
+        );
+        assert_eq!(legacy, Err(VaultVerifyError::WrappedChainHasNoVault));
+        assert_eq!(registry_path, Err(VaultVerifyError::WrappedChainHasNoVault));
+    }
+
+    /// The whole point of the registry path: a third-party caveat the hardcoded
+    /// path has never heard of changes the outcome.
+    #[test]
+    fn a_third_party_caveat_binds_on_the_registry_path_only() {
+        use crate::caveat::evaluator::{CaveatEvalCtx, CaveatEvaluator, CaveatRefusal};
+
+        struct RequireVendorApproval;
+
+        impl CaveatEvaluator for RequireVendorApproval {
+            fn key(&self) -> &'static str {
+                "vendor.example/approval"
+            }
+            fn evaluate(&self, _ctx: &CaveatEvalCtx<'_>) -> Result<(), CaveatRefusal> {
+                Err(CaveatRefusal::Violated {
+                    evaluator: "vendor.example/approval".to_owned(),
+                    detail: "vendor approval missing".into(),
+                })
+            }
+        }
+
+        let secret = [0x66u8; 32];
+        let vault_id = [0x22u8; 32];
+        let chain = [0x33u8; 32];
+        let rows = stub_rows(vault_id, chain, true);
+
+        // A Raw caveat cannot enter a chain unless the catalog registers its
+        // name (RFC-0957 fail-closed on unknown Raw names), so register it.
+        let mut catalog = InMemoryCatalog::default();
+        catalog.register_raw_name("vendor.example/approval");
+        let with_vendor = mac_with(
+            &secret,
+            &[
+                Caveat::Vault(vault_id),
+                Caveat::Raw(crate::caveat::RawCaveat {
+                    name: "vendor.example/approval".to_owned(),
+                    value: Vec::new(),
+                }),
+            ],
+            &catalog,
+        );
+
+        // Hardcoded path: the vendor caveat is invisible to it, so it accepts.
+        assert!(
+            with_vendor
+                .verify_for_vault_op(&secret, &catalog, None, &chain, &rows)
+                .is_ok(),
+            "the legacy path has no vocabulary for a vendor caveat"
+        );
+
+        // Registry path: registered evaluator refuses.
+        let mut reg = vault_registry(rows);
+        reg.register(RequireVendorApproval).unwrap();
+        let err = with_vendor
+            .verify_for_vault_op_with(
+                &secret,
+                &catalog,
+                None,
+                &chain,
+                &reg,
+                &crate::clock::SystemClock,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, VaultVerifyError::CaveatRefused { .. }),
+            "expected an evaluator refusal, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("vendor.example/approval"),
+            "the refusal must name the evaluator: {err}"
+        );
+    }
 }

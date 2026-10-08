@@ -64,6 +64,22 @@ pub enum VaultVerifyError {
     #[error("WrappedOnly chain has no Caveat::Vault ancestor (chainless — safe default rejects)")]
     WrappedChainHasNoVault,
 
+    /// A registered [`crate::caveat::evaluator::CaveatEvaluator`] refused a
+    /// caveat during `verify_for_vault_op_with`.
+    ///
+    /// The registry's refusal is a single opaque reason by design — an extension
+    /// crate must not be able to forge a precise vault error. The rendered
+    /// string names the evaluator and its reason so the cause is still
+    /// diagnosable; a caller needing the structured `VaultRowMissing` /
+    /// `ChainMismatch` / `VaultNotActive` variants should use
+    /// `verify_for_vault_op`, whose default registry is exactly the vault
+    /// evaluator and which therefore still yields them.
+    #[error("caveat evaluator refused during vault-op verification: {key}")]
+    CaveatRefused {
+        /// The refusal, rendered.
+        key: String,
+    },
+
     /// Wraps any non-vault-specific `MacaroonError` raised during the
     /// `verify_for_vault_op` pipeline (chain mismatch, root-secret
     /// mismatch, wrapped-cycle, wrapped-depth-exceeded,

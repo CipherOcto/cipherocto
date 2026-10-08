@@ -251,10 +251,37 @@ gate.** A strategy that produces nothing but needs a producing node to verify
 boots successfully and is refused later, at step 4. Collapsing the two would
 make step 4 unreachable.
 
+### Declared where the traits live (deviation, recorded)
+
+The RFC places the attestation traits and the registry in
+`octo-wallet::capability`. A Layer-E strategy crate has to _implement_ those
+traits, so declaring them in the wallet means every strategy crate depends on
+the wallet — while the wallet depends on `octo-cap-zk` for its ZK mint
+substrate. That closes a dependency cycle, and mission D removes the wallet's
+dependency on `octo-cap-zk` only in **Phase 5**, two phases after this one.
+
+**The stated phase order is therefore not executable as written.** The strategy
+crates this mission adds cannot be added before the removal Phase 5 performs.
+
+Rather than reorder the missions or leave the strategy crates until last, the
+traits are declared in `octo-cap-macaroon`, alongside `AttestationTypeId` which
+the RFC already puts there, and re-exported from
+`octo_wallet::capability::attestation` unchanged. Both import paths resolve to
+the same trait objects, so:
+
+- the RFC's stated import path still works and is what core uses;
+- `octo-cap-zk` depends on `octo-cap-macaroon` alone, with no cycle and no
+  dependency on the wallet;
+- mission D's removal is still Phase 5's job, on schedule;
+- `octo-cap-macaroon` gains a dependency on `octo-protocol` for
+  `PayloadKindId`, which is a Layer-A edge and already present transitively.
+
+Mission D's dependency-removal work is unaffected and still outstanding.
+
 ### Still open in this mission
 
-- The `octo-cap-poi` crate and the `root_secret_knowledge` strategy in
-  `octo-cap-zk`
+- The `octo-cap-poi` crate. `root_secret_knowledge` is landed in
+  `octo-cap-zk` and ships unregistered, awaiting mission B
 - The determinism fixture, a second implementation of one relation
 - The registration host in `octo-wallet-node` and the strategy links it carries
 - `in_boundary_execution`'s measured profile

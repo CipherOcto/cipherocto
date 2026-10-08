@@ -52,6 +52,8 @@ use octo_cap_macaroon::wire::WireError;
 /// Local copy of `NodeType` (RFC-0958 §NodeType Gating Rule).
 ///
 /// The wallet crate owns the canonical `NodeType` enum (in
+pub mod attestation;
+
 /// `crates/octo-wallet/src/node.rs`); this enum mirrors the three
 /// variants the mint API depends on. Conversion is via the
 /// `to_zk_node_type` free function in the wallet re-export shim

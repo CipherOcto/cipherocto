@@ -31,6 +31,11 @@ async-trait = "0.1"
 thiserror = "1"
 # RFC-0964 constraint encoding (used by `caveat::FactoryVet::pre_conditions`).
 cipherocto-encoding = { path = "../cipherocto-encoding" }
+# RFC-0973 §Phase 2: `AttestationAdmission::required_payload_kinds` returns
+# `PayloadKindId`. The attestation traits are declared here rather than in the
+# wallet because a Layer-E strategy crate has to implement them, and the wallet
+# depends on the strategy crate for its ZK mint substrate.
+octo-protocol = { path = "../octo-protocol" }
 # `octo-determin` (mission 0862-c9 RETIRED — local `MicroOctoW`
 # alias killed project-wide per user mandate 2026-08-17): provides
 # the canonical amount-bearing type `Dqa` (RFC-0862 + RFC-0105

@@ -225,7 +225,7 @@ static WALLET_COVERAGE: WalletCoverage = WalletCoverage;
 struct WalletCoverage;
 
 impl super::attestation::PayloadCoverage for WalletCoverage {
-    fn serves_all(&self, _kinds: &[octo_protocol::payload_kind::PayloadKindId]) -> bool {
+    fn serves_all(&self, _kinds: &[octo_cap_macaroon::attestation::PayloadKind]) -> bool {
         false
     }
 }

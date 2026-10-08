@@ -42,7 +42,7 @@ Complete (2026-06-21, agent-assisted, commit `3f15ad63`)
     `getUpdates` long-poll.
   - `crates/octo-adapter-telegram-mtproto/CHANGELOG.md`
     (+105 lines): Phase 3 entry.
-  - `missions/claimed/0850ab-c-bot-api-http-fallback.md` (this
+  - `missions/archived/completed/0850ab-c-bot-api-http-fallback.md` (this
     file).
 
 - **Test totals**:
@@ -56,32 +56,32 @@ Complete (2026-06-21, agent-assisted, commit `3f15ad63`)
   - `cargo clippy --workspace --all-targets -- -D warnings`
     clean.
   - `cargo clippy -p octo-adapter-telegram-mtproto
-    --features "real-network bot-api" --all-targets -- -D
-    warnings` clean.
+--features "real-network bot-api" --all-targets -- -D
+warnings` clean.
 
 - **Acceptance criteria** (from the mission's §"Acceptance
   Criteria"):
   - [x] `cargo build -p octo-adapter-telegram-mtproto`
-    succeeds with default features (no grammers, no reqwest;
-    default build is unchanged from Phase 2.5).
+        succeeds with default features (no grammers, no reqwest;
+        default build is unchanged from Phase 2.5).
   - [x] `cargo build -p octo-adapter-telegram-mtproto
-    --features bot-api` succeeds and pulls reqwest.
+--features bot-api` succeeds and pulls reqwest.
   - [x] `cargo build -p octo-adapter-telegram-mtproto
-    --features "real-network bot-api"` succeeds and pulls
-    both grammers and reqwest.
+--features "real-network bot-api"` succeeds and pulls
+        both grammers and reqwest.
   - [x] `cargo test -p octo-adapter-telegram-mtproto
-    --features bot-api` passes all 13 new tests (mission
-    says 13, actual is 18 in `http_fallback` + 4 in
-    `transport` + 5 in `adapter` = 27; the "13" target in
-    the original spec was an under-count), plus all
-    pre-existing tests.
+--features bot-api` passes all 13 new tests (mission
+        says 13, actual is 18 in `http_fallback` + 4 in
+        `transport` + 5 in `adapter` = 27; the "13" target in
+        the original spec was an under-count), plus all
+        pre-existing tests.
   - [x] `cargo test -p octo-adapter-telegram-mtproto
-    --features "real-network bot-api"` passes.
+--features "real-network bot-api"` passes.
   - [x] `cargo test -p octo-adapter-telegram-mtproto`
-    (default) passes.
+        (default) passes.
   - [x] `cargo fmt --all -- --check` clean.
   - [x] `cargo clippy --workspace --all-targets --features
-    "real-network bot-api" -- -D warnings` clean.
+"real-network bot-api" -- -D warnings` clean.
 
 ## RFC
 
@@ -120,7 +120,7 @@ probe). The wire format is HTTPS + JSON, with the canonical Telegram
 
 - `mtproto_port.md` is the canonical MTProto reference, but **does not
   cover the Bot API** (the Bot API is HTTP-only and out of MTProto scope).
-  Section 12 of `mtproto_port.md` describes *MTProto-over-HTTP* (gap G4,
+  Section 12 of `mtproto_port.md` describes _MTProto-over-HTTP_ (gap G4,
   not implemented; not this mission). The Bot API is **gap G6** in the
   research doc.
 - `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` §4
@@ -145,7 +145,7 @@ probe). The wire format is HTTPS + JSON, with the canonical Telegram
 3. **Response parsing**: every response is JSON. Success is
    `{"ok": true, "result": T}`. Errors are
    `{"ok": false, "error_code": int, "description": str, "parameters":
-   {...}?}` and must be mapped to `MtprotoTelegramError`. We never
+{...}?}` and must be mapped to `MtprotoTelegramError`. We never
    parse the body as a success unless `ok == true`; the `result` field
    is then deserialized into the typed response struct.
 4. **Long-poll** (`getUpdates`): the `timeout` query parameter is the
@@ -285,7 +285,7 @@ struct BotApiErrorParameters {
    `/bot<token>/sendMessage` with form body
    `chat_id=123&text=hello` returns 200 with
    `{"ok": true, "result": {message_id: 1, chat: {id: 123, type: "private"},
-   date: 1700000000, text: "hello"}}`. Assert the response is parsed
+date: 1700000000, text: "hello"}}`. Assert the response is parsed
    into a `BotMessage` with `message_id == 1` and `text == Some("hello")`.
 3. **send_document happy path** (wiremock): POST
    `/bot<token>/sendDocument` with multipart body containing
@@ -306,11 +306,11 @@ struct BotApiErrorParameters {
    `description` is in the source chain.
 7. **Error envelope: 429 Rate Limited** (wiremock): returns
    `{"ok": false, "error_code": 429, "description": "Too Many
-   Requests", "parameters": {"retry_after": 5}}`. Assert
+Requests", "parameters": {"retry_after": 5}}`. Assert
    `MtprotoTelegramError::RateLimited { retry_after_secs: 5 }`.
 8. **Error envelope: 400 Bad Request** (wiremock): returns
    `{"ok": false, "error_code": 400, "description": "chat not
-   found"}`. Assert `MtprotoTelegramError::ApiError(400)`.
+found"}`. Assert `MtprotoTelegramError::ApiError(400)`.
 9. **Error envelope: 500 Server Error** (wiremock): returns 500 with
    the error envelope. Assert `MtprotoTelegramError::Network`.
 10. **Token redaction**: `BotApiClient` must not leak the bot token in
@@ -342,17 +342,17 @@ struct BotApiErrorParameters {
 - `cargo build -p octo-adapter-telegram-mtproto --features bot-api`
   succeeds and pulls reqwest.
 - `cargo build -p octo-adapter-telegram-mtproto --features "real-network
-  bot-api"` succeeds and pulls both grammers and reqwest.
+bot-api"` succeeds and pulls both grammers and reqwest.
 - `cargo test -p octo-adapter-telegram-mtproto --features bot-api`
   passes all 13 new tests, plus all pre-existing tests.
 - `cargo test -p octo-adapter-telegram-mtproto --features
-  "real-network bot-api"` passes.
+"real-network bot-api"` passes.
 - `cargo test -p octo-adapter-telegram-mtproto` (default) passes
   (Bot-API module is feature-gated and the default build has no
   wiremock dependency).
 - `cargo fmt --all -- --check` clean.
 - `cargo clippy --workspace --all-targets --features
-  "real-network bot-api" -- -D warnings` clean.
+"real-network bot-api" -- -D warnings` clean.
 
 ## Out of Scope (deferred to a later phase)
 

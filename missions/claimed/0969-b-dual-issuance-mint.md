@@ -8,7 +8,7 @@ Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation
 
 RFC-0969 (Economics): Dual-Pipeline Authorization — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0969-dual-pipeline-authorization.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/claimed/0969-dual-pipeline-authorization.md`; top-level is `claimed/` not `open/`)
+**Sub-mission of:** `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/archived/completed/0969-dual-pipeline-authorization.md`; top-level is `claimed/` not `open/`)
 
 ## Summary
 
@@ -53,10 +53,10 @@ Phantom type `IdentityKey::from_public_bytes` call site is at `mint_dual` (buyer
 
 **Requires (mission gates):**
 
-- `missions/open/0969-dual-pipeline-authorization.md` (top-level)
-- `missions/open/0957-e-mint-txn-parameter.md` — 4-arg `CapabilityToken::mint` signature amendment MUST land first
-- `missions/open/0957-c-holder-registry-impl.md` — `Transaction::insert_dual` MUST exist (owned by 0957-c per the convention)
-- `missions/open/0959-b-market-delivery-impl.md` — `BearerCapsule` typed struct MUST exist
+- `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level)
+- `missions/claimed/0957-e-mint-txn-parameter.md` — 4-arg `CapabilityToken::mint` signature amendment MUST land first
+- `missions/claimed/0957-c-holder-registry-impl.md` — `Transaction::insert_dual` MUST exist (owned by 0957-c per the convention)
+- `missions/claimed/0959-b-market-delivery-impl.md` — `BearerCapsule` typed struct MUST exist
 
 ```yaml
 depends_on:

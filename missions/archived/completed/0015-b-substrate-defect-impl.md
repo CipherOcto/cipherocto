@@ -21,7 +21,7 @@ claimed_at: 2026-09-14
 
 **Status:** Open
 **Substrate:** RFC-0015-b §X.1 + §X.2 + §X.3 + §X.4 (defect 5 demoted to RFC-0012-v4 paired Layer A cycle; out of scope for this mission)
-**Parent:** RFC-0015-b (substrate-defect paired amendment; see `missions/claimed/0015-b-substrate-defect-amendment.md`)
+**Parent:** RFC-0015-b (substrate-defect paired amendment; see `missions/archived/completed/0015-b-substrate-defect-amendment.md`)
 **Depends on:** RFC-0015-b Accepted; RFC-0015 Accepted; RFC-0015-a Accepted
 
 ## Scope
@@ -131,7 +131,7 @@ R3 (DRY verification round 2 = DRY CLOSED) → closure artifacts
 ## Cross-references
 
 - RFC-0015-b §X.1 + §X.2 + §X.3 + §X.4 (defect 5 DEFERRED to RFC-0012-v4 paired Layer A cycle)
-- `missions/claimed/0015-b-substrate-defect-amendment.md` (paired amendment RFC)
+- `missions/archived/completed/0015-b-substrate-defect-amendment.md` (paired amendment RFC)
 - `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md` §Deferred substrate defects
 - `crates/octo-wallet/src/agent.rs` (substrate target)
 - `crates/octo-wallet/src/error.rs` (doc-comment hygiene target)

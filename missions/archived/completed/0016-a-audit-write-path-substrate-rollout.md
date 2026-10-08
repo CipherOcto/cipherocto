@@ -34,7 +34,7 @@ Per RFC-0016-a §6.1 Public surface additions + §6.10 Acceptance Criterion + §
 
 ### Out-of-scope (already landed in paired implementation mission)
 
-The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-impl.md` (paired implementation, Claimed status, not yet archived to `archived/completed/`) + paired implementation work (substrate-side, pre-RFC-0016-a promotion):
+The following §6 surface landed in `missions/archived/completed/0015-b-substrate-defect-impl.md` (paired implementation, Claimed status, not yet archived to `archived/completed/`) + paired implementation work (substrate-side, pre-RFC-0016-a promotion):
 
 - `ChainHash(pub [u8; 32])` newtype — `crates/octo-audit/src/audit_event_v2.rs` §ChainHash
 - `append_audit_event(sink, event) -> Result<ChainHash, AuditError>` — Layer B façade
@@ -108,7 +108,7 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 - **RFC-0012-v2** — substrate amendments for the audit chain. `compute_chain_hash` paired with §S5.
 - **parent RFC-0016** (`rfcs/accepted/process/0016-audit-receipt-api.md`) — §Related RFCs row verification only (AC-13). No edit required since RFC-0016-a row is already present.
 - **parent RFC-0016-a** (`rfcs/accepted/process/0016-a-audit-receipt-write-path.md`) — needs §Related RFCs table appended (AC-12).
-- **paired impl mission** (`missions/claimed/0015-b-substrate-defect-impl.md`) — paired implementation that landed §6 substrate code (Claimed status, not yet archived).
+- **paired impl mission** (`missions/archived/completed/0015-b-substrate-defect-impl.md`) — paired implementation that landed §6 substrate code (Claimed status, not yet archived).
 
 ## Risk
 
@@ -126,20 +126,20 @@ The following §6 surface landed in `missions/claimed/0015-b-substrate-defect-im
 
 ## Test vectors (mission-level)
 
-| ID                                       | Scenario                                                                                                   | Expected                                                                         |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `cb-compute_chain_hash-each-variant`     | `compute_chain_hash(&event)` for every `AuditEventKind` variant                                            | returns 32-byte BLAKE3 digest matching `append_audit_event` return value         |
-| `cb-no-bypass-compute_chain_hash`        | grep `audit_event_v2.rs` + `audit_write.rs` for direct `blake3::hash` invocations outside façade           | 0 matches                                                                        |
-| `rsw-concurrent-readers-no-partial-rows` | N=8 reader threads + 1 writer thread, writer appends mid-read                                              | every reader sees either pre-write or post-write state atomically. Never partial |
-| `rsw-single-writer-guarantee`            | 2 writer threads call `append_audit_event` concurrently                                                    | one succeeds, the other gets `AuditError::ChainHashMismatch` (or `WouldBlock`)   |
-| `rsw-stoolap-domain-adapter-conformance` | grep `crates/octo-audit/src/storage/*.rs` for direct table access                                          | every flagged site routes through gated adapter (R/W primitive agnostic)         |
-| `rid-paired-acceptance-verification`     | grep workspace for raw `[u8; 32]` use sites of `ReceiptId`                                                 | 0 matches. Every consumer resolves via `octo_settlement::ReceiptId` import path  |
-| `cli-error-envelope-all-variants`        | 8 §6.7 `AuditError` variants (4 additive + 4 collapse-group)                                              | each maps to documented `OctoCliError` variant at correct exit (additive 52/17/16/13, collapse-group all 64) |
+| ID                                       | Scenario                                                                                         | Expected                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `cb-compute_chain_hash-each-variant`     | `compute_chain_hash(&event)` for every `AuditEventKind` variant                                  | returns 32-byte BLAKE3 digest matching `append_audit_event` return value                                     |
+| `cb-no-bypass-compute_chain_hash`        | grep `audit_event_v2.rs` + `audit_write.rs` for direct `blake3::hash` invocations outside façade | 0 matches                                                                                                    |
+| `rsw-concurrent-readers-no-partial-rows` | N=8 reader threads + 1 writer thread, writer appends mid-read                                    | every reader sees either pre-write or post-write state atomically. Never partial                             |
+| `rsw-single-writer-guarantee`            | 2 writer threads call `append_audit_event` concurrently                                          | one succeeds, the other gets `AuditError::ChainHashMismatch` (or `WouldBlock`)                               |
+| `rsw-stoolap-domain-adapter-conformance` | grep `crates/octo-audit/src/storage/*.rs` for direct table access                                | every flagged site routes through gated adapter (R/W primitive agnostic)                                     |
+| `rid-paired-acceptance-verification`     | grep workspace for raw `[u8; 32]` use sites of `ReceiptId`                                       | 0 matches. Every consumer resolves via `octo_settlement::ReceiptId` import path                              |
+| `cli-error-envelope-all-variants`        | 8 §6.7 `AuditError` variants (4 additive + 4 collapse-group)                                     | each maps to documented `OctoCliError` variant at correct exit (additive 52/17/16/13, collapse-group all 64) |
 
 ## Cross-references
 
 - `missions/archived/completed/0016-a-audit-write-path-promotion.md` — RFC-0016-a promotion mission
-- `missions/claimed/0015-b-substrate-defect-impl.md` — paired implementation (transition_agent + append_agent_transition_event + error variants), Claimed status
+- `missions/archived/completed/0015-b-substrate-defect-impl.md` — paired implementation (transition_agent + append_agent_transition_event + error variants), Claimed status
 - RFC-0016 — read-path substrate contract
 - RFC-0015-a — write-path surface contract
 - RFC-0012-v2 — substrate amendment for audit chain

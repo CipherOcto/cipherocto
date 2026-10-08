@@ -266,7 +266,7 @@ Adapter crates register at startup via `octo_storage::register(db_arc, store_arc
 
 ### `crates/quota-router-storage/` (25 sites across 9 files)
 
-Per `missions/open/0206-002-layer-b-type-renames.md` v2.1 Explicit Sites table (regenerated from `rg -n 'stoolap::Database' crates/quota-router-storage/src crates/octo-vault/src` run 2026-08-20):
+Per `missions/claimed/0206-002-layer-b-type-renames.md` v2.1 Explicit Sites table (regenerated from `rg -n 'stoolap::Database' crates/quota-router-storage/src crates/octo-vault/src` run 2026-08-20):
 
 | File                             | Sites                                                                                                                                                                                                                                                      | Kind           |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |

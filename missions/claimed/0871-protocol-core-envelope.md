@@ -69,20 +69,20 @@ Per RFC-0871 §Adversary Analysis (verbatim threat framing), the seven threats +
 
 Per BLUEPRINT §Mission template. RFC-0871 §Specification types mapped to this mission (Phase 1 base):
 
-| RFC-0871 Type / Section | Implemented By |
-|---|---|
-| `NodeEnvelope` (§Data Structures) | This mission — `crates/octo-protocol/src/envelope.rs` |
-| `PayloadKindId` (§Data Structures) | This mission — `crates/octo-protocol/src/payload_kind.rs` |
-| `Authorization` enum (§Data Structures) | This mission — `crates/octo-protocol/src/authorization.rs` (signature + capability + threshold + ZK + raw variants) |
-| `RecipientRef` (§Data Structures) | This mission — `crates/octo-protocol/src/recipient.rs` |
-| `ProtocolError` (§Error Handling) | This mission — `crates/octo-protocol/src/error.rs` |
-| `EnvelopeDispatcher` (§Algorithms) | This mission — `crates/octo-protocol/src/dispatch.rs` |
-| `envelope_id` derivation (§Algorithms) | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_ID", ...)`) |
-| Signing preimage (§Algorithms) | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", ...)`) |
-| Test vectors TV1–TV8 (§Test Vectors) | This mission — `crates/octo-protocol/tests/tv{1..8}_*.rs` |
-| `WalletNode` struct (§Wallet Node Lifecycle) | Mission `0871a-wallet-node.md` — consumes `NodeEnvelope` from this crate |
+| RFC-0871 Type / Section                                   | Implemented By                                                                                                                                                    |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NodeEnvelope` (§Data Structures)                         | This mission — `crates/octo-protocol/src/envelope.rs`                                                                                                             |
+| `PayloadKindId` (§Data Structures)                        | This mission — `crates/octo-protocol/src/payload_kind.rs`                                                                                                         |
+| `Authorization` enum (§Data Structures)                   | This mission — `crates/octo-protocol/src/authorization.rs` (signature + capability + threshold + ZK + raw variants)                                               |
+| `RecipientRef` (§Data Structures)                         | This mission — `crates/octo-protocol/src/recipient.rs`                                                                                                            |
+| `ProtocolError` (§Error Handling)                         | This mission — `crates/octo-protocol/src/error.rs`                                                                                                                |
+| `EnvelopeDispatcher` (§Algorithms)                        | This mission — `crates/octo-protocol/src/dispatch.rs`                                                                                                             |
+| `envelope_id` derivation (§Algorithms)                    | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_ID", ...)`)                                      |
+| Signing preimage (§Algorithms)                            | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", ...)`)                               |
+| Test vectors TV1–TV8 (§Test Vectors)                      | This mission — `crates/octo-protocol/tests/tv{1..8}_*.rs`                                                                                                         |
+| `WalletNode` struct (§Wallet Node Lifecycle)              | Mission `0871a-wallet-node.md` — consumes `NodeEnvelope` from this crate                                                                                          |
 | Per-extension crate adapter (§Per-Extension Crate Layout) | Missions `0957-ext-macaroon-crate.md`, `0957-ext-zk-crate.md` — register `CapabilitySpec` impls that produce `Authorization::Capability` / `Authorization::Proof` |
-| `PaymentCaveat` (§Implementation Phases Phase 5) | Mission `0871e-paid-query-caveat.md` — extends `Authorization::Capability` with payment caveat chain |
+| `PaymentCaveat` (§Implementation Phases Phase 5)          | Mission `0871e-paid-query-caveat.md` — extends `Authorization::Capability` with payment caveat chain                                                              |
 
 ## Dependencies
 
@@ -102,11 +102,11 @@ Per BLUEPRINT §Mission template. RFC-0871 §Specification types mapped to this 
 
 **Consumes this mission (downstream):**
 
-- `missions/open/0871a-wallet-node.md` — Phase 2 wallet node uses `octo-protocol::NodeEnvelope`
-- `missions/open/0870-b-envelope-adoption.md` — Phase 3 quota router adoption uses `octo-protocol::NodeEnvelope` (already filed)
-- `missions/open/0957-ext-macaroon-crate.md` — Phase 4 macaroon extraction uses `octo-protocol::Authorization::Capability`
-- `missions/open/0957-ext-zk-crate.md` — Phase 4 ZK extraction uses `octo-protocol::Authorization::Proof`
-- `missions/open/0969-a-gateway-relocation.md` — Phase 5 gateway uses `octo-protocol::dispatch`
+- `missions/claimed/0871a-wallet-node.md` — Phase 2 wallet node uses `octo-protocol::NodeEnvelope`
+- `missions/claimed/0870-b-envelope-adoption.md` — Phase 3 quota router adoption uses `octo-protocol::NodeEnvelope` (already filed)
+- `missions/claimed/0957-ext-macaroon-crate.md` — Phase 4 macaroon extraction uses `octo-protocol::Authorization::Capability`
+- `missions/claimed/0957-ext-zk-crate.md` — Phase 4 ZK extraction uses `octo-protocol::Authorization::Proof`
+- `missions/claimed/0969-a-gateway-relocation.md` — Phase 5 gateway uses `octo-protocol::dispatch`
 
 **Not Requires:**
 
@@ -134,7 +134,7 @@ Per RFC-0871 §Implementation Phases Phase 1 (Core envelope acceptance):
 - [x] Implementation landed (Phase 1) — commit `bf58559d`
 - [x] Test vectors 1–8 pass (47/47 tests green)
 - [x] Adversary Analysis A1–A7 covered (A1, A2, A4, A5, A6, A7 enforced
-  in dispatch + verify_all; A3 enforced in Phase 3 node wirings)
+      in dispatch + verify_all; A3 enforced in Phase 3 node wirings)
 
 ## Pull Request
 
@@ -146,7 +146,8 @@ Implementation landed in single commit `bf58559d` on `next` branch. 21 files
 changed, 2639 insertions. `crates/octo-protocol/` Layer 1 stable crate ships
 all 9 modules (envelope, payload_kind, authorization, recipient, error,
 dispatch, signing, time, lib) + 8 RFC-0871 §Test Vectors integration tests
-+ 34 unit tests. Workspace build green; clippy clean; fmt clean.
+
+- 34 unit tests. Workspace build green; clippy clean; fmt clean.
 
 `octo-ident` augmented with optional `borsh` feature for
 BorshSerialize/BorshDeserialize on `WireDid` (gated feature; no impact on

@@ -520,11 +520,7 @@ The CLI is operator-facing; throughput is not a primary concern. Latency targets
 
 ## Mission Decomposition
 
-The reputation read surface decomposes into one companion implementation mission that gates the substrate `[ADD]` block from §7.4 (`octo_reputation::project`, `octo_reputation::attestations`). The mission is filed in `missions/open/` per the parent RFC-0011 §Mission Lifecycle pattern; it is closed by a single companion PR that lands the substrate `[ADD]` plus the CLI subcommand binding. Mission YAML MUST carry `RFC-0011-b` in its `rfc:` field so the R3 carried-forward cross-reference audit can trace the `[ADD]` back to a mission.
-
-| Mission YAML                                     | Substrate `[ADD]`                                                                                                                     | CLI subcommand bound   | Companion impl-guide section                            |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------- |
-| `missions/open/0011-b-reputation-subcommands.md` | `octo_reputation::project(did, role)` + `octo_reputation::attestations(did, role, since_unix, limit)` (per §7.4 substrate signatures) | `octo reputation show` | §7.2 Subcommand Taxonomy + §Roles and Authorities table |
+The reputation read surface decomposes into one companion implementation mission that gates the substrate `[ADD]` block from §7.4 (`octo_reputation::project`, `octo_reputation::attestations`). The mission is filed in `missions/archived/completed/0011-b-reputation-subcommands.md` | `octo_reputation::project(did, role)` + `octo_reputation::attestations(did, role, since_unix, limit)` (per §7.4 substrate signatures) | `octo reputation show` | §7.2 Subcommand Taxonomy + §Roles and Authorities table |
 
 **Mission status snapshot (draft cycle, 2026-08-31):**
 

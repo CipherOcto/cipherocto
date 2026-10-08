@@ -72,10 +72,10 @@ Err(SpendLedgerError::NegativeCost { cost: budget }) }` (matches
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
-- **Sibling:** `missions/open/0862-c3-cross-process-drain.md`
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Sibling:** `missions/archived/completed/0862-c3-cross-process-drain.md`
   (cross-process coordination — orthogonal; c8 is in-process)
-- **Sibling:** `missions/open/0862-c4-assert-to-error.md`
+- **Sibling:** `missions/archived/completed/0862-c4-assert-to-error.md`
   (panic surface in `dqa_to_i64` — orthogonal; c8 is precondition
   asymmetry)
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
@@ -113,9 +113,9 @@ Err(SpendLedgerError::NegativeCost { cost: budget }) }` (matches
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                   |
-| ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 2 security review findings #1 + #2 (seed TOCTOU + asymmetric NegativeCost guard).                                                                                           |
-| 2026-08-17 | @mmacedoeu | Round 3 expansion: added AC-3 (scale=0 assert) per Round 3 security review finding #2.                                                                                                                   |
-| 2026-08-17 | @mmacedoeu | Round 3 cleanup: drop `v007:24` line ref from ## Problem section; drop `RFC-0862 v2.0` version pin from ## RFC section per CLAUDE.md referencing rule; expand AC-6 to clarify TV-06 lives in octo-vault. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 2 security review findings #1 + #2 (seed TOCTOU + asymmetric NegativeCost guard).                                                                                                                                                                                                                                                                                    |
+| 2026-08-17 | @mmacedoeu | Round 3 expansion: added AC-3 (scale=0 assert) per Round 3 security review finding #2.                                                                                                                                                                                                                                                                                                            |
+| 2026-08-17 | @mmacedoeu | Round 3 cleanup: drop `v007:24` line ref from ## Problem section; drop `RFC-0862 v2.0` version pin from ## RFC section per CLAUDE.md referencing rule; expand AC-6 to clarify TV-06 lives in octo-vault.                                                                                                                                                                                          |
 | 2026-08-18 | @mmacedoeu | Close-out audit: substrate guards (drain_lock + NegativeCost precondition + `SpendLedgerError::InvalidScale` for scale=0 per `0862-c4` typed-error conversion) + TV-0862-15/16 (in `tests/tv_0862_spend_ledger.rs`) + RFC-0862 §StoolapSpendLedger seed hardening amend (line 1040-1051) were all already in place. Mission file moved `open/` → `claimed/`. 23/23 quota-router-storage TV green. |

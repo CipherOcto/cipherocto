@@ -8,42 +8,7 @@ Closed (Band A — 2026-08-06). Claimed 2026-08-04; implementation landed (commi
 
 RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/claimed/0959-a1-market-delivery.md` (top-level decomposition mission; path corrected 2026-08-06 — was `missions/open/`)
-
-## Summary
-
-Implement RFC-0959-A1 §Phase 1 (Data Structures + Algorithms) and §Phase 2 (Stoolap Transaction Wrapper). Author `BearerCapsule` (typed struct per RFC-0959-A1 §Out of Scope; NOT RFC-0903 virtual keys), `DealSettled` (4th settlement chain artifact joining `Ask` + `SettlementEvent` + `SettlementReceipt`), `DealSettledPayload`, `MarketDeliveryEnvelope` (3-segment wire: `envelope_id || bearer_capsule || capability_token`), `MarketDeliveryEnvelopePreimage` (signed bytes), `EnvelopeId` (32-byte BLAKE3 newtype, `Hash` impl), `DeliveryError` enum (6 variants). Author `deliver_at_settlement` algorithm + `stoolap_txn` atomic transaction wrapper + `append_deal_settled` + chain hash update. Implement `chain_tip_lock` CAS primitive to break the TOCTOU race (Finding A10).
-
-Manual redacting `Debug` impls on all 6 security-bearing structs (MarketDeliveryEnvelopePreimage, EnvelopeId, DealSettled, DealSettledPayload, BearerCapsule, MarketDeliveryEnvelope).
-
-## Acceptance Criteria
-
-### Type definitions (Band A landed)
-
-- [x] `crates/octo-wallet/src/capability/market_delivery.rs` (NEW — landed `0ba67943`) — `BearerCapsule` re-export + `RoleTag` + `DealSettled` + `DealSettledPayload` + `MarketDeliveryEnvelope` + `MarketDeliveryEnvelopePreimage` + `EnvelopeId` + `DeliveryError`. All 6 security-bearing structs + `EnvelopeId` have manual redacting Debug impls; 7/7 unit tests pass.
-- [x] `EnvelopeId` wraps `[u8; 32]`, derives `Hash` + `Eq` + `Clone` + `Copy` (also `Serialize` + `Deserialize` for disk persistence). Manual Debug impl displays `<redacted 32 bytes>` per RFC-0959-A1 §Security.
-- [x] `BearerCapsule` 3-field shape (per RFC-0959-A1 §Data Structures canonical form): `bearer_capsule_hash: [u8; 32]`, `encrypted_capsule: Vec<u8>`, `seller_signature: [u8; 64]`. Stub lives in `crates/quota-router-storage/src/bearer_capsule_stub.rs` (3-field `#[non_exhaustive]` per 0957-c landing). Re-exported via `crates/octo-wallet/src/capability/bearer_capsule_re_export.rs`. **NOT** the 6-field shortform `bearer_id + ask_id + holder_pub + caveats_canonical + signed_at_unix + signature` claimed in original mission text — mission text was stale; actual RFC body defines 3-field shape.
-- [x] `MarketDeliveryEnvelope` 5-field struct: `envelope_id: [u8; 32]`, `bearer: BearerCapsule`, `capability_token: String`, `deal_settled: DealSettled`, `created_at_unix: u64`. **NOT** the 3-segment wire `envelope_id || bearer_capsule || capability_token` claimed in original mission text — mission text was stale; actual RFC body defines 5-field struct.
-- [x] `MarketDeliveryEnvelopePreimage` 5-field struct with `envelope_id` zeroed (R10-N8 self-referential-hash fix).
-- [x] `DealSettled` 3-field struct: `event_hash: [u8; 32]`, `payload: DealSettledPayload`, `seller_signature: [u8; 64]`. **NOT** a single struct with embedded fields per mission text — actual RFC body defines 3-field struct + 8-field payload struct.
-- [x] `DealSettledPayload` 8-field struct: `prev_chain_hash`, `buyer_did`, `seller_did`, `ask_id`, `bearer_capsule_hash`, `cap_root_hash`, `settled_at_unix`, `role_tag`. The hash chain input per RFC-0959-A1 §Determinism Requirements.
-
-### Error type (Band A partial)
-
-- [x] `DeliveryError` enum (6 variants landed in Band A): `ChainTipMismatch { expected, actual }`, `BearerInsertFailed { ask_id, reason }`, `CapabilityInsertFailed { ask_id, reason }`, `GossipFailed { attempts }` (reserved for 0959-c), `ReplayDetected { envelope_id }`, `ChainHashBroken { expected, actual }`. Manual redacting Debug impl in place. **DRIFT FLAGGED:** RFC-0959-A1 §Error Handling defines 14 variants (adds `AskNotFound`, `GossipError`, `InvalidSettledAtUnix`, `RoleBindingMismatch`, `StoolapTxnError`, `StoolapDbError`, `CasError`, `OutboxError`, `ChainError`, `SerializationError`, `RegistryError`, `ChainAppendError`); Band A ships the 6 originally claimed in mission text. **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per [[deferred-vs-unspecified]]** — promotion requires `SettlementChainError` (4 variants) + downstream error source stubs (CasError, OutboxError, ChainError, OutboxError, RegistryError, GossipError) all of which need to land as named-owners; out of scope for the implementation phase that lands the algorithm.
-
-### Atomic transaction wrapper (DEFERRED — not in Band A)
-
-- [ ] `crates/quota-router-storage/src/transaction.rs` (EXTEND) — `write_lock_chain_tip` already exists (per `crates/quota-router-storage/src/transaction.rs` §Stubs); needs `chain_tip_lock` first-class method + `ChainTipGuard` auto-release wrapper.
-- [ ] `chain_tip_lock(expected_prev_hash: [u8;32]) -> Result<ChainTipGuard, DeliveryError>` — compare-and-swap on `(chain_tip_hash, expected_prev_hash)`. **DEFERRED to `0959-b2-deliver-algorithm` mission per [[deferred-vs-unspecified]]** — algorithm-author phase owns tx-boundary work.
-- [ ] All-or-nothing: if any insert fails, all prior inserts in the txn are rolled back. (Existing `insert_dual` atomicity per 0957-c covers the dual-record case; cross-record failure-mode tests deferred.)
-
-### `deliver_at_settlement` algorithm (DEFERRED — not in Band A)
-
-- [ ] `crates/octo-wallet/src/capability/deliver.rs` (NEW) — full 13-step `deliver_at_settlement` algorithm per RFC-0959-A1 §Algorithms. **DEFERRED to `0959-b2-deliver-algorithm` mission per [[deferred-vs-unspecified]]** — algorithm-author phase is the deferred work, not Band A.
-- [ ] Steps 0-10 + 7b (12 items) inside the txn; steps 11-12 (gossip + return) outside. Per RFC-0959-A1 §Algorithms.
-- [ ] `mint_bearer_capsule` algorithm (RFC-0959-A1 §Data Structures, NOT from RFC-0903): X25519(seller_ephemeral, buyer_encryption) + HKDF-BLAKE3 + ChaCha20-Poly1305 + Ed25519 seller signature. **DEFERRED to `0959-b2-deliver-algorithm` mission per [[deferred-vs-unspecified]]**.
-- [ ] `receive_market_delivery` buyer-side protocol (RFC-0959-A1 §Data Structures). **OUT OF SCOPE**: lives in `0959-c` sub-mission per top-level decomposition spec `missions/claimed/0959-a1-market-delivery.md` AC-1 cross-mission deferral row (TV4 + TV7 + A11).
+**Sub-mission of:** `missions/claimed/0959-a1-market-delivery.md` (top-level decomposition mission; path corrected 2026-08-06 — was `missions/claimed/0959-a1-market-delivery.md` AC-1 cross-mission deferral row (TV4 + TV7 + A11).
 
 ### Settlement chain extension (DEFERRED — not in Band A)
 
@@ -92,10 +57,10 @@ Manual redacting `Debug` impls on all 6 security-bearing structs (MarketDelivery
 
 **Requires (mission gates):**
 
-- `missions/open/0959-a1-market-delivery.md` (top-level)
+- `missions/claimed/0959-a1-market-delivery.md` (top-level)
 - `missions/claimed/0959-a-ask-pricing-stoolap.md` (in progress) — base `Ask` + `SettlementEvent` + `SettlementReceipt`
-- `missions/open/0957-c-holder-registry-impl.md` — `HolderRegistry` + `Transaction::insert_dual` substrate
-- `missions/open/0957-e-mint-txn-parameter.md` — `CapabilityCatalog` extensions (specifically `holder_registry`, `root_secret_for_ask`, `settlement_chain_tip` consumed here; `gossip_to_buyer` consumed by 0959-c)
+- `missions/claimed/0957-c-holder-registry-impl.md` — `HolderRegistry` + `Transaction::insert_dual` substrate
+- `missions/claimed/0957-e-mint-txn-parameter.md` — `CapabilityCatalog` extensions (specifically `holder_registry`, `root_secret_for_ask`, `settlement_chain_tip` consumed here; `gossip_to_buyer` consumed by 0959-c)
 
 ```yaml
 depends_on:

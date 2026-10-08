@@ -75,7 +75,7 @@ This RFC names the binding explicitly.
 **Requires:**
 
 - RFC-0009 — the node identity is the binding primitive
-- RFC-0009-B1 — WalletCrypto + IdentityKey::from_public_bytes formal signature  // R46-N7 fix: added per R46 review; the 3 phantoms tracked in 0957-A1 §Phantom Types:IdentityKey + RFC-0959-A1 §Algorithms:phantom_call_site (R60-N4 fix: shifted +22 by R58 Debug impl additions in 0959) + RFC-0969 §Algorithms:phantom_call_site (R55-N5 fix) require RFC-0009-B1 promotion before 0957-A1, 0959-A1, and 0969 can be Accepted.
+- RFC-0009-B1 — WalletCrypto + IdentityKey::from_public_bytes formal signature // R46-N7 fix: added per R46 review; the 3 phantoms tracked in 0957-A1 §Phantom Types:IdentityKey + RFC-0959-A1 §Algorithms:phantom_call_site (R60-N4 fix: shifted +22 by R58 Debug impl additions in 0959) + RFC-0969 §Algorithms:phantom_call_site (R55-N5 fix) require RFC-0009-B1 promotion before 0957-A1, 0959-A1, and 0969 can be Accepted.
 - RFC-0853 — per-hop channel binding (independent promotion track; not gated by 0971 acceptance per R46-N6 fix)
 - RFC-0862 — HolderRegistry gossip
 - RFC-0870 — Router role
@@ -91,19 +91,20 @@ This RFC names the binding explicitly.
 - RFC-0968 — ReputationAnchor role (optional)
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG: `0971 ← {0870, 0957, 0957-A1, 0959, 0959-A1, 0968*, 0969, 0970, 0009, 0009-B1, 0853, 0862}` — acyclic (R47-N1 fix: added `0009-B1` per Dependencies section)
 > 2. RFC-0853 BLAKE3 primitive substrate + RFC-0957-A1 HolderRegistry + RFC-0959-A1 MarketDeliveryEnvelope + RFC-0968 ReputationAnchor + RFC-0969 Dual-Pipeline + RFC-0970 HopEnvelope: multiple prerequisite amendments
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Role-binding coverage** | All three required roles (Router, TokenIssuer, Asker) explicitly named as the same node; ReputationAnchor optional | Test: TV1, TV6, TV7 |
-| **G2: Unified storage** | One `HolderRegistry` per node; gossiped via RFC-0862 | RFC-0957-A1 §HolderRegistry binding |
-| **G3: No individual role drift** | RFC-0870 + RFC-0957 + RFC-0959 + RFC-0968 responsibilities unchanged | Cross-RFC consistency check |
-| **G4: Forward compat** | New roles can be added | §Future Work |  // R32-N7 fix: no `§Future Roles` section exists; renamed to `§Future Work`.
-| **G5: Cross-role data flow** | Data flow between roles documented | §Cross-Role Data Flow |
-| **G6: Pure forwarder exception** | A pure forwarder is a Router but NOT a destination node | Test: TV6 |
+| Goal                             | Target                                                                                                             | Metric                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| **G1: Role-binding coverage**    | All three required roles (Router, TokenIssuer, Asker) explicitly named as the same node; ReputationAnchor optional | Test: TV1, TV6, TV7                 |
+| **G2: Unified storage**          | One `HolderRegistry` per node; gossiped via RFC-0862                                                               | RFC-0957-A1 §HolderRegistry binding |
+| **G3: No individual role drift** | RFC-0870 + RFC-0957 + RFC-0959 + RFC-0968 responsibilities unchanged                                               | Cross-RFC consistency check         |
+| **G4: Forward compat**           | New roles can be added                                                                                             | §Future Work                        | // R32-N7 fix: no `§Future Roles` section exists; renamed to `§Future Work`. |
+| **G5: Cross-role data flow**     | Data flow between roles documented                                                                                 | §Cross-Role Data Flow               |
+| **G6: Pure forwarder exception** | A pure forwarder is a Router but NOT a destination node                                                            | Test: TV6                           |
 
 ## Motivation
 
@@ -179,15 +180,15 @@ This RFC does NOT introduce new algorithms. It cross-references:
 
 ### Role-Binding Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Owned Resources |
-|------|------------|-----------------|-----------|-----------------|
-| **Router** (REQUIRED) | RFC-0009 `IdentityKey` of node | forward + receive + verify | RFC-0870 Router Lifecycle | `ForwardRequestPayload`; `HopEnvelope` |
-| **Token Issuer** (REQUIRED) | RFC-0009 `IdentityKey` of node (same) | mint + revoke + register | node identity lifecycle | `HolderRegistry` (RFC-0957-A1); root secret |
-| **Asker** (REQUIRED) | RFC-0009 `IdentityKey` of node (same) | publish Ask | node identity lifecycle | `Ask` table (RFC-0959) |
-| **ReputationAnchor** (OPTIONAL) | RFC-0009 `IdentityKey` of node (same) | anchor reputation | node identity lifecycle | `ReputationRecord` table (RFC-0968) |
-| Provider Vault | RFC-0009 §Vault | provider key storage | node identity lifecycle | `ProviderKey` entries |
-| HolderRegistry | RFC-0957-A1 §HolderRegistry | unified catalog | node restart-survivable; gossip-replicated | `HolderRecord` rows |
-| Settlement Chain | RFC-0959 §Settlement Chain | append SettlementEvent + DealSettled | chain tip | `SettlementEvent` + `DealSettled` rows |
+| Role                            | Identifier                            | Authority Scope                      | Lifecycle                                  | Owned Resources                             |
+| ------------------------------- | ------------------------------------- | ------------------------------------ | ------------------------------------------ | ------------------------------------------- |
+| **Router** (REQUIRED)           | RFC-0009 `IdentityKey` of node        | forward + receive + verify           | RFC-0870 Router Lifecycle                  | `ForwardRequestPayload`; `HopEnvelope`      |
+| **Token Issuer** (REQUIRED)     | RFC-0009 `IdentityKey` of node (same) | mint + revoke + register             | node identity lifecycle                    | `HolderRegistry` (RFC-0957-A1); root secret |
+| **Asker** (REQUIRED)            | RFC-0009 `IdentityKey` of node (same) | publish Ask                          | node identity lifecycle                    | `Ask` table (RFC-0959)                      |
+| **ReputationAnchor** (OPTIONAL) | RFC-0009 `IdentityKey` of node (same) | anchor reputation                    | node identity lifecycle                    | `ReputationRecord` table (RFC-0968)         |
+| Provider Vault                  | RFC-0009 §Vault                       | provider key storage                 | node identity lifecycle                    | `ProviderKey` entries                       |
+| HolderRegistry                  | RFC-0957-A1 §HolderRegistry           | unified catalog                      | node restart-survivable; gossip-replicated | `HolderRecord` rows                         |
+| Settlement Chain                | RFC-0959 §Settlement Chain            | append SettlementEvent + DealSettled | chain tip                                  | `SettlementEvent` + `DealSettled` rows      |
 
 The "same" annotation on the Identifier column is the binding: all four roles share one RFC-0009 `IdentityKey`.
 
@@ -235,15 +236,15 @@ All steps are within the same node. The node identity is the binding.
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Router (REQUIRED) | RFC-0009 `IdentityKey` of node | forward + receive + verify | RFC-0870 Router Lifecycle | RFC-0870 + RFC-0971 binding |
-| Token Issuer (REQUIRED) | RFC-0009 `IdentityKey` of node (same) | mint + revoke + register | node identity lifecycle | RFC-0957 + RFC-0971 binding |
-| Asker (REQUIRED) | RFC-0009 `IdentityKey` of node (same) | publish Ask | node identity lifecycle | RFC-0959 + RFC-0971 binding |
-| ReputationAnchor (OPTIONAL) | RFC-0009 `IdentityKey` of node (same) | anchor reputation | node identity lifecycle | RFC-0968 + RFC-0971 binding |
-| HolderRegistry | RFC-0957-A1 §HolderRegistry (same node) | unified catalog | node restart-survivable | RFC-0957-A1 + RFC-0971 binding |
-| Provider Vault | RFC-0009 §Vault (same node) | provider key storage | node identity lifecycle | RFC-0009 + RFC-0971 binding |
-| Settlement Chain | RFC-0959 §Settlement Chain (same node) | append + verify chain | chain tip | RFC-0959 + RFC-0959-A1 + RFC-0971 binding |
+| Role                        | Identifier                              | Authority Scope            | Lifecycle                 | Source/Ref                                |
+| --------------------------- | --------------------------------------- | -------------------------- | ------------------------- | ----------------------------------------- |
+| Router (REQUIRED)           | RFC-0009 `IdentityKey` of node          | forward + receive + verify | RFC-0870 Router Lifecycle | RFC-0870 + RFC-0971 binding               |
+| Token Issuer (REQUIRED)     | RFC-0009 `IdentityKey` of node (same)   | mint + revoke + register   | node identity lifecycle   | RFC-0957 + RFC-0971 binding               |
+| Asker (REQUIRED)            | RFC-0009 `IdentityKey` of node (same)   | publish Ask                | node identity lifecycle   | RFC-0959 + RFC-0971 binding               |
+| ReputationAnchor (OPTIONAL) | RFC-0009 `IdentityKey` of node (same)   | anchor reputation          | node identity lifecycle   | RFC-0968 + RFC-0971 binding               |
+| HolderRegistry              | RFC-0957-A1 §HolderRegistry (same node) | unified catalog            | node restart-survivable   | RFC-0957-A1 + RFC-0971 binding            |
+| Provider Vault              | RFC-0009 §Vault (same node)             | provider key storage       | node identity lifecycle   | RFC-0009 + RFC-0971 binding               |
+| Settlement Chain            | RFC-0959 §Settlement Chain (same node)  | append + verify chain      | chain tip                 | RFC-0959 + RFC-0959-A1 + RFC-0971 binding |
 
 ### Out-of-Scope Roles
 
@@ -282,17 +283,17 @@ stateDiagram-v2
     end note
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Bound | Router reaches `Elected` | Yes | All three required roles + optional ReputationAnchor become active | n/a |
-| Bound | Suspended | Router reaches `Suspect` | Yes | Authority reduced per RFC-0870 | n/a |
-| Suspended | Bound | Router recovers from `Suspect` | Yes | Authority restored | n/a |
-| Bound | Unbound (Router) | Router reaches `Resigned` or `Inactive` | Yes | Router role deactivates; Token Issuer + Asker continue | n/a |
-| Active (Token Issuer) | Draining (Token Issuer) | operator decision | Yes | No new mints; existing tokens still verifiable | n/a |
-| Draining (Token Issuer) | Retired (Token Issuer) | all tokens expired or revoked | Yes | Token Issuer role deactivates | n/a |
-| Active (Asker) | Draining (Asker) | operator decision | Yes | No new Asks; existing Asks still settle | n/a |
-| Draining (Asker) | Retired (Asker) | all Asks settled or expired | Yes | Asker role deactivates | n/a |
-| All roles | Fully Unbound | Router + Token Issuer + Asker + ReputationAnchor all Retired | Yes | Node is offline; all role states gone | n/a |  // R51-N5 fix: added Router to match the 4-role binding (RFC-0971 L244-248).
+| From                    | To                      | Trigger                                                      | Deterministic? | Side Effects                                                       | Signing |
+| ----------------------- | ----------------------- | ------------------------------------------------------------ | -------------- | ------------------------------------------------------------------ | ------- |
+| (none)                  | Bound                   | Router reaches `Elected`                                     | Yes            | All three required roles + optional ReputationAnchor become active | n/a     |
+| Bound                   | Suspended               | Router reaches `Suspect`                                     | Yes            | Authority reduced per RFC-0870                                     | n/a     |
+| Suspended               | Bound                   | Router recovers from `Suspect`                               | Yes            | Authority restored                                                 | n/a     |
+| Bound                   | Unbound (Router)        | Router reaches `Resigned` or `Inactive`                      | Yes            | Router role deactivates; Token Issuer + Asker continue             | n/a     |
+| Active (Token Issuer)   | Draining (Token Issuer) | operator decision                                            | Yes            | No new mints; existing tokens still verifiable                     | n/a     |
+| Draining (Token Issuer) | Retired (Token Issuer)  | all tokens expired or revoked                                | Yes            | Token Issuer role deactivates                                      | n/a     |
+| Active (Asker)          | Draining (Asker)        | operator decision                                            | Yes            | No new Asks; existing Asks still settle                            | n/a     |
+| Draining (Asker)        | Retired (Asker)         | all Asks settled or expired                                  | Yes            | Asker role deactivates                                             | n/a     |
+| All roles               | Fully Unbound           | Router + Token Issuer + Asker + ReputationAnchor all Retired | Yes            | Node is offline; all role states gone                              | n/a     | // R51-N5 fix: added Router to match the 4-role binding (RFC-0971 L244-248). |
 
 ### Liveness Check
 
@@ -317,13 +318,13 @@ The role binding does not affect determinism. All four roles inherit their deter
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| Role binding itself | A | Identity-keyed; deterministic |
-| Router lifecycle transitions | A | RFC-0870 (inherited) |
-| Token Issuer mint | A | RFC-0957 + RFC-0957-A1 (inherited) |
-| Asker publish | A | RFC-0959 (inherited) |
-| ReputationAnchor (optional) | A | RFC-0968 (inherited) |
+| Operation                    | Class | Rationale                          |
+| ---------------------------- | ----- | ---------------------------------- |
+| Role binding itself          | A     | Identity-keyed; deterministic      |
+| Router lifecycle transitions | A     | RFC-0870 (inherited)               |
+| Token Issuer mint            | A     | RFC-0957 + RFC-0957-A1 (inherited) |
+| Asker publish                | A     | RFC-0959 (inherited)               |
+| ReputationAnchor (optional)  | A     | RFC-0968 (inherited)               |
 
 ## Error Handling
 
@@ -340,7 +341,7 @@ This RFC does NOT introduce new performance targets. Each role's performance is 
 - **Role confusion** — an attacker who compromises the node identity gains all roles. This is by design.
 - **Single point of failure** — the destination node holds all roles. If the node is offline, deals cannot settle, capabilities cannot be verified, Asks cannot be published. Mitigation: peer_set replication via RFC-0862 gossip; failover per RFC-0870 §Recovery Semantics.
 - **Role escalation** — an attacker with one role's authority tries to use another role's authority. By design: same identity.
-- **Audit-trail ambiguity** — which role signed a given event. Mitigation: each event includes a `role_tag` field (e.g., `DealSettled.role_tag = RoleTag::Asker`).  // R53-N3 fix: typed enum in RFC-0959-A1 §Data Structures:RoleTag, not string.
+- **Audit-trail ambiguity** — which role signed a given event. Mitigation: each event includes a `role_tag` field (e.g., `DealSettled.role_tag = RoleTag::Asker`). // R53-N3 fix: typed enum in RFC-0959-A1 §Data Structures:RoleTag, not string.
 
 ### Key Handling Rules
 
@@ -381,38 +382,38 @@ Verdict: ACCEPTED RISK.
 1. **Who benefits?** — Forensic investigator.
 2. **What does it cost them?** — Audit complexity.
 3. **What do they gain if successful?** — Clear audit trail.
-4. **What's our defense?** — Each event includes a `role_tag` field (e.g., `DealSettled.role_tag = RoleTag::Asker`).  // R53-N3 fix: typed enum in RFC-0959-A1 §Data Structures:RoleTag, not string.
+4. **What's our defense?** — Each event includes a `role_tag` field (e.g., `DealSettled.role_tag = RoleTag::Asker`). // R53-N3 fix: typed enum in RFC-0959-A1 §Data Structures:RoleTag, not string.
 5. **What's the residual risk?** — None; the role_tag is part of the event payload.
 
 Verdict: NO RISK.
 
 ## Dependency Validation
 
-| RFC# | Type | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0971 acceptance? |
-|------|------|------------------------------|------------------------|------------------------------------|
-| RFC-0009 | Requires | Accepted | Already | No |
-| RFC-0853 | Requires | Draft | Yes | YES |
-| RFC-0862 | Requires | Accepted | Already | No |
-| RFC-0870 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0957-A1 | Requires | Draft | Yes | YES |
-| RFC-0959 | Requires | Accepted | Already | No |
-| RFC-0959-A1 | Requires | Draft | Yes | YES |
-| RFC-0968 | Optional | Draft | Best-effort | No |
-| RFC-0969 | Requires | Draft | Yes | YES |
-| RFC-0970 | Requires | Draft | Yes | YES |
+| RFC#        | Type     | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0971 acceptance? |
+| ----------- | -------- | --------------------------- | ---------------------- | ---------------------------------- |
+| RFC-0009    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0853    | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0862    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0870    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957-A1 | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0959    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0959-A1 | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0968    | Optional | Draft                       | Best-effort            | No                                 |
+| RFC-0969    | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0970    | Requires | Draft                       | Yes                    | YES                                |
 
 **DAG check:** `0971 ← {0870, 0957, 0957-A1, 0959, 0959-A1, 0968*, 0969, 0970, 0009, 0009-B1, 0853, 0862}` — acyclic. Valid. (R47-N1 fix: added `0009-B1` to match Dependencies section.)
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| **IA-1: Node identity is stable across all four roles** | §Role-Binding Table | Role-binding breaks | RFC-0009 §Identity Stability |
-| **IA-2: HolderRegistry ownership is permanently keyed by issuer identity** | §Cross-Role Data Flow | Cross-node mint verifiability fails | RFC-0957-A1 §HolderRegistry binding; no transfer protocol |
-| **IA-3: Settlement Chain is owned by the same node as the HolderRegistry** | §Cross-Role Data Flow | DealSettled events cannot reference HolderRegistry rows | RFC-0959 + RFC-0959-A1 |
-| **IA-4: Peer set gossip is operational** | §Cross-Role Data Flow | Cross-node role-binding synchronization fails | RFC-0862 §Gossip Heartbeat |
-| **IA-5: Router Lifecycle applies to the Router role only** | §Lifecycle | Other roles' lifecycles are independent | Each role's lifecycle is stateless beyond node identity |
+| Assumption                                                                 | Where Relied Upon     | Blast Radius if False                                   | Mitigation / Status                                       |
+| -------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------- | --------------------------------------------------------- |
+| **IA-1: Node identity is stable across all four roles**                    | §Role-Binding Table   | Role-binding breaks                                     | RFC-0009 §Identity Stability                              |
+| **IA-2: HolderRegistry ownership is permanently keyed by issuer identity** | §Cross-Role Data Flow | Cross-node mint verifiability fails                     | RFC-0957-A1 §HolderRegistry binding; no transfer protocol |
+| **IA-3: Settlement Chain is owned by the same node as the HolderRegistry** | §Cross-Role Data Flow | DealSettled events cannot reference HolderRegistry rows | RFC-0959 + RFC-0959-A1                                    |
+| **IA-4: Peer set gossip is operational**                                   | §Cross-Role Data Flow | Cross-node role-binding synchronization fails           | RFC-0862 §Gossip Heartbeat                                |
+| **IA-5: Router Lifecycle applies to the Router role only**                 | §Lifecycle            | Other roles' lifecycles are independent                 | Each role's lifecycle is stateless beyond node identity   |
 
 ## Compatibility
 
@@ -531,12 +532,12 @@ Expected: signature verifies with K; role_tag = RoleTag::Asker disambiguates whi
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Verdict |
-|----------|------|------|---------|
-| **(a) Keep roles separate** | Clean separation | Implementer uncertainty | Rejected |
-| **(b) Single super-role** | Simple | Loses individual role semantics | Rejected |
-| **(c) Explicit role binding (this RFC)** | Unambiguous; backward-compat | Adds meta-spec | **Adopted** |
-| **(d) Configuration-driven** | Flexible | Configuration drift risk | Rejected |
+| Approach                                 | Pros                         | Cons                            | Verdict     |
+| ---------------------------------------- | ---------------------------- | ------------------------------- | ----------- |
+| **(a) Keep roles separate**              | Clean separation             | Implementer uncertainty         | Rejected    |
+| **(b) Single super-role**                | Simple                       | Loses individual role semantics | Rejected    |
+| **(c) Explicit role binding (this RFC)** | Unambiguous; backward-compat | Adds meta-spec                  | **Adopted** |
+| **(d) Configuration-driven**             | Flexible                     | Configuration drift risk        | Rejected    |
 
 ## Implementation Phases
 
@@ -554,18 +555,18 @@ Expected: signature verifies with K; role_tag = RoleTag::Asker disambiguates whi
 
 ### Phase 3: Mission Decomposition
 
-- [ ] `missions/open/0971-a-role-binding.md` — role binding implementation
+- [ ] `missions/archived/completed/0971-a-role-binding.md` — role binding implementation
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/node/role_binding.rs` (NEW) | Role binding declaration |
+| File                                                        | Change                              |
+| ----------------------------------------------------------- | ----------------------------------- |
+| `crates/quota-router-core/src/node/role_binding.rs` (NEW)   | Role binding declaration            |
 | `docs/07-developers/destination-node-architecture.md` (NEW) | Destination node architecture guide |
-| RFC-0870 §Roles | Cross-reference RFC-0971 |
-| RFC-0957 §Roles | Cross-reference RFC-0971 |
-| RFC-0959 §Roles | Cross-reference RFC-0971 |
-| RFC-0968 §Roles | Cross-reference RFC-0971 |
+| RFC-0870 §Roles                                             | Cross-reference RFC-0971            |
+| RFC-0957 §Roles                                             | Cross-reference RFC-0971            |
+| RFC-0959 §Roles                                             | Cross-reference RFC-0971            |
+| RFC-0968 §Roles                                             | Cross-reference RFC-0971            |
 
 ## Future Work
 
@@ -582,11 +583,11 @@ The dual-mode workflow requires the destination node to hold four roles. Today's
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.0     | 2026-08-01 | Initial draft |
-| 1.1     | 2026-08-01 | Round 2: predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker`; `ReputationAnchor` clearly OPTIONAL; pure forwarder exception explicit; `seller_signature` ≡ Asker signature; `role_tag` for audit |
-| 1.2     | 2026-08-01 | Round 21 (R13-N8 fix): ReputationAnchor Lifecycle cross-ref; Asker→HolderRegistry mermaid edge corrected; role-binding state machine extended with Draining/Suspended/Retired transitions; Draining atomicity clarified; RFC-0009-B1 reference added. (R23-N9 note: prior 'Round 4' was stale; canonical fix-id is R13-N8.) |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Changes                                                                                                                                                                                                                                                                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Initial draft                                                                                                                                                                                                                                                                                                               |
+| 1.1        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Round 2: predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker`; `ReputationAnchor` clearly OPTIONAL; pure forwarder exception explicit; `seller_signature` ≡ Asker signature; `role_tag` for audit                                                                                                    |
+| 1.2        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Round 21 (R13-N8 fix): ReputationAnchor Lifecycle cross-ref; Asker→HolderRegistry mermaid edge corrected; role-binding state machine extended with Draining/Suspended/Retired transitions; Draining atomicity clarified; RFC-0009-B1 reference added. (R23-N9 note: prior 'Round 4' was stale; canonical fix-id is R13-N8.) |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged; 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/networking/`. `DestinationNode = Router ∧ TokenIssuer ∧ Asker` predicate canonical; `ReputationAnchor` OPTIONAL; DAG check includes RFC-0009-B1 + the 4 in-batch RFCs (0957-A1, 0959-A1, 0969, 0970); `role_tag = RoleTag::Asker` typed enum (no string literals); phantom call site at 0959-A1 L520 properly DEFERRED. |
 
 ## Related RFCs
@@ -613,8 +614,8 @@ The dual-mode workflow requires the destination node to hold four roles. Today's
 
 ## Related Missions
 
-- `missions/claimed/0957-b-provider-boundary-exercise-path.md` — R9-4 closure DONE
-- Future: `missions/open/0971-a-role-binding.md`
+- `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` — R9-4 closure DONE
+- Future: `missions/archived/completed/0971-a-role-binding.md`
 
 ## Cross-Reference: Outgoing Edges
 

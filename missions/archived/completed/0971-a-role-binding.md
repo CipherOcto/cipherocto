@@ -2,13 +2,13 @@
 
 ## Status
 
-**Closed 2026-08-07.** Claimed 2026-08-04. Partial progress 2026-08-06: 11/22 ACs flipped GREEN (commit `67a47ace`). 9 ACs DEFERRED into mission `missions/claimed/0971-a1-deferred-acs.md` per [[deferred-vs-unspecified]] named-owner rule (filed 2026-08-07). **0971-a1 closed 2026-08-07 (9/9 GREEN, 14-39 days early)** — all 8 ACs moved to 0971-a1 (AC-A1 through AC-A5 + AC-B1 + AC-B2 + AC-B4) closed by commit `f465912d` + `9a46e06f` + `0bdbcb38`. Total: 22/22 ACs GREEN across 2 missions. Stale checkbox surface in this mission flipped 2026-08-07 (this commit).
+**Closed 2026-08-07.** Claimed 2026-08-04. Partial progress 2026-08-06: 11/22 ACs flipped GREEN (commit `67a47ace`). 9 ACs DEFERRED into mission `missions/archived/completed/0971-a1-deferred-acs.md` per [[deferred-vs-unspecified]] named-owner rule (filed 2026-08-07). **0971-a1 closed 2026-08-07 (9/9 GREEN, 14-39 days early)** — all 8 ACs moved to 0971-a1 (AC-A1 through AC-A5 + AC-B1 + AC-B2 + AC-B4) closed by commit `f465912d` + `9a46e06f` + `0bdbcb38`. Total: 22/22 ACs GREEN across 2 missions. Stale checkbox surface in this mission flipped 2026-08-07 (this commit).
 
 ## RFC
 
 RFC-0971 (Networking): Destination-Node Role Consolidation — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0971-destination-node-role-consolidation.md` (top-level decomposition mission)
+**Sub-mission of:** `missions/archived/completed/0971-destination-node-role-consolidation.md` (top-level decomposition mission)
 
 ## Summary
 
@@ -246,7 +246,7 @@ consumer-side audit log uses the same redaction convention for `envelope_id`
 
 **Requires (mission gates):**
 
-- `missions/open/0971-destination-node-role-consolidation.md` (top-level)
+- `missions/archived/completed/0971-destination-node-role-consolidation.md` (top-level)
 - At least one sub-mission from each of the 4 in-batch RFCs MUST be merged (0957-c, 0959-b, 0969-a, 0970-a) so that the role-binding declaration references real types.
 
 ```yaml

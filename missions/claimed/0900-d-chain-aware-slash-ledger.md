@@ -49,9 +49,9 @@ chain-aware at the SQL level; `slash_ledger` PK promoted from
   distinct rows).
 - AC-9 LANDED: existing 3 tests updated + 1 new test added.
 - AC-10 PARTIALLY VERIFIED: `cargo test -p quota-router-storage
-  --lib` = 192/192 pass; `cargo build -p quota-router-core
-  --features full` = green; `cargo test -p quota-router-core
-  --lib --features full` blocked by missing libpython3.12 in
+--lib` = 192/192 pass; `cargo build -p quota-router-core
+--features full` = green; `cargo test -p quota-router-core
+--lib --features full` blocked by missing libpython3.12 in
   current env (pre-existing infra, not 0900-d regression).
 - AC-11 LANDED: clippy + fmt both green.
 
@@ -206,21 +206,21 @@ slash_ledger `BIGINT`.
   BLAKE3 prefix per §20.3 — same shape applies to slash ledger
   identity (slash ledger intentionally does NOT derive an ID; the
   composite key IS the identity per §20.3 lattice)
-- **Sibling:** `missions/claimed/0862-c1-dqa-vault-bump-amendment.md`
+- **Sibling:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md`
   (LANDED 2026-08-17) — same DQA(12) + chain_id promotion pattern
   for vault transfers; this mission applies it to slash ledger
 - **Co-mission (parallel):**
-  `missions/open/0862-c9-micro-octow-type-unification.md` (filed
+  `missions/retired/0862-c9-micro-octow-type-unification.md` (filed
   2026-08-17) — closes audit-verdict Risk #1 CRITICAL (MicroOctoW
   alias); this mission closes Risk #2 CRITICAL (4 column types)
   for the slash_ledger portion
 - **Co-mission (parallel):**
-  `missions/open/0105-x-s4-deferred-codemod-sites.md` (filed
+  `missions/claimed/0105-x-s4-deferred-codemod-sites.md` (filed
   2026-08-17) — in-memory field type migration for
   marketplace/slashing.rs etc.; this mission covers migration
   column promotion + chain_id PK
 - **Co-mission (parallel):**
-  `missions/open/0959-c1-wire-format-amendment.md` (filed
+  `missions/claimed/0959-c1-wire-format-amendment.md` (filed
   2026-08-17) — settlement wire format DQA(12); this mission is
   parallel for slash_ledger chain-aware
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
@@ -304,9 +304,9 @@ String), ProviderStake>` lookup syntax is verbose. Mitigation:
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                             |
-| ---------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6d RFC-0900 amendment per pending task #443). Co-filed with `0862-c9`, `0105-x`, `0959-c1`. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6d RFC-0900 amendment per pending task #443). Co-filed with `0862-c9`, `0105-x`, `0959-c1`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-08-18 | @mmacedoeu | **LANDED (scope-narrowed).** v015 migration + `SlashLedgerRow.chain_id` + `ProviderStake.chain_id` (4 sites) + `append_outcome` widening + 3 existing tests updated + 1 new chain-discriminator test (TV-0900-D-09). RFC-0900 v2.0 row + §Slash Ledger Substrate subsection added. AC-1 sub-clause (DQA(12) promotion), AC-4 (SlashOutcome.chain_id), AC-5 (HashMap tuple-key), AC-8 (9 remaining TVs) DEFERRED to follow-on. Documented 2 stoolap fork quirks: (1) `x'...'` literals rejected in DEFAULT clauses, (2) column-level UNIQUE autoindex named `unique_<table>_<col>` not `sqlite_autoindex_<table>_1`, (3) INSERT param binding uses SCHEMA column order not INSERT column-list order. |
 
 ## Out of scope

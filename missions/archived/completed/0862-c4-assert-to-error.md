@@ -75,7 +75,7 @@ proper error variants.)
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
 - **Pattern:** `octo_determin::DqaError` already covers scale
   invariant violations upstream; the storage layer's
   `SpendLedgerError::Storage` should wrap + propagate

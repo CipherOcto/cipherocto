@@ -44,7 +44,7 @@ octo network router peers <peer_node_id_hex> [--json]
 ## Dependencies
 
 - RFC-0011-p Draft at `next 92b69be3`
-- Substrate companion mission G10 at `missions/open/0011-h-s-a-quota-router-node.md` (paired Open → Claimed → Completed)
+- Substrate companion mission G10 at `missions/archived/0011-h-s-a-quota-router-node.md` (paired Open → Claimed → Completed)
 - Substrate slice at `next 52a99360`
 
 ## Out of Scope

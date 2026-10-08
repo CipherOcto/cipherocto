@@ -16,14 +16,14 @@ Extend the RFC-0957 macaroon caveat DSL with the 9 new caveat types per RFC-0965
 
 ## Depends on (RFC + upstream missions)
 
-| Dependency                                                     | Status                          | Required?             |
-| -------------------------------------------------------------- | ------------------------------- | --------------------- |
-| RFC-0957 (Capability Token Format)                             | Accepted (2026-07-20)           | YES — base caveat DSL |
-|                                                                | RFC-0960 (Grand Design)         | Accepted              | YES — defines the 9 new types in §2.2 |
-|                                                                | RFC-0965 (Capability Extension) | Accepted              | YES — wire format + names             |
-|                                                                | RFC-0964 (Constraint Encoding)  | Accepted              | NO (companion; W3)                    |
-|                                                                | RFC-0967 (Policy Object Graph)  | Accepted              | NO (consumer for PolicyReference; W5) |
-| Mission `missions/claimed/0957-a-capability-token-macaroon.md` | Claimed (2026-07-20)            | YES — base caveat DSL |
+| Dependency                                                                | Status                          | Required?             |
+| ------------------------------------------------------------------------- | ------------------------------- | --------------------- |
+| RFC-0957 (Capability Token Format)                                        | Accepted (2026-07-20)           | YES — base caveat DSL |
+|                                                                           | RFC-0960 (Grand Design)         | Accepted              | YES — defines the 9 new types in §2.2 |
+|                                                                           | RFC-0965 (Capability Extension) | Accepted              | YES — wire format + names             |
+|                                                                           | RFC-0964 (Constraint Encoding)  | Accepted              | NO (companion; W3)                    |
+|                                                                           | RFC-0967 (Policy Object Graph)  | Accepted              | NO (consumer for PolicyReference; W5) |
+| Mission `missions/archived/completed/0957-a-capability-token-macaroon.md` | Claimed (2026-07-20)            | YES — base caveat DSL |
 
 ## Type Coverage
 

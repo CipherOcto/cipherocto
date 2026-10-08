@@ -23,7 +23,7 @@ Closes three HIGH-severity security findings in `StoolapSpendLedger`'s
    not the dsn-dir. Worst case: flock on `/etc/passwd`.
 
 2. **Path traversal** (Round 3, severity HIGH): `lock_path =
-   path.strip_prefix("file://").unwrap_or(path); .join(".spend_ledger.lock")`
+path.strip_prefix("file://").unwrap_or(path); .join(".spend_ledger.lock")`
    performs NO canonicalization. DSN containing `..` segments (e.g.
    `file:///tmp/legit/../../etc/passwd-target`) resolves to an
    attacker-controlled directory. No `starts_with("/")` check; no
@@ -50,45 +50,45 @@ Closes three HIGH-severity security findings in `StoolapSpendLedger`'s
 
 ## Dependency edges
 
-| From | To | Why | Layer direction |
-| ---- | -- | --- | ---------------- |
-| `StoolapSpendLedger::open_path_with_clock` | std `fs2::symlink_metadata` | pre-open symlink check | substrate → std |
-| `open_path_with_clock` | std `std::fs::Permissions::from_mode` | umask 0600 set | substrate → std |
+| From                                       | To                                    | Why                    | Layer direction |
+| ------------------------------------------ | ------------------------------------- | ---------------------- | --------------- |
+| `StoolapSpendLedger::open_path_with_clock` | std `fs2::symlink_metadata`           | pre-open symlink check | substrate → std |
+| `open_path_with_clock`                     | std `std::fs::Permissions::from_mode` | umask 0600 set         | substrate → std |
 
 ## Acceptance Criteria
 
 - [x] AC-1: pre-open `symlink_metadata` check (portable fallback — AC
-  note re-lists `O_NOFOLLOW` as the strict alternative, deferred per
-  libc-dep concern). On symlink: surface new
-  `SpendLedgerError::LockPathSymlink { path: String }` — typed error
-  (mirrors LockUnavailable from c3, fail-closed).
+      note re-lists `O_NOFOLLOW` as the strict alternative, deferred per
+      libc-dep concern). On symlink: surface new
+      `SpendLedgerError::LockPathSymlink { path: String }` — typed error
+      (mirrors LockUnavailable from c3, fail-closed).
 - [x] AC-2: After `open(&lock_path)` succeeds, call
-  `std::fs::set_permissions(&lock_path, Permissions::from_mode(0o600))`.
-  On failure: surface `SpendLedgerError::Storage(format!("lock chmod:
-  {e}"))`. umask=0600 prevents unlink+recreate race across uids.
+      `std::fs::set_permissions(&lock_path, Permissions::from_mode(0o600))`.
+      On failure: surface `SpendLedgerError::Storage(format!("lock chmod:
+{e}"))`. umask=0600 prevents unlink+recreate race across uids.
 - [x] AC-3: Drop `OpenOptions::truncate(true)`. Defensive only — flock
-  doesn't need content; truncate destroys any pre-existing data on
-  the lock file path (a debugging marker etc.). The remaining
-  `create(true) + write(true)` opens or creates + opens the lock
-  file at zero-length without destruction.
+      doesn't need content; truncate destroys any pre-existing data on
+      the lock file path (a debugging marker etc.). The remaining
+      `create(true) + write(true)` opens or creates + opens the lock
+      file at zero-length without destruction.
 - [ ] AC-4: Path canonicalization check — DEFERRED. The pre-open
-  symlink check (AC-1) is accepted per Risks §Symlink pre-check
-  TOCTOU (acceptable for this substrate's threat model where attacker
-  must already have write to dsn-dir; O_NOFOLLOW strict fix reserved
-  for a separate amendment).
+      symlink check (AC-1) is accepted per Risks §Symlink pre-check
+      TOCTOU (acceptable for this substrate's threat model where attacker
+      must already have write to dsn-dir; O_NOFOLLOW strict fix reserved
+      for a separate amendment).
 - [x] AC-5: Two new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`:
-  TV-0862-20 (symlink at `.spend_ledger.lock` -> `/etc/passwd` ->
-  `LockPathSymlink` returned; side-effect check asserts the symlink
-  was NOT clobbered), TV-0862-21 (lock file permissions are 0o600
-  after open — read via `lock_path.metadata().permissions().mode() &
-  0o777`).
+      TV-0862-20 (symlink at `.spend_ledger.lock` -> `/etc/passwd` ->
+      `LockPathSymlink` returned; side-effect check asserts the symlink
+      was NOT clobbered), TV-0862-21 (lock file permissions are 0o600
+      after open — read via `lock_path.metadata().permissions().mode() &
+0o777`).
 - [x] AC-6: RFC-0862 new v2.0.10 row documenting all AC-1/2/3
-  substrate changes + AC-5 TV.
+      substrate changes + AC-5 TV.
 - [x] AC-7: clippy zero + cargo fmt clean + 20/20 TV green.
 
 ## Cross-reference
 
-- **Parent:** `missions/claimed/0862-c3-cross-process-drain.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c3-cross-process-drain.md` (LANDED)
 - **Audit source:** S6c Round 3 findings: TOCTOU-sYM-LINK-RACE (HIGH,
   file:line), path-traversal (HIGH), lock-bypass (HIGH).
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
@@ -112,7 +112,7 @@ Closes three HIGH-severity security findings in `StoolapSpendLedger`'s
   - v2.0.10 row appended
 - `memory/mission-0862-c11-lock-file-hardening-status.md` (memory card)
 - `memory/MEMORY.md` (pointer)
-- `missions/open/0862-c11-lock-file-hardening.md` → `missions/claimed/`
+- `missions/claimed/0862-c11-lock-file-hardening.md` → `missions/claimed/`
 
 ## Out of scope (filed separately)
 
@@ -149,7 +149,7 @@ Closes three HIGH-severity security findings in `StoolapSpendLedger`'s
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                                                 |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-18 | @mmacedoeu | Initial filing per S6c Round 3 HIGH security findings. Three findings consolidated into single substrate hardening landing + 2 new TV + 1 RFC row. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-18 | @mmacedoeu | Initial filing per S6c Round 3 HIGH security findings. Three findings consolidated into single substrate hardening landing + 2 new TV + 1 RFC row.                                                                                                                                                                                                                  |
 | 2026-08-18 | @mmacedoeu | LANDED. Substrate edit (`stoolap_spend_ledger.rs`: `LockPathSymlink` variant + `PermissionsExt` import + `open_path_with_clock` symlink pre-check + chmod 0o600 + drop truncate). TV-0862-20 + TV-0862-21 added (20/20 green). RFC-0862 v2.0.10 row appended. AC-1/2/3/5/6/7 closed; AC-4 (post-open canonicalize) DEFERRED — pre-check accepted per Risks §TOCTOU. |

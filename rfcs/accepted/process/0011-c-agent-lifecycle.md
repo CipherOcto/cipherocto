@@ -724,12 +724,12 @@ decomposition is **flat** (no nested sub-missions) per
 ### DOC-ONLY (this RFC cycle)
 
 - `rfcs/draft/process/0011-c-agent-lifecycle.md` — this RFC
-- `missions/open/0011-c-agent-create-subcommand.md` — companion mission
-- `missions/open/0011-c-agent-run-subcommand.md` — companion mission
-- `missions/open/0011-c-agent-list-subcommand.md` — companion mission
-- `missions/open/0011-c-agent-destroy-subcommand.md` — companion mission
-- `missions/open/0011-c-agent-attach-subcommand.md` — companion mission
-- `missions/open/0011-c-octo-runtime-substrate.md` — companion substrate mission (NEW; Layer B)
+- `missions/archived/completed/0011-c-agent-create-subcommand.md` — companion mission
+- `missions/archived/completed/0011-c-agent-run-subcommand.md` — companion mission
+- `missions/archived/completed/0011-c-agent-list-subcommand.md` — companion mission
+- `missions/archived/completed/0011-c-agent-destroy-subcommand.md` — companion mission
+- `missions/archived/completed/0011-c-agent-attach-subcommand.md` — companion mission
+- `missions/archived/completed/0011-c-octo-runtime-substrate.md` — companion substrate mission (NEW; Layer B)
 
 ### SUBSTRATE (follow-on missions, NOT this RFC cycle)
 

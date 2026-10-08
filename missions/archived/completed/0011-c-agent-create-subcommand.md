@@ -50,7 +50,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-core-outpu
 - [ ] `AgentCreateOutput` payload type implemented + unit-tested (`agent_id`, `state`, `registered_at_unix`, `manifest_digest`)
 - [ ] `OctoCliRedactor` agent-specific patterns applied per RFC-0011-c §Security Considerations — log-time wholesale `REDACTED_KEY` substitution for `agent_id`, `capability_root`, `holder_did` via `FIELD_TABLE` entries, exercised by TV `tv_agt_redact_log_line_replaces_agent_family_fields`.
 
-> Note: envelope-payload redaction (`RedactedString` newtype + conditional `holder_did == active_did` policy + `agent_id` truncation) is deferred to mission `0011-c-agent-redaction-envelope`. That mission's stub YAML lives at `missions/open/0011-c-agent-redaction-envelope.md` and gates the Phase 2 work on the Phase 1 substrate that this mission locks.
+> Note: envelope-payload redaction (`RedactedString` newtype + conditional `holder_did == active_did` policy + `agent_id` truncation) is deferred to mission `0011-c-agent-redaction-envelope`. That mission's stub YAML lives at `missions/archived/completed/0011-c-agent-redaction-envelope.md` and gates the Phase 2 work on the Phase 1 substrate that this mission locks.
 
 - [ ] `Commands::Agent` clap variant wired (the 4 sibling subcommand missions attach here)
 - [ ] `ManifestParseError` (exit 39), `CapabilityValidationFailed(usize)` (exit 40), `AgentAlreadyExists(Uuid)` (exit 41) wired (per RFC-0011-c §9.8 slot allocation 39-52)
@@ -105,7 +105,7 @@ Land the `octo agent create` subcommand per RFC-0011-c §9.3.1. The four sibling
 
 4. **`ManifestParseError`, `CapabilityValidationFailed`, `AgentAlreadyExists` error variants + exit 39/40/41 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add three variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 39/40/41 per RFC-0011-c §9.8 (slot allocation 39-52).
 
-5. **Agent-specific redaction patterns (Phase 1)** — `crates/octo-cli/src/redact.rs` (Layer C/D; per RFC-0011-c §Security Considerations). Add `FIELD_TABLE` entries for `agent_id` / `capability_root` / `holder_did` so the live `OctoCliRedactor` tracing layer (`OctoCliRedactor::on_event` → `redact_by_field`) substitutes `REDACTED_KEY` wholesale in log lines. `state`, `registered_at_unix`, `manifest_digest` are NOT redacted (operator-owned info, not substrate secrets).→ Phase 2 envelope-payload redaction (`RedactedString` newtype + conditional `holder_did == active_did` policy + `agent_id` truncation) deferred to mission `0011-c-agent-redaction-envelope` (stub at `missions/open/0011-c-agent-redaction-envelope.md`).
+5. **Agent-specific redaction patterns (Phase 1)** — `crates/octo-cli/src/redact.rs` (Layer C/D; per RFC-0011-c §Security Considerations). Add `FIELD_TABLE` entries for `agent_id` / `capability_root` / `holder_did` so the live `OctoCliRedactor` tracing layer (`OctoCliRedactor::on_event` → `redact_by_field`) substitutes `REDACTED_KEY` wholesale in log lines. `state`, `registered_at_unix`, `manifest_digest` are NOT redacted (operator-owned info, not substrate secrets).→ Phase 2 envelope-payload redaction (`RedactedString` newtype + conditional `holder_did == active_did` policy + `agent_id` truncation) deferred to mission `0011-c-agent-redaction-envelope` (stub at `missions/archived/completed/0011-c-agent-redaction-envelope.md`).
 
 ## Cargo deps
 

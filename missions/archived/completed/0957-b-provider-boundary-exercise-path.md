@@ -28,21 +28,21 @@ Sub-mission letter-b of RFC-0957. Implements the provider boundary egress/ingres
 
 **R3 clarification — DAG acyclicity:** No circular dependency exists despite reviewer's R3 finding. Actual DAG: `RFC-0957 → RFC-0009 (substrate) → RFC-0102 (vault) → RFC-0853 (BLAKE3) → RFC-0959 (settlement) → RFC-0957-b (this mission)` is acyclic per R3 audit; depends_on relation is linear + ancestor-walk.
 
-| Dependency                                   | Status                                                                | Required?                                                            |
-| -------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| RFC-0957 (Capability Token Format)           | ACCEPTED (2026-07-20)                                                 | YES — substrate                                                      |
-| RFC-0959 v1.0 (Independent Settlement Chain) | ACCEPTED (2026-07-20)                                                 | YES — settlement hash + receipt + ConsumedReceiptIndex + Ask binding |
-| RFC-0009 (Identity Management)               | ACCEPTED (2026-07-20)                                                 | YES — NodeType taxonomy + Ed25519 substrate                          |
-| RFC-0102 (Wallet Cryptography)               | ACCEPTED (2026-07-20)                                                 | YES — vault + keystore                                               |
-| RFC-0853 (Overlay Cryptography)              | ACCEPTED (2026-07-20)                                                 | YES — BLAKE3 primitive for cache_key + settlement_hash               |
-| RFC-0126 (Deterministic Serialization)       | Accepted                                                              | YES — canonical_ser for envelope + axes_consumed                     |
-| RFC-0862 (Stoolap Sync Layer)                | Accepted (v1.2.0)                                                     | YES — marketplace index rebuild + cross-repo persistence             |
-| RFC-0909 (Deterministic Quota Accounting)    | Accepted (v69)                                                        | NO (coexistence only per Option A — independent chain)               |
-| Mission                                      | `missions/claimed/0102-a-wallet-foundation.md` (S01)                  | Claimed (2026-07-20)                                                 | YES — wallet substrate for vault one-shot borrow                  |
-| Mission                                      | `missions/claimed/0957-a-capability-token-macaroon.md` (S02)          | Claimed (2026-07-20)                                                 | YES — capability token format (this is letter-b of same RFC-0957) |
-| Mission                                      | `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03)                | Claimed (2026-07-20)                                                 | YES — settlement hash + Ask binding types                         |
-| Use Case                                     | `docs/use-cases/enhanced-quota-router-gateway.md`                     | ✓ Approved (2026-03-12)                                              | YES — provider boundary + capability egress intent layer          |
-| Plan                                         | `docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md` | ✓ exists                                                             | YES — authoritative session plan                                  |
+| Dependency                                   | Status                                                                  | Required?                                                            |
+| -------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| RFC-0957 (Capability Token Format)           | ACCEPTED (2026-07-20)                                                   | YES — substrate                                                      |
+| RFC-0959 v1.0 (Independent Settlement Chain) | ACCEPTED (2026-07-20)                                                   | YES — settlement hash + receipt + ConsumedReceiptIndex + Ask binding |
+| RFC-0009 (Identity Management)               | ACCEPTED (2026-07-20)                                                   | YES — NodeType taxonomy + Ed25519 substrate                          |
+| RFC-0102 (Wallet Cryptography)               | ACCEPTED (2026-07-20)                                                   | YES — vault + keystore                                               |
+| RFC-0853 (Overlay Cryptography)              | ACCEPTED (2026-07-20)                                                   | YES — BLAKE3 primitive for cache_key + settlement_hash               |
+| RFC-0126 (Deterministic Serialization)       | Accepted                                                                | YES — canonical_ser for envelope + axes_consumed                     |
+| RFC-0862 (Stoolap Sync Layer)                | Accepted (v1.2.0)                                                       | YES — marketplace index rebuild + cross-repo persistence             |
+| RFC-0909 (Deterministic Quota Accounting)    | Accepted (v69)                                                          | NO (coexistence only per Option A — independent chain)               |
+| Mission                                      | `missions/claimed/0102-a-wallet-foundation.md` (S01)                    | Claimed (2026-07-20)                                                 | YES — wallet substrate for vault one-shot borrow                  |
+| Mission                                      | `missions/archived/completed/0957-a-capability-token-macaroon.md` (S02) | Claimed (2026-07-20)                                                 | YES — capability token format (this is letter-b of same RFC-0957) |
+| Mission                                      | `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03)                  | Claimed (2026-07-20)                                                 | YES — settlement hash + Ask binding types                         |
+| Use Case                                     | `docs/use-cases/enhanced-quota-router-gateway.md`                       | ✓ Approved (2026-03-12)                                              | YES — provider boundary + capability egress intent layer          |
+| Plan                                         | `docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md`   | ✓ exists                                                             | YES — authoritative session plan                                  |
 
 ## Type Coverage
 
@@ -315,7 +315,7 @@ findings, all resolved across commits `da83d8cd` (R9-1, R9-2, R9-3, R9-5, R9-6) 
 Per BLUEPRINT.md:
 
 1. All Requires RFCs reach Accepted (7-day review + 2 maintainer approvals each).
-2. ~~Move this mission file to `missions/claimed/0957-b-provider-boundary-exercise-path.md`~~ — **DONE 2026-07-20** (per §Status header).
+2. ~~Move this mission file to `missions/archived/completed/0957-b-provider-boundary-exercise-path.md`~~ — **DONE 2026-07-20** (per §Status header).
 3. Implementation per RFC-0957 §Implementation Phases Phase 3 + S04 plan §3 Steps 1-10 (R17 fix — consistent with master plan §6 11-step enumeration; session plan enumerates 10 numbered steps with Step 11 embedded in §3 Step 10).
 4. PR + review → merge.
 5. Exercise path green in CI under `--all-features` per master plan §9 Exit Criteria.

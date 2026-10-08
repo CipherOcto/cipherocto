@@ -3,7 +3,7 @@
 ## Status
 
 **Closed 2026-08-07.** Absorbs the 2 AC-B2.1 hardening items deferred from
-`missions/claimed/0969-a2-followup.md` (Status: Closed 2026-08-07, 17/17 ACs
+`missions/archived/completed/0969-a2-followup.md` (Status: Closed 2026-08-07, 17/17 ACs
 GREEN). Substrate work landed at commit `2ec21e01`. Total: 2/2 ACs GREEN.
 Owner: @cipherocto.
 
@@ -16,7 +16,7 @@ cites real missions or RFC substrate.
 
 RFC-0969 (Economics): Dual-Pipeline Authorization — Accepted 2026-08-02.
 
-**Sub-mission of:** `missions/claimed/0969-a2-followup.md` (Band A closed 2026-08-07).
+**Sub-mission of:** `missions/archived/completed/0969-a2-followup.md` (Band A closed 2026-08-07).
 
 ## Phase
 
@@ -124,11 +124,11 @@ This hardening adds (per 0969-a2 AC-B2 §Deviations deferred items):
 
 One impl commit + this docs commit landed 2026-08-07.
 
-| AC | Target | Closed | Impl Commit |
-|----|--------|--------|-------------|
-| AC-B2.1.a | 2026-09-04 | 2026-08-07 (28d early) | `2ec21e01` |
-| AC-B2.1.b | 2026-09-04 | 2026-08-07 (28d early) | `2ec21e01` |
-| **Total** | 2026-09-04 | **2026-08-07** | 1 commit |
+| AC        | Target     | Closed                 | Impl Commit |
+| --------- | ---------- | ---------------------- | ----------- |
+| AC-B2.1.a | 2026-09-04 | 2026-08-07 (28d early) | `2ec21e01`  |
+| AC-B2.1.b | 2026-09-04 | 2026-08-07 (28d early) | `2ec21e01`  |
+| **Total** | 2026-09-04 | **2026-08-07**         | 1 commit    |
 
 Verification artifacts (2026-08-07):
 

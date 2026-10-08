@@ -2,18 +2,18 @@
 
 ## Status
 
-**Closed 2026-08-07.** Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C **closed early 2026-08-07** (11/11 ACs GREEN; commit `357d8384`). Total: 17/17 ACs GREEN across 3 commits + 1 docs commit. **Plus 4 cargo-verification ACs** flipped 2026-08-07: `cargo build --workspace` green (2m 34s); `cargo test --workspace --lib` green; `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean; `cargo fmt --check` clean. **Total ACs in this follow-up: 23/23.** Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
+**Closed 2026-08-07.** Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/archived/completed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C **closed early 2026-08-07** (11/11 ACs GREEN; commit `357d8384`). Total: 17/17 ACs GREEN across 3 commits + 1 docs commit. **Plus 4 cargo-verification ACs** flipped 2026-08-07: `cargo build --workspace` green (2m 34s); `cargo test --workspace --lib` green; `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean; `cargo fmt --check` clean. **Total ACs in this follow-up: 23/23.** Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/archived/completed/0969-a-dual-pipeline-gateway.md` §Claimant).
 
 ## Closure
 
 Three impl commits + three docs commits landed 2026-08-07. Verifications all green.
 
-| Group | ACs | Target | Closed | Impl Commit | Docs Commit |
-|-------|-----|--------|--------|-------------|-------------|
-| A — Identity linkage + AuthError Debug | 5/5 | 2026-08-14 | 2026-08-07 (7d early) | `0434e53f` + `3979e1de` | (this file) |
-| B — GatewayAuthenticator + authenticate() + brace-balance lint | 3/3 | 2026-08-21 | 2026-08-07 (14d early) | `52bff741` | (this file) |
-| C — Test vectors TV1-TV8+TV10-TV12 | 11/11 | 2026-08-28 | 2026-08-07 (21d early) | `357d8384` | (this file) |
-| **Total** | **17/17** | 2026-08-28 | **2026-08-07** | 4 commits | 1 commit |
+| Group                                                          | ACs       | Target     | Closed                 | Impl Commit             | Docs Commit |
+| -------------------------------------------------------------- | --------- | ---------- | ---------------------- | ----------------------- | ----------- |
+| A — Identity linkage + AuthError Debug                         | 5/5       | 2026-08-14 | 2026-08-07 (7d early)  | `0434e53f` + `3979e1de` | (this file) |
+| B — GatewayAuthenticator + authenticate() + brace-balance lint | 3/3       | 2026-08-21 | 2026-08-07 (14d early) | `52bff741`              | (this file) |
+| C — Test vectors TV1-TV8+TV10-TV12                             | 11/11     | 2026-08-28 | 2026-08-07 (21d early) | `357d8384`              | (this file) |
+| **Total**                                                      | **17/17** | 2026-08-28 | **2026-08-07**         | 4 commits               | 1 commit    |
 
 Verification artifacts (2026-08-07):
 
@@ -36,7 +36,7 @@ Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
 
 RFC-0969 (Economics): Dual-Pipeline Authorization — Accepted 2026-08-02.
 
-**Sub-mission of:** `missions/claimed/0969-a-dual-pipeline-gateway.md` (Band A closed 2026-08-07) + `missions/claimed/0969-dual-pipeline-authorization.md` (top-level).
+**Sub-mission of:** `missions/archived/completed/0969-a-dual-pipeline-gateway.md` (Band A closed 2026-08-07) + `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level).
 
 ## Phase
 

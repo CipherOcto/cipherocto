@@ -117,7 +117,7 @@ macaroon v1 chain construction or attenuation invariant.
    cargo test --workspace --lib                                  # no regressions (excluding 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures)
    cargo clippy -p octo-cap-macaroon --all-targets -- -D warnings
    cargo fmt --all -- --check
-   npx prettier --write missions/open/0957-c1-verify-time-amendment.md
+   npx prettier --write missions/archived/completed/0957-c1-verify-time-amendment.md
    ```
 6. Memory card cross-link: S5 status card
    (`memory/mission-0957-g-verify-time-invariant-status.md`)
@@ -160,7 +160,7 @@ No new cyclic edges. No new crate deps.
 - `memory/mission-0957-g-verify-time-invariant-status.md`
   (existing — add cross-reference backlink)
 - `memory/mission-0957-c1-verify-time-amendment-status.md` (NEW)
-- `missions/open/0957-c1-verify-time-amendment.md` (this file)
+- `missions/archived/completed/0957-c1-verify-time-amendment.md` (this file)
 
 ## Existing patterns reused
 

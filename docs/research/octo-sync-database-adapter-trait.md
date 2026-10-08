@@ -14,6 +14,7 @@ Phase 1 of the dep-avoidance research extracts an `octo-sync` leaf workspace tha
 **The solution: define a Rust trait `DatabaseSyncAdapter` in `octo-sync` that abstracts these operations.** The `stoolap` fork provides a `StoolapAdapter` implementation; the cipherocto sync engine consumes any `T: DatabaseSyncAdapter`. **No Cargo dep cycle.** The dep is replaced by a trait bound.
 
 This research doc designs the trait precisely, informed by:
+
 - The existing `PlatformAdapter` trait (RFC-0850 §8.2) at `crates/octo-network/src/dot/adapters/mod.rs:75`
 - The existing `CoordinatorAdmin` trait (RFC-0850 §8 extension) at `crates/octo-network/src/dot/adapters/coordinator_admin.rs:429`
 - The existing `Witness` trait (RFC-0854 §6, DPS) at `crates/octo-network/src/dps/witness.rs:9`
@@ -26,13 +27,13 @@ This research doc designs the trait precisely, informed by:
 
 Cipherocto has **5 existing adapter-style traits**, all using the same `Send + Sync` shape but differing on `async`:
 
-| Trait | File | `async_trait`? | Default impl for optional methods? | Use case |
-|---|---|---|---|---|
-| `PlatformAdapter` | `crates/octo-network/src/dot/adapters/mod.rs:75` | yes (`#[async_trait]`) | yes (`upload_media`/`download_media` return `Unreachable`) | DOT envelope transport per platform |
-| `CoordinatorAdmin` | `crates/octo-network/src/dot/adapters/coordinator_admin.rs:429` | yes (`#[async_trait]`) | yes (every method returns `Unimplemented`) | Group management per platform |
-| `Witness` | `crates/octo-network/src/dps/witness.rs:9` | no (sync) | n/a | Witness signing for DPS proof generation |
-| `DeterministicProofSystem` | `crates/octo-network/src/dps/trait_def.rs:15` | no (sync) | n/a | DPS proof system (STWO, etc.) |
-| `BINDHook` | `crates/octo-network/src/dot/witness.rs:396` | no (sync) | n/a | Hook for BIND/UNBIND events |
+| Trait                      | File                                                            | `async_trait`?         | Default impl for optional methods?                         | Use case                                 |
+| -------------------------- | --------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| `PlatformAdapter`          | `crates/octo-network/src/dot/adapters/mod.rs:75`                | yes (`#[async_trait]`) | yes (`upload_media`/`download_media` return `Unreachable`) | DOT envelope transport per platform      |
+| `CoordinatorAdmin`         | `crates/octo-network/src/dot/adapters/coordinator_admin.rs:429` | yes (`#[async_trait]`) | yes (every method returns `Unimplemented`)                 | Group management per platform            |
+| `Witness`                  | `crates/octo-network/src/dps/witness.rs:9`                      | no (sync)              | n/a                                                        | Witness signing for DPS proof generation |
+| `DeterministicProofSystem` | `crates/octo-network/src/dps/trait_def.rs:15`                   | no (sync)              | n/a                                                        | DPS proof system (STWO, etc.)            |
+| `BINDHook`                 | `crates/octo-network/src/dot/witness.rs:396`                    | no (sync)              | n/a                                                        | Hook for BIND/UNBIND events              |
 
 **Three observations from this inventory:**
 
@@ -44,26 +45,26 @@ Cipherocto has **5 existing adapter-style traits**, all using the same `Send + S
 
 The RFC-0862 wire protocol involves 5 operations on the underlying database. The trait must expose all 5:
 
-| RFC-0862 op | Direction | Required trait method | Caller |
-|---|---|---|---|
-| `read_wal_range(from_lsn, to_lsn)` | writer-side | `read_wal_range(from: Lsn, to: Lsn) -> Result<Vec<Vec<u8>>>` | 0862a `WalTailStreamer::on_commit` (writer fans out the chunk to subscribers) |
-| `current_lsn()` | both sides | `current_lsn() -> Result<Lsn>` | 0862a `WalTailStreamer::current_lsn` (for monotonicity checks and `is_last` computation) |
-| `apply_wal_entry(entry)` | reader-side | `apply_wal_entry(entry: &[u8]) -> Result<()>` | 0862a `WalTailStreamer::on_lsn_ack` (reader applies the entry after receiving it) |
-| `read_snapshot_segment(table_id, segment_index)` | reader-side | `read_snapshot_segment(table_id: u32, segment_index: u32) -> Result<Option<SnapshotSegment>>` | 0862c `SegmentIndexer::find_segment_file` (reader descends the Merkle tree) |
-| `write_snapshot_segment(table_id, segment_index, payload)` | writer-side | `write_snapshot_segment(table_id: u32, segment_index: u32, payload: &[u8]) -> Result<()>` | 0862c `SegmentIndexer::regenerate_snapshot` (writer regenerates a missing segment) |
+| RFC-0862 op                                                | Direction   | Required trait method                                                                         | Caller                                                                                   |
+| ---------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `read_wal_range(from_lsn, to_lsn)`                         | writer-side | `read_wal_range(from: Lsn, to: Lsn) -> Result<Vec<Vec<u8>>>`                                  | 0862a `WalTailStreamer::on_commit` (writer fans out the chunk to subscribers)            |
+| `current_lsn()`                                            | both sides  | `current_lsn() -> Result<Lsn>`                                                                | 0862a `WalTailStreamer::current_lsn` (for monotonicity checks and `is_last` computation) |
+| `apply_wal_entry(entry)`                                   | reader-side | `apply_wal_entry(entry: &[u8]) -> Result<()>`                                                 | 0862a `WalTailStreamer::on_lsn_ack` (reader applies the entry after receiving it)        |
+| `read_snapshot_segment(table_id, segment_index)`           | reader-side | `read_snapshot_segment(table_id: u32, segment_index: u32) -> Result<Option<SnapshotSegment>>` | 0862c `SegmentIndexer::find_segment_file` (reader descends the Merkle tree)              |
+| `write_snapshot_segment(table_id, segment_index, payload)` | writer-side | `write_snapshot_segment(table_id: u32, segment_index: u32, payload: &[u8]) -> Result<()>`     | 0862c `SegmentIndexer::regenerate_snapshot` (writer regenerates a missing segment)       |
 
 **One additional operation** is needed for backpressure (per RFC-0862 §4.3.2, R12-N12 resolution):
 
-| Operation | Direction | Required trait method | Caller |
-|---|---|---|---|
+| Operation                  | Direction       | Required trait method      | Caller                                                                          |
+| -------------------------- | --------------- | -------------------------- | ------------------------------------------------------------------------------- |
 | `set_paused(paused: bool)` | reader → writer | `set_paused(paused: bool)` | 0862a `WalTailStreamer::set_paused` (reader sends PAUSE when apply queue > 10K) |
 
 **Two auxiliary methods** are needed for the cipherocto sync engine to integrate cleanly:
 
-| Method | Purpose | Returns |
-|---|---|---|
+| Method         | Purpose                                                                                                                                                                                           | Returns                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | `mission_id()` | The `MissionKeyHierarchy` (RFC-0853) keys are derived per-mission; the sync engine needs the mission ID to derive the `transport_key` and `execution_key` (per RFC-0862 §4.3.1 and mission 0862d) | `Result<MissionId>` (type alias for `[u8; 32]`) |
-| `node_id()` | The `SyncNodeId = BLAKE3(public_key || mission_id)` is per-node; the sync engine needs the local node's `OverlayIdentity.public_key` (or a stable equivalent) | `Result<NodeId>` (type alias for `[u8; 32]`) |
+| `node_id()`    | The `SyncNodeId = BLAKE3(public_key                                                                                                                                                               |                                                 | mission_id)`is per-node; the sync engine needs the local node's`OverlayIdentity.public_key` (or a stable equivalent) | `Result<NodeId>` (type alias for `[u8; 32]`) |
 
 **Total: 8 trait methods** (5 RFC-0862 operations + 1 backpressure + 2 auxiliary).
 
@@ -238,6 +239,7 @@ pub trait DatabaseSyncAdapter: Send + Sync + 'static {
 `octo-network` uses `#[async_trait]` for the transport-side traits (`PlatformAdapter`, `CoordinatorAdmin`) because every transport operation is a network round-trip. The cipherocto async runtime (`tokio`) drives those.
 
 `octo-sync`'s database operations are fundamentally **local disk I/O** — `read`/`write`/`fsync` of WAL and snapshot files. These are `std::fs` operations on the Stoolap fork; they do not benefit from an async runtime. Making the trait `async` would force every implementer to either:
+
 - Hold a `tokio` runtime (which the Stoolap fork does not have), OR
 - Wrap sync operations in `tokio::task::spawn_blocking` (the cipherocto side already does this for other sync operations, e.g. the WAL read at `0862a:101`)
 
@@ -283,17 +285,17 @@ pub enum SyncError {
 
 **Mapping to wire codes** (per RFC-0862 §Error Handling + R8-N9):
 
-| Internal `SyncError` variant | Wire code | Used in |
-|---|---|---|
-| `LsnRegression { expected, actual }` | `E_SYNC_LSN_REGRESSION` | 0862a |
-| `InvalidLsnRange { from, to }` | `E_SYNC_LSN_REGRESSION` (with extended detail) | 0862a |
-| `UnknownPeer(SyncPeerId)` | `E_SYNC_AUTH_FAIL` (no such peer = auth fail) | 0862a |
-| `AllCarriersFailed` | `E_SYNC_RATE_LIMIT` (all carriers failed = rate-limited) | 0862g |
-| `UnknownEnvelopeSubtype(u8)` | `E_SYNC_AUTH_FAIL` (unknown subtype = corrupt/forged envelope) | 0862f |
-| `DecryptionFailed` | `E_SYNC_AUTH_FAIL` (AEAD failure = auth fail) | 0862d |
-| `SegmentNotFound { table_id, segment_index, regenerated }` | `E_SYNC_SEGMENT_NOT_FOUND` | 0862c |
-| `UnknownCarrier(String)` | `E_SYNC_AUTH_FAIL` (no such carrier = bad config) | 0862g |
-| `BackendNotReady(String)` | `E_SYNC_RATE_LIMIT` (backpressure signal; the reader's apply queue is full) | 0862a |
+| Internal `SyncError` variant                               | Wire code                                                                   | Used in |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------- | ------- |
+| `LsnRegression { expected, actual }`                       | `E_SYNC_LSN_REGRESSION`                                                     | 0862a   |
+| `InvalidLsnRange { from, to }`                             | `E_SYNC_LSN_REGRESSION` (with extended detail)                              | 0862a   |
+| `UnknownPeer(SyncPeerId)`                                  | `E_SYNC_AUTH_FAIL` (no such peer = auth fail)                               | 0862a   |
+| `AllCarriersFailed`                                        | `E_SYNC_RATE_LIMIT` (all carriers failed = rate-limited)                    | 0862g   |
+| `UnknownEnvelopeSubtype(u8)`                               | `E_SYNC_AUTH_FAIL` (unknown subtype = corrupt/forged envelope)              | 0862f   |
+| `DecryptionFailed`                                         | `E_SYNC_AUTH_FAIL` (AEAD failure = auth fail)                               | 0862d   |
+| `SegmentNotFound { table_id, segment_index, regenerated }` | `E_SYNC_SEGMENT_NOT_FOUND`                                                  | 0862c   |
+| `UnknownCarrier(String)`                                   | `E_SYNC_AUTH_FAIL` (no such carrier = bad config)                           | 0862g   |
+| `BackendNotReady(String)`                                  | `E_SYNC_RATE_LIMIT` (backpressure signal; the reader's apply queue is full) | 0862a   |
 
 The mapping is implemented as `impl From<SyncError> for WireError` in `octo-sync/src/error.rs` (per the R8-N9 acceptance criterion on 0862-base:135-144).
 
@@ -390,6 +392,7 @@ For the cipherocto workspace, the `stoolap` feature pulls in `stoolap` as a dep 
 For the stoolap fork standalone build, the fork implements `DatabaseSyncAdapter` for its own `MVCCEngine` directly (no cipherocto runtime dep at all). The cipherocto workspace has nothing to do with the fork's standalone build.
 
 **The Cargo workspace graph is now:**
+
 - `octo-sync` (leaf workspace, excluded from both projects' workspaces)
 - `cipherocto` (workspace) → `octo-network` (member) → `octo-sync` (git dep, internal path) → (no further cipherocto deps)
 - `stoolap` fork (separate repo, single-package Cargo manifest) → `octo-sync` (git dep) → (no further cipherocto deps)
@@ -427,36 +430,38 @@ This allows the cipherocto sync engine to be unit-tested in isolation, without a
 The trait uses `Result<T, SyncError>` (not panics) for all fallible operations, so new error variants can be added without breaking implementers (they would just `match` the new variant when added).
 
 For **new operations** (e.g., a Phase 3 `set_rate_limit(bps: u32)`), the cipherocto convention is:
+
 - Add a new method with a default no-op implementation.
 - Existing implementers are not broken (they get the default no-op).
 - The cipherocto sync engine detects the missing override via the `admin_capabilities`-style `BackendCapabilities` report (to be added in Phase 3).
 
 For **new error variants**, the convention is:
+
 - Add to the `SyncError` enum.
 - Update the `From<SyncError> for WireError` impl with a new mapping (or to a `WireError::Other(SyncError)` fallback).
 - Implementers are not broken (Rust's `#[non_exhaustive]` attribute on the enum, if added in Phase 3, lets us add variants without breaking downstream `match` exhaustiveness).
 
 ## 8. Migration Path
 
-| Phase | Artifact | Owner |
-|---|---|---|
-| **1** | New `octo-sync` leaf workspace (Phase 1 of dep-avoidance research) | cipherocto `octo-network` team |
-| **2a** | Add `DatabaseSyncAdapter` trait to `octo-sync/src/adapter.rs` (this research) | cipherocto `octo-network` team |
-| **2b** | Update `octo-network`'s sync engine to consume `dyn DatabaseSyncAdapter` (replaces direct `stoolap` DB calls) | cipherocto `octo-network` team |
-| **2c** | Add `crates/sync-adapter/` to the stoolap fork with `StoolapAdapter` impl | stoolap fork maintainers |
+| Phase  | Artifact                                                                                                       | Owner                          |
+| ------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| **1**  | New `octo-sync` leaf workspace (Phase 1 of dep-avoidance research)                                             | cipherocto `octo-network` team |
+| **2a** | Add `DatabaseSyncAdapter` trait to `octo-sync/src/adapter.rs` (this research)                                  | cipherocto `octo-network` team |
+| **2b** | Update `octo-network`'s sync engine to consume `dyn DatabaseSyncAdapter` (replaces direct `stoolap` DB calls)  | cipherocto `octo-network` team |
+| **2c** | Add `crates/sync-adapter/` to the stoolap fork with `StoolapAdapter` impl                                      | stoolap fork maintainers       |
 | **2d** | Update missions 0862a–0862i to use the trait (replace direct DB calls with `adapter.read_wal_range(...)` etc.) | cipherocto `octo-network` team |
-| **3** | (Optional) Add `BackendCapabilities` report + richer backpressure API | future RFC |
+| **3**  | (Optional) Add `BackendCapabilities` report + richer backpressure API                                          | future RFC                     |
 
 Each step is a separate PR. The trait itself (step 2a) is the smallest possible change — a single ~80-line file in `octo-sync/src/adapter.rs` — and can be merged independently of the consuming-side changes (step 2b).
 
 ## 9. Risks and Mitigations
 
-| Risk | Severity | Mitigation |
-|---|---|---|
-| Implementers' `Send + Sync` requirement adds complexity (e.g. `Mutex` wrapping) | Medium | Provide a `MockAdapter` example in `octo-sync/src/test_util.rs` showing the `parking_lot::Mutex` pattern. |
-| Sync trait vs. async trait debate | Low | Document the rationale (§4.2). Future Phase 3 can introduce `async-trait` if the use case changes. |
-| Trait evolution (new methods) breaking implementers | Low | Use the cipherocto `default = Unimplemented` pattern for new optional methods; use `#[non_exhaustive]` on `SyncError` for new error variants. |
-| Stoolap fork's `Send + Sync` requirement conflicts with its sync core | Low | The StoolapAdapter wraps `Arc<MVCCEngine>` in `parking_lot::Mutex<...>`; standard pattern, matches the `subscribers: parking_lot::Mutex<...>` field used elsewhere in mission 0862a (line 39). The underlying `MVCCEngine` is `Send + Sync` per the Stoolap fork's architecture (no `Rc`/`RefCell` in the engine's hot path). |
+| Risk                                                                            | Severity | Mitigation                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implementers' `Send + Sync` requirement adds complexity (e.g. `Mutex` wrapping) | Medium   | Provide a `MockAdapter` example in `octo-sync/src/test_util.rs` showing the `parking_lot::Mutex` pattern.                                                                                                                                                                                                                     |
+| Sync trait vs. async trait debate                                               | Low      | Document the rationale (§4.2). Future Phase 3 can introduce `async-trait` if the use case changes.                                                                                                                                                                                                                            |
+| Trait evolution (new methods) breaking implementers                             | Low      | Use the cipherocto `default = Unimplemented` pattern for new optional methods; use `#[non_exhaustive]` on `SyncError` for new error variants.                                                                                                                                                                                 |
+| Stoolap fork's `Send + Sync` requirement conflicts with its sync core           | Low      | The StoolapAdapter wraps `Arc<MVCCEngine>` in `parking_lot::Mutex<...>`; standard pattern, matches the `subscribers: parking_lot::Mutex<...>` field used elsewhere in mission 0862a (line 39). The underlying `MVCCEngine` is `Send + Sync` per the Stoolap fork's architecture (no `Rc`/`RefCell` in the engine's hot path). |
 
 ## 10. Open Questions
 
@@ -471,6 +476,7 @@ Each step is a separate PR. The trait itself (step 2a) is the smallest possible 
 **Define `DatabaseSyncAdapter` as a sync trait in `octo-sync/src/adapter.rs` with the 8 methods listed in §4.1.** Proceed with Phase 2 of the dep-avoidance research (steps 2a–2d in §8).
 
 **Next BLUEPRINT artifacts:**
+
 - A new Use Case `docs/use-cases/octo-sync-database-adapter.md` (formalizing the integration between `stoolap` and `octo-network` via the trait)
 - A new RFC `rfcs/draft/networking/0863-database-sync-adapter-trait.md` (the trait specification)
 - Missions: one per file in `octo-sync/src/`, plus a `stoolap-adapter` mission in the fork
@@ -488,8 +494,8 @@ Each step is a separate PR. The trait itself (step 2a) is the smallest possible 
 - `crates/octo-network/src/dot/adapters/mod.rs:75` — `PlatformAdapter` trait (the sync/async convention).
 - `crates/octo-network/src/dot/adapters/coordinator_admin.rs:429` — `CoordinatorAdmin` trait (the `default = Unimplemented` convention).
 - `crates/octo-network/src/dps/trait_def.rs:15` — `DeterministicProofSystem` trait (the sync-trait-without-default-implementations convention).
-- `missions/open/networking/0862-base-stoolap-data-sync-core.md` — the base mission that this trait enables. **(Accepted)**
-- `missions/open/networking/0862a-wal-tail-streamer.md` — the writer-side engine that consumes the trait. **(Accepted)**
+- `missions/archived/0862-base-stoolap-data-sync-core.md` — the base mission that this trait enables. **(Accepted)**
+- `missions/archived/0862a-wal-tail-streamer.md` — the writer-side engine that consumes the trait. **(Accepted)**
 - `docs/BLUEPRINT.md` — the canonical workflow that this research feeds.
 
 ---

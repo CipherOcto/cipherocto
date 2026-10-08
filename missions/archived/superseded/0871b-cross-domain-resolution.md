@@ -7,7 +7,7 @@
 >
 > All 5 scope items originally listed in this umbrella landed in the impl mission, with one drift: wire-form payload kind sub-namespace moved from `0x0007` (umbrella plan) to `0x0009:0001:...:0002` (impl reality). Cross-node forwarding (1 item) deferred to its own filed mission.
 >
-> This archived file is retained for grepability of the original scope narrative. The canonical entry point is now `missions/claimed/0871b-cross-domain-resolution-impl.md` + `missions/open/0871b-cross-node-forwarding.md`.
+> This archived file is retained for grepability of the original scope narrative. The canonical entry point is now `missions/archived/completed/0871b-cross-domain-resolution-impl.md` + `missions/archived/completed/0871b-cross-node-forwarding.md`.
 
 ---
 
@@ -96,5 +96,5 @@ expires.
 - [[wave-3-gaps-2026-08-10]] — original wave 3 gap surface
 - [[mission-gap-closure-priorities-2026-08-10]] — parent backlog
 - [[cipherocto-design-principles]] — Stable Abstractions Principle
-- `missions/claimed/0871b-cross-domain-resolution-impl.md` — successor (CLOSED)
-- `missions/open/0871b-cross-node-forwarding.md` — successor (OPEN)
+- `missions/archived/completed/0871b-cross-domain-resolution-impl.md` — successor (CLOSED)
+- `missions/archived/completed/0871b-cross-node-forwarding.md` — successor (OPEN)

@@ -256,22 +256,22 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
 
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|------------------|----------------|
-| `QrLinkArgs` struct | This mission (onboard-core) |
-| `PairLinkArgs` struct | This mission (onboard-core) |
-| `WhatsAppSession` struct | This mission (onboard-core) |
-| `SessionInfo` struct | This mission (onboard-core) |
-| `CoreError` enum | This mission (onboard-core) |
-| `OnboardError` enum | This mission (onboard binary) |
-| qr-link mode | This mission (onboard-core, reuses `WhatsAppWebAdapter::start_bot` + polls `self_handle`) |
-| pair-link mode | This mission (onboard-core, reuses `WhatsAppWebAdapter::start_bot` with `pair_phone` config) |
+| RFC-0850p-a Type                          | Implemented By                                                                                      |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `QrLinkArgs` struct                       | This mission (onboard-core)                                                                         |
+| `PairLinkArgs` struct                     | This mission (onboard-core)                                                                         |
+| `WhatsAppSession` struct                  | This mission (onboard-core)                                                                         |
+| `SessionInfo` struct                      | This mission (onboard-core)                                                                         |
+| `CoreError` enum                          | This mission (onboard-core)                                                                         |
+| `OnboardError` enum                       | This mission (onboard binary)                                                                       |
+| qr-link mode                              | This mission (onboard-core, reuses `WhatsAppWebAdapter::start_bot` + polls `self_handle`)           |
+| pair-link mode                            | This mission (onboard-core, reuses `WhatsAppWebAdapter::start_bot` with `pair_phone` config)        |
 | Session extraction via `Event::Connected` | This mission (onboard-core, calls `adapter.self_handle()` after adapter's own handler populates it) |
-| Config output writer + sidecar | This mission (onboard-core) |
-| CLI arg structs (clap) | This mission (onboard binary) |
-| Tracing redaction layer | This mission (onboard binary) |
-| `WhatsAppConfig::validate()` | Adapter change (additive) |
-| `WhatsAppConfig` schema | Mission 0850p (existing, consumed) |
+| Config output writer + sidecar            | This mission (onboard-core)                                                                         |
+| CLI arg structs (clap)                    | This mission (onboard binary)                                                                       |
+| Tracing redaction layer                   | This mission (onboard binary)                                                                       |
+| `WhatsAppConfig::validate()`              | Adapter change (additive)                                                                           |
+| `WhatsAppConfig` schema                   | Mission 0850p (existing, consumed)                                                                  |
 
 ## Implementation Guide
 
@@ -312,6 +312,7 @@ Mirrors `octo-matrix-onboard` / `octo-matrix-onboard-core` and `octo-telegram-on
 ### Why reuse the adapter's `WhatsAppWebAdapter`?
 
 The adapter's `Event::Connected` handler (adapter.rs:226-237) already resolves `device.pn` into `self_phone` and persists the noise-key handshake. The onboard tool reuses this exact flow via `start_bot()` to guarantee:
+
 1. The session DB is created with the same storage backend (`StoolapStore`), transport factory, http client, and device-props override the adapter will use on next start
 2. The `device.pn` resolution logic is shared (no drift between onboard-resolved and adapter-resolved phone numbers)
 3. The `Event::PairingQrCode` / `Event::PairingCode` rendering is shared (no drift between onboard-rendered and adapter-rendered QR/codes)
@@ -325,6 +326,7 @@ The adapter exposes `self_handle()` as `pub fn self_handle(&self) -> Option<Stri
 ### Why one extra exit code (`SessionExpired = 7`)?
 
 WhatsApp's `Event::LoggedOut` is ambiguous: it fires for both "link rejected outright" and "session later expired." A single exit code would conflate two operator-recovery paths:
+
 - Code 2 (`AuthRejected`): "check your phone, the link was rejected" → operator retries `qr-link`
 - Code 7 (`SessionExpired`): "the session you had is no longer valid" → operator re-links
 
@@ -348,8 +350,4 @@ The on-disk config is a JSON file (NOT stoolap). The session storage is the stoo
 
 ### RFC Status
 
-RFC-0850p-a is in `rfcs/draft/networking/`. Per the BLUEPRINT "implementation requires accepted RFC" rule, this mission is placed in `missions/open/` (not `pending/`) matching the 0850h and 0850ab series' actual practice, where implementation has proceeded in parallel with RFC maturation. The 0850h mission is `Implemented` while RFC-0850 is still `Draft`; the 0850ab-a mission is `Claimed` while RFC-0850ab-a is `Accepted`. This mission follows the same pattern: RFC drafted, mission opened, implementation claimed in parallel.
-
----
-
-**Mirrors:** `missions/claimed/0850ab-a-telegram-auth-onboarding.md` (Telegram Auth Onboarding), `missions/claimed/0850h-a-matrix-auth-onboarding.md` (Matrix Auth Onboarding)
+RFC-0850p-a is in `rfcs/draft/networking/`. Per the BLUEPRINT "implementation requires accepted RFC" rule, this mission is placed in `missions/claimed/0850ab-a-telegram-auth-onboarding.md` (Telegram Auth Onboarding), `missions/claimed/0850h-a-matrix-auth-onboarding.md` (Matrix Auth Onboarding)

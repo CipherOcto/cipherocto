@@ -2,15 +2,15 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-04; substrate landed across 1 commit (`56143def`-prior): `crates/octo-wallet/src/capability/dispatch.rs` (NEW, 178 lines) ships `AuthHeader` enum (4 variants) + manual redacting `Debug` + `ParseError` enum (2 variants: `DuplicateCapabilityHeader`, `NoAuthHeader`) + `LinkageResult` enum (3 variants: `Linked { subject_did, ask_id }`, `Mismatched`, `Indeterminate`) + `DispatchSet` struct + `parse_auth_headers(&[(String, String)]) -> Result<DispatchSet, ParseError>` multi-scheme parser (Bearer / CipherOcto-Cap / X-Capability-Token / Unsupported) + `AuthError` enum (8 variants: `IdentityMismatch`, `AskBindingMismatch`, `BothInvalid`, `RoutingLatencyExceeded`, `DuplicateCapabilityHeader`, `NoAuthHeader`, `UnsupportedScheme`, `Indeterminate`). 7/24 ACs GREEN (header parser substrate + DispatchSet shape + LinkageResult enum + AuthError enum + 7 unit tests pass); 17/24 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]]: `BearerVerification` + `CapabilityVerification` substrate (RFC-0903 bearer + RFC-0957 capability verifiers, RFC-0957-A1 `HolderRegistry` trait) + `GatewayAuthenticator` struct + `authenticate()` algorithm + identity linkage evaluation (currently stubbed as `Indeterminate` per `dispatch.rs:82-86`) + 11 test vectors (TV1-TV8 + TV10-TV12) → follow-up mission `missions/claimed/0969-a2-followup.md` (target 2026-08-21).
+Closed (Band A — 2026-08-07). Claimed 2026-08-04; substrate landed across 1 commit (`56143def`-prior): `crates/octo-wallet/src/capability/dispatch.rs` (NEW, 178 lines) ships `AuthHeader` enum (4 variants) + manual redacting `Debug` + `ParseError` enum (2 variants: `DuplicateCapabilityHeader`, `NoAuthHeader`) + `LinkageResult` enum (3 variants: `Linked { subject_did, ask_id }`, `Mismatched`, `Indeterminate`) + `DispatchSet` struct + `parse_auth_headers(&[(String, String)]) -> Result<DispatchSet, ParseError>` multi-scheme parser (Bearer / CipherOcto-Cap / X-Capability-Token / Unsupported) + `AuthError` enum (8 variants: `IdentityMismatch`, `AskBindingMismatch`, `BothInvalid`, `RoutingLatencyExceeded`, `DuplicateCapabilityHeader`, `NoAuthHeader`, `UnsupportedScheme`, `Indeterminate`). 7/24 ACs GREEN (header parser substrate + DispatchSet shape + LinkageResult enum + AuthError enum + 7 unit tests pass); 17/24 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]]: `BearerVerification` + `CapabilityVerification` substrate (RFC-0903 bearer + RFC-0957 capability verifiers, RFC-0957-A1 `HolderRegistry` trait) + `GatewayAuthenticator` struct + `authenticate()` algorithm + identity linkage evaluation (currently stubbed as `Indeterminate` per `dispatch.rs:82-86`) + 11 test vectors (TV1-TV8 + TV10-TV12) → follow-up mission `missions/archived/completed/0969-a2-followup.md` (target 2026-08-21).
 
-**Sub-mission of:** `missions/claimed/0969-dual-pipeline-authorization.md` (top-level decomposition mission, still Claimed 2026-08-04).
+**Sub-mission of:** `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level decomposition mission, still Claimed 2026-08-04).
 
 ## RFC
 
 RFC-0969 (Economics): Dual-Pipeline Authorization — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0969-dual-pipeline-authorization.md` (top-level decomposition mission)
+**Sub-mission of:** `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level decomposition mission)
 
 ## Summary
 
@@ -73,10 +73,10 @@ Manual redacting `Debug` impls on `ParseError`, `AuthError`. Brace balance verif
 
 **Requires (mission gates):**
 
-- `missions/open/0969-dual-pipeline-authorization.md` (top-level)
-- `missions/claimed/0957-a-capability-token-macaroon.md` (in progress) — base capability path
-- `missions/open/0957-c-holder-registry-impl.md` — `HolderRegistry` consumed via `Arc<dyn HolderRegistry>` slot
-- `missions/open/0957-d-wire-resolver-update.md` — `VerifyContext::holder_registry` slot shared
+- `missions/archived/completed/0969-dual-pipeline-authorization.md` (top-level)
+- `missions/archived/completed/0957-a-capability-token-macaroon.md` (in progress) — base capability path
+- `missions/claimed/0957-c-holder-registry-impl.md` — `HolderRegistry` consumed via `Arc<dyn HolderRegistry>` slot
+- `missions/claimed/0957-d-wire-resolver-update.md` — `VerifyContext::holder_registry` slot shared
 
 ```yaml
 depends_on:
@@ -116,7 +116,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Closure (2026-08-07)
 
-**Status:** Closed (Band A — 2026-08-07). 7/24 ACs GREEN; 17/24 ACs DEFERRED with named owner per [[deferred-vs-unspecified]] → `missions/claimed/0969-a2-followup.md`.
+**Status:** Closed (Band A — 2026-08-07). 7/24 ACs GREEN; 17/24 ACs DEFERRED with named owner per [[deferred-vs-unspecified]] → `missions/archived/completed/0969-a2-followup.md`.
 
 **Substrate commit:** `56143def`-prior (the original claim-time substrate commit; this closure is a doc-only flip).
 
@@ -155,7 +155,7 @@ This sub-mission implements (per top-level Type Coverage table):
 - Brace balance verified at `authenticate()` (R53-N1 fix). CI lint: `bash .github/linters/braces-balanced.sh authenticate` runs on every PR touching the function.
 - TV9 (Dual-Issuance Atomicity) and the `mint_dual` algorithm + `MintError` live in sub-mission 0969-b. This sub-mission owns 11 of 12 vectors.
 - The bearer path mission (RFC-0903 bearer mission) is the upstream for `BearerVerification` with `subject_did` + `ask_id` fields. If that mission is incomplete, this sub-mission's TV1/TV3/TV4/TV5/TV11 are `[ ]` until then.
-- The 17 ACs deferred at Band A closure (commit `ab0261f7`) are tracked under follow-up mission `missions/claimed/0969-a2-followup.md` (filed 2026-08-07) per [[deferred-vs-unspecified]] named-owner rule. Group A (5 ACs, target 2026-08-14) + Group B (3 ACs, target 2026-08-21) + Group C (11 ACs, target 2026-08-28).
+- The 17 ACs deferred at Band A closure (commit `ab0261f7`) are tracked under follow-up mission `missions/archived/completed/0969-a2-followup.md` (filed 2026-08-07) per [[deferred-vs-unspecified]] named-owner rule. Group A (5 ACs, target 2026-08-14) + Group B (3 ACs, target 2026-08-21) + Group C (11 ACs, target 2026-08-28).
 
 ## Path Reconciliation (2026-08-07)
 

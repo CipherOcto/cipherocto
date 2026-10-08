@@ -14,9 +14,9 @@ Closed (Band A — 2026-08-06). Claimed (2026-08-06); **v0.1 re-evaluation amend
 
 Sibling missions shipped:
 
-- `missions/claimed/0958-a-zk-capability-circuit.md` (Claimed 2026-07-22; 15/15 ACs done; R4 redo landed 2026-08-04 via `ae4dc4f8`, `9c996fba`, `89063351`)
-- `missions/claimed/0958-b-real-cairo-crypto.md` (Claimed 2026-08-05; 46/47 ACs done — added `prove_batch_signature` API)
-- `missions/claimed/0958-c-real-cairo-crypto-followup.md` (Claimed; redaction policy + `witness_format` field on `ProofBundle`)
+- `missions/archived/completed/0958-a-zk-capability-circuit.md` (Claimed 2026-07-22; 15/15 ACs done; R4 redo landed 2026-08-04 via `ae4dc4f8`, `9c996fba`, `89063351`)
+- `missions/archived/completed/0958-b-real-cairo-crypto.md` (Claimed 2026-08-05; 46/47 ACs done — added `prove_batch_signature` API)
+- `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` (Claimed; redaction policy + `witness_format` field on `ProofBundle`)
 
 Workspace crates (all on `next`, modified 2026-08-05):
 
@@ -206,9 +206,9 @@ cargo clippy --workspace --all-targets --features allow-stub-verifier \
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                  |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Mission claimed; AC-1 + AC-2 + AC-5 closed in Session 1; AC-3/AC-4 (settlement carrier missing) + AC-6 (GPU, optional) deferred per §Blockers.          |
+| Version | Date       | Change                                                                                                                                                                                                                                                                     |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Mission claimed; AC-1 + AC-2 + AC-5 closed in Session 1; AC-3/AC-4 (settlement carrier missing) + AC-6 (GPU, optional) deferred per §Blockers.                                                                                                                             |
 | v0.2    | 2026-08-06 | Closed Band A. 7/10 ACs green (AC-1/AC-2/AC-5 closed; AC-3/AC-4/AC-6 explicitly deferred per [[deferred-vs-unspecified]] named-owner rule). Status header flipped Claimed→Closed (Band A — 2026-08-06). No new impl commits (Session 1 closure substrate already shipped). |
 
 Last Updated: 2026-08-06

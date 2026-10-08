@@ -220,15 +220,15 @@ BIGINT`, `metadata BLOB`. `vault_id_unchecked` derivation: see
   `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
   §3 S6 row + §24 per-RFC TV table
 - **Sibling (per-audit-verdict):**
-  - `missions/claimed/0862-c1-dqa-vault-bump-amendment.md` (LANDED
+  - `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED
     2026-08-17) — Dqa + vault bump pattern for v013
-  - `missions/open/0862-c9-micro-octow-type-unification.md` (FILED
+  - `missions/retired/0862-c9-micro-octow-type-unification.md` (FILED
     2026-08-17) — closes audit-verdict Risk #1 (MicroOctoW alias)
-  - `missions/open/0105-x-s4-deferred-codemod-sites.md` (FILED
+  - `missions/claimed/0105-x-s4-deferred-codemod-sites.md` (FILED
     2026-08-17) — in-memory field type migration
-  - `missions/open/0959-c1-wire-format-amendment.md` (FILED
+  - `missions/claimed/0959-c1-wire-format-amendment.md` (FILED
     2026-08-17) — settlement wire format
-  - `missions/open/0900-d-chain-aware-slash-ledger.md` (FILED
+  - `missions/claimed/0900-d-chain-aware-slash-ledger.md` (FILED
     2026-08-17) — S6d RFC-0900 chain-aware slash ledger
 - **Audit source:** 2026-08-17 audit verdict, RFC amendment per
   parallel-model closure plan

@@ -8,7 +8,7 @@ Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026
 
 RFC-0957-A1 (Economics): Holder Registry + Catalog Storage (Amendment) — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/claimed/0957-a1-holder-registry.md` (top-level decomposition mission; path corrected 2026-08-06 — was `missions/open/`; top-level is actually in `claimed/`)
+**Sub-mission of:** `missions/archived/completed/0957-a1-holder-registry.md` (top-level decomposition mission; path corrected 2026-08-06 — was `missions/open/`; top-level is actually in `claimed/`)
 
 ## Summary
 
@@ -67,9 +67,9 @@ This amendment breaks the double-insert contradiction between the prior `mint()`
 
 **Requires (mission gates):**
 
-- `missions/claimed/0957-a1-holder-registry.md` (top-level; path corrected 2026-08-06)
+- `missions/archived/completed/0957-a1-holder-registry.md` (top-level; path corrected 2026-08-06)
 - `missions/claimed/0957-c-holder-registry-impl.md` (CLOSED Band A 2026-08-06 per commit `7609aaad`) — `HolderRecord`, `Transaction`, `HolderRegistry` exist on disk in `crates/quota-router-storage/src/`
-- `missions/claimed/0957-a-capability-token-macaroon.md` (in progress; 9/42 ACs) — base `CapabilityToken::mint` (5-arg with catalog) existed pre-amendment
+- `missions/archived/completed/0957-a-capability-token-macaroon.md` (in progress; 9/42 ACs) — base `CapabilityToken::mint` (5-arg with catalog) existed pre-amendment
 
 ```yaml
 depends_on:
@@ -115,23 +115,23 @@ This sub-mission implements (per top-level Type Coverage table):
 
 **AC rollup:** 13/15 ACs GREEN (2026-08-07 audit-closure roll-up; TV11 flipped via 0969-b1 closure).
 
-| AC                                                                              | Status                                       | Owner / deferral                                                                                                   |
-| ------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| AC-1: mint signature amendment                                                  | GREEN                                        | commit `e05f9639`                                                                                                  |
-| AC-2: catalog 4-method extension (default impls)                                | GREEN                                        | already on trait per RFC-0957-A1 §Phase 3 R13-N3                                                                   |
-| AC-3: TV8 100K lookup bench                                                     | DEFERRED                                     | owner @cipherocto, target 2026-09-15; criterion bench + 100K fixture build                                         |
-| AC-4: TV9 mint persistence-free                                                 | GREEN (compile-time guarantee via 4-arg sig) | mint has no catalog/txn params                                                                                     |
-| AC-5: TV10 caller-side persistence                                              | DEFERRED                                     | owner @cipherocto, target 2026-08-28; cross-crate integration test wiring                                          |
-| AC-6: TV11 insert_dual atomicity                                                | GREEN                                        | `missions/claimed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN; TV9-I1/I2/I3 tests)     |
-| AC-7: `cargo build --workspace`                                                 | GREEN                                        |                                                                                                                    |
-| AC-8: `cargo test --workspace`                                                  | GREEN                                        |                                                                                                                    |
-| AC-9: `cargo clippy --workspace --all-targets -- -D warnings`                   | GREEN                                        |                                                                                                                    |
-| AC-10: `cargo fmt --check`                                                      | GREEN                                        |                                                                                                                    |
-| AC-11: `cargo doc --workspace --no-deps`                                        | GREEN                                        |                                                                                                                    |
-| AC-12: catalog method type signatures (`Result<RootSecret, CatalogError>` etc.) | PARTIAL                                      | default impls use `Option<[u8; 32]>` per R13-N3 design; typed Result variants deferred                             |
-| AC-13: `MacaroonError::WrappedCycle` etc. propagated                            | GREEN                                        | mint has no catalog path; `Macaroon::extend_chain` cannot fail                                                     |
-| AC-14: `HolderRecord::from_capability` constructor                              | DEFERRED                                     | lives in `crates/quota-router-storage/src/` per 0957-c; cross-crate wiring needs verification (overlaps with TV10) |
-| AC-15: `git diff` shows ONLY parameter removals                                 | GREEN                                        | commit `e05f9639`: -119 / +69 lines (net negative = pure refactor)                                                 |
+| AC                                                                              | Status                                       | Owner / deferral                                                                                                          |
+| ------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| AC-1: mint signature amendment                                                  | GREEN                                        | commit `e05f9639`                                                                                                         |
+| AC-2: catalog 4-method extension (default impls)                                | GREEN                                        | already on trait per RFC-0957-A1 §Phase 3 R13-N3                                                                          |
+| AC-3: TV8 100K lookup bench                                                     | DEFERRED                                     | owner @cipherocto, target 2026-09-15; criterion bench + 100K fixture build                                                |
+| AC-4: TV9 mint persistence-free                                                 | GREEN (compile-time guarantee via 4-arg sig) | mint has no catalog/txn params                                                                                            |
+| AC-5: TV10 caller-side persistence                                              | DEFERRED                                     | owner @cipherocto, target 2026-08-28; cross-crate integration test wiring                                                 |
+| AC-6: TV11 insert_dual atomicity                                                | GREEN                                        | `missions/archived/completed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN; TV9-I1/I2/I3 tests) |
+| AC-7: `cargo build --workspace`                                                 | GREEN                                        |                                                                                                                           |
+| AC-8: `cargo test --workspace`                                                  | GREEN                                        |                                                                                                                           |
+| AC-9: `cargo clippy --workspace --all-targets -- -D warnings`                   | GREEN                                        |                                                                                                                           |
+| AC-10: `cargo fmt --check`                                                      | GREEN                                        |                                                                                                                           |
+| AC-11: `cargo doc --workspace --no-deps`                                        | GREEN                                        |                                                                                                                           |
+| AC-12: catalog method type signatures (`Result<RootSecret, CatalogError>` etc.) | PARTIAL                                      | default impls use `Option<[u8; 32]>` per R13-N3 design; typed Result variants deferred                                    |
+| AC-13: `MacaroonError::WrappedCycle` etc. propagated                            | GREEN                                        | mint has no catalog path; `Macaroon::extend_chain` cannot fail                                                            |
+| AC-14: `HolderRecord::from_capability` constructor                              | DEFERRED                                     | lives in `crates/quota-router-storage/src/` per 0957-c; cross-crate wiring needs verification (overlaps with TV10)        |
+| AC-15: `git diff` shows ONLY parameter removals                                 | GREEN                                        | commit `e05f9639`: -119 / +69 lines (net negative = pure refactor)                                                        |
 
 **Type deviation note:** Mission text specified `&RootSecret` and `&Did` for `mint` args; actual implementation uses `&[u8; 32]` and `&str`. Rationale: substrate types (`RootSecret`, `Did`) not yet defined in workspace; using primitives keeps the wire-breaking scope tight. Future work: introduce `RootSecret` newtype (per `crates/quota-router-storage/src/ask.rs` precursor) and use `octo_ident::WireDid` (already exists) in a follow-up mission.
 

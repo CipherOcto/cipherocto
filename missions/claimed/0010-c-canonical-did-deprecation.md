@@ -4,7 +4,7 @@
 
 Open (2026-07-27). Trigger: 6-month timer from Mission 0010-a ship.
 
-**Retro-status (2026-08-24 claim-and-implement cascade per user instruction "claim and implementaion IS on scope"):** Mission moved `missions/open/0010-c-canonical-did-deprecation.md` → `missions/claimed/0010-c-canonical-did-deprecation.md` per [[git-workflow]] `git mv`. The mission remains calendar-gated — 6-month timer fires 2027-01-23 (180 days post 0010-a merge 2026-07-27). Pre-timer substrate work limited to: CLI escape-hatch flag plumbing (`--disable-legacy-did-deprecation`), operator-facing config gate, migration guide `docs/07-developers/octoid-deprecation-guide.md`. The `parse` step 3 → `LegacyFormExpired` switch + post-window tests are calendar-dependent and remain N/A until 2027-01-23.
+**Retro-status (2026-08-24 claim-and-implement cascade per user instruction "claim and implementaion IS on scope"):** Mission moved `missions/claimed/0010-c-canonical-did-deprecation.md` → `missions/claimed/0010-c-canonical-did-deprecation.md` per [[git-workflow]] `git mv`. The mission remains calendar-gated — 6-month timer fires 2027-01-23 (180 days post 0010-a merge 2026-07-27). Pre-timer substrate work limited to: CLI escape-hatch flag plumbing (`--disable-legacy-did-deprecation`), operator-facing config gate, migration guide `docs/07-developers/octoid-deprecation-guide.md`. The `parse` step 3 → `LegacyFormExpired` switch + post-window tests are calendar-dependent and remain N/A until 2027-01-23.
 
 ## RFC
 

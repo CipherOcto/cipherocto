@@ -22,16 +22,16 @@ The **forwarding hops** between source and destination are RFC-0870 `ForwardRequ
 
 Six concrete gaps are spec-level (not implementation gaps):
 
-| # | Gap | Surface | Where it hurts |
-|---|-----|---------|----------------|
-| G1 | **No spec for dual-pipeline auth at forwarding hops** | RFC-0870 | Intermediate router nodes receive one envelope; they don't know whether to inspect or forward |
-| G2 | **No spec for legacy bearer emission alongside capability token** | RFC-0903 + RFC-0957 | Market delivery cannot hand the buyer both tokens atomically |
-| G3 | **Holder_did resolution strategy is unspecified** | RFC-0957 (out-of-band), RFC-0009 (vault) | Mint + verify both have a half-impl because the resolver is not designed |
-| G4 | **`CapabilityHandle.holder_did` is structurally dead** | `crates/quota-router-core/src/egress.rs:199` | Constructors use `String::new()`; no producer populates the field |
-| G5 | **No spec for "destination node is the mints"** | RFC-0870 + RFC-0957 + RFC-0959 | No role-binding between node-as-router and node-as-issuer |
-| G6 | **No spec for market delivery envelope (both tokens at deal time)** | RFC-0959 + RFC-0955 | Settlement chain completes but no delivery artifact; buyer can't use what they bought |
+| #   | Gap                                                                 | Surface                                      | Where it hurts                                                                                |
+| --- | ------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| G1  | **No spec for dual-pipeline auth at forwarding hops**               | RFC-0870                                     | Intermediate router nodes receive one envelope; they don't know whether to inspect or forward |
+| G2  | **No spec for legacy bearer emission alongside capability token**   | RFC-0903 + RFC-0957                          | Market delivery cannot hand the buyer both tokens atomically                                  |
+| G3  | **Holder_did resolution strategy is unspecified**                   | RFC-0957 (out-of-band), RFC-0009 (vault)     | Mint + verify both have a half-impl because the resolver is not designed                      |
+| G4  | **`CapabilityHandle.holder_did` is structurally dead**              | `crates/quota-router-core/src/egress.rs:199` | Constructors use `String::new()`; no producer populates the field                             |
+| G5  | **No spec for "destination node is the mints"**                     | RFC-0870 + RFC-0957 + RFC-0959               | No role-binding between node-as-router and node-as-issuer                                     |
+| G6  | **No spec for market delivery envelope (both tokens at deal time)** | RFC-0959 + RFC-0955                          | Settlement chain completes but no delivery artifact; buyer can't use what they bought         |
 
-The user's framing — *"the `holder_did` we can remove from the struct holding the empty field when deserialized, since it is empty we can get rid of it. The mint API can still receive the DID it gets elsewhere, internally or at some point given by the buyer"* — correctly identifies **G4** as the dead-field surgery + confirms the mint API surface should stay as-is. The other five gaps are downstream.
+The user's framing — _"the `holder_did` we can remove from the struct holding the empty field when deserialized, since it is empty we can get rid of it. The mint API can still receive the DID it gets elsewhere, internally or at some point given by the buyer"_ — correctly identifies **G4** as the dead-field surgery + confirms the mint API surface should stay as-is. The other five gaps are downstream.
 
 **Verification step (pre-Findings):** searched RFC-0957 §Wire Format + `crates/octo-wallet/src/capability/wire.rs` (top of file). The wire is 3 segments: `base64url(macaroon) || "." || base64url(holder_sig) || "." || base64url(discharges_bag)`. **No holder_did.** The wire is already correct. The user's framing targets the egress-side `CapabilityHandle.holder_did` field (F4), not the wire substrate.
 
@@ -47,7 +47,7 @@ The original design intent (recovered from RFC-0957 design goals + RFC-0959 role
 - The destination node is the **mints** — it issues both bearer tokens (for legacy clients) and capability tokens (for wallet-side clients) for the providers it re-sells.
 - The destination node holds the **catalog map**: `DID -> holder_pub -> caveats -> rate-limit -> provider`. This is its local knowledge of every holder it has ever minted for.
 - When a holder wants to use a legacy client, they opt for the bearer path. When their client is capability-aware, they opt for the capability path. The destination node's catalog must support both.
-- When the destination node decides to **re-sell access** in the quota market (RFC-0955 + RFC-0959), the buyer (B) provides its DID to the seller (S) at deal time. S mints a capability token for B *bound to the Ask* (RFC-0959 `AskBinding` caveat, RFC-0957 caveat DSL). S also has a legacy bearer for B's legacy client. S delivers both.
+- When the destination node decides to **re-sell access** in the quota market (RFC-0955 + RFC-0959), the buyer (B) provides its DID to the seller (S) at deal time. S mints a capability token for B _bound to the Ask_ (RFC-0959 `AskBinding` caveat, RFC-0957 caveat DSL). S also has a legacy bearer for B's legacy client. S delivers both.
 - B and S both store the same `(B_did, holder_pub, caveats, ask_id)` tuple. The wire does not need to carry `holder_did` because both sides already have it. The mint API doesn't need the buyer to supply it at mint time — S's catalog already has it.
 
 Today's spec state:
@@ -68,6 +68,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 ## Research Scope
 
 **Included:**
+
 - Dual-mode authentication: how legacy bearer + capability coexist at the same gateway
 - Forwarding hops: what auth envelope they carry; intermediate vs destination behavior
 - Mint API surface: stays as-is (mint receives holder_did from caller; parsed `CapabilityToken` keeps the field)
@@ -76,6 +77,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 - Resolver semantics: how the verification side resolves the holder_did at parse time
 
 **Excluded:**
+
 - Provider-key vault (RFC-0009 vault — Provider-Key Handling) — already speced, no changes needed
 - The macaroon crypto itself (RFC-0957 §Algorithms) — already speced
 - The ask settlement chain (RFC-0959) — already speced; gaps identified are upstream
@@ -89,14 +91,15 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 ### Finding F1: Two pipelines, one wire, no spec for the difference
 
 **What exists:**
+
 - RFC-0917 defines **litellm-mode** vs **any-llm-mode**. This is **provider integration strategy** (reqwest vs PyO3), NOT auth strategy. Both modes expose both HTTP proxy and Python SDK.
 - RFC-0903 is the centralized virtual-key management layer. Tokens are `sk-...` style, validated by HTTP proxy auth middleware.
-- RFC-0957 §Wire Format defines the capability token wire. RFC-0957 alternative header form: *"Alternative: `Authorization: CipherOcto-Cap <...>` (when bearer coexists)"* — this is the only spec-level hint that both could be on the same request.
+- RFC-0957 §Wire Format defines the capability token wire. RFC-0957 alternative header form: _"Alternative: `Authorization: CipherOcto-Cap <...>` (when bearer coexists)"_ — this is the only spec-level hint that both could be on the same request.
 - RFC-0949 is for enterprise browser users; separate concern.
 
 **Gap:** RFC-0917 is misread as addressing the dual-mode auth question. It does not. The "dual-mode" name is reused for two different concepts (provider integration strategy vs auth strategy). The actual legacy-bearer + capability dual-pipeline is only implicitly described in RFC-0957 alternative header form.
 
-**Boundary check:** RFC-0917 mentions *"virtual keys (RFC-0903) — HTTP proxy only (Python SDK callers bypass proxy, no virtual key enforcement)"* — this is the auth-path split, but it's about HTTP-vs-Python, not bearer-vs-capability.
+**Boundary check:** RFC-0917 mentions _"virtual keys (RFC-0903) — HTTP proxy only (Python SDK callers bypass proxy, no virtual key enforcement)"_ — this is the auth-path split, but it's about HTTP-vs-Python, not bearer-vs-capability.
 
 **Classification:** **New RFC.** Concept is significant enough to merit its own document. Roughly:
 
@@ -113,12 +116,14 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 ### Finding F2: Forwarding hops — auth envelope is undocumented
 
 **What exists:**
+
 - RFC-0870 defines `ForwardRequest` envelopes with TTL≤3 hops. The envelope carries `request: serialized HTTP request + headers`. Auth headers travel in the envelope transparently.
-- RFC-0870 peer trust: *"Do NOT forward `known_peers` from untrusted peers (`PeerTrust::Untrusted`)."* — this is about peer meta, not auth.
-- RFC-0870 G1: *"< 100ms p50 for 3-hop propagation."* — performance budget for forwarding.
+- RFC-0870 peer trust: _"Do NOT forward `known_peers` from untrusted peers (`PeerTrust::Untrusted`)."_ — this is about peer meta, not auth.
+- RFC-0870 G1: _"< 100ms p50 for 3-hop propagation."_ — performance budget for forwarding.
 - RFC-0870 Roles table: Router Node lifecycle includes forwarding but does NOT pin auth responsibilities.
 
 **Gap:** When a `ForwardRequest` arrives at an intermediate router, does that router:
+
 - (a) Verify the inner auth header before forwarding? **Verified NO** — `crates/quota-router-core/src/node/forward.rs` has no auth field; `handler.rs:116 handle_forward_request` deserializes the payload but does not inspect auth headers
 - (b) Add/append the destination DID? **Verified NO** — `forward.rs` has no DID field on the envelope
 - (c) Re-mint a scoped-down capability for the next hop? **Verified NO** — RFC-0870 TTL only; no per-hop mint
@@ -128,10 +133,10 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 
 **The gap is whether intermediate hops can be trusted with the bearer/capability.** Two design options:
 
-| Option | Threat model | Performance | Verdict |
-|---|---|---|---|
-| **Transitive trust** — hops forward the inner auth unchanged | Trust all hops (mesh-level adversary) | Fast | Rejected — RFC-0853 overlay cryptography specifies hop-by-hop channel binding |
-| **Channel-wrapped re-issuance** — every hop gets a fresh, scope-narrowed capability for the next hop | Trust only the destination | Slower (re-mint per hop) | Proposed (RFC-0957 has no spec for per-hop scope yet) |
+| Option                                                                                               | Threat model                          | Performance              | Verdict                                                                       |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| **Transitive trust** — hops forward the inner auth unchanged                                         | Trust all hops (mesh-level adversary) | Fast                     | Rejected — RFC-0853 overlay cryptography specifies hop-by-hop channel binding |
+| **Channel-wrapped re-issuance** — every hop gets a fresh, scope-narrowed capability for the next hop | Trust only the destination            | Slower (re-mint per hop) | Proposed (RFC-0957 has no spec for per-hop scope yet)                         |
 
 **Classification:** **New RFC (or amendment to RFC-0870).** Stricter: this is a new RFC because it changes the wire envelope from RFC-0870. Suggested:
 
@@ -148,28 +153,31 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 ### Finding F3: holder_did resolution — "out-of-band" is a TODO, not a design
 
 **What exists:**
-- RFC-0957 roles and authorities: *"Token Issuer: `DID` (per RFC-0009 §Identity Key Format); persisted on `CapabilityToken.holder_did`."* — the catalog exists as a concept but is not a spec module.
+
+- RFC-0957 roles and authorities: _"Token Issuer: `DID` (per RFC-0009 §Identity Key Format); persisted on `CapabilityToken.holder_did`."_ — the catalog exists as a concept but is not a spec module.
 - RFC-0957 verify context: `VerifyContext::root_secret_lookup: Box<dyn Fn(&[u8; 32]) -> Option<[u8; 32]>>` — the root secret catalog is a function pointer; no schema.
 - RFC-0957 verify context: `VerifyContext { discharges, channel_providers, clock, root_secret_lookup }` — the verify context already has 4 slots; one of them COULD be the DID resolver, but the spec doesn't name it.
 - `crates/octo-wallet/src/capability/mod.rs:119`: `mint(root_secret: &[u8; 32], holder: &IdentityKey, holder_did: impl Into<String>, ...)` — holder_did is a parameter.
-- `crates/octo-wallet/src/capability/wire.rs:84-86`: *"Holder DID + public key are NOT in the wire format — caller passes them as parameters (resolved out-of-band from a DID registry)."*
+- `crates/octo-wallet/src/capability/wire.rs:84-86`: _"Holder DID + public key are NOT in the wire format — caller passes them as parameters (resolved out-of-band from a DID registry)."_
 
 **Gap:** The "DID registry" mentioned in the wire spec comment doesn't exist. The closest is the `AudienceId` from RFC-0009 identity, which is an opaque string (`crates/octo-wallet/src/identity.rs::AudienceId::from_str` accepts any non-empty string).
 
 **What the destination node needs to resolve at verify time:**
+
 - Given `cap_root_hash` (from the wire) → find the local `HolderRecord { did, holder_pub, caveats, ask_id, ttl, scope }`
 - This is the "catalog map" the user references
 
 **Design options:**
 
-| Option | Storage | Lookup | Verdict |
-|---|---|---|---|
-| **(a) In-memory `HashMap<CapRootHash, HolderRecord>`** | Process-local | O(1) | No — lost on restart, no federation |
-| **(b) Stoolap table `holder_registry(cap_root_hash PK, did, holder_pub, caveats JSON, ask_id, mint_at_unix, ttl_unix)`** | Persistent | O(log n) index | Adopt — reuses stoolap (RFC-0862) |
-| **(c) Local file `~/.config/cipherocto/holders/<cap_root_hash>.holder`** | Persistent | O(1) file open | Rejected — same shape as provider-key vault but security-sensitive + read-on-every-request |
-| **(d) Skip storage — derive holder_pub from holder_sig in the wire** | None | Wire-only | Rejected — defeats the "out-of-band" design |
+| Option                                                                                                                   | Storage       | Lookup         | Verdict                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------------- | ------------------------------------------------------------------------------------------ |
+| **(a) In-memory `HashMap<CapRootHash, HolderRecord>`**                                                                   | Process-local | O(1)           | No — lost on restart, no federation                                                        |
+| **(b) Stoolap table `holder_registry(cap_root_hash PK, did, holder_pub, caveats JSON, ask_id, mint_at_unix, ttl_unix)`** | Persistent    | O(log n) index | Adopt — reuses stoolap (RFC-0862)                                                          |
+| **(c) Local file `~/.config/cipherocto/holders/<cap_root_hash>.holder`**                                                 | Persistent    | O(1) file open | Rejected — same shape as provider-key vault but security-sensitive + read-on-every-request |
+| **(d) Skip storage — derive holder_pub from holder_sig in the wire**                                                     | None          | Wire-only      | Rejected — defeats the "out-of-band" design                                                |
 
 **The (b) option is the only one that fits the cipherocto substrate:**
+
 - Stoolap is the persistence layer (RFC-0862 Accepted)
 - Sync between destinations is automatic via RFC-0862 gossip
 - Index is `cap_root_hash` (deterministic, BLAKE3-derived, 32 bytes — perfect primary key)
@@ -182,6 +190,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 ### Finding F4: `CapabilityHandle.holder_did` is dead — remove the field
 
 **What exists:**
+
 - `crates/quota-router-core/src/egress.rs:191-200` defines:
   ```rust
   pub struct CapabilityHandle {
@@ -192,11 +201,11 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 - `egress.rs:299`: `holder_did: String::new(), // populated by the verifier layer` — the comment is aspirational; no verifier layer exists in the workspace.
 - `egress.rs:286`: `holder_did: String::new()` — the no-capability-token path also returns empty.
 - `egress.rs:611`: `assert_eq!(handle.holder_did, "")` — test asserts the field is empty.
-- `egress.rs:188-189`: *"`None` for `cap_root_hash` and `holder_did` means no capability was attached"* — the doc comment treats the empty field as a sentinel.
+- `egress.rs:188-189`: _"`None` for `cap_root_hash` and `holder_did` means no capability was attached"_ — the doc comment treats the empty field as a sentinel.
 
 **Gap:** The field is a structural dead column. It is initialized to `String::new()` at every code path that constructs `CapabilityHandle`. The "verifier layer" the comment references does not exist in the workspace. Cross-referencing `proxy.rs::extract_capability_token` (returns only `Option<String>`, never parses the wire), the field has no producer.
 
-**The mint API is NOT in scope for this fix.** The user clarified: *"the mint API can still receive the DID it gets elsewhere, internally or at some point given by the buyer."* The mint API stays as-is. The parsed `CapabilityToken` wallet-side (`crates/octo-wallet/src/capability/mod.rs:58`) keeps its `holder_did: String` field because the wallet has the DID at mint time and the catalog provides it at parse time.
+**The mint API is NOT in scope for this fix.** The user clarified: _"the mint API can still receive the DID it gets elsewhere, internally or at some point given by the buyer."_ The mint API stays as-is. The parsed `CapabilityToken` wallet-side (`crates/octo-wallet/src/capability/mod.rs:58`) keeps its `holder_did: String` field because the wallet has the DID at mint time and the catalog provides it at parse time.
 
 **Design decision:** Drop `holder_did` from `CapabilityHandle`. The struct becomes:
 
@@ -209,25 +218,28 @@ pub struct CapabilityHandle {
 The egress-side handle is now a thin wrapper around the cap root hash. Any downstream consumer that needs the holder identity obtains it from the wallet-side parsed `CapabilityToken` (per F3 design) or from the wire's parse path (`deserialize_wire(s, holder_did, holder_pub)`) at the wallet boundary — not from the egress-side handle. The F4 fix is independent of F3; consumers can adopt the new path incrementally.
 
 **Side effects to clean up:**
+
 - `egress.rs:188-189` doc comment updated: no more "None for holder_did" sentinel language
 - `egress.rs:286, 299` field-initialization removed
 - `egress.rs:611` test assertion removed
 - Any consumer of `handle.holder_did` (grep `crates/quota-router-core/`) updated to obtain the DID from the wire-parse path or the catalog
 
-**Classification:** Mission-scale fix. Lives in `missions/claimed/0957-b-provider-boundary-exercise-path.md` R9-4 closure. No new RFC needed — the field is implementation, not spec.
+**Classification:** Mission-scale fix. Lives in `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` R9-4 closure. No new RFC needed — the field is implementation, not spec.
 
 **Confidence:** HIGH. The user has the call site. Surgical removal.
 
 ### Finding F5: Destination node is the mints — no role-binding
 
 **What exists:**
+
 - RFC-0870 roles and authorities: Router Node has lifecycle "(Designated, Elected, Active, ...)" — does NOT mention minting capability.
-- RFC-0957 roles and authorities: Token Issuer is the *holder* (RFC-0009 identity). The seller is unspecified as a role.
+- RFC-0957 roles and authorities: Token Issuer is the _holder_ (RFC-0009 identity). The seller is unspecified as a role.
 - RFC-0959 roles and authorities: Asker = the node that publishes the Ask. Router = the node that verifies the capability at consumption time. RFC-0959 role catalog lists Asker and Router as separate roles.
 
 **Gap:** The destination node (RFC-0870 "Router") is one role. The capability token issuer (RFC-0957 "Token Issuer") is another role. RFC-0959 "Asker" is a third. **Verified separately** in RFC-0959 role catalog — Asker and Router are listed as distinct roles with no explicit "same node" assertion. The user's framing assumes the destination node holds all three roles; the RFCs do not bind them explicitly. This is the gap.
 
 **What the spec needs:**
+
 - Designate the destination node as holding the union of: RouterNode + TokenIssuer + Asker.
 - Specify that the destination node's `HolderRegistry` (F3) is the source of truth for all holders it has minted for.
 - Specify that when the destination node re-sells access (RFC-0955 marketplace), it adopts the role of "Seller" with its own DID + escrow + reputation.
@@ -247,6 +259,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 ### Finding F6: Market delivery — both bearer + capability at deal time
 
 **What exists:**
+
 - RFC-0959 defines Ask signed by Asker, SettlementEvent signed by Router, SettlementReceipt signed by Router. No spec for the buyer's authorization token.
 - RFC-0955 defines compute markets + proof markets + storage markets. No spec for the access token delivery.
 - RFC-0900 — referenced as Draft.
@@ -267,11 +280,11 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 
 **Design options:**
 
-| Option | Where bearer comes from | Where capability comes from | Atomic? |
-|---|---|---|---|
-| **(a) Same catalog entry holds both** | `HolderRegistry` adds `bearer_capsule: EncryptedBlob` alongside `capability_root` | Same table | Yes — single write |
-| **(b) Separate bearer system (RFC-0903) + capability (RFC-0957)** | Eager RFC-0903 virtual key | Eager RFC-0957 mint | No — two distinct deals |
-| **(c) Issuer picks at delivery time** | Eager if buyer opted in | Eager if buyer opted in | Yes — at delivery |
+| Option                                                            | Where bearer comes from                                                           | Where capability comes from | Atomic?                 |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------- | ----------------------- |
+| **(a) Same catalog entry holds both**                             | `HolderRegistry` adds `bearer_capsule: EncryptedBlob` alongside `capability_root` | Same table                  | Yes — single write      |
+| **(b) Separate bearer system (RFC-0903) + capability (RFC-0957)** | Eager RFC-0903 virtual key                                                        | Eager RFC-0957 mint         | No — two distinct deals |
+| **(c) Issuer picks at delivery time**                             | Eager if buyer opted in                                                           | Eager if buyer opted in     | Yes — at delivery       |
 
 **The user's framing implies (a)**: the catalog entry holds both. This is the cleanest because the HolderRegistry already exists per F3.
 
@@ -285,19 +298,20 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 
 ### Summary table
 
-| Gap | Action | Document | Effort |
-|---|---|---|---|
-| G1 / F1 | New RFC | **RFC-0969 (dual-pipeline authorization)** | 1 session |
-| G2 / F2 | New RFC | **RFC-0970 (forwarding-hop auth envelope)** | 1-2 sessions |
-| G3 / F3 | RFC-0957 amendment | **RFC-0957-A1** (catalog storage + holder registry) | 1 session |
-| G4 / F4 | Mission-scale fix | **0957-b R9-4 closure** (drop `CapabilityHandle.holder_did` field) | trivial |
-| G5 / F5 | New RFC or RFC-0870 amendment | **RFC-0971 (destination-node role consolidation)** | 1-2 sessions (after prerequisites) |
-| G6 / F6 | RFC-0959 amendment + RFC-0957-A1 | **RFC-0959-A1** (market delivery envelope) | 1 session |
-| Verification (was F7) | None — subsumed by F4 | n/a | n/a |
+| Gap                   | Action                           | Document                                                           | Effort                             |
+| --------------------- | -------------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
+| G1 / F1               | New RFC                          | **RFC-0969 (dual-pipeline authorization)**                         | 1 session                          |
+| G2 / F2               | New RFC                          | **RFC-0970 (forwarding-hop auth envelope)**                        | 1-2 sessions                       |
+| G3 / F3               | RFC-0957 amendment               | **RFC-0957-A1** (catalog storage + holder registry)                | 1 session                          |
+| G4 / F4               | Mission-scale fix                | **0957-b R9-4 closure** (drop `CapabilityHandle.holder_did` field) | trivial                            |
+| G5 / F5               | New RFC or RFC-0870 amendment    | **RFC-0971 (destination-node role consolidation)**                 | 1-2 sessions (after prerequisites) |
+| G6 / F6               | RFC-0959 amendment + RFC-0957-A1 | **RFC-0959-A1** (market delivery envelope)                         | 1 session                          |
+| Verification (was F7) | None — subsumed by F4            | n/a                                                                | n/a                                |
 
 ### Per-document recommendations
 
 **0957-b R9-4 closure (mission fix, no RFC): Drop `CapabilityHandle.holder_did`**
+
 - File: `crates/quota-router-core/src/egress.rs`
 - Remove `holder_did: String` field from `CapabilityHandle` (holder field)
 - Remove `String::new()` initializers in constructors
@@ -307,6 +321,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Mint API (`crates/octo-wallet/src/capability/mod.rs:119`) STAYS AS-IS — `holder_did` parameter preserved
 
 **RFC-0957-A1 (in-place amendment): Holder Registry + Catalog Storage**
+
 - Section: §Algorithms — `mint()` signature STAYS (`mint(root_secret, holder, holder_did, caveats, catalog)`); no parameter changes
 - Section: §Roles and Authorities — Token Issuer row updated to mention `HolderRegistry` (RFC-0862-backed stoolap table)
 - Section: §Data Structures — `CapabilityToken.holder_did` populated at parse time from the wallet's local catalog
@@ -316,6 +331,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Missions: extend `0957-a` (registry) + new `0957-c` (registry impl + wire rewrite if needed)
 
 **RFC-0959-A1 (in-place amendment): Market Delivery Envelope**
+
 - Section: §Roles and Authorities — Asker row updated to mention Seller = the same node
 - Section: §Lifecycle Requirements — new event `DealSettled { buyer_did, seller_did, ask_id, bearer_capsule_hash, capability_root_hash, ... }`
 - Section: §Algorithms — `deliver_at_settlement(buyer_did, seller_did, ask_id) -> (BearerCapsule, CapabilityToken)` that pulls both from the HolderRegistry
@@ -323,6 +339,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Implementation: `crates/octo-wallet/src/capability/{market,delivery}.rs` (or extension of existing 0959 crate)
 
 **RFC-0969 (new): Dual-Pipeline Authorization**
+
 - Section: §Wire Format — both legacy bearer and capability on the same request envelope
 - Section: §Roles and Authorities — Gateway Authenticator role (new)
 - Section: §Algorithms — header-based router: `Authorization: Bearer ...` → RFC-0903 path; `X-Capability-Token: ...` → RFC-0957 path; `Authorization: CipherOcto-Cap ...` → RFC-0957 alt path
@@ -331,6 +348,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Section: §Adversary Analysis — on the dual-pipeline path
 
 **RFC-0970 (new): Forwarding-Hop Authorization Envelope**
+
 - Section: §Wire Format — outer envelope wraps inner request; per-hop channel
 - Section: §Roles and Authorities — Intermediate Router (untrusted)
 - Section: §Algorithms — per-hop re-mint: `mutate_for_hop(capability, next_hop_did, ttl = RTT)`; destination unwraps
@@ -338,6 +356,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Section: §Compatibility — RFC-0870 ForwardRequest envelope extended
 
 **RFC-0971 (new): Destination-Node Role Consolidation**
+
 - Section: §Roles and Authorities — Router + TokenIssuer + Asker + (optionally) ReputationAnchor are the same node
 - Section: §Lifecycle Requirements — combined state machine
 - Section: §Specification (storage) — single HolderRegistry on the destination node
@@ -375,7 +394,7 @@ RFC-0971 (role consolidation)             — meta, summarizes all four
 ### Immediate (next session)
 
 1. **Close 0957-b R9-4** — drop `holder_did: String` from `CapabilityHandle` in `crates/quota-router-core/src/egress.rs`. Update holder-field doc, constructors initializers, tests assertion. Side-effect: any consumer of `handle.holder_did` updated to parse from wire (`deserialize_wire(s, holder_did, holder_pub)`). Mint API unchanged.
-2. **Update `missions/claimed/0957-b-provider-boundary-exercise-path.md`** R9-4 carryover table — mark as CLOSED (mission-scale fix, not RFC).
+2. **Update `missions/archived/completed/0957-b-provider-boundary-exercise-path.md`** R9-4 carryover table — mark as CLOSED (mission-scale fix, not RFC).
 3. **Create RFC-0957-A1** in `rfcs/draft/economics/0957-a1-holder-registry.md`. Cover F3 (holder registry + catalog). Mint API signature stays as-is per user clarification.
 
 ### Verification gate
@@ -414,21 +433,21 @@ DAG check: no cycles. RFC-0971 depends on all four; that is the final.
 
 ## Cross-Reference Map
 
-| Spec / Mission | In scope | Gap addressed |
-|---|---|---|
-| `rfcs/accepted/economics/0957-capability-token-format.md` | Capability wire format | F1 (dual pipeline), F3 (catalog); F4 only as footnote (mint API unchanged) |
-| `rfcs/accepted/economics/0959-ask-settlement-chain.md` | Settlement chain | F6 (market delivery) |
-| `rfcs/accepted/economics/0917-dual-mode-query-router.md` | Dual-mode provider integration | F1 (overlap with new RFC-0969 — different concept) |
-| `rfcs/accepted/economics/0903-B1-schema-amendments.md` | Virtual keys | F1 (legacy bearer) |
-| `rfcs/accepted/networking/0870-distributed-quota-router-network.md` | Forwarding | F2 (hop auth), F5 (destination role) |
-| `rfcs/accepted/process/0009-identity-management.md` | Vault + identity | F3 (catalog drops vault dependency) |
-| `rfcs/accepted/networking/0862-stoolap-data-sync.md` | Stoolap sync | F3 (catalog uses stoolap) |
-| `rfcs/accepted/networking/0853-overlay-cryptography.md` | Per-hop crypto | F2 (per-hop channel) |
-| `rfcs/accepted/economics/0955-model-liquidity-layer.md` | Marketplace | F6 (delivery) |
-| `missions/claimed/0957-b-provider-boundary-exercise-path.md` | R9 audit | F4 (closure of R9-4) |
-| `missions/claimed/0957-a-capability-token-macaroon.md` | Mint + verify | none (mint API unchanged; F4 is in 0957-b egress-only) |
-| `crates/octo-wallet/src/capability/{mod,wire,macaroon}.rs` | Code surface | F3 (registry); mint API unchanged |
-| `crates/quota-router-core/src/egress.rs` | Egress-side | F4 (drop `CapabilityHandle.holder_did` field) |
+| Spec / Mission                                                          | In scope                       | Gap addressed                                                              |
+| ----------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------- |
+| `rfcs/accepted/economics/0957-capability-token-format.md`               | Capability wire format         | F1 (dual pipeline), F3 (catalog); F4 only as footnote (mint API unchanged) |
+| `rfcs/accepted/economics/0959-ask-settlement-chain.md`                  | Settlement chain               | F6 (market delivery)                                                       |
+| `rfcs/accepted/economics/0917-dual-mode-query-router.md`                | Dual-mode provider integration | F1 (overlap with new RFC-0969 — different concept)                         |
+| `rfcs/accepted/economics/0903-B1-schema-amendments.md`                  | Virtual keys                   | F1 (legacy bearer)                                                         |
+| `rfcs/accepted/networking/0870-distributed-quota-router-network.md`     | Forwarding                     | F2 (hop auth), F5 (destination role)                                       |
+| `rfcs/accepted/process/0009-identity-management.md`                     | Vault + identity               | F3 (catalog drops vault dependency)                                        |
+| `rfcs/accepted/networking/0862-stoolap-data-sync.md`                    | Stoolap sync                   | F3 (catalog uses stoolap)                                                  |
+| `rfcs/accepted/networking/0853-overlay-cryptography.md`                 | Per-hop crypto                 | F2 (per-hop channel)                                                       |
+| `rfcs/accepted/economics/0955-model-liquidity-layer.md`                 | Marketplace                    | F6 (delivery)                                                              |
+| `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` | R9 audit                       | F4 (closure of R9-4)                                                       |
+| `missions/archived/completed/0957-a-capability-token-macaroon.md`       | Mint + verify                  | none (mint API unchanged; F4 is in 0957-b egress-only)                     |
+| `crates/octo-wallet/src/capability/{mod,wire,macaroon}.rs`              | Code surface                   | F3 (registry); mint API unchanged                                          |
+| `crates/quota-router-core/src/egress.rs`                                | Egress-side                    | F4 (drop `CapabilityHandle.holder_did` field)                              |
 
 ---
 

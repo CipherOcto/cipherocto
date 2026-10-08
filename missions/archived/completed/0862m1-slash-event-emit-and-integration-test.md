@@ -2,9 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed (2026-08-06) by @mmacedoeu. Sub-mission of `missions/claimed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06).
+Closed (Band A — 2026-08-06). Claimed (2026-08-06) by @mmacedoeu. Sub-mission of `missions/archived/completed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06).
 
-**Sub-mission of:** `missions/claimed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06).
+**Sub-mission of:** `missions/archived/completed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06).
 
 ## RFC
 
@@ -42,11 +42,13 @@ The `0862m` Band A closure deferred this work because (a) the sync→network dep
 ## Dependencies
 
 **Requires (RFC gates):**
+
 - RFC-0862 — sync engine substrate (CRC32/LSN/HMAC detection)
 - RFC-0855p-c — DomainCoordinator discipline (slash emission recipient)
 
 **Requires (mission gates):**
-- `missions/claimed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06) — provides `SyncSlash` struct + `SyncError::FakeSummary` detection path consumed here
+
+- `missions/archived/completed/0862m-sync-peer-slashing.md` (Band A closed 2026-08-06) — provides `SyncSlash` struct + `SyncError::FakeSummary` detection path consumed here
 
 ```yaml
 depends_on:
@@ -97,14 +99,14 @@ cargo fmt --all -- --check                                               # clean
 
 **Field mapping (documented in module header):**
 
-| `SyncSlash` | `SlashEnvelope` |
-|---|---|
-| `code: u16` | `slash_reason: u16` (pass-through if in sync-reserved range 0x0020-0x0023) |
-| `sub_code: u32` | `slash_reason_data: u32` (`SyncLsnRegression`: `(expected << 16) \| actual`) |
-| `peer_id: [u8; 32]` | `target_peer: String` (hex-encoded; DC stores per-target counter) |
-| n/a | `slash_id: String` (derived from `(peer_hex, code)` for upstream dedup) |
-| n/a | `signature: Vec<u8>` (empty; witness layer adds it later) |
-| n/a | `cast_at: u64` (caller-supplied epoch) |
+| `SyncSlash`         | `SlashEnvelope`                                                              |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `code: u16`         | `slash_reason: u16` (pass-through if in sync-reserved range 0x0020-0x0023)   |
+| `sub_code: u32`     | `slash_reason_data: u32` (`SyncLsnRegression`: `(expected << 16) \| actual`) |
+| `peer_id: [u8; 32]` | `target_peer: String` (hex-encoded; DC stores per-target counter)            |
+| n/a                 | `slash_id: String` (derived from `(peer_hex, code)` for upstream dedup)      |
+| n/a                 | `signature: Vec<u8>` (empty; witness layer adds it later)                    |
+| n/a                 | `cast_at: u64` (caller-supplied epoch)                                       |
 
 **Design rationale:**
 
@@ -115,9 +117,9 @@ cargo fmt --all -- --check                                               # clean
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                              |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Mission filed open by `0862m` Band A closure. 12 ACs (bridge + integration test + cross-crate compat).                                             |
+| Version | Date       | Change                                                                                                                                                                                                                          |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Mission filed open by `0862m` Band A closure. 12 ACs (bridge + integration test + cross-crate compat).                                                                                                                          |
 | v0.2    | 2026-08-06 | Claimed + closed Band A same-session. 12/12 ACs green. Bridge module + 9 unit tests + 5 integration tests landed. Cross-crate compat green (build/clippy/fmt/test). Status header flipped Claimed→Closed (Band A — 2026-08-06). |
 
 Last Updated: 2026-08-06

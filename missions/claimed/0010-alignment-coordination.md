@@ -120,7 +120,7 @@ Multiple inline bare version pin references remain in mission body text (not ret
 - 5 inline retrofixes applied to `0010-c` + `0010-f2-multi-chain-did-resolution` + `0010-f2-registry-namespacing` + `0010-f2-multi-chain-routing` + `0010-f8-rich-did-storage` per audit findings
 - 1 sibling mission filed (`0010-f8-rich-did-documents-clippy-fix`) + cross-references 1 retrofix mission + 1 dependency mission via `depends_on` chain
 - AC gate: `ls missions/claimed/0010-*.md` → 10 files (9 existing + 1 new clippy-fix)
-- AC gate: `rg 'Retro-supersession \(2026-08-24 audit\)' missions/claimed/0010-c-32-byte-addendum.md missions/claimed/0010-f2-multi-chain-did-resolution.md missions/claimed/0010-f2-registry-namespacing.md missions/claimed/0010-f2-multi-chain-routing.md missions/claimed/0010-f8-rich-did-storage.md` → 5 hits (1 retro-supersession note per retrofixed mission)
+- AC gate: `rg 'Retro-supersession \(2026-08-24 audit\)' missions/claimed/0010-c-32-byte-addendum.md missions/archived/completed/0010-f2-multi-chain-did-resolution.md missions/claimed/0010-f2-registry-namespacing.md missions/claimed/0010-f2-multi-chain-routing.md missions/claimed/0010-f8-rich-did-storage.md` → 5 hits (1 retro-supersession note per retrofixed mission)
 - AC gate: `rg 'pub trait DidRegistry' crates/octo-ident/src/registry.rs` → 1 hit (substrate anchor for retrofix 3)
 - AC gate: `rg 'IDENTITY_RESOLVE_WITH_CHAIN' crates/octo-protocol/src/payload_kind.rs` → 1 hit (substrate anchor for retrofix 4)
 - Cross-RFC cite validation: Guard 2 PASS for all 5 retrofixed + 1 new mission files
@@ -130,7 +130,7 @@ Multiple inline bare version pin references remain in mission body text (not ret
 ## Files / Artifacts
 
 - Edit: `missions/claimed/0010-c-32-byte-addendum.md` (frontmatter retro-supersession note)
-- Edit: `missions/claimed/0010-f2-multi-chain-did-resolution.md` (Status block retro-supersession note + Substrate header bare pin correction)
+- Edit: `missions/archived/completed/0010-f2-multi-chain-did-resolution.md` (Status block retro-supersession note + Substrate header bare pin correction)
 - Edit: `missions/claimed/0010-f2-registry-namespacing.md` (Status block retro-supersession note combining status + path + bare pin)
 - Edit: `missions/claimed/0010-f2-multi-chain-routing.md` (Status block retro-supersession note combining status + bare pin)
 - Edit: `missions/claimed/0010-f8-rich-did-storage.md` (Status block retro-supersession note combining status + path)

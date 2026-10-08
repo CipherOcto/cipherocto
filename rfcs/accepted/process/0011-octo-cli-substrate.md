@@ -1155,11 +1155,11 @@ This RFC covers Phase 1 only. Follow-on amendments cover Phases 2-8.
 
 - `rfcs/draft/process/0011-octo-cli-substrate.md` — this file
 - `docs/07-developers/octo-cli-implementation-guide.md` — companion guide
-- `missions/claimed/0011-core-output-envelope-redaction.md` — mission 1
-- `missions/claimed/0011-identity-commands.md` — mission 2
-- `missions/claimed/0011-capability-commands.md` — mission 3
-- `missions/claimed/0011-policy-commands.md` — mission 4
-- `missions/open/0011-deprecation-stub-removal.md` — mission 5 (Claimed per frontmatter; v2.0 stub removal landed in commit 2c28cbb2)
+- `missions/archived/completed/0011-core-output-envelope-redaction.md` — mission 1
+- `missions/archived/completed/0011-identity-commands.md` — mission 2
+- `missions/archived/completed/0011-capability-commands.md` — mission 3
+- `missions/archived/completed/0011-policy-commands.md` — mission 4
+- `missions/archived/completed/0011-deprecation-stub-removal.md` — mission 5 (Claimed per frontmatter; v2.0 stub removal landed in commit 2c28cbb2)
 
 ### SUBSTRATE (follow-on missions, NOT this RFC cycle)
 

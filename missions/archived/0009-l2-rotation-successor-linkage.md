@@ -137,7 +137,7 @@ Wire the **Active ↔ Rotating** state transitions + successor linkage substrate
 
 **Requires:**
 
-- `missions/open/0009-l1-lifecycle-state-machine.md` — `LifecycleState::Rotating` variant + `can_transition_to` edges (must land first)
+- `missions/archived/0009-l1-lifecycle-state-machine.md` — `LifecycleState::Rotating` variant + `can_transition_to` edges (must land first)
 - `missions/claimed/0009-a-hsm-routing.md` — `IdentityKey::sign` routed through `Arc<dyn HsmAdapter>` per RFC-0009 v1.1 (required for successor co-sign helper + revocation signature)
 - `missions/claimed/0957-c-holder-registry-impl.md` — `HolderRecord` schema (add `rotation_started_at_millis_unix` + `deprecated: bool` columns in same schema migration as `0009-l1`)
 - RFC-0009 §Lifecycle Requirements (Accepted 2026-07-20; §Lifecycle table rows 2-3)

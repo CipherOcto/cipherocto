@@ -25,7 +25,7 @@ dry_closure_audit: docs/audits/2026-09-13-A1-agent-redaction-envelope-dry-closur
 
 **Status:** Open (Phase 2 follow-on to `0011-c-agent-create-subcommand`)
 **Substrate:** RFC-0011-c §Security Considerations + RFC-0011 §Redaction Layer
-**Parent:** mission `missions/claimed/0011-c-agent-create-subcommand.md` (AC #49 Phase 2)
+**Parent:** mission `missions/archived/completed/0011-c-agent-create-subcommand.md` (AC #49 Phase 2)
 
 ## Scope
 
@@ -94,7 +94,7 @@ strictly additive: no Phase 1 surface is removed or weakened.
 
 ## Dependencies
 
-- `missions/claimed/0011-c-agent-create-subcommand.md` MUST be
+- `missions/archived/completed/0011-c-agent-create-subcommand.md` MUST be
   completed first (this mission's substrate).
 - `rfcs/accepted/process/0011-c-agent-lifecycle.md` — substrate
   RFC; cite §Security Considerations in mission YAML comments.

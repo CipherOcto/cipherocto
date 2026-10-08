@@ -58,7 +58,7 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 **Mission gates:**
 
 - `missions/claimed/0957-c-holder-registry-impl.md` — base HolderRecord + HolderKind MUST exist (F1, F2, F3 substrate) — Closed Band A 2026-08-06
-- `missions/open/0957-e-mint-txn-parameter.md` — CapabilityCatalog 4-method extension MUST exist (F4 substrate)
+- `missions/claimed/0957-e-mint-txn-parameter.md` — CapabilityCatalog 4-method extension MUST exist (F4 substrate)
 
 **Blocks:**
 

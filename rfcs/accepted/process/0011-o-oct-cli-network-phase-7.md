@@ -281,7 +281,7 @@ Per RFC-0011-h §Test Vectors redact-did-1 row + §Security Considerations redac
 
 ## Substrate-Additions Companion Missions
 
-Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 1 companion substrate mission. Mission YAML exists at `missions/open/0011-h-s-a-slash-bridge-trait.md`.
+Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 1 companion substrate mission. Mission YAML exists at `missions/archived/0011-h-s-a-slash-bridge-trait.md`.
 
 Per RFC-0011-h §Substrate-Additions Companion Missions row G9:
 
@@ -297,7 +297,7 @@ Phase 7 RFC carries 1 substrate addition; 0 substrate additions in this RFC itse
 
 **RFC-0011-o is the Phase 7 amendment.** Phase 7 implementation sequencing per `0011-h-multiphase-rollout-plan` §2.7 + RFC-0011-m §Implementation Phases (Phase 5 precedent for test vector naming `tv_net7_*`):
 
-1. **Substrate-first slice (1 companion mission):** G9 `0011-h-s-a-slash-bridge-trait` lands per companion mission YAML at `missions/open/0011-h-s-a-slash-bridge-trait.md`.
+1. **Substrate-first slice (1 companion mission):** G9 `0011-h-s-a-slash-bridge-trait` lands per companion mission YAML at `missions/archived/0011-h-s-a-slash-bridge-trait.md`.
 2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 7 test vectors (tv_net7_1 through tv_net7_6b per §Test Vectors split between CLI-parse-level + substrate-trait-level coverage) + 0 NEW OctoCliError variants (REUSES slot 89) land AFTER companion mission G9 closes per substrate-first ordering.
 
 User-gated decision on slice ordering per [[feedback_initiation_user_only]].
@@ -306,19 +306,19 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 ## Key Files to Modify
 
-| File                                                                                      | Action                                                                                                                                     |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `crates/octo-cli/src/main.rs::Commands::Network::SlashBridge`                             | ADD 1 action + 2 sub-actions (`list`, `propagate <slash_envelope_id_hex>`)                                                                 |
-| `crates/octo-cli/src/commands/network.rs`                                                 | ADD 2 dispatch fns + envelopes + `parse_32_byte_hex` shared helper invocation                                                              |
-| `crates/octo-cli/src/output.rs`                                                           | ADD 2 new envelope types (`NetworkSlashBridgeListOutput`, `NetworkSlashBridgePropagateOutput`)                                             |
-| `crates/octo-network/src/mon/slash_bridge.rs` (companion G9)                              | Layer B substrate addition: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types (NOT this RFC; companion mission) |
-| `rfcs/accepted/process/0011-o-oct-cli-network-phase-7.md`                                 | (this RFC)                                                                                                                                 |
-| `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md`                             | NO CHANGE (RFC-0011-h stays Accepted; RFC-0011-o is subordinate)                                                                           |
-| `missions/open/0011-h-s-a-slash-bridge-trait.md`                                          | CLAIMED → COMPLETED transition at companion mission closure                                                                                |
-| `missions/open/0011-h-network-slash-bridge.md` (NEW, per [[no-phantom-mission-pointers]]) | CLAIMED at Phase 7 RFC acceptance; COMPLETED at amendment closure                                                                          |
-| `docs/audits/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                                  | NEW closure audit (gitignored per [[docs-audits-scratchpad]])                                                                              |
-| `~/.claude/projects/.../memory/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                | NEW memory card                                                                                                                            |
-| `MEMORY.md`                                                                               | ADD 1-line index entry at top of session resume cards                                                                                      |
+| File                                                                                          | Action                                                                                                                                     |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `crates/octo-cli/src/main.rs::Commands::Network::SlashBridge`                                 | ADD 1 action + 2 sub-actions (`list`, `propagate <slash_envelope_id_hex>`)                                                                 |
+| `crates/octo-cli/src/commands/network.rs`                                                     | ADD 2 dispatch fns + envelopes + `parse_32_byte_hex` shared helper invocation                                                              |
+| `crates/octo-cli/src/output.rs`                                                               | ADD 2 new envelope types (`NetworkSlashBridgeListOutput`, `NetworkSlashBridgePropagateOutput`)                                             |
+| `crates/octo-network/src/mon/slash_bridge.rs` (companion G9)                                  | Layer B substrate addition: `SlashBridge` trait + `BridgedSlash` + `BridgeReceipt` + `BridgeError` types (NOT this RFC; companion mission) |
+| `rfcs/accepted/process/0011-o-oct-cli-network-phase-7.md`                                     | (this RFC)                                                                                                                                 |
+| `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md`                                 | NO CHANGE (RFC-0011-h stays Accepted; RFC-0011-o is subordinate)                                                                           |
+| `missions/archived/0011-h-s-a-slash-bridge-trait.md`                                          | CLAIMED → COMPLETED transition at companion mission closure                                                                                |
+| `missions/archived/0011-h-network-slash-bridge.md` (NEW, per [[no-phantom-mission-pointers]]) | CLAIMED at Phase 7 RFC acceptance; COMPLETED at amendment closure                                                                          |
+| `docs/audits/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                                      | NEW closure audit (gitignored per [[docs-audits-scratchpad]])                                                                              |
+| `~/.claude/projects/.../memory/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                    | NEW memory card                                                                                                                            |
+| `MEMORY.md`                                                                                   | ADD 1-line index entry at top of session resume cards                                                                                      |
 
 ## Future Work
 

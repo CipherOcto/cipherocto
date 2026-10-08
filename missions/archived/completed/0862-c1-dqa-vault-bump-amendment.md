@@ -123,7 +123,7 @@ macaroon_id))`
   cargo test --workspace --lib                                     # excludes 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures (commits 19faf380/4ab400bd/18edbe0d); unrelated to S6c
   cargo clippy --workspace --all-targets --features full -- -D warnings
   cargo fmt --all -- --check
-  npx prettier --write missions/open/0862-c1-dqa-vault-bump-amendment.md
+  npx prettier --write missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md
   ```
 - AC-5: Memory card:
   `memory/mission-0862-c1-dqa-vault-bump-amendment-status.md`
@@ -137,21 +137,21 @@ macaroon_id))`
   invariant is load-bearing for spend_ledger vault-binding reject
   (per RFC-0862 §SpendLedger vault_id cross-ref).
 - **Sibling missions:**
-  - `missions/open/0870-c1-version-tag-amendment.md` (S6a LANDED)
-  - `missions/open/0957-c1-verify-time-amendment.md` (S6b LANDED)
+  - `missions/archived/completed/0870-c1-version-tag-amendment.md` (S6a LANDED)
+  - `missions/archived/completed/0957-c1-verify-time-amendment.md` (S6b LANDED)
   - S6d RFC-0900 + 10 TV (pending)
   - S6e RFC-0959 + 25 TV (pending)
   - S6f RFC-0960 + 108 TV (pending)
   - S6g RFC-0105 + 109 TV (pending)
   - **Follow-ons (Round 1):**
-    - `missions/open/0862-c2-clock-trait.md` (Clock trait refactor)
-    - `missions/open/0862-c3-cross-process-drain.md` (cross-process drain + advisory file lock)
-    - `missions/open/0862-c4-assert-to-error.md` (`dqa_to_i64` assert → error)
-    - `missions/open/0862-c5-domain-sep.md` (domain-sep hygiene for untagged hash prefixes)
-    - `missions/open/0862-c6-fixture-keyspace.md` (production keyspace fixture risk)
+    - `missions/archived/completed/0862-c2-clock-trait.md` (Clock trait refactor)
+    - `missions/archived/completed/0862-c3-cross-process-drain.md` (cross-process drain + advisory file lock)
+    - `missions/archived/completed/0862-c4-assert-to-error.md` (`dqa_to_i64` assert → error)
+    - `missions/archived/completed/0862-c5-domain-sep.md` (domain-sep hygiene for untagged hash prefixes)
+    - `missions/claimed/0862-c6-fixture-keyspace.md` (production keyspace fixture risk)
   - **Follow-ons (Round 2):**
-    - `missions/open/0862-c7-adjacent-wrap.md` (quota-router-core u64→i64 wrap at `storage.rs:744/911/1083` + `cache.rs:211`) — **LANDED 2026-08-17 (commit `99fcfcf3`)**; status card `memory/mission-0862-c7-adjacent-wrap-status.md`
-    - `missions/open/0862-c8-seed-hardening.md` (seed() TOCTOU + asymmetric NegativeCost guard) — **LANDED 2026-08-17 (commit `c5a3105d`)**; status card `memory/mission-0862-c8-seed-hardening-status.md`
+    - `missions/archived/completed/0862-c7-adjacent-wrap.md` (quota-router-core u64→i64 wrap at `storage.rs:744/911/1083` + `cache.rs:211`) — **LANDED 2026-08-17 (commit `99fcfcf3`)**; status card `memory/mission-0862-c7-adjacent-wrap-status.md`
+    - `missions/archived/completed/0862-c8-seed-hardening.md` (seed() TOCTOU + asymmetric NegativeCost guard) — **LANDED 2026-08-17 (commit `c5a3105d`)**; status card `memory/mission-0862-c8-seed-hardening-status.md`
 - **Status card:**
   `memory/mission-0862-c1-dqa-vault-bump-amendment-status.md`
   (LANDED).

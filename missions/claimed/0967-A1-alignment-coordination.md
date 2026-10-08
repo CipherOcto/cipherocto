@@ -93,7 +93,7 @@ RFC-0967-A1-A1 v1.2 effective (2026-08-22) per `rfcs/accepted/economics/0967-a1-
 - 1 inline retrofix applied to `0967-a` per audit findings (combined crate rename + RFC-0967-A1 v1.9.2 supersession in single Status block quote)
 - 1 sibling mission filed (`0967-A1-v1.9.2-landing`) + cross-references 1 retrofix mission + 3 dependency missions via `depends_on` chain
 - AC gate: `ls missions/claimed/0967-*.md` → 3 files (1 existing + 1 landing + 1 coordination)
-- AC gate: `rg 'crate rename drift|RFC-0967-A1 v1.9.2 supersession' missions/claimed/0967-a-policy-object-graph.md` → 1 hit (retro-supersession note)
+- AC gate: `rg 'crate rename drift|RFC-0967-A1 v1.9.2 supersession' missions/archived/completed/0967-a-policy-object-graph.md` → 1 hit (retro-supersession note)
 - AC gate: `rg 'pub trait AuthorityPolicy|pub trait WorkflowKind' missions/claimed/0967-A1-v1.9.2-landing.md` → 2 hits (sibling mission trait spec)
 - Cross-RFC cite validation: Guard 2 PASS for all 1 retrofix + 2 new mission files
 - Prettier clean
@@ -101,7 +101,7 @@ RFC-0967-A1-A1 v1.2 effective (2026-08-22) per `rfcs/accepted/economics/0967-a1-
 
 ## Files / Artifacts
 
-- Edit: `missions/claimed/0967-a-policy-object-graph.md` (retro-supersession note in Status block + VH row 2026-08-24)
+- Edit: `missions/archived/completed/0967-a-policy-object-graph.md` (retro-supersession note in Status block + VH row 2026-08-24)
 - New: `missions/claimed/0967-A1-v1.9.2-landing.md` (substrate landing ownership for 6 traits + 30 UUIDv5 fixtures + 8 domain constants + PolicyRegistry trait + 36 byte-exact fixtures)
 - New: `missions/claimed/0967-A1-alignment-coordination.md` (this file)
 

@@ -1144,40 +1144,7 @@ graph TD
 > RFC-XXXX §X is the authoritative design.
 ```
 
-Both legacy and superseded missions remain greppable for history, but cannot be claimed. A superseded mission's banner references the new mission so reviewers can navigate. RFC-side supersession (`rfcs/archived/superseded/`) and mission-side supersession (`missions/archived/superseded/`) are independent folders; the procedure applies to both.
-
-**Timeout Rationale:**
-
-| Timeout       | Value   | Rationale                                                                                                                                                     |
-| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mission claim | 14 days | Allows adequate time for understanding RFC, planning implementation, and making significant progress. Two weeks is standard for substantial development work. |
-| PR review     | 7 days  | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles.                      |
-
-**Deferral procedure.** A mission moves to `missions/deferred/` when an upstream blocker makes the work unclaimable. Typical blockers:
-
-- The associated RFC is itself still `Draft` (not yet Accepted).
-- An external dependency (foundation RFC, third-party library) is unavailable.
-- A governance decision is required before implementation can proceed (e.g., quorum policy, fee schedule).
-
-**Authorization rule.** Deferral is a user-initiated lifecycle transition. An agent MUST NOT defer a mission, propose deferral as part of a sweep, or move a mission file into `missions/deferred/` on its own initiative — even when a blocker is unambiguous, even when the audit sweep identifies the deferral as "the obvious next step." The rationale: deferral is irreversible without human review (it removes the mission from `open/`, breaks claimability, and signals "blocked" to every downstream consumer). Only the user can authorize that signal. Auto-deferral by an agent is treated as a documentation bug regardless of how technically correct the rationale is.
-
-When admitting a blocker during a sweep, the agent's correct action is to **report the blocker** to the user with file:line evidence and a deferral recommendation. The user then issues a direct, explicit instruction (e.g., "defer 0870g" or "defer all three") if they want it acted on. Phrasings like "let's defer this" or "you can defer it" in conversation are not authorization — they are questions, and the agent must wait for the user to confirm the move before executing the `git mv`.
-
-When deferring (user-initiated only):
-
-1. `git mv` the mission file from `missions/open/` (or `missions/claimed/`) to `missions/deferred/`.
-2. Update the `## Status` header to `Deferred (YYYY-MM-DD) — <blocker>`.
-3. The mission file MUST carry an explicit `## Rationale for deferral` blockquote naming the blocker and any cross-references (e.g., the blocking RFC number or external issue).
-4. No timeouts apply to deferred missions. They remain greppable and recoverable but cannot be claimed.
-
-When the blocker resolves, the mission is re-claimed from `deferred/`:
-
-1. `git mv` back to `missions/open/` (or `missions/claimed/` if a claimant is ready).
-2. Update `## Status` header: `Deferred (YYYY-MM-DD) — <blocker>` → `Open` (or `Claimed`).
-3. Drop the `## Rationale for deferral` blockquote (or convert to a note).
-4. Proceed through the standard lifecycle.
-
-Example existing conformant mission: `missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/claimed/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance (live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
+Both legacy and superseded missions remain greppable for history, but cannot be claimed. A superseded mission's banner references the new mission so reviewers can navigate. RFC-side supersession (`rfcs/archived/superseded/`) and mission-side supersession (`missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/claimed/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance (live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 
 **2-Cycle Atomic Promotion gate** (amendment 2026-08-22 per research §20 decision #2; references BLUEPRINT rule 5 at §RFC Process). Two RFCs declaring a 2-cycle sibling MUST satisfy the following mission-side gate before either RFC can promote from `Draft` to `Accepted`:
 

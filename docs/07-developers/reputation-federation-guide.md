@@ -170,5 +170,5 @@ Run with `cargo test --ignored` once the publish path is wired.
 - RFC-0968-A1 amendment 22 — `MIN_ATTESTOR_QUORUM`
 - RFC-0968 §28.4 amendment 21 (Mission cluster inheritance — recorder event authority) — authority model (recorder signature authoritative)
 - RFC-0968 §28.4 amendment 22 (Pubkey-keyed gossip topics replaced) — DID-keyed topics (no pubkey mapping)
-- Mission 0855p-b — `missions/claimed/0855p-b-cross-mission-reputation.md`
-- Mission 0968-b — `missions/open/0968-b-marketplace-integration.md`
+- Mission 0855p-b — `missions/archived/0855p-b-cross-mission-reputation.md`
+- Mission 0968-b — `missions/archived/0968-b-marketplace-integration.md`

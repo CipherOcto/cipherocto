@@ -172,7 +172,7 @@ attached_at_unix, event_cursor: Some(cursor), session_id_hex }`
      `octo revoke-attach --session-id`) → exit 58 `RevocationError`
 
 7. **Sibling mission YAML updates**:
-   - `missions/claimed/0011-c-agent-attach-subcommand.md`:
+   - `missions/archived/completed/0011-c-agent-attach-subcommand.md`:
      - `release_gate_cleared_at: 2026-09-16` annotation
      - `implementation_state: cli-dispatch-wired` (replaces `cli-dispatch-stubbed`)
      - REMOVE `stub_variant` + `stub_exit_code` frontmatter annotations

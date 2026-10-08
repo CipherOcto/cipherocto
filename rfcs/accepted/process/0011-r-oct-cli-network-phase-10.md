@@ -208,12 +208,12 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 ### Key Files to Modify
 
 - `rfcs/draft/process/0011-r-oct-cli-network-phase-10.md` — NEW RFC Draft (this file)
-- `missions/open/0011-h-s-a-reputation-store.md` — substrate companion YAML stub fill-in
+- `missions/archived/0011-h-s-a-reputation-store.md` — substrate companion YAML stub fill-in
 - `crates/octo-reputation/src/store/mod.rs` — EXTEND existing trait with `list` + `peer_reputation` methods + add `ReputationFilter` enum + `PeerReputation` struct
 - `crates/octo-reputation/src/store/memory.rs` — EXTEND `InMemoryReputationStore` with stub implementations
 - `crates/octo-reputation/src/store/stoolap.rs` — EXTEND `StoolapReputationStore` with stub implementations
 - `crates/octo-cli/src/commands/network.rs` — CLI dispatch slice (Args + envelopes + handlers + test vectors)
-- `missions/open/0011-h-network-reputation.md` — NEW CLI mission YAML (Created Completed paired)
+- `missions/archived/0011-h-network-reputation.md` — NEW CLI mission YAML (Created Completed paired)
 
 ### Future Work
 

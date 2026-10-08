@@ -77,11 +77,11 @@ The envelope replaces ad-hoc per-node wire formats with a single canonical shape
 
 CipherOcto's mesh today has one specialized node type: the Quota Router (RFC-0870). Identity resolution, reputation anchoring, capability issuance, and market settlement each have RFCs but no shared envelope — each would re-invent its own wire format.
 
-Concrete gap: `GatewayAuthenticator` at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, no production caller) co-locates with `quota-router-core::proxy::handle_request` doing its own inline Bearer strip (RFC-0969 amendment `missions/open/0969-a-gateway-relocation.md` closes this gap). The two are unrelated — no shared envelope.
+Concrete gap: `GatewayAuthenticator` at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, no production caller) co-locates with `quota-router-core::proxy::handle_request` doing its own inline Bearer strip (RFC-0969 amendment `missions/claimed/0969-a-gateway-relocation.md` closes this gap). The two are unrelated — no shared envelope.
 
-Concrete gap: `IdentityKey::sign` in `crates/octo-wallet/src/identity.rs` calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — bypassing the `HsmAdapter` trait at `crates/octo-wallet/src/hsm.rs`. Hardware wallets (`LedgerSigner`) cannot sign capability tokens today. Mission `missions/open/0009-a-hsm-routing.md` closes this gap.
+Concrete gap: `IdentityKey::sign` in `crates/octo-wallet/src/identity.rs` calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — bypassing the `HsmAdapter` trait at `crates/octo-wallet/src/hsm.rs`. Hardware wallets (`LedgerSigner`) cannot sign capability tokens today. Mission `missions/claimed/0009-a-hsm-routing.md` closes this gap.
 
-Concrete gap: `AudienceId::from_str` in `crates/octo-wallet/src/identity.rs` accepts any non-empty string (per RFC-0010 critique). Wallet DOES NOT validate canonical DID format. RFC-0010 already ratifies the codec; wallet integration is missing. Mission `missions/open/0010-d-wallet-audience-validation.md` closes this gap.
+Concrete gap: `AudienceId::from_str` in `crates/octo-wallet/src/identity.rs` accepts any non-empty string (per RFC-0010 critique). Wallet DOES NOT validate canonical DID format. RFC-0010 already ratifies the codec; wallet integration is missing. Mission `missions/claimed/0010-d-wallet-audience-validation.md` closes this gap.
 
 These gaps are symptoms of a missing layer: the **specialized node protocol envelope**. This RFC defines it.
 
@@ -601,7 +601,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - `NodeEnvelope`, `PayloadKindId`, `Authorization`, `RecipientRef`, `ProtocolError`
 - borsh serde impls + BLAKE3 envelope_id computation
 - DID validation via `octo_ident::CanonicalCodec::parse()`
-- Implementation mission: TBD — file under `missions/open/` with slug assigned at promotion-to-Accepted time (slug TBD to avoid pre-naming collision per Round-3 review). RFC-0870 adoption mission `missions/open/0870-b-envelope-adoption.md` consumes this phase.
+- Implementation mission: TBD — file under `missions/claimed/0870-b-envelope-adoption.md` consumes this phase.
 
 ### Phase 2 — Wallet node (Layer 2 specialized)
 
@@ -609,19 +609,15 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - `WalletNode` struct + `NetworkReceiver` impl
 - `IdentityKey::sign` routes through `HsmAdapter` (close the gap)
 - Wallet payload kinds: `WALLET_SIGN_ED25519`, `WALLET_MINT_CAPABILITY`, `WALLET_ATTENUATE_CAPABILITY`, `WALLET_RESOLVE_DID`
-- Implementation mission: `missions/open/0009-a-hsm-routing.md` (HSM closure prerequisite); new mission file under `missions/open/` with slug TBD at promotion-to-Accepted time.
-
-### Phase 3 — Specialized node adoption (per-RFC)
-
-- Quota router adopts envelope — mission `missions/open/0870-b-envelope-adoption.md`
+- Implementation mission: `missions/claimed/0009-a-hsm-routing.md` (HSM closure prerequisite); new mission file under `missions/claimed/0870-b-envelope-adoption.md`
 - Identity resolver node (NEW) — mission TBD at promotion
 - Reputation anchor node (RFC-0968 wiring) — mission TBD at promotion
 - Capability issuer node (RFC-0957-A1 extension) — mission TBD at promotion
 
 ### Phase 4 — Per-extension crate extraction
 
-- `crates/octo-cap-macaroon/` from `crates/octo-wallet/src/capability/macaroon.rs` — mission `missions/open/0957-ext-macaroon-crate.md`
-- `crates/octo-cap-zk/` from `crates/octo-wallet/src/capability/zk_mint.rs` — mission `missions/open/0957-ext-zk-crate.md`
+- `crates/octo-cap-macaroon/` from `crates/octo-wallet/src/capability/macaroon.rs` — mission `missions/claimed/0957-ext-macaroon-crate.md`
+- `crates/octo-cap-zk/` from `crates/octo-wallet/src/capability/zk_mint.rs` — mission `missions/claimed/0957-ext-zk-crate.md`
 - `crates/octo-cap-federation/` from `crates/octo-wallet/src/capability/federation.rs` — mission TBD at promotion
 - Each crate registers `CapabilitySpec` via plugin
 

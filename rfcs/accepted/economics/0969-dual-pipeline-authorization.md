@@ -87,6 +87,7 @@ This RFC names the role, specifies the routing, applies the 4-way dispatch table
 - RFC-0909 — coexistence only
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG: `0969 ← {0903, 0957, 0957-A1, 0009, 0009-B1, 0949*, 0959-A1*}` — acyclic (R11-N9 fix: added `0009-B1` per §Dependencies RFC-0009-B1 entry)
 > 2. RFC-0957-A1 HolderRegistry substrate prerequisite
 > 3. RFC-0903 + RFC-0957 + RFC-0009 prerequisites satisfied
@@ -94,16 +95,16 @@ This RFC names the role, specifies the routing, applies the 4-way dispatch table
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Routing determinism** | Header prefix → parse path is a pure function | Test: every header prefix has exactly one parse path |
-| **G2: Dual-pipeline coverage** | 100% of gateway requests routed through bearer path, capability path, or no-auth path (v1.1 dispatch table) | Test: 100 representative requests, all routed correctly |
+| Goal                                       | Target                                                                                                                                                      | Metric                                                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **G1: Routing determinism**                | Header prefix → parse path is a pure function                                                                                                               | Test: every header prefix has exactly one parse path                                             |
+| **G2: Dual-pipeline coverage**             | 100% of gateway requests routed through bearer path, capability path, or no-auth path (v1.1 dispatch table)                                                 | Test: 100 representative requests, all routed correctly                                          |
 | **G3: Header precedence (v1.1 amendment)** | Both Bearer + Capability-Token present → `BothSchemesUnsupported` (rejected per dispatch table). The prior AND-gate + identity-linkage behavior is REMOVED. | Test: dual-token request → `Err(AuthError::BothSchemesUnsupported)` regardless of identity match |
-| **G4: Backward compat** | Legacy bearer requests continue working | Regression test over RFC-0903 |
-| **G5: Forward compat** | Wallet-side capability requests work | Regression test over RFC-0957 |
-| **G6: Routing latency** | ≤ 1ms p99 added | Bench |
-| **G7: Catalog unification** | Both paths write to the same HolderRegistry via insert_dual | Test: dual-issuance populates two paired HolderRecord rows in one transaction |
-| **G8: Debug redaction** | Zero credential material in Debug | Test: TV10 |
+| **G4: Backward compat**                    | Legacy bearer requests continue working                                                                                                                     | Regression test over RFC-0903                                                                    |
+| **G5: Forward compat**                     | Wallet-side capability requests work                                                                                                                        | Regression test over RFC-0957                                                                    |
+| **G6: Routing latency**                    | ≤ 1ms p99 added                                                                                                                                             | Bench                                                                                            |
+| **G7: Catalog unification**                | Both paths write to the same HolderRegistry via insert_dual                                                                                                 | Test: dual-issuance populates two paired HolderRecord rows in one transaction                    |
+| **G8: Debug redaction**                    | Zero credential material in Debug                                                                                                                           | Test: TV10                                                                                       |
 
 ## Motivation
 
@@ -126,6 +127,7 @@ X-Request-Id: req_42
 ```
 
 The gateway's Gateway Authenticator:
+
 1. Parses `Authorization: Bearer sk-...` → routes to RFC-0903 path.
 2. Parses `X-Capability-Token: <...>` → routes to RFC-0957 path.
 3. v1.1 amendment: only ONE scheme per request (header precedence: dispatch table rejects BothSchemesUnsupported as client misconfig; the v1.0 AND-gate enforcement is REMOVED).
@@ -269,12 +271,12 @@ pub struct CapabilityVerification {
 
 Per the 2026-08-08 specialized node protocol research + user clarification, the original `LinkageResult::Indeterminate` / `RoutingDecision::Dual` machinery is replaced with a 4-way dispatch table. (Note: the "Neither" row is defined for documentation completeness — at runtime `DispatchSet::from_headers()` returns `Err(ParseError::NoAuthHeader)` on empty input, so the `RoutingDecision::NoAuth` arm is only reachable if a future revision relaxes `from_headers()` to accept empty headers.)
 
-| Request headers | RoutingDecision | Notes |
-| --- | --- | --- |
-| `Authorization: Bearer <x>` only (today's 100% traffic) | `RoutingDecision::Bearer` | RFC-0903 path |
-| `Authorization: CipherOcto-Cap <x>` only (future cipherocto clients) | `RoutingDecision::Capability` | RFC-0957 path |
+| Request headers                                                          | RoutingDecision                                                          | Notes                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Authorization: Bearer <x>` only (today's 100% traffic)                  | `RoutingDecision::Bearer`                                                | RFC-0903 path                                                                                                                                                                                          |
+| `Authorization: CipherOcto-Cap <x>` only (future cipherocto clients)     | `RoutingDecision::Capability`                                            | RFC-0957 path                                                                                                                                                                                          |
 | Both `Authorization: Bearer <x>` AND `Authorization: CipherOcto-Cap <x>` | `RoutingDecision::BothSchemesUnsupported` (rejected as client misconfig) | Per 2026-08-08 clarification: client sending both is a bug, not a routing decision. The legitimate "both" case is RFC-0959-A1 market delivery, which is server-side delivery NOT HTTP request ingress. |
-| Neither (no Authorization header) | `RoutingDecision::NoAuth` (reserved; see note above) | Reserved for future revision where `from_headers()` accepts empty headers. Currently `from_headers()` returns `Err(ParseError::NoAuthHeader)` per TV7. |
+| Neither (no Authorization header)                                        | `RoutingDecision::NoAuth` (reserved; see note above)                     | Reserved for future revision where `from_headers()` accepts empty headers. Currently `from_headers()` returns `Err(ParseError::NoAuthHeader)` per TV7.                                                 |
 
 `LinkageResult::Indeterminate` variant is REMOVED. `RoutingDecision::Dual` is REMOVED from the request-shape axis (only valid in RFC-0959-A1 delivery context, not HTTP request ingress). The dispatch is fully determined by request headers alone; no side-channel lookup needed for the dispatch decision itself.
 
@@ -283,6 +285,7 @@ Per the 2026-08-08 specialized node protocol research + user clarification, the 
 #### Removed types (v1.1 amendment)
 
 The following types are REMOVED in v1.1:
+
 - `LinkageResult::Indeterminate` — replaced by the 4-way dispatch table
 - `RoutingDecision::Dual` (in the HTTP request ingress axis) — only valid in RFC-0959-A1 market delivery
 - `AuthenticatedIdentity.rate_limit_remaining` — business-rule data, not gateway enrichment
@@ -291,7 +294,7 @@ The following types are REMOVED in v1.1:
 - `BearerVerification.rate_limit_remaining` / `.budget_remaining_octows` — moved to gateway-side check
 - `CapabilityVerification.caveats_satisfied` — moved to post-`authenticate()` evaluation
 
-Implementation mission: `missions/open/0969-a-gateway-relocation.md`.
+Implementation mission: `missions/claimed/0969-a-gateway-relocation.md`.
 
 ### Wire Format
 
@@ -525,14 +528,14 @@ pub fn mint_dual(
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Gateway Authenticator | per-gateway instance | parse + route + dispatch auth headers | stateless beyond local cache | RFC-0969 §Roles (NEW) |
-| Virtual-Key Operator (RFC-0903) | RFC-0903 §Roles | bearer virtual-key management | operator lifecycle | RFC-0903 |
-| Token Issuer (RFC-0957) | RFC-0009 `IdentityKey` of issuing node | mint + revoke + register | node identity lifecycle | RFC-0957 |
-| Holder | RFC-0009 `IdentityKey` of holder | own DID + holder_pub + caveats | node identity lifecycle | RFC-0009 |
-| Legacy Client | HTTP client (no identity key) | use bearer path | stateless | RFC-0903 |
-| Capability Client | wallet-side agent | use capability path + sign Ed25519 | wallet-side lifecycle | RFC-0957 |
+| Role                            | Identifier                             | Authority Scope                       | Lifecycle                    | Source/Ref            |
+| ------------------------------- | -------------------------------------- | ------------------------------------- | ---------------------------- | --------------------- |
+| Gateway Authenticator           | per-gateway instance                   | parse + route + dispatch auth headers | stateless beyond local cache | RFC-0969 §Roles (NEW) |
+| Virtual-Key Operator (RFC-0903) | RFC-0903 §Roles                        | bearer virtual-key management         | operator lifecycle           | RFC-0903              |
+| Token Issuer (RFC-0957)         | RFC-0009 `IdentityKey` of issuing node | mint + revoke + register              | node identity lifecycle      | RFC-0957              |
+| Holder                          | RFC-0009 `IdentityKey` of holder       | own DID + holder_pub + caveats        | node identity lifecycle      | RFC-0009              |
+| Legacy Client                   | HTTP client (no identity key)          | use bearer path                       | stateless                    | RFC-0903              |
+| Capability Client               | wallet-side agent                      | use capability path + sign Ed25519    | wallet-side lifecycle        | RFC-0957              |
 
 ## Lifecycle Requirements
 
@@ -566,13 +569,13 @@ On gateway restart: the Gateway Authenticator rebuilds its state from the local 
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `DispatchSet::from_headers()` | A | Pure deterministic parser |
-| `authenticate()` RFC-0903 path | A | Virtual-key table lookup is deterministic |
-| `authenticate()` RFC-0957 path | A | HolderRegistry lookup + chain check are deterministic |
-| `authenticate()` routing_decision computation | A | Pure boolean (header count per dispatch table) |
-| `mint_dual()` | A | Single transaction; deterministic |
+| Operation                                     | Class | Rationale                                             |
+| --------------------------------------------- | ----- | ----------------------------------------------------- |
+| `DispatchSet::from_headers()`                 | A     | Pure deterministic parser                             |
+| `authenticate()` RFC-0903 path                | A     | Virtual-key table lookup is deterministic             |
+| `authenticate()` RFC-0957 path                | A     | HolderRegistry lookup + chain check are deterministic |
+| `authenticate()` routing_decision computation | A     | Pure boolean (header count per dispatch table)        |
+| `mint_dual()`                                 | A     | Single transaction; deterministic                     |
 
 ## Error Handling
 
@@ -707,12 +710,12 @@ impl std::fmt::Debug for AuthError {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Routing latency | ≤ 1ms p99 added | Header parser + dispatch |
-| HolderRegistry lookup | ≤ 5ms p99 | RFC-0957-A1 §Performance |
-| Bearer virtual-key lookup | ≤ 1ms p99 | RFC-0903 §Performance |
-| Identity linkage check | ≤ 0.1ms p99 | String + Option compare |
+| Metric                    | Target          | Notes                    |
+| ------------------------- | --------------- | ------------------------ |
+| Routing latency           | ≤ 1ms p99 added | Header parser + dispatch |
+| HolderRegistry lookup     | ≤ 5ms p99       | RFC-0957-A1 §Performance |
+| Bearer virtual-key lookup | ≤ 1ms p99       | RFC-0903 §Performance    |
+| Identity linkage check    | ≤ 0.1ms p99     | String + Option compare  |
 
 ## Security Considerations
 
@@ -783,28 +786,28 @@ Verdict: NO RISK. 4-way dispatch table rejects `BothSchemesUnsupported` upfront.
 
 ## Dependency Validation
 
-| RFC# | Type | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0969 acceptance? |
-|------|------|------------------------------|------------------------|------------------------------------|
-| RFC-0903 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0957-A1 | Requires | Draft | Yes | YES |
-| RFC-0009 | Requires | Accepted | Already | No |
-| RFC-0949 | Optional | Draft | Best-effort | No |
-| RFC-0959-A1 | Optional | Draft | No | No |
+| RFC#        | Type     | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0969 acceptance? |
+| ----------- | -------- | --------------------------- | ---------------------- | ---------------------------------- |
+| RFC-0903    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957-A1 | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0009    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0949    | Optional | Draft                       | Best-effort            | No                                 |
+| RFC-0959-A1 | Optional | Draft                       | No                     | No                                 |
 
 **DAG check:** `0969 ← {0903, 0957, 0957-A1, 0009, 0949*, 0959-A1*}` — acyclic. Valid.
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| **IA-1: Header order is preserved by the HTTP library** | §Algorithms `from_headers` | Routing determinism breaks | Use `http::HeaderMap::iter()` |
-| **IA-2: Virtual-key table is operator-managed** | §Roles Virtual-Key Operator | Bearer path unavailable | RFC-0903 §Operations |
-| **IA-3: HolderRegistry is local to the gateway** | §Algorithms HolderRegistry lookup | Cross-node capability verification fails | RFC-0957-A1 §HolderRegistry binding |
-| **IA-4: 4-way dispatch semantics are agreed upon by all implementers** | §Dispatch Table | Inconsistent routing across gateway impls | Test: TV1-TV5 |
-| **IA-5: Virtual-key `subject_did` is canonical and trustworthy** | RFC-0871 §Wallet Node Lifecycle `BearerVerification.subject_did` | Cross-holder attack if subject_did is forgeable (reachable only on bearer-only path post-v1.1) | RFC-0903 virtual-key issuance policy |
-| **IA-6: Capability `ask_id` is canonical** | §CapabilityVerification `ask_id` | Cross-ask attack if ask_id is forgeable (reachable only on capability-only path post-v1.1) | Test: TV11 |
-| **IA-7: `mint_dual` uses `txn.insert_dual` for atomic pair insert** | §Algorithms `mint_dual` | Double-insert → `AskAlreadyExists` | RFC-0957-A1 §TransactionExt |
+| Assumption                                                             | Where Relied Upon                                                | Blast Radius if False                                                                          | Mitigation / Status                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **IA-1: Header order is preserved by the HTTP library**                | §Algorithms `from_headers`                                       | Routing determinism breaks                                                                     | Use `http::HeaderMap::iter()`        |
+| **IA-2: Virtual-key table is operator-managed**                        | §Roles Virtual-Key Operator                                      | Bearer path unavailable                                                                        | RFC-0903 §Operations                 |
+| **IA-3: HolderRegistry is local to the gateway**                       | §Algorithms HolderRegistry lookup                                | Cross-node capability verification fails                                                       | RFC-0957-A1 §HolderRegistry binding  |
+| **IA-4: 4-way dispatch semantics are agreed upon by all implementers** | §Dispatch Table                                                  | Inconsistent routing across gateway impls                                                      | Test: TV1-TV5                        |
+| **IA-5: Virtual-key `subject_did` is canonical and trustworthy**       | RFC-0871 §Wallet Node Lifecycle `BearerVerification.subject_did` | Cross-holder attack if subject_did is forgeable (reachable only on bearer-only path post-v1.1) | RFC-0903 virtual-key issuance policy |
+| **IA-6: Capability `ask_id` is canonical**                             | §CapabilityVerification `ask_id`                                 | Cross-ask attack if ask_id is forgeable (reachable only on capability-only path post-v1.1)     | Test: TV11                           |
+| **IA-7: `mint_dual` uses `txn.insert_dual` for atomic pair insert**    | §Algorithms `mint_dual`                                          | Double-insert → `AskAlreadyExists`                                                             | RFC-0957-A1 §TransactionExt          |
 
 ## Compatibility
 
@@ -949,12 +952,12 @@ Expected: routing decision byte-identical across two independent gateway impleme
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Verdict |
-|----------|------|------|---------|
-| **(a) Bearer-only gateway** | Simple | Wallet clients fail | Rejected |
-| **(b) Capability-only gateway** | Clean | Legacy clients break | Rejected |
-| **(c) Two separate gateways** | Clear separation | Operational overhead | Rejected |
-| **(d) Single gateway, OR-gate** | Flexible | Downgrade attacks | Rejected |
+| Approach                                                      | Pros                                            | Cons                    | Verdict     |
+| ------------------------------------------------------------- | ----------------------------------------------- | ----------------------- | ----------- |
+| **(a) Bearer-only gateway**                                   | Simple                                          | Wallet clients fail     | Rejected    |
+| **(b) Capability-only gateway**                               | Clean                                           | Legacy clients break    | Rejected    |
+| **(c) Two separate gateways**                                 | Clear separation                                | Operational overhead    | Rejected    |
+| **(d) Single gateway, OR-gate**                               | Flexible                                        | Downgrade attacks       | Rejected    |
 | **(e) Single gateway, 4-way dispatch table (this RFC, v1.1)** | Secure; consistent; rejects cross-scheme misuse | No dual-issuance needed | **Adopted** |
 
 ## Upstream Dependencies (Round 3 R2 R1 C2/C5 fix)
@@ -984,16 +987,16 @@ These three amendments are PRE-REQUISITE for RFC-0969.
 
 ### Phase 3: Mission Decomposition
 
-- [ ] `missions/open/0969-a-dual-pipeline-gateway.md` — gateway routing implementation
-- [ ] `missions/open/0969-b-dual-issuance-mint.md` — dual-issuance + HolderRegistry binding
+- [ ] `missions/archived/completed/0969-a-dual-pipeline-gateway.md` — gateway routing implementation
+- [ ] `missions/claimed/0969-b-dual-issuance-mint.md` — dual-issuance + HolderRegistry binding
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-wallet/src/capability/dispatch.rs` (NEW) | AuthHeader + DispatchSet |
-| `crates/quota-router-core/src/gateway/authenticator.rs` (NEW) | GatewayAuthenticator |
-| `crates/octo-wallet/src/capability/dual_issuance.rs` (NEW) | mint_dual algorithm |
+| File                                                          | Change                   |
+| ------------------------------------------------------------- | ------------------------ |
+| `crates/octo-wallet/src/capability/dispatch.rs` (NEW)         | AuthHeader + DispatchSet |
+| `crates/quota-router-core/src/gateway/authenticator.rs` (NEW) | GatewayAuthenticator     |
+| `crates/octo-wallet/src/capability/dual_issuance.rs` (NEW)    | mint_dual algorithm      |
 
 ## Future Work
 
@@ -1010,12 +1013,12 @@ The dual-mode workflow requires both bearer and capability tokens to be accepted
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.0     | 2026-08-01 | Initial draft |
-| 1.1     | 2026-08-01 | Round 2: identity linkage (bearer.subject_did == cap.holder_did, bearer.ask_id == cap.ask_id) — **REMOVED in v1.2 dispatch amendment (both-schemes-present rejected at dispatch, linkage unreachable)**; BearerVerification.subject_did + ask_id fields; mint_dual uses txn.insert_dual for atomic pair insert; Debug redaction; mint_dual has explicit ask_ttl_unix parameter |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.1        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Round 2: identity linkage (bearer.subject_did == cap.holder_did, bearer.ask_id == cap.ask_id) — **REMOVED in v1.2 dispatch amendment (both-schemes-present rejected at dispatch, linkage unreachable)**; BearerVerification.subject_did + ask_id fields; mint_dual uses txn.insert_dual for atomic pair insert; Debug redaction; mint_dual has explicit ask_ttl_unix parameter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged; 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/economics/`. Brace balance verified at `authenticate()` (R53-N1 fix); phantom `IdentityKey::from_public_bytes` call site in §mint_dual Algorithm properly DEFERRED to RFC-0957-A2; ParseError / MintError / AuthError all have manual redacting Debug impls; **identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id) was the v1.0 cross-holder credential mixing defense — SUPERSEDED in v1.2 dispatch amendment (2026-08-08); see v1.2 row above**. |
-| 1.2 | 2026-08-08 | **Accepted (amendment) — GatewayAuthenticator relocation + dispatch table.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Four amendments: (1) **`GatewayAuthenticator` relocated** from `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 0 production callers per audit 2026-08-08) to `quota-router-core::ingress::authenticator`. Orchestrator co-locates with callers. (2) **`AuthenticatedIdentity` renamed to `AuthenticatedRequest`**; enrichment fields (`rate_limit_remaining`, `budget_remaining_octows`) DROPPED — the HTTP proxy gateway is transparent and MUST NOT enrich with business-rule data per user clarification 2026-08-07. Rate limits / budget / allowed-routes checked SEPARATELY in `quota-router-core::proxy::handle_request` AFTER `authenticate()` returns Ok. (3) **4-way dispatch table** replaces `LinkageResult::Indeterminate` + `RoutingDecision::Dual` machinery: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (client misconfig per user clarification 2026-08-07); neither → `RoutingDecision::NoAuth` (pass-through to model provider, per user clarification 2026-08-07). The legitimate "both" case is RFC-0959-A1 market delivery (server-side), NOT HTTP request ingress. (4) **Verifier traits** (`BearerVerifier`, `CapabilityVerifier`) replace direct `HolderRegistry` + `VirtualKeyTable` + `ChannelProviderSet` access — traits live in `octo-wallet::verify::*` per RFC-0871 §Wallet Node Lifecycle; orchestrator composes via `Arc<dyn Trait>`. Implementation mission: `missions/open/0969-a-gateway-relocation.md`. Cross-references: RFC-0871 §Implementation Phase 2; RFC-0870 §NodeEnvelope Adoption; memory `rfc-0969-dual-pipeline-semantics.md`. Round-1 adversarial review (2026-08-08) fixed the v1.1 rename half-apply: `§GatewayAuthenticator::authenticate()` body + §Test Vectors rewritten to construct `AuthenticatedRequest { subject_did, ask_id, bearer, capability, routing_decision }` matching the v1.2 data structure. Algorithm body rewritten to compute `routing_decision` from header count alone per the dispatch table (no AND-gate identity linkage, which is unreachable under new semantics). Round-2 adversarial review (2026-08-08) propagated the dispatch semantics across the spec body (§Summary items 1+5, §Why Needed, §Scope, §Header Precedence Rules, §Design Goals G2/G3, §Wire Format, §Determinism Requirements, §Threat Model, §Replay Protection, §Adversary Analysis Finding A21, §Implicit Assumptions Audit IA-4/IA-5/IA-6, §System Architecture mermaid, §Sample Walk-Through §A, §Upstream Dependencies, §Alternatives Considered (e), §Conclusion, §Backward Compatibility). Round-3 adversarial review (2026-08-08) removed unreachable `AuthError` variants (`IdentityMismatch`, `AskBindingMissing`, `HolderPubMissing`, `AskBindingMismatch`) replaced by single `BothSchemesUnsupported`; updated TV11 (was `AskBindingMismatch` expectation); fixed line refs at §Summary #6 (mint_dual Algorithm reference) + IA-5 (RFC-0871 §Wallet Node Lifecycle); rewrote §Sample Walk-Through A.1/A.2/A.3 per v1.2 dispatch. |
+| 1.2        | 2026-08-08                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **Accepted (amendment) — GatewayAuthenticator relocation + dispatch table.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Four amendments: (1) **`GatewayAuthenticator` relocated** from `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 0 production callers per audit 2026-08-08) to `quota-router-core::ingress::authenticator`. Orchestrator co-locates with callers. (2) **`AuthenticatedIdentity` renamed to `AuthenticatedRequest`**; enrichment fields (`rate_limit_remaining`, `budget_remaining_octows`) DROPPED — the HTTP proxy gateway is transparent and MUST NOT enrich with business-rule data per user clarification 2026-08-07. Rate limits / budget / allowed-routes checked SEPARATELY in `quota-router-core::proxy::handle_request` AFTER `authenticate()` returns Ok. (3) **4-way dispatch table** replaces `LinkageResult::Indeterminate` + `RoutingDecision::Dual` machinery: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (client misconfig per user clarification 2026-08-07); neither → `RoutingDecision::NoAuth` (pass-through to model provider, per user clarification 2026-08-07). The legitimate "both" case is RFC-0959-A1 market delivery (server-side), NOT HTTP request ingress. (4) **Verifier traits** (`BearerVerifier`, `CapabilityVerifier`) replace direct `HolderRegistry` + `VirtualKeyTable` + `ChannelProviderSet` access — traits live in `octo-wallet::verify::*` per RFC-0871 §Wallet Node Lifecycle; orchestrator composes via `Arc<dyn Trait>`. Implementation mission: `missions/claimed/0969-a-gateway-relocation.md`. Cross-references: RFC-0871 §Implementation Phase 2; RFC-0870 §NodeEnvelope Adoption; memory `rfc-0969-dual-pipeline-semantics.md`. Round-1 adversarial review (2026-08-08) fixed the v1.1 rename half-apply: `§GatewayAuthenticator::authenticate()` body + §Test Vectors rewritten to construct `AuthenticatedRequest { subject_did, ask_id, bearer, capability, routing_decision }` matching the v1.2 data structure. Algorithm body rewritten to compute `routing_decision` from header count alone per the dispatch table (no AND-gate identity linkage, which is unreachable under new semantics). Round-2 adversarial review (2026-08-08) propagated the dispatch semantics across the spec body (§Summary items 1+5, §Why Needed, §Scope, §Header Precedence Rules, §Design Goals G2/G3, §Wire Format, §Determinism Requirements, §Threat Model, §Replay Protection, §Adversary Analysis Finding A21, §Implicit Assumptions Audit IA-4/IA-5/IA-6, §System Architecture mermaid, §Sample Walk-Through §A, §Upstream Dependencies, §Alternatives Considered (e), §Conclusion, §Backward Compatibility). Round-3 adversarial review (2026-08-08) removed unreachable `AuthError` variants (`IdentityMismatch`, `AskBindingMissing`, `HolderPubMissing`, `AskBindingMismatch`) replaced by single `BothSchemesUnsupported`; updated TV11 (was `AskBindingMismatch` expectation); fixed line refs at §Summary #6 (mint_dual Algorithm reference) + IA-5 (RFC-0871 §Wallet Node Lifecycle); rewrote §Sample Walk-Through A.1/A.2/A.3 per v1.2 dispatch. |
 
 ## Related RFCs
 
@@ -1038,12 +1041,13 @@ The dual-mode workflow requires both bearer and capability tokens to be accepted
 
 ## Related Missions
 
-- Future: `missions/open/0969-a-dual-pipeline-gateway.md`
-- Future: `missions/open/0969-b-dual-issuance-mint.md`
+- Future: `missions/archived/completed/0969-a-dual-pipeline-gateway.md`
+- Future: `missions/claimed/0969-b-dual-issuance-mint.md`
 
 ## Cross-Reference: Outgoing Edges
 
 This RFC is a dependency of:
+
 - RFC-0970 — per-hop envelope
 - RFC-0971 — meta RFC
 
@@ -1063,6 +1067,7 @@ X-Request-Id: req_42
 ```
 
 Gateway Authenticator:
+
 1. Parses single header → `DispatchSet { headers: [Bearer] }`.
 2. `routing_decision = Bearer` (header count: bearer present, capability absent).
 3. Bearer path: virtual-key table lookup → Ok; `subject_did = "did:octo:buyer1"`; `ask_id = H1`.
@@ -1079,6 +1084,7 @@ X-Request-Id: req_42
 ```
 
 Gateway Authenticator:
+
 1. Parses single header → `DispatchSet { headers: [CapabilityToken] }`.
 2. `routing_decision = Capability`.
 3. Capability path: HolderRegistry lookup → Ok; `holder_did = "did:octo:buyer1"`; `ask_id = H1`.
@@ -1096,6 +1102,7 @@ X-Request-Id: req_42
 ```
 
 Gateway Authenticator:
+
 1. Parses both headers → `DispatchSet { headers: [Bearer, CapabilityToken] }`.
 2. `routing_decision = BothSchemesUnsupported` (header count: both present).
 3. Returns `Err(AuthError::BothSchemesUnsupported)` — rejected BEFORE any lookup or identity linkage runs.
@@ -1103,6 +1110,7 @@ Gateway Authenticator:
 ### B. Why Not OR-Gate?
 
 OR-gate (any path valid) is rejected because:
+
 - A valid bearer + invalid capability would still be accepted (downgrade).
 - A valid capability + invalid bearer would still be accepted (bearer header unused).
 - The holder's intent (dual-token) is ambiguous.
@@ -1113,6 +1121,7 @@ The 4-way dispatch table (reject `BothSchemesUnsupported`) is the v1.1 interpret
 ### C. Why Not Separate Gateways?
 
 Two separate gateways rejected because:
+
 - Operational overhead: two deployments, two auth metrics, two routing tables.
 - Routing complexity: clients must choose the right gateway based on auth type.
 - The 4-way dispatch table (reject `BothSchemesUnsupported`) is the v1.1 interpretation: single scheme per request, no cross-scheme path — the same dispatch closes the cross-scheme ambiguity at a single gateway.

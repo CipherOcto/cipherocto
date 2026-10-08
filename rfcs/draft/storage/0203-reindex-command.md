@@ -28,17 +28,18 @@ Add `REINDEX` SQL command to stoolap that rebuilds BTree indexes on BIGINT and D
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Deterministic rebuild | Same input → same output index |
-| G2 | No data loss | All rows must be re-indexed correctly |
-| G3 | Transparent to queries | Other sessions continue normally during rebuild |
+| Goal | Target                 | Metric                                          |
+| ---- | ---------------------- | ----------------------------------------------- |
+| G1   | Deterministic rebuild  | Same input → same output index                  |
+| G2   | No data loss           | All rows must be re-indexed correctly           |
+| G3   | Transparent to queries | Other sessions continue normally during rebuild |
 
 ## Motivation
 
 RFC-0202-A §6.11 introduces lexicographic key encoding for BIGINT and DECIMAL BTree indexes. Production deployment with pre-existing BIGINT/DECIMAL data requires a mechanism to rebuild indexes with the new encoding. Additionally, B-tree indexes can become fragmented or corrupted over time, requiring a rebuild capability.
 
 Stoolap currently has no `REINDEX` command. This RFC adds:
+
 1. `REINDEX INDEX index_name` — rebuild a specific index
 2. `REINDEX TABLE table_name` — rebuild all indexes on a table
 3. `REINDEX DATABASE` — rebuild all indexes in the database (optional, lower priority)
@@ -69,11 +70,13 @@ reindex_stmt ::= REINDEX (INDEX index_name | TABLE table_name | DATABASE)
 **File:** `src/parser/ast.rs`
 
 Add to `Statement` enum:
+
 ```rust
 Reindex(ReindexStatement),
 ```
 
 Add `ReindexStatement` struct:
+
 ```rust
 pub struct ReindexStatement {
     pub token: Token,
@@ -123,32 +126,34 @@ pub(crate) fn execute_reindex(
 6. Release lock
 
 **Lexicographic encoding for BIGINT/DECIMAL:**
+
 - Use `encode_bigint_lexicographic(bi)` from `storage/index/btree.rs`
 - Use `encode_decimal_lexicographic(d)` from `storage/index/btree.rs`
 - Fall back to raw `Value::Ord` for other types
 
 ### Error Handling
 
-| Error | Condition | Response |
-|-------|-----------|----------|
-| IndexNotFound | REINDEX INDEX on non-existent index | `Error::IndexNotFound` |
-| TableNotFound | REINDEX TABLE on non-existent table | `Error::TableNotFound` |
-| IndexInUse | Another transaction holds index lock | `Error::Busy` with retry hint |
-| Corruption | Checksum mismatch during scan | `Error::internal("index corruption detected")` |
+| Error         | Condition                            | Response                                       |
+| ------------- | ------------------------------------ | ---------------------------------------------- |
+| IndexNotFound | REINDEX INDEX on non-existent index  | `Error::IndexNotFound`                         |
+| TableNotFound | REINDEX TABLE on non-existent table  | `Error::TableNotFound`                         |
+| IndexInUse    | Another transaction holds index lock | `Error::Busy` with retry hint                  |
+| Corruption    | Checksum mismatch during scan        | `Error::internal("index corruption detected")` |
 
 ### Determinism Requirements
 
 Rebuild must be deterministic for verification:
+
 - Same input rows → same output index structure
 - Scan order must be consistent (by row_id ascending)
 - Key encoding must match RFC-0202-A §6.11 exactly
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Throughput | >10k rows/sec | Single-threaded rebuild |
-| Memory | O(index_size) | No temporary structures beyond index itself |
+| Metric     | Target        | Notes                                       |
+| ---------- | ------------- | ------------------------------------------- |
+| Throughput | >10k rows/sec | Single-threaded rebuild                     |
+| Memory     | O(index_size) | No temporary structures beyond index itself |
 
 ## Security Considerations
 
@@ -158,11 +163,11 @@ Rebuild must be deterministic for verification:
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Lock contention | Medium | REINDEX acquires exclusive lock; warn in docs |
-| Partial rebuild on crash | High | Atomic: clear then rebuild; crash leaves empty (detectable) |
-| Memory exhaustion | Medium | Process in batches if index is very large |
+| Threat                   | Impact | Mitigation                                                  |
+| ------------------------ | ------ | ----------------------------------------------------------- |
+| Lock contention          | Medium | REINDEX acquires exclusive lock; warn in docs               |
+| Partial rebuild on crash | High   | Atomic: clear then rebuild; crash leaves empty (detectable) |
+| Memory exhaustion        | Medium | Process in batches if index is very large                   |
 
 ## Compatibility
 
@@ -171,11 +176,11 @@ Rebuild must be deterministic for verification:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|---------|------|------|
-| REINDEX as new command | Explicit, clear semantics | Parser/executor changes required |
-| Background online rebuild | Non-blocking | Complex, may not be deterministic |
-| Auto-upgrade on access | Transparent | Hidden side-effects, non-deterministic |
+| Approach                  | Pros                      | Cons                                   |
+| ------------------------- | ------------------------- | -------------------------------------- |
+| REINDEX as new command    | Explicit, clear semantics | Parser/executor changes required       |
+| Background online rebuild | Non-blocking              | Complex, may not be deterministic      |
+| Auto-upgrade on access    | Transparent               | Hidden side-effects, non-deterministic |
 
 ## Implementation Phases
 
@@ -202,13 +207,13 @@ Rebuild must be deterministic for verification:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/parser/ast.rs` | Add `Statement::Reindex`, `ReindexStatement`, `ReindexTarget` |
-| `src/parser/statements.rs` | Add REINDEX parser rule |
-| `src/parser/mod.rs` | Export new types |
-| `src/executor/ddl.rs` | Add `execute_reindex`, `reindex_index`, `reindex_table` |
-| `src/executor/mod.rs` | Wire REINDEX to executor |
+| File                         | Change                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| `src/parser/ast.rs`          | Add `Statement::Reindex`, `ReindexStatement`, `ReindexTarget`                   |
+| `src/parser/statements.rs`   | Add REINDEX parser rule                                                         |
+| `src/parser/mod.rs`          | Export new types                                                                |
+| `src/executor/ddl.rs`        | Add `execute_reindex`, `reindex_index`, `reindex_table`                         |
+| `src/executor/mod.rs`        | Wire REINDEX to executor                                                        |
 | `src/storage/index/btree.rs` | Ensure `encode_bigint_lexicographic` / `encode_decimal_lexicographic` are `pub` |
 
 ## Future Work
@@ -223,9 +228,9 @@ Rebuild must be deterministic for verification:
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-04-11 | Initial draft |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 1.0     | 2026-04-11 | Initial draft |
 
 ## Related RFCs
 
@@ -234,4 +239,4 @@ Rebuild must be deterministic for verification:
 
 ## Related Use Cases
 
-- [Mission 0202-c: BIGINT/DECIMAL Persistence (AC-9: REINDEX documentation)](../../missions/claimed/0202-c-bigint-decimal-persistence.md)
+- [Mission 0202-c: BIGINT/DECIMAL Persistence (AC-9: REINDEX documentation)](../../missions/archived/0202-c-bigint-decimal-persistence.md)

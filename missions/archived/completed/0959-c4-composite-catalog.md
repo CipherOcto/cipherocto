@@ -29,7 +29,7 @@ Closes 0959-c3 Notes "out of scope for Band A" (gossip + storage delegation in o
 
 ## Depends on
 
-- 0959-c3 closed Band A (done — `missions/claimed/0959-c3-octo-transport-wiring.md`)
+- 0959-c3 closed Band A (done — `missions/archived/completed/0959-c3-octo-transport-wiring.md`)
 - 0959-c2 closed Band A (done)
 - `CapabilityGossip` trait + `TransportDeliveryCatalog` impl (shipped 0959-c3)
 

@@ -684,9 +684,9 @@ The settlement substrate `octo_settlement` (RFC-0959) is the source of truth for
 The audit + settlement substrate names referenced in this RFC (`octo-audit`, `octo-settlement`) resolve to a **two-crate canonical pattern** per `docs/research/2026-09-10-octo-audit-governance-settlement-modular-layer-research.md` Finding 4 (hybrid Layer A core + Layer B façade):
 
 | RFC name (Layer B façade) | Substrate (Layer A frozen) | RFC defining split |
-|---|---|---|
-| `octo-audit` | `octo-audit-core` | RFC-0012 |
-| `octo-settlement` | `octo-settlement-core` | RFC-0014 |
+| ------------------------- | -------------------------- | ------------------ |
+| `octo-audit`              | `octo-audit-core`          | RFC-0012           |
+| `octo-settlement`         | `octo-settlement-core`     | RFC-0014           |
 
 The façade re-exports ONLY from the substrate (no domain leakage). The substrate owns canonical `AuditEvent` + `AuditEventKind` + `AppendOnlyAuditSink` (RFC-0012 §Specification) + `Receipt` + `AskState` + `SettlementStore` + `AppendOnlyReceiptSink` (RFC-0014 §Specification). Domain crates (`octo-wallet/capability/audit_log`, `octo-network/dot/audit_store`, `octo-whatsapp/audit`, `quota-router-sm-engine` storage adapter) consume the substrate for canonical types + add their own storage adapters + extension enums.
 
@@ -778,7 +778,7 @@ surface (both `octo audit list` and `octo audit show` subcommands plus their
 `[ADD]` substrate surface and `OctoCliError` exit-code extensions land
 together in a single RFC cycle per §Implementation Phases §Phase 1):
 
-- **Mission:** `missions/claimed/0011-a-audit-commands.md` (NEW; RFC-Accept
+- **Mission:** `missions/archived/completed/0011-a-audit-commands.md` (NEW; RFC-Accept
   gated per `docs/BLUEPRINT.md` §RFC Acceptance Process; atomicity statement
   per §Implementation Phases §Phase 1).
 - **Substrate amendments:** filed separately per parent RFC §Subcommand
@@ -804,7 +804,7 @@ required at this RFC's scope.
 - `rfcs/draft/process/0011-a-audit-subcommands.md` — this file (Draft)
 - `docs/07-developers/octo-cli-implementation-guide.md` — add
   §Audit Subcommand Fixtures + §Audit Substrate `[ADD]` Mapping
-- `missions/claimed/0011-a-audit-commands.md` — NEW mission (RFC-Accept
+- `missions/archived/completed/0011-a-audit-commands.md` — NEW mission (RFC-Accept
   gated per BLUEPRINT.md §RFC Acceptance Process)
 
 ### SUBSTRATE (follow-on substrate amendments, NOT this RFC cycle)
@@ -887,7 +887,7 @@ Audit subcommands are READ-ONLY by construction (per §Security Considerations r
 | 1.2     | 2026-08-31 | Draft    | v1.2 — Wave 3.5 C1/H/M-series surgical fixes (13 total)<br>13 surgical fixes: 1 CRITICAL (ReceiptStatus re-export), 6 HIGH (H1/H3/H4/H5/H6/H7), 6 MEDIUM (M-series grouped) |
 | 1.3     | 2026-08-31 | Draft    | Wave 4.5: 2 MED + 3 LOW — VH row drift, TV expected-value re-paste, L243 fragment, L273 truncation, L603 severity                                                           |
 | 1.4     | 2026-08-31 | Accepted | Promoted Draft → Accepted after W1-W6.5 multi-round adversarial review loop + DRY closure (W5+W6 zero-finding) + 28 cite hygiene fixes                                      |
-| 1.5     | 2026-09-10 | Accepted | Layer-model amendment: RFC-0012 + RFC-0014 substrate split. |
+| 1.5     | 2026-09-10 | Accepted | Layer-model amendment: RFC-0012 + RFC-0014 substrate split.                                                                                                                 |
 
 ## Related RFCs
 

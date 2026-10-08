@@ -1323,18 +1323,9 @@ Phase 7 (this RFC) depends on:
 
 The mesh operations surface decomposes into three companion implementation
 missions, each gating a discrete substrate `[ADD]` block from §Subcommand
-Taxonomy. The missions are filed in `missions/open/` per the
-parent RFC-0011 §Mission Lifecycle pattern; each is closed by a single
-companion PR that lands the substrate `[ADD]` plus the CLI subcommand
-binding. Mission YAMLs MUST carry `RFC-0011-f` in their `rfc:` field so
-the R3 carried-forward cross-reference audit (§Subcommand Taxonomy + R3
-review loop) can trace each `[ADD]` back to a mission.
-
-| Mission YAML                                      | Substrate `[ADD]`                                                                                | CLI subcommand(s) bound            | Companion impl-guide section                                    |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------- | --------------------------------------------------------------- |
-| `missions/open/0011-f-mesh-peer-subcommand.md`    | `octo_mesh::{list,add,remove}_peer` (`[ADD]` surface entries #1, #2, #3 in §Subcommand Taxonomy) | `octo mesh peer {list,add,remove}` | §Subcommand Taxonomy rows 1-3 + §Roles and Authorities rows 1-3 |
-| `missions/open/0011-f-mesh-forward-subcommand.md` | `octo_mesh::forward` (`[ADD]` surface entry #4 in §Subcommand Taxonomy)                          | `octo mesh forward`                | §Subcommand Taxonomy row 4 + §Roles and Authorities row 4       |
-| `missions/open/0011-f-mesh-rpc-subcommand.md`     | `octo_mesh::rpc` (`[ADD]` surface entry #5 in §Subcommand Taxonomy)                              | `octo mesh rpc`                    | §Subcommand Taxonomy row 5 + §Roles and Authorities row 5       |
+Taxonomy. The missions are filed in `missions/archived/completed/0011-f-mesh-peer-subcommand.md` | `octo_mesh::{list,add,remove}_peer` (`[ADD]` surface entries #1, #2, #3 in §Subcommand Taxonomy) | `octo mesh peer {list,add,remove}` | §Subcommand Taxonomy rows 1-3 + §Roles and Authorities rows 1-3 |
+| `missions/archived/completed/0011-f-mesh-forward-subcommand.md` | `octo_mesh::forward` (`[ADD]` surface entry #4 in §Subcommand Taxonomy) | `octo mesh forward` | §Subcommand Taxonomy row 4 + §Roles and Authorities row 4 |
+| `missions/archived/completed/0011-f-mesh-rpc-subcommand.md` | `octo_mesh::rpc` (`[ADD]` surface entry #5 in §Subcommand Taxonomy) | `octo mesh rpc` | §Subcommand Taxonomy row 5 + §Roles and Authorities row 5 |
 
 > **Decomposition rationale:** The three missions split along the
 > substrate `[ADD]` entry boundary because each `[ADD]` is gated on a

@@ -45,7 +45,7 @@ octo network slash-bridge propagate <slash_envelope_id_hex> [--dry-run] [--confi
 ## Dependencies
 
 - RFC-0011-o Draft at `next 27fe1a48`
-- Substrate companion mission G9 at `missions/open/0011-h-s-a-slash-bridge-trait.md` (paired Open → Claimed → Completed)
+- Substrate companion mission G9 at `missions/archived/0011-h-s-a-slash-bridge-trait.md` (paired Open → Claimed → Completed)
 - Substrate slice at `next 8599f5c8`
 
 ## Out of Scope

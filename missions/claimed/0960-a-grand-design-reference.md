@@ -27,25 +27,25 @@ The doc is **navigation only** — every section points to the canonical RFC-096
 
 ## Depends on (RFC + upstream missions)
 
-| Dependency                                                           | Status                     | Required?                                                              |
-| -------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
-| RFC-0960 (Grand Design)                                              | ACCEPTED v2.0 (2026-07-23) | YES — umbrella                                                         |
-| RFC-0957 (Capability Token Format)                                   | Accepted (2026-07-20)      | YES — Capability primitive substrate                                   |
-| RFC-0958 (ZK Capability Subclass)                                    | Accepted (2026-07-21)      | YES — ZK subclass binding                                              |
-| RFC-0959 (Ask Settlement Chain)                                      |                            | YES — SettlementReceipt primitive                                      |
-| RFC-0126 (Deterministic Serialization)                               | Accepted                   | YES — canonical_ser for all primitives                                 |
-| RFC-0102 (Wallet Cryptography)                                       | Accepted                   | YES — Transfer primitive sketch                                        |
-| RFC-0862 (Stoolap Sync Layer)                                        | Accepted v1.2.0            | YES — event log replication                                            |
-| RFC-0909 (Deterministic Quota Accounting)                            | Accepted v69               | NO (coexistence only per RFC-0959 v1.0 Option A)                       |
-| RFC-0961 (CIPHERO_SQL Deterministic SQL)                             |                            | YES — Deterministic SQL spec; DEFERRED for implementation (see §Notes) |
-| RFC-0962 (ExecutionEnvelope Object Protocol)                         |                            | YES — ExecutionEnvelope spec                                           |
-| RFC-0963 (Resource Shard Routing)                                    |                            | YES — shard routing spec                                               |
-| RFC-0964 (Constraint Encoding Standard)                              |                            | YES — 23-variant encoding                                              |
-| RFC-0965 (Capability Extension Format)                               |                            | YES — caveat type set                                                  |
-| RFC-0967 (Policy Object Graph)                                       |                            | YES — PolicyReference caveat + PolicyGraph                             |
-| Mission `missions/claimed/0957-a-capability-token-macaroon.md`       | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
-| Mission `missions/claimed/0957-b-provider-boundary-exercise-path.md` | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
-| Mission `missions/claimed/0959-a-ask-pricing-stoolap.md`             | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
+| Dependency                                                                      | Status                     | Required?                                                              |
+| ------------------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
+| RFC-0960 (Grand Design)                                                         | ACCEPTED v2.0 (2026-07-23) | YES — umbrella                                                         |
+| RFC-0957 (Capability Token Format)                                              | Accepted (2026-07-20)      | YES — Capability primitive substrate                                   |
+| RFC-0958 (ZK Capability Subclass)                                               | Accepted (2026-07-21)      | YES — ZK subclass binding                                              |
+| RFC-0959 (Ask Settlement Chain)                                                 |                            | YES — SettlementReceipt primitive                                      |
+| RFC-0126 (Deterministic Serialization)                                          | Accepted                   | YES — canonical_ser for all primitives                                 |
+| RFC-0102 (Wallet Cryptography)                                                  | Accepted                   | YES — Transfer primitive sketch                                        |
+| RFC-0862 (Stoolap Sync Layer)                                                   | Accepted v1.2.0            | YES — event log replication                                            |
+| RFC-0909 (Deterministic Quota Accounting)                                       | Accepted v69               | NO (coexistence only per RFC-0959 v1.0 Option A)                       |
+| RFC-0961 (CIPHERO_SQL Deterministic SQL)                                        |                            | YES — Deterministic SQL spec; DEFERRED for implementation (see §Notes) |
+| RFC-0962 (ExecutionEnvelope Object Protocol)                                    |                            | YES — ExecutionEnvelope spec                                           |
+| RFC-0963 (Resource Shard Routing)                                               |                            | YES — shard routing spec                                               |
+| RFC-0964 (Constraint Encoding Standard)                                         |                            | YES — 23-variant encoding                                              |
+| RFC-0965 (Capability Extension Format)                                          |                            | YES — caveat type set                                                  |
+| RFC-0967 (Policy Object Graph)                                                  |                            | YES — PolicyReference caveat + PolicyGraph                             |
+| Mission `missions/archived/completed/0957-a-capability-token-macaroon.md`       | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
+| Mission `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
+| Mission `missions/claimed/0959-a-ask-pricing-stoolap.md`                        | Claimed (2026-07-20)       | NO (substrate, not blocking)                                           |
 
 ## Type Coverage
 

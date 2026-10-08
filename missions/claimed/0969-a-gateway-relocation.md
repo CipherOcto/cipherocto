@@ -5,6 +5,7 @@
 closed 2026-08-11 (@claude). LANDED.
 
 **Pre-conditions verified:**
+
 - RFC-0871 ACCEPTED 2026-08-09 (commit `350ba7b8`) — verifier traits gate cleared
 - RFC-0010 v1.3 (DidRegistry trait) ACCEPTED — substrate landed
 - `HolderRegistry` trait shipped via 0957-ext-macaroon Phase 2c
@@ -17,62 +18,62 @@ integration are explicitly deferred (separate missions).
 ## What landed
 
 - [x] NEW `crates/quota-router-core/src/ingress/authenticator.rs` —
-  `GatewayAuthenticator` orchestrator relocated from
-  `crates/octo-wallet/src/capability/gateway_authenticator.rs` (668
-  lines, zero production callers per the 2026-08-08 audit).
+      `GatewayAuthenticator` orchestrator relocated from
+      `crates/octo-wallet/src/capability/gateway_authenticator.rs` (668
+      lines, zero production callers per the 2026-08-08 audit).
 - [x] REMOVED `crates/octo-wallet/src/capability/gateway_authenticator.rs`
-  (orphan substrate relocated).
+      (orphan substrate relocated).
 - [x] MOD `crates/quota-router-core/src/ingress.rs` — declares
-  `pub mod authenticator;` so the relocated file is reachable as
-  `quota_router_core::ingress::authenticator::*`.
+      `pub mod authenticator;` so the relocated file is reachable as
+      `quota_router_core::ingress::authenticator::*`.
 - [x] MOD `crates/quota-router-core/Cargo.toml` — `octo-wallet` moved
-  from `[dev-dependencies]` to `[dependencies]` so the lib target can
-  import `octo_wallet::capability::dispatch` + `::macaroon`.
+      from `[dev-dependencies]` to `[dependencies]` so the lib target can
+      import `octo_wallet::capability::dispatch` + `::macaroon`.
 - [x] MOD `crates/octo-wallet/src/capability/mod.rs` — dropped the
-  `pub mod gateway_authenticator;` declaration.
+      `pub mod gateway_authenticator;` declaration.
 - [x] MOD `crates/octo-wallet/tests/dispatch_tv.rs` — updated 12 test
-  imports from `octo_wallet::capability::gateway_authenticator::*` to
-  `quota_router_core::ingress::authenticator::*`. All 12 TV still
-  pass.
+      imports from `octo_wallet::capability::gateway_authenticator::*` to
+      `quota_router_core::ingress::authenticator::*`. All 12 TV still
+      pass.
 - [x] All 17 `ingress::authenticator::tests` pass (the relocated
-  module's in-source tests, exercised via `cargo test --lib`).
+      module's in-source tests, exercised via `cargo test --lib`).
 
 ## What did NOT land (deferred; explicit deferral)
 
 - [ ] `RoutingDecision` enum reshape from current
-  `{Bearer, Capability, Dual, PureForward}` to RFC-0969 mission-spec
-  `{Bearer, Capability, BothSchemesUnsupported, NoAuth}`. The 17
-  in-source tests + 12 dispatch_tv tests all assert against the
-  current variants; reshape requires coordinated test updates.
+      `{Bearer, Capability, Dual, PureForward}` to RFC-0969 mission-spec
+      `{Bearer, Capability, BothSchemesUnsupported, NoAuth}`. The 17
+      in-source tests + 12 dispatch_tv tests all assert against the
+      current variants; reshape requires coordinated test updates.
 - [ ] `LinkageResult::Indeterminate` removal. Currently used by
-  `authenticate()` to route single-pipeline requests; removal requires
-  introducing a `NoAuth` variant + reshaping the dispatch table.
+      `authenticate()` to route single-pipeline requests; removal requires
+      introducing a `NoAuth` variant + reshaping the dispatch table.
 - [ ] `proxy.rs::handle_request` inline Bearer strip
-  (`extract_client_key`) replacement with
-  `gateway_authenticator.authenticate(headers)`. The proxy currently
-  has its own simpler auth path (priority: Bearer > X-API-Key >
-  X-AnyLLM-Key). Wiring the relocated authenticator in requires a
-  feature-flagged path because the authenticator depends on
-  `HolderRegistry` + `Clock` traits that the proxy doesn't currently
-  inject.
+      (`extract_client_key`) replacement with
+      `gateway_authenticator.authenticate(headers)`. The proxy currently
+      has its own simpler auth path (priority: Bearer > X-API-Key >
+      X-AnyLLM-Key). Wiring the relocated authenticator in requires a
+      feature-flagged path because the authenticator depends on
+      `HolderRegistry` + `Clock` traits that the proxy doesn't currently
+      inject.
 
 ## Acceptance Criteria — what passed
 
 - [x] `crates/octo-wallet/src/capability/gateway_authenticator.rs`
-  REMOVED (substrate relocated)
+      REMOVED (substrate relocated)
 - [x] NEW `crates/quota-router-core/src/ingress/authenticator.rs`
-  (orchestrator)
+      (orchestrator)
 - [x] `GatewayAuthenticator` fields per RFC-0969 (already in
-  substrate; preserved across relocation):
-  `bearer_verifier + cap_verifier + holder_registry + clock + catalog`
+      substrate; preserved across relocation):
+      `bearer_verifier + cap_verifier + holder_registry + clock + catalog`
 - [x] `AuthenticatedRequest` shape preserved across relocation
-  (`subject_did + ask_id + bearer + capability + routing_decision`)
+      (`subject_did + ask_id + bearer + capability + routing_decision`)
 - [x] `cargo test -p quota-router-core --lib` green (1588/1588 pass;
-  was 1571; +17 from new module)
+      was 1571; +17 from new module)
 - [x] `cargo test -p octo-wallet --test dispatch_tv` green (12/12
-  pass; updated to new import path)
+      pass; updated to new import path)
 - [x] `cargo test -p octo-wallet --lib` green (220/220 pass; no
-  regressions)
+      regressions)
 - [x] `cargo clippy -p quota-router-core --lib --features litellm-mode,full -- -D warnings` clean
 - [x] `cargo fmt --all -- --check` clean
 
@@ -82,8 +83,8 @@ integration are explicitly deferred (separate missions).
 - [ ] `LinkageResult::Indeterminate` removal
 - [ ] `proxy.rs::handle_request` inline Bearer strip replacement
 - [ ] Cross-crate compat `cargo build --workspace --features full`
-  green (cargo build on quota-router-core only was verified; full
-  workspace not built this session)
+      green (cargo build on quota-router-core only was verified; full
+      workspace not built this session)
 - [ ] Cross-crate compat `cargo test --workspace --lib` green
 
 ## Implementation Notes
@@ -111,7 +112,7 @@ integration are explicitly deferred (separate missions).
 - RFC-0957-A1 — `HolderRegistry` trait substrate
 - `crates/quota-router-core/src/ingress.rs` — provider-response ingress
   (different scope; stays unchanged except for the `pub mod
-  authenticator;` declaration)
+authenticator;` declaration)
 - `crates/octo-wallet/src/capability/dispatch.rs` — header parser
   substrate (stays in octo-wallet)
 - `crates/octo-wallet/src/capability/macaroon.rs` — `CapabilityCatalog`
@@ -209,14 +210,14 @@ RFC-0969 relocation is multi-file (`octo-wallet` removal + `quota-router-core::i
 
 - This mission depends on RFC-0871 reaching Accepted status. The verifier traits (`BearerVerifier`, `CapabilityVerifier`) are specified in RFC-0871 §Wallet Node Lifecycle; this mission consumes them.
 - Mission is the gateway-side complement to mission `0870-b-envelope-adoption.md` (quota router wire format migration). Both consume RFC-0871 §NodeEnvelope + §Verifier traits.
-- Mission also complements `missions/claimed/0969-a2-followup.md` (already closed 2026-08-07) which captured the earlier `authenticate()` implementation. The amendment re-scopes that work per the 4-way dispatch table.
+- Mission also complements `missions/archived/completed/0969-a2-followup.md` (already closed 2026-08-07) which captured the earlier `authenticate()` implementation. The amendment re-scopes that work per the 4-way dispatch table.
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0969 amendment adds relocation + dispatch table requirement; mission captures the gap closure scope. Cross-references RFC-0871 §Wallet Node Lifecycle + RFC-0969 dispatch table. |
-| v0.2 | 2026-08-11 | **Claimed + LANDED** by @claude. File relocation only — `GatewayAuthenticator` moved from `octo-wallet::capability::gateway_authenticator` to `quota-router-core::ingress::authenticator`. `octo-wallet` dep promoted from dev-dep to runtime dep (Layer B ↔ Layer B). 17 + 12 tests pass at new location. RoutingDecision reshape + LinkageResult::Indeterminate removal + proxy.rs::handle_request wiring deferred (separate missions; documented). |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-08 | Mission filed. RFC-0969 amendment adds relocation + dispatch table requirement; mission captures the gap closure scope. Cross-references RFC-0871 §Wallet Node Lifecycle + RFC-0969 dispatch table.                                                                                                                                                                                                                                                   |
+| v0.2    | 2026-08-11 | **Claimed + LANDED** by @claude. File relocation only — `GatewayAuthenticator` moved from `octo-wallet::capability::gateway_authenticator` to `quota-router-core::ingress::authenticator`. `octo-wallet` dep promoted from dev-dep to runtime dep (Layer B ↔ Layer B). 17 + 12 tests pass at new location. RoutingDecision reshape + LinkageResult::Indeterminate removal + proxy.rs::handle_request wiring deferred (separate missions; documented). |
 
 Last Updated: 2026-08-11
 Version: 0.2

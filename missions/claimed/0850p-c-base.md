@@ -31,7 +31,7 @@ Coordinate the implementation of RFC-0850p-c across the `octo-network` and `octo
 - `missions/open/0850p-c-cross-platform-witness.md` — Future Work F5 in RFC-0850p-c
 - `missions/open/0850p-c-libp2p-propagation.md` — Future Work F3 in RFC-0850p-c
 - `missions/open/0850p-c-partial-bindings.md` — Future Work F2 in RFC-0850p-c
-- `missions/open/0850p-d-dc-initiated-group-creation.md` — DC-initiated group creation & invite (companion to new RFC-0850p-d)
+- `missions/claimed/0850p-d-dc-initiated-group-creation.md` — DC-initiated group creation & invite (companion to new RFC-0850p-d)
 
 ## Acceptance Criteria
 
@@ -87,24 +87,24 @@ Coordinate the implementation of RFC-0850p-c across the `octo-network` and `octo
 
 ## Type Coverage
 
-| RFC-0850p-c Type | Implemented By |
-|------------------|----------------|
-| `GroupState` enum | This mission |
-| `GroupBinding` struct | This mission |
-| `BindEnvelope` | This mission |
-| `BindAck` | This mission |
-| `UnbindEnvelope` | This mission |
-| `UnbindAuthority` | This mission |
-| `RebindEnvelope` | This mission |
-| `GroupRegistry` | This mission |
-| `NonceReplayTable` | This mission |
-| Implicit designator ceremony | This mission |
-| Explicit founder BIND | This mission |
-| Cross-node REBIND atomicity (F1) | Sub-mission `0850p-c-cross-node-rebind.md` |
-| Partial bindings (F2) | Sub-mission `0850p-c-partial-bindings.md` |
-| libp2p BIND propagation (F3) | Sub-mission `0850p-c-libp2p-propagation.md` |
-| Cross-platform witness aggregation (F5) | Sub-mission `0850p-c-cross-platform-witness.md` |
-| DC-initiated group creation & invite | Sub-mission `0850p-d-dc-initiated-group-creation.md` |
+| RFC-0850p-c Type                        | Implemented By                                       |
+| --------------------------------------- | ---------------------------------------------------- |
+| `GroupState` enum                       | This mission                                         |
+| `GroupBinding` struct                   | This mission                                         |
+| `BindEnvelope`                          | This mission                                         |
+| `BindAck`                               | This mission                                         |
+| `UnbindEnvelope`                        | This mission                                         |
+| `UnbindAuthority`                       | This mission                                         |
+| `RebindEnvelope`                        | This mission                                         |
+| `GroupRegistry`                         | This mission                                         |
+| `NonceReplayTable`                      | This mission                                         |
+| Implicit designator ceremony            | This mission                                         |
+| Explicit founder BIND                   | This mission                                         |
+| Cross-node REBIND atomicity (F1)        | Sub-mission `0850p-c-cross-node-rebind.md`           |
+| Partial bindings (F2)                   | Sub-mission `0850p-c-partial-bindings.md`            |
+| libp2p BIND propagation (F3)            | Sub-mission `0850p-c-libp2p-propagation.md`          |
+| Cross-platform witness aggregation (F5) | Sub-mission `0850p-c-cross-platform-witness.md`      |
+| DC-initiated group creation & invite    | Sub-mission `0850p-d-dc-initiated-group-creation.md` |
 
 ## Location
 
@@ -121,7 +121,7 @@ High (~1500 lines; envelope types, GroupRegistry, witness validation pipeline, c
 
 ## Prerequisites
 
-- RFC-0850 status: Draft (implementation has begun per CLAUDE.md; binding can proceed in parallel per the 0850p-a pattern in `missions/open/0850p-a-whatsapp-auth-onboarding.md`)
+- RFC-0850 status: Draft (implementation has begun per CLAUDE.md; binding can proceed in parallel per the 0850p-a pattern in `missions/claimed/0850p-a-whatsapp-auth-onboarding.md`)
 - RFC-0855 status: Accepted
 - RFC-0855p-b status: Accepted
 - RFC-0850p-a status: Accepted
@@ -133,12 +133,13 @@ High (~1500 lines; envelope types, GroupRegistry, witness validation pipeline, c
 ### Why a base mission?
 
 RFC-0850p-c declares 6 envelope types, 4 GroupState transitions, 10 witness validation rules, 1 NonceReplayTable, and 3 adapter integrations. Per the BLUEPRINT "Multi-Mission Decomposition" rule ("When an RFC has 10+ types, 4+ phases, or 1000+ lines of specification, decompose into multiple missions"), the work is split into:
+
 - **Base mission (this one):** Core types, GroupRegistry, witness pipeline, ceremony state machines, adapter hooks — the parts that all sub-missions depend on
 - **Sub-missions:** Future Work items (F1-F5) and the new DC-initiated group creation flow (RFC-0850p-d)
 
 ### Why is the RFC still Draft while this base mission is Open?
 
-Per `missions/open/0850p-a-whatsapp-auth-onboarding.md` ("RFC Status" section): "implementation has proceeded in parallel with RFC maturation." The 0850h mission is `Implemented` while RFC-0850 is still `Draft`; the 0850ab-a mission is `Claimed` while RFC-0850ab-a is `Accepted`. This base mission follows the same pattern: the RFC is mature (Accepted as of 2026-06-16) and the base mission is now Open for claim.
+Per `missions/claimed/0850p-a-whatsapp-auth-onboarding.md` ("RFC Status" section): "implementation has proceeded in parallel with RFC maturation." The 0850h mission is `Implemented` while RFC-0850 is still `Draft`; the 0850ab-a mission is `Claimed` while RFC-0850ab-a is `Accepted`. This base mission follows the same pattern: the RFC is mature (Accepted as of 2026-06-16) and the base mission is now Open for claim.
 
 ### Cross-RFC consistency
 

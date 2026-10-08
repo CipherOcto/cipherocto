@@ -22,8 +22,8 @@ c7 + c8 LANDED 2026-08-17).
 
 - Primary: RFC-0959 (Wire Format) — `SettlementEnvelope` v2.0 with
   `cost: DqaEncoding` (16-byte BE scale 12) + `cost_vault_id: Option<[u8;32]>`
-  + `chain_id: Option<[u8;32]>` per review §8.4.1 + §20.7 + §8.5.1
-  precision-loss-tested round-trip fixtures
+  - `chain_id: Option<[u8;32]>` per review §8.4.1 + §20.7 + §8.5.1
+    precision-loss-tested round-trip fixtures
 - Co-RFC: RFC-0960 (chain-aware bump) — `cost_vault_id` column
   reference + `chain_id` column in settlement_events schema per
   review §9.2 v004 sketch
@@ -37,17 +37,17 @@ c7 + c8 LANDED 2026-08-17).
 
 Most substrate already landed (mission file path drift corrected):
 
-| Mission AC | Original path (stale) | Actual current state |
-|---|---|---|
-| AC-5 | `settlement_event_repo.rs: cost_micro_octo_w: u128 → cost: Dqa` | ALREADY LANDED — field at line 277 typed `octo_determin::Dqa`; field name remains `cost_micro_octo_w` (cosmetic — wire form is already DqaEncoding via v004 column type) |
-| AC-5 | `SettlementEnvelope.cost: DqaEncoding` | ALREADY LANDED — at `crates/quota-router-storage/src/ask.rs:1003` with `#[serde(with = "crate::dqa_serde::field")] pub cost: Dqa` |
-| AC-6 | `crates/quota-router-storage/src/octo_vault_lookup.rs` (NEW per S5.1 follow-on) | ALREADY LANDED — actually at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` (S5.1 follow-on landed; uses `octo_cap_macaroon::{VaultLookup, VaultRowSnapshot}` + `octo_vault::{ChainId, VaultId, VaultState, VaultSubstrate}`) |
-| AC-2 step 2 | `crates/octo-protocol/src/settlement_envelope.rs` | NOT EXISTENT — `SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs:984` |
-| AC-2 step 2 | `crates/quota-router-storage/src/octo_vault_lookup.rs` | NOT EXISTENT — `OctoVaultLookup` lives in `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` |
-| AC-4 | `migrations/v015__settlement_chain_vault.sql` | NOT EXISTENT — v015 slot taken by `v015__chain_aware_slash_ledger.sql`. New migration must be v016. |
-| AC-3 | `crates/octo-protocol/tests/tv_0959_settlement_wire.rs` | NOT EXISTENT — new TV file must live in `crates/quota-router-storage/tests/` (where `SettlementEnvelope` lives) |
-| AC-2 | `crates/quota-router-storage/src/settlement_verify.rs` (NEW) | NOT EXISTENT — needs creation |
-| AC-2 | RFC-0959 §Wire Format subsection + §Settlement-Time Vault Row Lookup subsection + §Cross-Chain Settlement Reject algorithm | NOT EXISTENT — needs RFC-0959 v2.0 amendment |
+| Mission AC  | Original path (stale)                                                                                                      | Actual current state                                                                                                                                                                                                                     |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC-5        | `settlement_event_repo.rs: cost_micro_octo_w: u128 → cost: Dqa`                                                            | ALREADY LANDED — field at line 277 typed `octo_determin::Dqa`; field name remains `cost_micro_octo_w` (cosmetic — wire form is already DqaEncoding via v004 column type)                                                                 |
+| AC-5        | `SettlementEnvelope.cost: DqaEncoding`                                                                                     | ALREADY LANDED — at `crates/quota-router-storage/src/ask.rs:1003` with `#[serde(with = "crate::dqa_serde::field")] pub cost: Dqa`                                                                                                        |
+| AC-6        | `crates/quota-router-storage/src/octo_vault_lookup.rs` (NEW per S5.1 follow-on)                                            | ALREADY LANDED — actually at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` (S5.1 follow-on landed; uses `octo_cap_macaroon::{VaultLookup, VaultRowSnapshot}` + `octo_vault::{ChainId, VaultId, VaultState, VaultSubstrate}`) |
+| AC-2 step 2 | `crates/octo-protocol/src/settlement_envelope.rs`                                                                          | NOT EXISTENT — `SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs:984`                                                                                                                                                |
+| AC-2 step 2 | `crates/quota-router-storage/src/octo_vault_lookup.rs`                                                                     | NOT EXISTENT — `OctoVaultLookup` lives in `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs`                                                                                                                                      |
+| AC-4        | `migrations/v015__settlement_chain_vault.sql`                                                                              | NOT EXISTENT — v015 slot taken by `v015__chain_aware_slash_ledger.sql`. New migration must be v016.                                                                                                                                      |
+| AC-3        | `crates/octo-protocol/tests/tv_0959_settlement_wire.rs`                                                                    | NOT EXISTENT — new TV file must live in `crates/quota-router-storage/tests/` (where `SettlementEnvelope` lives)                                                                                                                          |
+| AC-2        | `crates/quota-router-storage/src/settlement_verify.rs` (NEW)                                                               | NOT EXISTENT — needs creation                                                                                                                                                                                                            |
+| AC-2        | RFC-0959 §Wire Format subsection + §Settlement-Time Vault Row Lookup subsection + §Cross-Chain Settlement Reject algorithm | NOT EXISTENT — needs RFC-0959 v2.0 amendment                                                                                                                                                                                             |
 
 **Real remaining work** (corrected scope):
 
@@ -57,7 +57,7 @@ Most substrate already landed (mission file path drift corrected):
 2. Update `SettlementEnvelope::compute_settlement_hash()` to include
    the new fields in canonical preimage.
 3. Add `SettlementError::ChainMismatch { vault_id, vault_chain_id,
-   envelope_chain_id }` variant + `SettlementError::CostVaultIdMissing`
+envelope_chain_id }` variant + `SettlementError::CostVaultIdMissing`
    variant.
 4. Create `crates/quota-router-storage/src/settlement_verify.rs` with
    `verify_settlement_chain_match(envelope, vault_lookup)` function —
@@ -74,7 +74,7 @@ Most substrate already landed (mission file path drift corrected):
    - NEW column `cost_vault_id BLOB(32) NULL` per §20.7
    - NEW column `chain_id BLOB(32) NULL` per §20.7
    - NEW `CREATE UNIQUE INDEX idx_se_cost_vault_id ON
-     settlement_events(cost_vault_id)` per §20.7 audit query
+settlement_events(cost_vault_id)` per §20.7 audit query
    - Backfill legacy v004 rows with `NULL` (no DEFAULT — fork parser
      limitation per v015 recon).
 7. Create `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` —
@@ -84,8 +84,8 @@ Most substrate already landed (mission file path drift corrected):
    - §Version History v2.0 row
    - §Wire Format v2.0 subsection (replaces v1.0 §Wire Format) —
      field list with byte offsets + `DqaEncoding` 16-byte BE encoding
-     + `cost_vault_id` derivation cross-ref to RFC-0960 + `chain_id`
-     derivation cross-ref to RFC-0010 v1.6
+     - `cost_vault_id` derivation cross-ref to RFC-0960 + `chain_id`
+       derivation cross-ref to RFC-0010 v1.6
    - §Settlement-Time Vault Row Lookup subsection (NEW) — 3-step
      algorithm: `cost_vault_id` present → `vault_lookup.lookup_vault(cost_vault_id)`
      → `vault.chain_id == envelope.chain_id` else
@@ -104,14 +104,15 @@ Most substrate already landed (mission file path drift corrected):
 
 ## Dependency edges
 
-| From | To | Why | Layer direction |
-|---|---|---|---|
-| `crates/quota-router-storage/src/settlement_verify.rs` (NEW) | `octo_cap_macaroon::VaultLookup` | Trait abstraction | lib → lib (Layer B intra) |
-| `crates/quota-router-storage/src/settlement_event_repo.rs` | `octo_determin::Dqa` (already) | In-memory cost type | lib → lib (Layer A) |
-| `crates/quota-router-storage/migrations/v016__settlement_chain_vault.sql` (NEW) | `cost_vault_id BLOB(32)` + `chain_id BLOB(32)` columns | Storage schema | n/a (schema only) |
-| `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` (NEW) | `octo_vault::vault_id_unchecked` (cross-ref) | TV cross-RFC pinning | test → test |
+| From                                                                            | To                                                     | Why                  | Layer direction           |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------- | ------------------------- |
+| `crates/quota-router-storage/src/settlement_verify.rs` (NEW)                    | `octo_cap_macaroon::VaultLookup`                       | Trait abstraction    | lib → lib (Layer B intra) |
+| `crates/quota-router-storage/src/settlement_event_repo.rs`                      | `octo_determin::Dqa` (already)                         | In-memory cost type  | lib → lib (Layer A)       |
+| `crates/quota-router-storage/migrations/v016__settlement_chain_vault.sql` (NEW) | `cost_vault_id BLOB(32)` + `chain_id BLOB(32)` columns | Storage schema       | n/a (schema only)         |
+| `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` (NEW)            | `octo_vault::vault_id_unchecked` (cross-ref)           | TV cross-RFC pinning | test → test               |
 
 No new cyclic edges. New crate dep:
+
 - `quota-router-storage` gains `octo-cap-macaroon` (intra-Layer B
   per RFC-0957-A1 §Layer Discipline; `VaultLookup` trait source)
 
@@ -214,7 +215,7 @@ actual }`
 - AC-3: **TV-0959-01..25 byte-exact fixtures** in
   `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` (NEW):
   - **TV-0959-01..05**: `Dqa` 16-byte BE round-trip — `Dqa { value,
-    scale }` → 16-byte BE → `Dqa { value, scale }` byte-exact
+scale }` → 16-byte BE → `Dqa { value, scale }` byte-exact
     (via `dqa_serde::field` codec path)
   - **TV-0959-06..10**: precision-loss-tested — large values that
     would lose precision under scale-6 vs scale-12; round-trip
@@ -244,7 +245,7 @@ settlement_events(cost_vault_id)` per §20.7 audit query
     limitation per v015 recon documented)
 - AC-5: **`settlement_event_repo.rs` field additions**:
   - `PersistedSettlementEvent` gains `cost_vault_id: Option<[u8; 32]>`
-    + `chain_id: Option<[u8; 32]>` fields
+    - `chain_id: Option<[u8; 32]>` fields
   - `SettlementEventInsert` DAO input struct gains the same fields
   - INSERT SQL bindings updated for the 2 new columns
   - `cost_micro_octo_w: octo_determin::Dqa` field ALREADY present
@@ -256,9 +257,9 @@ settlement_events(cost_vault_id)` per §20.7 audit query
 - AC-7: **`settlement_verify.rs` settlement-time verifier created**
   at `crates/quota-router-storage/src/settlement_verify.rs` (NEW):
   - Function: `pub fn verify_settlement_chain_match(
-      envelope: &SettlementEnvelope,
-      vault_lookup: &dyn VaultLookup,
-    ) -> Result<(), SettlementError>`
+envelope: &SettlementEnvelope,
+vault_lookup: &dyn VaultLookup,
+) -> Result<(), SettlementError>`
   - 3-step algorithm per AC-2 (cost_vault_id present → vault row
     exists → chain match)
   - `SettlementError::CostVaultIdMissing` + `SettlementError::ChainMismatch`
@@ -282,22 +283,22 @@ settlement_events(cost_vault_id)` per §20.7 audit query
   cargo test -p octo-vault --lib                                     # no regressions (TV-V1 + TV-C1 stay green)
   cargo clippy --workspace --all-targets --features full -- -D warnings
   cargo fmt --all -- --check
-  npx prettier --write missions/open/0959-c1-wire-format-amendment.md
+  npx prettier --write missions/claimed/0959-c1-wire-format-amendment.md
   ```
 
 ## Cross-reference
 
-- **Pre-req:** `missions/open/0862-c1-dqa-vault-bump-amendment.md`
-  (S6c LANDED 2026-08-17), `missions/open/0957-c1-verify-time-amendment.md`
-  (S6b LANDED 2026-08-17), `missions/open/0870-c1-version-tag-amendment.md`
+- **Pre-req:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md`
+  (S6c LANDED 2026-08-17), `missions/archived/completed/0957-c1-verify-time-amendment.md`
+  (S6b LANDED 2026-08-17), `missions/archived/completed/0870-c1-version-tag-amendment.md`
   (S6a LANDED 2026-08-17),
-  `missions/open/0957-g-verify-time-invariant.md` (S5 LANDED 2026-08-17
-  commit `d007de54`), `missions/open/0010-c-32-byte-addendum.md`
+  `missions/archived/completed/0957-g-verify-time-invariant.md` (S5 LANDED 2026-08-17
+  commit `d007de54`), `missions/claimed/0010-c-32-byte-addendum.md`
   (LANDED 2026-08-19 commit `9cf483db`)
 - **Sibling missions:**
-  - `missions/open/0862-c1-dqa-vault-bump-amendment.md` (S6c LANDED)
-  - `missions/open/0870-c1-version-tag-amendment.md` (S6a LANDED)
-  - `missions/open/0957-c1-verify-time-amendment.md` (S6b LANDED)
+  - `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (S6c LANDED)
+  - `missions/archived/completed/0870-c1-version-tag-amendment.md` (S6a LANDED)
+  - `missions/archived/completed/0957-c1-verify-time-amendment.md` (S6b LANDED)
   - S6d RFC-0900 amendment (pending, 10 TV)
   - S6f RFC-0960 amendment (pending, 108 TV)
   - S6g RFC-0105 amendment (pending, 109 TV)
@@ -326,9 +327,9 @@ settlement_events(cost_vault_id)` per §20.7 audit query
   §Cross-Chain Settlement Reject subsection)
 - `crates/quota-router-storage/src/ask.rs` (modify —
   `SettlementEnvelope` v2.0 fields: `cost_vault_id: Option<[u8; 32]>`
-  + `chain_id: Option<[u8; 32]>`; `compute_settlement_hash` canonical
-  preimage extension; `SettlementError::CostVaultIdMissing` +
-  `SettlementError::ChainMismatch` enum variants)
+  - `chain_id: Option<[u8; 32]>`; `compute_settlement_hash` canonical
+    preimage extension; `SettlementError::CostVaultIdMissing` +
+    `SettlementError::ChainMismatch` enum variants)
 - `crates/quota-router-storage/src/settlement_verify.rs` (NEW —
   settlement-time verifier per AC-7)
 - `crates/quota-router-storage/src/settlement_event_repo.rs`
@@ -359,7 +360,7 @@ settlement_events(cost_vault_id)` per §20.7 audit query
 - `crates/octo-determin::Dqa` 16-byte BE wire form via
   `dqa_serde::field` (S4 LANDED) — wire codec round-trip
 - `crates/octo-vault::vault_id_unchecked(chain_id, owner_did,
-  asset_id)` — canonical vault_id helper for TV cross-ref
+asset_id)` — canonical vault_id helper for TV cross-ref
   (`SettlementEnvelope.cost_vault_id` MUST match this byte-exact)
 - `crates/octo-ident::chain::ChainId::as_bytes()` — RFC-0010 v1.6
   32-byte BLAKE3 derivation (LANDED 2026-08-19)
@@ -409,9 +410,9 @@ settlement_events(cost_vault_id)` per §20.7 audit query
 
 ## Version history
 
-| Date       | Author     | Change |
-| ---------- | ---------- | ------ |
-| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #4, parallel-model Risks #5 HIGH + #6 MED). S6e sub-session. Co-filed with `0862-c9-micro-octow-type-unification.md` + `0105-x-s4-deferred-codemod-sites.md`. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #4, parallel-model Risks #5 HIGH + #6 MED). S6e sub-session. Co-filed with `0862-c9-micro-octow-type-unification.md` + `0105-x-s4-deferred-codemod-sites.md`.                                                                                                                                                                                                                                                                       |
 | 2026-08-19 | @mmacedoeu | Re-scoped per 2026-08-19 recon: corrected file paths (`SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs:984`, NOT `crates/octo-protocol/src/settlement_envelope.rs`); corrected migration slot (v016, NOT v015 — taken by `chain_aware_slash_ledger`); corrected OctoVaultLookup location (already LANDED at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs`, NOT new file); expanded AC list from 7 → 10 to reflect recon-delimited surface; cross-ref RFC-0010 v1.6 (LANDED 2026-08-19). |
 
 ## Out of scope

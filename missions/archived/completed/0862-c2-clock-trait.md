@@ -22,8 +22,8 @@ TV fixtures never read `updated_at_unix_ms`.
 - Two `SystemTime::now()` sites replaced with
   `self.clock.unix_millis() as i64` (cast at use site).
 - New test-only `pub fn raw_query(&self, sql: &str,
-  params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows,
-  SpendLedgerError>` accessor on the substrate so the column
+params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows,
+SpendLedgerError>` accessor on the substrate so the column
   write can be asserted by TV.
 - New TV-0862-10 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
   byte-pins `updated_at_unix_ms = 1_700_000_000_000` via injected
@@ -64,23 +64,23 @@ reuse that shape.
 ## Acceptance Criteria
 
 - [x] AC-1: `Clock` trait available at the substrate boundary
-  (reused `crates/quota-router-storage::clock::Clock::unix_millis() -> u64`,
-  not a new trait; `SystemClock` production + `FixedClock` test
-  fixture both already exist from mission 0957-c)
+      (reused `crates/quota-router-storage::clock::Clock::unix_millis() -> u64`,
+      not a new trait; `SystemClock` production + `FixedClock` test
+      fixture both already exist from mission 0957-c)
 - [x] AC-2: `StoolapSpendLedger` holds `clock: Arc<dyn Clock>` field;
-  default constructors inject `SystemClock`; `_with_clock` variants
-  accept caller-supplied clock
+      default constructors inject `SystemClock`; `_with_clock` variants
+      accept caller-supplied clock
 - [x] AC-3: `seed()` + `try_deduct()` read clock from injected
-  instance (`self.clock.unix_millis() as i64`)
+      instance (`self.clock.unix_millis() as i64`)
 - [x] AC-4: TV-0862-10 byte-pins `updated_at_unix_ms` via injected
-  `FixedClock(1_700_000_000_000)` + raw SQL round-trip
+      `FixedClock(1_700_000_000_000)` + raw SQL round-trip
 - [x] AC-5: Existing 16 TV stay byte-stable (no regression)
 - [x] AC-6: RFC-0862 v2.0.6 row + `§Clock precondition` paragraph
-  added to `§StoolapSpendLedger`
+      added to `§StoolapSpendLedger`
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
 - **Pattern:** `crates/quota-router-storage::clock::Clock` trait (mission
   0957-c wired the `SystemClock` + `FixedClock` impls)
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`

@@ -4,7 +4,7 @@
 
 Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 commit. Pivoted scope from phantom-laden predecessor per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]]; renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 13/13 ACs green (5 HolderRecord ACs collapse to substrate confirmation per `quota-router-storage/src/holder_record.rs:204`; 8 crypto + replay + audit + epoch + TV ACs implemented).
 
-**Sub-mission of:** `missions/claimed/0970-a-hop-envelope.md` (Band A closed 2026-08-06; commit `11921128`).
+**Sub-mission of:** `missions/archived/completed/0970-a-hop-envelope.md` (Band A closed 2026-08-06; commit `11921128`).
 
 **Supersedes:** `missions/open/0970-a1-holder-binding-and-crypto.PHANTOM.md` — 5 phantom pointers reconciled:
 
@@ -24,6 +24,7 @@ RFC-0853 (Networking): Overlay Cryptography — Accepted (provides X25519 + ChaC
 Replace the BLAKE3 hash placeholders in `crates/octo-wallet/src/capability/hop_envelope.rs::wrap_for_hop` / `verify_chain_hash` with real RFC-0853 crypto: X25519 ECDH + ChaCha20-Poly1305 for `InnerRequest` encryption; Ed25519 signature verification over `(chain_hash || audience_did || ttl_millis_unix)`. Add `DestinationNonceStore` substrate (replay defense), `node_epoch: u64` field on `HopEnvelope` (stale epoch reject), `audit_replay_log.rs` (forensics). Wire replay defense into `unwrap_at_destination`. Land TV3 (replay), TV6 (intermediate compromise), TV7 (signature forgery), TV10 (pure forwarder invariant).
 
 The substrate has:
+
 - `HolderRecord::from_hop_capability` at `quota-router-storage/src/holder_record.rs:204` (mission §HolderRecord binding ACs collapse to substrate confirmation).
 - `HopEnvelope` + `InnerRequest` + `HopCapability` + `HopError` + `HopScope` + `ForwardRequestPayload` at `octo-wallet/src/capability/hop_envelope.rs` (8 module tests).
 - `x25519_dalek::{StaticSecret, PublicKey}` + `x25519_shared_secret()` at `octo-network/src/ocrypt/session.rs:134`.
@@ -116,8 +117,8 @@ cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings  # clean
 
 **Requires (mission gates):**
 
-- `missions/claimed/0970-a-hop-envelope.md` (Band A closed 2026-08-06) — provides `HopEnvelope` + `InnerRequest` + `HopError` + `HopScope` + `ForwardRequestPayload` substrate consumed here
-- `missions/claimed/0970-b-forward-integration.md` (Band A closed 2026-08-06) — provides `ForwardRequestPayload.hop_envelope: Option<HopEnvelope>` extension
+- `missions/archived/completed/0970-a-hop-envelope.md` (Band A closed 2026-08-06) — provides `HopEnvelope` + `InnerRequest` + `HopError` + `HopScope` + `ForwardRequestPayload` substrate consumed here
+- `missions/archived/completed/0970-b-forward-integration.md` (Band A closed 2026-08-06) — provides `ForwardRequestPayload.hop_envelope: Option<HopEnvelope>` extension
 - `missions/claimed/0957-c-holder-registry-impl.md` (Band A closed 2026-08-06) — provides `HolderRecord` + `HolderKind` substrate (consumed via `from_hop_capability`)
 
 ```yaml
@@ -145,17 +146,17 @@ depends_on:
 
 **Implementation surface:**
 
-| Change | File | Detail |
-|---|---|---|
-| `x25519-dalek` dep added | `crates/octo-wallet/Cargo.toml` | X25519 ECDH substrate for `wrap_for_hop`/`unwrap_at_destination` |
-| `HopCapability` gains `wrapping_node_pub: [u8;32]` + `node_epoch: u64` fields | `crates/octo-wallet/src/capability/hop_envelope.rs` | Ed25519 verifying-key bytes for `verify_hop_signature`; epoch for stale-epoch reject |
-| `wrap_for_hop(&InnerRequest, &StaticSecret, &SigningKey, ttl, ...)` | same file | X25519 ECDH + ChaCha20-Poly1305 AEAD encrypts `InnerRequest.ciphertext`; AAD = `b"hpaa" || chain_hash || audience_did || ttl || epoch`; Ed25519 sig over `b"hpsg" || chain_hash || audience_did || ttl || epoch` |
-| `unwrap_at_destination(envelope, expected, now, current_epoch, &StaticSecret, &store, &audit)` | same file | Check order: audience → TTL → epoch → replay → AEAD; returns `InnerRequest` with recovered plaintext |
-| `verify_hop_signature(envelope) -> Result<(), HopError>` | same file | Real Ed25519 verify via `ed25519_dalek::Verifier::verify_strict` (replaces BLAKE3 placeholder) |
-| `HopError::DecryptionFailed` + `SignatureInvalid` + `StaleEpoch` | same file | AEAD tag mismatch / sig verify fail / stale epoch variants |
-| `DestinationNonceStore` NEW substrate | `crates/octo-wallet/src/capability/destination_nonce_store.rs` | Append-only `HashSet<[u8;32]>` behind `Mutex`; `record` / `is_seen` / `len` / `is_empty`; `NonceError::AlreadyRecorded` on duplicate |
-| `AuditReplayLog` NEW substrate | `crates/octo-wallet/src/capability/audit_replay_log.rs` | Append-only `Vec<ReplayEntry>` behind `Mutex`; bounded by `capacity`; manual redaction `Debug`; `AuditError::Full` on capacity exceeded |
-| `pub mod destination_nonce_store; pub mod audit_replay_log;` | `crates/octo-wallet/src/capability/mod.rs` | Wire new modules into capability surface |
+| Change                                                                                         | File                                                           | Detail                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `x25519-dalek` dep added                                                                       | `crates/octo-wallet/Cargo.toml`                                | X25519 ECDH substrate for `wrap_for_hop`/`unwrap_at_destination`                                                                        |
+| `HopCapability` gains `wrapping_node_pub: [u8;32]` + `node_epoch: u64` fields                  | `crates/octo-wallet/src/capability/hop_envelope.rs`            | Ed25519 verifying-key bytes for `verify_hop_signature`; epoch for stale-epoch reject                                                    |
+| `wrap_for_hop(&InnerRequest, &StaticSecret, &SigningKey, ttl, ...)`                            | same file                                                      | X25519 ECDH + ChaCha20-Poly1305 AEAD encrypts `InnerRequest.ciphertext`; AAD = `b"hpaa"                                                 |     | chain_hash |     | audience_did |     | ttl |     | epoch`; Ed25519 sig over `b"hpsg" |     | chain_hash |     | audience_did |     | ttl |     | epoch` |
+| `unwrap_at_destination(envelope, expected, now, current_epoch, &StaticSecret, &store, &audit)` | same file                                                      | Check order: audience → TTL → epoch → replay → AEAD; returns `InnerRequest` with recovered plaintext                                    |
+| `verify_hop_signature(envelope) -> Result<(), HopError>`                                       | same file                                                      | Real Ed25519 verify via `ed25519_dalek::Verifier::verify_strict` (replaces BLAKE3 placeholder)                                          |
+| `HopError::DecryptionFailed` + `SignatureInvalid` + `StaleEpoch`                               | same file                                                      | AEAD tag mismatch / sig verify fail / stale epoch variants                                                                              |
+| `DestinationNonceStore` NEW substrate                                                          | `crates/octo-wallet/src/capability/destination_nonce_store.rs` | Append-only `HashSet<[u8;32]>` behind `Mutex`; `record` / `is_seen` / `len` / `is_empty`; `NonceError::AlreadyRecorded` on duplicate    |
+| `AuditReplayLog` NEW substrate                                                                 | `crates/octo-wallet/src/capability/audit_replay_log.rs`        | Append-only `Vec<ReplayEntry>` behind `Mutex`; bounded by `capacity`; manual redaction `Debug`; `AuditError::Full` on capacity exceeded |
+| `pub mod destination_nonce_store; pub mod audit_replay_log;`                                   | `crates/octo-wallet/src/capability/mod.rs`                     | Wire new modules into capability surface                                                                                                |
 
 **Verification output:**
 
@@ -190,7 +191,7 @@ cargo fmt -p octo-wallet -- --check                 # clean
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                          |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Filed open as `0970-a1-holder-binding-and-crypto.md` (phantom-laden, 5 drift items: `cipherocto-crypto` crate, `X25519Keypair` type, `from_hop_capability(hop_envelope, holder_did)` wrong signature, `quota-router-core/src/registry.rs` wrong path, `audit_replay_log` conflation). |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Filed open as `0970-a1-holder-binding-and-crypto.md` (phantom-laden, 5 drift items: `cipherocto-crypto` crate, `X25519Keypair` type, `from_hop_capability(hop_envelope, holder_did)` wrong signature, `quota-router-core/src/registry.rs` wrong path, `audit_replay_log` conflation).                                                                                                                                             |
 | v0.2    | 2026-08-07 | Reconciled per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]]: pivoted scope to canonical 0970-a1 owned pieces (real crypto + replay defense + epoch + audit + TVs); renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 5 HolderRecord ACs collapse to substrate confirmation. |

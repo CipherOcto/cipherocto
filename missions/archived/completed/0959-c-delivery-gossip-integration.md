@@ -8,7 +8,7 @@ Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026
 
 RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0959-a1-market-delivery.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/claimed/0959-a1-market-delivery.md` as the canonical reference; top-level is `claimed/` not `open/`)
+**Sub-mission of:** `missions/claimed/0959-a1-market-delivery.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/claimed/0959-a1-market-delivery.md` as the canonical reference; top-level is `claimed/` not `open/`)
 
 ## Summary
 
@@ -54,9 +54,9 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 **Requires (mission gates):**
 
-- `missions/open/0959-a1-market-delivery.md` (top-level)
-- `missions/open/0959-b-market-delivery-impl.md` — `MarketDeliveryEnvelope` + `DeliveryError::GossipFailed` variant
-- `missions/open/0957-e-mint-txn-parameter.md` — `CapabilityCatalog::gossip_to_buyer`
+- `missions/claimed/0959-a1-market-delivery.md` (top-level)
+- `missions/claimed/0959-b-market-delivery-impl.md` — `MarketDeliveryEnvelope` + `DeliveryError::GossipFailed` variant
+- `missions/claimed/0957-e-mint-txn-parameter.md` — `CapabilityCatalog::gossip_to_buyer`
 
 ```yaml
 depends_on:

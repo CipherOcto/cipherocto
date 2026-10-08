@@ -54,8 +54,8 @@ Per RFC-0012 §Key Files to Modify Phase 1 — substrate extraction. Creates two
 
 ### Out of scope (separate missions)
 
-- Migration of `octo-wallet/capability/audit_log.rs` to use substrate → `missions/open/0012-audit-wallet-migration.md`
-- `StoolapAuditSink` impl + verify_chain test vectors → `missions/open/0012-audit-verify-chain-tests.md`
+- Migration of `octo-wallet/capability/audit_log.rs` to use substrate → `missions/archived/completed/0012-audit-wallet-migration.md`
+- `StoolapAuditSink` impl + verify_chain test vectors → `missions/archived/completed/0012-audit-verify-chain-tests.md`
 - Domain-level `StoolapAuditSink` impl (consumer of `AppendOnlyAuditSink`) → downstream mission
 
 ### Dependencies
@@ -79,12 +79,12 @@ Per RFC-0012 §Key Files to Modify Phase 1 — substrate extraction. Creates two
 
 ### Test vectors (substrate-level, RFC-0012 §Test Vectors)
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `chain-empty` | Empty event sequence | `verify_chain(&[]) == Ok(())` |
-| `chain-single` | Single event with `prev_chain_hash = [0;32]` | `verify_chain` accepts; `chain_hash` matches `BLAKE3(canonical_bytes)` |
-| `chain-monotonic` | 10 events with strict `event_id` monotonicity + correct chaining | `verify_chain` accepts |
-| `chain-gap` | 10 events with `event_id` skip 5 → 7 | `verify_chain` returns `AuditChainError::SequenceGap { event_id: 7, prev: 5, next: 7 }` |
-| `chain-hash-mismatch` | Event with `chain_hash` field flipped by 1 byte | `verify_chain` returns `AuditChainError::HashMismatch` |
-| `chain-timestamp-regression` | Two events with `at_millis_unix` decreasing | `verify_chain` returns `AuditChainError::TimestampRegression` |
-| `debug-redaction` | `format!("{:?}", event)` with non-zero `cap_root_hash` | Output contains `<redacted 32 bytes>`; does NOT contain actual hash bytes |
+| ID                           | Scenario                                                         | Expected                                                                                |
+| ---------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `chain-empty`                | Empty event sequence                                             | `verify_chain(&[]) == Ok(())`                                                           |
+| `chain-single`               | Single event with `prev_chain_hash = [0;32]`                     | `verify_chain` accepts; `chain_hash` matches `BLAKE3(canonical_bytes)`                  |
+| `chain-monotonic`            | 10 events with strict `event_id` monotonicity + correct chaining | `verify_chain` accepts                                                                  |
+| `chain-gap`                  | 10 events with `event_id` skip 5 → 7                             | `verify_chain` returns `AuditChainError::SequenceGap { event_id: 7, prev: 5, next: 7 }` |
+| `chain-hash-mismatch`        | Event with `chain_hash` field flipped by 1 byte                  | `verify_chain` returns `AuditChainError::HashMismatch`                                  |
+| `chain-timestamp-regression` | Two events with `at_millis_unix` decreasing                      | `verify_chain` returns `AuditChainError::TimestampRegression`                           |
+| `debug-redaction`            | `format!("{:?}", event)` with non-zero `cap_root_hash`           | Output contains `<redacted 32 bytes>`; does NOT contain actual hash bytes               |

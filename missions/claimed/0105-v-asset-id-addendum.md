@@ -178,7 +178,7 @@ Dqa, expected_scale: u8 }`
 let computed = match f.op { ... apply op ... };
 assert_eq!(computed, f.expected, "TV-D10 drift");
 assert_eq!(computed.scale(), f.expected_scale, "TV-D10 scale
-  drift");
+drift");
 }`
   - 100 fixtures cover edge cases: scale-up overflow, scale-down
     truncation, division by zero (returns error), negative result,
@@ -236,17 +236,17 @@ assert_eq!(computed.scale(), f.expected_scale, "TV-D10 scale
   `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
   §3 S6 row + §24 per-RFC TV table + §8.10 central-registry count
 - **Sibling (per-audit-verdict):**
-  - `missions/claimed/0862-c1-dqa-vault-bump-amendment.md` (LANDED
+  - `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED
     2026-08-17) — Dqa + vault bump pattern
-  - `missions/open/0862-c9-micro-octow-type-unification.md` (FILED
+  - `missions/retired/0862-c9-micro-octow-type-unification.md` (FILED
     2026-08-17) — closes audit-verdict Risk #1
-  - `missions/open/0105-x-s4-deferred-codemod-sites.md` (FILED
+  - `missions/claimed/0105-x-s4-deferred-codemod-sites.md` (FILED
     2026-08-17) — in-memory field type migration
-  - `missions/open/0959-c1-wire-format-amendment.md` (FILED
+  - `missions/claimed/0959-c1-wire-format-amendment.md` (FILED
     2026-08-17) — settlement wire format
-  - `missions/open/0900-d-chain-aware-slash-ledger.md` (FILED
+  - `missions/claimed/0900-d-chain-aware-slash-ledger.md` (FILED
     2026-08-17) — S6d RFC-0900 chain-aware slash ledger
-  - `missions/open/0960-vault-substrate-amendment.md` (FILED
+  - `missions/archived/completed/0960-vault-substrate-amendment.md` (FILED
     2026-08-17) — S6f RFC-0960 chain-aware vault substrate
 - **Audit source:** 2026-08-17 audit verdict, S6g RFC-0105
   asset_id addendum + 109 TV per §24

@@ -61,21 +61,21 @@ fixture DIDs are still in production keyspace.
 ## Acceptance Criteria
 
 - [ ] AC-1: **DEFERRED** — reserved test prefix in RFC-0010
-  (e.g. `did:octo:test:`); separate RFC-0010 amendment. Out of scope
-  for RFC-0862 v2.x follow-ons.
+      (e.g. `did:octo:test:`); separate RFC-0010 amendment. Out of scope
+      for RFC-0862 v2.x follow-ons.
 - [x] AC-2: **CHOSEN** — documented in RFC-0862 §StoolapSpendLedger
-  that `StoolapSpendLedger` performs no DID validation + relies on
-  the wallet-node boundary. Module-level doc comment + RFC-0862
-  v2.0.7 paragraph.
+      that `StoolapSpendLedger` performs no DID validation + relies on
+      the wallet-node boundary. Module-level doc comment + RFC-0862
+      v2.0.7 paragraph.
 - [x] AC-3: New TV-0862-14 pins the convention: substrate accepts
-  ANY holder_did shape (empty / non-`did:octo:` / binary-garbage /
-  canonical); distinct rows persist independently. Regression
-  guard against future over-strict substrate validation.
+      ANY holder_did shape (empty / non-`did:octo:` / binary-garbage /
+      canonical); distinct rows persist independently. Regression
+      guard against future over-strict substrate validation.
 - [x] AC-4: Existing 17 TV stay byte-stable (no regression).
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
 - **Co-RFC:** RFC-0010 (DID spec) — owns the reserved test prefix
   decision if AC-1 is chosen
 - **Wallet boundary:** `crates/octo-paid-query/src/` (canonical

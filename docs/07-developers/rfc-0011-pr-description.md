@@ -74,11 +74,11 @@ No `(Draft)` or `vN.M` suffixes in cross-references per CLAUDE.md
 ```
  rfcs/draft/process/0011-octo-cli-substrate.md                 | ~1200 lines (NEW)
  docs/07-developers/octo-cli-implementation-guide.md            | ~1100 lines (NEW)
- missions/open/0011-core-output-envelope-redaction.md           | ~125 lines  (NEW)
- missions/open/0011-identity-commands.md                        | ~155 lines  (NEW)
- missions/open/0011-capability-commands.md                      | ~175 lines  (NEW)
- missions/open/0011-policy-commands.md                          | ~140 lines  (NEW)
- missions/open/0011-deprecation-stub-removal.md                 | ~131 lines  (NEW)
+ missions/archived/completed/0011-core-output-envelope-redaction.md           | ~125 lines  (NEW)
+ missions/archived/completed/0011-identity-commands.md                        | ~155 lines  (NEW)
+ missions/archived/completed/0011-capability-commands.md                      | ~175 lines  (NEW)
+ missions/archived/completed/0011-policy-commands.md                          | ~140 lines  (NEW)
+ missions/archived/completed/0011-deprecation-stub-removal.md                 | ~131 lines  (NEW)
 ```
 
 ## Review checklist

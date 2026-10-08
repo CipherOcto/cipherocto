@@ -45,12 +45,12 @@ v1.2 suffix IS the file identity).
 
 ## Dependency edges
 
-| From                                                                              | To                | Why                                    |
-| --------------------------------------------------------------------------------- | ----------------- | -------------------------------------- |
-| `rfcs/accepted/numeric/0112-deterministic-vectors.md` lines 80,275,278,286,450    | Drop `v1.20`      | Cross-RFC ref to RFC-0111 (5 sites)    |
+| From                                                                                    | To                     | Why                                                      |
+| --------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------- |
+| `rfcs/accepted/numeric/0112-deterministic-vectors.md` lines 80,275,278,286,450          | Drop `v1.20`           | Cross-RFC ref to RFC-0111 (5 sites)                      |
 | `rfcs/accepted/numeric/0127-dcs-blob-amendment.md` lines 47,125,150,240,535-539,744,749 | Drop `v2.5.1`/`v2.6.0` | Cross-RFC ref to RFC-0126 (9 sites); self-refs preserved |
-| `rfcs/accepted/numeric/0113-deterministic-matrices.md` lines 224,1042             | Drop `v1.12`/`v1.20` | Cross-RFC ref to RFC-0112/RFC-0111 (2 sites) |
-| `rfcs/accepted/process/0010-canonical-did-codec.md` line 406                      | Drop `v1.3`       | Cross-RFC ref to RFC-0862 (1 site)     |
+| `rfcs/accepted/numeric/0113-deterministic-matrices.md` lines 224,1042                   | Drop `v1.12`/`v1.20`   | Cross-RFC ref to RFC-0112/RFC-0111 (2 sites)             |
+| `rfcs/accepted/process/0010-canonical-did-codec.md` line 406                            | Drop `v1.3`            | Cross-RFC ref to RFC-0862 (1 site)                       |
 
 No new cyclic edges. Pure format compliance; spec content unchanged.
 
@@ -64,12 +64,14 @@ No new cyclic edges. Pure format compliance; spec content unchanged.
 
 The Round-3 review surfaced 17 cross-RFC prose citations that violate
 this rule by appending `vN.M` to the RFC number. Examples:
+
 - `RFC-0111 v1.20` (×5 sites in 0112)
 - `RFC-0126 v2.5.1` (×9 sites in 0127)
 - `RFC-0112 v1.12` (0113:224)
 - `RFC-0862 v1.3` (0010:406)
 
 These violate the convention because:
+
 1. Version pins are fragile — they decay as RFCs are amended, leaving
    the prose out-of-date.
 2. The convention explicitly forbids them in prose; only the RFC's own
@@ -110,6 +112,6 @@ These violate the convention because:
 - AC-5 (0009 exempt) + AC-6 (Version History exempt) honored.
 - AC-7 verification grep returns zero hits.
 - Memory card created + MEMORY.md updated.
-- Mission file `git mv` to `missions/claimed/0862-c10-rfc-version-pin-cleanup.md`.
+- Mission file `git mv` to `missions/archived/completed/0862-c10-rfc-version-pin-cleanup.md`.
 - 1 commit: `chore(rfcs): 0862-c10 — strip cross-RFC vN.M version pins (4 files, 17 sites)`.
 - NO push performed — push awaits user instruction per `feedback_initiation_user_only`.

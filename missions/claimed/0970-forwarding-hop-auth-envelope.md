@@ -26,7 +26,7 @@ The envelope wire format is 4-segment (RFC-0970 §Wire Format): `hop_envelope_id
 
 The sub-missions (0970-a, 0970-a1, 0970-b) implement the ACs by RFC-0970 §Test Vectors. When all sub-missions are complete and merged, every AC below is satisfied.
 
-- [ ] All 11 RFC-0970 §Test Vectors pass (TV1: Single-Hop Wrap + Unwrap, TV2: Three-Hop Chain, TV3: Replay Detection, TV4: TTL Expiration, TV5: Audience Mismatch, TV6: Intermediate Router Compromise — Inner Content Encrypted, TV7: Hop Signature Forgery, TV8: Chain Hash Mismatch, TV9: Debug Redaction, TV10: Pure Forwarder, TV11: TTL Millisecond Resolution (200ms)) → **GREEN by sub-mission roll-up**: TV1, TV4, TV5, TV8, TV9, TV11 (6 vectors) → `missions/claimed/0970-a-hop-envelope.md` Band A closure (commit `2f078974`-prior; 9/9 unit tests pass); TV3, TV6, TV7, TV10 (4 vectors) → `missions/claimed/0970-a1-hop-crypto-and-replay-defense.md` Band A closure (commit; 13/13 ACs GREEN). **TV2 DEFERRED** per [[deferred-vs-unspecified]] named-owner rule (only 2-hop variant covered; 3-hop chain variant not yet added — Owner: @cipherocto, target 2026-08-21, follow-up mission TBD per `0970-a` §Notes).
+- [ ] All 11 RFC-0970 §Test Vectors pass (TV1: Single-Hop Wrap + Unwrap, TV2: Three-Hop Chain, TV3: Replay Detection, TV4: TTL Expiration, TV5: Audience Mismatch, TV6: Intermediate Router Compromise — Inner Content Encrypted, TV7: Hop Signature Forgery, TV8: Chain Hash Mismatch, TV9: Debug Redaction, TV10: Pure Forwarder, TV11: TTL Millisecond Resolution (200ms)) → **GREEN by sub-mission roll-up**: TV1, TV4, TV5, TV8, TV9, TV11 (6 vectors) → `missions/archived/completed/0970-a-hop-envelope.md` Band A closure (commit `2f078974`-prior; 9/9 unit tests pass); TV3, TV6, TV7, TV10 (4 vectors) → `missions/archived/completed/0970-a1-hop-crypto-and-replay-defense.md` Band A closure (commit; 13/13 ACs GREEN). **TV2 DEFERRED** per [[deferred-vs-unspecified]] named-owner rule (only 2-hop variant covered; 3-hop chain variant not yet added — Owner: @cipherocto, target 2026-08-21, follow-up mission TBD per `0970-a` §Notes).
 - [x] All 4 RFC-0970 §Adversary Analysis findings covered (A15: Replay attack on unwrap, A16: Compromised intermediate router reads inner content, A17: Hop signature key compromise, A22: Cross-realm replay (Round 2 R2 finding)) → **Closure:** A15 (replay attack) covered by `0970-a1` TV3 (`HopError::ReplayDetected` + `audit_replay_log` entry); A16 (intermediate router reads inner content) covered by `0970-a1` TV6 (RFC-0853 channel encryption binding on `InnerRequest.ciphertext` field); A17 (hop signature key compromise) covered by `0970-a1` TV7 (Ed25519 signature verification on `hop_cap.signature`); A22 (cross-realm replay) covered by `0970-a1` TV10 (`pure_forward` returns `InvalidScope` by design + NO `HolderKind::HopCapability` row inserted).
 - [x] Phantom type `DestinationNonceStore` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (cross-mission; consumed by sub-mission 0970-a) → **Closure:** `DestinationNonceStore` substrate landed in `0970-a1` (real implementation, not phantom); the phantom reference in mission text is stale wording — the actual store lives at `crates/octo-wallet/src/capability/destination_nonce_store.rs` per `0970-a1` substrate. The "phantom DEFERRED to RFC-0009-B1" rule is now a documentation relic; the underlying type is concrete and consumed by `unwrap_at_destination` for replay defense.
 - [x] Sub-missions 0970-a, 0970-b all merged and ACs flipped → **Closure:** `0970-a` Band A closed 2026-08-06 (commit `2f078974`-prior; 11/15 ACs GREEN, 4 deferred to `0970-a1`); `0970-a1` Band A closed 2026-08-07 (13/13 ACs GREEN); `0970-b` Band A closed 2026-08-06 (commit `11921128`-prior; 5/5 ACs GREEN). Sub-mission decomposition complete.
@@ -72,18 +72,18 @@ decomposes_into:
 - RFC-0862 — HolderRegistry gossip + audit_replay_log sync
 - RFC-0870 — Router role + ForwardRequestPayload
 - RFC-0957-A1 — unified HolderRegistry (`HolderKind::HopCapability` row + `HolderRecord::from_hop_capability` constructor)
-- RFC-0958 — optional ZK-verified hops; F4 promotion path (build-pipeline Ed25519 sig + verify-side pubkey check) documented in RFC-0958 §Future Work; implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md`; `hop_envelope` signature verifiability integration is post-0958-a merge scope
+- RFC-0958 — optional ZK-verified hops; F4 promotion path (build-pipeline Ed25519 sig + verify-side pubkey check) documented in RFC-0958 §Future Work; implementation in flight via `missions/archived/completed/0958-a-zk-capability-circuit.md`; `hop_envelope` signature verifiability integration is post-0958-a merge scope
 - RFC-0971 — destination-node role consolidation (downstream)
 
 **Mission gates:**
 
-- `missions/open/0957-c-holder-registry-impl.md` — `HolderRecord::from_hop_capability` constructor MUST exist (cross-mission; co-author contract per 0957-c Notes)
+- `missions/claimed/0957-c-holder-registry-impl.md` — `HolderRecord::from_hop_capability` constructor MUST exist (cross-mission; co-author contract per 0957-c Notes)
 - Router substrate: RFC-0870 (Router role). Coordinate with RFC-0870 §Roles (updated by sub-mission 0970-b).
 - Channel substrate: RFC-0853 (per-hop channel binding). Coordinate with existing 0957-a capability substrate (BLAKE3 keyed-hash + HKDF-BLAKE3 primitives).
 
 **Not Requires:**
 
-- RFC-0958 (ZK subclass) — Accepted; implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md` (S05 4-session plan); hop_envelope ZK-verifiability integration is post-0958-a merge scope
+- RFC-0958 (ZK subclass) — Accepted; implementation in flight via `missions/archived/completed/0958-a-zk-capability-circuit.md` (S05 4-session plan); hop_envelope ZK-verifiability integration is post-0958-a merge scope
 
 ## Implementation Guide
 

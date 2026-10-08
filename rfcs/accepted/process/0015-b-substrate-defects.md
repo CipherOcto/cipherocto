@@ -4,7 +4,7 @@
 
 Accepted (2026-09-14)
 
-> **Substrate-defect paired amendment per RFC-0015 + RFC-0015-a + RFC-0016 plateau declaration 2026-09-14.** This amendment restates surviving substrate defects (post-canonicalization against RFC-0015-a §6.1 canonical `std::sync::Mutex` GLOBAL `AGENT_REGISTRY` pattern + RFC-0012 Layer A frozen contract) as additive §X.1-§X.5 requirements. Paired with `missions/claimed/0015-b-substrate-defect-impl.md` per RFC-0015-a §6.5 paired-acceptance bridge.
+> **Substrate-defect paired amendment per RFC-0015 + RFC-0015-a + RFC-0016 plateau declaration 2026-09-14.** This amendment restates surviving substrate defects (post-canonicalization against RFC-0015-a §6.1 canonical `std::sync::Mutex` GLOBAL `AGENT_REGISTRY` pattern + RFC-0012 Layer A frozen contract) as additive §X.1-§X.5 requirements. Paired with `missions/archived/completed/0015-b-substrate-defect-impl.md` per RFC-0015-a §6.5 paired-acceptance bridge.
 
 ## Authors
 
@@ -46,7 +46,7 @@ The amendment is **strictly additive** — no breaking changes to existing publi
 
 **Paired implementation mission dependencies:**
 
-- `missions/claimed/0015-b-substrate-defect-impl.md` — the paired substrate implementation mission. Acceptance of RFC-0015-b REQUIRES this mission landing per RFC-0015-a §6.5 paired-acceptance bridge.
+- `missions/archived/completed/0015-b-substrate-defect-impl.md` — the paired substrate implementation mission. Acceptance of RFC-0015-b REQUIRES this mission landing per RFC-0015-a §6.5 paired-acceptance bridge.
 
 ## Design Goals
 
@@ -280,7 +280,7 @@ Substrate-level test vectors (canonical numbering per parent RFC-0015-a §Test V
 
 ### Phase 2: Substrate Implementation (paired mission)
 
-- [ ] `missions/claimed/0015-b-substrate-defect-impl.md` lands per paired acceptance bridge (parent RFC-0015-a §6.5)
+- [ ] `missions/archived/completed/0015-b-substrate-defect-impl.md` lands per paired acceptance bridge (parent RFC-0015-a §6.5)
 - [ ] Sub-step 1: §X.1 in-flight flag activation (AgentRecord.transitioning + transition_agent in-flight check + RAII guard + doc-comment hygiene) + TV-WLT-AGT-29 test
 - [ ] Sub-step 2: §X.2 lookup_agent existence-leak closure + TV-WLT-AGT-25 not-owned test (happy-path + unknown-UUID covered by parent TV-WLT-AGT-22 + TV-WLT-AGT-23)
 - [ ] Sub-step 3: §X.3 state-machine test coverage (TV-WLT-AGT-27)
@@ -294,7 +294,7 @@ Substrate-level test vectors (canonical numbering per parent RFC-0015-a §Test V
 ### Phase 3: RFC-0016-a Promotion (downstream)
 
 - [ ] Substrate-faithfulness verified post-RFC-0015-b landing
-- [ ] `missions/claimed/0016-a-audit-write-path-promotion.md` DRY CLOSED
+- [ ] `missions/archived/completed/0016-a-audit-write-path-promotion.md` DRY CLOSED
 - [ ] RFC-0016-a promoted Draft → Accepted
 
 Defect 5 phantom-event detection lives in a separate RFC-0012-v4 paired Layer A amendment cycle (out of RFC-0015-b scope per [[deferred-vs-unspecified]]); tracked in §Future Work F1.

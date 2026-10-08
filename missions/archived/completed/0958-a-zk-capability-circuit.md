@@ -63,25 +63,25 @@ Sub-mission letter-a of RFC-0958. Implements the ZK capability subclass in ciphe
 
 No circular dependency exists. RFC-0958 subclasses RFC-0957 (adds optional `proof_bundle` field, no breaking change); RFC-0958 requires RFC-0630 only for self-host mode (`ExecutionTrace` consumed by private witness). Promotion order: RFC-0957 reaches Accepted → RFC-0958 reaches Accepted (gated on RFC-0957 + RFC-0630) → this mission 0958-a claimable.
 
-| Type            | Artifact                                                           | Required?                                                      |
-| --------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
-| RFC             | RFC-0958 (ZK Capability Subclass)                                  | YES — substrate                                                |
-| RFC             | RFC-0957 (Capability Token Format)                                 | YES — `CapabilityToken` extended                               |
-| RFC             | RFC-0630 (Proof-of-Inference Consensus)                            | YES (self-host mode only) — `ExecutionTrace` type              |
-| RFC             | RFC-0009 (Identity Management)                                     | YES — DID + NodeType                                           |
-| RFC             | RFC-0102 (Wallet Cryptography)                                     | YES — wallet substrate for `cap_root_secret`                   |
-| RFC             | RFC-0853 (Overlay Cryptography)                                    | YES — BLAKE3 primitive                                         |
-| RFC             | RFC-0126 (Deterministic Serialization)                             | Optional — referenced via `canonical_ser`                      |
-| Mission         | `missions/claimed/0957-a-capability-token-macaroon.md` (S02)       | YES — `CapabilityToken` base struct                            |
-| Mission         | `missions/claimed/0957-b-provider-boundary-exercise-path.md` (S04) | Optional — exercise path may consume ZK-bearing caps           |
-| Mission         | `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03)             | Optional — settlement hash + Ask binding types                 |
-| Mission         | `missions/open/zk-proof-verification.md` (sibling)                 | RELATED — STWO substrate shared (`crates/zk-vendor/stwo-sys/`) |
-| Use Case        | `docs/use-cases/enhanced-quota-router-gateway.md`                  | YES — provider boundary + ZK trust reduction                   |
-| Use Case        | `docs/use-cases/hybrid-ai-blockchain-runtime.md`                   | YES — ZK PoI for self-host inference                           |
-| Plan            | `docs/plans/2026-07-19-session-05-zk-capability-circuit.md`        | YES — authoritative session plan                               |
-| Workspace crate | `crates/zk-circuit/`                                               | YES — CASM compile substrate                                   |
-| Workspace crate | `crates/zk-verifier/`                                              | YES — STWO verify entry point                                  |
-| Workspace crate | `crates/zk-vendor/` + `crates/zk-vendor/stwo-sys/`                 | YES — STWO FFI bridge (cdylib)                                 |
+| Type            | Artifact                                                                      | Required?                                                      |
+| --------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| RFC             | RFC-0958 (ZK Capability Subclass)                                             | YES — substrate                                                |
+| RFC             | RFC-0957 (Capability Token Format)                                            | YES — `CapabilityToken` extended                               |
+| RFC             | RFC-0630 (Proof-of-Inference Consensus)                                       | YES (self-host mode only) — `ExecutionTrace` type              |
+| RFC             | RFC-0009 (Identity Management)                                                | YES — DID + NodeType                                           |
+| RFC             | RFC-0102 (Wallet Cryptography)                                                | YES — wallet substrate for `cap_root_secret`                   |
+| RFC             | RFC-0853 (Overlay Cryptography)                                               | YES — BLAKE3 primitive                                         |
+| RFC             | RFC-0126 (Deterministic Serialization)                                        | Optional — referenced via `canonical_ser`                      |
+| Mission         | `missions/archived/completed/0957-a-capability-token-macaroon.md` (S02)       | YES — `CapabilityToken` base struct                            |
+| Mission         | `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` (S04) | Optional — exercise path may consume ZK-bearing caps           |
+| Mission         | `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03)                        | Optional — settlement hash + Ask binding types                 |
+| Mission         | `missions/claimed/zk-proof-verification.md` (sibling)                         | RELATED — STWO substrate shared (`crates/zk-vendor/stwo-sys/`) |
+| Use Case        | `docs/use-cases/enhanced-quota-router-gateway.md`                             | YES — provider boundary + ZK trust reduction                   |
+| Use Case        | `docs/use-cases/hybrid-ai-blockchain-runtime.md`                              | YES — ZK PoI for self-host inference                           |
+| Plan            | `docs/plans/2026-07-19-session-05-zk-capability-circuit.md`                   | YES — authoritative session plan                               |
+| Workspace crate | `crates/zk-circuit/`                                                          | YES — CASM compile substrate                                   |
+| Workspace crate | `crates/zk-verifier/`                                                         | YES — STWO verify entry point                                  |
+| Workspace crate | `crates/zk-vendor/` + `crates/zk-vendor/stwo-sys/`                            | YES — STWO FFI bridge (cdylib)                                 |
 
 ---
 
@@ -353,7 +353,7 @@ Version: 0.6
 
 **Supersession:** none. `0958-a` does not supersede any prior mission.
 
-**Follow-on mission file (to be filed):** `missions/open/0958-b-real-cairo-crypto.md` — full HMAC-BLAKE3 chain re-derivation + Ed25519 holder-sig verify + Poseidon inference-trace binding inside Cairo `main()`; real-zk STWO integration for `prove_batch_signature`.
+**Follow-on mission file (to be filed):** `missions/archived/completed/0958-b-real-cairo-crypto.md` — full HMAC-BLAKE3 chain re-derivation + Ed25519 holder-sig verify + Poseidon inference-trace binding inside Cairo `main()`; real-zk STWO integration for `prove_batch_signature`.
 
 ## Pull Request
 
@@ -365,10 +365,10 @@ Version: 0.6
 
 ## Related Artifacts
 
-- **Sibling mission:** `missions/open/zk-proof-verification.md` (generic STWO marketplace ZK verification, RFC-0100/0102 base; shares STWO bridge at `crates/zk-vendor/stwo-sys/`)
+- **Sibling mission:** `missions/claimed/zk-proof-verification.md` (generic STWO marketplace ZK verification, RFC-0100/0102 base; shares STWO bridge at `crates/zk-vendor/stwo-sys/`)
 - **Workspace crates:** `crates/zk-circuit/`, `crates/zk-verifier/`, `crates/zk-vendor/`, `crates/zk-vendor/stwo-sys/`
 - **Downstream consumers (optional):** mission `0957-b-provider-boundary-exercise-path.md` may consume ZK-bearing caps via S04 exercise path's optional ZK flag
-- **Phantom-pointer remediation:** `missions/claimed/0957-b-provider-boundary-exercise-path.md` line 111 fixed (`-cairo` suffix dropped). 8 other backreferences in `0959-a1`, `0969-dual-pipeline-authorization`, `0010-b-canonical-did-codemod`, `0971-destination-node-role-consolidation`, `0970-forwarding-hop-auth-envelope`, `missions/open/zk-proof-verification.md` will be atomically updated when this mission is archived.
+- **Phantom-pointer remediation:** `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` line 111 fixed (`-cairo` suffix dropped). 8 other backreferences in `0959-a1`, `0969-dual-pipeline-authorization`, `0010-b-canonical-did-codemod`, `0971-destination-node-role-consolidation`, `0970-forwarding-hop-auth-envelope`, `missions/claimed/zk-proof-verification.md` will be atomically updated when this mission is archived.
 
 ---
 

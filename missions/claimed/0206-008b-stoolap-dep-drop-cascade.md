@@ -38,6 +38,7 @@ pub use stoolap::Value;
 5 of the 9 retaining crates already dropped `stoolap` (octo-ident-storage,
 octo-matrix-session-store, octo-reputation, octo-whatsapp, quota-router-storage
 via prior 0206-008b commits). 3 remaining:
+
 - `octo-adapter-whatsapp` — IN SCOPE
 - `octo-adapter-telegram-mtproto` — IN SCOPE
 - `quota-router-core` — DEFERRED to 0206-008c (uses `stoolap::pubsub::*` 34+ sites)
@@ -58,6 +59,7 @@ DROP `stoolap = { git = "https://...", rev = "..." }` direct dep from:
 - `crates/octo-adapter-telegram-mtproto/Cargo.toml`
 
 REPLACE D1 deviation comment block with resolution note:
+
 ```
 # Stoolap direct dep REMOVED 2026-08-20 by mission 0206-008b. Substrate
 # `pub mod stoolap` re-export block (DataType, Error, ApiTransaction,
@@ -84,7 +86,7 @@ added to substrate re-export block — substrate v2.4 extension scope).
 
 - Edit: `crates/octo-adapter-whatsapp/Cargo.toml` (drop dep + comment)
 - Edit: `crates/octo-adapter-telegram-mtproto/Cargo.toml` (drop dep + comment)
-- New: `missions/open/0206-008c-stoolap-pubsub-block-extension.md` (deferred scope)
+- New: `missions/claimed/0206-008c-stoolap-pubsub-block-extension.md` (deferred scope)
 
 ## Cross-references
 
@@ -112,6 +114,6 @@ added to substrate re-export block — substrate v2.4 extension scope).
 
 ## Version History
 
-| Version | Date | Change |
-|---------|------|--------|
-| v1.0 | 2026-08-20 | Initial filing; 2 Cargo.toml dep drops (oaw + oatm); qrc deferred to 0206-008c after discovery of `stoolap::pubsub` 34+ sites not in v2.3 re-export block |
+| Version | Date       | Change                                                                                                                                                    |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-20 | Initial filing; 2 Cargo.toml dep drops (oaw + oatm); qrc deferred to 0206-008c after discovery of `stoolap::pubsub` 34+ sites not in v2.3 re-export block |

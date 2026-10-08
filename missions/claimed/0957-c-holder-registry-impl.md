@@ -8,7 +8,7 @@ Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026
 
 RFC-0957-A1 (Economics): Holder Registry + Catalog Storage (Amendment) — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0957-a1-holder-registry.md` (top-level decomposition mission)
+**Sub-mission of:** `missions/archived/completed/0957-a1-holder-registry.md` (top-level decomposition mission)
 
 ## Summary
 
@@ -73,8 +73,8 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 **Requires (mission gates):**
 
-- `missions/open/0957-a1-holder-registry.md` (top-level) — this is a sub-mission
-- `missions/claimed/0957-a-capability-token-macaroon.md` (in progress) — BearerCapsule + CapabilityToken constructors MUST exist before `from_bearer` / `from_capability` can compile
+- `missions/archived/completed/0957-a1-holder-registry.md` (top-level) — this is a sub-mission
+- `missions/archived/completed/0957-a-capability-token-macaroon.md` (in progress) — BearerCapsule + CapabilityToken constructors MUST exist before `from_bearer` / `from_capability` can compile
 
 **Not Requires:**
 
@@ -259,7 +259,7 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 
 **Changes:**
 
-- AC #2 (Atomicity G8 / TV11 forced-failure `TransactionExt::insert_dual`) → flipped GREEN via Path B body rewrite. AC text references `TransactionExt::insert_dual` (RFC-0957-A1 §Co-author contract name); substrate delivers on `StoolapHolderRegistry::insert_dual` (concrete atomic impl) + `HolderRegistry::insert_dual` trait method. Atomic body + TV9-I2 forced-failure rollback test landed in `missions/claimed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN). Same atomicity invariant, substrate name. AC body now cites the closing sub-mission.
+- AC #2 (Atomicity G8 / TV11 forced-failure `TransactionExt::insert_dual`) → flipped GREEN via Path B body rewrite. AC text references `TransactionExt::insert_dual` (RFC-0957-A1 §Co-author contract name); substrate delivers on `StoolapHolderRegistry::insert_dual` (concrete atomic impl) + `HolderRegistry::insert_dual` trait method. Atomic body + TV9-I2 forced-failure rollback test landed in `missions/archived/completed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN). Same atomicity invariant, substrate name. AC body now cites the closing sub-mission.
 - AC #1 (Cross-node mint verifiability G5 / TV5 gossip integration test) → augmented with named owner (@cipherocto) + target (2026-08-28) per [[deferred-vs-unspecified]] named-owner rule. Sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands (per [[no-phantom-mission-pointers]], cannot cite a non-existent mission).
 - AC #3 (Cross-crate compat / workspace `--all-features` clippy) → flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (legacy `tdlib-rs` adapter excluded from workspace).
 

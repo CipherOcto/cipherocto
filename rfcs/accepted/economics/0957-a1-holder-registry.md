@@ -22,7 +22,7 @@ Closes G3 ("holder_did resolution is unspecified") by binding the wallet-side ca
 
 1. **`HolderKind` enum** — `V1 = 0x00`, `ZKBearing = 0x01`, `Bearer = 0x02`, `HopCapability = 0x03`. Replaces the prior 2-variant `class_tag`.
 2. **`HolderRecord`** — content-addressable storage record: `(cap_root_hash PK, kind, holder_did, holder_pub, audience_did, caveats_canonical, ask_id, mint_at_millis_unix, ttl_millis_unix, revoked_at_millis_unix)`. PK is the 32-byte BLAKE3-derived root hash from the credential.
-3. **`HolderRegistry` trait** — abstract catalog with 6 methods: `lookup(cap_root_hash)`, `lookup_by_ask(ask_id, kind)`, `lookup_active(cap_root_hash, &dyn Clock)`, `insert(record)`, `revoke(cap_root_hash, &dyn Clock)`, `sync_peers()`.  // R24-N3 fix: revoke takes clock parameter (R15-N3 fix); R25-N5 fix: prior historical note claiming `revoke(cap_root_hash)` was canonical has been superseded — the canonical signature is `revoke(cap_root_hash, &dyn Clock)` per R15-N3. All atomic operations use the new `Transaction` boundary. (R7-N3 fix: `insert_dual` lives on `TransactionExt`, NOT on `HolderRegistry`; `verify_chain_hash` is a free function in RFC-0970, NOT a trait method; `lookup_active` IS on the trait but was missing from the summary. R11-N17 fix: prior summary said `lookup_active(cap_root_hash, now_unix)` with phantom `now_unix: u64` parameter; the canonical signature per the trait body uses `&dyn Clock`. R13-N1 + R13-N2 fix (subsequently superseded by R15-N3 + R24-N3): prior summary said `revoke(cap_root_hash, at_unix)` with phantom `at_unix` parameter, and `sync_peers(peer_dids)` with phantom `peer_dids` parameter. R15-N3 superseded `revoke(cap_root_hash)` (no clock) with `revoke(cap_root_hash, &dyn Clock)` (clock injected per lookup_active pattern). The current canonical signature for sync_peers remains `sync_peers()` (peer set is catalog-owned). R26-N3 fix: prior R13 historical wording "uses internal clock" is stale — R15-N3 established clock-injection.)
+3. **`HolderRegistry` trait** — abstract catalog with 6 methods: `lookup(cap_root_hash)`, `lookup_by_ask(ask_id, kind)`, `lookup_active(cap_root_hash, &dyn Clock)`, `insert(record)`, `revoke(cap_root_hash, &dyn Clock)`, `sync_peers()`. // R24-N3 fix: revoke takes clock parameter (R15-N3 fix); R25-N5 fix: prior historical note claiming `revoke(cap_root_hash)` was canonical has been superseded — the canonical signature is `revoke(cap_root_hash, &dyn Clock)` per R15-N3. All atomic operations use the new `Transaction` boundary. (R7-N3 fix: `insert_dual` lives on `TransactionExt`, NOT on `HolderRegistry`; `verify_chain_hash` is a free function in RFC-0970, NOT a trait method; `lookup_active` IS on the trait but was missing from the summary. R11-N17 fix: prior summary said `lookup_active(cap_root_hash, now_unix)` with phantom `now_unix: u64` parameter; the canonical signature per the trait body uses `&dyn Clock`. R13-N1 + R13-N2 fix (subsequently superseded by R15-N3 + R24-N3): prior summary said `revoke(cap_root_hash, at_unix)` with phantom `at_unix` parameter, and `sync_peers(peer_dids)` with phantom `peer_dids` parameter. R15-N3 superseded `revoke(cap_root_hash)` (no clock) with `revoke(cap_root_hash, &dyn Clock)` (clock injected per lookup_active pattern). The current canonical signature for sync_peers remains `sync_peers()` (peer set is catalog-owned). R26-N3 fix: prior R13 historical wording "uses internal clock" is stale — R15-N3 established clock-injection.)
 4. **`StoolapHolderRegistry`** — reference impl backed by a stoolap table per RFC-0862. Schema includes `UNIQUE(ask_id, kind) WHERE ask_id IS NOT NULL` and `INDEX(ask_id, kind)`.
 5. **`CapabilityCatalog` extension** — adds 4 methods: `holder_registry()`, `root_secret_for_ask(ask_id)`, `settlement_chain_tip()`, `gossip_to_buyer(buyer_did, env)`. (R7-N2 fix: `stoolap()` was intentionally MOVED AWAY to a direct `&stoolap::Database` parameter on algorithms like `wrap_for_hop`/`deliver_at_settlement`; not on the trait.)
 6. **`CapabilityToken::mint` signature** — amended. R6-C3 fix: the canonical signature is `mint(root_secret, holder, holder_did, initial_caveats) -> Result<CapabilityToken, MintError>` (4 args, persistence-free). The `catalog` and `Option<&mut Transaction>` parameters are REMOVED. Persistence is handled by the caller via `TransactionExt::insert_dual` (atomic pair insert) or `TransactionExt::insert_holder_record` (single insert). The post-write hook is REMOVED entirely; mint is pure crypto.
@@ -92,28 +92,29 @@ This amendment makes the registry a first-class spec component. The substrate is
 - RFC-0909 — coexistence only
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG: `0957-A1 ← {0957, 0009, 0009-B1, 0126, 0853, 0862, 0958*}` — acyclic (R12-N18 fix: added `0009-B1`; IdentityKey::from_public_bytes in §Phantom Types lives in RFC-0009-B1)
 > 2. RFC-0853 BLAKE3 primitive substrate is a prerequisite (RFC-0957 has the same prerequisite)
 > 3. RFC-0009, RFC-0126, RFC-0862, RFC-0957 prerequisites satisfied
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Lookup latency** | ≤ 5ms p99 over 100K holders | Stoolap BLAKE3-keyed PK index benchmark |
-| **G2: Wire compatibility** | Capability token wire bytes byte-identical pre/post amendment | Diff harness: parse 100 representative wire samples, assert equality |
-| **G3: Mint API stability** | `mint()` signature amended to 4-arg persistence-free; documented delta | `git diff` shows ONLY parameter removals (catalog + Option<&mut Transaction>); no parameter additions |
-| **G4: Sync convergence** | Holder registry gossip converges across N peers in ≤ 30s | RFC-0862 gossip benchmark with `HolderRegistry` rows |
-| **G5: Cross-node mint verifiability** | A capability token minted by node A is verifiable by node B after sync | Integration test: node A mints, sync to node B, node B verifies |
-| **G6: Subclass agnosticism** | Schema accommodates all 4 `HolderKind` variants without schema change | Unit test inserting each kind, each round-trips |
-| **G7: Debug redaction** | Zero credential material in `Debug` output | grep -rn "Debug" with `format!("{:?}", ...)` test cases |
-| **G8: Atomicity** | `insert_dual` is all-or-nothing | Forced-failure integration test |
+| Goal                                  | Target                                                                 | Metric                                                                                                |
+| ------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **G1: Lookup latency**                | ≤ 5ms p99 over 100K holders                                            | Stoolap BLAKE3-keyed PK index benchmark                                                               |
+| **G2: Wire compatibility**            | Capability token wire bytes byte-identical pre/post amendment          | Diff harness: parse 100 representative wire samples, assert equality                                  |
+| **G3: Mint API stability**            | `mint()` signature amended to 4-arg persistence-free; documented delta | `git diff` shows ONLY parameter removals (catalog + Option<&mut Transaction>); no parameter additions |
+| **G4: Sync convergence**              | Holder registry gossip converges across N peers in ≤ 30s               | RFC-0862 gossip benchmark with `HolderRegistry` rows                                                  |
+| **G5: Cross-node mint verifiability** | A capability token minted by node A is verifiable by node B after sync | Integration test: node A mints, sync to node B, node B verifies                                       |
+| **G6: Subclass agnosticism**          | Schema accommodates all 4 `HolderKind` variants without schema change  | Unit test inserting each kind, each round-trips                                                       |
+| **G7: Debug redaction**               | Zero credential material in `Debug` output                             | grep -rn "Debug" with `format!("{:?}", ...)` test cases                                               |
+| **G8: Atomicity**                     | `insert_dual` is all-or-nothing                                        | Forced-failure integration test                                                                       |
 
 ## Motivation
 
 ### Problem Statement
 
-RFC-0957 §Wire Format (in `crates/octo-wallet/src/capability/wire.rs:84-86`): *"Holder DID + public key are NOT in the wire format — caller passes them as parameters (resolved out-of-band from a DID registry)."*
+RFC-0957 §Wire Format (in `crates/octo-wallet/src/capability/wire.rs:84-86`): _"Holder DID + public key are NOT in the wire format — caller passes them as parameters (resolved out-of-band from a DID registry)."_
 
 The DID registry does not exist. RFC-0957 §Roles mentions Token Issuer but the catalog storage layer is not specified. `VerifyContext` has four slots but no `holder_registry` slot. The "out-of-band resolution" is aspirational.
 
@@ -372,12 +373,12 @@ pub const OUTBOX_SCAN_PERIOD: Duration = Duration::from_secs(5);
 
 The cluster uses two names for the same caveat (time-bound expiry) across the four dual-mode RFCs:
 
-| RFC | Caveat name used |
-|-----|------------------|
-| RFC-0957-A1 | `Caveat::BeforeMillis(u64)` (millis) |
+| RFC         | Caveat name used                                                                                                                                                                   |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0957-A1 | `Caveat::BeforeMillis(u64)` (millis)                                                                                                                                               |
 | RFC-0959-A1 | `Caveat::BeforeMillis(u64)` (millis at call site: `ask_ttl_millis_unix * 1000`; R10-N1 fix: prior text said `Before`, but R9-N4 updated the call site to canonical `BeforeMillis`) |
-| RFC-0969 | `Caveat::BeforeMillis(u64)` (millis at call site: `ask_ttl_millis_unix * 1000`; R10-N1 fix: prior text said `Before`, but R9-N5 updated the call site to canonical `BeforeMillis`) |
-| RFC-0970 | `Caveat::BeforeMillis(u64)` (millis) |
+| RFC-0969    | `Caveat::BeforeMillis(u64)` (millis at call site: `ask_ttl_millis_unix * 1000`; R10-N1 fix: prior text said `Before`, but R9-N5 updated the call site to canonical `BeforeMillis`) |
+| RFC-0970    | `Caveat::BeforeMillis(u64)` (millis)                                                                                                                                               |
 
 **Both names are ALIASES** in canonical_ser. The canonical discriminant byte is `0x04` (`CaveatTag::BeforeMillis`); `Caveat::Before` is a thin newtype wrapper that canonical_ser expands to the same byte. The variant name is a presentation choice; the wire bytes are byte-identical across all four RFCs.
 
@@ -386,6 +387,7 @@ This is the R7-N7 fix: prior text drifted between RFCs without an explicit alias
 ### Outbox Worker (R5 C4 fix)
 
 The outbox worker is a background task that:
+
 1. Periodically (every 5s) scans `outbox` for entries with `attempts < MAX_OUTBOX_ATTEMPTS`.
 2. For each entry, calls `catalog.gossip_to_buyer(buyer_did, payload)`.
 3. On success: deletes the entry.
@@ -655,14 +657,14 @@ UNCHANGED. RFC-0957 §Egress Transform is not modified. The egress-side `Capabil
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Token Issuer (RFC-0957) | RFC-0009 `IdentityKey` of issuing node | mint + revoke + register | node identity lifecycle | RFC-0957 §Roles |
-| Vault Holder (RFC-0009) | RFC-0009 §Vault | provider key storage | node identity lifecycle | RFC-0009 §Vault |
-| Sync Peer (RFC-0862) | peer_set member of node | gossip holder_registry deltas | epoch-bounded heartbeat | RFC-0862 |
-| **HolderRegistry (NEW binding)** | per-node stoolap table | persistent storage of `HolderRecord` | node restart-survivable; gossip-replicated | RFC-0957-A1 |
-| **CapabilityCatalog (EXTENDED)** | per-node catalog | holder_registry() + root_secret_for_ask() + settlement_chain_tip() + gossip_to_buyer() (4 methods, R10-N10 fix: prior text listed `stoolap` as a 5th method but R7-N2 dropped it; R11-N21 fix: prior text led with `lookup` but `lookup` is on `HolderRegistry`, not on `CapabilityCatalog` — the catalog's first method is `holder_registry()` which returns the registry) | node restart-survivable | RFC-0957-A1 |
-| Wallet SDK (RFC-0009) | client-side library | read-side resolver | stateless | RFC-0009 §Identity |
+| Role                             | Identifier                             | Authority Scope                                                                                                                                                                                                                                                                                                                                                             | Lifecycle                                  | Source/Ref         |
+| -------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------ |
+| Token Issuer (RFC-0957)          | RFC-0009 `IdentityKey` of issuing node | mint + revoke + register                                                                                                                                                                                                                                                                                                                                                    | node identity lifecycle                    | RFC-0957 §Roles    |
+| Vault Holder (RFC-0009)          | RFC-0009 §Vault                        | provider key storage                                                                                                                                                                                                                                                                                                                                                        | node identity lifecycle                    | RFC-0009 §Vault    |
+| Sync Peer (RFC-0862)             | peer_set member of node                | gossip holder_registry deltas                                                                                                                                                                                                                                                                                                                                               | epoch-bounded heartbeat                    | RFC-0862           |
+| **HolderRegistry (NEW binding)** | per-node stoolap table                 | persistent storage of `HolderRecord`                                                                                                                                                                                                                                                                                                                                        | node restart-survivable; gossip-replicated | RFC-0957-A1        |
+| **CapabilityCatalog (EXTENDED)** | per-node catalog                       | holder_registry() + root_secret_for_ask() + settlement_chain_tip() + gossip_to_buyer() (4 methods, R10-N10 fix: prior text listed `stoolap` as a 5th method but R7-N2 dropped it; R11-N21 fix: prior text led with `lookup` but `lookup` is on `HolderRegistry`, not on `CapabilityCatalog` — the catalog's first method is `holder_registry()` which returns the registry) | node restart-survivable                    | RFC-0957-A1        |
+| Wallet SDK (RFC-0009)            | client-side library                    | read-side resolver                                                                                                                                                                                                                                                                                                                                                          | stateless                                  | RFC-0009 §Identity |
 
 ## Lifecycle Requirements
 
@@ -677,12 +679,12 @@ stateDiagram-v2
     Expired --> [*]: gossip GC after 30 days
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Active | `insert(record)` | Yes | `holder_registry.insert(record)` | mint envelope |
-| Active | Revoked | `revoke(cap_root_hash)` | Yes | `record.revoked_at_millis_unix = Some(now)` | revocation envelope |
-| Active | Expired | `current_unix > record.ttl_millis_unix` at lookup | Yes | lookup returns `Expired` (not `Active`) | n/a |
-| Revoked / Expired | (deleted) | gossip GC after 30 days | Yes | row removed from table | n/a |
+| From              | To        | Trigger                                           | Deterministic? | Side Effects                                | Signing             |
+| ----------------- | --------- | ------------------------------------------------- | -------------- | ------------------------------------------- | ------------------- |
+| (none)            | Active    | `insert(record)`                                  | Yes            | `holder_registry.insert(record)`            | mint envelope       |
+| Active            | Revoked   | `revoke(cap_root_hash)`                           | Yes            | `record.revoked_at_millis_unix = Some(now)` | revocation envelope |
+| Active            | Expired   | `current_unix > record.ttl_millis_unix` at lookup | Yes            | lookup returns `Expired` (not `Active`)     | n/a                 |
+| Revoked / Expired | (deleted) | gossip GC after 30 days                           | Yes            | row removed from table                      | n/a                 |
 
 ### Liveness Check
 
@@ -709,17 +711,17 @@ On node restart: the `StoolapHolderRegistry` reads the stoolap table from disk. 
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `HolderRegistry::lookup(cap_root_hash)` | A | PK lookup; deterministic |
-| `HolderRegistry::lookup_by_ask(ask_id, kind)` | A | UNIQUE-index lookup; deterministic |
-| `HolderRegistry::insert(record)` | A | Stoolap PK INSERT; deterministic |
-| `HolderRegistry::insert_dual(rec_a, rec_b)` | A | Single Stoolap transaction; deterministic |
-| `HolderRegistry::revoke(cap_root_hash)` | A | PK UPDATE; deterministic |
-| `HolderRegistry::sync_peers()` | B | RFC-0862 gossip; deterministic when configured correctly |
-| `verify_chain_hash(...)` (free function per RFC-0970) | A | BLAKE3 chain; deterministic |  // R14-N3 fix: `verify_chain_hash` was removed from `HolderRegistry` (cycle break at lines 300-304) and is now a free function in RFC-0970.
-| `verify()` post-resolution step | A | HMAC chain check unchanged |
-| `mint()` (pure crypto) | A | BLAKE3 + canonical_ser over a fixed input; deterministic. R8-N8 fix: post-write hook and in-txn path are REMOVED; mint never writes. |
+| Operation                                             | Class | Rationale                                                                                                                            |
+| ----------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `HolderRegistry::lookup(cap_root_hash)`               | A     | PK lookup; deterministic                                                                                                             |
+| `HolderRegistry::lookup_by_ask(ask_id, kind)`         | A     | UNIQUE-index lookup; deterministic                                                                                                   |
+| `HolderRegistry::insert(record)`                      | A     | Stoolap PK INSERT; deterministic                                                                                                     |
+| `HolderRegistry::insert_dual(rec_a, rec_b)`           | A     | Single Stoolap transaction; deterministic                                                                                            |
+| `HolderRegistry::revoke(cap_root_hash)`               | A     | PK UPDATE; deterministic                                                                                                             |
+| `HolderRegistry::sync_peers()`                        | B     | RFC-0862 gossip; deterministic when configured correctly                                                                             |
+| `verify_chain_hash(...)` (free function per RFC-0970) | A     | BLAKE3 chain; deterministic                                                                                                          | // R14-N3 fix: `verify_chain_hash` was removed from `HolderRegistry` (cycle break at lines 300-304) and is now a free function in RFC-0970. |
+| `verify()` post-resolution step                       | A     | HMAC chain check unchanged                                                                                                           |
+| `mint()` (pure crypto)                                | A     | BLAKE3 + canonical_ser over a fixed input; deterministic. R8-N8 fix: post-write hook and in-txn path are REMOVED; mint never writes. |
 
 ## Error Handling
 
@@ -979,15 +981,15 @@ impl std::fmt::Debug for SettlementReceiptPayload {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| `lookup` latency | ≤ 5ms p99 over 100K holders | Stoolap BLAKE3-keyed PK index |
-| `lookup_by_ask` latency | ≤ 5ms p99 over 100K holders | Stoolap UNIQUE-index on `(ask_id, kind)` |
-| `insert` latency | ≤ 10ms p99 over 100K holders | Stoolap PK INSERT |
-| `insert_dual` latency | ≤ 15ms p99 | Single transaction |
-| Sync convergence | ≤ 30s across 10 peers | RFC-0862 gossip benchmark |
-| Wire compatibility | 0 bytes diff | Diff harness over 100 representative wires |
-| Storage footprint | ≤ 512 bytes per `HolderRecord` | 32+1+~64+32+~64+~256+33+8+8+9 = ~507 bytes nominal |
+| Metric                  | Target                         | Notes                                              |
+| ----------------------- | ------------------------------ | -------------------------------------------------- |
+| `lookup` latency        | ≤ 5ms p99 over 100K holders    | Stoolap BLAKE3-keyed PK index                      |
+| `lookup_by_ask` latency | ≤ 5ms p99 over 100K holders    | Stoolap UNIQUE-index on `(ask_id, kind)`           |
+| `insert` latency        | ≤ 10ms p99 over 100K holders   | Stoolap PK INSERT                                  |
+| `insert_dual` latency   | ≤ 15ms p99                     | Single transaction                                 |
+| Sync convergence        | ≤ 30s across 10 peers          | RFC-0862 gossip benchmark                          |
+| Wire compatibility      | 0 bytes diff                   | Diff harness over 100 representative wires         |
+| Storage footprint       | ≤ 512 bytes per `HolderRecord` | 32+1+~64+32+~64+~256+33+8+8+9 = ~507 bytes nominal |
 
 ## Security Considerations
 
@@ -1044,29 +1046,29 @@ The registry adds a new replay surface: `revoke(cap_root_hash)` envelopes. Mitig
 
 ## Dependency Validation
 
-| RFC# | Type | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0957-A1 acceptance? |
-|------|------|------------------------------|------------------------|----------------------------------------|
-| RFC-0009 | Requires | Accepted | Already | No |
-| RFC-0009-B1 | Requires | Draft | Yes | YES  // R46-N8 fix: added per R46 review; the `IdentityKey::from_public_bytes` stub at L80 + 3 call sites (0957-A1 L80, 0959-A1 L520 — R60-N2 fix: was L498, shifted +22 by R58 Debug impl additions in 0959, 0969 L507) require this RFC to be promoted to Accepted before 0957-A1 can be Accepted. |
-| RFC-0126 | Requires | Accepted | Already | No |
-| RFC-0853 | Requires | Draft | Yes | YES |
-| RFC-0862 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0958 | Optional | Draft | Best-effort | No |
+| RFC#        | Type     | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0957-A1 acceptance?                                                                                                                                                                                                                                                               |
+| ----------- | -------- | --------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0009    | Requires | Accepted                    | Already                | No                                                                                                                                                                                                                                                                                                  |
+| RFC-0009-B1 | Requires | Draft                       | Yes                    | YES // R46-N8 fix: added per R46 review; the `IdentityKey::from_public_bytes` stub at L80 + 3 call sites (0957-A1 L80, 0959-A1 L520 — R60-N2 fix: was L498, shifted +22 by R58 Debug impl additions in 0959, 0969 L507) require this RFC to be promoted to Accepted before 0957-A1 can be Accepted. |
+| RFC-0126    | Requires | Accepted                    | Already                | No                                                                                                                                                                                                                                                                                                  |
+| RFC-0853    | Requires | Draft                       | Yes                    | YES                                                                                                                                                                                                                                                                                                 |
+| RFC-0862    | Requires | Accepted                    | Already                | No                                                                                                                                                                                                                                                                                                  |
+| RFC-0957    | Requires | Accepted                    | Already                | No                                                                                                                                                                                                                                                                                                  |
+| RFC-0958    | Optional | Draft                       | Best-effort            | No                                                                                                                                                                                                                                                                                                  |
 
 **DAG check:** `0957-A1 ← {0957, 0009, 0009-B1, 0126, 0853, 0862, 0958*}` — acyclic. Valid.
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| **IA-1: Stoolap table is locally writeable** | §Algorithms `StoolapHolderRegistry::insert` | All mints fail | Test: TV3 (Insert + Duplicate) |
-| **IA-2: RFC-0862 gossip peers trust each other** | §Algorithms `sync_peers` | Cross-node mint verifiability fails during partition | RFC-0862 §Gossip Heartbeat + Partition Recovery |
-| **IA-3: BLAKE3 cap_root_hash is collision-resistant** | §Data Structures PK | Catalog PK collisions enable record overwrite | 256-bit BLAKE3; collision risk 2^-128 |
-| **IA-4: Node restart preserves stoolap state** | §Recovery Semantics | Catalog lost on restart | RFC-0862 §Persistence guarantees restart-survivable stoolap |
-| **IA-5: Holder DID format is opaque UTF-8** | §Data Structures `holder_did: String` | Catalog schema migration if format changes | RFC-0009 §Identity Key Format pins DID format |
-| **IA-6: Wallet SDK reads from local catalog** | §Algorithms caller-side resolver | Wallet cannot resolve `holder_did` to verify | Test: TV5 (Cross-Node Mint Verifiability) |
-| **IA-7: `revoked_at_millis_unix` is a separate field from `ttl_millis_unix`** | §Data Structures + §Lifecycle | Revocation state ambiguous | RFC-0957-A1 §Data Structures makes the two fields distinct |
+| Assumption                                                                    | Where Relied Upon                           | Blast Radius if False                                | Mitigation / Status                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------- |
+| **IA-1: Stoolap table is locally writeable**                                  | §Algorithms `StoolapHolderRegistry::insert` | All mints fail                                       | Test: TV3 (Insert + Duplicate)                              |
+| **IA-2: RFC-0862 gossip peers trust each other**                              | §Algorithms `sync_peers`                    | Cross-node mint verifiability fails during partition | RFC-0862 §Gossip Heartbeat + Partition Recovery             |
+| **IA-3: BLAKE3 cap_root_hash is collision-resistant**                         | §Data Structures PK                         | Catalog PK collisions enable record overwrite        | 256-bit BLAKE3; collision risk 2^-128                       |
+| **IA-4: Node restart preserves stoolap state**                                | §Recovery Semantics                         | Catalog lost on restart                              | RFC-0862 §Persistence guarantees restart-survivable stoolap |
+| **IA-5: Holder DID format is opaque UTF-8**                                   | §Data Structures `holder_did: String`       | Catalog schema migration if format changes           | RFC-0009 §Identity Key Format pins DID format               |
+| **IA-6: Wallet SDK reads from local catalog**                                 | §Algorithms caller-side resolver            | Wallet cannot resolve `holder_did` to verify         | Test: TV5 (Cross-Node Mint Verifiability)                   |
+| **IA-7: `revoked_at_millis_unix` is a separate field from `ttl_millis_unix`** | §Data Structures + §Lifecycle               | Revocation state ambiguous                           | RFC-0957-A1 §Data Structures makes the two fields distinct  |
 
 ## Compatibility
 
@@ -1226,16 +1228,16 @@ Post-state: record has cap_root_hash PK; kind = HopCapability; holder_did = rout
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Verdict |
-|----------|------|------|---------|
-| **(a) In-memory `HashMap<CapRootHash, HolderRecord>`** | O(1) lookup | Lost on restart; no federation | Rejected |
-| **(b) Local file** | Persistent; simple | O(1) file open per request; no federation; security-sensitive | Rejected |
-| **(c) Skip storage** | No storage | Defeats out-of-band design | Rejected |
-| **(d) External DB** | Mature; federated | Out-of-substrate | Rejected |
-| **(e) Stoolap table per node + RFC-0862 gossip** | Persistent; federated; substrate-native | New sync surface | **Adopted** |
-| **(f) Bypass registry — put holder_did in the wire** | Simplest impl | Breaks wire format invariant | Rejected |
-| **(g) Separate tables per HolderKind** | Stronger isolation | More tables; more sync traffic | Rejected (substrate reuse preferred) |
-| **(h) Single class_tag with 2 variants** | Simpler | Cannot represent Bearer/HopCapability | Rejected (Round 2 R3 C11) |
+| Approach                                               | Pros                                    | Cons                                                          | Verdict                              |
+| ------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------- | ------------------------------------ |
+| **(a) In-memory `HashMap<CapRootHash, HolderRecord>`** | O(1) lookup                             | Lost on restart; no federation                                | Rejected                             |
+| **(b) Local file**                                     | Persistent; simple                      | O(1) file open per request; no federation; security-sensitive | Rejected                             |
+| **(c) Skip storage**                                   | No storage                              | Defeats out-of-band design                                    | Rejected                             |
+| **(d) External DB**                                    | Mature; federated                       | Out-of-substrate                                              | Rejected                             |
+| **(e) Stoolap table per node + RFC-0862 gossip**       | Persistent; federated; substrate-native | New sync surface                                              | **Adopted**                          |
+| **(f) Bypass registry — put holder_did in the wire**   | Simplest impl                           | Breaks wire format invariant                                  | Rejected                             |
+| **(g) Separate tables per HolderKind**                 | Stronger isolation                      | More tables; more sync traffic                                | Rejected (substrate reuse preferred) |
+| **(h) Single class_tag with 2 variants**               | Simpler                                 | Cannot represent Bearer/HopCapability                         | Rejected (Round 2 R3 C11)            |
 
 ## Implementation Phases
 
@@ -1256,20 +1258,20 @@ Post-state: record has cap_root_hash PK; kind = HopCapability; holder_did = rout
 
 ### Phase 3: Mission Decomposition
 
-- [ ] `missions/open/0957-c-holder-registry-impl.md` — StoolapHolderRegistry reference impl
-- [ ] `missions/open/0957-d-wire-resolver-update.md` — wire.rs caller-side resolver pattern
-- [ ] `missions/open/0957-e-mint-txn-parameter.md` — `mint` signature amendment + post-write hook gating
+- [ ] `missions/claimed/0957-c-holder-registry-impl.md` — StoolapHolderRegistry reference impl
+- [ ] `missions/claimed/0957-d-wire-resolver-update.md` — wire.rs caller-side resolver pattern
+- [ ] `missions/claimed/0957-e-mint-txn-parameter.md` — `mint` signature amendment + post-write hook gating
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-wallet/src/capability/holder_registry.rs` (NEW) | HolderKind + HolderRecord + HolderRegistry trait + Transaction |
-| `crates/octo-wallet/src/capability/stoolap_holder_registry.rs` (NEW) | StoolapHolderRegistry impl |
-| `crates/octo-wallet/src/capability/capability_catalog.rs` (EXTEND) | 4 new methods (R13-N3 fix) |
-| `crates/octo-wallet/src/capability/mod.rs` (AMEND) | mint signature + post-write hook gating |
-| `crates/octo-wallet/src/capability/wire.rs` (EXTEND) | compute_cap_root_hash_from_wire helper |
-| `crates/octo-wallet/src/capability/verify.rs` (EXTEND) | VerifyContext extension |
+| File                                                                 | Change                                                         |
+| -------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `crates/octo-wallet/src/capability/holder_registry.rs` (NEW)         | HolderKind + HolderRecord + HolderRegistry trait + Transaction |
+| `crates/octo-wallet/src/capability/stoolap_holder_registry.rs` (NEW) | StoolapHolderRegistry impl                                     |
+| `crates/octo-wallet/src/capability/capability_catalog.rs` (EXTEND)   | 4 new methods (R13-N3 fix)                                     |
+| `crates/octo-wallet/src/capability/mod.rs` (AMEND)                   | mint signature + post-write hook gating                        |
+| `crates/octo-wallet/src/capability/wire.rs` (EXTEND)                 | compute_cap_root_hash_from_wire helper                         |
+| `crates/octo-wallet/src/capability/verify.rs` (EXTEND)               | VerifyContext extension                                        |
 
 ## Future Work
 
@@ -1288,12 +1290,12 @@ The mint signature amendment (drop to the canonical 4-arg persistence-free signa
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.0     | 2026-08-01 | Initial draft (in-place amendment to RFC-0957) |
-| 1.1     | 2026-08-01 | Round 2: 4-kind enum; mint signature amendment to 4-arg persistence-free; 4 CapabilityCatalog methods (R7-N2 dropped stoolap()); revoked_at_millis_unix; lookup_by_ask + insert_dual; UNIQUE constraint; Debug redaction |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Initial draft (in-place amendment to RFC-0957)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.1        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Round 2: 4-kind enum; mint signature amendment to 4-arg persistence-free; 4 CapabilityCatalog methods (R7-N2 dropped stoolap()); revoked_at_millis_unix; lookup_by_ask + insert_dual; UNIQUE constraint; Debug redaction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged (R64: no new findings after R63 cite correction); 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/economics/` to `rfcs/accepted/economics/`. Cross-RFC anchors verified: DeliveryError variants at 0959-A1 L804/L822/L831; `deliver_at_settlement` function-def at L460, call-site at L593; `pure_forward_legacy_payload` MaxHopDepthExceeded site at 0970 L756; phantom types `IdentityKey::from_public_bytes` / `DestinationNonceStore` / `root_secret_for_root_secret_hash` all DEFERRED; all security-bearing structs have manual redacting Debug impls (MarketDeliveryEnvelopePreimage, EnvelopeId, DealSettled, DealSettledPayload, BearerCapsule, MarketDeliveryEnvelope). |
-| 1.2     | 2026-08-08 | **Capability as Authorization cross-reference.** Added cross-reference to RFC-0871. The `CapabilityToken` defined here (RFC-0957 macaroon) IS one of the `Authorization` mechanisms in RFC-0871's `NodeEnvelope` (`Authorization::Capability(token)`). Macaroon attenuation invariant (§3.5) holds across the envelope boundary: a node receiving `Authorization::Capability(token)` enforces the same caveat constraints the issuer encoded at mint. The `HolderRegistry` substrate is the canonical lookup for `token.holder_did` resolution during envelope authorization verification. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. No wire-format change to RFC-0957 macaroon; additive cross-reference only. |
+| 1.2        | 2026-08-08                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | **Capability as Authorization cross-reference.** Added cross-reference to RFC-0871. The `CapabilityToken` defined here (RFC-0957 macaroon) IS one of the `Authorization` mechanisms in RFC-0871's `NodeEnvelope` (`Authorization::Capability(token)`). Macaroon attenuation invariant (§3.5) holds across the envelope boundary: a node receiving `Authorization::Capability(token)` enforces the same caveat constraints the issuer encoded at mint. The `HolderRegistry` substrate is the canonical lookup for `token.holder_did` resolution during envelope authorization verification. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. No wire-format change to RFC-0957 macaroon; additive cross-reference only. |
 
 ## Related RFCs
 
@@ -1320,15 +1322,16 @@ The mint signature amendment (drop to the canonical 4-arg persistence-free signa
 
 ## Related Missions
 
-- `missions/claimed/0957-b-provider-boundary-exercise-path.md` — R9-4 closure (drop `CapabilityHandle.holder_did`) DONE (commit `c87a4833`)
-- `missions/claimed/0957-a-capability-token-macaroon.md` — base mint + verify
-- Future: `missions/open/0957-c-holder-registry-impl.md`
-- Future: `missions/open/0957-d-wire-resolver-update.md`
-- Future: `missions/open/0957-e-mint-txn-parameter.md`
+- `missions/archived/completed/0957-b-provider-boundary-exercise-path.md` — R9-4 closure (drop `CapabilityHandle.holder_did`) DONE (commit `c87a4833`)
+- `missions/archived/completed/0957-a-capability-token-macaroon.md` — base mint + verify
+- Future: `missions/claimed/0957-c-holder-registry-impl.md`
+- Future: `missions/claimed/0957-d-wire-resolver-update.md`
+- Future: `missions/claimed/0957-e-mint-txn-parameter.md`
 
 ## Cross-Reference: Outgoing Edges
 
 This RFC is a dependency of:
+
 - RFC-0959-A1 — Market Delivery (needs `lookup_by_ask` + `insert_dual`)
 - RFC-0969 — Dual-Pipeline Authorization (needs `insert_dual` + CapabilityCatalog extensions)
 - RFC-0970 — Forwarding-Hop Auth (needs `HolderRecord::from_hop_capability` + HopCapability registration)
@@ -1372,8 +1375,8 @@ verify(&token, &VerifyContext {
 
 RFC-0957 §Roles Token Issuer row is updated by reference:
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
+| Role         | Identifier                             | Authority Scope          | Lifecycle               | Source/Ref                                            |
+| ------------ | -------------------------------------- | ------------------------ | ----------------------- | ----------------------------------------------------- |
 | Token Issuer | RFC-0009 `IdentityKey` of issuing node | mint + revoke + register | node identity lifecycle | RFC-0957 §Roles + RFC-0957-A1 §HolderRegistry binding |
 
 The "register" verb means: caller writes `HolderRecord` via `TransactionExt::insert_holder_record` (or `TransactionExt::insert_dual` for atomic pair insert) after `mint()` returns. Mint itself does NOT write. (R8-N9 fix: prior text said mint auto-wrote on every call unless in explicit transaction; the auto-write path was REMOVED by R6-C3.)

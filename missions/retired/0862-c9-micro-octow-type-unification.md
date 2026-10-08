@@ -13,6 +13,7 @@ was **abandoned**; mandate goes further by removing the alias
 entirely (not just unifying definitions).
 
 **Implementation status:** Already LANDED via separate commits:
+
 - `2750caa7` + `b20c37dc` — initial alias kill (LANDED 2026-08-17)
 - `2a610c3d` — MicroOctoW removed from 27 files (mission `0862-c9 RETIRED kill MicroOctoW`)
 - `01a6d43d` + `0ff3e5a3` — borsh re-introduction (subset re-add per mission `0862-c9 borsh re-introduction`)
@@ -24,12 +25,12 @@ above + the actual alias-kill commits. No new ACs apply.
 
 - Primary: RFC-0862 (`StoolapSpendLedger` substrate — type-system
   coherence with the DQA-based spending model per §Future Work F12)
-(storage restructure hard-recommendation #1). Closes parallel-model
-risk surfaced by audit of `MicroOctoW` type-alias split: 3
-definitions, 2 distinct underlying types (`u128` vs
-`octo_determin::Dqa`) in same workspace. Capability builder emits
-caveats with `MicroOctoW = u128`; spend_ledger substrate reads
-`MicroOctoW = Dqa`. Silent runtime drift at boundary.
+  (storage restructure hard-recommendation #1). Closes parallel-model
+  risk surfaced by audit of `MicroOctoW` type-alias split: 3
+  definitions, 2 distinct underlying types (`u128` vs
+  `octo_determin::Dqa`) in same workspace. Capability builder emits
+  caveats with `MicroOctoW = u128`; spend_ledger substrate reads
+  `MicroOctoW = Dqa`. Silent runtime drift at boundary.
 
 ## RFC
 
@@ -122,15 +123,15 @@ not unify across caveat crate.
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md`
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md`
   (LANDED 2026-08-17, commits `2750caa7` + `b20c37dc`)
 - **Pattern:** `crates/quota-router-storage/src/stoolap_spend_ledger.rs:74`
   — first workspace-local canonical alias attempt (must be promoted
   to `octo-determin` per AC-1)
-- **Sibling:** `missions/open/0862-c7-adjacent-wrap.md` (LANDED),
-  `missions/open/0862-c8-seed-hardening.md` (LANDED)
+- **Sibling:** `missions/archived/completed/0862-c7-adjacent-wrap.md` (LANDED),
+  `missions/archived/completed/0862-c8-seed-hardening.md` (LANDED)
 - **Co-mission (parallel):**
-  `missions/open/0105-x-s4-deferred-codemod-sites.md` (filed
+  `missions/claimed/0105-x-s4-deferred-codemod-sites.md` (filed
   2026-08-17) — extends u128→Dqa codemod to deferred sites;
   c9 + x-mission together close audit-verdict Risks #1 + #4
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
@@ -211,9 +212,9 @@ caveat::PaymentCaveat::new(budget)`. **Migration is
 | Date       | Author     | Change                                                                                                                                                                                        |
 | ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #1, parallel-model Risk #1 CRITICAL). Co-filed with `0105-x-s4-deferred-codemod-sites` for Risk #4 HIGH. |
-| 2026-08-17 | (mandate)  | USER MANDATE: kill every `MicroOctoW`-variant alias project-wide. Original canonical-aliasing plan abandoned. Implementation via separate commits `2750caa7` + `b20c37dc` + `2a610c3d`. |
-| 2026-08-18 | (commits)  | Borsh re-introduction subset per mission `0862-c9 borsh re-introduction` (`01a6d43d` + `0ff3e5a3`). `BorshSerialize`/`BorshDeserialize` for `Dqa` shipped (Layer A additive change). |
-| 2026-08-19 | @mmacedoeu | Drift closure — mission file superseded by mandate + landed commits. Status → RETIRED. No new ACs. |
+| 2026-08-17 | (mandate)  | USER MANDATE: kill every `MicroOctoW`-variant alias project-wide. Original canonical-aliasing plan abandoned. Implementation via separate commits `2750caa7` + `b20c37dc` + `2a610c3d`.       |
+| 2026-08-18 | (commits)  | Borsh re-introduction subset per mission `0862-c9 borsh re-introduction` (`01a6d43d` + `0ff3e5a3`). `BorshSerialize`/`BorshDeserialize` for `Dqa` shipped (Layer A additive change).          |
+| 2026-08-19 | @mmacedoeu | Drift closure — mission file superseded by mandate + landed commits. Status → RETIRED. No new ACs.                                                                                            |
 
 ## Out of scope
 

@@ -93,18 +93,18 @@ Per recon 2026-08-19: v016 migration `settlement_chain_vault.sql` should exist (
 - 3 inline retrofixes applied to `0959-b1` + `0959-c2` + `0959-c3` per audit findings
 - 2 sibling missions filed + cross-reference each other via `depends_on` chain
 - AC gate: `ls missions/claimed/0959-c1-wire-{A,B}*.md missions/claimed/0959-alignment-coordination.md` → 3 files
-- AC gate: `rg 'eec6fb51' missions/claimed/0959-b1-mdelivery-types-drift.md` → ≥3 hits (commit hash retrofix)
+- AC gate: `rg 'eec6fb51' missions/archived/completed/0959-b1-mdelivery-types-drift.md` → ≥3 hits (commit hash retrofix)
 - AC gate: `rg 'cross_node_delivery_transport.rs.*added by.*0959-c3' missions/claimed/0959-c2-cross-node-delivery.md` → 1 hit (retro-supersession note)
-- AC gate: `rg 'substrate correction.*2026-08-24' missions/claimed/0959-c3-octo-transport-wiring.md` → 1 hit (substrate path correction note)
+- AC gate: `rg 'substrate correction.*2026-08-24' missions/archived/completed/0959-c3-octo-transport-wiring.md` → 1 hit (substrate path correction note)
 - Cross-RFC cite validation: Guard 2 PASS for all 3 new mission files
 - Prettier clean
 - No new INVALID cites introduced
 
 ## Files / Artifacts
 
-- Edit: `missions/claimed/0959-b1-mdelivery-types-drift.md` (commit hash retrofix)
+- Edit: `missions/archived/completed/0959-b1-mdelivery-types-drift.md` (commit hash retrofix)
 - Edit: `missions/claimed/0959-c2-cross-node-delivery.md` (retro-supersession note)
-- Edit: `missions/claimed/0959-c3-octo-transport-wiring.md` (substrate path correction + RFC-0959 v2.0 cross-link)
+- Edit: `missions/archived/completed/0959-c3-octo-transport-wiring.md` (substrate path correction + RFC-0959 v2.0 cross-link)
 - New: `missions/claimed/0959-c1-wire-A-substrate-verify.md`
 - New: `missions/claimed/0959-c1-wire-B-rfc-tv.md`
 - New: `missions/claimed/0959-alignment-coordination.md` (this file)

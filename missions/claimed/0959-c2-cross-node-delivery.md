@@ -2,9 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed (2026-08-06) by @mmacedoeu. Sub-mission of `missions/claimed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
+Closed (Band A — 2026-08-06). Claimed (2026-08-06) by @mmacedoeu. Sub-mission of `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
 
-**Sub-mission of:** `missions/claimed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
+**Sub-mission of:** `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
 
 ## RFC
 
@@ -51,7 +51,7 @@ The `0959-c` Band A closure deferred this work because (a) the cross-node integr
 
 **Requires (mission gates):**
 
-- `missions/claimed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06) — provides bounded retry loop consumed here
+- `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06) — provides bounded retry loop consumed here
 - `missions/claimed/0959-b-market-delivery-impl.md` (Band A closed 2026-08-06) — provides `MarketDeliveryEnvelope` + envelope_id consumed by lookup
 - `missions/claimed/0957-c-holder-registry-impl.md` (Band A closed 2026-08-06) — provides `StoolapHolderRegistry` substrate (the substrate used in this mission's fixture)
 
@@ -75,7 +75,7 @@ depends_on:
 ## Notes
 
 - The fixture uses a single `StoolapHolderRegistry::open_in_memory()` for the buyer side (per [[stoolap-general-purpose-db]] hard red line: cipherocto business/consumer schema stays cipherocto-side; the test uses an ephemeral in-memory registry to avoid contaminating production state). Seller-side registry is not needed for TV7 since the seller only broadcasts the envelope; the buyer is the consumer.
-- RFC-0862 gossip channel binding is a cross-crate wiring operation; the production wiring is tracked by `missions/open/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06).
+- RFC-0862 gossip channel binding is a cross-crate wiring operation; the production wiring is tracked by `missions/archived/completed/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06).
 - TV7 is the previously-deferred AC-6 from mission `0959-c` Band A closure.
 - **Retro-supersession (2026-08-24, audit):** `crates/octo-wallet/tests/cross_node_delivery_transport.rs` added by `0959-c3-octo-transport-wiring.md` Band A closure (commit landed 2026-08-07) — production-wiring TV7 driven through `TransportDeliveryCatalog` + `octo_cap_macaroon_transport::NodeTransport`. Both test files (`cross_node_delivery.rs` + `cross_node_delivery_transport.rs`) coexist; 4/4 in-process harness + 6/6 production-wiring tests green. Mission AC text updated retroactively to reference both files per R19 scope discipline + historical-mission-preservation principle.
 
@@ -108,7 +108,7 @@ cargo fmt --check -p octo-wallet                                       # clean
 
 **Deferrals (per [[deferred-vs-unspecified]] named-owner rule):**
 
-- **AC "RFC-0862 gossip binding"** → `missions/open/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06). Production `TransportDeliveryCatalog` impl that holds `Arc<octo_transport::NodeTransport>` + `SendContext` builder; async API decision (Option A async fn vs Option B block_on) tracked in the follow-up.
+- **AC "RFC-0862 gossip binding"** → `missions/archived/completed/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06). Production `TransportDeliveryCatalog` impl that holds `Arc<octo_transport::NodeTransport>` + `SendContext` builder; async API decision (Option A async fn vs Option B block_on) tracked in the follow-up.
 
 **Version History:**
 

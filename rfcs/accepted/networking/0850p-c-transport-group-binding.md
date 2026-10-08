@@ -35,6 +35,7 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG — this RFC depends on 0850, 0855, 0855p-b, 0850p-a, 0851p-a; none depend on this RFC. 0855p-c depends on THIS RFC and 0855p-b.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0850p-c-base.md` (TBD; not yet created) will declare 0850, 0855, 0855p-b, 0850p-a, 0851p-a as prerequisites.
 > 3. DomainCoordinator specialization (0855p-c) is **downstream** — this RFC specifies the binding ceremony; 0855p-c specifies the DomainCoordinator's election/handover/slashing using that ceremony.
@@ -42,15 +43,15 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Binding ceremony completes in <30s for ≤10-member groups | Wall-clock from first `DOT/1/BIND` broadcast to `GroupState::Bound` |
-| G2 | BIND is replay-safe | `BIND` envelopes include `bind_epoch` + `bind_nonce`; replays rejected |
-| G3 | Multi-platform binding works (1 domain_id → N groups, 1 per platform) | Same `domain_id` bound to one WhatsApp group AND one Matrix room is accepted |
-| G4 | UNBIND requires DomainCoordinator authority OR 2/3 vote | Unsigned UNBIND rejected; DomainCoordinator-issued UNBIND accepted |
-| G5 | REBIND (changing platform group) preserves `domain_id` | REBIND from group A to group B with same `domain_id` accepted; A goes to `Unbound` |
-| G6 | BIND is RFC-0008 Class A | State machine is deterministic given input |
-| G7 | GroupState is observable to all members | Any group member can query local `GroupRegistry` to get `domain_id` for a given `group_jid` |
+| Goal | Target                                                                | Metric                                                                                      |
+| ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| G1   | Binding ceremony completes in <30s for ≤10-member groups              | Wall-clock from first `DOT/1/BIND` broadcast to `GroupState::Bound`                         |
+| G2   | BIND is replay-safe                                                   | `BIND` envelopes include `bind_epoch` + `bind_nonce`; replays rejected                      |
+| G3   | Multi-platform binding works (1 domain_id → N groups, 1 per platform) | Same `domain_id` bound to one WhatsApp group AND one Matrix room is accepted                |
+| G4   | UNBIND requires DomainCoordinator authority OR 2/3 vote               | Unsigned UNBIND rejected; DomainCoordinator-issued UNBIND accepted                          |
+| G5   | REBIND (changing platform group) preserves `domain_id`                | REBIND from group A to group B with same `domain_id` accepted; A goes to `Unbound`          |
+| G6   | BIND is RFC-0008 Class A                                              | State machine is deterministic given input                                                  |
+| G7   | GroupState is observable to all members                               | Any group member can query local `GroupRegistry` to get `domain_id` for a given `group_jid` |
 
 ## Motivation
 
@@ -117,12 +118,12 @@ Without a binding ceremony:
 
 ### Role/Authority Coverage Table
 
-| Role | Authority | Lifecycle | Revocable by | Cross-RFC |
-|------|-----------|-----------|--------------|-----------|
-| DomainCoordinator | `bind_domain` | Yes (reuses 0855p-b `CoordinatorLifecycle`) | Self / Governance / Group loss | 0855p-b + 0855p-c |
-| GroupBinder | `bind_propose` | Ephemeral | Self | New in this RFC |
-| GroupWitness | `bind_witness` | Ephemeral | Self | New in this RFC |
-| MissionCreator | `bind_at_genesis` | One-shot (per 0855p-b v1.1) | N/A | 0855p-b |
+| Role              | Authority         | Lifecycle                                   | Revocable by                   | Cross-RFC         |
+| ----------------- | ----------------- | ------------------------------------------- | ------------------------------ | ----------------- |
+| DomainCoordinator | `bind_domain`     | Yes (reuses 0855p-b `CoordinatorLifecycle`) | Self / Governance / Group loss | 0855p-b + 0855p-c |
+| GroupBinder       | `bind_propose`    | Ephemeral                                   | Self                           | New in this RFC   |
+| GroupWitness      | `bind_witness`    | Ephemeral                                   | Self                           | New in this RFC   |
+| MissionCreator    | `bind_at_genesis` | One-shot (per 0855p-b v1.1)                 | N/A                            | 0855p-b           |
 
 ## Specification
 
@@ -176,18 +177,18 @@ struct GroupBinding {
 
 **Transitions:**
 
-| From | To | Trigger | Affected group | Deterministic? |
-|------|----|---------|----------------|----------------|
-| (none) | Unbound | Adapter discovers group (config or join event) | The discovered group | Yes |
-| Unbound | Bound | `DOT/1/BIND` accepted by ≥1 witness | The bound group | Yes (witness count deterministic) |
-| Bound | ReBinding | `DOT/1/REBIND` accepted (signaled by old group) | **The old group** (transitions to ReBinding) | Yes |
-| ReBinding | UnboundQuarantined | `DOT/1/REBIND` complete (new group bound; old group quarantines) | **The old group** (reaches terminal UnboundQuarantined via ReBinding) | Yes |
-| ReBinding | Unbound | `DOT/1/REBIND` aborted (timeout) | The old group | Yes (timeout is deterministic) |
-| (none) | Bound | `DOT/1/REBIND` accepted (new group is being bound) | **The new group** (enters Bound directly, skipping Unbound) | Yes |
-| Bound | Unbound | `DOT/1/UNBIND` accepted | The bound group | Yes |
-| Unbound | UnboundQuarantined | UNBIND was issued; cooldown to prevent rapid rebinding | The unbound group | Yes |
-| UnboundQuarantined | Unbound | Cooldown elapsed (default 100 epochs) | The unbound-quarantined group | Yes |
-| Bound | UnboundQuarantined | Slash / governance termination | The bound group | Yes |
+| From               | To                 | Trigger                                                          | Affected group                                                        | Deterministic?                    |
+| ------------------ | ------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------- |
+| (none)             | Unbound            | Adapter discovers group (config or join event)                   | The discovered group                                                  | Yes                               |
+| Unbound            | Bound              | `DOT/1/BIND` accepted by ≥1 witness                              | The bound group                                                       | Yes (witness count deterministic) |
+| Bound              | ReBinding          | `DOT/1/REBIND` accepted (signaled by old group)                  | **The old group** (transitions to ReBinding)                          | Yes                               |
+| ReBinding          | UnboundQuarantined | `DOT/1/REBIND` complete (new group bound; old group quarantines) | **The old group** (reaches terminal UnboundQuarantined via ReBinding) | Yes                               |
+| ReBinding          | Unbound            | `DOT/1/REBIND` aborted (timeout)                                 | The old group                                                         | Yes (timeout is deterministic)    |
+| (none)             | Bound              | `DOT/1/REBIND` accepted (new group is being bound)               | **The new group** (enters Bound directly, skipping Unbound)           | Yes                               |
+| Bound              | Unbound            | `DOT/1/UNBIND` accepted                                          | The bound group                                                       | Yes                               |
+| Unbound            | UnboundQuarantined | UNBIND was issued; cooldown to prevent rapid rebinding           | The unbound group                                                     | Yes                               |
+| UnboundQuarantined | Unbound            | Cooldown elapsed (default 100 epochs)                            | The unbound-quarantined group                                         | Yes                               |
+| Bound              | UnboundQuarantined | Slash / governance termination                                   | The bound group                                                       | Yes                               |
 
 **R1-TGB-1 fix — per-group clarity:** the state machine is **per-group**, not global. A REBIND operation affects TWO groups: the old group (Bound → ReBinding → UnboundQuarantined) and the new group (Unbound → Bound). The transitions table now specifies "Affected group" to make this explicit. The previous version conflated the two groups' transitions in a single row, which was misleading.
 
@@ -405,6 +406,7 @@ sequenceDiagram
 **Cross-reference:** This is the `bind_at_genesis` path referenced in §"Roles and Authorities" §4 "MissionCreator". It uses the same `BindEnvelope` type as the implicit path; only the issuer differs (creator vs. first-DOT-sender).
 
 **Founder eligibility (E2E IS-3.3 fix):** the founder (mission creator) MUST satisfy all of:
+
 - Has a `MissionCreator` role per §"Roles and Authorities" §4 "MissionCreator"
 - Has signed the mission descriptor with their term key
 - Is a current member of the target group (verified via the adapter's membership API)
@@ -420,22 +422,22 @@ If any of the first three checks fails, witnesses reject the BIND silently (per 
 
 **Examples:**
 
-| domain_id | WhatsApp group | Matrix room | Telegram supergroup | Valid? |
-|-----------|----------------|-------------|---------------------|--------|
-| D1 | 120363...@g.us | (none) | (none) | YES (1 platform) |
-| D1 | 120363...@g.us | !abc:matrix.org | (none) | YES (2 platforms) |
-| D1 | 120363...@g.us | !abc:matrix.org | -100123... | YES (3 platforms) |
-| D1 | 120363...@g.us | !abc:matrix.org | -100456... | NO (2 WhatsApp-bound would be fine, but 2 different group_jids on the same platform is not) |
+| domain_id | WhatsApp group | Matrix room     | Telegram supergroup | Valid?                                                                                      |
+| --------- | -------------- | --------------- | ------------------- | ------------------------------------------------------------------------------------------- |
+| D1        | 120363...@g.us | (none)          | (none)              | YES (1 platform)                                                                            |
+| D1        | 120363...@g.us | !abc:matrix.org | (none)              | YES (2 platforms)                                                                           |
+| D1        | 120363...@g.us | !abc:matrix.org | -100123...          | YES (3 platforms)                                                                           |
+| D1        | 120363...@g.us | !abc:matrix.org | -100456...          | NO (2 WhatsApp-bound would be fine, but 2 different group_jids on the same platform is not) |
 
 Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a given `domain_id`**. Different platforms are independent. So:
 
-| domain_id | WhatsApp | Matrix | Valid? |
-|-----------|----------|--------|--------|
-| D1 | G1 | - | YES |
-| D1 | G1 | R1 | YES |
-| D1 | G1, G2 | - | NO (2 WhatsApp groups bound to D1) |
-| D1 | - | R1, R2 | NO (2 Matrix rooms bound to D1) |
-| D1 | G1 | R1, R2 | NO (2 Matrix rooms) |
+| domain_id | WhatsApp | Matrix | Valid?                             |
+| --------- | -------- | ------ | ---------------------------------- |
+| D1        | G1       | -      | YES                                |
+| D1        | G1       | R1     | YES                                |
+| D1        | G1, G2   | -      | NO (2 WhatsApp groups bound to D1) |
+| D1        | -        | R1, R2 | NO (2 Matrix rooms bound to D1)    |
+| D1        | G1       | R1, R2 | NO (2 Matrix rooms)                |
 
 **Why?** A `domain_id` is a single logical "channel" within a mission. Multiple physical groups on the same platform would split the channel (DOT envelopes might be delivered to one but not the other, depending on which group the sender is in). Multiple platforms are OK because DOT already supports multi-carrier propagation per RFC-0850 G7 (Censorship Resistance).
 
@@ -445,26 +447,26 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 
 > **Cross-RFC consistency fix (R9-1, R9-2, R9-3):** the unbind reason codes below are aligned with RFC-0855p-b §B "Slash Offense Codes" (the canonical slash reason code reference). The 0x0001-0x000B codes are protocol-level and MUST be globally consistent. The previous version of this table had conflicts with 0855p-b (e.g., 0x0003 = "Mission terminated" here vs 0x0003 = "Founder squat" in 0855p-b); this version resolves those conflicts by deferring to 0855p-b §B.
 
-| Code | Reason | Authority | Cooldown |
-|------|--------|-----------|----------|
-| 0x0001 | Double-sign (per 0855p-b §B) | — (slash proof, not unbind) | — |
-| 0x0002 | Liveness-failure (per 0855p-b §B) | — (slash proof, not unbind) | — |
-| 0x0003 | **Founder squat** (BIND without intent to govern) | Any witness | 1000 epochs |
-| 0x0004 | **Censorship** (refused to relay valid envelope for 100+ epochs, per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
-| 0x0005 | **Coordinator misbehavior** (umbrella, per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
-| 0x0006 | **Key compromise** (per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
-| 0x0007 | **Banning legitimate member** (per 0855p-b §B) | Governance (slash tally) | 25% OCTO-O |
-| 0x0008 | **Vote-buying** (per 0855p-b §B) | Governance (slash tally) | 100% OCTO-O |
-| 0x0009 | **Genesis compromise** (per 0855p-b §B; creator's key revoked after `GenesisActive`) | MissionCreator (slash proof) | immediate `Inactive` |
-| 0x000A | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)") | MissionCreator + 2/3 governance vote | 1000 epochs |
-| 0x000B | **`is_reconnect_lie`** (E2E IS-1.6 fix): the reconnect claim was falsified (claimant is not the same peer as the original BIND signer) | Any witness | 500 epochs |
-| 0x000C-0x000D | Reserved (NOT slash/unbind reasons; sub-DC delegation and governance vote use separate mechanisms; see RFC-0855p-d §"Sub-DC delegation protocol") | — | — |
-| 0x000E | `CreateGroupFailed` (per RFC-0850p-d §"Slash Reason Codes Added") | Witness (slash tally) | 25% OCTO-B + 200-epoch cooldown |
-| 0x000F | `CgGroupSpam` (per RFC-0850p-d §"Slash Reason Codes Added") | Witness (slash tally) | 50% OCTO-B + 1000-epoch cooldown |
-| 0x0010 | `FalseWitness` (per RFC-0850p-d §"Slash Reason Codes Added"; reused by RFC-0850p-e for false `KICK_DETECTED.witness_assertion`) | Witness (slash tally) | 50% OCTO-W |
-| 0x0011 | `SelfKicked` (per RFC-0850p-e §"Slash Reason Codes Used") | Self (slash tally) | 10% OCTO-O |
-| 0x0012 | `CrossPlatformWitnessCollusion` (per RFC-0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in 0855p-c's Adversary Analysis table) | Mission participants (slash tally) | 50% OCTO-W + 1000-epoch cooldown |
-| 0x0013-0xFFFF | Reserved | — | — |
+| Code          | Reason                                                                                                                                            | Authority                            | Cooldown                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | -------------------------------- |
+| 0x0001        | Double-sign (per 0855p-b §B)                                                                                                                      | — (slash proof, not unbind)          | —                                |
+| 0x0002        | Liveness-failure (per 0855p-b §B)                                                                                                                 | — (slash proof, not unbind)          | —                                |
+| 0x0003        | **Founder squat** (BIND without intent to govern)                                                                                                 | Any witness                          | 1000 epochs                      |
+| 0x0004        | **Censorship** (refused to relay valid envelope for 100+ epochs, per 0855p-b §B)                                                                  | Governance (slash tally)             | 2^slash_count epochs             |
+| 0x0005        | **Coordinator misbehavior** (umbrella, per 0855p-b §B)                                                                                            | Governance (slash tally)             | 2^slash_count epochs             |
+| 0x0006        | **Key compromise** (per 0855p-b §B)                                                                                                               | Governance (slash tally)             | 2^slash_count epochs             |
+| 0x0007        | **Banning legitimate member** (per 0855p-b §B)                                                                                                    | Governance (slash tally)             | 25% OCTO-O                       |
+| 0x0008        | **Vote-buying** (per 0855p-b §B)                                                                                                                  | Governance (slash tally)             | 100% OCTO-O                      |
+| 0x0009        | **Genesis compromise** (per 0855p-b §B; creator's key revoked after `GenesisActive`)                                                              | MissionCreator (slash proof)         | immediate `Inactive`             |
+| 0x000A        | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)")                                                | MissionCreator + 2/3 governance vote | 1000 epochs                      |
+| 0x000B        | **`is_reconnect_lie`** (E2E IS-1.6 fix): the reconnect claim was falsified (claimant is not the same peer as the original BIND signer)            | Any witness                          | 500 epochs                       |
+| 0x000C-0x000D | Reserved (NOT slash/unbind reasons; sub-DC delegation and governance vote use separate mechanisms; see RFC-0855p-d §"Sub-DC delegation protocol") | —                                    | —                                |
+| 0x000E        | `CreateGroupFailed` (per RFC-0850p-d §"Slash Reason Codes Added")                                                                                 | Witness (slash tally)                | 25% OCTO-B + 200-epoch cooldown  |
+| 0x000F        | `CgGroupSpam` (per RFC-0850p-d §"Slash Reason Codes Added")                                                                                       | Witness (slash tally)                | 50% OCTO-B + 1000-epoch cooldown |
+| 0x0010        | `FalseWitness` (per RFC-0850p-d §"Slash Reason Codes Added"; reused by RFC-0850p-e for false `KICK_DETECTED.witness_assertion`)                   | Witness (slash tally)                | 50% OCTO-W                       |
+| 0x0011        | `SelfKicked` (per RFC-0850p-e §"Slash Reason Codes Used")                                                                                         | Self (slash tally)                   | 10% OCTO-O                       |
+| 0x0012        | `CrossPlatformWitnessCollusion` (per RFC-0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in 0855p-c's Adversary Analysis table)       | Mission participants (slash tally)   | 50% OCTO-W + 1000-epoch cooldown |
+| 0x0013-0xFFFF | Reserved                                                                                                                                          | —                                    | —                                |
 
 **Note on unbind vs slash:** the unbind reason codes 0x0001-0x000B are a SUPERSET of the slash reason codes from RFC-0855p-b §B. Codes 0x0001-0x0009 are shared with 0855p-b (slash reasons); 0x000A-0x000B are transport-level (0850p-c); 0x000C-0x000D are reserved (NOT slash/unbind reasons; sub-DC delegation/governance are separate mechanisms); 0x000E-0x0011 are 0850p-family slash reasons (CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked); 0x0012 is 0855p-c slash reason (CrossPlatformWitnessCollusion); 0x0013-0xFFFF are reserved. The cooldown column applies when the unbind is the OUTCOME of a slash (cooldown before re-binding allowed); codes 0x0001-0x0002 are slash-only (not unbind outcomes). See `docs/reviews/r16/r16-r1-adversarial-review.md` §2 for the canonical slash code allocation block.
 
@@ -508,8 +510,9 @@ REBIND is the operation that changes the physical group for an existing `domain_
   - Has signed and broadcast at least one `CoordinatorHeartbeat` (per RFC-0855p-b §"Liveness Check"; R2-TGB-2 fix: envelope name was previously incorrectly given as `DOT/1/HEARTBEAT` — the canonical name is `CoordinatorHeartbeat`) in the new group (proves presence)
   - Has `peer_id` matching the canonical `BLAKE3(participant_id || mission_id)` (verifies key ownership)
   - Is a current member of the new group (verified via the adapter's membership API)
-  
+
   **R1-TGB-6 fix — successor eligibility:** the previous spec said "the new coordinator must be eligible per RFC-0855p-b" but did not specify HOW the witnesses verify eligibility. The 4 checks above are now explicit. Witnesses that find any check fails silently drop the REBIND.
+
 - Old group cannot be re-bound to the same `domain_id` for at least 100 epochs (prevents ping-pong rebinding).
 
 ### 8. Witness Validation Rules
@@ -528,6 +531,7 @@ When a `DOT/1/BIND` is received, each member validates:
 10. **Reconnect split-brain check (R3-1, R3-6 fix):** if `is_reconnect == true` AND a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)` in the local registry, the BIND is silently dropped (with optional `tracing::debug!` for diagnostics). This prevents a former DomainCoordinator from clobbering the current one. **First-BIND-wins rule (R3-9 fix, R4-7 tiebreaker):** if two BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the canonical BIND is the one with the **lowest `bind_hash` lexicographically** (this is a network-wide deterministic tiebreaker, not per-witness). The witness compares each incoming BIND's `bind_hash` to the locally-accepted binding's `bind_hash`; if the incoming `bind_hash` is lower AND the BIND is valid, the witness switches to the incoming BIND. This ensures that all witnesses converge to the same canonical BIND regardless of local reception order. The first-wins rule is implicit in check #5 (no existing binding) but is now explicit to handle the race where two BINDs are in-flight before either updates the registry.
 
 **is_reconnect validation (E2E IS-1.2 fix):** the `is_reconnect` flag in `BindEnvelope` is true when the BIND is being submitted by a node that was previously the DomainCoordinator for this `(mission_id, domain_id, platform)` and is reconnecting after a network partition. Validation steps for the witnesses:
+
 1. Look up the `(mission_id, domain_id, platform)` in the local registry.
 2. If a previous `coordinator_id` is in the local registry AND its `peer_id` matches the BIND's `coordinator_id` (via `BLAKE3(participant_id || mission_id)` comparison), the BIND is treated as a valid reconnect — accepted, and the registry is updated with the new `coordinator_term_id` and `bound_at_epoch`.
 3. If no previous `coordinator_id` is in the registry, the `is_reconnect = true` claim is FALSE — the BIND is treated as a fresh bind, not a reconnect. No slashing; just a `tracing::warn!` log.
@@ -599,32 +603,32 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 
 ### 10. RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| BIND signature verify | A | Cryptographic, deterministic |
-| BIND_ACK signature verify | A | Same |
-| Witness count check | A | Deterministic from gossip |
-| Multi-platform rule check | A | Deterministic from registry |
-| UNBIND authority check | A | Signature + vote tally |
-| Cooldown timer | B | Wall-clock acceptable |
-| REBIND timeout (5 min) | B | Same |
+| Operation                 | Class | Rationale                    |
+| ------------------------- | ----- | ---------------------------- |
+| BIND signature verify     | A     | Cryptographic, deterministic |
+| BIND_ACK signature verify | A     | Same                         |
+| Witness count check       | A     | Deterministic from gossip    |
+| Multi-platform rule check | A     | Deterministic from registry  |
+| UNBIND authority check    | A     | Signature + vote tally       |
+| Cooldown timer            | B     | Wall-clock acceptable        |
+| REBIND timeout (5 min)    | B     | Same                         |
 
 ### 11. Error Handling
 
 This section defines the typed error and rejection cases for `0850p-c` operations. All recovery is deterministic (no panic, no silent retry that could fork state).
 
-| Error case | Trigger | Recovery | Reference |
-|-----------|---------|----------|-----------|
-| `BindRejected::MultiPlatformViolation` | New BIND for `(mission_id, domain_id, platform)` when another BIND for same `(mission_id, domain_id)` already exists on a different platform without migration proposal | Silent drop; `BIND_REJECTED` event to founder; founder must propose platform migration (slash reason 0x000A) | §5 "Multi-Platform Binding Rule" |
-| `BindRejected::SignatureInvalid` | BIND envelope signature does not verify against the claimed DomainCoordinator pubkey | Silent drop; emit metric `bind_signature_fail_total` | §8 "Witness Validation Rules" check 1 |
-| `BindRejected::WitnessTimeout` | Implicit DomainCoordinator receives <1 `BIND_ACK` within `BIND_WITNESS_TIMEOUT = 100` epochs | Reset `pending_bind`; retry up to 3 times with backoff `50, 200, 800` epochs; on final failure, fall back to Witness role | §3 "Binding Ceremony — Implicit Designator" |
-| `BindRejected::FounderSquat` | Founder's BIND accepted but no `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs | Slash tally initiated with `slash_reason = 0x0003`; 1000-epoch cooldown on `(mission_id, domain_id)` | E2E IS-1.5 fix |
-| `BindRejected::CrossPlatformSpoof` | `BIND.platform` does not match the receiving adapter's platform (e.g., `platform = "whatsapp"` arriving via Matrix adapter) | Silent drop; emit metric `bind_cross_platform_spoof_total` | §8 check 3 (R1-TGB-5 fix) |
-| `BindRejected::IsReconnectLie` | `is_reconnect = true` but the BIND's `coordinator_id` does not match the previous BIND's `coordinator_id` for this `(mission_id, domain_id)` | Silent drop; slash tally with `slash_reason = 0x000B`; 500-epoch cooldown on claimant | §8 check 4 (E2E IS-1.6 fix) |
-| `UnbindReason::Code(0x000A)` | Platform migration committed; old group's BIND is replaced | Old group → `UnboundQuarantined`; new group → `Bound`; cooldown `MIGRATION_RETRY_COOLDOWN = 500` epochs | §6a "Platform Migration (E2E IS-4.8 fix)" |
-| `RebindFailed::SuccessorIneligible` | REBIND candidate fails the 4 explicit eligibility checks (mission-membership, trust-set, slash-record, key-pair-match) | Silent drop; emit `REBIND_REJECTED`; slash tally if 0x0005 misbehavior suspected | §7 "REBIND Lifecycle" (R1-TGB-6 fix) |
-| `RebindFailed::Cooldown` | REBIND attempted before `BIND_RETRY_COOLDOWN` elapses for `(mission_id, domain_id)` | Silent drop; emit `REBIND_REJECTED_COOLDOWN` | §7 cooldown rule |
-| `BindReplayRejected` | BIND with same `bind_nonce` + `bind_epoch` seen twice | First-seen-wins; second instance silently dropped | IA-TGB-11 |
+| Error case                             | Trigger                                                                                                                                                                 | Recovery                                                                                                                  | Reference                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `BindRejected::MultiPlatformViolation` | New BIND for `(mission_id, domain_id, platform)` when another BIND for same `(mission_id, domain_id)` already exists on a different platform without migration proposal | Silent drop; `BIND_REJECTED` event to founder; founder must propose platform migration (slash reason 0x000A)              | §5 "Multi-Platform Binding Rule"            |
+| `BindRejected::SignatureInvalid`       | BIND envelope signature does not verify against the claimed DomainCoordinator pubkey                                                                                    | Silent drop; emit metric `bind_signature_fail_total`                                                                      | §8 "Witness Validation Rules" check 1       |
+| `BindRejected::WitnessTimeout`         | Implicit DomainCoordinator receives <1 `BIND_ACK` within `BIND_WITNESS_TIMEOUT = 100` epochs                                                                            | Reset `pending_bind`; retry up to 3 times with backoff `50, 200, 800` epochs; on final failure, fall back to Witness role | §3 "Binding Ceremony — Implicit Designator" |
+| `BindRejected::FounderSquat`           | Founder's BIND accepted but no `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs                                                                      | Slash tally initiated with `slash_reason = 0x0003`; 1000-epoch cooldown on `(mission_id, domain_id)`                      | E2E IS-1.5 fix                              |
+| `BindRejected::CrossPlatformSpoof`     | `BIND.platform` does not match the receiving adapter's platform (e.g., `platform = "whatsapp"` arriving via Matrix adapter)                                             | Silent drop; emit metric `bind_cross_platform_spoof_total`                                                                | §8 check 3 (R1-TGB-5 fix)                   |
+| `BindRejected::IsReconnectLie`         | `is_reconnect = true` but the BIND's `coordinator_id` does not match the previous BIND's `coordinator_id` for this `(mission_id, domain_id)`                            | Silent drop; slash tally with `slash_reason = 0x000B`; 500-epoch cooldown on claimant                                     | §8 check 4 (E2E IS-1.6 fix)                 |
+| `UnbindReason::Code(0x000A)`           | Platform migration committed; old group's BIND is replaced                                                                                                              | Old group → `UnboundQuarantined`; new group → `Bound`; cooldown `MIGRATION_RETRY_COOLDOWN = 500` epochs                   | §6a "Platform Migration (E2E IS-4.8 fix)"   |
+| `RebindFailed::SuccessorIneligible`    | REBIND candidate fails the 4 explicit eligibility checks (mission-membership, trust-set, slash-record, key-pair-match)                                                  | Silent drop; emit `REBIND_REJECTED`; slash tally if 0x0005 misbehavior suspected                                          | §7 "REBIND Lifecycle" (R1-TGB-6 fix)        |
+| `RebindFailed::Cooldown`               | REBIND attempted before `BIND_RETRY_COOLDOWN` elapses for `(mission_id, domain_id)`                                                                                     | Silent drop; emit `REBIND_REJECTED_COOLDOWN`                                                                              | §7 cooldown rule                            |
+| `BindReplayRejected`                   | BIND with same `bind_nonce` + `bind_epoch` seen twice                                                                                                                   | First-seen-wins; second instance silently dropped                                                                         | IA-TGB-11                                   |
 
 **Notes:**
 
@@ -632,72 +636,71 @@ This section defines the typed error and rejection cases for `0850p-c` operation
 - All silent drops emit at least one metric (`tracing` event with `WARN` level + counter increment) so operators can diagnose; the "silent" refers to no peer-visible protocol response.
 - Slash reason codes 0x0001-0x000B are globally canonical (per RFC-0855p-b §B); 0x000A-0x000B are transport-level and defined here.
 
-
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Implicit binding ceremony | <30s for ≤10-member group |
-| Explicit founder binding | <10s |
-| BIND propagation (10 members) | <5s |
-| BIND_ACK aggregation | <3s |
-| REBIND propagation (both groups) | <10s |
-| Unbind propagation | <5s |
-| Cooldown (UNBIND reason 0x0003 founder-squat) | 1000 epochs |
-| Cooldown (UNBIND reason 0x0004 censorship) | 2^slash_count epochs |
-| Cooldown (UNBIND reason 0x0005 coordinator-misbehavior) | 2^slash_count epochs |
+| Metric                                                  | Target                    |
+| ------------------------------------------------------- | ------------------------- |
+| Implicit binding ceremony                               | <30s for ≤10-member group |
+| Explicit founder binding                                | <10s                      |
+| BIND propagation (10 members)                           | <5s                       |
+| BIND_ACK aggregation                                    | <3s                       |
+| REBIND propagation (both groups)                        | <10s                      |
+| Unbind propagation                                      | <5s                       |
+| Cooldown (UNBIND reason 0x0003 founder-squat)           | 1000 epochs               |
+| Cooldown (UNBIND reason 0x0004 censorship)              | 2^slash_count epochs      |
+| Cooldown (UNBIND reason 0x0005 coordinator-misbehavior) | 2^slash_count epochs      |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption MUST be named, classified, and either validated at runtime, mitigated in code, or accepted with deadline + Future Work.
 
-| # | Assumption | Type | Status | Mitigation / Deadline |
-|---|-----------|------|--------|----------------------|
-| IA-TGB-1 | The physical group membership is a trustworthy signal of who is in the mission | TRUST | **ACCEPTED RISK** | WhatsApp group admin can add/remove members arbitrarily. Mitigated by per-sender allowlist in 0850p-a v1.15 D-WA-10. Long-term: DomainCoordinator vouches for members (0855p-c). |
-| IA-TGB-2 | First DOT-sender is a reasonable DomainCoordinator | PROTOCOL | **ACCEPTED RISK** | Race condition handled by `bind_hash` ordering. Founder squat mitigated by UNBIND reason 0x0003 with 1000-epoch cooldown. |
-| IA-TGB-3 | The DomainCoordinator's pubkey is in the mission's trust set | CRYPTO | MITIGATED | BIND signature verified by all witnesses; rejection if pubkey is unknown. |
-| IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule #7 (per §8 "Witness Validation Rules") |
-| IA-TGB-5 | Multi-platform rule is enforced consistently | PROTOCOL | MITIGATED | Each node's `GroupRegistry` enforces; conflict rejected on BIND. |
-| IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from RFC-0855 §11 "Governance Models"); `SlashVote` envelope signature-verified. |
-| IA-TGB-7 | Cooldown prevents rapid rebinding | TIME | MITIGATED | `UnboundQuarantined` state enforced; 100 / 2^n / 1000 epochs. |
-| IA-TGB-8 | Mission creator's `bind_at_genesis` is one-shot | AUTHORITY | MITIGATED | RFC-0855p-b v1.1 §"Genesis State Machine" limits to 3 states; creator cannot rebind after GenesisActive. |
-| IA-TGB-9 | Platform identifier is canonical (no spelling variants) | PROTOCOL | MITIGATED | Platform IDs are enum (`"whatsapp"`, `"matrix"`, `"telegram"`, ...); no free-form strings. |
-| IA-TGB-10 | `group_jid` is unique per platform | PROTOCOL | MITIGATED | Platform-specific (e.g., WhatsApp `120363...@g.us` is globally unique). |
-| IA-TGB-11 | Replay of BIND across epochs is rejected | REPLAY | MITIGATED | `bind_nonce` + `bind_epoch` binding. |
-| IA-TGB-12 | REBIND atomicity is preserved | PROTOCOL | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. A node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
-| IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses | REPLAY | MITIGATED | Specified in §8 "Witness Validation Rules" (E2E IS-1.2 fix) |
-| IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout | TIMING | MITIGATED | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff |
-| IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs | AUTHORITY | MITIGATED | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003 |
-| IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B | SECURITY | MITIGATED | Specified in §8 "Witness Validation Rules" (E2E IS-1.6 fix) |
-| IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used | PROTOCOL | MITIGATED | Specified in §6 "Unbind Reasons" |
-| IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id` | PROTOCOL | MITIGATED | Specified in §3 "Binding Ceremony — Implicit Designator" |
-| IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks | AUTHORITY | MITIGATED | Specified in §4 "Binding Ceremony — Explicit Founder" |
-| IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled | DETERMINISM | MITIGATED | First-seen-wins (per-witness) |
-| IA-TGB-21 (E2E IS-3.5) | 3-way BIND race resolves to a single canonical BIND | DETERMINISM | MITIGATED | Lowest `bind_hash` lex, then lowest `peer_id` lex |
-| IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level | GOVERNANCE | MITIGATED | Specified in §6a "Platform Migration (E2E IS-4.8 fix)" |
-| IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter | SECURITY | MITIGATED | Specified in §8 "Witness Validation Rules" witness check #3 (R1-TGB-5 fix) |
-| IA-TGB-24 (E2E IS-8.1) | BIND hash comparison is big-endian per RFC-0008 | DETERMINISM | MITIGATED | Raw 32-byte comparison, no endianness conversion |
-| IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!` | PROTOCOL | MITIGATED | Per R3-1 fix; routine filtering is silent (project policy: `tracing::warn!` reserved for security-relevant rejections) |
-| IA-TGB-26 (E2E IS-8.5) | BIND envelope serialization is canonical (no trailing bytes) | SERIALIZATION | MITIGATED | Reuses RFC-0008 §"Serialization" with strict length validation |
-| IA-TGB-27 (E2E IS-8.6) | Empty allowlist means "anyone in group" | COMPATIBILITY | MITIGATED | Backwards-compatible: legacy deployments work without changes |
-| IA-TGB-28 (E2E IS-8.7) | Phone-number allowlist comparison normalizes format | COMPATIBILITY | MITIGATED | Adapter normalizes `+15551234567`, `15551234567`, `5551234567` to canonical form |
-| IA-TGB-29 (E2E IS-8.8) | BIND envelope hash includes the `state` field | SECURITY | MITIGATED | Per R1-TGB-2 fix; `state` and `renewed_at_epoch` are explicit in the hash field list |
+| #                      | Assumption                                                                     | Type          | Status            | Mitigation / Deadline                                                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------ | ------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IA-TGB-1               | The physical group membership is a trustworthy signal of who is in the mission | TRUST         | **ACCEPTED RISK** | WhatsApp group admin can add/remove members arbitrarily. Mitigated by per-sender allowlist in 0850p-a v1.15 D-WA-10. Long-term: DomainCoordinator vouches for members (0855p-c).                         |
+| IA-TGB-2               | First DOT-sender is a reasonable DomainCoordinator                             | PROTOCOL      | **ACCEPTED RISK** | Race condition handled by `bind_hash` ordering. Founder squat mitigated by UNBIND reason 0x0003 with 1000-epoch cooldown.                                                                                |
+| IA-TGB-3               | The DomainCoordinator's pubkey is in the mission's trust set                   | CRYPTO        | MITIGATED         | BIND signature verified by all witnesses; rejection if pubkey is unknown.                                                                                                                                |
+| IA-TGB-4               | `bind_epoch` is within ±1 of local epoch                                       | TIME          | MITIGATED         | Witness validation rule #7 (per §8 "Witness Validation Rules")                                                                                                                                           |
+| IA-TGB-5               | Multi-platform rule is enforced consistently                                   | PROTOCOL      | MITIGATED         | Each node's `GroupRegistry` enforces; conflict rejected on BIND.                                                                                                                                         |
+| IA-TGB-6               | Slash vote tally is correct (2/3)                                              | GOVERNANCE    | MITIGATED         | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from RFC-0855 §11 "Governance Models"); `SlashVote` envelope signature-verified.                              |
+| IA-TGB-7               | Cooldown prevents rapid rebinding                                              | TIME          | MITIGATED         | `UnboundQuarantined` state enforced; 100 / 2^n / 1000 epochs.                                                                                                                                            |
+| IA-TGB-8               | Mission creator's `bind_at_genesis` is one-shot                                | AUTHORITY     | MITIGATED         | RFC-0855p-b v1.1 §"Genesis State Machine" limits to 3 states; creator cannot rebind after GenesisActive.                                                                                                 |
+| IA-TGB-9               | Platform identifier is canonical (no spelling variants)                        | PROTOCOL      | MITIGATED         | Platform IDs are enum (`"whatsapp"`, `"matrix"`, `"telegram"`, ...); no free-form strings.                                                                                                               |
+| IA-TGB-10              | `group_jid` is unique per platform                                             | PROTOCOL      | MITIGATED         | Platform-specific (e.g., WhatsApp `120363...@g.us` is globally unique).                                                                                                                                  |
+| IA-TGB-11              | Replay of BIND across epochs is rejected                                       | REPLAY        | MITIGATED         | `bind_nonce` + `bind_epoch` binding.                                                                                                                                                                     |
+| IA-TGB-12              | REBIND atomicity is preserved                                                  | PROTOCOL      | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. A node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
+| IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses                        | REPLAY        | MITIGATED         | Specified in §8 "Witness Validation Rules" (E2E IS-1.2 fix)                                                                                                                                              |
+| IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout                                  | TIMING        | MITIGATED         | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff                                                                                                                                  |
+| IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs                                   | AUTHORITY     | MITIGATED         | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003                                                                                                                           |
+| IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B                               | SECURITY      | MITIGATED         | Specified in §8 "Witness Validation Rules" (E2E IS-1.6 fix)                                                                                                                                              |
+| IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used                   | PROTOCOL      | MITIGATED         | Specified in §6 "Unbind Reasons"                                                                                                                                                                         |
+| IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id`                                    | PROTOCOL      | MITIGATED         | Specified in §3 "Binding Ceremony — Implicit Designator"                                                                                                                                                 |
+| IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks                           | AUTHORITY     | MITIGATED         | Specified in §4 "Binding Ceremony — Explicit Founder"                                                                                                                                                    |
+| IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled                   | DETERMINISM   | MITIGATED         | First-seen-wins (per-witness)                                                                                                                                                                            |
+| IA-TGB-21 (E2E IS-3.5) | 3-way BIND race resolves to a single canonical BIND                            | DETERMINISM   | MITIGATED         | Lowest `bind_hash` lex, then lowest `peer_id` lex                                                                                                                                                        |
+| IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level               | GOVERNANCE    | MITIGATED         | Specified in §6a "Platform Migration (E2E IS-4.8 fix)"                                                                                                                                                   |
+| IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter                            | SECURITY      | MITIGATED         | Specified in §8 "Witness Validation Rules" witness check #3 (R1-TGB-5 fix)                                                                                                                               |
+| IA-TGB-24 (E2E IS-8.1) | BIND hash comparison is big-endian per RFC-0008                                | DETERMINISM   | MITIGATED         | Raw 32-byte comparison, no endianness conversion                                                                                                                                                         |
+| IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!`                                 | PROTOCOL      | MITIGATED         | Per R3-1 fix; routine filtering is silent (project policy: `tracing::warn!` reserved for security-relevant rejections)                                                                                   |
+| IA-TGB-26 (E2E IS-8.5) | BIND envelope serialization is canonical (no trailing bytes)                   | SERIALIZATION | MITIGATED         | Reuses RFC-0008 §"Serialization" with strict length validation                                                                                                                                           |
+| IA-TGB-27 (E2E IS-8.6) | Empty allowlist means "anyone in group"                                        | COMPATIBILITY | MITIGATED         | Backwards-compatible: legacy deployments work without changes                                                                                                                                            |
+| IA-TGB-28 (E2E IS-8.7) | Phone-number allowlist comparison normalizes format                            | COMPATIBILITY | MITIGATED         | Adapter normalizes `+15551234567`, `15551234567`, `5551234567` to canonical form                                                                                                                         |
+| IA-TGB-29 (E2E IS-8.8) | BIND envelope hash includes the `state` field                                  | SECURITY      | MITIGATED         | Per R1-TGB-2 fix; `state` and `renewed_at_epoch` are explicit in the hash field list                                                                                                                     |
 
 **Open assumptions:** None. All 29 (R5-1 fix — was 12; 17 added in E2E round — IA-TGB-13 through IA-TGB-29) are either MITIGATED or ACCEPTED with named Future Work references.
 
 ## Security Considerations
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| BIND replay | Medium | Nonce + epoch binding |
-| Founder squat (illegitimate first-DOT-sender) | High | UNBIND reason 0x0003; 1000-epoch cooldown |
-| DomainCoordinator key compromise | Critical | Slash (2/3 vote) + REBIND to new coordinator |
-| Slash vote forgery | High | Ed25519 signature + quorum check |
-| Multi-platform violation (2 groups same platform) | Medium | Local registry enforcement; rejection on BIND |
-| Cooldown bypass | Low | State machine enforces `UnboundQuarantined` |
-| Witness Sybil (fake witnesses) | High | Witnesses must be group members; physical-group membership is hard to forge |
-| REBIND ping-pong | Medium | 100-epoch cooldown on old group |
-| BIND from non-group-member | Medium | Adapter-level filter (envelope arrived in group) |
+| Threat                                            | Impact   | Mitigation                                                                  |
+| ------------------------------------------------- | -------- | --------------------------------------------------------------------------- |
+| BIND replay                                       | Medium   | Nonce + epoch binding                                                       |
+| Founder squat (illegitimate first-DOT-sender)     | High     | UNBIND reason 0x0003; 1000-epoch cooldown                                   |
+| DomainCoordinator key compromise                  | Critical | Slash (2/3 vote) + REBIND to new coordinator                                |
+| Slash vote forgery                                | High     | Ed25519 signature + quorum check                                            |
+| Multi-platform violation (2 groups same platform) | Medium   | Local registry enforcement; rejection on BIND                               |
+| Cooldown bypass                                   | Low      | State machine enforces `UnboundQuarantined`                                 |
+| Witness Sybil (fake witnesses)                    | High     | Witnesses must be group members; physical-group membership is hard to forge |
+| REBIND ping-pong                                  | Medium   | 100-epoch cooldown on old group                                             |
+| BIND from non-group-member                        | Medium   | Adapter-level filter (envelope arrived in group)                            |
 
 ## Adversary Analysis
 
@@ -705,20 +708,20 @@ This section defines the typed error and rejection cases for `0850p-c` operation
 
 ### Decision Table
 
-| ID | Decision | Adversary | Control | When | Blast | Defense | Severity | Status |
-|----|----------|-----------|---------|------|-------|---------|----------|--------|
-| D-TGB-1 | Implicit designator = first DOT-sender | Founder squatter | Own DOT key | First DOT in group | Single domain_id | BIND race + UNBIND 0x0003 | HIGH | MITIGATED |
-| D-TGB-2 | Explicit founder BIND | Mission creator abuse | Creator key | Mission creation | One mission | One-shot per 0855p-b v1.1 | MEDIUM | MITIGATED |
-| D-TGB-3 | BIND signature check | Impersonator | Own key | Any time | One binding | Ed25519 verify | LOW | MITIGATED |
-| D-TGB-4 | Multi-platform rule enforcement | BIND spammer | Own keys | Any time | One domain_id | Local registry rejects | MEDIUM | MITIGATED |
-| D-TGB-5 | Cooldown on UNBIND | Rapid rebinder | Own keys | After UNBIND | One domain_id | State machine enforces | LOW | MITIGATED |
-| D-TGB-6 | Slash vote (2/3) | Coordinator compromise | Coordinator key | After compromise | One domain_id | 2/3 quorum + new coordinator | CRITICAL | MITIGATED |
-| D-TGB-7 | REBIND to new group | DomainCoordinator fleeing | Coordinator key | After slash warning | One domain_id | New coordinator must be eligible | MEDIUM | MITIGATED |
-| D-TGB-8 | BIND_ACK threshold = 1 | Witness starvation | Network | After BIND | One binding | Timeout → REBIND or fall back to founder | LOW | MITIGATED |
-| D-TGB-9 | Witness membership check | Fake witness | Own key | At BIND | One binding | Adapter-level filter (envelope arrived in group) | MEDIUM | MITIGATED |
-| D-TGB-10 | DomainCoordinator trust root | Key compromise | DomainCoordinator key | Any time | One domain_id | Per-sender allowlist (0850p-a v1.15) + REBIND | HIGH | MITIGATED |
-| D-TGB-11 | REBIND atomicity | Network partition | Network | During REBIND | One domain_id | Each node enforces local atomicity | LOW | **ACCEPTED RISK** — F1 (cross-node atomicity) |
-| D-TGB-12 | Unbind reason 0x0003 (squat) cooldown | Repeated squatter | Own keys | After UNBIND | One domain_id | 1000-epoch cooldown | MEDIUM | MITIGATED |
+| ID       | Decision                               | Adversary                 | Control               | When                | Blast            | Defense                                          | Severity | Status                                        |
+| -------- | -------------------------------------- | ------------------------- | --------------------- | ------------------- | ---------------- | ------------------------------------------------ | -------- | --------------------------------------------- |
+| D-TGB-1  | Implicit designator = first DOT-sender | Founder squatter          | Own DOT key           | First DOT in group  | Single domain_id | BIND race + UNBIND 0x0003                        | HIGH     | MITIGATED                                     |
+| D-TGB-2  | Explicit founder BIND                  | Mission creator abuse     | Creator key           | Mission creation    | One mission      | One-shot per 0855p-b v1.1                        | MEDIUM   | MITIGATED                                     |
+| D-TGB-3  | BIND signature check                   | Impersonator              | Own key               | Any time            | One binding      | Ed25519 verify                                   | LOW      | MITIGATED                                     |
+| D-TGB-4  | Multi-platform rule enforcement        | BIND spammer              | Own keys              | Any time            | One domain_id    | Local registry rejects                           | MEDIUM   | MITIGATED                                     |
+| D-TGB-5  | Cooldown on UNBIND                     | Rapid rebinder            | Own keys              | After UNBIND        | One domain_id    | State machine enforces                           | LOW      | MITIGATED                                     |
+| D-TGB-6  | Slash vote (2/3)                       | Coordinator compromise    | Coordinator key       | After compromise    | One domain_id    | 2/3 quorum + new coordinator                     | CRITICAL | MITIGATED                                     |
+| D-TGB-7  | REBIND to new group                    | DomainCoordinator fleeing | Coordinator key       | After slash warning | One domain_id    | New coordinator must be eligible                 | MEDIUM   | MITIGATED                                     |
+| D-TGB-8  | BIND_ACK threshold = 1                 | Witness starvation        | Network               | After BIND          | One binding      | Timeout → REBIND or fall back to founder         | LOW      | MITIGATED                                     |
+| D-TGB-9  | Witness membership check               | Fake witness              | Own key               | At BIND             | One binding      | Adapter-level filter (envelope arrived in group) | MEDIUM   | MITIGATED                                     |
+| D-TGB-10 | DomainCoordinator trust root           | Key compromise            | DomainCoordinator key | Any time            | One domain_id    | Per-sender allowlist (0850p-a v1.15) + REBIND    | HIGH     | MITIGATED                                     |
+| D-TGB-11 | REBIND atomicity                       | Network partition         | Network               | During REBIND       | One domain_id    | Each node enforces local atomicity               | LOW      | **ACCEPTED RISK** — F1 (cross-node atomicity) |
+| D-TGB-12 | Unbind reason 0x0003 (squat) cooldown  | Repeated squatter         | Own keys              | After UNBIND        | One domain_id    | 1000-epoch cooldown                              | MEDIUM   | MITIGATED                                     |
 
 ### Multi-Round Review
 
@@ -730,16 +733,14 @@ This section defines the typed error and rejection cases for `0850p-c` operation
 
 ### Token Economics Reference
 
-| Activity | Token | Rationale |
-|----------|-------|-----------|
-| BIND issuance | OCTO-O (orchestration) | DomainCoordinator's first action |
-| BIND_ACK | OCTO-B (bandwidth) | Witness ack is small |
-| UNBIND | OCTO-O (orchestration) | Coordination-level event |
-| REBIND | OCTO-O (orchestration) | Same |
-| Cooldown timer | None | State machine, no on-chain cost |
-| Slash vote | OCTO-O (slash stake) | Per RFC-0855p-b §B (slash reason codes 0x0001-0x000B) and §"Slashing Integration" |
-
-
+| Activity       | Token                  | Rationale                                                                         |
+| -------------- | ---------------------- | --------------------------------------------------------------------------------- |
+| BIND issuance  | OCTO-O (orchestration) | DomainCoordinator's first action                                                  |
+| BIND_ACK       | OCTO-B (bandwidth)     | Witness ack is small                                                              |
+| UNBIND         | OCTO-O (orchestration) | Coordination-level event                                                          |
+| REBIND         | OCTO-O (orchestration) | Same                                                                              |
+| Cooldown timer | None                   | State machine, no on-chain cost                                                   |
+| Slash vote     | OCTO-O (slash stake)   | Per RFC-0855p-b §B (slash reason codes 0x0001-0x000B) and §"Slashing Integration" |
 
 Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For DomainCoordinator, the role-specific stake is `100 OCTO-O` per term.
 
@@ -855,14 +856,14 @@ Verify:
 
 ## Alternatives Considered
 
-| Alternative | Pros | Cons | Decision |
-|-------------|------|------|----------|
-| Always explicit founder BIND | Predictable | Most groups won't pre-coordinate; ceremony is ceremony-heavy | REJECTED — implicit designator is the default |
-| Always implicit designator | Simple | Allows squat attacks; no pre-coordination path | REJECTED — both paths needed |
-| No multi-platform rule (allow N groups per platform) | Flexible | Splits the channel; DOT envelopes may not reach all | REJECTED — multi-platform rule is needed |
-| Multi-platform rule across all platforms (1 group total) | Simple | Defeats RFC-0850 G7 Censorship Resistance | REJECTED — N platforms, 1 group per platform |
-| BIND requires 2/3 witness ack (not 1) | More secure | Slows binding; 2-member groups can't bind | REJECTED — ≥1 ACK is sufficient given adapter-level membership check |
-| DomainCoordinator election via platform-admin authority (e.g., WhatsApp group admin) | Tighter coupling | Platform-specific; doesn't work for all platforms | DEFERRED to 0855p-c |
+| Alternative                                                                          | Pros             | Cons                                                         | Decision                                                             |
+| ------------------------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| Always explicit founder BIND                                                         | Predictable      | Most groups won't pre-coordinate; ceremony is ceremony-heavy | REJECTED — implicit designator is the default                        |
+| Always implicit designator                                                           | Simple           | Allows squat attacks; no pre-coordination path               | REJECTED — both paths needed                                         |
+| No multi-platform rule (allow N groups per platform)                                 | Flexible         | Splits the channel; DOT envelopes may not reach all          | REJECTED — multi-platform rule is needed                             |
+| Multi-platform rule across all platforms (1 group total)                             | Simple           | Defeats RFC-0850 G7 Censorship Resistance                    | REJECTED — N platforms, 1 group per platform                         |
+| BIND requires 2/3 witness ack (not 1)                                                | More secure      | Slows binding; 2-member groups can't bind                    | REJECTED — ≥1 ACK is sufficient given adapter-level membership check |
+| DomainCoordinator election via platform-admin authority (e.g., WhatsApp group admin) | Tighter coupling | Platform-specific; doesn't work for all platforms            | DEFERRED to 0855p-c                                                  |
 
 ## Implementation Phases
 
@@ -900,23 +901,19 @@ Verify:
 
 ## Key Files to Modify
 
-| File | Action |
-|------|--------|
-| `crates/octo-network/src/dot/binding.rs` | New module: `GroupState`, `GroupBinding`, `BindEnvelope`, etc. |
-| `crates/octo-network/src/dot/group_registry.rs` | New module: per-node `GroupRegistry` |
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | Hook BIND on first DOT; emit on explicit founder BIND |
-| `crates/octo-adapter-matrix/src/lib.rs` | Same as WhatsApp |
-| `crates/octo-adapter-telegram/src/lib.rs` | Same |
-| `crates/octo-network/src/mon/coordinator.rs` | Integrate with `CoordinatorLifecycle` (0855p-b) |
+| File                                                        | Action                                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `crates/octo-network/src/dot/binding.rs`                    | New module: `GroupState`, `GroupBinding`, `BindEnvelope`, etc.          |
+| `crates/octo-network/src/dot/group_registry.rs`             | New module: per-node `GroupRegistry`                                    |
+| `crates/octo-adapter-whatsapp/src/adapter.rs`               | Hook BIND on first DOT; emit on explicit founder BIND                   |
+| `crates/octo-adapter-matrix/src/lib.rs`                     | Same as WhatsApp                                                        |
+| `crates/octo-adapter-telegram/src/lib.rs`                   | Same                                                                    |
+| `crates/octo-network/src/mon/coordinator.rs`                | Integrate with `CoordinatorLifecycle` (0855p-b)                         |
 | `rfcs/accepted/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §3.1 "Lifecycle States" mission formation |
 
 ## Future Work
 
-Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
-
-| ID | Title | Severity | Deadline | Spec | Mission |
-|----|-------|----------|----------|------|---------|
-| F1 | Cross-node REBIND atomicity (mitigates D-TGB-11) | LOW | Post-launch | Mission: distributed REBIND coordination across N physical groups; uses a 2-phase commit on the BIND log + tie-break by `domain_id` lex order. Fallback: 30s timeout, manual operator reconciliation. | `missions/open/0850p-c-cross-node-rebind.md` |
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/0850p-c-cross-node-rebind.md` |
 | F2 | Partial bindings (subset of group participates in mission) | LOW | Future | Mission: optional `participant_filter: Vec<PeerId>` field on the BIND envelope; the adapter filters DOT messages from non-listed peers. Useful for large public groups where only a subset is mission-relevant. | `missions/open/0850p-c-partial-bindings.md` |
 | F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch | Mission: the BIND envelope is also gossiped on the libp2p mesh (alongside platform-group delivery), so nodes not yet in the physical group can learn about the binding and request admission. | `missions/open/0850p-c-libp2p-propagation.md` |
 | F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c | (DONE — see RFC-0855p-c §"Platform-Admin Authority Check", 2026-06-16 draft) | — |
@@ -935,16 +932,17 @@ The 100-epoch / 1000-epoch cooldowns prevent rapid rebinding attacks without bei
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| Malicious DC signs invalid BIND | HIGH | DC's signature is verified against the trusted set (cross-RFC: 0855p-c); invalid BIND is rejected |
-| DC private key compromise | HIGH | Cross-platform admin attestation (0855p-c F2) detects the compromise within `MAX_ATTEST_AGE_EPOCHS`; slash via 0855p-b F3 |
-| Replay of old BIND | MEDIUM | BIND envelope includes `signed_at_epoch`; verifier rejects BINDs older than `MAX_BIND_AGE_EPOCHS` |
-| Cross-platform race condition | HIGH (mission fragmentation) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
-| Network partition during 2PC | MEDIUM | `dc-reconcile` manual operator flow after `REBIND_TIMEOUT_EPOCHS` |
-| Cross-platform witness collusion | MEDIUM | Slash reason code 0x0012 (0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in v1.0, but 0x000F conflicts with 0850p-d's `CgGroupSpam`; canonical mapping is 0x0012); reputation deprioritization (0855p-b F2) |
-| Large group bandwidth waste | LOW (operational) | Partial bindings (F2) with `participant_filter` |
-| BIND delivered before peer is in physical group | LOW (operational) | libp2p BIND gossip (F3) for pre-admission notification |
+| Threat                                          | Impact                       | Mitigation                                                                                                                                                                                                               |
+| ----------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Malicious DC signs invalid BIND                 | HIGH                         | DC's signature is verified against the trusted set (cross-RFC: 0855p-c); invalid BIND is rejected                                                                                                                        |
+| DC private key compromise                       | HIGH                         | Cross-platform admin attestation (0855p-c F2) detects the compromise within `MAX_ATTEST_AGE_EPOCHS`; slash via 0855p-b F3                                                                                                |
+| Replay of old BIND                              | MEDIUM                       | BIND envelope includes `signed_at_epoch`; verifier rejects BINDs older than `MAX_BIND_AGE_EPOCHS`                                                                                                                        |
+| Cross-platform race condition                   | HIGH (mission fragmentation) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id`                                                                                                                                                      |
+| Network partition during 2PC                    | MEDIUM                       | `dc-reconcile` manual operator flow after `REBIND_TIMEOUT_EPOCHS`                                                                                                                                                        |
+| Cross-platform witness collusion                | MEDIUM                       | Slash reason code 0x0012 (0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in v1.0, but 0x000F conflicts with 0850p-d's `CgGroupSpam`; canonical mapping is 0x0012); reputation deprioritization (0855p-b F2) |
+| Large group bandwidth waste                     | LOW (operational)            | Partial bindings (F2) with `participant_filter`                                                                                                                                                                          |
+| BIND delivered before peer is in physical group | LOW (operational)            | libp2p BIND gossip (F3) for pre-admission notification                                                                                                                                                                   |
+
 ## Related Use Cases
 
 - **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The primary use case. RFC-0850p-c is the binding layer that maps logical `domain_id`s to physical group instances on platforms (WhatsApp groups, Telegram supergroups, Matrix rooms, etc.).
@@ -963,14 +961,15 @@ RFC-0850p-c (this RFC): Transport Group Binding Ceremony
    ▼
 Missions: 0850p-c-{cross-node-rebind, partial-bindings, libp2p-propagation, cross-platform-witness}
 ```
+
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1.0 | 2026-06-16 | Initial draft |
-| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with mission stubs in `missions/open/0850p-c-f{1,2,3,5}-*.md` for the 4 unspecced items; F4 (DomainCoordinator) marked DONE (RFC-0855p-c, 2026-06-16 draft); F6 (UNBIND reason range) marked DONE (allocation in 0855p-b §B "Slash Offense Codes"). |
-| 0.1.2 | 2026-06-17 | R16 R1 fix: §B "GroupRegistry Local State" extended with `unbound_quarantine` map (R1-M7 fix: NOT a `GroupBinding.unbound_quarantined_at` field — quarantine state lives alongside bindings in GroupRegistry); §6 "Unbind Reasons" table extended with codes 0x000C-0x0012 (R1-C2 fix: 0x000C-0x000D reserved, 0x000E-0x0011 are 0850p-family slash reasons, 0x0012 is 0855p-c `CrossPlatformWitnessCollusion`); §"Adversarial Review" line 944 updated from 0x000F to 0x0012 (R1-C2 follow-up fix — the cross-platform witness collusion mitigation referenced 0x000F which conflicts with 0850p-d's `CgGroupSpam`). |
-| 0.1.3 | 2026-06-17 | R16 R3 fix: (H1) §6a "Slash reason 0x000A" (line 479) and §"Forward Compatibility" (line 761) updated from "0x000C-0xFFFF reserved" to the full canonical slash code allocation block (0x000C-0x000D reserved for non-slash mechanisms; 0x000E-0x0012 allocated; 0x0013-0xFFFF reserved for future slash reasons); (M1) §"Future Work" F6 row (line 923) updated to reflect the actual current allocation (was "UNBIND reason 0x000C-0xFFFF reserved for future governance events" which incorrectly suggested all codes in 0x000C-0xFFFF were reserved for future UNBIND use). |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.0   | 2026-06-16 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 0.1.1   | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with mission stubs in `missions/open/0850p-c-f{1,2,3,5}-*.md` for the 4 unspecced items; F4 (DomainCoordinator) marked DONE (RFC-0855p-c, 2026-06-16 draft); F6 (UNBIND reason range) marked DONE (allocation in 0855p-b §B "Slash Offense Codes").                                                                                                                                                                                                                                                                 |
+| 0.1.2   | 2026-06-17 | R16 R1 fix: §B "GroupRegistry Local State" extended with `unbound_quarantine` map (R1-M7 fix: NOT a `GroupBinding.unbound_quarantined_at` field — quarantine state lives alongside bindings in GroupRegistry); §6 "Unbind Reasons" table extended with codes 0x000C-0x0012 (R1-C2 fix: 0x000C-0x000D reserved, 0x000E-0x0011 are 0850p-family slash reasons, 0x0012 is 0855p-c `CrossPlatformWitnessCollusion`); §"Adversarial Review" line 944 updated from 0x000F to 0x0012 (R1-C2 follow-up fix — the cross-platform witness collusion mitigation referenced 0x000F which conflicts with 0850p-d's `CgGroupSpam`). |
+| 0.1.3   | 2026-06-17 | R16 R3 fix: (H1) §6a "Slash reason 0x000A" (line 479) and §"Forward Compatibility" (line 761) updated from "0x000C-0xFFFF reserved" to the full canonical slash code allocation block (0x000C-0x000D reserved for non-slash mechanisms; 0x000E-0x0012 allocated; 0x0013-0xFFFF reserved for future slash reasons); (M1) §"Future Work" F6 row (line 923) updated to reflect the actual current allocation (was "UNBIND reason 0x000C-0xFFFF reserved for future governance events" which incorrectly suggested all codes in 0x000C-0xFFFF were reserved for future UNBIND use).                                       |
 
 ## Related RFCs
 

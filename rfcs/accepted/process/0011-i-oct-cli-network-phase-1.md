@@ -38,7 +38,7 @@ RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Imp
 - **RFC-0851 §10 Gateway Cache** — `GatewayCache::iter/get` substrate
 - **RFC-0862p-a Governance Rotation** — `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window}` substrate
 - **`octo-wallet` Layer B substrate** for `identity show` local public-key read
-- **Companion mission `0011-h-s-a-local-gateway-identity-state`** — Layer B substrate for `identity show` 3 missing constructor args (`network_id`, `gateway_class`, `creation_epoch`). MUST land before Phase 1 implementation per F2 R1 finding. Mission YAML at `missions/open/0011-h-s-a-local-gateway-identity-state.md`
+- **Companion mission `0011-h-s-a-local-gateway-identity-state`** — Layer B substrate for `identity show` 3 missing constructor args (`network_id`, `gateway_class`, `creation_epoch`). MUST land before Phase 1 implementation per F2 R1 finding. Mission YAML at `missions/claimed/0011-h-s-a-local-gateway-identity-state.md`
 
 ## Design Goals
 
@@ -383,10 +383,10 @@ Per RFC-0011-i scope:
 | `crates/octo-network/src/mon/local_gateway_identity.rs`              | **NEW** (companion substrate for `identity show` — Layer B substrate additions per F2; lands BEFORE Phase 1 CLI dispatch)                                              | B          |
 | `rfcs/draft/process/0011-i-oct-cli-network-phase-1.md`               | (this RFC; R1.5 fix-sweep applied per F1 + F2 + F3)                                                                                                                    | A (spec)   |
 | `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md`        | NO CHANGE (RFC-0011-h stays Accepted; RFC-0011-i is subordinate)                                                                                                       | A (spec)   |
-| `missions/open/0011-h-s-a-local-gateway-identity-state.md`           | **NEW** (companion substrate mission; cited from this RFC per [[no-phantom-mission-pointers]]); CLAIMED → COMPLETED at companion mission closure                       | (planning) |
-| `missions/open/0011-h-network-peers-identity.md`                     | CLAIMED → COMPLETED transition at amendment closure (waits for companion substrate mission land first per substrate-first ordering)                                    | (planning) |
-| `missions/open/0011-h-network-trust-graph.md`                        | CLAIMED → COMPLETED transition at amendment closure                                                                                                                    | (planning) |
-| `missions/open/0011-h-network-governance.md`                         | CLAIMED (rotation sub-action) → archive per [[no-phantom-mission-pointers]]                                                                                            | (planning) |
+| `missions/claimed/0011-h-s-a-local-gateway-identity-state.md`        | **NEW** (companion substrate mission; cited from this RFC per [[no-phantom-mission-pointers]]); CLAIMED → COMPLETED at companion mission closure                       | (planning) |
+| `missions/archived/0011-h-network-peers-identity.md`                 | CLAIMED → COMPLETED transition at amendment closure (waits for companion substrate mission land first per substrate-first ordering)                                    | (planning) |
+| `missions/archived/0011-h-network-trust-graph.md`                    | CLAIMED → COMPLETED transition at amendment closure                                                                                                                    | (planning) |
+| `missions/archived/0011-h-network-governance.md`                     | CLAIMED (rotation sub-action) → archive per [[no-phantom-mission-pointers]]                                                                                            | (planning) |
 | `docs/audits/2026-09-20-RFC-0011-i-dry-closure.md`                   | NEW closure audit (gitignored per [[docs-audits-scratchpad]])                                                                                                          | (audit)    |
 | `~/.claude/projects/.../memory/2026-09-20-RFC-0011-i-dry-closure.md` | NEW memory card                                                                                                                                                        | (memory)   |
 | `MEMORY.md`                                                          | ADD 1-line index entry at top of session resume cards                                                                                                                  | (memory)   |

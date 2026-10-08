@@ -33,6 +33,7 @@ Specifies how a fresh CipherOcto node acquires its first peers and joins the DOT
 - RFC-0008 (Process): Deterministic AI Execution Boundary — bootstrap is not consensus-critical; Class B is sufficient (wall-clock OK for retry, but not for state)
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG — this RFC depends on 0851, 0850, 0843, 0126, 0009, 0000-template; none depend on this RFC.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0851p-a-base.md` (TBD; not yet created) will declare 0851, 0850, 0843, 0126, 0009 as prerequisites.
 > 3. RFC-0009 is "Planned" — if not Accepted by implementation, identity types MUST be inlined (see RFC-0850 §"Dependencies" precedent).
@@ -40,16 +41,16 @@ Specifies how a fresh CipherOcto node acquires its first peers and joins the DOT
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | First peer acquired in <5s (Mode A) | Wall-clock from `start_bootstrap()` to first `GatewayAdvertisement` cached |
-| G2 | DHT bootstrap works with no central trust anchor (Mode B) | First peer acquired in <60s after Kademlia walk |
-| G3 | Invite-only mode works fully offline (Mode C) | QR scan → config load → mesh join without internet bootstrap query |
-| G4 | No single bootstrap node can eclipse a new node | First 3 bootstrap responses must agree on ≥80% of peer list |
-| G5 | DNS / IP hijack of one bootstrap node is detectable | At least 2 of N initial bootstrap responses must validate against signed seed list |
-| G6 | Bootstrap is replay-safe | All bootstrap envelopes include nonce + epoch; cached responses expire after 1 epoch |
-| G7 | Seed list is rotatable via governance | New signed seed list accepted with ≥2/3 stake-weighted vote (or operator push) |
-| G8 | All state transitions are RFC-0008 Class A except retry timing (Class B) | State machine is deterministic; retry backoff is RFC-0008 Class B (wall-clock OK) |
+| Goal | Target                                                                   | Metric                                                                               |
+| ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| G1   | First peer acquired in <5s (Mode A)                                      | Wall-clock from `start_bootstrap()` to first `GatewayAdvertisement` cached           |
+| G2   | DHT bootstrap works with no central trust anchor (Mode B)                | First peer acquired in <60s after Kademlia walk                                      |
+| G3   | Invite-only mode works fully offline (Mode C)                            | QR scan → config load → mesh join without internet bootstrap query                   |
+| G4   | No single bootstrap node can eclipse a new node                          | First 3 bootstrap responses must agree on ≥80% of peer list                          |
+| G5   | DNS / IP hijack of one bootstrap node is detectable                      | At least 2 of N initial bootstrap responses must validate against signed seed list   |
+| G6   | Bootstrap is replay-safe                                                 | All bootstrap envelopes include nonce + epoch; cached responses expire after 1 epoch |
+| G7   | Seed list is rotatable via governance                                    | New signed seed list accepted with ≥2/3 stake-weighted vote (or operator push)       |
+| G8   | All state transitions are RFC-0008 Class A except retry timing (Class B) | State machine is deterministic; retry backoff is RFC-0008 Class B (wall-clock OK)    |
 
 ## Motivation
 
@@ -123,13 +124,13 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 
 ### Role/Authority Coverage Table
 
-| Role | Authority | Lifecycle | Revocable by | Cross-RFC |
-|------|-----------|-----------|--------------|-----------|
-| Bootstrap Node | `bootstrap_serve` | Yes (4 states) | Governance / Self | 0851 §M-GDP-3 |
-| Bootstrapping Node | `bootstrap_request` | Yes (5 states) | Self | 0851 §M-GDP-3 |
+| Role                | Authority             | Lifecycle                 | Revocable by       | Cross-RFC                                                                     |
+| ------------------- | --------------------- | ------------------------- | ------------------ | ----------------------------------------------------------------------------- |
+| Bootstrap Node      | `bootstrap_serve`     | Yes (4 states)            | Governance / Self  | 0851 §M-GDP-3                                                                 |
+| Bootstrapping Node  | `bootstrap_request`   | Yes (5 states)            | Self               | 0851 §M-GDP-3                                                                 |
 | Seed List Authority | `seed_list_authority` | Out of scope (governance) | Governance (slash) | 0855 §11.1 "Governance Flexibility" (Dao model) + §11.2 "Governance Policies" |
-| Inviter | `invite_issue` | One-shot (no state) | Self / Governance | New in this RFC |
-| DHT Walker | `dht_walk` | Passive | N/A | RFC-0843 |
+| Inviter             | `invite_issue`        | One-shot (no state)       | Self / Governance  | New in this RFC                                                               |
+| DHT Walker          | `dht_walk`            | Passive                   | N/A                | RFC-0843                                                                      |
 
 ## Specification
 
@@ -193,13 +194,13 @@ struct SeedList {
 
 **Default seed list at launch (R3-10 fix — `effective_epoch` and `expires_epoch` added):**
 
-| Operator label | Region | Capabilities | Last seen (launch) | Signed at (epoch) | Effective epoch | Expires epoch |
-|----------------|--------|--------------|---------------------|---------------------|------------------|----------------|
-| foundation-1 | us-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
-| foundation-2 | eu-west | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
-| foundation-3 | ap-south | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
-| foundation-4 | sa-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
-| foundation-5 | ap-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
+| Operator label | Region   | Capabilities  | Last seen (launch) | Signed at (epoch) | Effective epoch | Expires epoch |
+| -------------- | -------- | ------------- | ------------------ | ----------------- | --------------- | ------------- |
+| foundation-1   | us-east  | Full (0x0FFF) | 0                  | 0                 | 0               | 7,776,000     |
+| foundation-2   | eu-west  | Full (0x0FFF) | 0                  | 0                 | 0               | 7,776,000     |
+| foundation-3   | ap-south | Full (0x0FFF) | 0                  | 0                 | 0               | 7,776,000     |
+| foundation-4   | sa-east  | Full (0x0FFF) | 0                  | 0                 | 0               | 7,776,000     |
+| foundation-5   | ap-east  | Full (0x0FFF) | 0                  | 0                 | 0               | 7,776,000     |
 
 Five geographically diverse bootstrap nodes. New nodes connect to all 5 in parallel and require ≥3 responses to agree on peer list (Sybil defense, see §6 "Sybil / Eclipse Defense").
 
@@ -296,18 +297,18 @@ sequenceDiagram
 
 **State transitions:**
 
-| From | To | Trigger | Deterministic? |
-|------|----|---------|----------------|
-| Init | Connecting | SeedList loaded and verified | Yes (deterministic from disk) |
-| Connecting | Validating | ≥3 BOOTSTRAP_RESP received with valid signatures | Yes |
-| Connecting | Connecting (retry) | <3 responses within `BOOTSTRAP_TIMEOUT_SECS` | No (retry backoff is RFC-0008 Class B) |
-| Connecting | FallbackB | All 5 bootstrap nodes timed out | Yes (timeout is deterministic) |
-| Validating | Cached | ≥80% peer-list intersection across ≥3 responses | Yes |
-| Validating | FallbackB | <80% intersection (Sybil detected) | Yes |
-| Validating | FallbackC | User has invite file | No (user action) |
-| Cached | Done | Advertisements merged into local GatewayCache | Yes |
-| Cached | FallbackB | Merge fails (e.g., invalid advertisement) | Yes |
-| Done | (terminal) | Hand off to GDP §M-GDP-3 | Yes |
+| From       | To                 | Trigger                                          | Deterministic?                         |
+| ---------- | ------------------ | ------------------------------------------------ | -------------------------------------- |
+| Init       | Connecting         | SeedList loaded and verified                     | Yes (deterministic from disk)          |
+| Connecting | Validating         | ≥3 BOOTSTRAP_RESP received with valid signatures | Yes                                    |
+| Connecting | Connecting (retry) | <3 responses within `BOOTSTRAP_TIMEOUT_SECS`     | No (retry backoff is RFC-0008 Class B) |
+| Connecting | FallbackB          | All 5 bootstrap nodes timed out                  | Yes (timeout is deterministic)         |
+| Validating | Cached             | ≥80% peer-list intersection across ≥3 responses  | Yes                                    |
+| Validating | FallbackB          | <80% intersection (Sybil detected)               | Yes                                    |
+| Validating | FallbackC          | User has invite file                             | No (user action)                       |
+| Cached     | Done               | Advertisements merged into local GatewayCache    | Yes                                    |
+| Cached     | FallbackB          | Merge fails (e.g., invalid advertisement)        | Yes                                    |
+| Done       | (terminal)         | Hand off to GDP §M-GDP-3                         | Yes                                    |
 
 **Retry policy (RFC-0008 Class B):** exponential backoff 1s, 2s, 4s, 8s, 16s, max 60s; give up after 5 attempts and transition to FallbackB.
 
@@ -356,13 +357,13 @@ octo://invite?v=1&bootstrap=https://node1.cipherocto.net:443,https://node2.ciphe
 
 A malicious or compromised set of bootstrap nodes could collude to feed the new node a poisoned peer list (eclipse attack). Defenses:
 
-| Defense | Mechanism | Effectiveness |
-|---------|-----------|---------------|
-| **Diverse seed list** | Default 5 geographically diverse bootstrap nodes | Defeats single-region attacker |
-| **Intersection requirement** | ≥80% of returned peer lists must agree | Defeats minority Sybil |
-| **Out-of-band trust** | Trust scores from RFC-0860 weight peer list entries | Defeats low-reputation attacker |
-| **DHT cross-check** | Mode B can verify Mode A results | Defeats Mode A-only attacker |
-| **Genesis checkpoint** | New node can fetch signed checkpoint from CipherOcto website | Defeats persistent attacker (last resort) |
+| Defense                      | Mechanism                                                    | Effectiveness                             |
+| ---------------------------- | ------------------------------------------------------------ | ----------------------------------------- |
+| **Diverse seed list**        | Default 5 geographically diverse bootstrap nodes             | Defeats single-region attacker            |
+| **Intersection requirement** | ≥80% of returned peer lists must agree                       | Defeats minority Sybil                    |
+| **Out-of-band trust**        | Trust scores from RFC-0860 weight peer list entries          | Defeats low-reputation attacker           |
+| **DHT cross-check**          | Mode B can verify Mode A results                             | Defeats Mode A-only attacker              |
+| **Genesis checkpoint**       | New node can fetch signed checkpoint from CipherOcto website | Defeats persistent attacker (last resort) |
 
 **Sybil threshold:** with 5 bootstrap nodes and 80% intersection, an attacker must control ≥3 of 5 to eclipse. This is acceptable for bootstrap, given that the attacker also needs to compromise the SeedListAuthority signing key. **Documented as ACCEPTED RISK with deadline.**
 
@@ -370,15 +371,15 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 
 ### 7. Failure Modes
 
-| Failure | Detection | Response |
-|---------|-----------|----------|
-| All 5 bootstrap nodes unreachable | Timeout (60s) | Fall back to Mode B (DHT) |
-| Mode A returns <80% intersection | Intersection check | Fall back to Mode B |
-| Mode B DHT walk finds no peers | 60s timeout | Fall back to Mode C (invite) or abort with clear error |
-| Mode C invite signature invalid | Signature check | Reject, stay in Init |
-| Signed seed list version < local version | Version check | Accept and use newer (governance rotation) |
-| Signed seed list version > local version | Version check | Accept and update local (governance rotation) |
-| Multiple valid seed lists (split) | Authority signature check | Reject both, log error, use cached |
+| Failure                                  | Detection                 | Response                                               |
+| ---------------------------------------- | ------------------------- | ------------------------------------------------------ |
+| All 5 bootstrap nodes unreachable        | Timeout (60s)             | Fall back to Mode B (DHT)                              |
+| Mode A returns <80% intersection         | Intersection check        | Fall back to Mode B                                    |
+| Mode B DHT walk finds no peers           | 60s timeout               | Fall back to Mode C (invite) or abort with clear error |
+| Mode C invite signature invalid          | Signature check           | Reject, stay in Init                                   |
+| Signed seed list version < local version | Version check             | Accept and use newer (governance rotation)             |
+| Signed seed list version > local version | Version check             | Accept and update local (governance rotation)          |
+| Multiple valid seed lists (split)        | Authority signature check | Reject both, log error, use cached                     |
 
 **Mode A → Mode B trigger (E2E IS-2.1 fix):** the fallback fires when fewer than `MIN_BOOTSTRAP_RESPONSES` (3) responses are received within `BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT` (90 epochs). The "All 5 timed out" row above is the degenerate case; the general rule is the 3-of-5 Sybil defense threshold. If exactly 2 of 5 respond, the node accepts the 2-of-5 case as a **low-confidence bootstrap** (per IS-2.5 / §"Sybil / Eclipse Defense" above) and does NOT fall back to Mode B; only 0-of-5 or 1-of-5 triggers the Mode B fallback.
 
@@ -395,41 +396,40 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 
 ### 9. RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| State machine transitions | A | Deterministic given input |
-| Seed list signature verification | A | Cryptographic, deterministic |
-| BOOTSTRAP_REQ/RESP signature verify | A | Same |
-| Peer list intersection (BLAKE3) | A | Deterministic |
-| Retry backoff timing | B | Wall-clock acceptable for non-consensus |
-| Timeout (60s) | B | Same |
-| Mode selection (A → B → C) | A | Deterministic order |
+| Operation                           | Class | Rationale                               |
+| ----------------------------------- | ----- | --------------------------------------- |
+| State machine transitions           | A     | Deterministic given input               |
+| Seed list signature verification    | A     | Cryptographic, deterministic            |
+| BOOTSTRAP_REQ/RESP signature verify | A     | Same                                    |
+| Peer list intersection (BLAKE3)     | A     | Deterministic                           |
+| Retry backoff timing                | B     | Wall-clock acceptable for non-consensus |
+| Timeout (60s)                       | B     | Same                                    |
+| Mode selection (A → B → C)          | A     | Deterministic order                     |
 
 ### 10. Error Handling
 
 This section defines typed error and recovery paths for `0851p-a` operations. Bootstrap failures must always surface to the operator (not silently retry forever) and must transition through well-defined state machine states.
 
-| Error case | Trigger | Recovery | Reference |
-|-----------|---------|----------|-----------|
-| `BootstrapError::NoSeeds` | `LocalSeedList` is empty (e.g., fresh install with no Mode C invite) | Operator must add seeds manually or scan invite QR; surface user-facing error | Mode A pre-condition |
-| `BootstrapError::StaleSeed` | Seed's `expires_epoch` is < `current_epoch - MAX_SEED_AGE_EPOCHS` | Drop seed from local list; do not add to `LocalSeedList`; do not propagate | Mode A, F3 mission `0851p-a-seed-health-check` |
-| `BootstrapError::StaleList` | All seeds in `LocalSeedList` are stale | Refuse to start; emit `SEED_LIST_FULLY_STALE` metric; do not enter Mode A | F3 |
-| `BootstrapError::SeedListUnreachable` | Mode A bootstrap node refuses connection / times out after 60s | Fall back to Mode B (DHT) | §4 "Mode B — DHT Fallback" |
-| `BootstrapError::InvalidSignature` | Seed list envelope signature does not verify against the canonical `SeedListAuthority` pubkey | Reject the entire list; do not load; emit `SEED_LIST_SIG_FAIL` | Mode A |
-| `BootstrapError::IntersectionBelowThreshold` | Mode A peer-list intersection check returns <80% | Fall back to Mode B; tag the Mode A result as `bootstrap_confidence: Low` | §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix) |
-| `BootstrapError::SlashedSeed` | Seed's pubkey is in the local slash blacklist (slash reason 0x000D) | Reject silently; do not add to `LocalSeedList`; emit `SEED_SLASHED` metric | F6 mission `0851p-a-bootstrap-slashing` |
-| `BootstrapError::DhtWalkFailed` | Mode B Kademlia walk finds no peers within 60s | Fall back to Mode C (invite) or surface `BootstrapFailed` | §5 "Mode C — Invite Link" |
-| `BootstrapError::InviteSignatureInvalid` | Mode C invite's signature does not verify | Reject; stay in `Init`; surface user-facing error | Mode C |
-| `BootstrapError::AllModesFailed` | All 3 modes fail (Mode A timeout AND Mode B no-peers AND Mode C no-invite) | Transition to `BootstrapFailed`; surface user-facing error; retry with exponential backoff `60, 120, 240, ...` epochs capped at 3600; **infinite retries** (a node that can't bootstrap is useless) | §7 "Failure Modes" (E2E IS-2.4 fix) |
-| `BootstrapError::SeedHealthAlert` | >20% of seeds are stale | Log `WARN`; emit metric `seed_stale_ratio`; start anyway (configurable) | F3 |
-| `BootstrapError::TorPathUnreachable` | `bootstrap_mode = TorOnly` and Tor circuit cannot be established | Fall back to Mode A (Direct); if `bootstrap_mode = TorWithIpFallback` configured, use IP fallback; otherwise surface `BootstrapFailed` | F2 mission `0851p-a-tor-seed-list` |
+| Error case                                   | Trigger                                                                                       | Recovery                                                                                                                                                                                            | Reference                                      |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `BootstrapError::NoSeeds`                    | `LocalSeedList` is empty (e.g., fresh install with no Mode C invite)                          | Operator must add seeds manually or scan invite QR; surface user-facing error                                                                                                                       | Mode A pre-condition                           |
+| `BootstrapError::StaleSeed`                  | Seed's `expires_epoch` is < `current_epoch - MAX_SEED_AGE_EPOCHS`                             | Drop seed from local list; do not add to `LocalSeedList`; do not propagate                                                                                                                          | Mode A, F3 mission `0851p-a-seed-health-check` |
+| `BootstrapError::StaleList`                  | All seeds in `LocalSeedList` are stale                                                        | Refuse to start; emit `SEED_LIST_FULLY_STALE` metric; do not enter Mode A                                                                                                                           | F3                                             |
+| `BootstrapError::SeedListUnreachable`        | Mode A bootstrap node refuses connection / times out after 60s                                | Fall back to Mode B (DHT)                                                                                                                                                                           | §4 "Mode B — DHT Fallback"                     |
+| `BootstrapError::InvalidSignature`           | Seed list envelope signature does not verify against the canonical `SeedListAuthority` pubkey | Reject the entire list; do not load; emit `SEED_LIST_SIG_FAIL`                                                                                                                                      | Mode A                                         |
+| `BootstrapError::IntersectionBelowThreshold` | Mode A peer-list intersection check returns <80%                                              | Fall back to Mode B; tag the Mode A result as `bootstrap_confidence: Low`                                                                                                                           | §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix)  |
+| `BootstrapError::SlashedSeed`                | Seed's pubkey is in the local slash blacklist (slash reason 0x000D)                           | Reject silently; do not add to `LocalSeedList`; emit `SEED_SLASHED` metric                                                                                                                          | F6 mission `0851p-a-bootstrap-slashing`        |
+| `BootstrapError::DhtWalkFailed`              | Mode B Kademlia walk finds no peers within 60s                                                | Fall back to Mode C (invite) or surface `BootstrapFailed`                                                                                                                                           | §5 "Mode C — Invite Link"                      |
+| `BootstrapError::InviteSignatureInvalid`     | Mode C invite's signature does not verify                                                     | Reject; stay in `Init`; surface user-facing error                                                                                                                                                   | Mode C                                         |
+| `BootstrapError::AllModesFailed`             | All 3 modes fail (Mode A timeout AND Mode B no-peers AND Mode C no-invite)                    | Transition to `BootstrapFailed`; surface user-facing error; retry with exponential backoff `60, 120, 240, ...` epochs capped at 3600; **infinite retries** (a node that can't bootstrap is useless) | §7 "Failure Modes" (E2E IS-2.4 fix)            |
+| `BootstrapError::SeedHealthAlert`            | >20% of seeds are stale                                                                       | Log `WARN`; emit metric `seed_stale_ratio`; start anyway (configurable)                                                                                                                             | F3                                             |
+| `BootstrapError::TorPathUnreachable`         | `bootstrap_mode = TorOnly` and Tor circuit cannot be established                              | Fall back to Mode A (Direct); if `bootstrap_mode = TorWithIpFallback` configured, use IP fallback; otherwise surface `BootstrapFailed`                                                              | F2 mission `0851p-a-tor-seed-list`             |
 
 **Notes:**
 
 - All error variants are typed (`thiserror`-derived `BootstrapError` enum); no stringly-typed errors.
 - Mode D (NIP-05 / Nostr) error handling is specified in mission `0851p-a-nostr-mode-d.md` (F5, future work, post-launch).
 - Slash reason code `0x000D` (`bootstrap_node_misbehavior`) is allocated in RFC-0855p-b §B; this RFC uses it for F6.
-
 
 ## Lifecycle Requirements
 
@@ -453,14 +453,14 @@ enum BootstrapNodeLifecycle {
 
 **Transitions:**
 
-| From | To | Trigger | Authority |
-|------|----|---------|-----------|
-| Registered | Active | SeedListAuthority sees ≥1 successful BOOTSTRAP_REQ/RESP | SeedListAuthority |
-| Active | Suspect | No heartbeats for 3 epochs | Automatic (deterministic) |
-| Suspect | Active | Heartbeat resumed | Automatic |
-| Suspect | Revoked | 30 epochs in Suspect without recovery | SeedListAuthority (governance) |
-| Active | Revoked | Slash by governance | Slashing Adjudicator |
-| Revoked | (terminal) | New entry supersedes | N/A |
+| From       | To         | Trigger                                                 | Authority                      |
+| ---------- | ---------- | ------------------------------------------------------- | ------------------------------ |
+| Registered | Active     | SeedListAuthority sees ≥1 successful BOOTSTRAP_REQ/RESP | SeedListAuthority              |
+| Active     | Suspect    | No heartbeats for 3 epochs                              | Automatic (deterministic)      |
+| Suspect    | Active     | Heartbeat resumed                                       | Automatic                      |
+| Suspect    | Revoked    | 30 epochs in Suspect without recovery                   | SeedListAuthority (governance) |
+| Active     | Revoked    | Slash by governance                                     | Slashing Adjudicator           |
+| Revoked    | (terminal) | New entry supersedes                                    | N/A                            |
 
 ### 2. BootstrapClientLifecycle (client-side)
 
@@ -488,53 +488,53 @@ enum BootstrapClientLifecycle {
 
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Mode A first peer (warm cache) | <2s |
-| Mode A first peer (cold cache) | <5s |
-| Mode B DHT walk | <60s |
-| Mode C invite parse | <100ms |
-| Seed list verify (5 entries) | <10ms |
-| BOOTSTRAP_REQ/RESP round-trip | <500ms |
-| Peer list intersection (256 entries) | <1ms |
-| Failure detection timeout | 60s |
+| Metric                               | Target |
+| ------------------------------------ | ------ |
+| Mode A first peer (warm cache)       | <2s    |
+| Mode A first peer (cold cache)       | <5s    |
+| Mode B DHT walk                      | <60s   |
+| Mode C invite parse                  | <100ms |
+| Seed list verify (5 entries)         | <10ms  |
+| BOOTSTRAP_REQ/RESP round-trip        | <500ms |
+| Peer list intersection (256 entries) | <1ms   |
+| Failure detection timeout            | 60s    |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption MUST be named, classified, and either validated at runtime, mitigated in code, or accepted with deadline + Future Work.
 
-| # | Assumption | Type | Status | Mitigation / Deadline |
-|---|-----------|------|--------|----------------------|
-| IA-NB-1 | SeedListAuthority is honest | TRUST | **ACCEPTED RISK** | Multi-sig foundation key at launch; DAO vote post-launch. Deadline: post-launch F1 (SeedListAuthority decentralization). |
-| IA-NB-2 | 5 bootstrap nodes is sufficient for Sybil resistance | SCALE | MITIGATED | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as MITIGATED with 5-of-5 trust assumption in 0851 §11 "Anti-Sybil Mechanisms". |
-| IA-NB-3 | DNS resolution is honest | TRUST | **ACCEPTED RISK** | Use Tor onion or I2P addresses for at least 2 of 5 bootstrap nodes. Deadline: F2 (Tor-only seed list). |
-| IA-NB-4 | TCP/TLS to bootstrap node is not censored | TRUST | **ACCEPTED RISK** | Mode C invite works without internet. Mode B DHT works over non-TCP transports (WebSocket, etc.) per RFC-0843. |
-| IA-NB-5 | Ed25519 is collision-resistant | CRYPTO | MITIGATED | Standard assumption; BLAKE3-256 of public key is the node_id. |
-| IA-NB-6 | Epoch is synchronized across nodes | TIME | MITIGATED | RFC-0850 §5 "Logical Timestamp Model" defines the epoch as a monotonic `u64` counter; nodes within ±1 epoch are acceptable. |
-| IA-NB-7 | Inviter is trustworthy (Mode C) | TRUST | **ACCEPTED RISK** | Web-of-trust depth 1, max 3 hops. User trusts inviter. Documented in §5 "Mode C — Invite Link (Offline)". |
-| IA-NB-8 | Kademlia DHT is functional (Mode B) | PROTOCOL | MITIGATED | RFC-0843 is battle-tested; if Kademlia fails, Mode C is the fallback. |
-| IA-NB-9 | 256-peer initial list is enough to grow | SCALE | MITIGATED | Once bootstrapped, GDP §M-GDP-3 DiscoveryLifecycle::Bootstrap → Expansion handles growth. |
-| IA-NB-10 | Seed list version monotonicity is preserved | PROTOCOL | MITIGATED | Effective_epoch < expires_epoch invariant enforced at signature verify. |
-| IA-NB-11 | Public addresses in seed list are routable | NETWORK | **MISSING CHECK** | No validation that `public_addrs` are actually reachable until first BOOTSTRAP_REQ. Add health check at seed list load (F3). |
-| IA-NB-12 | At least one node is reachable in any region | NETWORK | **ACCEPTED RISK** | Geographic diversity; documented in §1 "BootstrapNode Registry" default table. |
-| IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR | MITIGATED | Specified in §7 "Failure Modes" (E2E IS-2.4 fix) |
-| IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence | SECURITY | MITIGATED | Specified in §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix) |
+| #        | Assumption                                                            | Type     | Status            | Mitigation / Deadline                                                                                                                                            |
+| -------- | --------------------------------------------------------------------- | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IA-NB-1  | SeedListAuthority is honest                                           | TRUST    | **ACCEPTED RISK** | Multi-sig foundation key at launch; DAO vote post-launch. Deadline: post-launch F1 (SeedListAuthority decentralization).                                         |
+| IA-NB-2  | 5 bootstrap nodes is sufficient for Sybil resistance                  | SCALE    | MITIGATED         | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as MITIGATED with 5-of-5 trust assumption in 0851 §11 "Anti-Sybil Mechanisms". |
+| IA-NB-3  | DNS resolution is honest                                              | TRUST    | **ACCEPTED RISK** | Use Tor onion or I2P addresses for at least 2 of 5 bootstrap nodes. Deadline: F2 (Tor-only seed list).                                                           |
+| IA-NB-4  | TCP/TLS to bootstrap node is not censored                             | TRUST    | **ACCEPTED RISK** | Mode C invite works without internet. Mode B DHT works over non-TCP transports (WebSocket, etc.) per RFC-0843.                                                   |
+| IA-NB-5  | Ed25519 is collision-resistant                                        | CRYPTO   | MITIGATED         | Standard assumption; BLAKE3-256 of public key is the node_id.                                                                                                    |
+| IA-NB-6  | Epoch is synchronized across nodes                                    | TIME     | MITIGATED         | RFC-0850 §5 "Logical Timestamp Model" defines the epoch as a monotonic `u64` counter; nodes within ±1 epoch are acceptable.                                      |
+| IA-NB-7  | Inviter is trustworthy (Mode C)                                       | TRUST    | **ACCEPTED RISK** | Web-of-trust depth 1, max 3 hops. User trusts inviter. Documented in §5 "Mode C — Invite Link (Offline)".                                                        |
+| IA-NB-8  | Kademlia DHT is functional (Mode B)                                   | PROTOCOL | MITIGATED         | RFC-0843 is battle-tested; if Kademlia fails, Mode C is the fallback.                                                                                            |
+| IA-NB-9  | 256-peer initial list is enough to grow                               | SCALE    | MITIGATED         | Once bootstrapped, GDP §M-GDP-3 DiscoveryLifecycle::Bootstrap → Expansion handles growth.                                                                        |
+| IA-NB-10 | Seed list version monotonicity is preserved                           | PROTOCOL | MITIGATED         | Effective_epoch < expires_epoch invariant enforced at signature verify.                                                                                          |
+| IA-NB-11 | Public addresses in seed list are routable                            | NETWORK  | **MISSING CHECK** | No validation that `public_addrs` are actually reachable until first BOOTSTRAP_REQ. Add health check at seed list load (F3).                                     |
+| IA-NB-12 | At least one node is reachable in any region                          | NETWORK  | **ACCEPTED RISK** | Geographic diversity; documented in §1 "BootstrapNode Registry" default table.                                                                                   |
+| IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR    | MITIGATED         | Specified in §7 "Failure Modes" (E2E IS-2.4 fix)                                                                                                                 |
+| IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence                 | SECURITY | MITIGATED         | Specified in §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix)                                                                                                       |
 
 **Open assumption:** IA-NB-11 (seed list health check at load) is **MISSING** — flagged for implementation F3.
 
 ## Security Considerations
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Bootstrap node compromise | High | Multi-node intersection + trust scores |
-| DNS hijack of one bootstrap node | Medium | 5 geographically diverse; ≥3 required |
-| BGP hijack | Medium | Same; cross-check via DHT |
-| Eclipse attack (3-of-5 Sybil) | Critical | Trust scores + DHT cross-check + Mode C |
-| Replay of BOOTSTRAP_RESP | Medium | Nonce binding + epoch |
-| Spam BOOTSTRAP_REQ | Low | Rate limit per IP; signed requests |
-| Invite forgery | High | Ed25519 signature + web-of-trust |
-| Stale seed list | Low | expires_epoch enforced |
-| Censorship of bootstrap nodes | Medium | Tor/I2P addresses; Mode B DHT |
+| Threat                           | Impact   | Mitigation                              |
+| -------------------------------- | -------- | --------------------------------------- |
+| Bootstrap node compromise        | High     | Multi-node intersection + trust scores  |
+| DNS hijack of one bootstrap node | Medium   | 5 geographically diverse; ≥3 required   |
+| BGP hijack                       | Medium   | Same; cross-check via DHT               |
+| Eclipse attack (3-of-5 Sybil)    | Critical | Trust scores + DHT cross-check + Mode C |
+| Replay of BOOTSTRAP_RESP         | Medium   | Nonce binding + epoch                   |
+| Spam BOOTSTRAP_REQ               | Low      | Rate limit per IP; signed requests      |
+| Invite forgery                   | High     | Ed25519 signature + web-of-trust        |
+| Stale seed list                  | Low      | expires_epoch enforced                  |
+| Censorship of bootstrap nodes    | Medium   | Tor/I2P addresses; Mode B DHT           |
 
 ## Adversary Analysis
 
@@ -542,19 +542,19 @@ enum BootstrapClientLifecycle {
 
 ### Decision Table
 
-| ID | Decision | Adversary | Control | When | Blast | Defense | Severity | Status |
-|----|----------|-----------|---------|------|-------|---------|----------|--------|
-| D-NB-1 | Default to 5 bootstrap nodes | Foundation attacker | SeedListAuthority key | Genesis | All new nodes | Multi-sig foundation; DAO post-launch | HIGH | **ACCEPTED RISK** — F1 deadline |
-| D-NB-2 | 80% peer list intersection | Eclipse attacker (3-of-5 Sybil) | 3 of 5 bootstrap nodes | First 60s | Single new node | Trust scores + DHT cross-check | MEDIUM | MITIGATED |
-| D-NB-3 | Mode B DHT fallback | DHT Sybil | DHT region | First 60s after Mode A fails | Single new node | Signed peer-list records | MEDIUM | MITIGATED |
-| D-NB-4 | Mode C invite via web-of-trust | Malicious inviter | Inviter's key | At invite scan | Single new node | Signature + web-of-trust | MEDIUM | **ACCEPTED RISK** — Mode C is trust-transfer |
-| D-NB-5 | 256-peer initial cap | Eclipse attacker | Multiple nodes | First 60s | Single new node | Subsequent GDP growth uncaps | LOW | MITIGATED |
-| D-NB-6 | 60s bootstrap timeout | Network censor | Network path | First 60s | Single new node | Mode C invite works offline | LOW | MITIGATED |
-| D-NB-7 | 5 attempts max | DoS attacker | Own network | First 60s | Single new node | Exponential backoff; clear abort | LOW | MITIGATED |
-| D-NB-8 | Signed seed list version | Stale-seed attacker | Stale key | Days after rotation | New nodes | Version check; trust-score trust | MEDIUM | MITIGATED |
-| D-NB-9 | Inviter web-of-trust depth 3 | Multi-hop social attacker | 3 keys | At invite | Single new node | Web-of-trust is a UX problem, not just protocol | MEDIUM | **ACCEPTED RISK** — F4 (trust UX) |
-| D-NB-10 | BOOTSTRAP_REQ signed | Impersonation attacker | Own key | Any time | Single new node | Ed25519 verify | LOW | MITIGATED |
-| D-NB-11 | SeedListAuthority multi-sig | Foundation attacker | Foundation key | Any time | All new nodes | Multi-sig (3-of-5) post-launch | HIGH | **ACCEPTED RISK** — F1 |
+| ID      | Decision                       | Adversary                       | Control                | When                         | Blast           | Defense                                         | Severity | Status                                       |
+| ------- | ------------------------------ | ------------------------------- | ---------------------- | ---------------------------- | --------------- | ----------------------------------------------- | -------- | -------------------------------------------- |
+| D-NB-1  | Default to 5 bootstrap nodes   | Foundation attacker             | SeedListAuthority key  | Genesis                      | All new nodes   | Multi-sig foundation; DAO post-launch           | HIGH     | **ACCEPTED RISK** — F1 deadline              |
+| D-NB-2  | 80% peer list intersection     | Eclipse attacker (3-of-5 Sybil) | 3 of 5 bootstrap nodes | First 60s                    | Single new node | Trust scores + DHT cross-check                  | MEDIUM   | MITIGATED                                    |
+| D-NB-3  | Mode B DHT fallback            | DHT Sybil                       | DHT region             | First 60s after Mode A fails | Single new node | Signed peer-list records                        | MEDIUM   | MITIGATED                                    |
+| D-NB-4  | Mode C invite via web-of-trust | Malicious inviter               | Inviter's key          | At invite scan               | Single new node | Signature + web-of-trust                        | MEDIUM   | **ACCEPTED RISK** — Mode C is trust-transfer |
+| D-NB-5  | 256-peer initial cap           | Eclipse attacker                | Multiple nodes         | First 60s                    | Single new node | Subsequent GDP growth uncaps                    | LOW      | MITIGATED                                    |
+| D-NB-6  | 60s bootstrap timeout          | Network censor                  | Network path           | First 60s                    | Single new node | Mode C invite works offline                     | LOW      | MITIGATED                                    |
+| D-NB-7  | 5 attempts max                 | DoS attacker                    | Own network            | First 60s                    | Single new node | Exponential backoff; clear abort                | LOW      | MITIGATED                                    |
+| D-NB-8  | Signed seed list version       | Stale-seed attacker             | Stale key              | Days after rotation          | New nodes       | Version check; trust-score trust                | MEDIUM   | MITIGATED                                    |
+| D-NB-9  | Inviter web-of-trust depth 3   | Multi-hop social attacker       | 3 keys                 | At invite                    | Single new node | Web-of-trust is a UX problem, not just protocol | MEDIUM   | **ACCEPTED RISK** — F4 (trust UX)            |
+| D-NB-10 | BOOTSTRAP_REQ signed           | Impersonation attacker          | Own key                | Any time                     | Single new node | Ed25519 verify                                  | LOW      | MITIGATED                                    |
+| D-NB-11 | SeedListAuthority multi-sig    | Foundation attacker             | Foundation key         | Any time                     | All new nodes   | Multi-sig (3-of-5) post-launch                  | HIGH     | **ACCEPTED RISK** — F1                       |
 
 ### Multi-Round Review
 
@@ -566,14 +566,12 @@ enum BootstrapClientLifecycle {
 
 ### Token Economics Reference
 
-| Activity | Token | Rationale |
-|----------|-------|-----------|
-| Bootstrap node operation | OCTO-N (node uptime) | Bootstrap nodes are long-lived gateways |
-| BOOTSTRAP_REQ/RESP relay | OCTO-B (bandwidth) | Small envelopes, low bandwidth cost |
-| Seed list signing | OCTO-O (orchestration) | SeedListAuthority is governance-level |
-| Inviter vouching | None | Off-chain social trust; no on-chain cost |
-
-
+| Activity                 | Token                  | Rationale                                |
+| ------------------------ | ---------------------- | ---------------------------------------- |
+| Bootstrap node operation | OCTO-N (node uptime)   | Bootstrap nodes are long-lived gateways  |
+| BOOTSTRAP_REQ/RESP relay | OCTO-B (bandwidth)     | Small envelopes, low bandwidth cost      |
+| Seed list signing        | OCTO-O (orchestration) | SeedListAuthority is governance-level    |
+| Inviter vouching         | None                   | Off-chain social trust; no on-chain cost |
 
 Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For Bootstrap Node Operator, the role-specific stake is `100 OCTO-O` per term.
 
@@ -660,14 +658,14 @@ Verify: bootstrap nodes NOT loaded
 
 ## Alternatives Considered
 
-| Alternative | Pros | Cons | Decision |
-|-------------|------|------|----------|
-| DHT-only bootstrap (no bootstrap nodes) | No central trust | Slow first contact; Sybil-vulnerable | REJECTED — use as Mode B fallback |
-| Bootstrap nodes only (no DHT) | Fast, simple | Central trust anchor | REJECTED — use as Mode A default, not only mode |
-| Static peer list in config | Trivially simple | Doesn't scale; user-hostile | REJECTED — too rigid |
-| Trust-on-first-use (TOFU) only | No central authority | First peer can eclipse forever | REJECTED — needs intersection defense |
-| Hardcoded IP addresses (no DNS) | No DNS hijack | Hard to migrate; no CDN | REJECTED — DNS+IP both supported |
-| Three modes (A, B, C) | Defense in depth | More spec to maintain | **CHOSEN** |
+| Alternative                             | Pros                 | Cons                                 | Decision                                        |
+| --------------------------------------- | -------------------- | ------------------------------------ | ----------------------------------------------- |
+| DHT-only bootstrap (no bootstrap nodes) | No central trust     | Slow first contact; Sybil-vulnerable | REJECTED — use as Mode B fallback               |
+| Bootstrap nodes only (no DHT)           | Fast, simple         | Central trust anchor                 | REJECTED — use as Mode A default, not only mode |
+| Static peer list in config              | Trivially simple     | Doesn't scale; user-hostile          | REJECTED — too rigid                            |
+| Trust-on-first-use (TOFU) only          | No central authority | First peer can eclipse forever       | REJECTED — needs intersection defense           |
+| Hardcoded IP addresses (no DNS)         | No DNS hijack        | Hard to migrate; no CDN              | REJECTED — DNS+IP both supported                |
+| Three modes (A, B, C)                   | Defense in depth     | More spec to maintain                | **CHOSEN**                                      |
 
 ## Implementation Phases
 
@@ -703,27 +701,23 @@ Verify: bootstrap nodes NOT loaded
 
 ## Key Files to Modify
 
-| File | Action |
-|------|--------|
-| `crates/octo-network/src/dot/bootstrap.rs` | New module: BootstrapNode, SeedList, BootstrapRequest/Response |
-| `crates/octo-network/src/dot/lifecycle.rs` | Add BootstrapClientLifecycle, BootstrapNodeLifecycle |
-| `crates/octo-network/src/dot/gdp.rs` | Integrate Bootstrap Done → DiscoveryLifecycle::Bootstrap transition |
-| `crates/octo-adapter-tor/src/lib.rs` | Add Tor onion address support (Mode A) |
-| `crates/octo-bootstrap-cli/src/main.rs` | New binary: `octo-bootstrap status`, `octo-bootstrap invite-gen` |
-| `config/seed_list_v1.json` | New: foundation seed list (5 entries) |
+| File                                       | Action                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| `crates/octo-network/src/dot/bootstrap.rs` | New module: BootstrapNode, SeedList, BootstrapRequest/Response      |
+| `crates/octo-network/src/dot/lifecycle.rs` | Add BootstrapClientLifecycle, BootstrapNodeLifecycle                |
+| `crates/octo-network/src/dot/gdp.rs`       | Integrate Bootstrap Done → DiscoveryLifecycle::Bootstrap transition |
+| `crates/octo-adapter-tor/src/lib.rs`       | Add Tor onion address support (Mode A)                              |
+| `crates/octo-bootstrap-cli/src/main.rs`    | New binary: `octo-bootstrap status`, `octo-bootstrap invite-gen`    |
+| `config/seed_list_v1.json`                 | New: foundation seed list (5 entries)                               |
 
 ## Future Work
 
-Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
-
-| ID | Title | Severity | Deadline | Spec | Mission |
-|----|-------|----------|----------|------|---------|
-| F1 | SeedListAuthority decentralization (DAO multi-sig) | HIGH | Pre-public-launch | Mission: 3-of-5 foundation multi-sig at launch transitions to DAO multi-sig at F1 deadline (post-launch, after MissionSlashing v1.0 ships). DAO key is the governance key per RFC-0855 §11. | `missions/open/0851p-a-seed-authority-decentralization.md` |
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/0851p-a-seed-authority-decentralization.md` |
 | F2 | Tor-only seed list option | MEDIUM | Post-launch | Mission: new `bootstrap_mode = TorOnly` config option; the bootstrap adapter connects to a `.onion` seed list service, hides the gateway's IP from the seed list operator. | `missions/open/0851p-a-tor-seed-list.md` |
-| F3 | Seed list health check at load (mitigates IA-NB-11) | MEDIUM | Pre-public-launch | Mission: on `start_node`, verify each seed's `signed_at_epoch` is within the last `MAX_SEED_AGE_EPOCHS = 10`; reject stale seeds; log + alert if > 20% are stale (Sybil/eclipse signal). | `missions/open/0851p-a-seed-health-check.md` |
+| F3 | Seed list health check at load (mitigates IA-NB-11) | MEDIUM | Pre-public-launch | Mission: on `start_node`, verify each seed's `signed_at_epoch` is within the last `MAX_SEED_AGE_EPOCHS = 10`; reject stale seeds; log + alert if > 20% are stale (Sybil/eclipse signal). | `missions/claimed/0851p-a-seed-health-check.md` |
 | F4 | Trust UX (web-of-trust visualization) | MEDIUM | Post-launch | Mission: a `dot-trust graph` CLI command that renders the web-of-trust graph (signed_by relationships) as ASCII art or DOT format for operator inspection. | `missions/open/0851p-a-trust-ux.md` |
 | F5 | Mode D = NIP-05 / Nostr pubkey bootstrap | LOW | Future | Mission: a new `bootstrap_mode = Nostr` config; the bootstrap adapter resolves a NIP-05 identifier to a Nostr pubkey, fetches the user's contact list, and treats each contact as a potential bootstrap peer (verifying the contact's `DOT capability` claim). | `missions/open/0851p-a-nostr-mode-d.md` |
-| F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch | Mission: extend slash reason codes with `0x000D` = `bootstrap_node_misbehavior` (defined in RFC-0855p-b §B "Slash Offense Codes" range allocation); slashed nodes are removed from the seed list. | `missions/open/0851p-a-bootstrap-slashing.md` |
+| F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch | Mission: extend slash reason codes with `0x000D` = `bootstrap_node_misbehavior` (defined in RFC-0855p-b §B "Slash Offense Codes" range allocation); slashed nodes are removed from the seed list. | `missions/archived/0851p-a-bootstrap-slashing.md` |
 | F7 | DotDomain bootstrap mode (Mode D) | HIGH | Pre-launch | Specified in RFC-0851p-b. Bootstraps a node by joining a DC-managed broadcast domain. The DotDomain mode is the keystone that connects social adapters to peer discovery. | RFC-0851p-b missions |
 
 ## Rationale
@@ -738,18 +732,19 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| Malicious seed list authority | CRITICAL | Signature verification; slashing (F6) for known misbehavior |
-| Authority key compromise | CRITICAL | Decentralization via DAO multi-sig (F1) post-launch |
-| Stale seed list (Sybil/eclipse) | HIGH | F3 staleness check; alert at 20% stale ratio |
-| Sybil seeds in the list | HIGH | Web-of-trust + cross-referencing with other seeds |
-| Tor exit node deanonymization | MEDIUM | F2 Tor-only mode; no IP fallback in TorOnly |
-| Nostr relay poisoning | MEDIUM | Multiple relay queries; cross-reference results |
-| Bootstrap node withholding peers | MEDIUM | F6 slashing (0x000D.01); reputation deprioritization |
-| Bootstrap node censoring legit peer | MEDIUM | F6 slashing (0x000D.03); multi-seed consensus |
-| Replay of old seed list | LOW | `signed_at_epoch` check (F3) |
-| DoS on seed list service | LOW | Multi-seed fallback; service is replicated |
+| Threat                              | Impact   | Mitigation                                                  |
+| ----------------------------------- | -------- | ----------------------------------------------------------- |
+| Malicious seed list authority       | CRITICAL | Signature verification; slashing (F6) for known misbehavior |
+| Authority key compromise            | CRITICAL | Decentralization via DAO multi-sig (F1) post-launch         |
+| Stale seed list (Sybil/eclipse)     | HIGH     | F3 staleness check; alert at 20% stale ratio                |
+| Sybil seeds in the list             | HIGH     | Web-of-trust + cross-referencing with other seeds           |
+| Tor exit node deanonymization       | MEDIUM   | F2 Tor-only mode; no IP fallback in TorOnly                 |
+| Nostr relay poisoning               | MEDIUM   | Multiple relay queries; cross-reference results             |
+| Bootstrap node withholding peers    | MEDIUM   | F6 slashing (0x000D.01); reputation deprioritization        |
+| Bootstrap node censoring legit peer | MEDIUM   | F6 slashing (0x000D.03); multi-seed consensus               |
+| Replay of old seed list             | LOW      | `signed_at_epoch` check (F3)                                |
+| DoS on seed list service            | LOW      | Multi-seed fallback; service is replicated                  |
+
 ## Orchestrator Contract
 
 The `BootstrapOrchestrator` (in `octo-transport/src/bootstrap.rs`) implements the client-side bootstrap protocol. Its contract is:
@@ -790,6 +785,7 @@ Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped at 60s). After `max_retries` at
 ### Integration with QuotaRouterNode
 
 `QuotaRouterNode::build_with_bootstrap()` uses the orchestrator via `discover_peers()`:
+
 1. Creates an orchestrator from the seed list
 2. Calls `discover_peers()` which runs validation + TCP collection
 3. If responses are received, uses peer entries from the responses
@@ -797,11 +793,11 @@ Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped at 60s). After `max_retries` at
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1.0 | 2026-06-16 | Initial draft |
-| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with spec column + mission paths in `missions/open/0851p-a-f{1,2,3,4,5,6}-*.md`. |
-| 0.1.2 | 2026-06-30 | Added §Orchestrator Contract — codifies `BootstrapOrchestrator` input/output/lifecycle/wire-format/retry-policy/integration. Replaces the stub `send_bootstrap_requests` with direct TCP response collection. `discover_peers()` public API for callers that don't need `TransportDiscovery`. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.0   | 2026-06-16 | Initial draft                                                                                                                                                                                                                                                                                 |
+| 0.1.1   | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with spec column + mission paths in `missions/open/0851p-a-f{1,2,3,4,5,6}-*.md`.                                                                                                            |
+| 0.1.2   | 2026-06-30 | Added §Orchestrator Contract — codifies `BootstrapOrchestrator` input/output/lifecycle/wire-format/retry-policy/integration. Replaces the stub `send_bootstrap_requests` with direct TCP response collection. `discover_peers()` public API for callers that don't need `TransportDiscovery`. |
 
 ## Related RFCs
 

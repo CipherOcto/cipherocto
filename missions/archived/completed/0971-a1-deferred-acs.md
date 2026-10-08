@@ -2,7 +2,7 @@
 
 ## Status
 
-**Closed 2026-08-07.** Group B Closed (2026-08-07, 4/4 ACs GREEN). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commit `9a46e06f`). **Total: 9/9 ACs GREEN across 3 commits.** Claimed 2026-08-07 to absorb the 9 deferred ACs from `missions/claimed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/claimed/0971-a-role-binding.md` §Claimant).
+**Closed 2026-08-07.** Group B Closed (2026-08-07, 4/4 ACs GREEN). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commit `9a46e06f`). **Total: 9/9 ACs GREEN across 3 commits.** Claimed 2026-08-07 to absorb the 9 deferred ACs from `missions/archived/completed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/archived/completed/0971-a-role-binding.md` §Claimant).
 
 Group B closed 2026-08-07 (4/4 ACs GREEN):
 
@@ -23,11 +23,11 @@ Group A closed 2026-08-07 (5/5 ACs GREEN; commit `9a46e06f`, 39 days ahead of 20
 
 Three impl commits + this docs commit landed 2026-08-07. Verifications all green.
 
-| Group | ACs | Target | Closed | Impl Commit | Docs Commit |
-|-------|-----|--------|--------|-------------|-------------|
-| A — Cross-role data flow | 5/5 | 2026-09-15 | 2026-08-07 (39d early) | `f465912d` (AC-A1+AC-A2) + `9a46e06f` (AC-A3+AC-A4+AC-A5) | (this file) |
-| B — Docs + audit consumer + cargo doc | 4/4 | 2026-08-21 | 2026-08-07 (14d early) | `0bdbcb38` | (this file) |
-| **Total** | **9/9** | 2026-09-15 | **2026-08-07** | 3 commits | 1 commit |
+| Group                                 | ACs     | Target     | Closed                 | Impl Commit                                               | Docs Commit |
+| ------------------------------------- | ------- | ---------- | ---------------------- | --------------------------------------------------------- | ----------- |
+| A — Cross-role data flow              | 5/5     | 2026-09-15 | 2026-08-07 (39d early) | `f465912d` (AC-A1+AC-A2) + `9a46e06f` (AC-A3+AC-A4+AC-A5) | (this file) |
+| B — Docs + audit consumer + cargo doc | 4/4     | 2026-08-21 | 2026-08-07 (14d early) | `0bdbcb38`                                                | (this file) |
+| **Total**                             | **9/9** | 2026-09-15 | **2026-08-07**         | 3 commits                                                 | 1 commit    |
 
 Verification artifacts (2026-08-07):
 
@@ -42,7 +42,7 @@ Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
 
 RFC-0971 (Networking): Destination-Node Role Consolidation (Accepted 2026-08-02).
 
-**Sub-mission of:** `missions/claimed/0971-a-role-binding.md` (status-deferred ACs moved to this follow-up).
+**Sub-mission of:** `missions/archived/completed/0971-a-role-binding.md` (status-deferred ACs moved to this follow-up).
 
 ## Phase
 
@@ -95,8 +95,8 @@ The 9 deferred ACs are functionally two units:
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** Commit `0bdbcb38` (2026-08-07) — `crates/quota-router-core/src/node/role_binding_consumer_audit.rs` (NEW, 237 lines) + `crates/quota-router-core/src/node/mod.rs` (added `pub mod role_binding_consumer_audit;`). New `RoleBindingConsumerAuditLog` struct with `record_replay_detection` method + `ConsumerReplayAuditEntry` (manual redacting Debug) + `ConsumerAuditError::Full` capacity error. 7 tests pass.
 - [x] **AC-B2.** RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. RFC-0955-R1 currently has no §Roles section — anchoring is mechanism, not role. Either (a) create §Roles section in `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` documenting the `ReputationAnchor` role binding + cross-reference to RFC-0971, or (b) explicitly omit per RFC scope rationale (anchoring is mechanism-only, no role binding). Per [[deferred-vs-unspecified]] named-owner rule: even an "omit" decision needs rationale documentation.
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** Option (a) — added new `## Roles` section to RFC-0955-R1 (after `## Tuple-Fanout Defense` + before `## Wire Compatibility`) documenting: (i) `ReputationAnchor` OPTIONAL role binding + RFC-0971 cross-reference; (ii) mechanism vs role distinction; (iii) cross-crate wiring (RoleBindingDeclaration + RoleTag::ReputationAnchor + destination_optional_roles helper + validate_destination_binding predicate); (iv) audit trail (RoleBindingAuditLog tied to RFC-0955-R1 ReputationAnchorBatch).
-- [x] **AC-B3.** §Developer Guide section authored inline in `missions/claimed/0971-a-role-binding.md` (full inline; not separate file). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. Per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required.
-      Owner: @cipherocto. Target: 2026-08-21. **Closure:** New `## Developer Guide` section in `missions/claimed/0971-a-role-binding.md` (before `## Dependencies`) with 6 subsections: `Role-Binding Declaration` + `Pure Forwarder Exception` + `ReputationAnchor Opt-In` + `Cross-Role Data Flow` + `Audit Trail` + `Troubleshooting`. Each subsection includes canonical code patterns + RF-0971 references + security/redaction notes.
+- [x] **AC-B3.** §Developer Guide section authored inline in `missions/archived/completed/0971-a-role-binding.md` (full inline; not separate file). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. Per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** New `## Developer Guide` section in `missions/archived/completed/0971-a-role-binding.md` (before `## Dependencies`) with 6 subsections: `Role-Binding Declaration` + `Pure Forwarder Exception` + `ReputationAnchor Opt-In` + `Cross-Role Data Flow` + `Audit Trail` + `Troubleshooting`. Each subsection includes canonical code patterns + RF-0971 references + security/redaction notes.
 - [x] **AC-B4.** `cargo doc --workspace --no-deps` builds without broken-doc-link warnings. Currently `-p quota-router-core` clippy is clean; workspace doc build unverified. Substrate: `cargo doc --workspace --no-deps -- -D warnings` (treat warnings as errors). If broken links surface, fix by inlining cross-references or adding `#[allow(rustdoc::broken_intra_doc_links)]` per Rust 1.71+ policy.
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** `cargo doc --workspace --no-deps` build succeeds (target/doc/cipherocto_encoding/index.html + 85 other files generated). Pre-existing warnings remain in 4 crates (NOT in 0971-a1 scope per [[no-phantom-mission-pointers]]): `octo-adapter-whatsapp` (2 broken-doc-links: `PlatformAdapter::send_envelope` + `InboundEvent::Unknown`); `octo-matrix-onboard` (1 bare URL: `matrix.example.com`); `quota-router-cli` (2 unclosed HTML tags: `<path>` + `<u64>`); `octo-reputation` (1 warning); `octo-adapter-bluesky` (1 warning). All pre-existing infrastructure debt; 0971-a1 does not introduce new warnings. Cleanup follow-up filed under §Post-closure Follow-up.
 
@@ -132,14 +132,14 @@ Each entry follows [[deferred-vs-unspecified]] form: unfulfilled AC + concrete p
 This follow-up implements (per 0971-a §Type Coverage deferred entries):
 
 - **Group A:** Cross-role data flow end-to-end integration tests (TV2 + TV3) + audit trail emission at transition.
-- **Group B:** `RoleBindingConsumerAuditLog` (NEW, in `crates/quota-router-core/src/node/role_binding_consumer_audit.rs`) + RFC-0955-R1 §Roles section addition + inline §Developer Guide section in `missions/claimed/0971-a-role-binding.md` + `cargo doc --workspace` verification.
+- **Group B:** `RoleBindingConsumerAuditLog` (NEW, in `crates/quota-router-core/src/node/role_binding_consumer_audit.rs`) + RFC-0955-R1 §Roles section addition + inline §Developer Guide section in `missions/archived/completed/0971-a-role-binding.md` + `cargo doc --workspace` verification.
 
 ## Location
 
 - `crates/quota-router-core/src/node/role_binding_consumer_audit.rs` (NEW) — Group B AC-B1
 - `crates/quota-router-core/tests/cross_role_data_flow.rs` (NEW) — Group A AC-A4 + AC-A5
 - `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` (MODIFY) — Group B AC-B2 (either create §Roles section or document explicit omission)
-- `missions/claimed/0971-a-role-binding.md` (MODIFY) — Group B AC-B3 (inline §Developer Guide section)
+- `missions/archived/completed/0971-a-role-binding.md` (MODIFY) — Group B AC-B3 (inline §Developer Guide section)
 
 ## Claimant
 

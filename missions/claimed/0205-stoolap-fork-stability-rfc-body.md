@@ -106,7 +106,7 @@ RFC contents:
 
 ## Termination
 
-- Mission YAML filed at `missions/open/0205-stoolap-fork-stability-rfc-body.md`
+- Mission YAML filed at `missions/claimed/0205-stoolap-fork-stability-rfc-body.md`
 - RFC body filed at `rfcs/draft/storage/0205-stoolap-fork-stability.md`
 - 269 lines, 32 sections, prettier formatted
 - 8 ACs PASS (per Acceptance Criteria above)

@@ -102,7 +102,7 @@ helpers (LANDED 0900-d) works but:
 
 ## Cross-reference
 
-- **Unblocks:** `missions/open/0900-d1-followon-dqa-codec-hashmap-tuple-outcome.md`
+- **Unblocks:** `missions/archived/completed/0900-d1-followon-dqa-codec-hashmap-tuple-outcome.md`
   AC-1 (recon) + AC-2 (DQA(12) column promotion via v016)
 - **Pattern:** `octo_determin::Dqa::to_bytes()` /
   `Dqa::from_bytes()` — canonical 16-byte BE wire form already

@@ -10,7 +10,7 @@ Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07) — 7/10 ACs 
 
 RFC-0957-A1 (Economics): Holder Registry + Catalog Storage (Amendment) — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0957-a1-holder-registry.md` (top-level decomposition mission)
+**Sub-mission of:** `missions/archived/completed/0957-a1-holder-registry.md` (top-level decomposition mission)
 
 ## Summary
 
@@ -56,8 +56,8 @@ This sub-mission preserves wire format compatibility (G2: wire bytes byte-identi
 
 **Requires (mission gates):**
 
-- `missions/open/0957-a1-holder-registry.md` (top-level)
-- `missions/open/0957-c-holder-registry-impl.md` — `HolderRegistry` trait + `HolderRecord` MUST exist before this sub-mission compiles
+- `missions/archived/completed/0957-a1-holder-registry.md` (top-level)
+- `missions/claimed/0957-c-holder-registry-impl.md` — `HolderRegistry` trait + `HolderRecord` MUST exist before this sub-mission compiles
 
 ```yaml
 depends_on:

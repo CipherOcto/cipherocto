@@ -7,7 +7,7 @@
 §3 row 6 (Stream C.2). Pre-reqs verified landed: S2 (octo-storage
 split), S3 (octo-vault substrate + TV-V1 10), S4 (DFP codemod — `Dqa`
 canonical). Pillar 2 step 2 (OctoVaultLookup glue crate) **DEFERRED
-to S5.1** — see `missions/open/0957-g1-octo-vault-lookup-glue.md`.
+to S5.1** — see `missions/archived/completed/0957-g1-octo-vault-lookup-glue.md`.
 
 ## RFC
 
@@ -216,7 +216,7 @@ sequenceDiagram
   in B0 PR bundle).
 - **`OctoVaultLookup` glue crate** (S5.1 follow-on — pattern matches
   `TransportDeliveryCatalog`). Mission:
-  `missions/open/0957-g1-octo-vault-lookup-glue.md`.
+  `missions/archived/completed/0957-g1-octo-vault-lookup-glue.md`.
 
 ## Dependency edges (LANDED state)
 

@@ -89,7 +89,7 @@ RFC-0960 v3.5 §2.1 + §2.2 + RFC-0967-A1 §2.6 document 5 policy Kinds requirin
 - 1 sibling mission filed (`0960-v3.5-landing`) + cross-references 2 retrofix missions via `depends_on` chain
 - AC gate: `ls missions/claimed/0960-*.md` → 4 files (2 existing + 1 landing + 1 coordination)
 - AC gate: `rg 'v3.5 supersession' missions/claimed/0960-a-grand-design-reference.md` → 1 hit (retrofix 1)
-- AC gate: `rg 'v3.5 supersession' missions/claimed/0960-vault-substrate-amendment.md` → 1 hit (retrofix 2)
+- AC gate: `rg 'v3.5 supersession' missions/archived/completed/0960-vault-substrate-amendment.md` → 1 hit (retrofix 2)
 - AC gate: `rg 'pub trait ValueTransfer' missions/claimed/0960-v3.5-landing.md` → 1 hit (sibling mission trait spec)
 - Cross-RFC cite validation: Guard 2 PASS for all 3 new + retrofixed mission files
 - Prettier clean
@@ -98,7 +98,7 @@ RFC-0960 v3.5 §2.1 + §2.2 + RFC-0967-A1 §2.6 document 5 policy Kinds requirin
 ## Files / Artifacts
 
 - Edit: `missions/claimed/0960-a-grand-design-reference.md` (v3.5 retro-supersession + 23→25 variants in §3 table + §Acceptance Criteria retro-supersession note)
-- Edit: `missions/claimed/0960-vault-substrate-amendment.md` (v3.5 retro-supersession + VH row 2026-08-23 supersession)
+- Edit: `missions/archived/completed/0960-vault-substrate-amendment.md` (v3.5 retro-supersession + VH row 2026-08-23 supersession)
 - New: `missions/claimed/0960-v3.5-landing.md` (substrate landing ownership for 4 tables + ValueTransfer trait + 5 policy-kind UUIDv5 fixtures)
 - New: `missions/claimed/0960-alignment-coordination.md` (this file)
 

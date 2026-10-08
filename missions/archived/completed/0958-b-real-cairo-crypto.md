@@ -12,7 +12,7 @@
 
 Follow-up to mission `0958-a` (Claimed, v0.4 amended 2026-08-04). Mission 0958-a shipped the CASM compilation pipeline, the STWO FFI bridge, the NodeType gating layer, the wire format v2, and the test vector surface — but the cryptographic body inside the Cairo circuit (`cairo/src/lib.cairo::main`) is currently a structural-only stub (returns `1` after field-bounds checks). Mission 0958-b fills in the real cryptographic primitives:
 
-1. **HMAC chain re-derivation inside `cairo/src/lib.cairo::main`** — the macaroon caveat chain is currently not re-derived; the proofer submits a commitment without proving the chain is structurally valid. S1 ships HMAC-SHA-256 (using `core::sha256::compute_sha256_byte_array` from cairo-corelib 2.16.0); HMAC-BLAKE3 was originally specced but cairo-corelib ships BLAKE2s via `core::blake`, NOT BLAKE3. HMAC-BLAKE3 deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` AC-1.
+1. **HMAC chain re-derivation inside `cairo/src/lib.cairo::main`** — the macaroon caveat chain is currently not re-derived; the proofer submits a commitment without proving the chain is structurally valid. S1 ships HMAC-SHA-256 (using `core::sha256::compute_sha256_byte_array` from cairo-corelib 2.16.0); HMAC-BLAKE3 was originally specced but cairo-corelib ships BLAKE2s via `core::blake`, NOT BLAKE3. HMAC-BLAKE3 deferred to `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` AC-1.
 2. **Ed25519 holder signature verify inside the circuit** — `holder_sig` is currently not verified; the proofer submits it without proving it validates against `holder_did`. Implementation uses a small embedded Ed25519 verifier (Ristretto-style or Cairo-native field ops; ~3-5 KB CASM footprint).
 3. **Poseidon inference-trace binding** — `inference_trace.steps` is currently not folded into the proof; `output_hash` is accepted on trust. Implementation uses Cairo corelib Poseidon (`core::poseidon::poseidon_hash_span`).
 4. **Real-zk STWO integration** — replace `prove_batch_signature`'s stub BLAKE3 commitment with the real STWO STARK prover. Requires `crates/zk-vendor/stwo-sys/` to be built (`cargo +nightly-2025-06-23 build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml`) and the `real-zk` Cargo feature enabled.
@@ -33,9 +33,9 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S1 Deviations (documented per [[deferred-vs-unspecified]])
 
-- **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` (Round 1 review F-3 — file created 2026-08-05).
+- **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` (Round 1 review F-3 — file created 2026-08-05).
 - **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see the upstream `compile(...)` method's `program_offset > config.max_bytecode_size` branch (Round 3 review F-24: replaced line ref `compiler.rs:486` with symbol-form reference per `[[no-line-refs-anywhere]]`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
-- **Ed25519 holder-sig verify → DEFERRED to 0958-c.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; deferred to `missions/open/0958-c-real-cairo-crypto-followup.md`.
+- **Ed25519 holder-sig verify → DEFERRED to 0958-c.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; deferred to `missions/archived/completed/0958-c-real-cairo-crypto-followup.md`.
 
 ### S2 — Real-zk STWO STARK integration (LANDED 2026-08-05)
 
@@ -107,7 +107,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S4 — Fuzz + closeout (LANDED 2026-08-05; populated by Round 1 review F-5)
 
-- [x] `missions/open/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `[[deferred-vs-unspecified]]`.
+- [x] `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `[[deferred-vs-unspecified]]`.
 - [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet-fuzz capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure; fuzz package reference corrected from `-p octo-wallet` (which has no `[[bin]]` fuzz targets) to `-p octo-wallet-fuzz` per Round 5 review F-31.
 - [x] 24h cargo-fuzz nightly job confirmed in `.github/workflows/zk-capability-circuit.yml` (name `fuzz-nightly`, schedule cron + `workflow_dispatch` trigger); package reference `-p octo-wallet-fuzz` matches `crates/octo-wallet/fuzz/Cargo.toml`.
 - [x] `docs/07-developers/zk-capability-circuit-guide.md` §Build + §AC evidence updated to reflect real-zk default + stub fail-closed semantics + integration with the 0958-c follow-up mission.
@@ -158,7 +158,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### Architectural direction
 
-1. **Cairo circuit body rewrite** — replace the current `cairo/src/lib.cairo::main()` structural stub with the cryptographic body. Use scarb 2.16.0 corelib imports; pin all corelib versions in `cairo/Scarb.toml`. Verify CASM size stays under `max_bytecode_size = 50 * 1024` (set by 0958-a R4 fix). If CASM exceeds 50 KB, split the HMAC-BLAKE3 chain into a separate verifying sub-circuit (Stage-2 verifier pattern) — see `missions/open/0958-c-real-cairo-crypto-followup.md` AC-4. Round 4 review F-26: dropped the prior `#[cfg(feature = "casm_split")]` gating reference; no such cargo feature exists in any Cargo.toml (the Stage-2 split is a code-level refactor, not a feature-flag-bound artifact).
+1. **Cairo circuit body rewrite** — replace the current `cairo/src/lib.cairo::main()` structural stub with the cryptographic body. Use scarb 2.16.0 corelib imports; pin all corelib versions in `cairo/Scarb.toml`. Verify CASM size stays under `max_bytecode_size = 50 * 1024` (set by 0958-a R4 fix). If CASM exceeds 50 KB, split the HMAC-BLAKE3 chain into a separate verifying sub-circuit (Stage-2 verifier pattern) — see `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` AC-4. Round 4 review F-26: dropped the prior `#[cfg(feature = "casm_split")]` gating reference; no such cargo feature exists in any Cargo.toml (the Stage-2 split is a code-level refactor, not a feature-flag-bound artifact).
 
 2. **Real-zk STWO integration** — extend `prove_batch_signature` to actually call `zk_vendor::loaded_library().unwrap().prove(casm, witness, public)` (R4 H9 integration test). The current `#[cfg(feature = "full")]` stub returns `Err(ProverError::Internal("full path unimplemented"))`; replace with the real implementation. Drop the `full` feature flag; replace with `real-zk` (already declared in `crates/octo-wallet/Cargo.toml` per R3 #4 `2fb0a455`).
 
@@ -181,9 +181,9 @@ None. Single cipherocto-side mission; no stoolap fork work.
 
 ## Related Artifacts
 
-- **Parent mission:** `missions/claimed/0958-a-zk-capability-circuit.md` (v0.4; surface area + tests + bridge)
-- **Follow-up mission:** `missions/open/0958-c-real-cairo-crypto-followup.md` (v0.1; opens 2026-08-05; HMAC-BLAKE3 + Ed25519 + Stage-2 split + structured `ProverInput` JSON; Round 1 review F-3 closure)
-- **Sibling mission:** `missions/open/zk-proof-verification.md` (generic STWO marketplace; shares `crates/zk-vendor/stwo-sys/`)
+- **Parent mission:** `missions/archived/completed/0958-a-zk-capability-circuit.md` (v0.4; surface area + tests + bridge)
+- **Follow-up mission:** `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` (v0.1; opens 2026-08-05; HMAC-BLAKE3 + Ed25519 + Stage-2 split + structured `ProverInput` JSON; Round 1 review F-3 closure)
+- **Sibling mission:** `missions/claimed/zk-proof-verification.md` (generic STWO marketplace; shares `crates/zk-vendor/stwo-sys/`)
 - **Worktree:** none (uses cipherocto workspace directly)
 
 ## Version History

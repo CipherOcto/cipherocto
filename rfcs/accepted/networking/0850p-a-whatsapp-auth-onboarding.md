@@ -30,15 +30,15 @@ Define a standalone CLI binary (`octo-whatsapp-onboard`) and companion library (
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Standalone auth without gateway | `octo-whatsapp-onboard qr-link` exits 0 without loading adapter cdylib |
-| G2 | Interactive QR pairing in terminal | QR rendered as unicode half-block; scan completion drives `Event::Connected` |
-| G3 | Pair-code linking as alternative to QR | `octo-whatsapp-onboard pair-link --phone +15551234567` issues a 6-char code via the WhatsApp Web protocol |
-| G4 | Config produced is adapter-compatible | `WhatsAppConfig::validate()` passes on output JSON (or deserialize round-trip succeeds, see §"Config Output" schema compat note) |
-| G5 | No plaintext secrets in CLI logs | tracing redaction layer test passes; PII (resolved phone, custom pair code) never emitted unredacted |
-| G6 | Exit codes distinguish failure classes | 7 distinct exit codes (0-6) matching the matrix/telegram table |
-| G7 | Session verification without re-pairing | `whoami` works on persisted stoolap session database |
+| Goal | Target                                  | Metric                                                                                                                           |
+| ---- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | Standalone auth without gateway         | `octo-whatsapp-onboard qr-link` exits 0 without loading adapter cdylib                                                           |
+| G2   | Interactive QR pairing in terminal      | QR rendered as unicode half-block; scan completion drives `Event::Connected`                                                     |
+| G3   | Pair-code linking as alternative to QR  | `octo-whatsapp-onboard pair-link --phone +15551234567` issues a 6-char code via the WhatsApp Web protocol                        |
+| G4   | Config produced is adapter-compatible   | `WhatsAppConfig::validate()` passes on output JSON (or deserialize round-trip succeeds, see §"Config Output" schema compat note) |
+| G5   | No plaintext secrets in CLI logs        | tracing redaction layer test passes; PII (resolved phone, custom pair code) never emitted unredacted                             |
+| G6   | Exit codes distinguish failure classes  | 7 distinct exit codes (0-6) matching the matrix/telegram table                                                                   |
+| G7   | Session verification without re-pairing | `whoami` works on persisted stoolap session database                                                                             |
 
 ## Motivation
 
@@ -56,15 +56,15 @@ The core insight: `WhatsAppWebAdapter::start_bot()` is **already the auth flow**
 
 ### Architectural Difference from Telegram/Matrix
 
-| Aspect | Telegram (0850ab-a) | Matrix (0850h-a) | WhatsApp (0850p-a, this RFC) |
-|--------|---------------------|------------------|-------------------------------|
-| Auth model | TDLib state machine (`WaitPhoneNumber` → `WaitCode` → `WaitPassword` → `Ready`) | SDK callbacks (`client.login_username`) + OIDC listener + QR rendezvous | Event stream (`Bot::on_event` emits `PairingQrCode` / `PairingCode` / `Connected` / `LoggedOut`) |
-| Secret material | bot_token, api_hash, phone, 2FA password | access_token, refresh_token, password | stoolap session DB (Signal noise_key, identity_key, prekeys, signed_prekeys) |
-| Auth modes | 2 (bot, user) | 4 (password, OIDC, SSO, QR) | 2 (QR link, pair-code link) |
-| Session persistence | TDLib SQLite in `data_dir/` | Matrix session via `client.restore_session(MatrixAuth::UserSession { ... })` | stoolap DB in `session_path` |
-| Adapter restart | Adapter re-opens `data_dir`; TDLib reloads session from disk | Adapter re-opens `MatrixAuth::UserSession` from JSON | Adapter re-opens `session_path`; whatsapp-rust reloads Signal state from stoolap |
-| Identity extraction | `tdlib_rs::functions::get_me()` | `client.session_meta()` + `client.session_tokens()` | `Event::Connected` + `device.pn` resolution (adapter.rs:226-237) |
-| Per-operator config knobs | api_id, api_hash, verifying_key | refresh_token, passphrase (0850h-b) | pair_phone, pair_code, ws_url, groups |
+| Aspect                    | Telegram (0850ab-a)                                                             | Matrix (0850h-a)                                                             | WhatsApp (0850p-a, this RFC)                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Auth model                | TDLib state machine (`WaitPhoneNumber` → `WaitCode` → `WaitPassword` → `Ready`) | SDK callbacks (`client.login_username`) + OIDC listener + QR rendezvous      | Event stream (`Bot::on_event` emits `PairingQrCode` / `PairingCode` / `Connected` / `LoggedOut`) |
+| Secret material           | bot_token, api_hash, phone, 2FA password                                        | access_token, refresh_token, password                                        | stoolap session DB (Signal noise_key, identity_key, prekeys, signed_prekeys)                     |
+| Auth modes                | 2 (bot, user)                                                                   | 4 (password, OIDC, SSO, QR)                                                  | 2 (QR link, pair-code link)                                                                      |
+| Session persistence       | TDLib SQLite in `data_dir/`                                                     | Matrix session via `client.restore_session(MatrixAuth::UserSession { ... })` | stoolap DB in `session_path`                                                                     |
+| Adapter restart           | Adapter re-opens `data_dir`; TDLib reloads session from disk                    | Adapter re-opens `MatrixAuth::UserSession` from JSON                         | Adapter re-opens `session_path`; whatsapp-rust reloads Signal state from stoolap                 |
+| Identity extraction       | `tdlib_rs::functions::get_me()`                                                 | `client.session_meta()` + `client.session_tokens()`                          | `Event::Connected` + `device.pn` resolution (adapter.rs:226-237)                                 |
+| Per-operator config knobs | api_id, api_hash, verifying_key                                                 | refresh_token, passphrase (0850h-b)                                          | pair_phone, pair_code, ws_url, groups                                                            |
 
 **Key consequence:** WhatsApp has **no equivalent of `WaitCode`** or `WaitPassword`. There is no stdin reading in the interactive loop. The terminal loop is the QR code (operator scans with their phone) or a 6-character pair code (operator types in WhatsApp > Linked Devices). After that, the CLI blocks on the event stream until `Event::Connected` (success) or `Event::LoggedOut` (failure).
 
@@ -135,16 +135,16 @@ The following are explicitly out of scope and become named "responsibility trans
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Operator | UID / SSH principal | `pair-phone-entry`, `config-edit`, `session-rotate` | `OperatorLifecycle` (out of scope) | This RFC; future `DomainCoordinator` |
-| WhatsApp Bot Identity | `self_phone` (E.164) | `platform-identity` | `BotLifecycle` (8 states) | This RFC §"Lifecycle Requirements" |
-| WhatsApp Server | TLS endpoint | `platform-server` | stateless (Meta-side) | This RFC; ADVERSARIAL |
-| whatsapp-rust crate | `Cargo.toml` version | `protocol-implementation` | per crate version | This RFC |
-| Stoolap Session DB | `session_path` | `session-storage` | per bot pairing | This RFC |
-| Adapter Consumer | gateway PID | `adapter-runtime` | per process | This RFC |
-| DomainCoordinator | `(domain_id, public_key)` (per RFC-0855p-c §"DomainCoordinatorRecord") | `DOT/1/BIND` envelope, slash via governance | `DomainCoordinatorLifecycle` (per RFC-0855p-c) | RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) |
-| WhatsApp Group Admin | phone number (in WA group metadata) | `group-membership` (per WA server) | per WA group lifetime | WhatsApp (platform); out of scope |
+| Role                  | Identifier                                                             | Authority Scope                                     | Lifecycle                                      | Source/Ref                                             |
+| --------------------- | ---------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------ |
+| Operator              | UID / SSH principal                                                    | `pair-phone-entry`, `config-edit`, `session-rotate` | `OperatorLifecycle` (out of scope)             | This RFC; future `DomainCoordinator`                   |
+| WhatsApp Bot Identity | `self_phone` (E.164)                                                   | `platform-identity`                                 | `BotLifecycle` (8 states)                      | This RFC §"Lifecycle Requirements"                     |
+| WhatsApp Server       | TLS endpoint                                                           | `platform-server`                                   | stateless (Meta-side)                          | This RFC; ADVERSARIAL                                  |
+| whatsapp-rust crate   | `Cargo.toml` version                                                   | `protocol-implementation`                           | per crate version                              | This RFC                                               |
+| Stoolap Session DB    | `session_path`                                                         | `session-storage`                                   | per bot pairing                                | This RFC                                               |
+| Adapter Consumer      | gateway PID                                                            | `adapter-runtime`                                   | per process                                    | This RFC                                               |
+| DomainCoordinator     | `(domain_id, public_key)` (per RFC-0855p-c §"DomainCoordinatorRecord") | `DOT/1/BIND` envelope, slash via governance         | `DomainCoordinatorLifecycle` (per RFC-0855p-c) | RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) |
+| WhatsApp Group Admin  | phone number (in WA group metadata)                                    | `group-membership` (per WA server)                  | per WA group lifetime                          | WhatsApp (platform); out of scope                      |
 
 ## Specification
 
@@ -207,10 +207,10 @@ flowchart TB
 
 The binary/core split follows the `octo-matrix-onboard` and `octo-telegram-onboard` pattern:
 
-| Crate | Type | Purpose |
-|-------|------|---------|
-| `octo-whatsapp-onboard` | binary | CLI surface (clap), dispatches to core |
-| `octo-whatsapp-onboard-core` | lib | Auth flows, session extraction, output writing |
+| Crate                        | Type   | Purpose                                        |
+| ---------------------------- | ------ | ---------------------------------------------- |
+| `octo-whatsapp-onboard`      | binary | CLI surface (clap), dispatches to core         |
+| `octo-whatsapp-onboard-core` | lib    | Auth flows, session extraction, output writing |
 
 **Rationale:** Same as 0850h-a / 0850ab-a. The core library is reusable by integration tests, CI scripts, and a future session-rotation daemon.
 
@@ -450,17 +450,17 @@ The `session list` subcommand scans the `~/.local/share/octo/whatsapp/` base dir
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| CLI arg parsing | A | Deterministic string matching |
-| Stoolap database open | A | Deterministic file open + schema init |
-| WebSocket connect | B | Network I/O — same input may produce different transient errors |
-| QR rendering | A | Pure formatting (qrcode crate) |
-| Event::Connected wait | B | External service (WhatsApp Web) — observable but not under CLI control |
-| Identity resolution from device.pn | A | Pure in-memory read of the persisted device record |
-| Config JSON serialization | A | Deterministic serde output |
-| File write (atomic rename) | A | Deterministic filesystem operation |
-| Session verification | B | WebSocket connect + identity resolution |
+| Operation                          | Class | Rationale                                                              |
+| ---------------------------------- | ----- | ---------------------------------------------------------------------- |
+| CLI arg parsing                    | A     | Deterministic string matching                                          |
+| Stoolap database open              | A     | Deterministic file open + schema init                                  |
+| WebSocket connect                  | B     | Network I/O — same input may produce different transient errors        |
+| QR rendering                       | A     | Pure formatting (qrcode crate)                                         |
+| Event::Connected wait              | B     | External service (WhatsApp Web) — observable but not under CLI control |
+| Identity resolution from device.pn | A     | Pure in-memory read of the persisted device record                     |
+| Config JSON serialization          | A     | Deterministic serde output                                             |
+| File write (atomic rename)         | A     | Deterministic filesystem operation                                     |
+| Session verification               | B     | WebSocket connect + identity resolution                                |
 
 All operations are Class A or B. No probabilistic operations.
 
@@ -679,24 +679,24 @@ All CLI-side operations are deterministic given the same inputs and stoolap sess
 
 ### Error Handling
 
-| Event | CLI Action | Exit Code |
-|-------|-----------|-----------|
-| `Event::PairingQrCode { code, .. }` | Render QR to stderr (eprintln) | — |
-| `Event::PairingCode { code, .. }` | Print code to stderr | — |
-| `Event::Connected` | Set `self_phone`, wait_for_connected returns | — |
-| `Event::LoggedOut` (during link) | Print error, exit | 2 |
-| `Event::LoggedOut` (during whoami) | Print "session expired", exit | 7 |
-| `Event::StreamError` | tracing::error, do not exit (adapter's reconnect loop handles) | — |
-| `MaxRetries` exceeded | tracing::error, exit | 3 |
-| WebSocket connect fail | Print error, exit | 3 |
-| --timeout elapsed | Print error, exit | 4 |
-| Ctrl-C during wait | tokio::signal::ctrl_c() → exit | 4 |
-| session_path unwritable | Print error, exit | 5 |
-| Config file exists, no --force | Print error, exit | 5 |
-| Invalid --phone (no +, leading 0, etc.) | Print error, exit | 5 |
-| Invalid --session-path (parent dir missing) | Print error, exit | 5 |
-| stoolap schema init failure | Print error, exit | 5 |
-| Custom pair code rejected by WhatsApp | Print error, exit | 2 |
+| Event                                       | CLI Action                                                     | Exit Code |
+| ------------------------------------------- | -------------------------------------------------------------- | --------- |
+| `Event::PairingQrCode { code, .. }`         | Render QR to stderr (eprintln)                                 | —         |
+| `Event::PairingCode { code, .. }`           | Print code to stderr                                           | —         |
+| `Event::Connected`                          | Set `self_phone`, wait_for_connected returns                   | —         |
+| `Event::LoggedOut` (during link)            | Print error, exit                                              | 2         |
+| `Event::LoggedOut` (during whoami)          | Print "session expired", exit                                  | 7         |
+| `Event::StreamError`                        | tracing::error, do not exit (adapter's reconnect loop handles) | —         |
+| `MaxRetries` exceeded                       | tracing::error, exit                                           | 3         |
+| WebSocket connect fail                      | Print error, exit                                              | 3         |
+| --timeout elapsed                           | Print error, exit                                              | 4         |
+| Ctrl-C during wait                          | tokio::signal::ctrl_c() → exit                                 | 4         |
+| session_path unwritable                     | Print error, exit                                              | 5         |
+| Config file exists, no --force              | Print error, exit                                              | 5         |
+| Invalid --phone (no +, leading 0, etc.)     | Print error, exit                                              | 5         |
+| Invalid --session-path (parent dir missing) | Print error, exit                                              | 5         |
+| stoolap schema init failure                 | Print error, exit                                              | 5         |
+| Custom pair code rejected by WhatsApp       | Print error, exit                                              | 2         |
 
 ### whoami Session Verification
 
@@ -749,18 +749,18 @@ stateDiagram-v2
 
 #### 2. BotLifecycle transition table
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| Unpaired | Pairing | CLI invoked (`qr-link` / `pair-link`) | Yes (operator decision) | WS handshake begins; stoolap DB init | n/a |
-| Pairing | Paired | `Event::PairingQrCode` or `Event::PairingCode` | Yes (event stream) | QR rendered / pair code displayed | Noise handshake |
-| Paired | Connected | `Event::Connected` + `device.pn` resolved | Yes | Adapter emits `Event::Connected`; sidecar written | Signal session established |
-| Paired | LoggedOut | `Event::LoggedOut` mid-link | Yes | CLI exits 2; no sidecar written | n/a |
-| Connected | Disconnected | WS transport lost | Yes (network event) | Adapter logs warning; reconnect logic engages | n/a |
-| Disconnected | Connected | WS re-established within 100ms grace (R3-M1) | Yes | Adapter resumes normal operation | New session |
-| Disconnected | LoggedOut | Grace period exceeded | Yes | CLI exits 2 on next interaction; adapter marked invalid | n/a |
-| Connected | Banned | Platform-side ban (`Event::StreamError` exhaustion) | Yes (event exhaustion) | Adapter cannot recover; CLI must reconnect with different phone | n/a |
-| Connected | Replaced | New device paired (multi-device logout) | Yes | Adapter sees `Event::StreamError` or `Event::LoggedOut` | n/a |
-| LoggedOut | Unpaired | Operator restarts CLI | Yes (operator decision) | New pairing possible | n/a |
+| From         | To           | Trigger                                             | Deterministic?          | Side Effects                                                    | Signing                    |
+| ------------ | ------------ | --------------------------------------------------- | ----------------------- | --------------------------------------------------------------- | -------------------------- |
+| Unpaired     | Pairing      | CLI invoked (`qr-link` / `pair-link`)               | Yes (operator decision) | WS handshake begins; stoolap DB init                            | n/a                        |
+| Pairing      | Paired       | `Event::PairingQrCode` or `Event::PairingCode`      | Yes (event stream)      | QR rendered / pair code displayed                               | Noise handshake            |
+| Paired       | Connected    | `Event::Connected` + `device.pn` resolved           | Yes                     | Adapter emits `Event::Connected`; sidecar written               | Signal session established |
+| Paired       | LoggedOut    | `Event::LoggedOut` mid-link                         | Yes                     | CLI exits 2; no sidecar written                                 | n/a                        |
+| Connected    | Disconnected | WS transport lost                                   | Yes (network event)     | Adapter logs warning; reconnect logic engages                   | n/a                        |
+| Disconnected | Connected    | WS re-established within 100ms grace (R3-M1)        | Yes                     | Adapter resumes normal operation                                | New session                |
+| Disconnected | LoggedOut    | Grace period exceeded                               | Yes                     | CLI exits 2 on next interaction; adapter marked invalid         | n/a                        |
+| Connected    | Banned       | Platform-side ban (`Event::StreamError` exhaustion) | Yes (event exhaustion)  | Adapter cannot recover; CLI must reconnect with different phone | n/a                        |
+| Connected    | Replaced     | New device paired (multi-device logout)             | Yes                     | Adapter sees `Event::StreamError` or `Event::LoggedOut`         | n/a                        |
+| LoggedOut    | Unpaired     | Operator restarts CLI                               | Yes (operator decision) | New pairing possible                                            | n/a                        |
 
 #### 3. Liveness check
 
@@ -786,39 +786,39 @@ stateDiagram-v2
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| qr-link latency | <2s + operator time | WS handshake + QR render (operator scan typically 2-10s) |
-| pair-link latency | <1s + operator time | WS handshake + code display (operator entry typically 5-15s) |
-| whoami latency | <10s (R4-L1) | Load config, **connect to WhatsApp via WebSocket**, noise-key handshake, identity resolution. Not a "load and check" semantic — the whoami flow re-establishes the session because the adapter does not expose a "read device.pn without starting the bot" method. A future mission could add `WhatsAppWebAdapter::read_device_pn() -> Option<String>` for a <100ms pure-local whoami. |
-| session list latency | <100ms (sidecar) / <5s (fallback) | Sidecar fast path is the default; fallback is rare |
-| Binary size | <20 MB stripped (R1-L2: stretch target, not enforced; actual size depends on `whatsapp-rust` + `wacore` + `waproto` feature flags; tracked but not blocking) | whatsapp-rust + wacore are heavier than matrix-sdk; lean features |
-| Config write | <100ms | Atomic JSON write |
+| Metric               | Target                                                                                                                                                       | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| qr-link latency      | <2s + operator time                                                                                                                                          | WS handshake + QR render (operator scan typically 2-10s)                                                                                                                                                                                                                                                                                                                               |
+| pair-link latency    | <1s + operator time                                                                                                                                          | WS handshake + code display (operator entry typically 5-15s)                                                                                                                                                                                                                                                                                                                           |
+| whoami latency       | <10s (R4-L1)                                                                                                                                                 | Load config, **connect to WhatsApp via WebSocket**, noise-key handshake, identity resolution. Not a "load and check" semantic — the whoami flow re-establishes the session because the adapter does not expose a "read device.pn without starting the bot" method. A future mission could add `WhatsAppWebAdapter::read_device_pn() -> Option<String>` for a <100ms pure-local whoami. |
+| session list latency | <100ms (sidecar) / <5s (fallback)                                                                                                                            | Sidecar fast path is the default; fallback is rare                                                                                                                                                                                                                                                                                                                                     |
+| Binary size          | <20 MB stripped (R1-L2: stretch target, not enforced; actual size depends on `whatsapp-rust` + `wacore` + `waproto` feature flags; tracked but not blocking) | whatsapp-rust + wacore are heavier than matrix-sdk; lean features                                                                                                                                                                                                                                                                                                                      |
+| Config write         | <100ms                                                                                                                                                       | Atomic JSON write                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies on that is not enforced by types, runtime validation, or test coverage MUST be listed here. Cross-reference: RFC-0000-template v1.3 §Implicit Assumptions Audit; RFC-0855p-b §"Implicit Assumptions Audit" (sister worked example).
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| Operator has a working phone with WhatsApp installed and active network | `qr-link` requires the operator to scan; `pair-link` requires the operator to type the code | Total: cannot pair; CLI times out at `Event::Connected` wait | Operator documentation; CLI prints actionable error on `LoggedOut` |
-| Operator can see the terminal (no headless / no SSH without TTY) | QR is rendered as unicode half-block in terminal | Pairing requires visual access; headless deployments need a different mechanism | Future Work F1: `octo-whatsapp-onboard serve-qr` over HTTP for headless; not in this RFC |
-| WhatsApp server is reachable from the gateway host (firewall, no regional block) | WS connection to `wss://web.whatsapp.com/ws` (or `--ws-url` override) | Total: cannot pair or operate | TLS via whatsapp-rust; no override in production; `R5-M2` hardens WS path; **ACCEPTED RISK** for regional blocks (operator must use a relay) |
-| Stoolap session DB can be created at the configured path with mode 0700/0600 | `qr-link` / `pair-link` / `whoami` all require the path | Total: CLI exits with `CoreError::Adapter` or permission error | CLI creates dir with mode 0700 before adapter starts |
-| The phone number entered via `--phone` is the SAME as the phone that will scan the QR or type the pair code | `pair-link` issues a 6-char code bound to that phone | High: pair code expires; operator confused; possible wrong-account link | CLI pre-validates E.164; documents the binding; pair code is short-lived (60s) and phone-bound by WhatsApp |
-| WhatsApp does not change its protocol incompatibly (Signal noise, protobuf, event stream) | whatsapp-rust implements the current protocol | Total: adapter cannot connect; `Event::StreamError` pattern | whatsapp-rust is pinned and updated by its maintainers; **ACCEPTED RISK** for protocol drift |
-| The stoolap session DB persists across adapter restarts (Signal state is durable) | `whoami` reuses the DB; `start_bot` reloads the Signal session | High: each restart requires re-pairing | whatsapp-rust is responsible for durability; `R6-H2` `wait_for_health` is the verification |
-| The bot phone number is not SIM-swapped, stolen, or factory-reset | `Event::Connected` re-resolves the device identity | Critical: identity theft → attacker controls the bot and all joined groups | Out of protocol scope; **ACCEPTED RISK**; operator's responsibility to secure the SIM and the WhatsApp account |
-| The stoolap database is not corrupted (disk failure, partial write) | `start_bot` opens the DB | Total: must re-pair | `to_disk_json` uses atomic write (tempfile + rename); stoolap's own durability; **ACCEPTED RISK** for hardware failure |
-| The CLI is run with a user that has permission to create files in `~/.local/share/octo/whatsapp/` | `qr-link` writes the sidecar + config | Total: permission denied, CLI exits non-zero | CLI prints actionable error; documents `$XDG_DATA_HOME` override |
-| The session DB path is not a symlink to an unexpected location (symlink attack) | `start_bot` opens the path | High: write to attacker's location, leak Signal keys | **MISSING** — symlink resolution is not checked. Future Work F2: add `std::fs::metadata` + canonicalize + compare to expected canonical path |
-| The `--ws-url` flag is not abused in production (only intended for tests) | Production default is `wss://web.whatsapp.com/ws` | Critical: attacker who controls DNS or `ws_url` config could MitM the noise handshake | Documented in CLI help; not enforced by code. **ACCEPTED RISK**; F3: add `cfg!(not(debug_assertions))` guard to refuse `--ws-url` in release builds unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` is set |
-| The `groups: Vec<String>` config field is the only source of broadcast domain registration | `adapter.rs:400-411` linear scan | High: unconfigured groups silently drop inbound messages | Per RFC-0850p, this is the current design. **ACCEPTED RISK**; RFC-0855p-c (DomainCoordinator, 2026-06-16 draft) will add `register_domain` / `list_domains` |
-| Multi-device pairing does not silently log out the adapter | Adapter runs in a long-lived WS connection | High: operator's phone activity (e.g., pairing a new tablet) could log out the gateway | whatsapp-rust handles reconnection; **ACCEPTED RISK**; F4: add explicit `Replaced` state to the adapter (currently mapped to `LoggedOut`) |
-| `whoami` re-establishing the WS connection is sufficient verification | `whoami` subcommand re-uses the adapter's start_bot path | Low: false positive if the WS is open but the device identity is wrong | Cross-checked with `self_handle()` returning the canonical phone; sidecar `self_phone` is the source of truth |
-| `group_jid` is shared out-of-band via invite link or mission descriptor | Adapter only joins groups listed in `groups: Vec<String>` | High: node cannot find the group to join without out-of-band coordination | Specified in §"Group Discovery (E2E IS-1.1 fix)" |
-| DOT envelopes are gossiped within the bound group | Adapter relays all DOT envelopes received in a joined group | Medium: routing topology must be defined to avoid loops and ensure delivery | Specified in §"Message Routing Topology (E2E IS-1.4 fix)" |
-| Adapter exposes a KickEvent stream for platform-loss detection | DomainCoordinator must react to kicks within the liveness window | Critical: without kick detection, the DomainCoordinator cannot transition to Inactive | Specified in §"Kick Detection (Platform Adapter API) (E2E IS-5.1 fix)" |
+| Assumption                                                                                                  | Where Relied Upon                                                                           | Blast Radius if False                                                                  | Mitigation / Status                                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Operator has a working phone with WhatsApp installed and active network                                     | `qr-link` requires the operator to scan; `pair-link` requires the operator to type the code | Total: cannot pair; CLI times out at `Event::Connected` wait                           | Operator documentation; CLI prints actionable error on `LoggedOut`                                                                                                                               |
+| Operator can see the terminal (no headless / no SSH without TTY)                                            | QR is rendered as unicode half-block in terminal                                            | Pairing requires visual access; headless deployments need a different mechanism        | Future Work F1: `octo-whatsapp-onboard serve-qr` over HTTP for headless; not in this RFC                                                                                                         |
+| WhatsApp server is reachable from the gateway host (firewall, no regional block)                            | WS connection to `wss://web.whatsapp.com/ws` (or `--ws-url` override)                       | Total: cannot pair or operate                                                          | TLS via whatsapp-rust; no override in production; `R5-M2` hardens WS path; **ACCEPTED RISK** for regional blocks (operator must use a relay)                                                     |
+| Stoolap session DB can be created at the configured path with mode 0700/0600                                | `qr-link` / `pair-link` / `whoami` all require the path                                     | Total: CLI exits with `CoreError::Adapter` or permission error                         | CLI creates dir with mode 0700 before adapter starts                                                                                                                                             |
+| The phone number entered via `--phone` is the SAME as the phone that will scan the QR or type the pair code | `pair-link` issues a 6-char code bound to that phone                                        | High: pair code expires; operator confused; possible wrong-account link                | CLI pre-validates E.164; documents the binding; pair code is short-lived (60s) and phone-bound by WhatsApp                                                                                       |
+| WhatsApp does not change its protocol incompatibly (Signal noise, protobuf, event stream)                   | whatsapp-rust implements the current protocol                                               | Total: adapter cannot connect; `Event::StreamError` pattern                            | whatsapp-rust is pinned and updated by its maintainers; **ACCEPTED RISK** for protocol drift                                                                                                     |
+| The stoolap session DB persists across adapter restarts (Signal state is durable)                           | `whoami` reuses the DB; `start_bot` reloads the Signal session                              | High: each restart requires re-pairing                                                 | whatsapp-rust is responsible for durability; `R6-H2` `wait_for_health` is the verification                                                                                                       |
+| The bot phone number is not SIM-swapped, stolen, or factory-reset                                           | `Event::Connected` re-resolves the device identity                                          | Critical: identity theft → attacker controls the bot and all joined groups             | Out of protocol scope; **ACCEPTED RISK**; operator's responsibility to secure the SIM and the WhatsApp account                                                                                   |
+| The stoolap database is not corrupted (disk failure, partial write)                                         | `start_bot` opens the DB                                                                    | Total: must re-pair                                                                    | `to_disk_json` uses atomic write (tempfile + rename); stoolap's own durability; **ACCEPTED RISK** for hardware failure                                                                           |
+| The CLI is run with a user that has permission to create files in `~/.local/share/octo/whatsapp/`           | `qr-link` writes the sidecar + config                                                       | Total: permission denied, CLI exits non-zero                                           | CLI prints actionable error; documents `$XDG_DATA_HOME` override                                                                                                                                 |
+| The session DB path is not a symlink to an unexpected location (symlink attack)                             | `start_bot` opens the path                                                                  | High: write to attacker's location, leak Signal keys                                   | **MISSING** — symlink resolution is not checked. Future Work F2: add `std::fs::metadata` + canonicalize + compare to expected canonical path                                                     |
+| The `--ws-url` flag is not abused in production (only intended for tests)                                   | Production default is `wss://web.whatsapp.com/ws`                                           | Critical: attacker who controls DNS or `ws_url` config could MitM the noise handshake  | Documented in CLI help; not enforced by code. **ACCEPTED RISK**; F3: add `cfg!(not(debug_assertions))` guard to refuse `--ws-url` in release builds unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` is set |
+| The `groups: Vec<String>` config field is the only source of broadcast domain registration                  | `adapter.rs:400-411` linear scan                                                            | High: unconfigured groups silently drop inbound messages                               | Per RFC-0850p, this is the current design. **ACCEPTED RISK**; RFC-0855p-c (DomainCoordinator, 2026-06-16 draft) will add `register_domain` / `list_domains`                                      |
+| Multi-device pairing does not silently log out the adapter                                                  | Adapter runs in a long-lived WS connection                                                  | High: operator's phone activity (e.g., pairing a new tablet) could log out the gateway | whatsapp-rust handles reconnection; **ACCEPTED RISK**; F4: add explicit `Replaced` state to the adapter (currently mapped to `LoggedOut`)                                                        |
+| `whoami` re-establishing the WS connection is sufficient verification                                       | `whoami` subcommand re-uses the adapter's start_bot path                                    | Low: false positive if the WS is open but the device identity is wrong                 | Cross-checked with `self_handle()` returning the canonical phone; sidecar `self_phone` is the source of truth                                                                                    |
+| `group_jid` is shared out-of-band via invite link or mission descriptor                                     | Adapter only joins groups listed in `groups: Vec<String>`                                   | High: node cannot find the group to join without out-of-band coordination              | Specified in §"Group Discovery (E2E IS-1.1 fix)"                                                                                                                                                 |
+| DOT envelopes are gossiped within the bound group                                                           | Adapter relays all DOT envelopes received in a joined group                                 | Medium: routing topology must be defined to avoid loops and ensure delivery            | Specified in §"Message Routing Topology (E2E IS-1.4 fix)"                                                                                                                                        |
+| Adapter exposes a KickEvent stream for platform-loss detection                                              | DomainCoordinator must react to kicks within the liveness window                            | Critical: without kick detection, the DomainCoordinator cannot transition to Inactive  | Specified in §"Kick Detection (Platform Adapter API) (E2E IS-5.1 fix)"                                                                                                                           |
 
 ## Security Considerations
 
@@ -839,6 +839,7 @@ The `group_jid` (the platform-specific group identifier, e.g., `1203630123456789
    - Telegram: `^-100\d+$` (supergroup) or `^-?\d+$` (basic group)
 
 **Order of operations at group join:**
+
 1. Node receives `group_jid` from one of the 3 channels above.
 2. Node validates the `group_jid` against the platform regex.
 3. Node calls `adapter.join_group(group_jid)`.
@@ -904,26 +905,26 @@ pub enum KickReason {
 
 ### Threat model
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| Custom pair code in shell history | Pair code leak | Accept via env var (`$OCTO_WHATSAPP_PAIR_CODE`) or flag; redact in logs (R1-H2) |
-| stoolap DB file permissions | Signal key leak | Mode 0600 on session_path, atomic write via tempfile |
-| WS URL hijack (DNS poisoning) | Man-in-the-middle on first link | TLS via whatsapp-rust (no override; --ws-url is for tests only) |
-| Multiple onboard processes on same session_path | Stoolap database corruption | Lockfile advisory (flock) on session_path; adapter's StoolapStore::init_schema is idempotent but concurrent writes can race |
-| `Event::LoggedOut` mid-link | Half-paired state | CLI exits 2, sidecar is NOT written (atomic: written only on Event::Connected, which fires after LoggedOut cancels the handshake). R5-M2: if the sidecar write itself fails after Event::Connected (e.g., disk full, permission denied), the link fails with `CoreError::Adapter` — the sidecar is a correctness requirement for fast `session list`, not an optimization. |
-| Config JSON field order differs from adapter expectations | Deserialization failure | Field-by-field serde_json::Map (deterministic order) |
-| Ctrl-C during config write | Partial config file | Atomic write (tempfile + rename) |
+| Threat                                                    | Impact                          | Mitigation                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Custom pair code in shell history                         | Pair code leak                  | Accept via env var (`$OCTO_WHATSAPP_PAIR_CODE`) or flag; redact in logs (R1-H2)                                                                                                                                                                                                                                                                                            |
+| stoolap DB file permissions                               | Signal key leak                 | Mode 0600 on session_path, atomic write via tempfile                                                                                                                                                                                                                                                                                                                       |
+| WS URL hijack (DNS poisoning)                             | Man-in-the-middle on first link | TLS via whatsapp-rust (no override; --ws-url is for tests only)                                                                                                                                                                                                                                                                                                            |
+| Multiple onboard processes on same session_path           | Stoolap database corruption     | Lockfile advisory (flock) on session_path; adapter's StoolapStore::init_schema is idempotent but concurrent writes can race                                                                                                                                                                                                                                                |
+| `Event::LoggedOut` mid-link                               | Half-paired state               | CLI exits 2, sidecar is NOT written (atomic: written only on Event::Connected, which fires after LoggedOut cancels the handshake). R5-M2: if the sidecar write itself fails after Event::Connected (e.g., disk full, permission denied), the link fails with `CoreError::Adapter` — the sidecar is a correctness requirement for fast `session list`, not an optimization. |
+| Config JSON field order differs from adapter expectations | Deserialization failure         | Field-by-field serde_json::Map (deterministic order)                                                                                                                                                                                                                                                                                                                       |
+| Ctrl-C during config write                                | Partial config file             | Atomic write (tempfile + rename)                                                                                                                                                                                                                                                                                                                                           |
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| QR code re-rendered for the wrong session | Operator scans but nothing pairs | QR is event-specific (per Event::PairingQrCode); the CLI passes the entire event through, not just the code |
-| poll_for_connected misses the brief window between Event::Connected and Event::LoggedOut | CLI exits 2 instead of 0 | Polling interval is 250ms; Event::Connected → device.pn resolution is <100ms in practice. Document the polling assumption. |
-| sidecar JSON for session_meta.json is corrupted | session list fails | Validate sidecar with serde_json::from_slice; on parse error, fall back to bot startup |
-| Self_handle() returns the wrong number (e.g., a different bot's session reused) | Operator pairs the wrong account | sidecar self_phone is the source of truth for session list; self_handle() is the cross-check |
-| `pair-link --phone` accepts a malformed phone and the protocol returns a confusing error | Operator confusion | CLI pre-validates the phone with regex `^\+[1-9]\d{6,14}$` (E.164) and exits 5 before any network call |
-| stoolap database does not exist on first link | Init schema failure mid-link | StoolapStore::new() calls init_schema(); if parent dir is missing, the CLI creates it with mode 0700 before the adapter starts |
+| Threat                                                                                   | Impact                           | Mitigation                                                                                                                     |
+| ---------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| QR code re-rendered for the wrong session                                                | Operator scans but nothing pairs | QR is event-specific (per Event::PairingQrCode); the CLI passes the entire event through, not just the code                    |
+| poll_for_connected misses the brief window between Event::Connected and Event::LoggedOut | CLI exits 2 instead of 0         | Polling interval is 250ms; Event::Connected → device.pn resolution is <100ms in practice. Document the polling assumption.     |
+| sidecar JSON for session_meta.json is corrupted                                          | session list fails               | Validate sidecar with serde_json::from_slice; on parse error, fall back to bot startup                                         |
+| Self_handle() returns the wrong number (e.g., a different bot's session reused)          | Operator pairs the wrong account | sidecar self_phone is the source of truth for session list; self_handle() is the cross-check                                   |
+| `pair-link --phone` accepts a malformed phone and the protocol returns a confusing error | Operator confusion               | CLI pre-validates the phone with regex `^\+[1-9]\d{6,14}$` (E.164) and exits 5 before any network call                         |
+| stoolap database does not exist on first link                                            | Init schema failure mid-link     | StoolapStore::new() calls init_schema(); if parent dir is missing, the CLI creates it with mode 0700 before the adapter starts |
 
 ## Adversary Analysis
 
@@ -933,29 +934,29 @@ This section supplements the existing Threat model (§"Security Considerations")
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| **D-WA-1**: `pair_phone` accepted via CLI arg | Local process observer (any user on the host) | 0 (just `ps aux`) | Phone number leak (low sensitivity) | Env var preferred; documented in help; CLI arg is a fallback | LOW. Phone number is not a secret. |
-| **D-WA-2**: Custom `pair_code` accepted via CLI arg | Local process observer | 0 | Pair code leak (60s TTL; usable for 60s to pair the attacker's device) | Env var `$OCTO_WHATSAPP_PAIR_CODE` preferred; redaction in `--verbose` output | LOW. Pair code is short-lived and phone-bound. |
-| **D-WA-3**: Stoolap DB mode 0600 | Local user on the host | 0 (if they can read other users' files, they have bigger problems) | Signal key leak → full identity theft on the platform | Mode 0600 on `session_path`; parent dir mode 0700; atomic write | LOW. Standard Unix file permissions. |
-| **D-WA-4**: Sidecar JSON written only on `Event::Connected` (atomic) | Process killer / disk-full attacker mid-link | 0 (just kill the process or fill the disk) | Half-paired state: `session list` shows the DB but it's not actually paired | CLI exits 2; sidecar NOT written; atomic write ensures no partial file; **R5-M2** makes sidecar a correctness requirement | LOW. Operator must `session remove` and re-pair. |
-| **D-WA-5**: `--ws-url` flag for test injection | Attacker who controls config | 0 (just edit the config) | MitM the noise handshake; impersonate the WhatsApp server; harvest all future messages | TLS via whatsapp-rust; `--ws-url` is a debug-only escape hatch; **NOT** enforced by code | MEDIUM. **ACCEPTED RISK**; F3 will harden with a release-build guard. |
-| **D-WA-6**: `Event::LoggedOut` mid-link → CLI exits 2, no sidecar | Attacker who can trigger a LoggedOut (e.g., by pairing a competing device from the same phone) | Must control the bot's phone | Half-paired state, denial of service for the gateway | Sidecar is the correctness check for `session list`; atomic write ensures consistency | MEDIUM. Recovery is operator-initiated (delete DB, re-pair). |
-| **D-WA-7**: Lockfile (flock) on `session_path` for multi-process safety | Two concurrent onboard processes on the same DB | 0 (just run two CLIs) | Stoolap DB corruption; partial writes; undefined behavior | Advisory lockfile; second process blocks or errors | LOW. Documented; the CLI is intended to be single-process. |
-| **D-WA-8**: `pair-link` pre-validates phone with E.164 regex | Attacker who can inject a malformed phone | 0 (just type it) | Confusing protocol error from WhatsApp server | Pre-validation: regex `^\+[1-9]\d{6,14}$`, CLI exits 5 before any network call | LOW. UX improvement, not security. |
-| **D-WA-9**: stoolap parent dir created with mode 0700 before adapter starts | Attacker who can write to a parent dir (e.g., `/tmp` is world-writable) | 0 | Pre-creating a world-readable dir; subsequent DB inherits more permissive umask | Mode 0700 set explicitly via `std::fs::DirBuilder::new().recursive(true).mode(0o700)` | LOW. |
-| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config | 0 | Add a malicious group → bridge unwanted traffic | Filesystem ACLs; operator trust; **RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)** will add `register_domain` with proper authority | MEDIUM. **ACCEPTED RISK**; RFC-0855p-c to fix. |
-| **D-WA-11**: `validate()` is in-memory only (does not hit the network) | n/a (not a security decision) | n/a | n/a | The CLI does not open WS in `validate()`; the adapter is not constructed | n/a. Performance optimization. |
-| **D-WA-12**: `whoami` re-establishes WS connection to verify (network-bound, 30s) | Attacker who can simulate a connected state without actually connecting | 0 | n/a (the bot is already connected; whoami is the verification) | The WS re-connect is the only way to verify `device.pn` is reachable; the adapter does not expose a "read device.pn without starting" method | LOW. Performance cost, not security cost. |
+| Decision                                                                              | Q1 Beneficiary                                                                                 | Q2 Cost to Attacker                                                | Q3 Gain if Successful                                                                  | Q4 Defense (cost to legit op)                                                                                                                | Q5 Residual Risk                                                      |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **D-WA-1**: `pair_phone` accepted via CLI arg                                         | Local process observer (any user on the host)                                                  | 0 (just `ps aux`)                                                  | Phone number leak (low sensitivity)                                                    | Env var preferred; documented in help; CLI arg is a fallback                                                                                 | LOW. Phone number is not a secret.                                    |
+| **D-WA-2**: Custom `pair_code` accepted via CLI arg                                   | Local process observer                                                                         | 0                                                                  | Pair code leak (60s TTL; usable for 60s to pair the attacker's device)                 | Env var `$OCTO_WHATSAPP_PAIR_CODE` preferred; redaction in `--verbose` output                                                                | LOW. Pair code is short-lived and phone-bound.                        |
+| **D-WA-3**: Stoolap DB mode 0600                                                      | Local user on the host                                                                         | 0 (if they can read other users' files, they have bigger problems) | Signal key leak → full identity theft on the platform                                  | Mode 0600 on `session_path`; parent dir mode 0700; atomic write                                                                              | LOW. Standard Unix file permissions.                                  |
+| **D-WA-4**: Sidecar JSON written only on `Event::Connected` (atomic)                  | Process killer / disk-full attacker mid-link                                                   | 0 (just kill the process or fill the disk)                         | Half-paired state: `session list` shows the DB but it's not actually paired            | CLI exits 2; sidecar NOT written; atomic write ensures no partial file; **R5-M2** makes sidecar a correctness requirement                    | LOW. Operator must `session remove` and re-pair.                      |
+| **D-WA-5**: `--ws-url` flag for test injection                                        | Attacker who controls config                                                                   | 0 (just edit the config)                                           | MitM the noise handshake; impersonate the WhatsApp server; harvest all future messages | TLS via whatsapp-rust; `--ws-url` is a debug-only escape hatch; **NOT** enforced by code                                                     | MEDIUM. **ACCEPTED RISK**; F3 will harden with a release-build guard. |
+| **D-WA-6**: `Event::LoggedOut` mid-link → CLI exits 2, no sidecar                     | Attacker who can trigger a LoggedOut (e.g., by pairing a competing device from the same phone) | Must control the bot's phone                                       | Half-paired state, denial of service for the gateway                                   | Sidecar is the correctness check for `session list`; atomic write ensures consistency                                                        | MEDIUM. Recovery is operator-initiated (delete DB, re-pair).          |
+| **D-WA-7**: Lockfile (flock) on `session_path` for multi-process safety               | Two concurrent onboard processes on the same DB                                                | 0 (just run two CLIs)                                              | Stoolap DB corruption; partial writes; undefined behavior                              | Advisory lockfile; second process blocks or errors                                                                                           | LOW. Documented; the CLI is intended to be single-process.            |
+| **D-WA-8**: `pair-link` pre-validates phone with E.164 regex                          | Attacker who can inject a malformed phone                                                      | 0 (just type it)                                                   | Confusing protocol error from WhatsApp server                                          | Pre-validation: regex `^\+[1-9]\d{6,14}$`, CLI exits 5 before any network call                                                               | LOW. UX improvement, not security.                                    |
+| **D-WA-9**: stoolap parent dir created with mode 0700 before adapter starts           | Attacker who can write to a parent dir (e.g., `/tmp` is world-writable)                        | 0                                                                  | Pre-creating a world-readable dir; subsequent DB inherits more permissive umask        | Mode 0700 set explicitly via `std::fs::DirBuilder::new().recursive(true).mode(0o700)`                                                        | LOW.                                                                  |
+| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config                                                     | 0                                                                  | Add a malicious group → bridge unwanted traffic                                        | Filesystem ACLs; operator trust; **RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)** will add `register_domain` with proper authority      | MEDIUM. **ACCEPTED RISK**; RFC-0855p-c to fix.                        |
+| **D-WA-11**: `validate()` is in-memory only (does not hit the network)                | n/a (not a security decision)                                                                  | n/a                                                                | n/a                                                                                    | The CLI does not open WS in `validate()`; the adapter is not constructed                                                                     | n/a. Performance optimization.                                        |
+| **D-WA-12**: `whoami` re-establishes WS connection to verify (network-bound, 30s)     | Attacker who can simulate a connected state without actually connecting                        | 0                                                                  | n/a (the bot is already connected; whoami is the verification)                         | The WS re-connect is the only way to verify `device.pn` is reachable; the adapter does not expose a "read device.pn without starting" method | LOW. Performance cost, not security cost.                             |
 
 ### Severity Summary
 
-| Severity | Findings |
-|----------|----------|
+| Severity     | Findings                                                                              |
+| ------------ | ------------------------------------------------------------------------------------- |
 | **CRITICAL** | None (D-WA-5 mitigated by WhatsApp's TLS; F4 will harden the `--ws-url` escape hatch) |
-| **HIGH** | None |
-| **MEDIUM** | D-WA-5, D-WA-6, D-WA-10 (all three are ACCEPTED RISK with named Future Work) |
-| **LOW** | D-WA-1, D-WA-2, D-WA-3, D-WA-4, D-WA-7, D-WA-8, D-WA-9, D-WA-12 |
+| **HIGH**     | None                                                                                  |
+| **MEDIUM**   | D-WA-5, D-WA-6, D-WA-10 (all three are ACCEPTED RISK with named Future Work)          |
+| **LOW**      | D-WA-1, D-WA-2, D-WA-3, D-WA-4, D-WA-7, D-WA-8, D-WA-9, D-WA-12                       |
 
 ### Multi-Round Review
 
@@ -989,12 +990,14 @@ Not applicable. This is operational tooling with no economic surface.
 ### qr-link config output
 
 Input:
+
 ```
 --session-path /home/user/.local/share/octo/whatsapp/default.session.db \
 --groups 120363012345678901@g.us
 ```
 
 Expected output (structure, paths vary):
+
 ```json
 {
   "session_path": "/home/user/.local/share/octo/whatsapp/default.session.db",
@@ -1005,12 +1008,14 @@ Expected output (structure, paths vary):
 ### pair-link config output
 
 Input:
+
 ```
 --session-path /home/user/.local/share/octo/whatsapp/default.session.db \
 --phone +15551234567
 ```
 
 Expected output:
+
 ```json
 {
   "session_path": "/home/user/.local/share/octo/whatsapp/default.session.db",
@@ -1021,33 +1026,34 @@ Expected output:
 
 ### Phone validation
 
-| Input | Expected |
-|-------|----------|
-| `+15551234567` | Accept (15 digits after +) |
-| `+1555123456` | Accept (10 digits) |
-| `15551234567` | Reject (no `+`) → exit 5 |
-| `+0123456789` | Reject (leading 0 after +) → exit 5 |
-| `+1-555-123-4567` | Reject (non-digit) → exit 5 |
-| `+` | Reject (no digits) → exit 5 |
+| Input             | Expected                            |
+| ----------------- | ----------------------------------- |
+| `+15551234567`    | Accept (15 digits after +)          |
+| `+1555123456`     | Accept (10 digits)                  |
+| `15551234567`     | Reject (no `+`) → exit 5            |
+| `+0123456789`     | Reject (leading 0 after +) → exit 5 |
+| `+1-555-123-4567` | Reject (non-digit) → exit 5         |
+| `+`               | Reject (no digits) → exit 5         |
 
 ### Error exit codes
 
-| Scenario | Expected exit |
-|----------|--------------|
-| Invalid `--phone` format | 5 |
-| `Event::LoggedOut` during link | 2 |
-| `Event::LoggedOut` during whoami | 7 |
-| WebSocket connect fail | 3 |
-| `--timeout` elapsed (default 300s) | 4 |
-| Ctrl-C during wait | 4 |
-| Config file exists, no `--force` | 5 |
-| `session_path` parent dir unwritable | 5 |
-| Stoolap schema init failure | 5 |
-| `whoami` finds expired session | 7 |
+| Scenario                             | Expected exit |
+| ------------------------------------ | ------------- |
+| Invalid `--phone` format             | 5             |
+| `Event::LoggedOut` during link       | 2             |
+| `Event::LoggedOut` during whoami     | 7             |
+| WebSocket connect fail               | 3             |
+| `--timeout` elapsed (default 300s)   | 4             |
+| Ctrl-C during wait                   | 4             |
+| Config file exists, no `--force`     | 5             |
+| `session_path` parent dir unwritable | 5             |
+| Stoolap schema init failure          | 5             |
+| `whoami` finds expired session       | 7             |
 
 ### Sidecar JSON
 
 After successful `qr-link`:
+
 ```json
 {
   "self_phone": "15551234567",
@@ -1058,6 +1064,7 @@ After successful `qr-link`:
 ```
 
 After successful `pair-link`:
+
 ```json
 {
   "self_phone": "15551234567",
@@ -1069,12 +1076,12 @@ After successful `pair-link`:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Adapter subcommand** (`octo-cli whatsapp-onboard`) | No new crate | Couples tooling to adapter cdylib; can't run standalone; depends on host process being loaded |
-| **Reimplement Bot in onboard core** | No dep on adapter runtime | Duplicates storage backend, transport factory, device-props; any drift produces sessions the adapter cannot load |
-| **Direct `whatsapp-rust` calls from onboard core** | No adapter dep at all | Same duplication risk as above; cross-crate refactor when the adapter updates |
-| **This RFC: standalone binary + core lib (reusing adapter's `WhatsAppWebAdapter`)** | Clean separation, shared runtime, mirrors matrix-onboard + telegram-onboard | One adapter change (`WhatsAppConfig::validate()`); polling-vs-Notify tradeoff |
+| Approach                                                                            | Pros                                                                        | Cons                                                                                                             |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Adapter subcommand** (`octo-cli whatsapp-onboard`)                                | No new crate                                                                | Couples tooling to adapter cdylib; can't run standalone; depends on host process being loaded                    |
+| **Reimplement Bot in onboard core**                                                 | No dep on adapter runtime                                                   | Duplicates storage backend, transport factory, device-props; any drift produces sessions the adapter cannot load |
+| **Direct `whatsapp-rust` calls from onboard core**                                  | No adapter dep at all                                                       | Same duplication risk as above; cross-crate refactor when the adapter updates                                    |
+| **This RFC: standalone binary + core lib (reusing adapter's `WhatsAppWebAdapter`)** | Clean separation, shared runtime, mirrors matrix-onboard + telegram-onboard | One adapter change (`WhatsAppConfig::validate()`); polling-vs-Notify tradeoff                                    |
 
 **Decision:** Standalone binary + core lib, reusing the adapter's `WhatsAppWebAdapter` runtime. Mirrors the proven `octo-matrix-onboard` (0850h-a) and `octo-telegram-onboard` (0850ab-a) patterns. The polling-for-`self_handle()` tradeoff is acceptable because the wait is operator-driven (seconds-to-minutes), not latency-sensitive (sub-second).
 
@@ -1091,31 +1098,27 @@ After successful `pair-link`:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | Add `WhatsAppConfig::validate()` (additive) |
-| `crates/octo-whatsapp-onboard/Cargo.toml` | New crate (binary) |
-| `crates/octo-whatsapp-onboard/src/main.rs` | CLI entry point (clap) |
-| `crates/octo-whatsapp-onboard/src/cli.rs` | Arg structs |
-| `crates/octo-whatsapp-onboard/src/logging.rs` | Redaction layer |
-| `crates/octo-whatsapp-onboard/src/error.rs` | Error types + exit codes |
-| `crates/octo-whatsapp-onboard/src/output.rs` | Config writer + sidecar |
-| `crates/octo-whatsapp-onboard-core/Cargo.toml` | New crate (lib) |
-| `crates/octo-whatsapp-onboard-core/src/lib.rs` | Public API + data structures |
-| `crates/octo-whatsapp-onboard-core/src/qr_link.rs` | QR-link mode |
-| `crates/octo-whatsapp-onboard-core/src/pair_link.rs` | Pair-code mode |
-| `crates/octo-whatsapp-onboard-core/src/session.rs` | Identity extraction via `Event::Connected` |
-| `crates/octo-whatsapp-onboard-core/src/output.rs` | Config writer + sidecar |
-| `crates/octo-whatsapp-onboard-core/src/error.rs` | Error types |
-| (workspace) | Auto-included via `members = ["crates/*"]` in root `Cargo.toml` |
+| File                                                 | Change                                                          |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| `crates/octo-adapter-whatsapp/src/adapter.rs`        | Add `WhatsAppConfig::validate()` (additive)                     |
+| `crates/octo-whatsapp-onboard/Cargo.toml`            | New crate (binary)                                              |
+| `crates/octo-whatsapp-onboard/src/main.rs`           | CLI entry point (clap)                                          |
+| `crates/octo-whatsapp-onboard/src/cli.rs`            | Arg structs                                                     |
+| `crates/octo-whatsapp-onboard/src/logging.rs`        | Redaction layer                                                 |
+| `crates/octo-whatsapp-onboard/src/error.rs`          | Error types + exit codes                                        |
+| `crates/octo-whatsapp-onboard/src/output.rs`         | Config writer + sidecar                                         |
+| `crates/octo-whatsapp-onboard-core/Cargo.toml`       | New crate (lib)                                                 |
+| `crates/octo-whatsapp-onboard-core/src/lib.rs`       | Public API + data structures                                    |
+| `crates/octo-whatsapp-onboard-core/src/qr_link.rs`   | QR-link mode                                                    |
+| `crates/octo-whatsapp-onboard-core/src/pair_link.rs` | Pair-code mode                                                  |
+| `crates/octo-whatsapp-onboard-core/src/session.rs`   | Identity extraction via `Event::Connected`                      |
+| `crates/octo-whatsapp-onboard-core/src/output.rs`    | Config writer + sidecar                                         |
+| `crates/octo-whatsapp-onboard-core/src/error.rs`     | Error types                                                     |
+| (workspace)                                          | Auto-included via `members = ["crates/*"]` in root `Cargo.toml` |
 
 ## Future Work
 
-Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
-
-| ID | Title | Severity | Spec | Mission |
-|----|-------|----------|------|---------|
-| F1 | `octo-whatsapp-onboard serve-qr` over HTTP for headless / no-TTY deployments (mitigates D-WA-4) | MEDIUM | Inline: new subcommand `serve-qr` that listens on `127.0.0.1:PORT` (configurable via `--bind`), streams the QR PNG (or unicode half-block) as `image/png` over HTTP, and exits after first successful `Event::Connected` (or 300s timeout). Operator scans via a phone browser pointed at the URL. | `missions/open/0850p-a-serve-qr-http.md` |
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/0850p-a-serve-qr-http.md` |
 | F2 | Symlink-resolution check on `session_path` before `start_bot` (mitigates D-WA-4 symlink-attack risk) | MEDIUM | Inline: after CLI creates the dir (mode 0700), call `std::fs::metadata(&session_path)` and `std::fs::canonicalize(&session_path)`. If the canonical path's parent != the requested parent, refuse with `CoreError::SessionPathSymlink`. Test: `tempdir/symlink_to_evil` is rejected. | `missions/open/0850p-a-symlink-check.md` |
 | F3 | Release-build guard: refuse `--ws-url` in release unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` (mitigates D-WA-5) | MEDIUM | Inline: in `cli.rs`, after arg parsing, `if cfg!(not(debug_assertions)) && args.ws_url.is_some() && std::env::var("OCTO_WHATSAPP_ALLOW_WS_URL").ok().as_deref() != Some("1") { return Err(CliError::WsUrlReleaseForbidden); }`. The help text documents the override. | `missions/open/0850p-a-ws-url-release-guard.md` |
 | F4 | Explicit `Replaced` state in `BotLifecycle` (currently mapped to `LoggedOut`, per D-WA-7) | LOW | Inline: add `Replaced: BotState` to the state machine; transition `Active → Replaced` on `Event::LoggedOut` where `cause == Replaced` (or whichever field whatsapp-rust exposes). New subcommand `whoami --detect-replacement` returns a distinct exit code. | `missions/open/0850p-a-replaced-state.md` |
@@ -1174,13 +1177,13 @@ All `DOT/1/Pairing*` envelopes (events from the WhatsApp Web protocol) are seria
 
 The TDLib session DB is a SQLite database with the following key tables (managed by `tdlib-rs`):
 
-| Table | Purpose |
-|-------|---------|
-| `users` | Cached user info (id, name, phone) |
-| `chats` | Cached chat metadata |
+| Table      | Purpose                                |
+| ---------- | -------------------------------------- |
+| `users`    | Cached user info (id, name, phone)     |
+| `chats`    | Cached chat metadata                   |
 | `messages` | Cached message history (DOT envelopes) |
-| `sessions` | Active TDLib sessions (one per auth) |
-| `auths` | Auth state (bot-token or user-account) |
+| `sessions` | Active TDLib sessions (one per auth)   |
+| `auths`    | Auth state (bot-token or user-account) |
 
 The adapter does NOT directly query the TDLib DB; it uses the `tdlib_rs::client::Client` API. The DB schema is documented here for reference only.
 
@@ -1193,7 +1196,7 @@ The adapter does NOT directly query the TDLib DB; it uses the `tdlib_rs::client:
   "schema_version": 1,
   "user_id": "1234567890",
   "username": "alice",
-  "mode": "Bot",  // or "User"
+  "mode": "Bot", // or "User"
   "auth_at_epoch": 12345,
   "session_db_path": "/home/alice/.local/share/octo/whatsapp/default/td.db"
 }
@@ -1211,25 +1214,25 @@ This sidecar enables fast `session list` (no need to spin up a TDLib client for 
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-12 | Initial draft |
-| 1.1 | 2026-06-12 | R1 fixes: removed internal Notify vs polling contradiction (R1-C1), removed `pair_code` field from `WhatsAppSession` (R1-C2), clarified `validate()` is in-memory only (R1-H1), added `$OCTO_WHATSAPP_PAIR_CODE` env var (R1-H2), reconciled deserialize vs adapter-instantiation schema check (R1-H3), pinned `WhatsAppSession` derives to `Debug, Clone` only (R1-M1), pinned polling interval to 250ms in mission AC (R1-M2), renamed `custom_pair_code` to `custom_code` (R1-M3), reframed determinism claim (R1-M4), justified "empty groups is OK" (R1-L1), demoted binary size to stretch target (R1-L2) |
-| 1.2 | 2026-06-12 | R2 fixes: fixed `to_disk_json` signature `&self` (R2-C1), removed `pair_code: null` from on-disk test vectors (R2-C2), added `OutputArgs` type to mission data structures (R2-H1), made `session remove` interactive with `--yes` flag and non-TTY fallback (R2-H2), clarified `chrono` is transitive (R2-H3), pinned sidecar `linked_at` to RFC 3339 UTC no-subsec (R2-M1), reordered `CoreError` variants alphabetically (R2-M2), fixed `wait_for_connected` to return `CoreError` (R2-M3), documented `--groups` JID form (R2-L1), documented `--groups` parsing edge cases (R2-L2) |
-| 1.3 | 2026-06-12 | R3 fixes: updated RFC CLI surface to show `OutputArgs` flatten (R3-C1), added explicit `From<CoreError> for OnboardError` impl (R3-C2), removed `pn` from `REDACT_KEYS` to avoid over-redacting `self_phone` log (R3-H1), added `core/time.rs` for the format helper (R3-H2), added 100ms grace period for `Connected→LoggedOut` race (R3-M1), added `parse_groups` value parser (R3-M2), made binary `write` layering explicit (R3-M3), reframed custom pair code redaction as defense-in-depth (R3-L1), added integration test for `Event::StreamError` exhaustion (R3-L2) |
-| 1.4 | 2026-06-12 | R4 fixes: replaced phantom `bot_handle_is_alive()` with existing `health_check()` (R4-C1; R3-M1 regression — method doesn't exist on `WhatsAppWebAdapter`), use `crate::time::` not `core::time::` in call site (R4-H1), added `POST_CONNECT_GRACE_MS` constant definition + unit test (R4-H2), dropped `[R3-C1]` tag from CLI surface for consistency (R4-M1), removed dead `format_rfc3339_secs` reference (R4-M2), added `From<CoreError>` stub to mission data structure block (R4-M3), reframed whoami latency as <10s (network-bound) not <2s (R4-L1), renamed helper to `format_rfc3339_secs(epoch_secs)` matching matrix pattern (R4-L2) |
-| 1.5 | 2026-06-12 | R5 fixes: `qr_link::run` and `pair_link::run` now call `wait_for_connected` (R5-H1), bumped `whoami` and `session verify` `wait_for_connected` timeouts from 10s to 30s for slow networks (R5-H2), clarified `to_disk_json` round-trip is via adapter instantiation (R5-M1), sidecar is **required** (not optimization), written before config JSON (R5-M2), `format_rfc3339_secs` call site conversion shown (R5-L2) |
-| 1.6 | 2026-06-12 | R6 fixes: `sidecar::write_sidecar` is `crate::sidecar::write_sidecar` (R6-H1), added `wait_for_health` helper for `session list` fallback (R6-H2), qr-link and pair-link AC specify sidecar-first ordering (R6-M1), pair-link and qr-link sequence diagrams show `Bot + on_event` as a composite of the adapter (R6-M2), dedupe of sidecar fast-path sentence (R6-L1) |
-| 1.7 | 2026-06-12 | R7 fixes: `wait_for_health` RFC pseudocode added (R7-H1), `whoami` `Result<String, CoreError>` → display conversion shown (R7-M1), `SESSION_LIST_HEALTH_TIMEOUT_SECS = 5` constant extracted (R7-M2), CLI subcommand AC cross-references core AC instead of restating (R7-L1) |
-| 1.8 | 2026-06-12 | R8 fixes: four constants (POLL_INTERVAL_MS, POST_CONNECT_GRACE_MS, SESSION_LIST_HEALTH_TIMEOUT_SECS, WHOAMI_TIMEOUT_SECS) defined in `core/session.rs` constants block (R8-H1), Quality Gates binary size demoted to "tracked but not enforced" matching R1-L2 (R8-M1), `whoami` CLI surface shows 30s hardcoded timeout (R8-L1) |
-| 1.9 | 2026-06-12 | R9 fixes: whoami AC subsumed duplicated natural-language bullets into the explicit match (R9-M1), session verify has same `Result<String, CoreError>` → display conversion as whoami (R9-L1) |
-| 1.10 | 2026-06-12 | R10 fixes: `SessionInfo::last_linked_at` changed from `Option<chrono::DateTime<Utc>>` to `Option<String>` (R10-L1: sidecar JSON is a String; avoids chrono dep and parse-from-RFC-3339 complexity); R2-H3's "chrono::Utc::now() in sidecar" claim removed (R4-L2 replaced it with `format_rfc3339_secs`) |
-| 1.11 | 2026-06-12 | R11 fixes: RFC `SessionInfo::last_linked_at` updated to match the mission's R10-L1 fix (R10 fix was incomplete — only updated the mission, not the RFC; drift between the two docs) |
-| 1.12 | 2026-06-12 | R12 fixes: mission's Location section updated to match the RFC's R1-H1 fix (workspace is auto-included via `members = ["crates/*"]` glob; no manual edit required) |
-| 1.13 | 2026-06-12 | R13 fixes: pair-link sequence diagram now includes the `session_path dir created mode 0700` validation step (was on qr-link line 196 but missing from pair-link after R6-M2 refactor) |
-| 1.14 | 2026-06-12 | R14 fixes: §Auth Flow pair-link "Custom pair code" Key design decision no longer claims redaction in output JSON (R3-L1 already established the custom code is never logged; this contradicts) |
-| 1.15 | 2026-06-15 | Worked-example audit using RFC template v1.3 new sections: added §Roles and Authorities (7 named roles + 3 out-of-scope + DomainCoordinator placeholder), §Lifecycle Requirements (BotLifecycle 8-state machine + transition table + liveness + recovery + time bounds), §Implicit Assumptions Audit (15 entries: 6 ACCEPTED RISK with named Future Work, 1 MISSING-symlink-check, 8 mitigated), §Adversary Analysis (12-decision 5-Question Test; 0 CRITICAL, 0 HIGH, 3 MEDIUM, 8 LOW). Future Work extracted: F1=DomainCoordinator (RFC-0855p-b F1), F2=headless serve-qr, F3=symlink check, F4=--ws-url release guard, F5=Replaced state. Related RFCs: cross-reference added to RFC-0855p-b. RFC template version reference updated to v1.3. |
-| 1.16 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): (1) F1=DomainCoordinator moved to RFC-0855p-c (2026-06-16 draft); v1.15 F2-F5 renumbered to F1-F4. (2) §Future Work table rebuilt: 9 items (F1-F9) all with mission stubs in `missions/open/0850p-a-f{1..9}-*.md`; inline specs for F1-F4 (small), mission-stubs for F5-F9. (3) Phase 2 (Multi-Account) section removed (now F5 in the table; tracked, not abandoned). (4) L146 TBD|TBD|TBD row for DomainCoordinator filled with RFC-0855p-c values. (5) All body cross-references to "RFC-0855p-b F1 (DomainCoordinator)" updated to "RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)". (6) Implicit Assumptions Audit (L815 F4→F3, L817 F5→F4) and Adversary Analysis (L942 F4→F3) renumbered. (7) Related RFCs (L1169) updated: 0855p-b → 0855p-c as the DomainCoordinator sister RFC. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0     | 2026-06-12 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.1     | 2026-06-12 | R1 fixes: removed internal Notify vs polling contradiction (R1-C1), removed `pair_code` field from `WhatsAppSession` (R1-C2), clarified `validate()` is in-memory only (R1-H1), added `$OCTO_WHATSAPP_PAIR_CODE` env var (R1-H2), reconciled deserialize vs adapter-instantiation schema check (R1-H3), pinned `WhatsAppSession` derives to `Debug, Clone` only (R1-M1), pinned polling interval to 250ms in mission AC (R1-M2), renamed `custom_pair_code` to `custom_code` (R1-M3), reframed determinism claim (R1-M4), justified "empty groups is OK" (R1-L1), demoted binary size to stretch target (R1-L2)                                                                                                                                  |
+| 1.2     | 2026-06-12 | R2 fixes: fixed `to_disk_json` signature `&self` (R2-C1), removed `pair_code: null` from on-disk test vectors (R2-C2), added `OutputArgs` type to mission data structures (R2-H1), made `session remove` interactive with `--yes` flag and non-TTY fallback (R2-H2), clarified `chrono` is transitive (R2-H3), pinned sidecar `linked_at` to RFC 3339 UTC no-subsec (R2-M1), reordered `CoreError` variants alphabetically (R2-M2), fixed `wait_for_connected` to return `CoreError` (R2-M3), documented `--groups` JID form (R2-L1), documented `--groups` parsing edge cases (R2-L2)                                                                                                                                                           |
+| 1.3     | 2026-06-12 | R3 fixes: updated RFC CLI surface to show `OutputArgs` flatten (R3-C1), added explicit `From<CoreError> for OnboardError` impl (R3-C2), removed `pn` from `REDACT_KEYS` to avoid over-redacting `self_phone` log (R3-H1), added `core/time.rs` for the format helper (R3-H2), added 100ms grace period for `Connected→LoggedOut` race (R3-M1), added `parse_groups` value parser (R3-M2), made binary `write` layering explicit (R3-M3), reframed custom pair code redaction as defense-in-depth (R3-L1), added integration test for `Event::StreamError` exhaustion (R3-L2)                                                                                                                                                                     |
+| 1.4     | 2026-06-12 | R4 fixes: replaced phantom `bot_handle_is_alive()` with existing `health_check()` (R4-C1; R3-M1 regression — method doesn't exist on `WhatsAppWebAdapter`), use `crate::time::` not `core::time::` in call site (R4-H1), added `POST_CONNECT_GRACE_MS` constant definition + unit test (R4-H2), dropped `[R3-C1]` tag from CLI surface for consistency (R4-M1), removed dead `format_rfc3339_secs` reference (R4-M2), added `From<CoreError>` stub to mission data structure block (R4-M3), reframed whoami latency as <10s (network-bound) not <2s (R4-L1), renamed helper to `format_rfc3339_secs(epoch_secs)` matching matrix pattern (R4-L2)                                                                                                 |
+| 1.5     | 2026-06-12 | R5 fixes: `qr_link::run` and `pair_link::run` now call `wait_for_connected` (R5-H1), bumped `whoami` and `session verify` `wait_for_connected` timeouts from 10s to 30s for slow networks (R5-H2), clarified `to_disk_json` round-trip is via adapter instantiation (R5-M1), sidecar is **required** (not optimization), written before config JSON (R5-M2), `format_rfc3339_secs` call site conversion shown (R5-L2)                                                                                                                                                                                                                                                                                                                            |
+| 1.6     | 2026-06-12 | R6 fixes: `sidecar::write_sidecar` is `crate::sidecar::write_sidecar` (R6-H1), added `wait_for_health` helper for `session list` fallback (R6-H2), qr-link and pair-link AC specify sidecar-first ordering (R6-M1), pair-link and qr-link sequence diagrams show `Bot + on_event` as a composite of the adapter (R6-M2), dedupe of sidecar fast-path sentence (R6-L1)                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.7     | 2026-06-12 | R7 fixes: `wait_for_health` RFC pseudocode added (R7-H1), `whoami` `Result<String, CoreError>` → display conversion shown (R7-M1), `SESSION_LIST_HEALTH_TIMEOUT_SECS = 5` constant extracted (R7-M2), CLI subcommand AC cross-references core AC instead of restating (R7-L1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.8     | 2026-06-12 | R8 fixes: four constants (POLL_INTERVAL_MS, POST_CONNECT_GRACE_MS, SESSION_LIST_HEALTH_TIMEOUT_SECS, WHOAMI_TIMEOUT_SECS) defined in `core/session.rs` constants block (R8-H1), Quality Gates binary size demoted to "tracked but not enforced" matching R1-L2 (R8-M1), `whoami` CLI surface shows 30s hardcoded timeout (R8-L1)                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.9     | 2026-06-12 | R9 fixes: whoami AC subsumed duplicated natural-language bullets into the explicit match (R9-M1), session verify has same `Result<String, CoreError>` → display conversion as whoami (R9-L1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.10    | 2026-06-12 | R10 fixes: `SessionInfo::last_linked_at` changed from `Option<chrono::DateTime<Utc>>` to `Option<String>` (R10-L1: sidecar JSON is a String; avoids chrono dep and parse-from-RFC-3339 complexity); R2-H3's "chrono::Utc::now() in sidecar" claim removed (R4-L2 replaced it with `format_rfc3339_secs`)                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.11    | 2026-06-12 | R11 fixes: RFC `SessionInfo::last_linked_at` updated to match the mission's R10-L1 fix (R10 fix was incomplete — only updated the mission, not the RFC; drift between the two docs)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.12    | 2026-06-12 | R12 fixes: mission's Location section updated to match the RFC's R1-H1 fix (workspace is auto-included via `members = ["crates/*"]` glob; no manual edit required)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.13    | 2026-06-12 | R13 fixes: pair-link sequence diagram now includes the `session_path dir created mode 0700` validation step (was on qr-link line 196 but missing from pair-link after R6-M2 refactor)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.14    | 2026-06-12 | R14 fixes: §Auth Flow pair-link "Custom pair code" Key design decision no longer claims redaction in output JSON (R3-L1 already established the custom code is never logged; this contradicts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.15    | 2026-06-15 | Worked-example audit using RFC template v1.3 new sections: added §Roles and Authorities (7 named roles + 3 out-of-scope + DomainCoordinator placeholder), §Lifecycle Requirements (BotLifecycle 8-state machine + transition table + liveness + recovery + time bounds), §Implicit Assumptions Audit (15 entries: 6 ACCEPTED RISK with named Future Work, 1 MISSING-symlink-check, 8 mitigated), §Adversary Analysis (12-decision 5-Question Test; 0 CRITICAL, 0 HIGH, 3 MEDIUM, 8 LOW). Future Work extracted: F1=DomainCoordinator (RFC-0855p-b F1), F2=headless serve-qr, F3=symlink check, F4=--ws-url release guard, F5=Replaced state. Related RFCs: cross-reference added to RFC-0855p-b. RFC template version reference updated to v1.3. |
+| 1.16    | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): (1) F1=DomainCoordinator moved to RFC-0855p-c (2026-06-16 draft); v1.15 F2-F5 renumbered to F1-F4. (2) §Future Work table rebuilt: 9 items (F1-F9) all with mission stubs in `missions/open/0850p-a-f{1..9}-*.md`; inline specs for F1-F4 (small), mission-stubs for F5-F9. (3) Phase 2 (Multi-Account) section removed (now F5 in the table; tracked, not abandoned). (4) L146 TBD                                                                                                                                                                                                                                                                                                         | TBD | TBD row for DomainCoordinator filled with RFC-0855p-c values. (5) All body cross-references to "RFC-0855p-b F1 (DomainCoordinator)" updated to "RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)". (6) Implicit Assumptions Audit (L815 F4→F3, L817 F5→F4) and Adversary Analysis (L942 F4→F3) renumbered. (7) Related RFCs (L1169) updated: 0855p-b → 0855p-c as the DomainCoordinator sister RFC. |
 
 ## Related RFCs
 

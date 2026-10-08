@@ -53,16 +53,20 @@ RFC-0206 v2.1 → v2.2 changes:
 ## Critical files
 
 **MODIFY (0206-011b — RFC body only)**:
+
 - `rfcs/draft/0206-cipherocto-octet-storage.md` — sections + Version History row + v2.1→v2.2 changelog
 
 **NEW (0206-001 v3.0b — substrate re-export block)**:
+
 - `crates/octo-storage-core/src/stoolap.rs` — module wrapper exposing the 4 re-exports
 - `crates/octo-storage-core/src/lib.rs` — add `pub mod stoolap;` declaration (8 top-level `pub use` cap unchanged)
 
 **MODIFY (0206-001 v3.0b)**:
+
 - `crates/octo-storage-core/Cargo.toml` — Layer A semver-major version bump (1.0.0 → 2.0.0)
 
 **MODIFY (0206-008b — 13 consumer crates drop direct dep)**:
+
 - All 13 crates identified in TV-A9(b) audit: `quota-router-storage`, `octo-vault`, `octo-core`, `octo-adapter-whatsapp`, `octo-ident-storage`, `octo-reputation`, `octo-whatsapp`, `octo-matrix-session-store`, `octo-storage-core`, `quota-router-cli`, `octo-adapter-telegram-mtproto`, `quota-router-core`, `quota-router-sm-engine`
 - For each: remove `stoolap = { ... }` line from `[dependencies]`; update `use stoolap::...` imports to `use octo_storage_core::stoolap::...` (with optional `#[cfg(feature = "stoolap-fork")] optional-feature gate` for adapter crates that already have it)
 
@@ -110,7 +114,7 @@ cargo fmt --all -- --check
 
 ## Termination conditions
 
-- `missions/open/0206-011b-rfc-0206-v22-amendment-stoolap-reexport.md` filed
+- `missions/retired/0206-011b-rfc-0206-v22-amendment-stoolap-reexport.md` filed
 - `0206-001 v3.0b` substrate PR landed (re-export block + version bump)
 - `0206-008b` consumer dep drop PR landed (13 crates → 5)
 - Phase 1.9 terminal sweep re-run: TV-0206-A9(b) PASS (5 sites ≤ 5)
@@ -122,6 +126,6 @@ cargo fmt --all -- --check
 
 ## Version History
 
-| Version | Date       | Change                                                          |
-| ------- | ---------- | --------------------------------------------------------------- |
+| Version | Date       | Change                                                            |
+| ------- | ---------- | ----------------------------------------------------------------- |
 | v1.0    | 2026-08-20 | Initial filing; Phase 1.9 sweep blocker for TV-0206-A9(b); 13 → 5 |

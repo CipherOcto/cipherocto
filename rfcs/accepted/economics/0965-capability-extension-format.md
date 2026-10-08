@@ -8,14 +8,14 @@ Accepted v2.0 — Status header synced with §Version History v2.0-CanonicalAlia
 
 ## Version History
 
-| Version | Date | Author | Note |
-|---------|------|--------|------|
-| v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
-| v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
-| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0967) promoted in lockstep on 2026-07-23. |
-| v1.2-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved: multi-`Permission` set union + RFC-0957 attenuation; `MaxUses` failsafe (`uses_consumed + 1 > max_uses` rejects even on partial sync); `Factory.Vet` per RFC-0126 + RFC-0964; `Sharded` caveat original-only; `PermissionKind` 2-byte expansion deferred v1.1 (schedule: post-v2.0); `AuditWindow` sync semantics (RFC-0862 delivers dispute; late = no effect). Additive (non-breaking) bump. |
-| v1.3-Referenced | 2026-08-08 | @cipherocto + @mmacedoeu | **Cross-reference to RFC-0871.** The caveat discriminator byte pattern (1-byte `0x01-0xCF` for RFC-allocated + `0xD0-0xFF` for application-specific) established by this RFC is the precedent for the larger 16-byte `PayloadKindId` discriminator in RFC-0871 (specialized node protocol envelope). The same `Raw { discriminator, body }` escape hatch pattern in RFC-0871's `Authorization` enum follows the `RawCaveat` pattern defined here. Both RFCs share the same extension principle: new types are added via RFC + reserved-range allocation + Raw escape hatch; old code fail-closes on unknown discriminators. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. |
-| v1.4-CrateLayout | 2026-08-08 | @cipherocto + @mmacedoeu | **Per-extension crate layout.** Added §Per-Extension Crate Layout subsection mandating that caveat types AND capability types land in separate crates (`crates/octo-cap-{macaroon,zk,federation,time-lock,threshold-mpc}/` etc.), each registering a `CapabilitySpec` impl via plugin. Wallet core unchanged; capability attenuation invariant (RFC-0957 §3.5) preserved across the crate boundary. Migration path: today's single-crate `cipherocto-capability-ext` reference impl → `crates/octo-cap-macaroon/` per RFC-0957 §Per-Extension Crate Layout. Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`. Cross-references: RFC-0957 §Per-Extension Crate Layout; RFC-0871 §Wallet Node Lifecycle. |
+| Version             | Date       | Author                   | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ---------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0                | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| v1.1                | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v1.1-Accepted       | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0967) promoted in lockstep on 2026-07-23.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v1.2-Resolved       | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved: multi-`Permission` set union + RFC-0957 attenuation; `MaxUses` failsafe (`uses_consumed + 1 > max_uses` rejects even on partial sync); `Factory.Vet` per RFC-0126 + RFC-0964; `Sharded` caveat original-only; `PermissionKind` 2-byte expansion deferred v1.1 (schedule: post-v2.0); `AuditWindow` sync semantics (RFC-0862 delivers dispute; late = no effect). Additive (non-breaking) bump.                                                                                                                                                                                                                                                                                                                                                 |
+| v1.3-Referenced     | 2026-08-08 | @cipherocto + @mmacedoeu | **Cross-reference to RFC-0871.** The caveat discriminator byte pattern (1-byte `0x01-0xCF` for RFC-allocated + `0xD0-0xFF` for application-specific) established by this RFC is the precedent for the larger 16-byte `PayloadKindId` discriminator in RFC-0871 (specialized node protocol envelope). The same `Raw { discriminator, body }` escape hatch pattern in RFC-0871's `Authorization` enum follows the `RawCaveat` pattern defined here. Both RFCs share the same extension principle: new types are added via RFC + reserved-range allocation + Raw escape hatch; old code fail-closes on unknown discriminators. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage.                                                                              |
+| v1.4-CrateLayout    | 2026-08-08 | @cipherocto + @mmacedoeu | **Per-extension crate layout.** Added §Per-Extension Crate Layout subsection mandating that caveat types AND capability types land in separate crates (`crates/octo-cap-{macaroon,zk,federation,time-lock,threshold-mpc}/` etc.), each registering a `CapabilitySpec` impl via plugin. Wallet core unchanged; capability attenuation invariant (RFC-0957 §3.5) preserved across the crate boundary. Migration path: today's single-crate `cipherocto-capability-ext` reference impl → `crates/octo-cap-macaroon/` per RFC-0957 §Per-Extension Crate Layout. Implementation missions: `missions/claimed/0957-ext-macaroon-crate.md`, `missions/claimed/0957-ext-zk-crate.md`. Cross-references: RFC-0957 §Per-Extension Crate Layout; RFC-0871 §Wallet Node Lifecycle.                                 |
 | v2.0-CanonicalAlias | 2026-08-17 | @cipherocto + @mmacedoeu | **Canonical `MicroOctoW` alias cross-reference.** §3 prologue note added: all amount-bearing caveat payload fields (`PaymentCaveat.budget`, `AmountMax`, `PerAxisMax.max_per_1k`, `PaymentCaveat.query_cost`, etc.) use the canonical alias `octo_determin::MicroOctoW` (= `Dqa` at `scale = 0`, integer micro-OCTO_W counts). Cross-ref RFC-0105 §substrate type coherence + RFC-0862 v2.0.3 §SpendLedger Substrate. Prior local `pub type MicroOctoW = u128` aliases in `octo-cap-macaroon` removed per mission `0862-c9` (audit verdict 2026-08-17 Risk #1 CRITICAL); construction is now `Dqa { value: <i64>, scale: 0 }` at the substrate boundary. TV-0862-17 + TV-0862-18 pin byte-exact round-trip. Additive (non-breaking) — subtype remains structurally identical to `Dqa` at `scale = 0`. |
 
 ## Authors
@@ -44,54 +44,56 @@ The new caveat types are the 9 RFC-0960-specific concepts that didn't fit RFC-09
 
 ### Required RFCs
 
-| RFC | Status | Reason |
-|-----|--------|--------|
-| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §2.2 Capability extensions |
-| RFC-0957 | Accepted | Macaroon substrate + attenuation invariant |
+| RFC      | Status                                                             | Reason                                                   |
+| -------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §2.2 Capability extensions                       |
+| RFC-0957 | Accepted                                                           | Macaroon substrate + attenuation invariant               |
 | RFC-0964 | **Accepted v1.1 (2026-07-23; promoted in lockstep with this RFC)** | Constraint canonical encoding (caveats wrap constraints) |
-| RFC-0126 | Accepted (v2.5.1) | Canonical serialization for caveat envelopes |
-| RFC-0853 | Draft | BLAKE3 primitive source |
+| RFC-0126 | Accepted (v2.5.1)                                                  | Canonical serialization for caveat envelopes             |
+| RFC-0853 | Draft                                                              | BLAKE3 primitive source                                  |
 
 ### Companion RFCs
 
-| RFC | Relationship | Reason |
-|-----|--------------|--------|
-| RFC-0961 | Builds on | CIPHERO_SQL procedures referenced by `AllowIf` constraint — Accepted v2.0 (2026-07-23; promoted in lockstep) |
-| RFC-0963 | Builds on | `Sharded` caveat pins capability to one shard — Accepted v2.0 (2026-07-23; promoted in lockstep) |
-| RFC-0967 | Refers to | Policy Object Graph (caveat type `PolicyReference` carries `policy_id`) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
+| RFC      | Relationship | Reason                                                                                                                          |
+| -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0961 | Builds on    | CIPHERO_SQL procedures referenced by `AllowIf` constraint — Accepted v2.0 (2026-07-23; promoted in lockstep)                    |
+| RFC-0963 | Builds on    | `Sharded` caveat pins capability to one shard — Accepted v2.0 (2026-07-23; promoted in lockstep)                                |
+| RFC-0967 | Refers to    | Policy Object Graph (caveat type `PolicyReference` carries `policy_id`) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
 
 ### Dependency Validation
 
-| Dependency | Type | Current Status (2026-07-23) | Hard-block? |
-|------------|------|------------------------------|-------------|
-| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
-| RFC-0957 | Requires | Accepted | No |
-| RFC-0964 | Requires | **Accepted v1.1 (promoted in lockstep)** | **YES → resolved** |
-| RFC-0126 | Requires | Accepted | No |
-| RFC-0853 | Requires | Draft | YES |
+| Dependency | Type     | Current Status (2026-07-23)              | Hard-block?        |
+| ---------- | -------- | ---------------------------------------- | ------------------ |
+| RFC-0960   | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0957   | Requires | Accepted                                 | No                 |
+| RFC-0964   | Requires | **Accepted v1.1 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0126   | Requires | Accepted                                 | No                 |
+| RFC-0853   | Requires | Draft                                    | YES                |
 
 **DAG check:** `0965 ← {0960, 0957, 0964, 0126, 0853}` — acyclic. RFC-0960 and RFC-0964 promoted to Accepted on 2026-07-23; their hard-blocks resolved.
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Attenuation invariant preserved | Adding a caveat can only restrict, never expand |
-| G2 | Compact envelope | Caveat header ≤ 8 bytes; payload ≤ 64 bytes typical |
-| G3 | Forward-compatible | New caveat type = new discriminator byte; old parsers fail-closed |
-| G4 | Type-safe deserialization | Unknown caveat types rejected at parse time |
-| G5 | Verifiable offline | All caveat checks are local; no external state lookups required at verify time |
+| Goal | Target                          | Metric                                                                         |
+| ---- | ------------------------------- | ------------------------------------------------------------------------------ |
+| G1   | Attenuation invariant preserved | Adding a caveat can only restrict, never expand                                |
+| G2   | Compact envelope                | Caveat header ≤ 8 bytes; payload ≤ 64 bytes typical                            |
+| G3   | Forward-compatible              | New caveat type = new discriminator byte; old parsers fail-closed              |
+| G4   | Type-safe deserialization       | Unknown caveat types rejected at parse time                                    |
+| G5   | Verifiable offline              | All caveat checks are local; no external state lookups required at verify time |
 
 ## Motivation
 
 ### Why extend the macaroon caveat DSL?
 
 RFC-0957's macaroon v1 carries:
+
 - First-party caveats: predicates on the redeeming request (e.g., "request is POST", "amount < 100").
 - Third-party caveats: discharge requirements (e.g., "Alice's bank must confirm").
 - Discharge bag: collected third-party discharges.
 
 For RFC-0960's economic primitive layer, RFC-0957's existing caveats are insufficient. We need:
+
 - **Resource-bound caveats** — `Vault(vault_id)` to bind a capability to a specific vault.
 - **Permission-kind caveats** — `Permission(NativeTokenTransfer)` to restrict the action type.
 - **Audit-window caveats** — `AuditWindow(duration)` for the dispute period.
@@ -102,6 +104,7 @@ These map cleanly to the macaroon caveat DSL: a caveat is a predicate on the red
 ### Why fail-closed on unknown caveats?
 
 A capability must be evaluated exactly the same on every node. If node A has caveat type X but node B doesn't, they diverge. Two solutions:
+
 - **Fail-closed** (chosen): node B rejects the capability because it doesn't recognize X.
 - **Fail-open with flag**: node B warns but accepts; eventually all nodes upgrade.
 
@@ -114,18 +117,18 @@ Fail-closed is safer: a malformed capability never gets past verification. The d
 The outer-envelope model is defined in **RFC-0964 §0**. Tag values for the
 RFC-0964/0965 stack:
 
-| Tag | Meaning | Inner envelope spec |
-|---|---|---|
-| 0x00 | forbidden (fail-closed) | — |
-| 0x01 | **Constraint** | RFC-0964 §1, §2 |
-| 0x02 | **Caveat** | RFC-0965 §1, §2 below |
-| 0x03 | **Capability** | RFC-0965 §6 |
-| 0x04 | **ExecutionEnvelope** (RFC-0962; renamed from ConsensusSession) | RFC-0962 §4 |
-| 0x05 | **Reservation** | RFC-0960 §2.3 |
-| 0x06 | **SettlementReceipt** | RFC-0959 §Data Structures |
-| 0x07 | `PolicyReference` (RFC-0967) | RFC-0967 §8.1 (added v1.1; `policy_id` ref) |
-| 0x08-0x1F | reserved | TBD |
-| 0x20-0xFF | application-specific | per app |
+| Tag       | Meaning                                                         | Inner envelope spec                         |
+| --------- | --------------------------------------------------------------- | ------------------------------------------- |
+| 0x00      | forbidden (fail-closed)                                         | —                                           |
+| 0x01      | **Constraint**                                                  | RFC-0964 §1, §2                             |
+| 0x02      | **Caveat**                                                      | RFC-0965 §1, §2 below                       |
+| 0x03      | **Capability**                                                  | RFC-0965 §6                                 |
+| 0x04      | **ExecutionEnvelope** (RFC-0962; renamed from ConsensusSession) | RFC-0962 §4                                 |
+| 0x05      | **Reservation**                                                 | RFC-0960 §2.3                               |
+| 0x06      | **SettlementReceipt**                                           | RFC-0959 §Data Structures                   |
+| 0x07      | `PolicyReference` (RFC-0967)                                    | RFC-0967 §8.1 (added v1.1; `policy_id` ref) |
+| 0x08-0x1F | reserved                                                        | TBD                                         |
+| 0x20-0xFF | application-specific                                            | per app                                     |
 
 **PermissionKind** and **ReservationState** are NOT standalone envelopes —
 they appear only as field values inside Caveat (§3.2) and Reservation
@@ -141,34 +144,34 @@ RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types (0x10-0x18)
 
 #### 1.1 RFC-0957 existing caveat types (unchanged)
 
-| Discriminator | Name | Purpose |
-|---|---|---|
-| 0x01 | `IpAddress` | Restrict to source IP |
-| 0x02 | `RequestPath` | Restrict URL path |
-| 0x03 | `RequestMethod` | Restrict HTTP method |
-| 0x04 | `Before` | Time-bound (deprecated; use `ValidAfter` instead) |
-| 0x05 | `After` | Time-bound (deprecated; use `ValidRange` instead) |
-| 0x06 | `Equals` | Equality check |
-| 0x07 | `LT` | Less-than check |
-| 0x08 | `GT` | Greater-than check |
-| 0x09 | `IN` | Set membership |
-| 0x0A | `ThirdPartyBind` | Third-party discharge binding |
-| 0x0B | `Version` | Version pinning |
-| 0x0C | `Custom` | Application-defined (must specify opaque verifier) |
+| Discriminator | Name             | Purpose                                            |
+| ------------- | ---------------- | -------------------------------------------------- |
+| 0x01          | `IpAddress`      | Restrict to source IP                              |
+| 0x02          | `RequestPath`    | Restrict URL path                                  |
+| 0x03          | `RequestMethod`  | Restrict HTTP method                               |
+| 0x04          | `Before`         | Time-bound (deprecated; use `ValidAfter` instead)  |
+| 0x05          | `After`          | Time-bound (deprecated; use `ValidRange` instead)  |
+| 0x06          | `Equals`         | Equality check                                     |
+| 0x07          | `LT`             | Less-than check                                    |
+| 0x08          | `GT`             | Greater-than check                                 |
+| 0x09          | `IN`             | Set membership                                     |
+| 0x0A          | `ThirdPartyBind` | Third-party discharge binding                      |
+| 0x0B          | `Version`        | Version pinning                                    |
+| 0x0C          | `Custom`         | Application-defined (must specify opaque verifier) |
 
 #### 1.2 RFC-0965 new caveat types
 
-| Discriminator | Name | Wraps (Constraint) | Purpose |
-|---|---|---|---|
-| 0x10 | `Vault` | — | Bind capability to a vault (32-byte vault_id) |
-| 0x11 | `Permission` | — | Restrict action type (PermissionKind enum) |
-| 0x12 | `ValidAfter` | — | Time bound (single timestamp, no end) |
-| 0x13 | `MaxUses` | — | Use count limit |
-| 0x14 | `AuditWindow` | — | Dispute period (Duration) |
-| 0x15 | `RedemptionContext` | — | Domain separator for replay defense |
-| 0x16 | `WrappedOnly` | — | Only usable through a parent capability |
-| 0x17 | `Factory` | — | Pre-validated invocation (Vet, not bytes) |
-| 0x18 | `Sharded` | — | Pin capability to one shard (RFC-0963) |
+| Discriminator | Name                | Wraps (Constraint) | Purpose                                       |
+| ------------- | ------------------- | ------------------ | --------------------------------------------- |
+| 0x10          | `Vault`             | —                  | Bind capability to a vault (32-byte vault_id) |
+| 0x11          | `Permission`        | —                  | Restrict action type (PermissionKind enum)    |
+| 0x12          | `ValidAfter`        | —                  | Time bound (single timestamp, no end)         |
+| 0x13          | `MaxUses`           | —                  | Use count limit                               |
+| 0x14          | `AuditWindow`       | —                  | Dispute period (Duration)                     |
+| 0x15          | `RedemptionContext` | —                  | Domain separator for replay defense           |
+| 0x16          | `WrappedOnly`       | —                  | Only usable through a parent capability       |
+| 0x17          | `Factory`           | —                  | Pre-validated invocation (Vet, not bytes)     |
+| 0x18          | `Sharded`           | —                  | Pin capability to one shard (RFC-0963)        |
 
 Discriminators `0xD0-0xFF` reserved for application-specific extensions. Discriminator `0x00` forbidden.
 
@@ -211,13 +214,13 @@ Permission payload:
 
 PermissionKind values:
 
-| Value | Kind |
-|---|---|
-| 0x01 | `NativeTokenTransfer` |
-| 0x02 | `ERC20TokenTransfer` |
-| 0x03 | `ContractCall` |
-| 0x04 | `Reservation` |
-| 0x05 | `VaultMutation` |
+| Value | Kind                  |
+| ----- | --------------------- |
+| 0x01  | `NativeTokenTransfer` |
+| 0x02  | `ERC20TokenTransfer`  |
+| 0x03  | `ContractCall`        |
+| 0x04  | `Reservation`         |
+| 0x05  | `VaultMutation`       |
 
 Verification: the redeeming operation's `permission_kind` must be in this caveat's set. (Capability may carry multiple `Permission` caveats; the **set** is the union — order does not matter for verification.)
 
@@ -271,10 +274,10 @@ RedemptionContext payload:
 
 `context` is application-defined. Two canonical encodings are accepted:
 
-| Encoding | Format | When to use |
-|---|---|---|
-| `CanonicalContext::Bytes(Vec<u8>)` | `0x01 || length_prefix || bytes` | Opaque blob; verifier does not interpret |
-| `CanonicalContext::Structured(ContextFields)` | `0x02 || canonical_ser({request_id, chain_id, marketplace_id, ...})` | Typed fields; verifier validates structure |
+| Encoding                                      | Format | When to use |
+| --------------------------------------------- | ------ | ----------- |
+| `CanonicalContext::Bytes(Vec<u8>)`            | `0x01  |             | length_prefix                                               |                                            | bytes` | Opaque blob; verifier does not interpret |
+| `CanonicalContext::Structured(ContextFields)` | `0x02  |             | canonical_ser({request_id, chain_id, marketplace_id, ...})` | Typed fields; verifier validates structure |
 
 Verification: `BLAKE3(0xA2 || canonical_ser(context)) == context_hash`. The same operation submitted with a different context fails. The `0xA2` prefix is the RedemptionContext-hash domain separator, distinct from the namespace tags (0x00-0x06) and version tags (0xA0-0xA1) per RFC-0964 §0+§4.
 
@@ -365,22 +368,22 @@ Caveat ordering is preserved exactly. Two `CaveatSet`s with the same caveats in 
 
 RFC-0957's attenuation invariant: a child macaroon can only **restrict** the parent. RFC-0965 defines per-caveat-type attenuation rules:
 
-| Caveat | Parent → Child |
-|---|---|
-| `Vault` | Equal (vault_id unchanged) |
-| `Permission` | Subset (child ⊆ parent) |
-| `ValidAfter` | `child.not_before ≥ parent.not_before` |
-| `ValidRange` | `child.valid_after ≥ parent.valid_after ∧ child.valid_until ≤ parent.valid_until` |
-| `MaxUses` | `child.count ≤ parent.count` |
-| `AuditWindow` | `child.duration ≥ parent.duration` |
-| `RedemptionContext` | Equal |
-| `WrappedOnly` | Parent chain is prefix of child's |
-| `Factory` | Vet constraints are superset |
-| `Sharded` | Equal |
-| `MaxPerTx` | `child.amount ≤ parent.amount` |
-| `RateLimit` | Both `max_per_window ≤ parent` AND `window_duration ≥ parent` (tighter cap, longer window) |
-| `LinearRelease` | `child.start ≥ parent.start ∧ child.end ≤ parent.end ∧ child.cliff ≥ parent.cliff` |
-| `ComplianceHold` | `child.threshold ≥ parent.threshold ∧ child.delay ≥ parent.delay` |
+| Caveat              | Parent → Child                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `Vault`             | Equal (vault_id unchanged)                                                                 |
+| `Permission`        | Subset (child ⊆ parent)                                                                    |
+| `ValidAfter`        | `child.not_before ≥ parent.not_before`                                                     |
+| `ValidRange`        | `child.valid_after ≥ parent.valid_after ∧ child.valid_until ≤ parent.valid_until`          |
+| `MaxUses`           | `child.count ≤ parent.count`                                                               |
+| `AuditWindow`       | `child.duration ≥ parent.duration`                                                         |
+| `RedemptionContext` | Equal                                                                                      |
+| `WrappedOnly`       | Parent chain is prefix of child's                                                          |
+| `Factory`           | Vet constraints are superset                                                               |
+| `Sharded`           | Equal                                                                                      |
+| `MaxPerTx`          | `child.amount ≤ parent.amount`                                                             |
+| `RateLimit`         | Both `max_per_window ≤ parent` AND `window_duration ≥ parent` (tighter cap, longer window) |
+| `LinearRelease`     | `child.start ≥ parent.start ∧ child.end ≤ parent.end ∧ child.cliff ≥ parent.cliff`         |
+| `ComplianceHold`    | `child.threshold ≥ parent.threshold ∧ child.delay ≥ parent.delay`                          |
 
 Verification: when a capability is attenuated (a parent issues a child), the parent signer MUST check that each caveat's attenuation rule holds. Failure to satisfy = invalid child macaroon.
 
@@ -429,6 +432,7 @@ Capability {
 Encoded bytes: ~250 bytes total.
 
 Verification when the holder redeems:
+
 1. `vault_id` matches caveat's Vault → OK.
 2. `permission_kind` matches Permission(Reservation) → OK.
 3. `now >= ValidAfter` → OK.
@@ -496,27 +500,27 @@ CREATE INDEX ix_capabilities_parent ON capabilities (parent_capability_id);
 
 ## Open Questions
 
-| # | Question | Resolution Target |
-|---|----------|-------------------|
-| 1 | Can a capability carry more than one `Permission` caveat? | Yes; set union. RFC-0957 attenuation: child's set is subset. |
-| 2 | What happens to a `MaxUses` projection during long sync? | `uses_consumed` is computed from the event log; partial sync means partial count. RFC-0962 covers sync semantics. |
-| 3 | How is `Factory`'s `Vet` canonically encoded? | Per RFC-0126 + RFC-0964 (Constraint subset); see RFC-0960 §10.7 |
-| 4 | Can a `Sharded` caveat be added in attenuation? | No — must be in the original capability; cannot move across shards. |
-| 5 | What is the encoding of `PermissionKind` if more kinds are added? | Single byte (current); could grow to 2 bytes if >255 kinds. v1.1 decision. |
-| 6 | How does `AuditWindow` interaction with offline dispute filing? | Dispute period counts from settlement landing; offline dispute = late filing = no effect. |
+| #   | Question                                                          | Resolution Target                                                                                                 |
+| --- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | Can a capability carry more than one `Permission` caveat?         | Yes; set union. RFC-0957 attenuation: child's set is subset.                                                      |
+| 2   | What happens to a `MaxUses` projection during long sync?          | `uses_consumed` is computed from the event log; partial sync means partial count. RFC-0962 covers sync semantics. |
+| 3   | How is `Factory`'s `Vet` canonically encoded?                     | Per RFC-0126 + RFC-0964 (Constraint subset); see RFC-0960 §10.7                                                   |
+| 4   | Can a `Sharded` caveat be added in attenuation?                   | No — must be in the original capability; cannot move across shards.                                               |
+| 5   | What is the encoding of `PermissionKind` if more kinds are added? | Single byte (current); could grow to 2 bytes if >255 kinds. v1.1 decision.                                        |
+| 6   | How does `AuditWindow` interaction with offline dispute filing?   | Dispute period counts from settlement landing; offline dispute = late filing = no effect.                         |
 
 ## Resolved Decisions (v1.2-Resolved)
 
 All Open Questions resolved with concrete answers (R28+ risk-closure round):
 
-| # | Question | Resolution | Status |
-|---|----------|------------|--------|
-| 1 | Multiple `Permission` caveats per capability | **Yes — set union semantics.** Child capability's effective `Permission` set = subset of parent's (RFC-0957 §Attenuation invariant: child only restricts). Multi-`Permission` union is monotone restriction only; no expansion possible. | Resolved |
-| 2 | `MaxUses` during long sync | **Conservative failsafe.** `uses_consumed` = event-log count of `Redemption` events referencing this capability. During partial sync (RFC-0862), verifier computes `uses_consumed` from locally-known events. **Verifier rule: reject if `uses_consumed + 1 > max_uses` even when event log is incomplete** — partial sync under-counts consumed uses, so conservative check prevents double-spend. Catch-up sync may later observe the rejection and reconcile. | Resolved |
-| 3 | `Factory.Vet` canonical encoding | **RFC-0126 + RFC-0964 (Constraint subset).** `Vet` is a constraint payload (RFC-0964 §3) wrapped in a `Factory` caveat (RFC-0965 §3.4). `predicate_hash` references a CIPHERO_SQL procedure (RFC-0961 §9). Cross-reference: RFC-0960 §10.7 (`Factory` specification). | Resolved |
-| 4 | `Sharded` caveat added during attenuation | **No.** `Sharded` binds a capability to a specific shard (RFC-0963). Moving across shards mid-capability would invalidate ZK proofs that depend on per-shard MMR roots. Must be set in original capability. Attenuation chain inherits shard binding (immutable). | Resolved |
-| 5 | `PermissionKind` encoding (1 vs 2 bytes) | **Defer to v1.1.** Currently 1 byte = 255 kinds (0x00 reserved, 0x01-0xFF available). v1.1 bumps to 2 bytes (LE) if any RFC adds the 255th kind. Migration path: 2-byte form is length-prefixed (`kind_hi == 0xFF` → 16-bit kind); 1-byte form remains wire-compatible. Schedule: post-v2.0 lockstep promotion. | Deferred v1.1 |
-| 6 | `AuditWindow` + offline dispute filing | **Dispute counts from settlement landing at the producer node.** RFC-0862 sync delivers dispute events to all nodes; nodes that miss the dispute window (offline > `audit_window`) reject late-filed disputes with `E_DISPUTE_WINDOW_EXPIRED`. The settlement itself is NOT reversed — late disputes have no effect. Producer node publishes settlement landing timestamp to enable clients to compute remaining window. | Resolved |
+| #   | Question                                     | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Status        |
+| --- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| 1   | Multiple `Permission` caveats per capability | **Yes — set union semantics.** Child capability's effective `Permission` set = subset of parent's (RFC-0957 §Attenuation invariant: child only restricts). Multi-`Permission` union is monotone restriction only; no expansion possible.                                                                                                                                                                                                                         | Resolved      |
+| 2   | `MaxUses` during long sync                   | **Conservative failsafe.** `uses_consumed` = event-log count of `Redemption` events referencing this capability. During partial sync (RFC-0862), verifier computes `uses_consumed` from locally-known events. **Verifier rule: reject if `uses_consumed + 1 > max_uses` even when event log is incomplete** — partial sync under-counts consumed uses, so conservative check prevents double-spend. Catch-up sync may later observe the rejection and reconcile. | Resolved      |
+| 3   | `Factory.Vet` canonical encoding             | **RFC-0126 + RFC-0964 (Constraint subset).** `Vet` is a constraint payload (RFC-0964 §3) wrapped in a `Factory` caveat (RFC-0965 §3.4). `predicate_hash` references a CIPHERO_SQL procedure (RFC-0961 §9). Cross-reference: RFC-0960 §10.7 (`Factory` specification).                                                                                                                                                                                            | Resolved      |
+| 4   | `Sharded` caveat added during attenuation    | **No.** `Sharded` binds a capability to a specific shard (RFC-0963). Moving across shards mid-capability would invalidate ZK proofs that depend on per-shard MMR roots. Must be set in original capability. Attenuation chain inherits shard binding (immutable).                                                                                                                                                                                                | Resolved      |
+| 5   | `PermissionKind` encoding (1 vs 2 bytes)     | **Defer to v1.1.** Currently 1 byte = 255 kinds (0x00 reserved, 0x01-0xFF available). v1.1 bumps to 2 bytes (LE) if any RFC adds the 255th kind. Migration path: 2-byte form is length-prefixed (`kind_hi == 0xFF` → 16-bit kind); 1-byte form remains wire-compatible. Schedule: post-v2.0 lockstep promotion.                                                                                                                                                  | Deferred v1.1 |
+| 6   | `AuditWindow` + offline dispute filing       | **Dispute counts from settlement landing at the producer node.** RFC-0862 sync delivers dispute events to all nodes; nodes that miss the dispute window (offline > `audit_window`) reject late-filed disputes with `E_DISPUTE_WINDOW_EXPIRED`. The settlement itself is NOT reversed — late disputes have no effect. Producer node publishes settlement landing timestamp to enable clients to compute remaining window.                                         | Resolved      |
 
 ### §10 AuditWindow + Sync semantics (v1.2 NEW)
 
@@ -559,6 +563,7 @@ crates/
 ```
 
 Each crate provides:
+
 - `Caveat` enum variants (RFC-0965 discriminator bytes)
 - `CapabilitySpec` impl registering via `octo-wallet::capability::CapabilityRegistry`
 - Mint + verify impls (RFC-0957 attenuation invariant preserved across crate boundary)
@@ -566,11 +571,12 @@ Each crate provides:
 Adding a new caveat type = new discriminator byte allocation per this RFC's pattern. Adding a new capability family = new crate. Wallet core (`octo-wallet`) unchanged.
 
 **Migration path from `cipherocto-capability-ext`:**
+
 - v1.0-v1.3: `cipherocto-capability-ext` is the single-crate reference impl
 - v1.4 (this amendment): extract to `crates/octo-cap-macaroon/` per RFC-0957 §Per-Extension Crate Layout
 - Future: `crates/octo-cap-{zk,federation,time-lock,threshold-mpc,...}/` land as their own RFCs
 
-Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`.
+Implementation missions: `missions/claimed/0957-ext-macaroon-crate.md`, `missions/claimed/0957-ext-zk-crate.md`.
 
 **Cross-references:** RFC-0957 §Per-Extension Crate Layout; RFC-0871 §Wallet Node Lifecycle; `docs/research/2026-08-08-specialized-node-protocol-research.md` §Layer 4 stability layering.
 
@@ -581,6 +587,7 @@ This RFC = Capability extension format. Status: **Accepted v1.1** (promoted from
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 
 The `cipherocto-capability-ext` crate implements:
+
 - `Caveat` enum (22 variants incl. RFC-0957 existing + new `PolicyReference`)
 - `CaveatSet` ordered list with canonical encoding
 - Attenuation rule verification (per-caveat-type)

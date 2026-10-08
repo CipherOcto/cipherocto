@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_replay_cache_first_seen
 
 ### Eviction
 
-When the cache exceeds 10K entries for a `(mission_id, peer_id)` pair, evict the oldest by `first_seen` (LRU by time, not by access — replay protection is about preventing the *first* re-application, not LRU by access).
+When the cache exceeds 10K entries for a `(mission_id, peer_id)` pair, evict the oldest by `first_seen` (LRU by time, not by access — replay protection is about preventing the _first_ re-application, not LRU by access).
 
 ### Flush strategy
 
@@ -118,7 +118,7 @@ Without resolver v2, Cargo will reject the cycle as a hard error. With resolver 
 
 ### Reference hygiene (resolves M2 — RFC-0850h-d is a mission, not an RFC)
 
-The "raw SQLite is never used" convention is documented in mission `missions/with-pr/0850h-d-stoolap-session-storage.md` (NOT in an RFC — `0850h-d` is a mission identifier, not an RFC identifier). The reference is therefore `[mission: 0850h-d](missions/with-pr/0850h-d-stoolap-session-storage.md)`. The convention applies because `stoolap` is the cipherocto project's universal persistence layer; new persistence code uses Stoolap as the SQL backend.
+The "raw SQLite is never used" convention is documented in mission `missions/archived/0850h-d-stoolap-session-storage.md` (NOT in an RFC — `0850h-d` is a mission identifier, not an RFC identifier). The reference is therefore `[mission: 0850h-d](missions/archived/0850h-d-stoolap-session-storage.md)`. The convention applies because `stoolap` is the cipherocto project's universal persistence layer; new persistence code uses Stoolap as the SQL backend.
 
 ## Description
 
@@ -139,7 +139,7 @@ Per the cipherocto convention established in mission [`0850h-d`](../../with-pr/0
 
 ### Why LRU by time (not by access)?
 
-Replay protection is about preventing the *first* re-application of a captured envelope. A "use" (move-to-back) would make the cache useless against a slow-drip replay attack. LRU by time is the conservative choice.
+Replay protection is about preventing the _first_ re-application of a captured envelope. A "use" (move-to-back) would make the cache useless against a slow-drip replay attack. LRU by time is the conservative choice.
 
 ### Pitfalls
 
@@ -160,9 +160,9 @@ Replay protection is about preventing the *first* re-application of a captured e
 
 This mission implements the following RFC-0862 types:
 
-| Type | Role in this mission |
-|------|---------------------|
-| `ReplayCache` (persistent) | Disk-backed extension of the in-memory `ReplayCache` from mission 0862-base; uses the Stoolap fork as the persistence layer (per the cipherocto convention from mission `0850h-d`) |
-| `octo-sync-replay-store` (new sub-crate) | The sub-crate that holds the persistent ReplayCache; depends on `stoolap` (not on `octo-sync` directly) to avoid Cargo package cycles |
+| Type                                     | Role in this mission                                                                                                                                                               |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ReplayCache` (persistent)               | Disk-backed extension of the in-memory `ReplayCache` from mission 0862-base; uses the Stoolap fork as the persistence layer (per the cipherocto convention from mission `0850h-d`) |
+| `octo-sync-replay-store` (new sub-crate) | The sub-crate that holds the persistent ReplayCache; depends on `stoolap` (not on `octo-sync` directly) to avoid Cargo package cycles                                              |
 
 The mission does NOT implement the in-memory `ReplayCache` (which is the default) — that is in mission 0862-base. The persistent variant is opt-in via the `persistent-replay-cache` Cargo feature flag. See the Type Coverage table in 0862-base for the full mapping.

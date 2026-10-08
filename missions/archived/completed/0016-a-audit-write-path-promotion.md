@@ -63,7 +63,7 @@ Per [[no-phantom-mission-pointer]] + RFC-0015-a §6.4 paired-invariance:
 2. `0015-b-substrate-defect-impl` mission lands SECOND
 3. **THIS mission** lands THIRD (RFC-0016-a DRY loop + promotion)
 4. Subsequent substrate missions (audit-commands Phase 3 CLI wiring
-   per `missions/claimed/0011-a-audit-commands.md`) land LAST
+   per `missions/archived/completed/0011-a-audit-commands.md`) land LAST
 
 This ordering ensures RFC-0016-a references the corrected substrate
 (`AlreadyInTransition` activated, TOCTOU closed, phantom-event
@@ -136,8 +136,8 @@ These verifications gate the DRY review spawn.
 
 ## Cross-references
 
-- `missions/open/0015-b-substrate-defect-amendment.md` (parent amendment RFC)
-- `missions/open/0015-b-substrate-defect-impl.md` (paired implementation)
+- `missions/archived/completed/0015-b-substrate-defect-amendment.md` (parent amendment RFC)
+- `missions/archived/completed/0015-b-substrate-defect-impl.md` (paired implementation)
 - RFC-0016 (Accepted 2026-09-14) — read-path substrate contract
 - RFC-0015-a (Accepted 2026-09-14) — write-path surface contract
 - `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md` — substrate defect context

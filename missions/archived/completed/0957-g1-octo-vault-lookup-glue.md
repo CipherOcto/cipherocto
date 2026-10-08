@@ -4,7 +4,7 @@
 
 **LANDED 2026-08-19 (drift closure).** Mission file written to
 remedy the **phantom pointer** left by 0957-g's deferral memo
-(`missions/open/0957-g1-octo-vault-lookup-glue.md` referenced but
+(`missions/archived/completed/0957-g1-octo-vault-lookup-glue.md` referenced but
 never authored).
 
 ## Commits

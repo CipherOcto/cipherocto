@@ -336,33 +336,33 @@ See RFC-0850 Platform Translation Layer for the transport-mode selection algorit
 
 ### Type Coverage
 
-| RFC-0850 Platform Translation Layer Type / Method | Implemented By |
-|------------------------------|----------------|
-| `PlatformAdapter::upload_media` trait signature | Mission 0850v (Implemented) |
-| `PlatformAdapter::download_media` trait signature | Mission 0850v (Implemented) |
-| `CapabilityReport::media_capabilities` field | Mission 0850v (Implemented) |
-| `MediaCapabilities { max_upload_bytes, supported_mime_types }` | Mission 0850v (Implemented) |
-| `TransportMode::Native` selection (`media_capabilities.is_some()`) | Mission 0850v (Implemented — `crates/octo-network/src/dot/transport.rs:92`) |
-| `select_mode_with_max_text` adapter-local dispatch | **This mission** (R1-C2 fix) |
-| WhatsApp `upload_media` override | This mission |
-| WhatsApp `download_media` override | This mission |
-| WhatsApp `media_capabilities` population (100 MiB Document) | This mission |
-| `MediaRef` wire format (base64url JSON of `UploadResponse`-shaped struct) | This mission |
-| `MediaRef` <-> `DocumentMessage` conversion | This mission |
-| Pre-flight payload size check | This mission |
-| Native→text fallback (RFC-0850 MUST fallback) | **This mission** (R1-H1 fix) |
-| `accept_message` `DOT/2/` prefix acceptance | **This mission** (R1-C1 + R1-M2 fix) |
-| `on_event` pre-download for `DOT/2/` messages | **This mission** (R1-C1 fix) |
-| `canonicalize` dual-mode payload dispatch | **This mission** (R1-C1 fix) |
-| Round-trip test (live-whatsapp feature) | This mission |
-| Malformed-ref handling (ApiError, redacted message) | This mission |
-| `MediaRef` Debug redaction | **This mission** (R1-H4 fix) |
-| `WhatsAppHandlerHandle` struct + `clone_for_handler` method | **This mission** (R3-C1 fix, type-level least-privilege) |
-| `DownloadRequest` struct + `download_tx`/`download_rx` channels (initialized in `start_bot` per **R4-C1 fix** — not in `new` like R3-M1 attempted) | **This mission** (R2-C1 + R4-C1 fix) |
-| `download_rx` consumer task in `start_bot` (drives `client.download` async via the handle, exits on channel close) | **This mission** (R2-C1 + R3-C1 + R4-C1 fix) |
-| Test-only `spawn_download_consumer_for_test` constructor (no auth needed) + async lifecycle tests | **This mission** (R3-M2 + R4-M3 fix) |
-| `dot_mode` metadata tag on `RawPlatformMessage` (text vs native) | **This mission** (R2-M5 fix) |
-| `canonicalize` `dot_mode`-based dispatch (no payload-byte sniffing) | **This mission** (R2-M5 fix) |
+| RFC-0850 Platform Translation Layer Type / Method                                                                                                  | Implemented By                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `PlatformAdapter::upload_media` trait signature                                                                                                    | Mission 0850v (Implemented)                                                 |
+| `PlatformAdapter::download_media` trait signature                                                                                                  | Mission 0850v (Implemented)                                                 |
+| `CapabilityReport::media_capabilities` field                                                                                                       | Mission 0850v (Implemented)                                                 |
+| `MediaCapabilities { max_upload_bytes, supported_mime_types }`                                                                                     | Mission 0850v (Implemented)                                                 |
+| `TransportMode::Native` selection (`media_capabilities.is_some()`)                                                                                 | Mission 0850v (Implemented — `crates/octo-network/src/dot/transport.rs:92`) |
+| `select_mode_with_max_text` adapter-local dispatch                                                                                                 | **This mission** (R1-C2 fix)                                                |
+| WhatsApp `upload_media` override                                                                                                                   | This mission                                                                |
+| WhatsApp `download_media` override                                                                                                                 | This mission                                                                |
+| WhatsApp `media_capabilities` population (100 MiB Document)                                                                                        | This mission                                                                |
+| `MediaRef` wire format (base64url JSON of `UploadResponse`-shaped struct)                                                                          | This mission                                                                |
+| `MediaRef` <-> `DocumentMessage` conversion                                                                                                        | This mission                                                                |
+| Pre-flight payload size check                                                                                                                      | This mission                                                                |
+| Native→text fallback (RFC-0850 MUST fallback)                                                                                                      | **This mission** (R1-H1 fix)                                                |
+| `accept_message` `DOT/2/` prefix acceptance                                                                                                        | **This mission** (R1-C1 + R1-M2 fix)                                        |
+| `on_event` pre-download for `DOT/2/` messages                                                                                                      | **This mission** (R1-C1 fix)                                                |
+| `canonicalize` dual-mode payload dispatch                                                                                                          | **This mission** (R1-C1 fix)                                                |
+| Round-trip test (live-whatsapp feature)                                                                                                            | This mission                                                                |
+| Malformed-ref handling (ApiError, redacted message)                                                                                                | This mission                                                                |
+| `MediaRef` Debug redaction                                                                                                                         | **This mission** (R1-H4 fix)                                                |
+| `WhatsAppHandlerHandle` struct + `clone_for_handler` method                                                                                        | **This mission** (R3-C1 fix, type-level least-privilege)                    |
+| `DownloadRequest` struct + `download_tx`/`download_rx` channels (initialized in `start_bot` per **R4-C1 fix** — not in `new` like R3-M1 attempted) | **This mission** (R2-C1 + R4-C1 fix)                                        |
+| `download_rx` consumer task in `start_bot` (drives `client.download` async via the handle, exits on channel close)                                 | **This mission** (R2-C1 + R3-C1 + R4-C1 fix)                                |
+| Test-only `spawn_download_consumer_for_test` constructor (no auth needed) + async lifecycle tests                                                  | **This mission** (R3-M2 + R4-M3 fix)                                        |
+| `dot_mode` metadata tag on `RawPlatformMessage` (text vs native)                                                                                   | **This mission** (R2-M5 fix)                                                |
+| `canonicalize` `dot_mode`-based dispatch (no payload-byte sniffing)                                                                                | **This mission** (R2-M5 fix)                                                |
 
 ## Implementation Guide
 
@@ -405,16 +405,16 @@ Medium-High (4 new code paths + 1 helper module + 3 test layers + adapter mode-d
 
 The wacore API exposes 11 media types (Image, Video, Audio, Document, History, AppState, Sticker, StickerPack, StickerPackThumbnail, LinkThumbnail, ProductCatalogImage) but only `Document` is suitable for arbitrary DOT envelope bytes:
 
-| Media Type | Use Case | Arbitrary Bytes? | Notes |
-|------------|----------|------------------|-------|
-| Image | JPEG/PNG | No | Re-encoded |
-| Video | MP4 | No | Re-encoded |
-| Audio | Opus | No | Re-encoded |
-| **Document** | **Any file** | **Yes (opaque)** | **Only type storing bytes verbatim** |
-| History | Protocol sync | No | App-specific shape |
-| AppState | State sync | No | App-specific shape |
-| Sticker | WebP | No | Re-encoded |
-| (others) | App-specific | No | Specific to WhatsApp internal protocols |
+| Media Type   | Use Case      | Arbitrary Bytes? | Notes                                   |
+| ------------ | ------------- | ---------------- | --------------------------------------- |
+| Image        | JPEG/PNG      | No               | Re-encoded                              |
+| Video        | MP4           | No               | Re-encoded                              |
+| Audio        | Opus          | No               | Re-encoded                              |
+| **Document** | **Any file**  | **Yes (opaque)** | **Only type storing bytes verbatim**    |
+| History      | Protocol sync | No               | App-specific shape                      |
+| AppState     | State sync    | No               | App-specific shape                      |
+| Sticker      | WebP          | No               | Re-encoded                              |
+| (others)     | App-specific  | No               | Specific to WhatsApp internal protocols |
 
 **R1-M3 fix:** The mission deliberately omits specific size limits (e.g., 100 MB for Document, 16 MB for Image/Video/Audio) from this table because wacore does not expose those as compile-time constants (`wacore/src/download.rs:33-47` defines `MediaType` as a plain enum). The 100 MiB figure used in `max_upload_bytes` is a WhatsApp server-side limit per public WhatsApp documentation as of 2026-06. The adapter's pre-flight check is the only local enforcement point; if WhatsApp raises the limit, the change is a single constant edit. The other-media-type limits are intentionally omitted from the mission AC because they are not pinned by wacore.
 
@@ -477,6 +477,7 @@ No new on-disk state. The `MediaRef` is fully derived from the `UploadResponse` 
 ### SDK risk
 
 `whatsapp-rust` + `wacore` + `wacore-binary` + `waproto` are pinned to rev `9734fb2ec544e22b7055147aa3e73b6889e3ff0d` per `crates/octo-adapter-whatsapp/Cargo.toml:38-43`. The `UploadResponse` shape and `Downloadable` impl for `DocumentMessage` are stable in this rev. A future rev that:
+
 - Adds fields to `UploadResponse` → `serde_json`'s default behavior ignores unknown fields on deserialize, so old receivers keep working
 - Removes fields from `UploadResponse` → `MediaRef` decode fails with `MediaRefError::Json` (missing field), mapped to `PlatformAdapterError::ApiError`. Acceptable failure mode (the gateway refuses the envelope, the sender can re-send)
 - Renames `DocumentMessage` fields → `to_document_message` fails to compile. Caught at `cargo build`, not at runtime
@@ -501,4 +502,4 @@ None blocking. Three items the implementor should sanity-check during the first 
 
 ---
 
-**Mirrors:** `missions/open/0850p-a-whatsapp-auth-onboarding.md` (sibling WhatsApp sub-mission, additive adapter change), `missions/archived/0850v-dot-dual-binary-transport.md` (consumed trait surface)
+**Mirrors:** `missions/claimed/0850p-a-whatsapp-auth-onboarding.md` (sibling WhatsApp sub-mission, additive adapter change), `missions/archived/0850v-dot-dual-binary-transport.md` (consumed trait surface)

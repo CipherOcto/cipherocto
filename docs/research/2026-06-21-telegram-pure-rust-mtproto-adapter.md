@@ -699,7 +699,7 @@ on the critical path for the cipherocto v1 adapter.
       `rfcs/draft/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md`
       (or amend RFC-0850ab-a)
 - [ ] Create mission at
-      `missions/open/0850ab-c-pure-rust-mtproto-telegram-adapter.md`
+      `missions/claimed/0850ab-c-pure-rust-mtproto-telegram-adapter.md`
 - [ ] Update `docs/research/README.md` with this report
 
 ### Open questions for the Use Case

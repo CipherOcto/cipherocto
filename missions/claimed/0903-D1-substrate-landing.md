@@ -103,7 +103,7 @@ Per RFC-0008 §Specification:
 
 **Evidence:**
 
-1. `cat missions/claimed/0903-d-budget-enforcement.md | head -5` → "Mission: Key Cache (L1)" — references RFC-0903 (Virtual API Key) not RFC-0903-D1 (LiteLLM persistence).
+1. `cat missions/archived/0903-d-budget-enforcement.md | head -5` → "Mission: Key Cache (L1)" — references RFC-0903 (Virtual API Key) not RFC-0903-D1 (LiteLLM persistence).
 2. RFC-0903-D1 v1.0 §0 Status declares separate dedicated mission required.
 
 **Fix decision:** Per historical-mission-preservation discipline, archived `0903-d-budget-enforcement.md` left as-is (filename + body content both predate RFC-0903-D1 v1.0 amendment filing; represents committed work at its filing time). New `0903-D1-substrate-landing.md` mission owns the LiteLLM persistence substrate (correct substrate scope + correct RFC amendment reference).

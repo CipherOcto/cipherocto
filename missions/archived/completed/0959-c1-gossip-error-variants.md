@@ -4,7 +4,7 @@
 
 Closed (Band A — 2026-08-06). Claimed 2026-08-06 by @mmacedoeu; implementation landed (commit `178f25c3`): `crates/octo-wallet/src/capability/macaroon.rs` extended `CatalogGossipError` with `Transient(String)` + `Permanent(String)` variants + manual redacting `Debug` impl (RFC-0957-A1 §Security). `crates/octo-wallet/src/capability/gossip.rs` consumes `INITIAL_BACKOFF`/`MAX_BACKOFF` via new `backoff_for_attempt(attempt: u32) -> Duration` helper + `thread::sleep` on `Transient` branch; `Unsupported | Permanent` merged into fail-fast arm (no retry, no backoff); `#[allow(unreachable_code)]` gate dropped; `#[allow(clippy::never_loop)]` gate also dropped. 5/5 ACs green. 7/7 gossip unit tests pass (2 pre-existing + 5 new: `backoff_for_attempt_caps_at_max`, `tv4_transient_retry_succeeds_at_attempt_3`, `gossip_exhausts_after_max_transient_attempts`, `permanent_fails_fast_no_retry`, `debug_redacts_transient_and_permanent_reasons`).
 
-**Sub-mission of:** `missions/claimed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
+**Sub-mission of:** `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06; commits `2f078974` + `323a115f`-prior).
 
 ## RFC
 
@@ -51,7 +51,7 @@ The `0959-c` Band A closure deferred this work because the only existing `Catalo
 
 **Requires (mission gates):**
 
-- `missions/claimed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06) — provides bounded retry loop + `INITIAL_BACKOFF`/`MAX_BACKOFF` constants + `GossipFailed { attempts }` emission consumed here
+- `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06) — provides bounded retry loop + `INITIAL_BACKOFF`/`MAX_BACKOFF` constants + `GossipFailed { attempts }` emission consumed here
 - `missions/claimed/0959-b-market-delivery-impl.md` (Band A closed 2026-08-06) — provides `MarketDeliveryEnvelope` + `DeliveryError::GossipFailed { attempts }` variant
 
 ```yaml
@@ -80,26 +80,26 @@ depends_on:
 
 **Implementation chain (commit `178f25c3`):**
 
-| Change | File | Detail |
-|---|---|---|
-| `CatalogGossipError::Transient(String)` + `Permanent(String)` variants | `crates/octo-wallet/src/capability/macaroon.rs` | typed enum extended; `thiserror::Error` derived for `Display`; manual `Debug` impl redacts reason payload (RFC-0957-A1 §Security defense-in-depth) |
-| Manual redacting `Debug` impl on `CatalogGossipError` | `crates/octo-wallet/src/capability/macaroon.rs` | `Unsupported` → `"Unsupported"`; `Transient(_)` → `Transient("[REDACTED reason]")`; `Permanent(_)` → `Permanent("[REDACTED reason]")` |
-| `backoff_for_attempt(attempt: u32) -> Duration` helper | `crates/octo-wallet/src/capability/gossip.rs` | `min(INITIAL_BACKOFF * 2^(attempt-1), MAX_BACKOFF)`; saturating shift + saturating mul; caps at `MAX_BACKOFF = 2s` |
-| Bounded retry with exponential backoff | `crates/octo-wallet/src/capability/gossip.rs` | on `Transient`: `thread::sleep(backoff_for_attempt(attempt))` before next attempt (skip on final); on `Unsupported \| Permanent`: fail-fast at attempt 1 |
-| Drop `#[allow(unreachable_code)]` gate | `crates/octo-wallet/src/capability/gossip.rs` | post-loop `Err(GossipFailed { attempts: MAX_GOSSIP_ATTEMPTS })` arm now reachable (5× Transient exhaustion) |
-| Drop `#[allow(clippy::never_loop)]` gate | `crates/octo-wallet/src/capability/gossip.rs` | loop now produces real exhaustion path; no longer structurally never-iterated |
-| 5 new unit tests | `crates/octo-wallet/src/capability/gossip.rs` | `backoff_for_attempt_caps_at_max`, `tv4_transient_retry_succeeds_at_attempt_3`, `gossip_exhausts_after_max_transient_attempts`, `permanent_fails_fast_no_retry`, `debug_redacts_transient_and_permanent_reasons` |
-| 3 new test catalogs | `crates/octo-wallet/src/capability/gossip.rs` | `AlwaysPermanentCatalog`, `AlwaysTransientCatalog` (atomic call counter), `AlwaysTransientThenOk` (atomic counter + initial-fail-count) |
+| Change                                                                 | File                                            | Detail                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CatalogGossipError::Transient(String)` + `Permanent(String)` variants | `crates/octo-wallet/src/capability/macaroon.rs` | typed enum extended; `thiserror::Error` derived for `Display`; manual `Debug` impl redacts reason payload (RFC-0957-A1 §Security defense-in-depth)                                                               |
+| Manual redacting `Debug` impl on `CatalogGossipError`                  | `crates/octo-wallet/src/capability/macaroon.rs` | `Unsupported` → `"Unsupported"`; `Transient(_)` → `Transient("[REDACTED reason]")`; `Permanent(_)` → `Permanent("[REDACTED reason]")`                                                                            |
+| `backoff_for_attempt(attempt: u32) -> Duration` helper                 | `crates/octo-wallet/src/capability/gossip.rs`   | `min(INITIAL_BACKOFF * 2^(attempt-1), MAX_BACKOFF)`; saturating shift + saturating mul; caps at `MAX_BACKOFF = 2s`                                                                                               |
+| Bounded retry with exponential backoff                                 | `crates/octo-wallet/src/capability/gossip.rs`   | on `Transient`: `thread::sleep(backoff_for_attempt(attempt))` before next attempt (skip on final); on `Unsupported \| Permanent`: fail-fast at attempt 1                                                         |
+| Drop `#[allow(unreachable_code)]` gate                                 | `crates/octo-wallet/src/capability/gossip.rs`   | post-loop `Err(GossipFailed { attempts: MAX_GOSSIP_ATTEMPTS })` arm now reachable (5× Transient exhaustion)                                                                                                      |
+| Drop `#[allow(clippy::never_loop)]` gate                               | `crates/octo-wallet/src/capability/gossip.rs`   | loop now produces real exhaustion path; no longer structurally never-iterated                                                                                                                                    |
+| 5 new unit tests                                                       | `crates/octo-wallet/src/capability/gossip.rs`   | `backoff_for_attempt_caps_at_max`, `tv4_transient_retry_succeeds_at_attempt_3`, `gossip_exhausts_after_max_transient_attempts`, `permanent_fails_fast_no_retry`, `debug_redacts_transient_and_permanent_reasons` |
+| 3 new test catalogs                                                    | `crates/octo-wallet/src/capability/gossip.rs`   | `AlwaysPermanentCatalog`, `AlwaysTransientCatalog` (atomic call counter), `AlwaysTransientThenOk` (atomic counter + initial-fail-count)                                                                          |
 
 **AC rollup:** 5/5 ACs green. 7/7 gossip tests pass.
 
 **Drift surface (mission text v0.1, 2026-08-06 vs RFC-0959-A1 body):**
 
-| # | Drift | Mission text | RFC-0959-A1 actual | Resolution |
-|---|---|---|---|---|
-| 1 | Test catalog placement | "mock harness" | 3 distinct typed catalogs (Permanent / Transient / Transient-then-Ok) | substrate uses typed catalogs for clarity; each catalog tests one failure mode |
-| 2 | Backoff helper visibility | (not specified) | `pub fn backoff_for_attempt(attempt: u32) -> Duration` exposed | exposed for direct testing (`backoff_for_attempt_caps_at_max`); loop uses it internally |
-| 3 | `match_same_arms` lint on `Unsupported` vs `Permanent` | separate match arms | merged arm `Err(Unsupported \| Permanent(_))` | clippy `match_same_arms` flagged; merged + nested per `unnested_or_patterns` |
+| #   | Drift                                                  | Mission text        | RFC-0959-A1 actual                                                    | Resolution                                                                              |
+| --- | ------------------------------------------------------ | ------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 1   | Test catalog placement                                 | "mock harness"      | 3 distinct typed catalogs (Permanent / Transient / Transient-then-Ok) | substrate uses typed catalogs for clarity; each catalog tests one failure mode          |
+| 2   | Backoff helper visibility                              | (not specified)     | `pub fn backoff_for_attempt(attempt: u32) -> Duration` exposed        | exposed for direct testing (`backoff_for_attempt_caps_at_max`); loop uses it internally |
+| 3   | `match_same_arms` lint on `Unsupported` vs `Permanent` | separate match arms | merged arm `Err(Unsupported \| Permanent(_))`                         | clippy `match_same_arms` flagged; merged + nested per `unnested_or_patterns`            |
 
 **Cross-mission dependencies (post-closure):**
 
@@ -110,10 +110,10 @@ depends_on:
 
 **Version History:**
 
-| Version | Date | Change |
-|---|---|---|
-| v0.1 | 2026-08-06 | Mission filed by `0959-c` Band A closure. Deferred ACs from `0959-c` captured (CatalogGossipError variants + backoff consumption + TV4 + exhaustion test). |
-| v0.2 | 2026-08-06 | Closed Band A. CatalogGossipError extended (Transient + Permanent + manual redacting Debug); backoff consumed via `backoff_for_attempt` helper; `#[allow]` gates dropped; 7/7 gossip tests green; cross-crate compat clean. |
+| Version | Date       | Change                                                                                                                                                                                                                      |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Mission filed by `0959-c` Band A closure. Deferred ACs from `0959-c` captured (CatalogGossipError variants + backoff consumption + TV4 + exhaustion test).                                                                  |
+| v0.2    | 2026-08-06 | Closed Band A. CatalogGossipError extended (Transient + Permanent + manual redacting Debug); backoff consumed via `backoff_for_attempt` helper; `#[allow]` gates dropped; 7/7 gossip tests green; cross-crate compat clean. |
 
 Last Updated: 2026-08-06
 Version: 0.2

@@ -68,7 +68,7 @@ This mission captures the audit findings + references the 1 new sibling mission 
 
 - New: `missions/claimed/0903-D1-substrate-landing.md` (LiteLLM persistence substrate ownership)
 - New: `missions/claimed/0903-D1-alignment-coordination.md` (this file)
-- Preserved: `missions/claimed/0903-d-budget-enforcement.md` (historical file as-is per historical-mission-preservation)
+- Preserved: `missions/archived/0903-d-budget-enforcement.md` (historical file as-is per historical-mission-preservation)
 
 ## Cross-references
 

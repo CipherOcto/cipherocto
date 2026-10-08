@@ -178,27 +178,26 @@ cargo clippy --workspace --all-targets -- -D warnings
 The AC table below covers `mission 0958-b`'s claim scope (Phase B.3 Cairo
 cryptographic body + Phase C.3 real-zk STWO end-to-end). For the full
 AC traceability including the prior `mission 0958-a` surface area work,
-see `missions/claimed/0958-b-real-cairo-crypto.md` §Version History
-v0.4/v0.5 rows + `missions/claimed/0958-a-zk-capability-circuit.md` §AC.
+see `missions/archived/completed/0958-b-real-cairo-crypto.md` §Version History
+v0.4/v0.5 rows + `missions/archived/completed/0958-a-zk-capability-circuit.md` §AC.
 
 **Multi-round review status (mission 0958-b v0.5; 2026-08-05):**
 
-| Round | Findings | Commit | Notes |
-|---|---|---|---|
-| S1 + S2 + S3 | (baseline crypto + real-zk STWO + stub retirement) | `aa004ad0` + `77aff4aa` + `81e2db4e` | Mission AC list original |
-| R1 | 16 findings (14 closed) | `549c2cc2` | F-1 unconditional-feature closure most critical |
-| R2 | 4 NEW MAJOR + MINOR | `e8a9ba5c` | F-17 phantom shas, F-18 core::blake3, F-19 zk_vectors breakdown, F-20 0958-c Version History |
-| R3 | 3 NEW MAJOR + 1 NOTE | `9fef522f` | F-21 0958-c regression, F-22 cron drift, F-23 phantom SHA, F-24 compiler.rs line ref |
-| R4 | 5 NEW + 2 NOTES | `63debd76` | F-25 phantom `--features full` in CI (CRITICAL), F-26 casm_split, F-27 nightly toolchain, F-28 AC-6 count, F-29 EOF newline |
-| R5 | 1 R4 regression + 4 NEW | `75e7e1e4` | F-30 YAML colon-in-parens (CRITICAL), F-31 fuzz package ref, F-32 seed corpus claim, F-33 Version History v0.5 row, F-34 0958-c v0.2 row |
-| R6 | 0 NEW (convergence verified) | `777f2f1e` | All R5 fixes stable; review chain closed |
+| Round        | Findings                                           | Commit                               | Notes                                                                                                                                    |
+| ------------ | -------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| S1 + S2 + S3 | (baseline crypto + real-zk STWO + stub retirement) | `aa004ad0` + `77aff4aa` + `81e2db4e` | Mission AC list original                                                                                                                 |
+| R1           | 16 findings (14 closed)                            | `549c2cc2`                           | F-1 unconditional-feature closure most critical                                                                                          |
+| R2           | 4 NEW MAJOR + MINOR                                | `e8a9ba5c`                           | F-17 phantom shas, F-18 core::blake3, F-19 zk_vectors breakdown, F-20 0958-c Version History                                             |
+| R3           | 3 NEW MAJOR + 1 NOTE                               | `9fef522f`                           | F-21 0958-c regression, F-22 cron drift, F-23 phantom SHA, F-24 compiler.rs line ref                                                     |
+| R4           | 5 NEW + 2 NOTES                                    | `63debd76`                           | F-25 phantom `--features full` in CI (CRITICAL), F-26 casm_split, F-27 nightly toolchain, F-28 AC-6 count, F-29 EOF newline              |
+| R5           | 1 R4 regression + 4 NEW                            | `75e7e1e4`                           | F-30 YAML colon-in-parens (CRITICAL), F-31 fuzz package ref, F-32 seed corpus claim, F-33 Version History v0.5 row, F-34 0958-c v0.2 row |
+| R6           | 0 NEW (convergence verified)                       | `777f2f1e`                           | All R5 fixes stable; review chain closed                                                                                                 |
 
 **Stub fail-closed semantics:** `crates/octo-wallet/Cargo.toml` does NOT
 activate `allow-stub-verifier` on the production `[dependencies]` edge.
 Test-only stub mode activates through `[dev-dependencies]`, which sets
 `features = ["allow-stub-verifier"]` on `zk-verifier` for test compilation
 only (R1 F-1 closure; surviving R6 verification).
-
 
 | **AC-1** | Real Cairo 2.x program body (no `unimplemented!()`) under scarb package `capability_zk` | `cairo/src/lib.cairo` exists + `scarb build` produces Sierra IR | `ae4dc4f8` (R4 S1 redo) |
 | **AC-2** | `zk_circuit::compile_from_source` shells out to cairo-compile; CASM BLAKE3 snapshot | `tests/casm_snapshot.rs` (loud-fail when toolchain missing) | `26fa53f6` (S1); R3 #8 harden `e7c79b9b` |
@@ -216,18 +215,19 @@ only (R1 F-1 closure; surviving R6 verification).
 | **AC-14** | `cargo clippy --workspace --all-targets --features full -- -D warnings` clean | workspace lint | `46e29fa2` (S3); R3 dead-variant triage `b98801e0` |
 | **AC-15** | Master plan §8 R12 exit criteria + single cipherocto-side PR + 8 R3 follow-ups | this doc + `git diff --stat` scope check + R3 fix-ups table | S4 closure + R3 #5 N=2 `a4594be8` + #7 dead variants `b98801e0` |
 | **AC-16** | **CANCELED v0.3** (no fork PR; crypto in cipherocto workspace) | — | — |
+
 ## Test vector table
 
-| Vector | File | NodeType | Public inputs | Expected outcome |
-|--------|------|----------|---------------|------------------|
-| TV1 | `tests/fixtures/capability-zk/zk-mint-self-host.json` | SelfHost | `ask_id=0x11..`, `cap_root_hash=0x22..`, `output_hash=Some(0x44..)`, `provider_slot_id="slot-tv1-001"` | MintAccept + VerifyOk |
-| TV2 | `tests/fixtures/capability-zk/zk-mint-hybrid-no-trace.json` | Hybrid | `ask_id=0x55..`, `output_hash=None`, `provider_slot_id="slot-tv2-001"` | MintAccept + VerifyOk |
-| TV3 | `tests/fixtures/capability-zk/zk-mint-wholesale-reject.json` | Wholesale | `ask_id=0x88..`, `provider_slot_id="slot-wholesale-001"` | MintReject `NodeTypeCannotMintZKCap` |
-| TV4 | `tests/fixtures/capability-zk/zk-verify-public-input-mismatch.json` | SelfHost | `ask_id` mutated to `0xff..` | VerifyReject `PublicInputMismatch` |
-| TV5 | `tests/fixtures/capability-zk/zk-verify-casm-drift.json` | SelfHost | `casm_hash = 0x00..` | MintReject + VerifyReject `CasmHashMismatch` |
-| TV6 | `tests/fixtures/capability-zk/zk-verify-stwo-fail.json` | SelfHost | `stark_proof[0] ^= 0xFF` | VerifyReject `StwoVerifyError` |
-| TV7 | `tests/fixtures/capability-zk/zk-verify-expired.json` | SelfHost | `verifier_local_unix_time + 301s` | VerifyReject `ClockSkewExceeded` |
-| TV8 | `tests/fixtures/capability-zk/zk-cross-impl-tv1.json` | SelfHost | two prover paths: `mint_with_zk_and_signers` + `zk_verifier::stub_commitment` | Both paths byte-equivalent + VerifyOk |
+| Vector | File                                                                | NodeType  | Public inputs                                                                                          | Expected outcome                             |
+| ------ | ------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| TV1    | `tests/fixtures/capability-zk/zk-mint-self-host.json`               | SelfHost  | `ask_id=0x11..`, `cap_root_hash=0x22..`, `output_hash=Some(0x44..)`, `provider_slot_id="slot-tv1-001"` | MintAccept + VerifyOk                        |
+| TV2    | `tests/fixtures/capability-zk/zk-mint-hybrid-no-trace.json`         | Hybrid    | `ask_id=0x55..`, `output_hash=None`, `provider_slot_id="slot-tv2-001"`                                 | MintAccept + VerifyOk                        |
+| TV3    | `tests/fixtures/capability-zk/zk-mint-wholesale-reject.json`        | Wholesale | `ask_id=0x88..`, `provider_slot_id="slot-wholesale-001"`                                               | MintReject `NodeTypeCannotMintZKCap`         |
+| TV4    | `tests/fixtures/capability-zk/zk-verify-public-input-mismatch.json` | SelfHost  | `ask_id` mutated to `0xff..`                                                                           | VerifyReject `PublicInputMismatch`           |
+| TV5    | `tests/fixtures/capability-zk/zk-verify-casm-drift.json`            | SelfHost  | `casm_hash = 0x00..`                                                                                   | MintReject + VerifyReject `CasmHashMismatch` |
+| TV6    | `tests/fixtures/capability-zk/zk-verify-stwo-fail.json`             | SelfHost  | `stark_proof[0] ^= 0xFF`                                                                               | VerifyReject `StwoVerifyError`               |
+| TV7    | `tests/fixtures/capability-zk/zk-verify-expired.json`               | SelfHost  | `verifier_local_unix_time + 301s`                                                                      | VerifyReject `ClockSkewExceeded`             |
+| TV8    | `tests/fixtures/capability-zk/zk-cross-impl-tv1.json`               | SelfHost  | two prover paths: `mint_with_zk_and_signers` + `zk_verifier::stub_commitment`                          | Both paths byte-equivalent + VerifyOk        |
 
 ## Vendoring strategy
 
@@ -255,17 +255,19 @@ To bump STWO upstream: increment the `stwo = "=2.1.0"` pin in
 
 ## Wire v1 / v2 dual support
 
-| Layer | Segments | Forward-compat | Backward-compat |
-|-------|----------|---------------|----------------|
-| **v1 wire** | `s1.s2.s3` (macaroon, sig, discharges) | ignores 4th segment | — |
-| **v2 wire** | `s1.s2.s3.s4` (+ optional `proof_bundle_borsh`) | — | accepts 3-segment wire; `proof_bundle = None` |
+| Layer       | Segments                                        | Forward-compat      | Backward-compat                               |
+| ----------- | ----------------------------------------------- | ------------------- | --------------------------------------------- |
+| **v1 wire** | `s1.s2.s3` (macaroon, sig, discharges)          | ignores 4th segment | —                                             |
+| **v2 wire** | `s1.s2.s3.s4` (+ optional `proof_bundle_borsh`) | —                   | accepts 3-segment wire; `proof_bundle = None` |
 
 **Serialize:**
+
 - `serialize_wire(token)` — emits v1 (3 segments).
 - `serialize_wire_v2(token, Some(pb_bytes))` — emits v2 (4 segments).
 - `serialize_wire_v2(token, None)` — emits v1 (3 segments) for backward compat.
 
 **Deserialize:**
+
 - `deserialize_wire(s, did, pub)` — recovers `CapabilityToken`; discards 4th segment if present.
 - `deserialize_wire_v2(s, did, pub) -> WireV2` — recovers `WireV2 { token, proof_bundle: Option<Vec<u8>> }`.
 
@@ -273,11 +275,11 @@ Base64url no-padding encoding per RFC-0957 §3.7.
 
 ## Performance targets
 
-| Gate | Target | Test | Status |
-|------|--------|------|--------|
-| **G1** (AC-11) | Proof gen <2s on 10K trace (SelfHost reference HW) | `tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` | sub-ms on stub; real-STWO gate under `--features full` |
-| **G2** (AC-11) | Verify <100ms | `tests/bench.rs::verify_latency_under_100ms` | sub-ms on stub |
-| **AC-12** | Proof size 50-500KB | `tests/bench.rs::proof_size_50_to_500kb` | stub = 32B structural smoke; 50-500KB gate under `--features full` |
+| Gate           | Target                                             | Test                                                             | Status                                                             |
+| -------------- | -------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **G1** (AC-11) | Proof gen <2s on 10K trace (SelfHost reference HW) | `tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` | sub-ms on stub; real-STWO gate under `--features full`             |
+| **G2** (AC-11) | Verify <100ms                                      | `tests/bench.rs::verify_latency_under_100ms`                     | sub-ms on stub                                                     |
+| **AC-12**      | Proof size 50-500KB                                | `tests/bench.rs::proof_size_50_to_500kb`                         | stub = 32B structural smoke; 50-500KB gate under `--features full` |
 
 **Reference HW:** 4-core x86_64, 16GB RAM, NVMe SSD (per RFC-0958 §Performance Targets). OS: Ubuntu 22.04 LTS. STWO build invocation: `cd crates/zk-vendor/stwo-sys && cargo +nightly-2025-06-23 build --release` (no env vars; the `stwo-cairo-prover` crate is pinned via Cargo.toml git tag, not via env flags). Round 5 fix F-61 closure: removed the prior F-56-fabricated STWO build flags (`STWO_CAIRO=1 STWO_USE_BUNDLED=0`) — these strings do not exist in the codebase; the actual build is the cd+nightly invocation above. Round 4 review F-56 closure: the prior "RFC-0958 §Implementation Reference" cross-reference was a phantom section (no such heading exists in RFC-0958); corrected to point at the actual `§Performance Targets` section.
 
@@ -311,6 +313,7 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 **Operator runbook (per RFC-0958 §CASM Drift, mission 0958-a R3 #5 fix-up):**
 
 1. **Compute new CASM BLAKE3.** Run `scarb build` in `cairo/` and read the in-process CASM BLAKE3 hash from `bundled_casm_hash()`. The hash is computed at runtime by `crates/zk-circuit/src/lib.rs::compile_source_inner`; no manual CASM file step is required.
+
    ```bash
    cd cairo && scarb build
    cargo test -p zk-circuit --test casm_snapshot
@@ -318,9 +321,11 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
    ```
 
 2. **Deploy N=2 grace verifier config.** Update the verifier's `accepted_casm_blake3_hashes` config to include both old and new:
+
    ```rust
    verify_capability_zk(&proof, &expected_public_inputs, &[old_casm, new_casm], now);
    ```
+
    Proofs bound to EITHER hash verify for the duration of the grace period.
 
 3. **Banner the grace period in release notes.** Operators see the N=2 acceptance in the dev guide + the verifier config.
@@ -334,11 +339,13 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
    Capabilities minted under the old hash now return `CasmHashMismatch`.
 
 **Test coverage:** `r3_casm_n2_rotation_accepts_either_v1_or_v2_hash` in `crates/octo-wallet/tests/zk_vectors.rs` exercises:
+
 - v1 proof rejected when accepted-set = [v2]
 - v2 proof NOT CasmHashMismatch when accepted-set = [v1, v2]
 - empty accepted-set fails closed
 
 **Migration runbook (future):** When `cairo/src/lib.cairo` changes:
+
 1. Bump `casm_version` on each new mint (currently hardcoded to 1)
 2. Track per-version CASM BLAKE3 separately
 3. Cap-verifier accepts `[v_N_casm] + [v_{N-1}_casm]` for grace, then `[v_N_casm]` alone

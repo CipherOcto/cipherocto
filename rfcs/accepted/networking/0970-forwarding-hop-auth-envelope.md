@@ -86,6 +86,7 @@ The design is forced by RFC-0853 §Overlay Cryptography: hop-by-hop channel bind
 - RFC-0969 — orthogonal; this RFC's intermediate routers are untrusted and do not run `GatewayAuthenticator`
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG: `0970 ← {0853, 0870, 0957, 0957-A1, 0009, 0009-B1, 0958*}` — acyclic (R12-N17 fix: added `0009-B1`; §Algorithms:wrap_for_hop references RFC-0009-B1 WalletCrypto trait)
 > 2. RFC-0853 BLAKE3 primitive substrate prerequisite
 > 3. RFC-0957-A1 HolderRegistry substrate prerequisite
@@ -93,16 +94,16 @@ The design is forced by RFC-0853 §Overlay Cryptography: hop-by-hop channel bind
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Intermediate router isolation** | 0 bytes of long-lived bearer/capability visible at intermediate routers | Test: TV6 |
-| **G2: Per-hop wrap latency** | ≤ 2ms p99 | Bench |
-| **G3: Destination unwrap latency** | ≤ 5ms p99 over a 3-hop chain | Bench |
-| **G4: Chain hash integrity** | Tampering with any hop's wrap invalidates the chain hash | Test: TV8 |
-| **G5: TTL enforcement** | HopCapability with expired TTL is rejected | Test: TV4 |
-| **G6: Replay defense** | Replaying a HopEnvelope is detected via nonce | Test: TV3 |
-| **G7: Debug redaction** | Zero credential material in Debug | Test: TV9 |
-| **G8: Pure forwarder** | A pure forwarder does not run GatewayAuthenticator | Test: TV10 |
+| Goal                                  | Target                                                                  | Metric     |
+| ------------------------------------- | ----------------------------------------------------------------------- | ---------- |
+| **G1: Intermediate router isolation** | 0 bytes of long-lived bearer/capability visible at intermediate routers | Test: TV6  |
+| **G2: Per-hop wrap latency**          | ≤ 2ms p99                                                               | Bench      |
+| **G3: Destination unwrap latency**    | ≤ 5ms p99 over a 3-hop chain                                            | Bench      |
+| **G4: Chain hash integrity**          | Tampering with any hop's wrap invalidates the chain hash                | Test: TV8  |
+| **G5: TTL enforcement**               | HopCapability with expired TTL is rejected                              | Test: TV4  |
+| **G6: Replay defense**                | Replaying a HopEnvelope is detected via nonce                           | Test: TV3  |
+| **G7: Debug redaction**               | Zero credential material in Debug                                       | Test: TV9  |
+| **G8: Pure forwarder**                | A pure forwarder does not run GatewayAuthenticator                      | Test: TV10 |
 
 ## Motivation
 
@@ -535,7 +536,7 @@ pub fn unwrap_at_destination(
                                                   // R42-N4 fix: DEFERRED (R42-N4) — `DestinationNonceStore` trait is a phantom type;
                                                   // no formal declaration in any of the 6 dual-mode RFCs. The trait is named
                                                   // as RFC-0853-C2 in the Upstream Dependencies block at L1187. Mission
-                                                  // `missions/open/0970-b-forward-integration.md` must add a minimal
+                                                  // `missions/archived/completed/0970-b-forward-integration.md` must add a minimal
                                                   // trait declaration before this RFC is Accepted.
                                                   // with wallet/registry/clock Arc-wrapping
                                                   // (R29-N6 + R20-N2 pattern). Enables cheap
@@ -598,7 +599,7 @@ pub fn unwrap_at_destination(
                                                                                             // renamed `root_secret_for_ask` to `root_secret_for_root_secret_hash`
                                                                                             // (per RFC-0853-C3 amendment requirement), but the trait method
                                                                                             // is not declared in any of the 6 dual-mode RFCs. Mission
-                                                                                            // `missions/open/0970-a-hop-envelope.md` must add a minimal
+                                                                                            // `missions/archived/completed/0970-a-hop-envelope.md` must add a minimal
                                                                                             // `pub fn root_secret_for_root_secret_hash(&self, hash: &[u8;32]) -> Option<[u8;32]>`
                                                                                             // to the WalletCrypto trait before this RFC is Accepted.
                 }
@@ -784,14 +785,14 @@ HopEnvelope (binary):
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Source Node | RFC-0009 `IdentityKey` of source | wrap_for_hop on hop 1 | node identity lifecycle | RFC-0870 + RFC-0970 |
-| Intermediate Router | RFC-0009 `IdentityKey` of router | forward + re-wrap (if can_rewrap) | node identity lifecycle | RFC-0870 + RFC-0970 |
-| **Pure Forwarder (NEW)** | RFC-0009 `IdentityKey` of node | forward only (no mint, no verify) | node identity lifecycle | RFC-0970 §Roles |
-| Destination Node | RFC-0009 `IdentityKey` of destination | unwrap_at_destination + verify | node identity lifecycle | RFC-0870 + RFC-0970 |
-| HopCapability Issuer | RFC-0009 `IdentityKey` of wrapping node | mint HopCapability per hop | per-hop TTL | RFC-0957 + RFC-0970 |
-| HolderRegistry Owner | RFC-0009 `IdentityKey` of registry node | persist HopCapability records | node identity lifecycle | RFC-0957-A1 |
+| Role                     | Identifier                              | Authority Scope                   | Lifecycle               | Source/Ref          |
+| ------------------------ | --------------------------------------- | --------------------------------- | ----------------------- | ------------------- |
+| Source Node              | RFC-0009 `IdentityKey` of source        | wrap_for_hop on hop 1             | node identity lifecycle | RFC-0870 + RFC-0970 |
+| Intermediate Router      | RFC-0009 `IdentityKey` of router        | forward + re-wrap (if can_rewrap) | node identity lifecycle | RFC-0870 + RFC-0970 |
+| **Pure Forwarder (NEW)** | RFC-0009 `IdentityKey` of node          | forward only (no mint, no verify) | node identity lifecycle | RFC-0970 §Roles     |
+| Destination Node         | RFC-0009 `IdentityKey` of destination   | unwrap_at_destination + verify    | node identity lifecycle | RFC-0870 + RFC-0970 |
+| HopCapability Issuer     | RFC-0009 `IdentityKey` of wrapping node | mint HopCapability per hop        | per-hop TTL             | RFC-0957 + RFC-0970 |
+| HolderRegistry Owner     | RFC-0009 `IdentityKey` of registry node | persist HopCapability records     | node identity lifecycle | RFC-0957-A1         |
 
 ### Out-of-Scope Roles
 
@@ -810,11 +811,11 @@ stateDiagram-v2
     Replayed --> [*]: gossip GC after 1 day
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Active | `wrap_for_hop()` | Yes | `holder_registry.insert(record)` | mint envelope |
-| Active | Expired | `current_millis > ttl_millis_unix` at lookup | Yes | lookup returns `Expired` | n/a |
-| Active | Replayed | `channel_session.is_nonce_seen(nonce)` | Yes | `UnwrapError::ReplayDetected` | n/a |
+| From   | To       | Trigger                                      | Deterministic? | Side Effects                     | Signing       |
+| ------ | -------- | -------------------------------------------- | -------------- | -------------------------------- | ------------- |
+| (none) | Active   | `wrap_for_hop()`                             | Yes            | `holder_registry.insert(record)` | mint envelope |
+| Active | Expired  | `current_millis > ttl_millis_unix` at lookup | Yes            | lookup returns `Expired`         | n/a           |
+| Active | Replayed | `channel_session.is_nonce_seen(nonce)`       | Yes            | `UnwrapError::ReplayDetected`    | n/a           |
 
 ### Liveness Check
 
@@ -844,13 +845,13 @@ On destination restart: channel session is rebuilt from RFC-0853 §Session Resum
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `wrap_for_hop` | A | Pure deterministic ops + BLAKE3 + Ed25519 |
-| `unwrap_at_destination` | A | Pure deterministic parsing + verify |
-| `verify_chain_hash` | A | Pure BLAKE3 chain |
-| `pure_forward` | A | Pure hop_count increment |
-| Channel layer E2E encryption | B | RFC-0853; deterministic when configured correctly |
+| Operation                    | Class | Rationale                                         |
+| ---------------------------- | ----- | ------------------------------------------------- |
+| `wrap_for_hop`               | A     | Pure deterministic ops + BLAKE3 + Ed25519         |
+| `unwrap_at_destination`      | A     | Pure deterministic parsing + verify               |
+| `verify_chain_hash`          | A     | Pure BLAKE3 chain                                 |
+| `pure_forward`               | A     | Pure hop_count increment                          |
+| Channel layer E2E encryption | B     | RFC-0853; deterministic when configured correctly |
 
 ## Error Handling
 
@@ -942,14 +943,14 @@ pub enum ForwardError {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Wrap latency per hop | ≤ 2ms p99 | Bench |
-| Unwrap latency (3-hop) | ≤ 5ms p99 | Bench |
-| Channel E2E encryption | ≤ 1ms p99 | RFC-0853 |
-| Channel E2E decryption | ≤ 1ms p99 | RFC-0853 |
-| HolderRegistry lookup (per hop) | ≤ 5ms p99 | RFC-0957-A1 |
-| Replay nonce check | ≤ 0.1ms p99 | In-memory HashSet |
+| Metric                          | Target      | Notes             |
+| ------------------------------- | ----------- | ----------------- |
+| Wrap latency per hop            | ≤ 2ms p99   | Bench             |
+| Unwrap latency (3-hop)          | ≤ 5ms p99   | Bench             |
+| Channel E2E encryption          | ≤ 1ms p99   | RFC-0853          |
+| Channel E2E decryption          | ≤ 1ms p99   | RFC-0853          |
+| HolderRegistry lookup (per hop) | ≤ 5ms p99   | RFC-0957-A1       |
+| Replay nonce check              | ≤ 0.1ms p99 | In-memory HashSet |
 
 ## Security Considerations
 
@@ -1023,14 +1024,14 @@ Verdict: NO RISK.
 
 ## Dependency Validation
 
-| RFC# | Type | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0970 acceptance? |
-|------|------|------------------------------|------------------------|------------------------------------|
-| RFC-0009 | Requires | Accepted | Already | No |
-| RFC-0853 | Requires | Draft | Yes | YES |
-| RFC-0870 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0957-A1 | Requires | Draft | Yes | YES |
-| RFC-0958 | Optional | Draft | Best-effort | No |
+| RFC#        | Type     | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0970 acceptance? |
+| ----------- | -------- | --------------------------- | ---------------------- | ---------------------------------- |
+| RFC-0009    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0853    | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0870    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957    | Requires | Accepted                    | Already                | No                                 |
+| RFC-0957-A1 | Requires | Draft                       | Yes                    | YES                                |
+| RFC-0958    | Optional | Draft                       | Best-effort            | No                                 |
 
 **DAG check:** `0970 ← {0853, 0870, 0957, 0957-A1, 0009, 0958*}` — acyclic. Valid.
 
@@ -1038,14 +1039,14 @@ Verdict: NO RISK.
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| **IA-1: Hop root secret is separate from long-lived root secret** | §Algorithms `wallet.hop_root_secret()` | Hop compromise escalates | Per-node key hygiene |
-| **IA-2: Channel layer is operational** | §Algorithms encrypt_e2e_to_destination | Inner content exposed | RFC-0853 §Operational Requirements |
-| **IA-3: HolderRegistry is reachable from destination** | §Algorithms registry.lookup | Hop verification fails | RFC-0957-A1 §HolderRegistry binding |
-| **IA-4: TTL ≤ RTT is enforceable in milliseconds** | §Algorithms ttl_millis | HopCapability with excessive TTL | This RFC + monitor |
-| **IA-5: ChannelSession nonce store is bounded** | §Replay Protection | Memory growth | RFC-0853 §Nonce Store GC |
-| **IA-6: Pure forwarder does NOT run GatewayAuthenticator** | §Algorithms `pure_forward` | Inconsistent routing | RFC-0971 binding + TV10 |
+| Assumption                                                        | Where Relied Upon                      | Blast Radius if False            | Mitigation / Status                 |
+| ----------------------------------------------------------------- | -------------------------------------- | -------------------------------- | ----------------------------------- |
+| **IA-1: Hop root secret is separate from long-lived root secret** | §Algorithms `wallet.hop_root_secret()` | Hop compromise escalates         | Per-node key hygiene                |
+| **IA-2: Channel layer is operational**                            | §Algorithms encrypt_e2e_to_destination | Inner content exposed            | RFC-0853 §Operational Requirements  |
+| **IA-3: HolderRegistry is reachable from destination**            | §Algorithms registry.lookup            | Hop verification fails           | RFC-0957-A1 §HolderRegistry binding |
+| **IA-4: TTL ≤ RTT is enforceable in milliseconds**                | §Algorithms ttl_millis                 | HopCapability with excessive TTL | This RFC + monitor                  |
+| **IA-5: ChannelSession nonce store is bounded**                   | §Replay Protection                     | Memory growth                    | RFC-0853 §Nonce Store GC            |
+| **IA-6: Pure forwarder does NOT run GatewayAuthenticator**        | §Algorithms `pure_forward`             | Inconsistent routing             | RFC-0971 binding + TV10             |
 
 ## Compatibility
 
@@ -1175,13 +1176,13 @@ Expected: HopCapability.ttl_millis_unix = current_millis + 200 (NOT truncated to
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Verdict |
-|----------|------|------|---------|
-| **(a) Transitive trust** | Fast; simple | Intermediate routers see long-lived credentials | Rejected (RFC-0853 forces hop-by-hop) |
-| **(b) Destination-only auth** | No protocol change | Intermediate routers can replay; memory leak risk | Rejected |
-| **(c) Per-hop full re-mint** | Strong | Slow; redundant verification | Rejected |
-| **(d) Per-hop channel-wrapped re-issuance + E2E inner encryption (this RFC)** | Channel-bound; E2E inner; substrate reuse | New envelope structure | **Adopted** |
-| **(e) End-to-end encryption (single layer)** | Strongest | Requires destination pubkey at source; brittle | Rejected |
+| Approach                                                                      | Pros                                      | Cons                                              | Verdict                               |
+| ----------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------- | ------------------------------------- |
+| **(a) Transitive trust**                                                      | Fast; simple                              | Intermediate routers see long-lived credentials   | Rejected (RFC-0853 forces hop-by-hop) |
+| **(b) Destination-only auth**                                                 | No protocol change                        | Intermediate routers can replay; memory leak risk | Rejected                              |
+| **(c) Per-hop full re-mint**                                                  | Strong                                    | Slow; redundant verification                      | Rejected                              |
+| **(d) Per-hop channel-wrapped re-issuance + E2E inner encryption (this RFC)** | Channel-bound; E2E inner; substrate reuse | New envelope structure                            | **Adopted**                           |
+| **(e) End-to-end encryption (single layer)**                                  | Strongest                                 | Requires destination pubkey at source; brittle    | Rejected                              |
 
 ## Implementation Phases
 
@@ -1203,17 +1204,17 @@ Expected: HopCapability.ttl_millis_unix = current_millis + 200 (NOT truncated to
 
 ### Phase 4: Mission Decomposition
 
-- [ ] `missions/open/0970-a-hop-envelope.md` — HopEnvelope implementation
-- [ ] `missions/open/0970-b-forward-integration.md` — ForwardRequest extension
+- [ ] `missions/archived/completed/0970-a-hop-envelope.md` — HopEnvelope implementation
+- [ ] `missions/archived/completed/0970-b-forward-integration.md` — ForwardRequest extension
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-wallet/src/capability/hop_envelope.rs` (NEW) | HopEnvelope + HopCapability + HopScope + InnerRequest |
-| `crates/quota-router-core/src/node/wrap.rs` (NEW) | wrap_for_hop + unwrap_at_destination + verify_chain_hash + pure_forward |
-| `crates/quota-router-core/src/node/forward.rs` (MODIFY) | ForwardRequestPayload extension |
-| `crates/octo-wallet/src/capability/holder_registry.rs` (MODIFY) | HolderRecord::from_hop_capability constructor |
+| File                                                            | Change                                                                  |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `crates/octo-wallet/src/capability/hop_envelope.rs` (NEW)       | HopEnvelope + HopCapability + HopScope + InnerRequest                   |
+| `crates/quota-router-core/src/node/wrap.rs` (NEW)               | wrap_for_hop + unwrap_at_destination + verify_chain_hash + pure_forward |
+| `crates/quota-router-core/src/node/forward.rs` (MODIFY)         | ForwardRequestPayload extension                                         |
+| `crates/octo-wallet/src/capability/holder_registry.rs` (MODIFY) | HolderRecord::from_hop_capability constructor                           |
 
 ## Future Work
 
@@ -1246,11 +1247,11 @@ This RFC depends on the following upstream amendments that MUST be in place befo
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.0     | 2026-08-01 | Initial draft |
-| 1.1     | 2026-08-01 | Round 2: E2E inner encryption; deterministic nonce via HKDF-BLAKE3; cap_root_hash single source from minted token; millisecond TTL; verify_chain_hash real implementation; ForwardRequestPayload extends (not replaces) RFC-0870; pure_forward; Debug redaction; holder_did = wrapping node, audience_did = next hop |
-| 1.2     | 2026-08-01 | Round 4: cap_root_hash = BLAKE3(macaroon.root_id) (canonical, single source, attenuation-stable); capability_wire embedded in envelope (verified through RFC-0957); MAX_HOP_DEPTH=3 cap (was 8; reconciled with RFC-0870 TTL ≤ 3, R12-N1 fix); pure_forward enforces RFC-0870 TTL semantics (reject ttl==0, decrement); synchronous replication of hop record to destination peer set (TTL 200ms < gossip 30s); node_epoch in nonce derivation (cross-session replay defense); destination-wide nonce store (Round 3 R2 M17 fix); verify_chain_hash moved to free function in this RFC (cycle break with RFC-0957-A1); Upstream Dependencies section documents 5 amendments |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.1        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Round 2: E2E inner encryption; deterministic nonce via HKDF-BLAKE3; cap_root_hash single source from minted token; millisecond TTL; verify_chain_hash real implementation; ForwardRequestPayload extends (not replaces) RFC-0870; pure_forward; Debug redaction; holder_did = wrapping node, audience_did = next hop                                                                                                                                                                                                                                                                                                                                                        |
+| 1.2        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Round 4: cap_root_hash = BLAKE3(macaroon.root_id) (canonical, single source, attenuation-stable); capability_wire embedded in envelope (verified through RFC-0957); MAX_HOP_DEPTH=3 cap (was 8; reconciled with RFC-0870 TTL ≤ 3, R12-N1 fix); pure_forward enforces RFC-0870 TTL semantics (reject ttl==0, decrement); synchronous replication of hop record to destination peer set (TTL 200ms < gossip 30s); node_epoch in nonce derivation (cross-session replay defense); destination-wide nonce store (Round 3 R2 M17 fix); verify_chain_hash moved to free function in this RFC (cycle break with RFC-0957-A1); Upstream Dependencies section documents 5 amendments |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged (R58 phantom `pure_forward_legacy_payload_v2` rejected; R60 reinstated 4 MaxHopDepthExceeded sites with correct function names); 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/networking/`. Brace balance verified at `verify_chain_hash()` (R54-N4 fix); 4 MaxHopDepthExceeded sites verified at L555 (UnwrapError in unwrap_at_destination), L688 (UnwrapError in verify_chain_hash), L732 (ForwardError in pure_forward), L756 (ForwardError in pure_forward_legacy_payload); ChainHashMismatch at L903; UnwrapError manual redacting Debug impl (R45-N1 consolidation); phantom `DestinationNonceStore` (L534) + `root_secret_for_root_secret_hash` (L595) properly DEFERRED. |
 
 ## Related RFCs
@@ -1273,12 +1274,13 @@ This RFC depends on the following upstream amendments that MUST be in place befo
 
 ## Related Missions
 
-- Future: `missions/open/0970-a-hop-envelope.md`
-- Future: `missions/open/0970-b-forward-integration.md`
+- Future: `missions/archived/completed/0970-a-hop-envelope.md`
+- Future: `missions/archived/completed/0970-b-forward-integration.md`
 
 ## Cross-Reference: Outgoing Edges
 
 This RFC is a dependency of:
+
 - RFC-0971 — meta RFC
 
 ## Appendices

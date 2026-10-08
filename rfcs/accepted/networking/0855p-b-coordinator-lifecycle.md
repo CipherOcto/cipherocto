@@ -35,6 +35,7 @@ Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type
 - RFC-0860 (Networking): Proof of Relay — for trust score source feeding election eligibility (RFC-0855 §4.2 "Membership Roles" requires `trust_score >= 500`)
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG (no cycles) — this RFC depends on 0855; 0855 is unchanged.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0855p-b-base.md` (TBD; not yet created) will declare `0855-mission-overlay-networks` as prerequisite.
 > 3. Optional dependencies MUST be documented separately from required — RFC-0860 is optional; without it, election eligibility uses raw stake only.
@@ -42,14 +43,14 @@ Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Election completes in <30s for 100-participant mission | Wall-clock from election start to `CoordinatorRecord.state = Elected` |
-| G2 | Term limits prevent indefinite incumbency | No coordinator serves > `term_max_epochs` consecutive epochs without re-election |
-| G3 | Handover completes in <5s with no message loss | Wall-clock from `Handover` state entry to successor `Active`; zero envelopes lost during transition |
-| G4 | Slashing is provable and deterministic | Slash proof is signed; penalty is computed deterministically from offense and stake record |
-| G5 | Liveness failure is detected in <2 × heartbeat_interval | Wall-clock from missed heartbeat to `Suspect` state entry |
-| G6 | All state transitions are RFC-0008 Class A | No non-determinism in coordinator state transitions affecting consensus |
+| Goal | Target                                                  | Metric                                                                                              |
+| ---- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| G1   | Election completes in <30s for 100-participant mission  | Wall-clock from election start to `CoordinatorRecord.state = Elected`                               |
+| G2   | Term limits prevent indefinite incumbency               | No coordinator serves > `term_max_epochs` consecutive epochs without re-election                    |
+| G3   | Handover completes in <5s with no message loss          | Wall-clock from `Handover` state entry to successor `Active`; zero envelopes lost during transition |
+| G4   | Slashing is provable and deterministic                  | Slash proof is signed; penalty is computed deterministically from offense and stake record          |
+| G5   | Liveness failure is detected in <2 × heartbeat_interval | Wall-clock from missed heartbeat to `Suspect` state entry                                           |
+| G6   | All state transitions are RFC-0008 Class A              | No non-determinism in coordinator state transitions affecting consensus                             |
 
 ## Motivation
 
@@ -115,13 +116,13 @@ The "nothing should be implied" rule requires that the **out-of-scope statement 
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Mission Coordinator | `CoordinatorId` (`[u8;32]`) | `coordinate` | `CoordinatorLifecycle` (8 states) | This RFC §Lifecycle Requirements |
-| Mission Creator | `creator_peer_id` (`[u8;32]`) | `designate-at-genesis` (one-shot) | stateless | RFC-0855 §3 "Mission Lifecycle" mission creation |
-| Mission Participant | `peer_id` (`[u8;32]`) | `vote` (per-election) | `mission_membership` (RFC-0855 §4.2 "Membership Roles") | RFC-0855 §4.2 "Membership Roles" |
-| Slashing Adjudicator | `governance_id` (`[u8;32]`) | `slash` | `governance_session` (per-mission) | RFC-0855 §11 "Governance Models" + This RFC §"Slashing Integration" |
-| Domain Coordinator | (TBD) | (TBD) | (TBD) | Future Work F1 — out of scope for this RFC |
+| Role                 | Identifier                    | Authority Scope                   | Lifecycle                                               | Source/Ref                                                          |
+| -------------------- | ----------------------------- | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------- |
+| Mission Coordinator  | `CoordinatorId` (`[u8;32]`)   | `coordinate`                      | `CoordinatorLifecycle` (8 states)                       | This RFC §Lifecycle Requirements                                    |
+| Mission Creator      | `creator_peer_id` (`[u8;32]`) | `designate-at-genesis` (one-shot) | stateless                                               | RFC-0855 §3 "Mission Lifecycle" mission creation                    |
+| Mission Participant  | `peer_id` (`[u8;32]`)         | `vote` (per-election)             | `mission_membership` (RFC-0855 §4.2 "Membership Roles") | RFC-0855 §4.2 "Membership Roles"                                    |
+| Slashing Adjudicator | `governance_id` (`[u8;32]`)   | `slash`                           | `governance_session` (per-mission)                      | RFC-0855 §11 "Governance Models" + This RFC §"Slashing Integration" |
+| Domain Coordinator   | (TBD)                         | (TBD)                             | (TBD)                                                   | Future Work F1 — out of scope for this RFC                          |
 
 ## Specification
 
@@ -259,17 +260,18 @@ pub struct CoordinatorRecord {
 
 #### Election Algorithm (per governance model)
 
-| Governance Model | Election | Tie-Break | Eligibility |
-|------------------|----------|-----------|-------------|
-| **Centralized** | First coordinator: creator designates. Replacement: 2/3 vote. | n/a (designated) | `trust_score >= 500` (RFC-0855 §4.2 "Membership Roles") |
-| **DAO** | Top-stake candidate wins if no candidate receives `>50%`. Otherwise top-stake wins. Re-election every `term_epochs`. | Lexicographic `peer_id` ascending | `octo_stake >= 1000` + `trust_score >= 500` |
-| **Federated** | One per organizational domain; consensus from `f+1` of `2f+1` domain representatives. | Domain index then `peer_id` | `domain_reputation >= threshold` |
-| **AI-Assisted** | AI proposes; humans ratify 2/3 within `proposal_deadline_epochs`. | n/a (proposed) | AI selection + human ratification |
-| **Autonomous** | No election; protocol-defined rotation by `coordinator_term_id` ordering. Mission genesis names a deterministic order (e.g., BLAKE3-ordered `peer_id` list). | BLAKE3 of `(mission_id, slot_index)` | n/a |
+| Governance Model | Election                                                                                                                                                     | Tie-Break                            | Eligibility                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | ------------------------------------------------------- |
+| **Centralized**  | First coordinator: creator designates. Replacement: 2/3 vote.                                                                                                | n/a (designated)                     | `trust_score >= 500` (RFC-0855 §4.2 "Membership Roles") |
+| **DAO**          | Top-stake candidate wins if no candidate receives `>50%`. Otherwise top-stake wins. Re-election every `term_epochs`.                                         | Lexicographic `peer_id` ascending    | `octo_stake >= 1000` + `trust_score >= 500`             |
+| **Federated**    | One per organizational domain; consensus from `f+1` of `2f+1` domain representatives.                                                                        | Domain index then `peer_id`          | `domain_reputation >= threshold`                        |
+| **AI-Assisted**  | AI proposes; humans ratify 2/3 within `proposal_deadline_epochs`.                                                                                            | n/a (proposed)                       | AI selection + human ratification                       |
+| **Autonomous**   | No election; protocol-defined rotation by `coordinator_term_id` ordering. Mission genesis names a deterministic order (e.g., BLAKE3-ordered `peer_id` list). | BLAKE3 of `(mission_id, slot_index)` | n/a                                                     |
 
 For Centralized, the `creator-may-not-replace` rule: the Mission Creator designates the first coordinator at genesis, but cannot replace a sitting coordinator except via the 2/3 vote path. This prevents a creator from indefinitely controlling a mission by repeatedly replacing coordinators.
 
 **Election eligibility filter (E2E IS-4.1 fix):** the election tally function MUST apply an eligibility filter BEFORE counting any ballot. The filter rejects:
+
 - Voters who are not current mission participants (verified via the mission's pubkey registry)
 - Voters whose trust score is below the governance model's threshold
 - Candidates who do not satisfy the eligibility check (per the table above)
@@ -301,14 +303,14 @@ enum GenesisState {
 
 **Transitions:**
 
-| From | To | Trigger | Deterministic? |
-|------|----|---------|----------------|
-| (none) | GenesisDesignated | Mission descriptor committed with `creator_peer_id == coordinator_peer_id` in `MissionDescriptor` | Yes (from genesis material) |
-| GenesisDesignated | GenesisSelfAttest | Creator signs `GenesisAttest { mission_id, coordinator_peer_id, attest_epoch, coordinator_term_id }` and broadcasts | Yes |
-| GenesisSelfAttest | GenesisActive | ≥1 peer (other than creator) receives GenesisAttest, validates signature against creator's public key, and broadcasts `GenesisWitness { mission_id, witness_peer_id, attest_hash }` | Yes (deterministic count) |
-| GenesisActive | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §"Election Algorithm (per governance model)" (with quorum = 0) | Yes |
-| GenesisSelfAttest | GenesisDesignated (rollback) | GenesisWitness validation fails (invalid signature on GenesisAttest, OR no witness received within `genesis_witness_timeout = 100 epochs`) | Yes (timeout is deterministic) |
-| GenesisActive | Inactive (failure path) | Creator's key is revoked / compromised after GenesisActive but before handoff to CoordinatorLifecycle. Creator signs `CoordinatorSlash { coordinator_id, mission_id, reason: 0x0009 (genesis-compromise) }` (slash reason code 0x0009 from this RFC's reserved 0x0009-0xFFFF range; codes 0x0001-0x0008 are already taken — see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes"). Forces immediate `Inactive`; next election runs normally. | Yes |
+| From              | To                                              | Trigger                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Deterministic?                 |
+| ----------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| (none)            | GenesisDesignated                               | Mission descriptor committed with `creator_peer_id == coordinator_peer_id` in `MissionDescriptor`                                                                                                                                                                                                                                                                                                                                                                 | Yes (from genesis material)    |
+| GenesisDesignated | GenesisSelfAttest                               | Creator signs `GenesisAttest { mission_id, coordinator_peer_id, attest_epoch, coordinator_term_id }` and broadcasts                                                                                                                                                                                                                                                                                                                                               | Yes                            |
+| GenesisSelfAttest | GenesisActive                                   | ≥1 peer (other than creator) receives GenesisAttest, validates signature against creator's public key, and broadcasts `GenesisWitness { mission_id, witness_peer_id, attest_hash }`                                                                                                                                                                                                                                                                               | Yes (deterministic count)      |
+| GenesisActive     | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §"Election Algorithm (per governance model)" (with quorum = 0)                                                                                                                                                                                                                                                                                                                | Yes                            |
+| GenesisSelfAttest | GenesisDesignated (rollback)                    | GenesisWitness validation fails (invalid signature on GenesisAttest, OR no witness received within `genesis_witness_timeout = 100 epochs`)                                                                                                                                                                                                                                                                                                                        | Yes (timeout is deterministic) |
+| GenesisActive     | Inactive (failure path)                         | Creator's key is revoked / compromised after GenesisActive but before handoff to CoordinatorLifecycle. Creator signs `CoordinatorSlash { coordinator_id, mission_id, reason: 0x0009 (genesis-compromise) }` (slash reason code 0x0009 from this RFC's reserved 0x0009-0xFFFF range; codes 0x0001-0x0008 are already taken — see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes"). Forces immediate `Inactive`; next election runs normally. | Yes                            |
 
 **R1-CL-1 fix — failure transition:** the v1.1 spec previously treated `GenesisActive` as terminal (no failure path). The fix adds an explicit `GenesisActive → Inactive` transition for the case where the creator's key is revoked or compromised after genesis succeeds but before the mission becomes Active. Without this, a compromised creator would persist as coordinator until manual intervention. The slash reason 0x0009 is in the reserved 0x0009-0xFFFF range (codes 0x0001-0x0008 are taken; see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes") and is defined here as `genesis-compromise`.
 
@@ -349,13 +351,13 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 
 #### Term Limits
 
-| Governance Model | Default `term_max_epochs` | Re-election Trigger | Cool-down after Resignation |
-|------------------|---------------------------|---------------------|------------------------------|
-| **Centralized** | 30 epochs (5 min @ 10s epochs) | Forced re-election at term end | 2 × `term_max_epochs` |
-| **DAO** | 30 epochs | Automatic at term end | 2 × `term_max_epochs` |
-| **Federated** | 30 epochs | Automatic at term end | 2 × `term_max_epochs` |
-| **AI-Assisted** | 30 epochs | Human veto or 10 consecutive missed heartbeats | 2 × `term_max_epochs` |
-| **Autonomous** | `mission_ttl` (entire mission) | n/a | 0 |
+| Governance Model | Default `term_max_epochs`      | Re-election Trigger                            | Cool-down after Resignation |
+| ---------------- | ------------------------------ | ---------------------------------------------- | --------------------------- |
+| **Centralized**  | 30 epochs (5 min @ 10s epochs) | Forced re-election at term end                 | 2 × `term_max_epochs`       |
+| **DAO**          | 30 epochs                      | Automatic at term end                          | 2 × `term_max_epochs`       |
+| **Federated**    | 30 epochs                      | Automatic at term end                          | 2 × `term_max_epochs`       |
+| **AI-Assisted**  | 30 epochs                      | Human veto or 10 consecutive missed heartbeats | 2 × `term_max_epochs`       |
+| **Autonomous**   | `mission_ttl` (entire mission) | n/a                                            | 0                           |
 
 `term_max_epochs = 0` means no limit; the coordinator serves until explicit handover, resignation, or slash.
 
@@ -383,6 +385,7 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 3. Successor elected per `Emergency` branch of the governance model.
 
 **Handover observability (E2E IS-4.4 fix):** the predecessor monitors the successor's activation. Specifically:
+
 - Predecessor sets `handover_started_epoch = current_epoch` when transitioning `Active → Handover`.
 - If `current_epoch - handover_started_epoch > HANDOVER_TIMEOUT = 500` epochs and the successor is NOT yet `Active`, the predecessor logs `tracing::warn!("Handover timeout: successor {successor:?} not active after {elapsed} epochs")` and broadcasts a `HandoverTimeout` envelope to the mission.
 - A `HandoverTimeout` triggers a new election (per the same governance model). The failed successor is not slashed (handovers are not slashable) but is marked as "ineligible-for-immediate-retry" for `HANDOVER_RETRY_COOLDOWN = 100` epochs.
@@ -403,6 +406,7 @@ Slashing extends RFC-0855 §17 "Token Economics Integration" by making `Demoting
 **Slash proof replay protection (E2E IS-4.5 fix):** the `slash_id` is defined as `BLAKE3(coordinator_term_id || offense || evidence_hash)`. The witness MUST have not seen the same `slash_id` in the last 1000 epochs. Replays are silently dropped. The `evidence_hash` is `BLAKE3(evidence)` so the same slash proof with a different `evidence` field is treated as a different slash (and may proceed in parallel).
 
 **Slash tally base = 2/3 of mission's current eligible voter count (E2E IS-4.6 fix, E2E IS-7.3 fix):** the 2/3 threshold is computed as `floor(2 * eligible_voter_count / 3)`, where `eligible_voter_count` is the number of mission participants whose trust score is ≥ the governance model's voter threshold, AS OF THE ELECTION EPOCH. The threshold is NOT a fixed number; it scales with mission size. For example:
+
 - 3 eligible voters → threshold is 2 (need 2 of 3 votes)
 - 7 eligible voters → threshold is 4 (need 4 of 7 votes)
 - 9 eligible voters → threshold is 6 (need 6 of 9 votes)
@@ -428,6 +432,7 @@ Slashing extends RFC-0855 §17 "Token Economics Integration" by making `Demoting
 **Slash evidence is publicly auditable (E2E IS-5.7 fix):** the `evidence` payload of a slash proof is part of the mission's permanent state. After a slash tally closes (succeeds or fails), the evidence is gossiped to all mission participants as a `SlashEvidenceArchive` envelope. The envelope is signed by the `Slashing Adjudicator` and contains the full evidence payload (which may be large — e.g., a transcript of coordinator misbehavior). All mission participants MUST store the evidence for at least `EVIDENCE_RETENTION_EPOCHS = 7_776_000` (~90 days) to allow post-hoc review.
 
 **Slash reason 0x0001-0x0009 reserved; 0x0009 = `genesis-compromise` (E2E IS-5.4 fix):** the slash reason codes are:
+
 - `0x0001` = `double-sign` (coordinator signed two conflicting envelopes for the same slot) — penalty: 100% OCTO-O
 - `0x0002` = `liveness-failure` (coordinator missed 10+ consecutive heartbeats) — penalty: 100% all stakes
 - `0x0003` = `founder-squat` (BIND issued by founder without intent to govern) — penalty: 100% OCTO-B/O + 1000-epoch cooldown
@@ -441,6 +446,7 @@ Slashing extends RFC-0855 §17 "Token Economics Integration" by making `Demoting
 Codes `0x000A-0x000B` are defined in RFC-0850p-c (transport-level slash reasons); codes `0x000C-0x000D` are reserved (NOT slash reasons; see RFC-0855p-d §"Sub-DC delegation protocol"); codes `0x000E-0x0011` are defined by the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e) — see §B "Slash Offense Codes" table and `docs/reviews/r16/r16-r1-adversarial-review.md` §2 for the canonical mapping; codes `0x0012-0xFFFF` are reserved for future slash reasons (R9-9 fix — was "0x000A-0xFFFF reserved" which contradicted §B; R16 R1 fix — extended to "0x000C-0xFFFF reserved" which also contradicted §B since 0x000C-0x0011 are now allocated; canonical mapping is "0x0012-0xFFFF reserved"). Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8 "Witness Validation Rules").
 
 **"Evidence of misbehavior" per slash reason (E2E IS-7.1 fix):** the expected evidence schema for each slash reason:
+
 - `0x0001 double-sign`: two conflicting `CoordinatorHeartbeat` envelopes (or other state-transition envelopes) signed by the same `coordinator_term_id`, with the same `epoch` field but different payloads.
 - `0x0002 liveness-failure`: a sequence of 10+ consecutive missed `CoordinatorHeartbeat` envelopes, with the slashed coordinator's `coordinator_term_id` and `last_heartbeat_epoch`.
 - `0x0003 founder-squat`: a `BindEnvelope` issued by a founder who did not send any `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs.
@@ -482,17 +488,17 @@ All state transitions MUST be deterministic given identical mission state, coord
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `CoordinatorId` derivation | A | Consensus-critical identity |
-| `CoordinatorLifecycle` state transition | A | Consensus-critical lifecycle |
-| Election tally computation | A | Consensus-critical election result |
-| `CoordinatorTermId` derivation (`BLAKE3`) | A | Consensus-critical identity binding |
-| Slash proof verification | A | Consensus-critical slashing |
-| `CoordinatorHeartbeat` emission | B | Off-chain but deterministic (epoch-based) |
-| Heartbeat transport | C | Network transport, non-deterministic |
-| Handover message preservation queue | C | In-memory queue, non-deterministic ordering |
-| Election ballot transport | C | Network transport |
+| Operation                                 | Class | Rationale                                   |
+| ----------------------------------------- | ----- | ------------------------------------------- |
+| `CoordinatorId` derivation                | A     | Consensus-critical identity                 |
+| `CoordinatorLifecycle` state transition   | A     | Consensus-critical lifecycle                |
+| Election tally computation                | A     | Consensus-critical election result          |
+| `CoordinatorTermId` derivation (`BLAKE3`) | A     | Consensus-critical identity binding         |
+| Slash proof verification                  | A     | Consensus-critical slashing                 |
+| `CoordinatorHeartbeat` emission           | B     | Off-chain but deterministic (epoch-based)   |
+| Heartbeat transport                       | C     | Network transport, non-deterministic        |
+| Handover message preservation queue       | C     | In-memory queue, non-deterministic ordering |
+| Election ballot transport                 | C     | Network transport                           |
 
 ### Error Handling
 
@@ -536,51 +542,51 @@ pub enum CoordinatorError {
 
 ## Performance Targets
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Election completion (100 participants) | <30s | Wall-clock from election start to `Elected` |
-| Election completion (10 participants) | <5s | Wall-clock |
-| Handover completion | <5s with zero envelope loss | Wall-clock + message count diff |
-| Heartbeat detection | <2 × `heartbeat_interval` epochs | Epoch delta between missed heartbeat and `Suspect` |
-| Slash proof verification | <1s | Wall-clock from proof receipt to `Demoting` |
-| `CoordinatorRecord` state size | <256 bytes | Serialized size (BLAKE3 + u64s + flags) |
-| State transition verification | <10ms | Wall-clock for one transition check |
+| Metric                                 | Target                           | Measurement                                        |
+| -------------------------------------- | -------------------------------- | -------------------------------------------------- |
+| Election completion (100 participants) | <30s                             | Wall-clock from election start to `Elected`        |
+| Election completion (10 participants)  | <5s                              | Wall-clock                                         |
+| Handover completion                    | <5s with zero envelope loss      | Wall-clock + message count diff                    |
+| Heartbeat detection                    | <2 × `heartbeat_interval` epochs | Epoch delta between missed heartbeat and `Suspect` |
+| Slash proof verification               | <1s                              | Wall-clock from proof receipt to `Demoting`        |
+| `CoordinatorRecord` state size         | <256 bytes                       | Serialized size (BLAKE3 + u64s + flags)            |
+| State transition verification          | <10ms                            | Wall-clock for one transition check                |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies on that is not enforced by types, runtime validation, or test coverage MUST be listed here.
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| Coordinator's `peer_id` is stable across the term | `CoordinatorRecord.coordinator_peer_id` | Identity hijack via peer_id reuse; slash goes to wrong peer | RFC-0853 key rotation; term_id binds peer_id to term_epoch; rotation forced at term boundary. **MITIGATED** by term_id binding. |
-| Mission participants have synchronized epoch counters | `current_epoch` in liveness check | False-positive `Suspect` from clock skew | Epoch from deterministic block height, not wall clock (RFC-0852 deterministic ordering). **MITIGATED**. |
-| Heartbeat transport is reliable and acknowledged | Liveness check | False-positive `Suspect` from network drop | Heartbeat is gossiped (RFC-0852); not point-to-point. **MITIGATED**. |
-| Slash proof evidence matches the offense type | Slash verification | Invalid slash; honest coordinator penalized | Verification function maps `offense: u16` to expected evidence schema; rejection on mismatch. **MITIGATED** by verification. |
-| Election ballots are signed and non-replayable | Election tally | Ballot replay → vote inflation | Signature binds `(election_id, voter, candidate, ballot_epoch)`; replay across elections has different `election_id`. **MITIGATED**. |
-| Slash proof `adjudicator` is the current governance key | Slash verification | Unauthorized slash by retired governance | Adjudicator key must match `mission_descriptor.governance_id` for the current `governance_session`. **MITIGATED** by key check. |
-| Term limits (`term_end_epoch`) are honored by the coordinator | Term end trigger | Coordinator overstays; mission drifts to single-leader | `Suspect → Handover` trigger on `current_epoch >= term_end_epoch` regardless of heartbeat. **MITIGATED**. |
-| Cool-down after Resignation is enforced | Re-election eligibility | Slashed/resigned coordinator immediately re-elected | Cool-down check in election eligibility filter. **MITIGATED**. |
-| Handover message queue survives process crash | Message preservation | Envelopes lost during handover | Queue is durable (RFC-0857 mempool); crash recovery replays queue. **MITIGATED**. |
-| IA-CL-1 (E2E IS-4.1) | Election eligibility filter runs BEFORE ballot tally | ELECTION | MITIGATED | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.1 fix) — the tally function rejects voters/candidates who fail the eligibility check |
-| IA-CL-2 (E2E IS-4.2) | Election `closed_epoch` is set when quorum is reached OR `ELECTION_TIMEOUT` fires, whichever is first | ELECTION | MITIGATED | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.2 fix) — `ELECTION_TIMEOUT = 1000` epochs |
-| IA-CL-3 (E2E IS-4.4) | Handover success or failure is observable to the mission within `HANDOVER_TIMEOUT = 500` epochs | LIFECYCLE | MITIGATED | Specified in §"Handover Protocol" (E2E IS-4.4 fix) |
-| IA-CL-4 (E2E IS-4.5) | Slash proof's `evidence` is replay-protected | SECURITY | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.5 fix) — slash_id is `BLAKE3(coordinator_term_id || offense || evidence_hash)` |
-| IA-CL-5 (E2E IS-4.6) | Slash tally base is 2/3 of the **mission's current eligible voter count** (not a fixed number) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.6 fix) |
-| IA-CL-6 (E2E IS-4.7) | Slash voting is open to ALL mission participants, not just the slashed coordinator's peers | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.7 fix) |
-| IA-CL-7 (E2E IS-5.2) | Heartbeat is gossiped to ALL mission participants, not just to the DomainCoordinator | OBSERVABILITY | MITIGATED | Specified in §"Liveness Check" (E2E IS-5.2 fix) |
-| IA-CL-8 (E2E IS-5.4) | Slash reason 0x0001-0x0009 are reserved; 0x0009 is defined as `genesis-compromise` | GOVERNANCE | MITIGATED | Specified in §"B. Slash Offense Codes" (E2E IS-5.4 fix) |
-| IA-CL-9 (E2E IS-5.5) | Slash tally can fail to reach quorum; the failure outcome is well-defined | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.5 fix) — failed tally logs and releases the slash lock |
-| IA-CL-10 (E2E IS-5.6) | Slash vote casting is rate-limited (no ballot spam) | SECURITY | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.6 fix) — one ballot per voter per slash_id |
-| IA-CL-11 (E2E IS-5.7) | Slash evidence is publicly auditable post-tally | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.7 fix) — evidence is part of the permanent mission state |
-| IA-CL-12 (E2E IS-6.1) | Demoting state has a bounded duration (`DEMOTING_DURATION = 10` epochs) | LIFECYCLE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-6.1 fix) |
-| IA-CL-13 (E2E IS-7.1) | "Evidence of misbehavior" is explicitly defined per slash reason code | GOVERNANCE | MITIGATED | Specified in §"B. Slash Offense Codes" (E2E IS-7.1 fix) — evidence schemas enumerated |
-| IA-CL-14 (E2E IS-7.2) | Slash vote tally is observable in real-time (before resolution) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.2 fix) — running tally published every 10 epochs |
-| IA-CL-15 (E2E IS-7.3) | Slash vote tally base is `2/3 of mission's current eligible voter count` (2/3 of what?) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.3 fix) — explicit formula |
-| IA-CL-16 (E2E IS-7.4) | Slash vote is binary (yes/no); abstentions are not counted | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.4 fix) |
-| IA-CL-17 (E2E IS-7.5) | Slash vote has a deadline (`SLASH_VOTE_DEADLINE = 500` epochs) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.5 fix) |
-| IA-CL-18 (E2E IS-7.6) | Slash vote result is final once deadline elapses; no late ballots accepted | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.6 fix) |
-| IA-CL-19 (E2E IS-7.7) | Slash vote result is gossiped to ALL mission participants | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.7 fix) |
-| IA-CL-20 (E2E IS-7.8) | Slash tally requires cryptographic finality (BLAKE3 hash of sorted ballots) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.8 fix) |
+| Assumption                                                    | Where Relied Upon                                                                                     | Blast Radius if False                                       | Mitigation / Status                                                                                                                  |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Coordinator's `peer_id` is stable across the term             | `CoordinatorRecord.coordinator_peer_id`                                                               | Identity hijack via peer_id reuse; slash goes to wrong peer | RFC-0853 key rotation; term_id binds peer_id to term_epoch; rotation forced at term boundary. **MITIGATED** by term_id binding.      |
+| Mission participants have synchronized epoch counters         | `current_epoch` in liveness check                                                                     | False-positive `Suspect` from clock skew                    | Epoch from deterministic block height, not wall clock (RFC-0852 deterministic ordering). **MITIGATED**.                              |
+| Heartbeat transport is reliable and acknowledged              | Liveness check                                                                                        | False-positive `Suspect` from network drop                  | Heartbeat is gossiped (RFC-0852); not point-to-point. **MITIGATED**.                                                                 |
+| Slash proof evidence matches the offense type                 | Slash verification                                                                                    | Invalid slash; honest coordinator penalized                 | Verification function maps `offense: u16` to expected evidence schema; rejection on mismatch. **MITIGATED** by verification.         |
+| Election ballots are signed and non-replayable                | Election tally                                                                                        | Ballot replay → vote inflation                              | Signature binds `(election_id, voter, candidate, ballot_epoch)`; replay across elections has different `election_id`. **MITIGATED**. |
+| Slash proof `adjudicator` is the current governance key       | Slash verification                                                                                    | Unauthorized slash by retired governance                    | Adjudicator key must match `mission_descriptor.governance_id` for the current `governance_session`. **MITIGATED** by key check.      |
+| Term limits (`term_end_epoch`) are honored by the coordinator | Term end trigger                                                                                      | Coordinator overstays; mission drifts to single-leader      | `Suspect → Handover` trigger on `current_epoch >= term_end_epoch` regardless of heartbeat. **MITIGATED**.                            |
+| Cool-down after Resignation is enforced                       | Re-election eligibility                                                                               | Slashed/resigned coordinator immediately re-elected         | Cool-down check in election eligibility filter. **MITIGATED**.                                                                       |
+| Handover message queue survives process crash                 | Message preservation                                                                                  | Envelopes lost during handover                              | Queue is durable (RFC-0857 mempool); crash recovery replays queue. **MITIGATED**.                                                    |
+| IA-CL-1 (E2E IS-4.1)                                          | Election eligibility filter runs BEFORE ballot tally                                                  | ELECTION                                                    | MITIGATED                                                                                                                            | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.1 fix) — the tally function rejects voters/candidates who fail the eligibility check |
+| IA-CL-2 (E2E IS-4.2)                                          | Election `closed_epoch` is set when quorum is reached OR `ELECTION_TIMEOUT` fires, whichever is first | ELECTION                                                    | MITIGATED                                                                                                                            | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.2 fix) — `ELECTION_TIMEOUT = 1000` epochs                                            |
+| IA-CL-3 (E2E IS-4.4)                                          | Handover success or failure is observable to the mission within `HANDOVER_TIMEOUT = 500` epochs       | LIFECYCLE                                                   | MITIGATED                                                                                                                            | Specified in §"Handover Protocol" (E2E IS-4.4 fix)                                                                                                       |
+| IA-CL-4 (E2E IS-4.5)                                          | Slash proof's `evidence` is replay-protected                                                          | SECURITY                                                    | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-4.5 fix) — slash_id is `BLAKE3(coordinator_term_id                                                          |     | offense |     | evidence_hash)` |
+| IA-CL-5 (E2E IS-4.6)                                          | Slash tally base is 2/3 of the **mission's current eligible voter count** (not a fixed number)        | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-4.6 fix)                                                                                                    |
+| IA-CL-6 (E2E IS-4.7)                                          | Slash voting is open to ALL mission participants, not just the slashed coordinator's peers            | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-4.7 fix)                                                                                                    |
+| IA-CL-7 (E2E IS-5.2)                                          | Heartbeat is gossiped to ALL mission participants, not just to the DomainCoordinator                  | OBSERVABILITY                                               | MITIGATED                                                                                                                            | Specified in §"Liveness Check" (E2E IS-5.2 fix)                                                                                                          |
+| IA-CL-8 (E2E IS-5.4)                                          | Slash reason 0x0001-0x0009 are reserved; 0x0009 is defined as `genesis-compromise`                    | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"B. Slash Offense Codes" (E2E IS-5.4 fix)                                                                                                  |
+| IA-CL-9 (E2E IS-5.5)                                          | Slash tally can fail to reach quorum; the failure outcome is well-defined                             | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-5.5 fix) — failed tally logs and releases the slash lock                                                    |
+| IA-CL-10 (E2E IS-5.6)                                         | Slash vote casting is rate-limited (no ballot spam)                                                   | SECURITY                                                    | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-5.6 fix) — one ballot per voter per slash_id                                                                |
+| IA-CL-11 (E2E IS-5.7)                                         | Slash evidence is publicly auditable post-tally                                                       | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-5.7 fix) — evidence is part of the permanent mission state                                                  |
+| IA-CL-12 (E2E IS-6.1)                                         | Demoting state has a bounded duration (`DEMOTING_DURATION = 10` epochs)                               | LIFECYCLE                                                   | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-6.1 fix)                                                                                                    |
+| IA-CL-13 (E2E IS-7.1)                                         | "Evidence of misbehavior" is explicitly defined per slash reason code                                 | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"B. Slash Offense Codes" (E2E IS-7.1 fix) — evidence schemas enumerated                                                                    |
+| IA-CL-14 (E2E IS-7.2)                                         | Slash vote tally is observable in real-time (before resolution)                                       | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.2 fix) — running tally published every 10 epochs                                                          |
+| IA-CL-15 (E2E IS-7.3)                                         | Slash vote tally base is `2/3 of mission's current eligible voter count` (2/3 of what?)               | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.3 fix) — explicit formula                                                                                 |
+| IA-CL-16 (E2E IS-7.4)                                         | Slash vote is binary (yes/no); abstentions are not counted                                            | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.4 fix)                                                                                                    |
+| IA-CL-17 (E2E IS-7.5)                                         | Slash vote has a deadline (`SLASH_VOTE_DEADLINE = 500` epochs)                                        | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.5 fix)                                                                                                    |
+| IA-CL-18 (E2E IS-7.6)                                         | Slash vote result is final once deadline elapses; no late ballots accepted                            | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.6 fix)                                                                                                    |
+| IA-CL-19 (E2E IS-7.7)                                         | Slash vote result is gossiped to ALL mission participants                                             | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.7 fix)                                                                                                    |
+| IA-CL-20 (E2E IS-7.8)                                         | Slash tally requires cryptographic finality (BLAKE3 hash of sorted ballots)                           | GOVERNANCE                                                  | MITIGATED                                                                                                                            | Specified in §"Slashing Integration" (E2E IS-7.8 fix)                                                                                                    |
 
 ## Security Considerations
 
@@ -598,26 +604,26 @@ MUST document:
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| **D1**: Term-limited re-election (incumbent cannot stay past `term_end_epoch` without re-election) | Incumbent coordinator | 0 (re-election is free) | Indefinite mission control | Term limit; re-election requires winning election; slash on `term_end_epoch` overstay | LOW. Re-election is itself adversarial (Sybil, bribery); mitigated by D2. |
-| **D2**: Election eligibility requires `trust_score >= 500` + minimum stake | Sybil cluster owner | 1000+ OCTO stake per identity | Election win via Sybil | Stake-gated admission (RFC-0851 §11 "Anti-Sybil Mechanisms") + M-of-N Sybil detection (RFC-0860 §6) | MEDIUM. Sophisticated Sybil with diverse funding and timing could pass; RFC-0860 behavioral correlation is the backstop. |
-| **D3**: Slash proof requires governance signature | Griefing attacker | 0 (without governance key) | Mis-slash honest coordinator | Only `mission_descriptor.governance_id` can sign slash proofs; rotated per `governance_session` | MEDIUM. Governance key compromise = total control; mitigated by RFC-0860 slashing of governance key. |
-| **D4**: Heartbeat emitted every `heartbeat_interval` epochs | Eclipse attacker partitioning the coordinator | Eclipse requires sustained network control | Force coordinator into `Suspect` → `Handover` without the coordinator actually being Byzantine | Coordinator can emit heartbeat via multiple transports; partition must be sustained for `4 × heartbeat_interval` to trigger handover | LOW. Sustained eclipse at the gateway level is detectable and slashable. |
-| **D5**: Handover message preservation queue | Attacker flooding the predecessor with envelopes during handover | Mission gossip bandwidth | Memory exhaustion; predecessor OOM during handover | Queue size cap (mission-defined); excess envelopes are dropped with `tracing::warn!`; not a slash | MEDIUM. Predecessor could be coerced to OOM via legitimate-looking envelope flood; rate limit per RFC-0852 is the backstop. |
-| **D6**: `2^slash_count` cool-down after slash | Recurrent misbehavior attacker | Lost slash stake | Re-elevation after 1 slash | Exponential cool-down; after 1 slash, 2 epochs; after 2 slashes, 4 epochs; after N, `2^N` epochs | LOW. After 5+ slashes, the cool-down exceeds typical mission TTL. |
-| **D7**: Election tally uses ballots sorted by `(voter, ballot_epoch)` | Vote-buying attacker | Bribes | Manipulate tally order to favor a candidate | Tally is order-independent (set semantics); sort is for determinism, not correctness | LOW. The sort is purely for cross-implementation verification. |
-| **D8**: Handover successor inherits `slash_count` and `octo_o_stake_locked` from predecessor (no, successor starts fresh) | Attacker creating fake "clean" identities to bypass cool-down | New identity registration | Bypass cool-down | Successor is a NEW `CoordinatorRecord` with `slash_count = 0`; but the underlying peer_id has its own slash history tracked per-mission | MEDIUM. Cross-mission slash history requires RFC-0860 reputation; out of scope for this RFC. |
+| Decision                                                                                                                  | Q1 Beneficiary                                                   | Q2 Cost to Attacker                        | Q3 Gain if Successful                                                                          | Q4 Defense (cost to legit op)                                                                                                           | Q5 Residual Risk                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **D1**: Term-limited re-election (incumbent cannot stay past `term_end_epoch` without re-election)                        | Incumbent coordinator                                            | 0 (re-election is free)                    | Indefinite mission control                                                                     | Term limit; re-election requires winning election; slash on `term_end_epoch` overstay                                                   | LOW. Re-election is itself adversarial (Sybil, bribery); mitigated by D2.                                                   |
+| **D2**: Election eligibility requires `trust_score >= 500` + minimum stake                                                | Sybil cluster owner                                              | 1000+ OCTO stake per identity              | Election win via Sybil                                                                         | Stake-gated admission (RFC-0851 §11 "Anti-Sybil Mechanisms") + M-of-N Sybil detection (RFC-0860 §6)                                     | MEDIUM. Sophisticated Sybil with diverse funding and timing could pass; RFC-0860 behavioral correlation is the backstop.    |
+| **D3**: Slash proof requires governance signature                                                                         | Griefing attacker                                                | 0 (without governance key)                 | Mis-slash honest coordinator                                                                   | Only `mission_descriptor.governance_id` can sign slash proofs; rotated per `governance_session`                                         | MEDIUM. Governance key compromise = total control; mitigated by RFC-0860 slashing of governance key.                        |
+| **D4**: Heartbeat emitted every `heartbeat_interval` epochs                                                               | Eclipse attacker partitioning the coordinator                    | Eclipse requires sustained network control | Force coordinator into `Suspect` → `Handover` without the coordinator actually being Byzantine | Coordinator can emit heartbeat via multiple transports; partition must be sustained for `4 × heartbeat_interval` to trigger handover    | LOW. Sustained eclipse at the gateway level is detectable and slashable.                                                    |
+| **D5**: Handover message preservation queue                                                                               | Attacker flooding the predecessor with envelopes during handover | Mission gossip bandwidth                   | Memory exhaustion; predecessor OOM during handover                                             | Queue size cap (mission-defined); excess envelopes are dropped with `tracing::warn!`; not a slash                                       | MEDIUM. Predecessor could be coerced to OOM via legitimate-looking envelope flood; rate limit per RFC-0852 is the backstop. |
+| **D6**: `2^slash_count` cool-down after slash                                                                             | Recurrent misbehavior attacker                                   | Lost slash stake                           | Re-elevation after 1 slash                                                                     | Exponential cool-down; after 1 slash, 2 epochs; after 2 slashes, 4 epochs; after N, `2^N` epochs                                        | LOW. After 5+ slashes, the cool-down exceeds typical mission TTL.                                                           |
+| **D7**: Election tally uses ballots sorted by `(voter, ballot_epoch)`                                                     | Vote-buying attacker                                             | Bribes                                     | Manipulate tally order to favor a candidate                                                    | Tally is order-independent (set semantics); sort is for determinism, not correctness                                                    | LOW. The sort is purely for cross-implementation verification.                                                              |
+| **D8**: Handover successor inherits `slash_count` and `octo_o_stake_locked` from predecessor (no, successor starts fresh) | Attacker creating fake "clean" identities to bypass cool-down    | New identity registration                  | Bypass cool-down                                                                               | Successor is a NEW `CoordinatorRecord` with `slash_count = 0`; but the underlying peer_id has its own slash history tracked per-mission | MEDIUM. Cross-mission slash history requires RFC-0860 reputation; out of scope for this RFC.                                |
 
 ### Severity Classification
 
-| Finding | Severity | Mitigation | Status |
-|---------|----------|------------|--------|
-| D2 Sybil candidacy | HIGH | Stake-gating + RFC-0860 M-of-N | MITIGATED, requires RFC-0860 final |
-| D3 Governance key compromise | HIGH | Governance rotation + slash | MITIGATED, requires governance RFC (F2) |
-| D5 Handover OOM | MEDIUM | Queue cap + rate limit | MITIGATED |
-| D8 Cross-mission slash reputation | MEDIUM | RFC-0860 reputation (future) | ACCEPTED RISK, deadline: when RFC-0860 final |
-| All others | LOW | Per-row mitigation | MITIGATED |
+| Finding                           | Severity | Mitigation                     | Status                                       |
+| --------------------------------- | -------- | ------------------------------ | -------------------------------------------- |
+| D2 Sybil candidacy                | HIGH     | Stake-gating + RFC-0860 M-of-N | MITIGATED, requires RFC-0860 final           |
+| D3 Governance key compromise      | HIGH     | Governance rotation + slash    | MITIGATED, requires governance RFC (F2)      |
+| D5 Handover OOM                   | MEDIUM   | Queue cap + rate limit         | MITIGATED                                    |
+| D8 Cross-mission slash reputation | MEDIUM   | RFC-0860 reputation (future)   | ACCEPTED RISK, deadline: when RFC-0860 final |
+| All others                        | LOW      | Per-row mitigation             | MITIGATED                                    |
 
 ### Multi-Round Review
 
@@ -633,14 +639,14 @@ Round 1 review SHOULD focus on the Election Algorithm table (per-governance-mode
 
 ## Economic Analysis
 
-| Operation | Token | Amount | Rationale |
-|-----------|-------|--------|-----------|
-| Election candidacy (DAO) | OCTO | 1000 lock per candidacy | Anti-Sybil (RFC-0851 §11 "Anti-Sybil Mechanisms") |
-| Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17 "Token Economics Integration") |
-| Slash on `Active → Demoting` (0x0005 coordinator misbehavior) | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior |
-| Slash on `Censorship` (0x0004) | OCTO | proportional to inactivity | RFC-0855 §17 / 0x0004 in §B |
-| Heartbeat emission | none | 0 | Free (bandwidth only) |
-| Handover coordination envelope | none | 0 | Free (single envelope) |
+| Operation                                                     | Token  | Amount                        | Rationale                                                      |
+| ------------------------------------------------------------- | ------ | ----------------------------- | -------------------------------------------------------------- |
+| Election candidacy (DAO)                                      | OCTO   | 1000 lock per candidacy       | Anti-Sybil (RFC-0851 §11 "Anti-Sybil Mechanisms")              |
+| Election candidacy (all models)                               | OCTO-O | 100 lock per term             | Coordinator stake (RFC-0855 §17 "Token Economics Integration") |
+| Slash on `Active → Demoting` (0x0005 coordinator misbehavior) | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior                    |
+| Slash on `Censorship` (0x0004)                                | OCTO   | proportional to inactivity    | RFC-0855 §17 / 0x0004 in §B                                    |
+| Heartbeat emission                                            | none   | 0                             | Free (bandwidth only)                                          |
+| Handover coordination envelope                                | none   | 0                             | Free (single envelope)                                         |
 
 ### Token Economics Reference
 
@@ -788,13 +794,13 @@ Verify:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Decision |
-|----------|------|------|----------|
-| **Hot standby (always-on backup coordinator)** | Fast handover (no election) | Wastes resources; no real election means incumbent can never be replaced by non-emergency means | REJECTED |
-| **BFT consensus (PBFT, Raft) for coordinator election** | Strong consistency guarantees | Too slow for overlay gossip (RFC-0852 explicitly rejects Raft/Paxos) | REJECTED |
-| **Rotating-by-epoch (no election; protocol-defined schedule)** | Simple; deterministic | Cannot respond to misbehavior; coordinator cannot be replaced mid-mission | DEFERRED (Autonomous governance model uses this) |
-| **Stake-weighted voting with quadratic cost** | Sybil-resistant | Higher implementation complexity; voting-cost bugs are consensus-splitting | DEFERRED (Future Work F2) |
-| **Election by random beacon (VDF)** | Truly random selection | Requires VDF implementation; not yet standardized for OCTO | DEFERRED (Future Work F3) |
+| Approach                                                       | Pros                          | Cons                                                                                            | Decision                                         |
+| -------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| **Hot standby (always-on backup coordinator)**                 | Fast handover (no election)   | Wastes resources; no real election means incumbent can never be replaced by non-emergency means | REJECTED                                         |
+| **BFT consensus (PBFT, Raft) for coordinator election**        | Strong consistency guarantees | Too slow for overlay gossip (RFC-0852 explicitly rejects Raft/Paxos)                            | REJECTED                                         |
+| **Rotating-by-epoch (no election; protocol-defined schedule)** | Simple; deterministic         | Cannot respond to misbehavior; coordinator cannot be replaced mid-mission                       | DEFERRED (Autonomous governance model uses this) |
+| **Stake-weighted voting with quadratic cost**                  | Sybil-resistant               | Higher implementation complexity; voting-cost bugs are consensus-splitting                      | DEFERRED (Future Work F2)                        |
+| **Election by random beacon (VDF)**                            | Truly random selection        | Requires VDF implementation; not yet standardized for OCTO                                      | DEFERRED (Future Work F3)                        |
 
 ## Implementation Phases
 
@@ -842,25 +848,25 @@ Verify:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-network/src/mon/coordinator.rs` | NEW: `CoordinatorRecord`, `CoordinatorLifecycle`, `CoordinatorSource`, transition logic |
-| `crates/octo-network/src/mon/election.rs` | NEW: `ElectionTally`, `ElectionBallot`, per-governance-model election |
-| `crates/octo-network/src/mon/slashing.rs` | NEW: `SlashProof`, slash verification |
-| `crates/octo-network/src/mon/lifecycle.rs` | EXISTING: integrate `CoordinatorLifecycle` with mission lifecycle |
+| File                                                        | Change                                                                                                            |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-network/src/mon/coordinator.rs`                | NEW: `CoordinatorRecord`, `CoordinatorLifecycle`, `CoordinatorSource`, transition logic                           |
+| `crates/octo-network/src/mon/election.rs`                   | NEW: `ElectionTally`, `ElectionBallot`, per-governance-model election                                             |
+| `crates/octo-network/src/mon/slashing.rs`                   | NEW: `SlashProof`, slash verification                                                                             |
+| `crates/octo-network/src/mon/lifecycle.rs`                  | EXISTING: integrate `CoordinatorLifecycle` with mission lifecycle                                                 |
 | `rfcs/accepted/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" |
 
 ## Future Work
 
 - **F1**: `DomainCoordinator` — specialization of `CoordinatorLifecycle` for physical broadcast domains (e.g., WhatsApp groups). See RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) which reuses this RFC's `CoordinatorRecord` and adds platform-specific states (`WAGroupAdmin`, `TelegramCreator`, `MatrixRoomAdmin`) and platform-admin authority checks.
-- **F2**: Cross-mission coordinator reputation (slash history aggregated across missions). Spec inline below; tracked in `missions/open/0855p-b-cross-mission-reputation.md`.
+- **F2**: Cross-mission coordinator reputation (slash history aggregated across missions). Spec inline below; tracked in `missions/archived/0855p-b-cross-mission-reputation.md`.
 - **F3**: Election by random beacon (VDF). Spec inline below; tracked in `missions/open/0855p-b-vdf-election.md`.
 - **F4**: Stake-weighted quadratic-cost voting. Spec inline below; tracked in `missions/open/0855p-b-stake-weighted-quadratic.md`.
 - **F5**: Governance RFC — specifies the `governance_id` rotation protocol and slash semantics for governance key compromise. Spec inline below; tracked in `missions/open/0855p-b-governance-rfc.md`.
 
 ### F2 spec (cross-mission coordinator reputation)
 
-Each `SlashEvent` (per §"Slash Reason Codes") carries `slash_count` which is local to the mission. For cross-mission reputation, augment the local `slash_count` with a global view fetched from a `SlashReputationStore` (a simple map `coordinator_pubkey -> Vec<SlashEvent>` from across all missions the coordinator has participated in). On election, candidates with a higher global slash count are deprioritized: `priority = stake / (1 + global_slash_count)`. This is a soft penalty, not a hard disqualification. Mission: `missions/open/0855p-b-cross-mission-reputation.md`.
+Each `SlashEvent` (per §"Slash Reason Codes") carries `slash_count` which is local to the mission. For cross-mission reputation, augment the local `slash_count` with a global view fetched from a `SlashReputationStore` (a simple map `coordinator_pubkey -> Vec<SlashEvent>` from across all missions the coordinator has participated in). On election, candidates with a higher global slash count are deprioritized: `priority = stake / (1 + global_slash_count)`. This is a soft penalty, not a hard disqualification. Mission: `missions/archived/0855p-b-cross-mission-reputation.md`.
 
 ### F3 spec (VDF election)
 
@@ -888,25 +894,26 @@ Slashing is integrated as a state (`Demoting`) rather than a one-shot event beca
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| Malicious coordinator signs invalid envelopes | CRITICAL | Slash via 0x0001-0x0009; cross-mission reputation (F2) |
-| Coordinator key compromise | CRITICAL | Slash + governance rotation (F5); recovery via 5-of-7 multi-sig |
-| Predictable leader election (grinding) | HIGH | VDF election (F3) makes grinding prohibitively expensive |
-| Plutocracy in election | HIGH | Stake-weighted quadratic voting (F4) damps large stakeholders |
-| Slash vote fraud (forged vote) | HIGH | Signature verification; 2/3 quorum required |
-| Slash vote censorship | MEDIUM | Cross-mission reputation (F2) deprioritizes low-vote coordinators |
-| Coordinator inactivity (Byzantine) | MEDIUM | Heartbeat liveness check; `Suspect` state → slash via 0x0003 (founder-squat analog) |
-| Governance key compromise | CRITICAL | Governance rotation (F5) with 5-of-7 recovery multi-sig |
-| Recurrent misbehavior | MEDIUM | `2^slash_count` cool-down provides exponential backoff |
-| Coordinator handover race | MEDIUM | `Handover` state is exclusive; only one successor can be `Active` |
+| Threat                                        | Impact   | Mitigation                                                                          |
+| --------------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| Malicious coordinator signs invalid envelopes | CRITICAL | Slash via 0x0001-0x0009; cross-mission reputation (F2)                              |
+| Coordinator key compromise                    | CRITICAL | Slash + governance rotation (F5); recovery via 5-of-7 multi-sig                     |
+| Predictable leader election (grinding)        | HIGH     | VDF election (F3) makes grinding prohibitively expensive                            |
+| Plutocracy in election                        | HIGH     | Stake-weighted quadratic voting (F4) damps large stakeholders                       |
+| Slash vote fraud (forged vote)                | HIGH     | Signature verification; 2/3 quorum required                                         |
+| Slash vote censorship                         | MEDIUM   | Cross-mission reputation (F2) deprioritizes low-vote coordinators                   |
+| Coordinator inactivity (Byzantine)            | MEDIUM   | Heartbeat liveness check; `Suspect` state → slash via 0x0003 (founder-squat analog) |
+| Governance key compromise                     | CRITICAL | Governance rotation (F5) with 5-of-7 recovery multi-sig                             |
+| Recurrent misbehavior                         | MEDIUM   | `2^slash_count` cool-down provides exponential backoff                              |
+| Coordinator handover race                     | MEDIUM   | `Handover` state is exclusive; only one successor can be `Active`                   |
+
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.2 | 2026-06-17 | R16 R1 fix: §B "Slash Offense Codes" table extended with codes 0x000C-0x0012 (0x000C-0x000D reserved [NOT slash reasons; sub-DC delegation], 0x000E-0x0011 from 0850p-family sister RFCs, 0x0012 `CrossPlatformWitnessCollusion` from 0855p-c §9b); description text updated with the new canonical mapping; line 441 narrative updated to say "0x0013-0xFFFF reserved" instead of "0x000C-0xFFFF reserved". |
-| 1.1 | 2026-06-16 | Patch: added §"Genesis State Machine" subsection (3-state machine `GenesisDesignated → GenesisSelfAttest → GenesisActive`) to fix v1.0's "stateless creator" gap. Mission Creator role entry updated to reference new state machine. Test Vector TV-6 added. Future Work F1 updated to point to RFC-0855p-c (DomainCoordinator). Deferred vs Unspecified Rule compliance (R10-batch): §Future Work F2-F5 each now have inline spec subsections + tracked mission paths in `missions/open/0855p-b-f{2,3,4,5}-*.md`. F1 already points to RFC-0855p-c. |
-| 1.0 | 2026-06-15 | Initial draft — fills RFC-0855 §16.3 → §11 forward-reference gap; defines `CoordinatorLifecycle`, `CoordinatorRecord`, per-governance-model election, handover, slashing, liveness check |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.2     | 2026-06-17 | R16 R1 fix: §B "Slash Offense Codes" table extended with codes 0x000C-0x0012 (0x000C-0x000D reserved [NOT slash reasons; sub-DC delegation], 0x000E-0x0011 from 0850p-family sister RFCs, 0x0012 `CrossPlatformWitnessCollusion` from 0855p-c §9b); description text updated with the new canonical mapping; line 441 narrative updated to say "0x0013-0xFFFF reserved" instead of "0x000C-0xFFFF reserved".                                                                                                                                         |
+| 1.1     | 2026-06-16 | Patch: added §"Genesis State Machine" subsection (3-state machine `GenesisDesignated → GenesisSelfAttest → GenesisActive`) to fix v1.0's "stateless creator" gap. Mission Creator role entry updated to reference new state machine. Test Vector TV-6 added. Future Work F1 updated to point to RFC-0855p-c (DomainCoordinator). Deferred vs Unspecified Rule compliance (R10-batch): §Future Work F2-F5 each now have inline spec subsections + tracked mission paths in `missions/open/0855p-b-f{2,3,4,5}-*.md`. F1 already points to RFC-0855p-c. |
+| 1.0     | 2026-06-15 | Initial draft — fills RFC-0855 §16.3 → §11 forward-reference gap; defines `CoordinatorLifecycle`, `CoordinatorRecord`, per-governance-model election, handover, slashing, liveness check                                                                                                                                                                                                                                                                                                                                                             |
 
 ## Related RFCs
 
@@ -944,29 +951,29 @@ stateDiagram-v2
 
 ### B. Slash Offense Codes (extends RFC-0855 §17)
 
-| Code | Offense | Penalty (default) | Source | Evidence schema (E2E IS-7.1) |
-|------|---------|-------------------|--------|-------------------------------|
-| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Envelope forgery' into a specific code) | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
-| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | This RFC (extends RFC-0855 §17 "Token Economics Integration" slashing mechanism) | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
-| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O + 1000-epoch cooldown | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Isolation breach' into a specific code) | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
-| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Free-riding' into a specific code) | `CensorshipProof` envelope with censored envelope's hash + witness signature |
-| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Coordinator misbehavior' into a specific code) | Free-form `evidence` payload + adjudicator signature |
-| 0x0006 | Key compromise (coordinator's signing key was compromised) | 50% OCTO-O | This RFC | `KeyRevocation` envelope + evidence revoked key was used |
-| 0x0007 | Banning legitimate member | 25% OCTO-O | This RFC | `MemberBan` envelope + evidence banned member had not violated any rule |
-| 0x0008 | Vote-buying | 100% OCTO-O | This RFC | Transcript of communications offering slash votes for payment |
-| 0x0009 | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix) | 100% OCTO-O + immediate Inactive | This RFC (v1.1 patch) | `KeyRevocation` envelope from creator's pubkey registry, issued after `GenesisActive` but before first `CoordinatorHeartbeat` |
-| 0x000A | Platform migration (per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)") | 100% OCTO-O + 1000-epoch cooldown | RFC-0850p-c | Mission-level vote result (2/3 of eligible voters approved migration) |
-| 0x000B | `is_reconnect_lie` (per RFC-0850p-c §8 "Witness Validation Rules") | 500-epoch cooldown | RFC-0850p-c | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true` |
-| 0x000C-0x000D | Reserved (sub-DC delegation / governance vote are NOT slash reasons; see RFC-0855p-d §"Sub-DC delegation protocol") | — | — | — |
-| 0x000E | `CreateGroupFailed` (per RFC-0850p-d §"Slash Reason Codes Added") | 25% OCTO-B | RFC-0850p-d | `CreateGroupFailEnvelope` with `failure_reason` indicating aborted/witness-rejected state |
-| 0x000F | `CgGroupSpam` (per RFC-0850p-d §"Slash Reason Codes Added") | 50% OCTO-B + 1000-epoch cooldown | RFC-0850p-d | 5+ `CREATE_GROUP` envelopes with `mission_id = X` rejected by witnesses within a 100-epoch window |
-| 0x0010 | `FalseWitness` (per RFC-0850p-d §"Slash Reason Codes Added"; reused by RFC-0850p-e §"Slash Reason Codes Used" for false `KICK_DETECTED.witness_assertion`) | 50% OCTO-W | RFC-0850p-d, RFC-0850p-e | `WitnessAssertion` envelope signature + later contradictory evidence (witness signed both + non-witness signed reverse) |
-| 0x0011 | `SelfKicked` (per RFC-0850p-e §"Slash Reason Codes Used"; self-penalty for false self-declared kick) | 10% OCTO-O | RFC-0850p-e | `SELF_KICKED` followed by successful re-BIND within `REJOIN_GRANT_TIMEOUT = 50` epochs (contradicting the claimed kick) |
-| 0x0012 | `CrossPlatformWitnessCollusion` (per RFC-0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in 0855p-c's Adversary Analysis table, but 0x000F conflicts with RFC-0850p-d's `CgGroupSpam`; canonical code is 0x0012) | 50% OCTO-W + 1000-epoch cooldown | RFC-0855p-c | Coordinated false `WitnessAssertion` envelopes across ≥ 2 platforms (e.g., WhatsApp + Matrix witnesses colluding to falsely attest) |
-| 0x0013-0x0016 | `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery` (RFC-0855p-e Future Work F-7; typed variants in canonical `SlashReasonCode` enum) | — | RFC-0855p-e | — |
-| 0x0017-0x00FF | Reserved (rejected by `SlashReasonCode::try_from_reason_id` per `octo-coordinator-types/src/lib.rs`) | — | — | — |
-| 0x0100 | `DomainCoordinatorMisbehavior` (RFC-0855p-c §9c "Cross-Domain Slash"; first user-extension registry slot via `SlashReasonCode::Extension(0x0100)`; 4 sub-codes `.01`-`.04`) | 50% OCTO-O + 2^slash_count-epoch cool-down | RFC-0855p-c | DC BIND/ATTEST misbehavior visible across multiple `domain_id`s |
-| 0x0101-0xFFFF | User-extension registry (catch-all `SlashReasonCode::Extension(id)`) | — | — | — |
+| Code          | Offense                                                                                                                                                                                                                      | Penalty (default)                               | Source                                                                                                       | Evidence schema (E2E IS-7.1)                                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 0x0001        | Double-sign (coordinator signed two conflicting envelopes for the same slot)                                                                                                                                                 | 100% OCTO-O                                     | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Envelope forgery' into a specific code)        | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads                                        |
+| 0x0002        | Liveness-failure (10+ consecutive missed heartbeats)                                                                                                                                                                         | 100% all stakes                                 | This RFC (extends RFC-0855 §17 "Token Economics Integration" slashing mechanism)                             | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes                                                                             |
+| 0x0003        | Founder squat (BIND without intent to govern)                                                                                                                                                                                | 100% OCTO-B/O + 1000-epoch cooldown             | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Isolation breach' into a specific code)        | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs                                              |
+| 0x0004        | Censorship (refused to relay valid envelope for 100+ epochs)                                                                                                                                                                 | proportional to inactivity                      | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Free-riding' into a specific code)             | `CensorshipProof` envelope with censored envelope's hash + witness signature                                                        |
+| 0x0005        | Coordinator misbehavior (umbrella)                                                                                                                                                                                           | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Coordinator misbehavior' into a specific code) | Free-form `evidence` payload + adjudicator signature                                                                                |
+| 0x0006        | Key compromise (coordinator's signing key was compromised)                                                                                                                                                                   | 50% OCTO-O                                      | This RFC                                                                                                     | `KeyRevocation` envelope + evidence revoked key was used                                                                            |
+| 0x0007        | Banning legitimate member                                                                                                                                                                                                    | 25% OCTO-O                                      | This RFC                                                                                                     | `MemberBan` envelope + evidence banned member had not violated any rule                                                             |
+| 0x0008        | Vote-buying                                                                                                                                                                                                                  | 100% OCTO-O                                     | This RFC                                                                                                     | Transcript of communications offering slash votes for payment                                                                       |
+| 0x0009        | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix)                                                                                                                        | 100% OCTO-O + immediate Inactive                | This RFC (v1.1 patch)                                                                                        | `KeyRevocation` envelope from creator's pubkey registry, issued after `GenesisActive` but before first `CoordinatorHeartbeat`       |
+| 0x000A        | Platform migration (per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)")                                                                                                                                               | 100% OCTO-O + 1000-epoch cooldown               | RFC-0850p-c                                                                                                  | Mission-level vote result (2/3 of eligible voters approved migration)                                                               |
+| 0x000B        | `is_reconnect_lie` (per RFC-0850p-c §8 "Witness Validation Rules")                                                                                                                                                           | 500-epoch cooldown                              | RFC-0850p-c                                                                                                  | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true`     |
+| 0x000C-0x000D | Reserved (sub-DC delegation / governance vote are NOT slash reasons; see RFC-0855p-d §"Sub-DC delegation protocol")                                                                                                          | —                                               | —                                                                                                            | —                                                                                                                                   |
+| 0x000E        | `CreateGroupFailed` (per RFC-0850p-d §"Slash Reason Codes Added")                                                                                                                                                            | 25% OCTO-B                                      | RFC-0850p-d                                                                                                  | `CreateGroupFailEnvelope` with `failure_reason` indicating aborted/witness-rejected state                                           |
+| 0x000F        | `CgGroupSpam` (per RFC-0850p-d §"Slash Reason Codes Added")                                                                                                                                                                  | 50% OCTO-B + 1000-epoch cooldown                | RFC-0850p-d                                                                                                  | 5+ `CREATE_GROUP` envelopes with `mission_id = X` rejected by witnesses within a 100-epoch window                                   |
+| 0x0010        | `FalseWitness` (per RFC-0850p-d §"Slash Reason Codes Added"; reused by RFC-0850p-e §"Slash Reason Codes Used" for false `KICK_DETECTED.witness_assertion`)                                                                   | 50% OCTO-W                                      | RFC-0850p-d, RFC-0850p-e                                                                                     | `WitnessAssertion` envelope signature + later contradictory evidence (witness signed both + non-witness signed reverse)             |
+| 0x0011        | `SelfKicked` (per RFC-0850p-e §"Slash Reason Codes Used"; self-penalty for false self-declared kick)                                                                                                                         | 10% OCTO-O                                      | RFC-0850p-e                                                                                                  | `SELF_KICKED` followed by successful re-BIND within `REJOIN_GRANT_TIMEOUT = 50` epochs (contradicting the claimed kick)             |
+| 0x0012        | `CrossPlatformWitnessCollusion` (per RFC-0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in 0855p-c's Adversary Analysis table, but 0x000F conflicts with RFC-0850p-d's `CgGroupSpam`; canonical code is 0x0012) | 50% OCTO-W + 1000-epoch cooldown                | RFC-0855p-c                                                                                                  | Coordinated false `WitnessAssertion` envelopes across ≥ 2 platforms (e.g., WhatsApp + Matrix witnesses colluding to falsely attest) |
+| 0x0013-0x0016 | `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery` (RFC-0855p-e Future Work F-7; typed variants in canonical `SlashReasonCode` enum)                                                                      | —                                               | RFC-0855p-e                                                                                                  | —                                                                                                                                   |
+| 0x0017-0x00FF | Reserved (rejected by `SlashReasonCode::try_from_reason_id` per `octo-coordinator-types/src/lib.rs`)                                                                                                                         | —                                               | —                                                                                                            | —                                                                                                                                   |
+| 0x0100        | `DomainCoordinatorMisbehavior` (RFC-0855p-c §9c "Cross-Domain Slash"; first user-extension registry slot via `SlashReasonCode::Extension(0x0100)`; 4 sub-codes `.01`-`.04`)                                                  | 50% OCTO-O + 2^slash_count-epoch cool-down      | RFC-0855p-c                                                                                                  | DC BIND/ATTEST misbehavior visible across multiple `domain_id`s                                                                     |
+| 0x0101-0xFFFF | User-extension registry (catch-all `SlashReasonCode::Extension(id)`)                                                                                                                                                         | —                                               | —                                                                                                            | —                                                                                                                                   |
 
 Codes 0x0001-0x0009 are defined in this RFC; codes 0x000A-0x000B are defined in RFC-0850p-c (transport-level slash reasons); codes 0x000C-0x000D are reserved (NOT slash reasons — see RFC-0855p-d §"Sub-DC delegation protocol"); codes 0x000E-0x0011 are defined by the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e); code 0x0012 is defined by RFC-0855p-c §9b ("Cross-Platform Slash") for cross-platform witness collusion; codes 0x0013-0x0016 are defined by RFC-0855p-e (Future Work F-7: `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery`); codes 0x0017-0x00FF are reserved and rejected by `SlashReasonCode::try_from_reason_id`; code 0x0100 is allocated by RFC-0855p-c §9c ("Cross-Domain Slash") for `DomainCoordinatorMisbehavior` in the user-extension namespace (the first allocated extension slot); codes 0x0101-0xFFFF remain in the user-extension registry for future RFC-allocated slash reasons. See `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation" for the canonical mapping. The evidence schema column is new in v1.1 (E2E IS-7.1 fix) — previously "evidence" was undefined for most codes.
 
@@ -1001,6 +1008,7 @@ const GENESIS_EPOCH_TOLERANCE: u64 = 1;
 ```
 
 **Cross-references:** the values are used by:
+
 - `GENESIS_WITNESS_TIMEOUT` — the timeout check in §"Genesis State Machine" that rolls back `GenesisSelfAttest → GenesisDesignated` when no witness arrives in time.
 - `MIN_GENESIS_WITNESSES` — the witness-count check in §"Genesis State Machine" that gates the `GenesisSelfAttest → GenesisActive` transition.
 - `GENESIS_EPOCH_TOLERANCE` — the clock-skew check in the `GenesisAttest` validation rule (R2-CL-3 fix).

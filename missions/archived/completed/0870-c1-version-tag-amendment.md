@@ -77,7 +77,7 @@ documents the `version_tag` field requirement with explicit constants.
    cargo test --workspace --lib                             # excludes 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures (commits 19faf380/4ab400bd/18edbe0d); unrelated to S6a
    cargo clippy --workspace --all-targets --features full -- -D warnings
    cargo fmt --all -- --check
-   npx prettier --write missions/open/0870-c1-version-tag-amendment.md
+   npx prettier --write missions/archived/completed/0870-c1-version-tag-amendment.md
    ```
 5. Memory card: this session's S5 memory card
    (`memory/mission-0957-g-verify-time-invariant-status.md`)
@@ -126,7 +126,7 @@ No new cyclic edges. No new crate deps.
   fixture)
 - `memory/mission-0957-g-verify-time-invariant-status.md` (existing
   — add cross-reference backlink in follow-up edit)
-- `missions/open/0870-c1-version-tag-amendment.md` (this file)
+- `missions/archived/completed/0870-c1-version-tag-amendment.md` (this file)
 
 ## Existing patterns reused
 

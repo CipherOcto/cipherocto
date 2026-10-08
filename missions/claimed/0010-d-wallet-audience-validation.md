@@ -59,8 +59,8 @@ The change is intentionally surgical: ONE source file modification (`identity.rs
 
 **Mission gates:**
 
-- `missions/claimed/0010-a-canonical-did-codec-crate.md` — Band A closed 2026-08-06; `crates/octo-ident` ships the codec
-- `missions/claimed/0010-b-canonical-did-codemod.md` — Band A closed 2026-08-06; production code uses canonical form
+- `missions/archived/completed/0010-a-canonical-did-codec-crate.md` — Band A closed 2026-08-06; `crates/octo-ident` ships the codec
+- `missions/archived/completed/0010-b-canonical-did-codemod.md` — Band A closed 2026-08-06; production code uses canonical form
 
 **Not Requires:**
 
@@ -98,11 +98,12 @@ runtime dep required by 0010-d for parse-time validation).
 320/320 unit tests pass; clippy -D warnings clean; fmt clean; workspace builds.
 
 Next serial-path mission: **`0957-ext-macaroon-crate`** — extract macaroon
-+ caveat + discharge types from `crates/octo-wallet/src/capability/macaroon.rs`
-into a standalone `crates/octo-cap-macaroon/` Layer-4 extension crate;
-registers `CapabilitySpec` impl per RFC-0965. Depends on `0010-d` having
-landed (so the extension crate can use `CanonicalCodec::parse` for its own
-audience validation).
+
+- caveat + discharge types from `crates/octo-wallet/src/capability/macaroon.rs`
+  into a standalone `crates/octo-cap-macaroon/` Layer-4 extension crate;
+  registers `CapabilitySpec` impl per RFC-0965. Depends on `0010-d` having
+  landed (so the extension crate can use `CanonicalCodec::parse` for its own
+  audience validation).
 
 ## Notes
 
@@ -112,9 +113,9 @@ audience validation).
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0010 amendment adds F4; mission captures gap closure scope. Cross-references RFC-0871 + `docs/research/2026-08-08-specialized-node-protocol-research.md`. |
+| Version | Date       | Change                                                                                                                                                                       |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-08 | Mission filed. RFC-0010 amendment adds F4; mission captures gap closure scope. Cross-references RFC-0871 + `docs/research/2026-08-08-specialized-node-protocol-research.md`. |
 
 Last Updated: 2026-08-08
 Version: 0.1

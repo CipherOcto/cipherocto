@@ -8,7 +8,7 @@ Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation
 
 RFC-0970 (Networking): Forwarding-Hop Authorization Envelope — Accepted 2026-08-02
 
-**Sub-mission of:** `missions/open/0970-forwarding-hop-auth-envelope.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/claimed/0970-forwarding-hop-auth-envelope.md`; top-level is `claimed/` not `open/`)
+**Sub-mission of:** `missions/claimed/0970-forwarding-hop-auth-envelope.md` (top-level decomposition mission; path corrected 2026-08-06 — Band A closure audits `missions/claimed/0970-forwarding-hop-auth-envelope.md`; top-level is `claimed/` not `open/`)
 
 ## Summary
 
@@ -44,8 +44,8 @@ This sub-mission is purely additive — no new types, no new algorithms. It is t
 
 **Requires (mission gates):**
 
-- `missions/open/0970-forwarding-hop-auth-envelope.md` (top-level)
-- `missions/open/0970-a-hop-envelope.md` — `HopEnvelope` + `InnerRequest` types MUST exist before this sub-mission compiles
+- `missions/claimed/0970-forwarding-hop-auth-envelope.md` (top-level)
+- `missions/archived/completed/0970-a-hop-envelope.md` — `HopEnvelope` + `InnerRequest` types MUST exist before this sub-mission compiles
 
 ```yaml
 depends_on:

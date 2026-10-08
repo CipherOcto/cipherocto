@@ -22,8 +22,8 @@ doc-drift surface between three sources of truth:
   guarantee (retract stale FOR UPDATE claims)
 - Co-RFC: none
 - Adjacent: missions 0862-c3 (cross-process atomicity LANDED 2026-08-18)
-  + 0862-c8 (seed hardening LANDED 2026-08-17) — both produced real
-  mechanism that the doc text pre-dates
+  - 0862-c8 (seed hardening LANDED 2026-08-17) — both produced real
+    mechanism that the doc text pre-dates
 
 ## Problem
 
@@ -43,6 +43,7 @@ breaking. The actual serialization layers are:
 3. Stoolap `Transaction` wrapper in `try_deduct` (mission 0862-c3 AC-2)
 
 Same drift appears in:
+
 - migration v007 header comment (lines 10-14 pre-c10)
 - v2.0.3 RFC row (claims `pub type MicroOctoW = Dqa` ADDED to
   `determin/src/lib.rs` AND cites TV-0862-17/TV-0862-18 — neither
@@ -55,32 +56,32 @@ Same drift appears in:
 ## Acceptance Criteria
 
 - [x] AC-1: `stoolap_spend_ledger.rs` §Atomicity paragraph rewritten to
-  describe actual mechanism: drain_lock (mission 0862-c8) + tx wrapper
-  (mission 0862-c3 AC-2) + cross-process `fs2` flock (mission 0862-c3).
-  All FOR UPDATE references RETRACTED; explanatory note that the
-  stoolap fork's storage layer returns `NotSupported` for FOR UPDATE
-  locking. Phase ordering explicit: drain_lock acquire -> tx begin ->
-  query -> dqa_to_i64 -> check -> execute -> commit -> drop.
+      describe actual mechanism: drain_lock (mission 0862-c8) + tx wrapper
+      (mission 0862-c3 AC-2) + cross-process `fs2` flock (mission 0862-c3).
+      All FOR UPDATE references RETRACTED; explanatory note that the
+      stoolap fork's storage layer returns `NotSupported` for FOR UPDATE
+      locking. Phase ordering explicit: drain_lock acquire -> tx begin ->
+      query -> dqa_to_i64 -> check -> execute -> commit -> drop.
 - [x] AC-2: migration `v007__create_spend_ledger.sql` header comment
-  rewritten to match substrate §Atomicity. No FOR UPDATE. Tx wrapper
-  and drain_lock documented with mission 0862-c3/c8 attribution.
-  Notes c10 as the correction cite.
+      rewritten to match substrate §Atomicity. No FOR UPDATE. Tx wrapper
+      and drain_lock documented with mission 0862-c3/c8 attribution.
+      Notes c10 as the correction cite.
 - [x] AC-3: RFC-0862 v2.0.3 row amended in place to retract the
-  inverted "ADD canonical alias" claim (c9 RETIRED killed it).
-  Phantom TV-0862-17/TV-0862-18 cites RETRACTED. Sub-row v2.0.3.1
-  documents the in-place amend + cites memory card.
+      inverted "ADD canonical alias" claim (c9 RETIRED killed it).
+      Phantom TV-0862-17/TV-0862-18 cites RETRACTED. Sub-row v2.0.3.1
+      documents the in-place amend + cites memory card.
 - [x] AC-4: New RFC-0862 v2.0.9 row describing the c10 doc-drift
-  consolidation work + AC-1/AC-2 substrate changes + AC-3 row amend.
-  Status: Draft (follow-on 0862-c10).
+      consolidation work + AC-1/AC-2 substrate changes + AC-3 row amend.
+      Status: Draft (follow-on 0862-c10).
 - [x] AC-5: 18/18 substrate TV pass without modification (the
-  corrected doc accurately describes the as-landed mechanism that the
-  existing TV verify).
+      corrected doc accurately describes the as-landed mechanism that the
+      existing TV verify).
 - [x] AC-6: clippy zero warnings + cargo fmt clean on touched files
-  (verified 2026-08-18).
+      (verified 2026-08-18).
 
 ## Cross-reference
 
-- **Parent:** `missions/claimed/0862-c3-cross-process-drain.md` (LANDED 2026-08-18)
+- **Parent:** `missions/archived/completed/0862-c3-cross-process-drain.md` (LANDED 2026-08-18)
 - **Audit source:** `plans/sparkling-mapping-kahan.md` Round 3 review output (sprint wf_bd836955-609)
 - **Layer direction:** doc-only consolidation (no source code logic change); substrate doc is at the same layer as the implementation it describes.
 - **Adjacent:** missions 0862-c9 RETIRED (MicroOctoW kill commit `2a610c3d`), 0862-c4 (InvalidScale typed error), 0862-c6 (no-DID-validation), 0862-c7 (adjacent u64→i64 wrap), 0862-c8 (seed hardening).
@@ -103,7 +104,7 @@ Same drift appears in:
   path-traversal / TOCTOU-symlink-race). Filed as new mission
   `0871c-lock-file-hardening`. Out of scope for c10 because
   changing the open() path requires a new substrate TV (TV-0862-20)
-  + RFC-0862 row describing the lock-file semantics change.
+  - RFC-0862 row describing the lock-file semantics change.
 - **Coverage gap TV** (cost=0 / scale boundary / macaroon_id edge /
   InvalidScale boundary): S6c Round 3 TV-coverage findings 13-20.
   Filed as new mission `0862-c11-tv-coverage-gap`.
@@ -131,6 +132,6 @@ Same drift appears in:
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                                                 |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Date       | Author     | Change                                                                                                                                                                            |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-18 | @mmacedoeu | Initial filing per S6c Round 3 adversarial review (sprint wf_bd836955-609). Consolidates 3 doc-drift findings + 1 RFC row inversion. Doc-only mission; no substrate logic change. |

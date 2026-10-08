@@ -87,9 +87,9 @@ invariant.
   requiring migration (the other 5 were already migrated by S4 codemod
   Round 2, verified 2026-08-18). Migrated:
   - [x] `crates/quota-router-core/src/marketplace/escrow.rs::Escrow +
-    EscrowSnapshot::amount_micro_octo_w` → `Dqa` (scale=0)
+EscrowSnapshot::amount_micro_octo_w` → `Dqa` (scale=0)
   - [x] `crates/quota-router-core/src/task_market/escrow.rs::TaskEscrow::amount_micro_octo_w`
-    → `Dqa` (constructor `new` + `with_arbitrator` signatures)
+        → `Dqa` (constructor `new` + `with_arbitrator` signatures)
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `marketplace/slashing.rs`
     - `amount_micro_octo_w: octo_determin::Dqa` (line 375)
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `task_market/slashing.rs`
@@ -98,28 +98,28 @@ invariant.
     - `_amount_micro_octo_w: octo_determin::Dqa` (line 70)
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `quota-router-storage/src/settlement_event_repo.rs`
     - `cost_micro_octo_w: octo_determin::Dqa` (line 277) + boundary
-    decode via `dqa_serde::dqa_from_bytes` (line 335)
+      decode via `dqa_serde::dqa_from_bytes` (line 335)
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `quota-router-cli/src/cli.rs`
-    + `commands.rs` — no `u128` amount-bearing fields; only `Dqa`
-    field-reads (commands.rs:6 `use octo_determin::Dfp` is for
-    unrelated price-rounding surface)
+    - `commands.rs` — no `u128` amount-bearing fields; only `Dqa`
+      field-reads (commands.rs:6 `use octo_determin::Dfp` is for
+      unrelated price-rounding surface)
 - AC-2: Test call sites migrated:
   - [x] `crates/quota-router-core/tests/marketplace_e2e.rs` (5 fields:
-    `let amount = dqa(...)` + 4 `Escrow::new` / `with_arbitrator` calls)
+        `let amount = dqa(...)` + 4 `Escrow::new` / `with_arbitrator` calls)
   - [x] `crates/quota-router-core/tests/task_market.rs` (8 `TaskEscrow::new` /
-    `with_arbitrator` `100_000` literals + 3 `u128` cast expressions at
-    matched.price + 2 `assert_eq!(escrow.base.amount_micro_octo_w, ...)`)
+        `with_arbitrator` `100_000` literals + 3 `u128` cast expressions at
+        matched.price + 2 `assert_eq!(escrow.base.amount_micro_octo_w, ...)`)
   - [x] `crates/quota-router-core/tests/fixtures_asks.rs` — no
-    `amount_micro_octo_w` literals remain (already Dqa)
+        `amount_micro_octo_w` literals remain (already Dqa)
   - [x] `crates/quota-router-cli/src/cli.rs` + `commands.rs` — no
-    u128 literal sites (already Dqa)
+        u128 literal sites (already Dqa)
 - AC-3: Cargo.toml deps verified:
   - [x] `crates/quota-router-core/Cargo.toml` — `octo-determin` git dep
-    present (line 84)
+        present (line 84)
   - [x] `crates/quota-router-storage/Cargo.toml` — `octo-determin` git
-    dep present (line 74)
+        dep present (line 74)
   - [x] `crates/quota-router-cli/Cargo.toml` — `octo-determin` git dep
-    present (line 21)
+        present (line 21)
 - AC-4: Display impl: `Dqa::Display` already exists per RFC-0105
   §Display. CLI surface uses `ev.cost_micro_octo_w` directly (Dqa →
   Display via `{:?}` formatter + `Dqa::Display` impl). No CLI format
@@ -137,16 +137,16 @@ invariant.
   changes.
 - AC-8: Tests green:
   - [x] `cargo test -p quota-router-core --features full --test task_market`
-    — 32/32 pass
+        — 32/32 pass
   - [x] `cargo test -p quota-router-core --features full --test marketplace_e2e`
-    — 24/24 pass
+        — 24/24 pass
   - [x] `cargo build -p quota-router-core --tests` — green
   - [ ] `cargo test -p quota-router-core --lib` — BLOCKED on
-    `libpython3.12.so.1.0` missing (pre-existing pyo3 build env issue,
-    not 0105-x regression)
+        `libpython3.12.so.1.0` missing (pre-existing pyo3 build env issue,
+        not 0105-x regression)
 - AC-9: clippy + fmt:
   - [x] `cargo clippy -p quota-router-core --features full --all-targets -- -D warnings`
-    — zero warnings
+        — zero warnings
   - [x] `cargo fmt --all -- --check` — clean
 
 ## Cross-reference
@@ -156,7 +156,7 @@ invariant.
 - **Pattern:** S4 DFP codemod (LANDED 2026-08-17) — same shape, 155
   sites covered; this mission catches the 7 file-deferred sites
   that escaped S4 codemod scope
-- **Co-mission:** `missions/open/0862-c9-micro-octow-type-unification.md`
+- **Co-mission:** `missions/retired/0862-c9-micro-octow-type-unification.md`
   (filed 2026-08-17) — closes audit-verdict Risk #1 CRITICAL
   (type-alias split); x-mission closes Risk #4 HIGH (field-type
   drift)
@@ -164,8 +164,8 @@ invariant.
   already migrated — use as the canonical reference impl for
   field-type + scale=0 invariant
 - **Sibling missions:**
-  - `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
-  - `missions/open/0862-c9-micro-octow-type-unification.md` (filed
+  - `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+  - `missions/retired/0862-c9-micro-octow-type-unification.md` (filed
     2026-08-17)
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
   §3 S7 row (Stream A.2 — RFC-0965 + RFC-0105 amendments cover the
@@ -251,9 +251,9 @@ invariant.
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                            |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #2, parallel-model Risk #4 HIGH). Co-filed with `0862-c9-micro-octow-type-unification` for Risk #1 CRITICAL. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #2, parallel-model Risk #4 HIGH). Co-filed with `0862-c9-micro-octow-type-unification` for Risk #1 CRITICAL.                                                                                     |
 | 2026-08-18 | @mmacedoeu | LANDED. Substrate migration: 2 source files (marketplace/escrow.rs + task_market/escrow.rs) + 2 test files (marketplace_e2e.rs + task_market.rs); 5 other AC-1 files ALREADY MIGRATED by S4 codemod Round 2. RFC-0862 v2.0.12 row added. 24 + 32 tests green; clippy zero; fmt clean. |
 
 ## Out of scope

@@ -230,12 +230,12 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 ### Key Files to Modify
 
 - `rfcs/draft/process/0011-q-oct-cli-network-phase-9.md` — NEW RFC Draft (this file)
-- `missions/open/0011-h-s-a-specialized-node-record.md` — substrate companion YAML stub fill-in
+- `missions/archived/0011-h-s-a-specialized-node-record.md` — substrate companion YAML stub fill-in
 - `crates/octo-network/src/specialized/node_record.rs` — NEW substrate module
 - `crates/octo-network/src/specialized/mod.rs` — NEW mod.rs
 - `crates/octo-network/src/lib.rs` — `pub mod specialized;` insertion
 - `crates/octo-cli/src/commands/network.rs` — CLI dispatch slice (Args + envelopes + handlers + test vectors)
-- `missions/open/0011-h-network-node.md` — NEW CLI mission YAML (Created Completed paired)
+- `missions/archived/0011-h-network-node.md` — NEW CLI mission YAML (Created Completed paired)
 
 ### Future Work
 

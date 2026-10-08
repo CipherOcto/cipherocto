@@ -55,8 +55,8 @@ Per RFC-0013 §Key Files to Modify Phase 1 — substrate extraction. The substra
 
 ### Out of scope (separate missions)
 
-- Migration of `octo-network/mon/governance.rs` to use substrate → `missions/open/0013-governance-network-migration.md`
-- 10 tally test vectors → `missions/open/0013-governance-tally-tests.md`
+- Migration of `octo-network/mon/governance.rs` to use substrate → `missions/claimed/0013-governance-network-migration.md`
+- 10 tally test vectors → `missions/claimed/0013-governance-tally-tests.md`
 - IO functions (`snapshot`, `attest`, `vote`) → RFC-0011-g amendment chain (separate concern; CLI-side projection)
 
 ### Dependencies
@@ -79,4 +79,4 @@ Per RFC-0013 §Key Files to Modify Phase 1 — substrate extraction. The substra
 
 ### Test vectors (substrate-level, RFC-0013 §Test Vectors 10 vectors)
 
-See `missions/open/0013-governance-tally-tests.md` for the canonical 10 test vectors.
+See `missions/claimed/0013-governance-tally-tests.md` for the canonical 10 test vectors.

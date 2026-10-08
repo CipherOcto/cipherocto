@@ -74,7 +74,7 @@ they were ever promoted to use the same prefix.
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
 - **Audit context:** `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
   §14.2 (domain separator hygiene)
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`

@@ -59,8 +59,8 @@ Per RFC-0014 §Key Files to Modify Phase 1 — substrate extraction. The substra
 
 ### Out of scope (separate missions)
 
-- Migration of `quota-router-sm-engine` to consume substrate (`SettlementStore` impl + `AppendOnlyReceiptSink` impl) → `missions/open/0014-settlement-sm-engine-migration.md`
-- 12 verify_receipt_chain test vectors → `missions/open/0014-settlement-verify-chain-tests.md`
+- Migration of `quota-router-sm-engine` to consume substrate (`SettlementStore` impl + `AppendOnlyReceiptSink` impl) → `missions/archived/completed/0014-settlement-sm-engine-migration.md`
+- 12 verify_receipt_chain test vectors → `missions/archived/completed/0014-settlement-verify-chain-tests.md`
 
 ### Dependencies
 
@@ -84,4 +84,4 @@ Per RFC-0014 §Key Files to Modify Phase 1 — substrate extraction. The substra
 
 ### Test vectors (substrate-level, RFC-0014 §Test Vectors 12 vectors)
 
-See `missions/open/0014-settlement-verify-chain-tests.md` for the canonical 12 test vectors.
+See `missions/archived/completed/0014-settlement-verify-chain-tests.md` for the canonical 12 test vectors.

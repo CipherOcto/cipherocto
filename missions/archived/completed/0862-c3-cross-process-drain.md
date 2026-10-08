@@ -49,33 +49,33 @@ The cross-instance IN-MEMORY case is already pinned by TV-0862-08
 ## Acceptance Criteria
 
 - [x] AC-1: Advisory file lock (`fs2 = "0.4"`) added to
-  `open_path_with_clock` via sibling file `<dsn-dir>/.spend_ledger.lock`.
-  `try_lock_exclusive` (non-blocking) on File; surfaces
-  `SpendLedgerError::LockUnavailable { path, reason }` on
-  contention (fail-closed per AC-1; no deadlock on held locks).
-  Lock released on File drop. `open_in_memory*` constructors set
-  `lock_file: None`.
+      `open_path_with_clock` via sibling file `<dsn-dir>/.spend_ledger.lock`.
+      `try_lock_exclusive` (non-blocking) on File; surfaces
+      `SpendLedgerError::LockUnavailable { path, reason }` on
+      contention (fail-closed per AC-1; no deadlock on held locks).
+      Lock released on File drop. `open_in_memory*` constructors set
+      `lock_file: None`.
 - [x] AC-2: `try_deduct` SELECT-then-UPDATE wrapped in stoolap
-  `Transaction::begin` → `query` → `execute` → `commit`. Atomicity
-  + read-your-own-writes within the same process; advisory lock
-  serializes across processes.
+      `Transaction::begin` → `query` → `execute` → `commit`. Atomicity
+  - read-your-own-writes within the same process; advisory lock
+    serializes across processes.
 - [x] AC-3: TV-0862-11 (new) — file-backed single-instance
-  concurrent-deduct: 20 threads × 100 cost on 1000 budget → exactly
-  10 succeed, 10 fail with `InsufficientBalance`, final balance 0.
-  Validates `drain_lock` + stoolap Transaction together on file path
-  matching in-memory path per TV-0862-08.
+      concurrent-deduct: 20 threads × 100 cost on 1000 budget → exactly
+      10 succeed, 10 fail with `InsufficientBalance`, final balance 0.
+      Validates `drain_lock` + stoolap Transaction together on file path
+      matching in-memory path per TV-0862-08.
 - [x] AC-3b: TV-0862-11b (new) — `open_path` surfaces
-  `SpendLedgerError::LockUnavailable` when external `flock` held on
-  `.spend_ledger.lock` (fail-closed contract).
+      `SpendLedgerError::LockUnavailable` when external `flock` held on
+      `.spend_ledger.lock` (fail-closed contract).
 - [x] AC-4: RFC-0862 v2.0.8 Version History row + §Cross-process
-  atomicity paragraph inserted before §No-DID-validation convention.
-  Documents two-layer model + lock target + non-blocking semantics.
+      atomicity paragraph inserted before §No-DID-validation convention.
+      Documents two-layer model + lock target + non-blocking semantics.
 - [x] AC-5: Existing TV-0862-08 (per-instance in-memory) stays;
-  TV-0862-11 parallels TV-0862-08 on file path. 18/18 TV green.
+      TV-0862-11 parallels TV-0862-08 on file path. 18/18 TV green.
 
 ## Cross-reference
 
-- **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
+- **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
 - **Pre-existing:** `crates/octo-storage-core/` migration runner uses
   stoolap transactions; verify reuse pattern
 - **Cross-instance:** mission `0871e-phase5c-1`
@@ -118,8 +118,8 @@ The cross-instance IN-MEMORY case is already pinned by TV-0862-08
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                                                 |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #4 (cross-process double-spend).                                                                                                                                                                |
-| 2026-08-17 | @mmacedoeu | Round 2 cleanup: fix phantom `0861-c1` → `0862-c1` parent pointer, drop line refs in Problem + Risks sections, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #4 (cross-process double-spend).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-08-17 | @mmacedoeu | Round 2 cleanup: fix phantom `0861-c1` → `0862-c1` parent pointer, drop line refs in Problem + Risks sections, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors.                                                                                                                                                                                                                                                                                                                          |
 | 2026-08-18 | @mmacedoeu | LANDED. Two-layer model chosen: AC-1 (`fs2` advisory sibling lock `<dsn-dir>/.spend_ledger.lock`, `try_lock_exclusive` fail-closed) + AC-2 (stoolap `Transaction` wrapper in `try_deduct`). TV-0862-11 (20-thread file-backed concurrent-deduct) + TV-0862-11b (LockUnavailable fail-closed) added. RFC-0862 v2.0.8 Version History row + §Cross-process atomicity paragraph. `SpendLedgerError::LockUnavailable { path, reason }` variant added. New `fs2 = "0.4"` dep + rationale comment in `quota-router-storage/Cargo.toml`. 18/18 TV green, clippy zero, cargo fmt clean. |

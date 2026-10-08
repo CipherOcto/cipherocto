@@ -46,7 +46,7 @@ octo network node bind <node_id_hex> --holder-did <did> [--dry-run | --apply --c
 ## Dependencies
 
 - RFC-0011-q Draft at `next c0287128`
-- Substrate companion mission G11 at `missions/open/0011-h-s-a-specialized-node-record.md` (paired Open → Claimed → Completed)
+- Substrate companion mission G11 at `missions/archived/0011-h-s-a-specialized-node-record.md` (paired Open → Claimed → Completed)
 - Substrate slice at `next 8c11d683`
 
 ## Out of Scope

@@ -91,6 +91,7 @@ This amendment closes that gap by binding the delivery to the settlement chain i
 - RFC-0909 — coexistence only
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG: `0959-A1 ← {0959, 0957, 0957-A1, 0009, 0009-B1, 0126, 0853, 0862, 0900*, 0955*}` — acyclic (R11-N9 fix: added `0009-B1`; algorithm body calls `IdentityKey::from_public_bytes` which lives in RFC-0009-B1)
 > 2. RFC-0853 BLAKE3 primitive substrate prerequisite
 > 3. RFC-0957-A1 HolderRegistry substrate prerequisite
@@ -98,16 +99,16 @@ This amendment closes that gap by binding the delivery to the settlement chain i
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Delivery atomicity** | Bearer + capability + DealSettled event committed in single Stoolap transaction | Integration test: force failure at each commit point |
-| **G2: Dual-mode coverage** | Every settled deal results in exactly one bearer + exactly one capability delivered | Grep audit: every `DealSettled` has non-empty `bearer_capsule_hash` AND non-empty `cap_root_hash` |
-| **G3: Forward-compat** | Legacy verifiers (pre-A1) skip `DealSettled` events without rejecting the chain | Backwards-compat test: pre-A1 verifier consumes post-A1 chain |
-| **G4: Sync convergence** | MarketDeliveryEnvelope reaches buyer's peer set in ≤ 30s | RFC-0862 gossip benchmark |
-| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash | Diff harness: replay RFC-0959 v2.0 chain, assert byte-identical hash for pre-A1 events |
-| **G6: Atomicity rollback** | Failed bearer insert OR capability insert rolls back the DealSettled event | Test: forced failure at each insert point |
-| **G7: Chain-tip TOCTOU** | Two concurrent `deliver_at_settlement` on the same rail do not fork the chain | Integration test: 100 concurrent deliveries, all succeed or all retry |
-| **G8: Debug redaction** | Zero credential material in `Debug` output | Test: TV9 |
+| Goal                               | Target                                                                              | Metric                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **G1: Delivery atomicity**         | Bearer + capability + DealSettled event committed in single Stoolap transaction     | Integration test: force failure at each commit point                                              |
+| **G2: Dual-mode coverage**         | Every settled deal results in exactly one bearer + exactly one capability delivered | Grep audit: every `DealSettled` has non-empty `bearer_capsule_hash` AND non-empty `cap_root_hash` |
+| **G3: Forward-compat**             | Legacy verifiers (pre-A1) skip `DealSettled` events without rejecting the chain     | Backwards-compat test: pre-A1 verifier consumes post-A1 chain                                     |
+| **G4: Sync convergence**           | MarketDeliveryEnvelope reaches buyer's peer set in ≤ 30s                            | RFC-0862 gossip benchmark                                                                         |
+| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash                               | Diff harness: replay RFC-0959 v2.0 chain, assert byte-identical hash for pre-A1 events            |
+| **G6: Atomicity rollback**         | Failed bearer insert OR capability insert rolls back the DealSettled event          | Test: forced failure at each insert point                                                         |
+| **G7: Chain-tip TOCTOU**           | Two concurrent `deliver_at_settlement` on the same rail do not fork the chain       | Integration test: 100 concurrent deliveries, all succeed or all retry                             |
+| **G8: Debug redaction**            | Zero credential material in `Debug` output                                          | Test: TV9                                                                                         |
 
 ## Motivation
 
@@ -258,6 +259,7 @@ pub fn receive_market_delivery(
 ```
 
 Algorithm:
+
 1. `let envelope: MarketDeliveryEnvelope = deserialize(envelope_bytes)?;`
 2. Verify `envelope.envelope_id == BLAKE3(canonical_ser(MarketDeliveryEnvelopePreimage::from(&envelope)))?`. If not, the envelope was modified in transit → `Err(Tampered)`. (R10-N9 fix: prior text said `BLAKE3(canonical_ser(&envelope))` which is a self-referential hash that always differs from the stored `envelope_id`; every legitimate envelope would be rejected. The correct formula uses the preimage struct with `envelope_id` zeroed.)
 3. Verify `envelope.deal_settled.seller_signature` is a valid Ed25519 signature by `seller_pub` over `canonical_ser(DealSettled w/o seller_signature)`. If not → `Err(InvalidSignature)`.
@@ -656,6 +658,7 @@ chain_hash_n = BLAKE3(chain_hash_{n-1} || canonical_ser(event_n_payload_w/o_sign
 `event_n_payload_w/o_signature` is the `DealSettled` struct with `seller_signature` zeroed and `event_hash` zeroed.
 
 **Backward compat:** legacy verifiers (pre-A1) see a `DealSettled` event as an unknown event type. They MUST:
+
 - Verify `prev_chain_hash` matches the prior event in the chain.
 - Use the stored `event_hash` field verbatim as the new chain tip (DO NOT recompute).
 - Skip the event body.
@@ -665,12 +668,12 @@ chain_hash_n = BLAKE3(chain_hash_{n-1} || canonical_ser(event_n_payload_w/o_sign
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Asker | RFC-0009 `IdentityKey` of publishing node | publish Ask | node identity lifecycle | RFC-0959 §Roles |
-| Router | RFC-0009 `IdentityKey` of routing/verifying node | verify + settle | node identity lifecycle | RFC-0959 §Roles |
-| **Seller (NEW, role-binding)** | RFC-0009 `IdentityKey` of seller's node | mint + deliver + sign `DealSettled` | node identity lifecycle | RFC-0959-A1 + RFC-0971 binding |
-| Buyer | RFC-0009 `IdentityKey` of buyer | receive + decrypt | node identity lifecycle | RFC-0959-A1 §Roles (NEW) |
+| Role                           | Identifier                                       | Authority Scope                     | Lifecycle               | Source/Ref                     |
+| ------------------------------ | ------------------------------------------------ | ----------------------------------- | ----------------------- | ------------------------------ |
+| Asker                          | RFC-0009 `IdentityKey` of publishing node        | publish Ask                         | node identity lifecycle | RFC-0959 §Roles                |
+| Router                         | RFC-0009 `IdentityKey` of routing/verifying node | verify + settle                     | node identity lifecycle | RFC-0959 §Roles                |
+| **Seller (NEW, role-binding)** | RFC-0009 `IdentityKey` of seller's node          | mint + deliver + sign `DealSettled` | node identity lifecycle | RFC-0959-A1 + RFC-0971 binding |
+| Buyer                          | RFC-0009 `IdentityKey` of buyer                  | receive + decrypt                   | node identity lifecycle | RFC-0959-A1 §Roles (NEW)       |
 
 Per RFC-0971, the seller's node IS the Asker, Router, Token Issuer. Therefore the `seller_signature` on `DealSettled` is signed by the same node identity as the `Asker` signature on the `Ask` and the `Router` signature on the `SettlementEvent`. RFC-0971's role-binding assertion makes this unambiguous.
 
@@ -698,14 +701,14 @@ stateDiagram-v2
     Delivered --> GCd: gossip GC after 30 days
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Pending | `deliver_at_settlement()` invoked | Yes | txn begin | n/a |
-| Pending | Delivered | Stoolap txn commits | Yes | chain append + gossip | Seller signature on DealSettled |
-| Pending | Failed | any step fails | Yes | txn roll-back | n/a |
-| Delivered | Revoked | buyer or seller revocation | Yes | revocation envelope in chain | Revocation envelope |
-| Delivered | Disputed | governance challenge | Yes | dispute envelope in chain | Governance signature |
-| Delivered | GCd | gossip GC after 30 days | Yes | row removed | n/a |
+| From      | To        | Trigger                           | Deterministic? | Side Effects                 | Signing                         |
+| --------- | --------- | --------------------------------- | -------------- | ---------------------------- | ------------------------------- |
+| (none)    | Pending   | `deliver_at_settlement()` invoked | Yes            | txn begin                    | n/a                             |
+| Pending   | Delivered | Stoolap txn commits               | Yes            | chain append + gossip        | Seller signature on DealSettled |
+| Pending   | Failed    | any step fails                    | Yes            | txn roll-back                | n/a                             |
+| Delivered | Revoked   | buyer or seller revocation        | Yes            | revocation envelope in chain | Revocation envelope             |
+| Delivered | Disputed  | governance challenge              | Yes            | dispute envelope in chain    | Governance signature            |
+| Delivered | GCd       | gossip GC after 30 days           | Yes            | row removed                  | n/a                             |
 
 ### Liveness Check
 
@@ -736,12 +739,12 @@ On buyer side: if the `MarketDeliveryEnvelope` is not received within 30s, the d
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `deliver_at_settlement` steps 0-10 + 7b (12 items; lookup + mint + insert + sign + chain append) | A | Single Stoolap transaction; deterministic |
-| `deliver_at_settlement` step 11 (gossip) | B | RFC-0862 gossip; deterministic when configured correctly |
-| `DealSettled` chain hash | A | BLAKE3 + canonical_ser |
-| `MarketDeliveryEnvelope.envelope_id` | A | BLAKE3 + canonical_ser |
+| Operation                                                                                        | Class | Rationale                                                |
+| ------------------------------------------------------------------------------------------------ | ----- | -------------------------------------------------------- |
+| `deliver_at_settlement` steps 0-10 + 7b (12 items; lookup + mint + insert + sign + chain append) | A     | Single Stoolap transaction; deterministic                |
+| `deliver_at_settlement` step 11 (gossip)                                                         | B     | RFC-0862 gossip; deterministic when configured correctly |
+| `DealSettled` chain hash                                                                         | A     | BLAKE3 + canonical_ser                                   |
+| `MarketDeliveryEnvelope.envelope_id`                                                             | A     | BLAKE3 + canonical_ser                                   |
 
 ## Error Handling
 
@@ -871,13 +874,13 @@ impl std::fmt::Debug for DeliveryError {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Delivery latency | ≤ 50ms p99 (mint + insert + sign + gossip) | Bench on testnet |
-| Atomicity overhead | ≤ 5ms added vs non-atomic | Stoolap txn overhead |
-| Gossip propagation | ≤ 30s to buyer's peer set | RFC-0862 gossip benchmark |
-| Chain hash continuity | 0 bytes diff for pre-A1 events | Diff harness |
-| Storage footprint | ≤ 256 bytes per DealSettled event + envelope | 32+32+~64+32+32+8+11+64 = ~275 bytes nominal |
+| Metric                | Target                                       | Notes                                        |
+| --------------------- | -------------------------------------------- | -------------------------------------------- |
+| Delivery latency      | ≤ 50ms p99 (mint + insert + sign + gossip)   | Bench on testnet                             |
+| Atomicity overhead    | ≤ 5ms added vs non-atomic                    | Stoolap txn overhead                         |
+| Gossip propagation    | ≤ 30s to buyer's peer set                    | RFC-0862 gossip benchmark                    |
+| Chain hash continuity | 0 bytes diff for pre-A1 events               | Diff harness                                 |
+| Storage footprint     | ≤ 256 bytes per DealSettled event + envelope | 32+32+~64+32+32+8+11+64 = ~275 bytes nominal |
 
 ## Security Considerations
 
@@ -956,33 +959,33 @@ Verdict: ACCEPTED RISK. Mitigation: chain-based access claim as fallback.
 
 ## Dependency Validation
 
-| RFC# | Type | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0959-A1 acceptance? |
-|------|------|------------------------------|------------------------|----------------------------------------|
-| RFC-0009 | Requires | Accepted | Already | No |
-| RFC-0126 | Requires | Accepted | Already | No |
-| RFC-0853 | Requires | Draft | Yes | YES |
-| RFC-0862 | Requires | Accepted | Already | No |
-| RFC-0903 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0957-A1 | Requires | Draft | Yes | YES |
-| RFC-0959 | Requires | Accepted | Already | No |
-| RFC-0900 | Optional | Draft | Best-effort | No |
-| RFC-0955 | Optional | Accepted | Best-effort | No |
+| RFC#        | Type     | Current Status (2026-08-01) | Assumed Before Accept? | Hard-block on RFC-0959-A1 acceptance? |
+| ----------- | -------- | --------------------------- | ---------------------- | ------------------------------------- |
+| RFC-0009    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0126    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0853    | Requires | Draft                       | Yes                    | YES                                   |
+| RFC-0862    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0903    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0957    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0957-A1 | Requires | Draft                       | Yes                    | YES                                   |
+| RFC-0959    | Requires | Accepted                    | Already                | No                                    |
+| RFC-0900    | Optional | Draft                       | Best-effort            | No                                    |
+| RFC-0955    | Optional | Accepted                    | Best-effort            | No                                    |
 
 **DAG check:** `0959-A1 ← {0959, 0957, 0957-A1, 0009, 0126, 0853, 0862, 0900*, 0955*}` — acyclic. Valid.
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| **IA-1: Both bearer + capability records exist for the ask** | §Algorithms steps 5-7 | `deliver_at_settlement` returns `AskNotFound` or `AskAlreadyExists` | RFC-0957-A1 §HolderRegistry UNIQUE constraint + `insert_dual` atomicity |
-| **IA-2: Stoolap transaction is atomic** | §Algorithms steps 0-10 + 7b | Partial-state delivery | RFC-0862 §Transaction guarantees |
-| **IA-3: Buyer's encryption pubkey is reachable** | §Algorithms step 3 | Bearer capsule cannot be encrypted | RFC-0009 §Identity Struct; wallet-side resolver |
-| **IA-4: Seller's identity is non-revoked** | §Algorithms step 10 | `DealSettled` signature invalid | RFC-0009 §Identity Lifecycle |
-| **IA-5: RFC-0862 gossip reaches buyer peer set within 30s** | §Algorithms step 11 | Envelope not received | RFC-0862 §Gossip Heartbeat + Retry |
-| **IA-6: Settlement chain tip is reachable inside the transaction** | §Algorithms step 2 | Cannot compute `prev_chain_hash` atomically | RFC-0862 §Transaction guarantees |
-| **IA-7: Capability token mint signature is 4-arg persistence-free (R6-C3 fix)** | §Algorithms step 2 (CapabilityToken::mint call) | Prior 6-arg mint triggered post-write hook → double insert | RFC-0957-A1 §Algorithms amendment | R7-N14 + R9-N6 fix |
-| **IA-8: `settled_at_unix` is derivable from prior `SettlementEvent`** | §Algorithms step 8 | Chain fork via clock drift | RFC-0959 §SettlementEvent provides this field |
+| Assumption                                                                      | Where Relied Upon                               | Blast Radius if False                                               | Mitigation / Status                                                     |
+| ------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **IA-1: Both bearer + capability records exist for the ask**                    | §Algorithms steps 5-7                           | `deliver_at_settlement` returns `AskNotFound` or `AskAlreadyExists` | RFC-0957-A1 §HolderRegistry UNIQUE constraint + `insert_dual` atomicity |
+| **IA-2: Stoolap transaction is atomic**                                         | §Algorithms steps 0-10 + 7b                     | Partial-state delivery                                              | RFC-0862 §Transaction guarantees                                        |
+| **IA-3: Buyer's encryption pubkey is reachable**                                | §Algorithms step 3                              | Bearer capsule cannot be encrypted                                  | RFC-0009 §Identity Struct; wallet-side resolver                         |
+| **IA-4: Seller's identity is non-revoked**                                      | §Algorithms step 10                             | `DealSettled` signature invalid                                     | RFC-0009 §Identity Lifecycle                                            |
+| **IA-5: RFC-0862 gossip reaches buyer peer set within 30s**                     | §Algorithms step 11                             | Envelope not received                                               | RFC-0862 §Gossip Heartbeat + Retry                                      |
+| **IA-6: Settlement chain tip is reachable inside the transaction**              | §Algorithms step 2                              | Cannot compute `prev_chain_hash` atomically                         | RFC-0862 §Transaction guarantees                                        |
+| **IA-7: Capability token mint signature is 4-arg persistence-free (R6-C3 fix)** | §Algorithms step 2 (CapabilityToken::mint call) | Prior 6-arg mint triggered post-write hook → double insert          | RFC-0957-A1 §Algorithms amendment                                       | R7-N14 + R9-N6 fix |
+| **IA-8: `settled_at_unix` is derivable from prior `SettlementEvent`**           | §Algorithms step 8                              | Chain fork via clock drift                                          | RFC-0959 §SettlementEvent provides this field                           |
 
 ## Compatibility
 
@@ -1126,13 +1129,13 @@ Expected output: capability token's macaroon is signed with the catalog's per-as
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Verdict |
-|----------|------|------|---------|
-| **(a) Out-of-band delivery** | Simple | No on-chain proof; no atomicity | Rejected |
-| **(b) Deliver only bearer** | Simpler | Buyer friction | Rejected |
-| **(c) Deliver only capability** | Cleaner | Legacy clients break | Rejected |
-| **(d) Atomic delivery via settlement chain + chain_tip_lock (this RFC)** | Atomic; auditable; replay defense | Adds chain length; new txn surface | **Adopted** |
-| **(e) Deliver via side-chain** | Reuses marketplace | Couples delivery to index; no replay defense | Rejected |
+| Approach                                                                 | Pros                              | Cons                                         | Verdict     |
+| ------------------------------------------------------------------------ | --------------------------------- | -------------------------------------------- | ----------- |
+| **(a) Out-of-band delivery**                                             | Simple                            | No on-chain proof; no atomicity              | Rejected    |
+| **(b) Deliver only bearer**                                              | Simpler                           | Buyer friction                               | Rejected    |
+| **(c) Deliver only capability**                                          | Cleaner                           | Legacy clients break                         | Rejected    |
+| **(d) Atomic delivery via settlement chain + chain_tip_lock (this RFC)** | Atomic; auditable; replay defense | Adds chain length; new txn surface           | **Adopted** |
+| **(e) Deliver via side-chain**                                           | Reuses marketplace                | Couples delivery to index; no replay defense | Rejected    |
 
 ## Implementation Phases
 
@@ -1154,18 +1157,18 @@ Expected output: capability token's macaroon is signed with the catalog's per-as
 
 ### Phase 4: Mission Decomposition
 
-- [ ] `missions/open/0959-b-market-delivery-impl.md` — delivery envelope implementation
-- [ ] `missions/open/0959-c-delivery-gossip-integration.md` — RFC-0862 gossip integration
+- [ ] `missions/claimed/0959-b-market-delivery-impl.md` — delivery envelope implementation
+- [ ] `missions/archived/completed/0959-c-delivery-gossip-integration.md` — RFC-0862 gossip integration
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
+| File                                                         | Change                                                            |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- |
 | `crates/octo-wallet/src/capability/market_delivery.rs` (NEW) | BearerCapsule + DealSettled + MarketDeliveryEnvelope + EnvelopeId |
-| `crates/octo-wallet/src/capability/deliver.rs` (NEW) | deliver_at_settlement algorithm |
-| `crates/octo-wallet/src/capability/stoolap_txn.rs` (NEW) | atomic transaction wrapper |
-| `crates/octo-wallet/src/capability/gossip.rs` (MODIFY) | gossip_to_buyer |
-| `crates/quota-router-core/src/settlement/chain.rs` (MODIFY) | append_deal_settled + chain hash |
+| `crates/octo-wallet/src/capability/deliver.rs` (NEW)         | deliver_at_settlement algorithm                                   |
+| `crates/octo-wallet/src/capability/stoolap_txn.rs` (NEW)     | atomic transaction wrapper                                        |
+| `crates/octo-wallet/src/capability/gossip.rs` (MODIFY)       | gossip_to_buyer                                                   |
+| `crates/quota-router-core/src/settlement/chain.rs` (MODIFY)  | append_deal_settled + chain hash                                  |
 
 ## Future Work
 
@@ -1185,10 +1188,10 @@ Without this amendment, the dual-mode workflow is half-built.
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.0     | 2026-08-01 | Initial draft (in-place amendment to RFC-0959) |
-| 1.1     | 2026-08-01 | Round 2: BearerCapsule defined here (not RFC-0903); `chain_tip_lock` CAS breaks TOCTOU; `ask_ttl_unix` parameter plumbed; `EnvelopeId` newtype for Hash impl; Debug redaction; `settled_at_unix` from prior SettlementEvent; buyer identity binding |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Changes                                                                                                                                                                                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Initial draft (in-place amendment to RFC-0959)                                                                                                                                                                                                      |
+| 1.1        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Round 2: BearerCapsule defined here (not RFC-0903); `chain_tip_lock` CAS breaks TOCTOU; `ask_ttl_unix` parameter plumbed; `EnvelopeId` newtype for Hash impl; Debug redaction; `settled_at_unix` from prior SettlementEvent; buyer identity binding |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged; 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/economics/`. IA-3 (RFC-0957 reaches Accepted before 0959-A1) satisfied via 0957 promotion in this batch; `chain_tip_lock` CAS breaks settlement-chain-tip TOCTOU; `RoleTag` typed enum consistently used (no string literals); `BUNDLED_CAIRO_JSON` not relevant (this is a non-Cairo amendment); phantom `IdentityKey::from_public_bytes` call site at L520 properly DEFERRED to RFC-0957-A2. |
 
 ## Related RFCs
@@ -1215,12 +1218,13 @@ Without this amendment, the dual-mode workflow is half-built.
 
 ## Related Missions
 
-- Future: `missions/open/0959-b-market-delivery-impl.md`
-- Future: `missions/open/0959-c-delivery-gossip-integration.md`
+- Future: `missions/claimed/0959-b-market-delivery-impl.md`
+- Future: `missions/archived/completed/0959-c-delivery-gossip-integration.md`
 
 ## Cross-Reference: Outgoing Edges
 
 This RFC is a dependency of:
+
 - RFC-0969 — Dual-Pipeline Authorization (needs delivery envelope to populate HolderRecord on both paths)
 - RFC-0971 — Destination-Node Role Consolidation (meta RFC; depends on all four)
 
@@ -1252,12 +1256,12 @@ A buyer `did:octo:buyer1` selects an Ask `ask_id = H1` from seller `did:octo:sel
 
 RFC-0959 §Roles is updated by reference:
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Asker | RFC-0009 `IdentityKey` of publishing node | publish Ask | node identity lifecycle | RFC-0959 §Roles |
-| Router | RFC-0009 `IdentityKey` of routing/verifying node | verify + settle | node identity lifecycle | RFC-0959 §Roles |
-| **Seller (NEW, role-binding)** | RFC-0009 `IdentityKey` of seller's node | mint + deliver + sign `DealSettled` | node identity lifecycle | RFC-0959-A1 + RFC-0971 binding |
-| Buyer | RFC-0009 `IdentityKey` of buyer | receive + decrypt | node identity lifecycle | RFC-0959-A1 §Roles (NEW) |
+| Role                           | Identifier                                       | Authority Scope                     | Lifecycle               | Source/Ref                     |
+| ------------------------------ | ------------------------------------------------ | ----------------------------------- | ----------------------- | ------------------------------ |
+| Asker                          | RFC-0009 `IdentityKey` of publishing node        | publish Ask                         | node identity lifecycle | RFC-0959 §Roles                |
+| Router                         | RFC-0009 `IdentityKey` of routing/verifying node | verify + settle                     | node identity lifecycle | RFC-0959 §Roles                |
+| **Seller (NEW, role-binding)** | RFC-0009 `IdentityKey` of seller's node          | mint + deliver + sign `DealSettled` | node identity lifecycle | RFC-0959-A1 + RFC-0971 binding |
+| Buyer                          | RFC-0009 `IdentityKey` of buyer                  | receive + decrypt                   | node identity lifecycle | RFC-0959-A1 §Roles (NEW)       |
 
 The Seller role is a naming convenience. The seller's node IS the Asker + Router + Token Issuer per RFC-0971. The `seller_signature` on `DealSettled` is the same identity as the `Asker` signature on the `Ask`.
 

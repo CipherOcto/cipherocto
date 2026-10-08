@@ -4,7 +4,6 @@ description: Successor mission to archived `0855p-b-cross-mission-reputation`. L
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-24T00:00:00.000Z
   v: "1.2"
   depends_on:
@@ -23,11 +22,11 @@ closure_audit: docs/audits/2026-09-03-0855p-b-gossip-successor-landed.md
 
 ## What v1.2 landed
 
-| Artifact | LoC | Purpose |
-|---|---|---|
-| `crates/octo-reputation/src/anchor_freshness.rs` | 220+ (incl. tests) | New module — gate home. Defines `AnchorFreshness` decision enum, `MAX_ANCHOR_STALENESS_BLOCKS = 256`, `MIN_FINALITY_BLOCKS_RFC0955 = 12`, `ANCHOR_TX_HASH_ZERO_SENTINEL`, `StaleEnvelopeReason` forensic carrier, `AnchorFreshnessPartition` bulk result, `filter_stale_anchor_events` / `partition_by_anchor_freshness` / `evaluate_gossip_envelope_freshness` / `evaluate_with_recorded_block_height` operations. 13 inline `#[cfg(test)]` unit tests. |
-| `crates/octo-reputation/src/lib.rs` | +12 LoC | `pub mod anchor_freshness;` + re-exports of the public surface (`AnchorFreshness`, `AnchorFreshnessPartition`, `StaleEnvelopeReason`, the four functions, three constants). |
-| `crates/octo-reputation/tests/canonical_blobs.rs` | +90 LoC | 4 new TV fixtures (TV-4..TV-7) extending the existing 3 anchor-batch vectors (TV-1..TV-3) pinned 2026-07-30 by `mission 0968a2 AC #17`. Fixture count now 7 — matches the original mission claim. |
+| Artifact                                          | LoC                | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-reputation/src/anchor_freshness.rs`  | 220+ (incl. tests) | New module — gate home. Defines `AnchorFreshness` decision enum, `MAX_ANCHOR_STALENESS_BLOCKS = 256`, `MIN_FINALITY_BLOCKS_RFC0955 = 12`, `ANCHOR_TX_HASH_ZERO_SENTINEL`, `StaleEnvelopeReason` forensic carrier, `AnchorFreshnessPartition` bulk result, `filter_stale_anchor_events` / `partition_by_anchor_freshness` / `evaluate_gossip_envelope_freshness` / `evaluate_with_recorded_block_height` operations. 13 inline `#[cfg(test)]` unit tests. |
+| `crates/octo-reputation/src/lib.rs`               | +12 LoC            | `pub mod anchor_freshness;` + re-exports of the public surface (`AnchorFreshness`, `AnchorFreshnessPartition`, `StaleEnvelopeReason`, the four functions, three constants).                                                                                                                                                                                                                                                                              |
+| `crates/octo-reputation/tests/canonical_blobs.rs` | +90 LoC            | 4 new TV fixtures (TV-4..TV-7) extending the existing 3 anchor-batch vectors (TV-1..TV-3) pinned 2026-07-30 by `mission 0968a2 AC #17`. Fixture count now 7 — matches the original mission claim.                                                                                                                                                                                                                                                        |
 
 ## Why this is the canonical home (drift v1.1 superseded)
 
@@ -87,28 +86,28 @@ let partition: AnchorFreshnessPartition =
 
 ## Tests landed
 
-| Test | Decision asserted | Pin rationale |
-|---|---|---|
-| `canonical_blob_zero_leaves_is_pinned` | (anchor batch, pre-existing) | TV-1 — verified 2026-07-30 by `0968a2 AC #17` |
-| `canonical_blob_single_leaf_is_pinned` | (anchor batch, pre-existing) | TV-2 — verified 2026-07-30 |
-| `canonical_blob_hundred_leaves_is_pinned` | (anchor batch, pre-existing) | TV-3 — verified 2026-07-30 |
-| `envelope_freshness_canonical_anchored_is_fresh` | Fresh | **TV-4 (NEW v1.2)** |
-| `envelope_freshness_canonical_zero_anchor_is_malformed` | StaleMalformedAnchor | **TV-5 (NEW v1.2)** |
-| `envelope_freshness_canonical_non_anchored_is_indeterminate` | IndeterminateNonAnchored | **TV-6 (NEW v1.2)** |
-| `envelope_freshness_canonical_reorg_depth_is_stale` | StaleReorgDepth | **TV-7 (NEW v1.2)** |
-| `anchored_envelope_is_fresh` | Fresh | inline unit test |
-| `zero_anchor_hash_is_malformed` | StaleMalformedAnchor | inline unit test |
-| `non_anchored_envelope_is_indeterminate` | IndeterminateNonAnchored | inline unit test |
-| `recorded_height_within_bound_is_fresh` | Fresh | inline unit test |
-| `recorded_height_outside_bound_is_reorg_stale` | StaleReorgDepth | inline unit test |
-| `recorded_height_exactly_at_bound_is_fresh` | Fresh (boundary inclusive) | inline unit test |
-| `recorded_height_in_future_is_reorg_stale` | StaleReorgDepth | inline unit test (clock-skew / fork-attack signal) |
-| `partition_drops_malformed_and_reorg_keeps_fresh` | partition shape | inline unit test |
-| `filter_keeps_fresh_drops_malformed` | filter shape | inline unit test (mission signature) |
-| `pin_min_finality_blocks_rfc0955_to_canonical_12` | const pin = 12 | inline unit test |
-| `pin_max_anchor_staleness_blocks` | const pin = 256 | inline unit test |
-| `pin_anchor_tx_hash_zero_sentinel` | const pin = [0u8; 32] | inline unit test |
-| `max_anchor_staleness_strictly_greater_than_min_finality` | const assert | inline unit test (compile-time invariant) |
+| Test                                                         | Decision asserted            | Pin rationale                                      |
+| ------------------------------------------------------------ | ---------------------------- | -------------------------------------------------- |
+| `canonical_blob_zero_leaves_is_pinned`                       | (anchor batch, pre-existing) | TV-1 — verified 2026-07-30 by `0968a2 AC #17`      |
+| `canonical_blob_single_leaf_is_pinned`                       | (anchor batch, pre-existing) | TV-2 — verified 2026-07-30                         |
+| `canonical_blob_hundred_leaves_is_pinned`                    | (anchor batch, pre-existing) | TV-3 — verified 2026-07-30                         |
+| `envelope_freshness_canonical_anchored_is_fresh`             | Fresh                        | **TV-4 (NEW v1.2)**                                |
+| `envelope_freshness_canonical_zero_anchor_is_malformed`      | StaleMalformedAnchor         | **TV-5 (NEW v1.2)**                                |
+| `envelope_freshness_canonical_non_anchored_is_indeterminate` | IndeterminateNonAnchored     | **TV-6 (NEW v1.2)**                                |
+| `envelope_freshness_canonical_reorg_depth_is_stale`          | StaleReorgDepth              | **TV-7 (NEW v1.2)**                                |
+| `anchored_envelope_is_fresh`                                 | Fresh                        | inline unit test                                   |
+| `zero_anchor_hash_is_malformed`                              | StaleMalformedAnchor         | inline unit test                                   |
+| `non_anchored_envelope_is_indeterminate`                     | IndeterminateNonAnchored     | inline unit test                                   |
+| `recorded_height_within_bound_is_fresh`                      | Fresh                        | inline unit test                                   |
+| `recorded_height_outside_bound_is_reorg_stale`               | StaleReorgDepth              | inline unit test                                   |
+| `recorded_height_exactly_at_bound_is_fresh`                  | Fresh (boundary inclusive)   | inline unit test                                   |
+| `recorded_height_in_future_is_reorg_stale`                   | StaleReorgDepth              | inline unit test (clock-skew / fork-attack signal) |
+| `partition_drops_malformed_and_reorg_keeps_fresh`            | partition shape              | inline unit test                                   |
+| `filter_keeps_fresh_drops_malformed`                         | filter shape                 | inline unit test (mission signature)               |
+| `pin_min_finality_blocks_rfc0955_to_canonical_12`            | const pin = 12               | inline unit test                                   |
+| `pin_max_anchor_staleness_blocks`                            | const pin = 256              | inline unit test                                   |
+| `pin_anchor_tx_hash_zero_sentinel`                           | const pin = [0u8; 32]        | inline unit test                                   |
+| `max_anchor_staleness_strictly_greater_than_min_finality`    | const assert                 | inline unit test (compile-time invariant)          |
 
 22 / 22 tests pass.
 
@@ -173,8 +172,8 @@ Per the user's 2026-09-03 message ("all we want is that code e close the mission
 
 ## Version History
 
-| Version | Date       | Change |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.0    | 2026-08-24 | Initial filing per Session 4 RFC-0968-A2 + external blockers cascade. Owns gossip ingress anchor_tx_hash stale-event filter (RFC-0968-A2 freshness gate). |
-| v1.1    | 2026-09-03 | DRIFT-RETRO-SUPERSEDED closure. 0 of 7 ACs landed. Drift audit findings catalogued. **This closure was a misread of user intent — superseded by v1.2 real-land.** Preserved in VH for traceability. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-24 | Initial filing per Session 4 RFC-0968-A2 + external blockers cascade. Owns gossip ingress anchor_tx_hash stale-event filter (RFC-0968-A2 freshness gate).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| v1.1    | 2026-09-03 | DRIFT-RETRO-SUPERSEDED closure. 0 of 7 ACs landed. Drift audit findings catalogued. **This closure was a misread of user intent — superseded by v1.2 real-land.** Preserved in VH for traceability.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | v1.2    | 2026-09-03 | REAL LAND. Created `crates/octo-reputation/src/anchor_freshness.rs` (220+ LoC, 13 inline tests); wired `pub mod anchor_freshness;` + 10 re-exports in `src/lib.rs`; added 4 new TV fixtures (TV-4..TV-7) to `tests/canonical_blobs.rs`. 22 tests pass; `cargo clippy -D warnings` clean; `cargo fmt --check` clean. Substrate home chosen at the canonical consumer side (`octo-reputation`) rather than the producer side (`octo-network`) per RFC-0850 layer model + drift audit D-7/D-9. Constants declared with explicit RFC-0955-R1 anchor (`MIN_FINALITY_BLOCKS_RFC0955 = 12` for chain-side reorg depth) and the mission-local gossip-ingress bound (`MAX_ANCHOR_STALENESS_BLOCKS = 256`). Mission moved from `missions/claimed/` to `missions/archived/completed/` per R19 real-completion discipline; v1.1 retro-supersession audit (`docs/audits/2026-09-03-0855p-b-gossip-successor-drift.md`) retained as historical reference and explicitly marked superseded. New closure audit at `docs/audits/2026-09-03-0855p-b-gossip-successor-landed.md`. |

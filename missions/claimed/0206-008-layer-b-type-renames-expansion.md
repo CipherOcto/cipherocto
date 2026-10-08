@@ -4,7 +4,6 @@ description: Apply 8+ other crates (octo-reputation, octo-matrix-session-store, 
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
   supersedes: null
@@ -191,7 +190,7 @@ octo-vault from mission 0206-002).
 
 ## Version History
 
-| Version | Date | Change |
-|---------|------|--------|
-| v1.0 | 2026-08-20 | Initial filing (NEW per substrate redesign plan); 89 sites / 38 files enumerated from disk; D1 deviation pattern inherited from 0206-002 |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1.0    | 2026-08-20 | Initial filing (NEW per substrate redesign plan); 89 sites / 38 files enumerated from disk; D1 deviation pattern inherited from 0206-002                                                                                                                                                                                                                     |
 | v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-008-layer-b-type-renames-expansion-status.md`: LANDED 927008d6 (2026-08-20). 89 sites / 38 files / 9 consumer crates TYPE renames applied; TV-A7 paths 5-17 closed. Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |

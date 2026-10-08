@@ -317,7 +317,7 @@ Per RFC-0959 v2.8 §8 (Pending, concrete test vectors).
   sovereign assets or meta.governance_pubkey for managed assets);
   second call returns `Err(SettlementEventError::Replay)`
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `quota-router-sm-engine` (Layer C specialized node role) —
   `settlement_event.rs` = **Layer B additive type hosted in Layer C node
@@ -380,7 +380,7 @@ cargo test -p quota-router-sm-engine --lib settlement_event
   `SettlementEventRepository::insert` per RFC-0960 v3.7 §2.5)
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
   cache table consumer (cache invalidation envelope source)
-- [[cipherocto-design-principles]] — Layer B additive-only rule
+- `cipherocto-design-principles` — Layer B additive-only rule
 
 ## Claimant
 

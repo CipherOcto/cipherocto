@@ -77,7 +77,7 @@ canonical place to derive the child capability key from the parent
   - `threshold_key_share_loss_tolerated` — lose 1 of N shares,
     signing continues (within threshold)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-wallet` (Layer B) — `derive_capability_key` extension +
   `ThresholdSigner` supertrait + impls
@@ -106,10 +106,10 @@ cargo test --workspace --lib
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — sister storage trait extension
-- [[mission-0957-f-future-work]] — F4 V2 bundling requirement
-- [[cipherocto-design-principles]] — Layer A additive-only rule
-- [[mission-gap-closure-priorities-2026-08-10]] — memory context
+- `rfc-0010-v13-storage-extension` — sister storage trait extension
+- `mission-0957-f-future-work` — F4 V2 bundling requirement
+- `cipherocto-design-principles` — Layer A additive-only rule
+- `mission-gap-closure-priorities-2026-08-10` — memory context
 
 ## Claimant
 

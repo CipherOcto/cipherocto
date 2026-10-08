@@ -1,6 +1,6 @@
 # 0871e-f7-cross-instance-did-coordination — Cross-instance DID write coordination
 
-**Status:** claimed (2026-08-11); substrate RFC-0862 v1.3 Accepted (commit `62ed3af1`) + DAG predecessor `0871b-storage-backend` LANDED (commit `71f8d745`). Approach picked 2026-08-10 → Option B per [[drain-coordinator-approach-2026-08-10]].
+**Status:** claimed (2026-08-11); substrate RFC-0862 v1.3 Accepted (commit `62ed3af1`) + DAG predecessor `0871b-storage-backend` LANDED (commit `71f8d745`). Approach picked 2026-08-10 → Option B per `drain-coordinator-approach-2026-08-10`.
 **Substrate:** RFC-0862 v1.3 (Accepted 2026-08-11, commit `62ed3af1`) §DidWriteCoordinator + RFC-0010 v1.3 `StoolapDidRegistry` (LANDED 2026-08-11, commit `71f8d745`)
 **Parent:** RFC-0862 §Future Work F8 (writer election / auto-failover); DAG predecessor `0871b-storage-backend`
 
@@ -74,7 +74,8 @@ impl to LWW without changing the trait surface.
 
 ### Layer discipline correction
 
-Per [[cipherocto-design-principles]] §Layer discipline:
+Per `cipherocto-design-principles` §Layer discipline:
+
 - `octo-ident` (Layer B) — substrate trait + `ChainId` + canonical_hash
 - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
   stays pure local persistence (no coordinator dependency)
@@ -138,11 +139,11 @@ cargo test --workspace --lib
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — v1.3 `DidRegistry` substrate
-- [[mission-0871b-storage-backend]] — substrate mission
-- [[mission-0871e-phase5c-1-cross-instance-drain]] — sister mission
+- `rfc-0010-v13-storage-extension` — v1.3 `DidRegistry` substrate
+- `mission-0871b-storage-backend` — substrate mission
+- `mission-0871e-phase5c-1-cross-instance-drain` — sister mission
   (same approach pick)
-- [[cipherocto-design-principles]] — Layer A additive-only rule
+- `cipherocto-design-principles` — Layer A additive-only rule
 - `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md` —
   RFC-0862 v1.3 (Accepted 2026-08-11, commit `62ed3af1`)
 

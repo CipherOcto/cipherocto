@@ -21,7 +21,7 @@ emission is stubbed.
 1. Add `octo-cap-macaroon = { path = "../octo-cap-macaroon" }` to
    `crates/octo-wallet-node/Cargo.toml` dependencies. Wire-form
    substrate lives in the Layer 4 extension crate (per-extension
-   pattern; see `[[cipherocto-design-principles]]`).
+   pattern; see `cipherocto-design-principles`).
 2. Edit `crates/octo-wallet-node/src/handlers/mint.rs`:
    - Import `octo_cap_macaroon::wire::{serialize_wire, WireError}`.
    - Replace the `format!("CIPHEROCTO_MINT_V1:{}", token.holder_did).into_bytes()`
@@ -34,7 +34,7 @@ emission is stubbed.
 
 ## Test vector discipline (byte-exact TV)
 
-Per `[[mission-gap-closure-priorities-2026-08-10]]` §Test vector
+Per `mission-gap-closure-priorities-2026-08-10` §Test vector
 discipline, 5 wallet-node wire-form TV must remain byte-exact across
 placeholder → real-wire cutover. Pin via 5 deterministic mint tests
 (fixed seed per TV; macaroon nonce is RNG-derived but the resulting
@@ -82,17 +82,17 @@ TV5's negative path; the four positive-path TV are additive.
 
 ## Validation
 
-- `cargo fmt --check` (per `[[cargo-fmt-workflow]]`)
+- `cargo fmt --check` (per `cargo-fmt-workflow`)
 - `cargo clippy --all-targets --all-features -- -D warnings`
-  (per `[[feedback_clippy_zero_warnings]]`)
+  (per `feedback_clippy_zero_warnings`)
 - `cargo test --lib -p octo-wallet-node` (per
-  `[[feedback_stoolap_test_performance]]` avoid full build)
+  `feedback_stoolap_test_performance` avoid full build)
 - `cargo test --lib -p octo-cap-macaroon` (TV unaffected by cutover)
 
 ## Cross-references
 
-- `[[0957-phase2-unblocker-map]]` — master unblocker
-- `[[cipherocto-design-principles]]` — per-extension crate model
-- `[[mission-gap-closure-priorities-2026-08-10]]` — Wave 1 plan
-- `[[mission-0957-ext-macaroon-phase2b-status]]` — predecessor substrate
-- `[[no-line-refs-anywhere]]` — §section refs only
+- `0957-phase2-unblocker-map` — master unblocker
+- `cipherocto-design-principles` — per-extension crate model
+- `mission-gap-closure-priorities-2026-08-10` — Wave 1 plan
+- `mission-0957-ext-macaroon-phase2b-status` — predecessor substrate
+- `no-line-refs-anywhere` — §section refs only

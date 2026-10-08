@@ -88,7 +88,7 @@ impl WriterElection {
 }
 ```
 
-Layer B substrate additions land in `crates/octo-coordinator-types/src/election.rs` (existing module extended, NOT a new module). The struct wraps the existing free function `elect_coordinator` so the canonical election logic stays in one place per [[cipherocto-design-principles]] §Stable Abstractions Principle. The struct adds ballot + stake + voter + governance_model state that the CLI's `octo network status` can query for writer-election state aggregation.
+Layer B substrate additions land in `crates/octo-coordinator-types/src/election.rs` (existing module extended, NOT a new module). The struct wraps the existing free function `elect_coordinator` so the canonical election logic stays in one place per `cipherocto-design-principles` §Stable Abstractions Principle. The struct adds ballot + stake + voter + governance_model state that the CLI's `octo network status` can query for writer-election state aggregation.
 
 The struct intentionally does NOT carry candidates: the `elect_coordinator` free function does not take a candidates list (verified substrate-faithful signature). Candidates are derived from ballots + stakes + voters per RFC-0862p-a election algorithm.
 
@@ -103,7 +103,7 @@ The struct intentionally does NOT carry candidates: the `elect_coordinator` free
 - [x] `ballot_count()` + `stake_count()` + `voter_count()` observability helpers land
 - [x] `cargo clippy -p octo-coordinator-types --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-coordinator-types --lib` green (54/54, +8 above Phase 5 baseline of 46)
-- [x] Layer discipline preserved (Layer B only, zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only, zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (8 substrate unit tests pin: struct method delegates to free function + cast_ballot + add_stake + add_voter + set_governance_model + ballot_count + stake_count + voter_count + idempotent insert)
 
 ## Dependencies
@@ -123,4 +123,4 @@ The struct intentionally does NOT carry candidates: the `elect_coordinator` free
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The struct method `WriterElection::elect_coordinator` DELEGATES to the free function `elect_coordinator` to keep the canonical election logic in one place — the struct is purely a state-aggregation surface for the CLI's `status` subcommand. The struct does NOT introduce parallel abstractions per [[cipherocto-design-principles]] §No parallel abstractions: the free function remains the authoritative election logic. Signature verified substrate-faithful (7-arg form returning `Result<ElectionTally, CoordinatorError>`) per direct read of `octo-coordinator-types/src/election.rs:222` during this stub fill-in.
+Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The struct method `WriterElection::elect_coordinator` DELEGATES to the free function `elect_coordinator` to keep the canonical election logic in one place — the struct is purely a state-aggregation surface for the CLI's `status` subcommand. The struct does NOT introduce parallel abstractions per `cipherocto-design-principles` §No parallel abstractions: the free function remains the authoritative election logic. Signature verified substrate-faithful (7-arg form returning `Result<ElectionTally, CoordinatorError>`) per direct read of `octo-coordinator-types/src/election.rs:222` during this stub fill-in.

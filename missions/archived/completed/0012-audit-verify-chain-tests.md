@@ -4,7 +4,6 @@ description: Implement `StoolapAuditSink` + `AppendOnlyAuditSink` impl + 10 veri
 metadata:
   node_type: substrate-storage-adapter
   type: sink-impl-and-tests
-  originSessionId: RFC-0012 author session
   created: 2026-09-10
   v: "1.1"
   depends_on:

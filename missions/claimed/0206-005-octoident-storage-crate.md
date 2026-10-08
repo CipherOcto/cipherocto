@@ -4,7 +4,6 @@ description: Open 2026-08-20; 3 — create new adapter crate `crates/octo-ident-
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
   supersedes: null
@@ -63,7 +62,7 @@ Covers:
 ## Cross-references
 
 - 3 (StoolapDidRegistry impl target)
-- 
+-
 - RFC-0206 TV-0206-A6, A9(a), A10, A11, A12
 - -Cuts (adapter deps via facade, not substrate)
 - RFC-0010 storage extension (DidRegistry trait origin)
@@ -85,7 +84,7 @@ Covers:
 
 ## Version History
 
-| Version | Date       | Change                                                            |
-| ------- | ---------- | ----------------------------------------------------------------- |
-| v1.0    | 2026-08-20 | Initial filing per R1 finding from `0206-003-trait-moves` CRIT #1 |
-| v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card : LANDED 7833125e (2026-08-20). octo-ident-storage adapter crate on disk at  (NO direct stoolap dep). Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-20 | Initial filing per R1 finding from `0206-003-trait-moves` CRIT #1                                                                                                                                                                                                               |
+| v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card : LANDED 7833125e (2026-08-20). octo-ident-storage adapter crate on disk at (NO direct stoolap dep). Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |

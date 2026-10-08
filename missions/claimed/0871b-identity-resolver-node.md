@@ -157,7 +157,7 @@ handler (`IDENTITY_RESOLVE`), `ReferenceDispatcher::verify_all`-driven
 authorization, canonical DID validation via `CanonicalCodec::parse(s, false)`,
 and `NetworkReceiver` wiring via `IdentityResolverNodeReceiver`.
 
-**Phase 1 MVP disclosures** (per [[deferred-vs-unspecified]] discipline):
+**Phase 1 MVP disclosures** (per `deferred-vs-unspecified` discipline):
 
 - **Placeholder pubkey**: `ResolveHandler::handle` returns `RawDid::hash` (the leading 32-byte hash of the canonical DID) as the storage-pubkey form. This is deterministic + byte-exact, so the wire shape is identical once the real `DidRegistry` backend is wired in a follow-on mission — no consumer-side migration.
 - **No `DidRegistry` trait yet**: the codec crate (`octo-ident`) exposes `CanonicalCodec` for canonical encoding but not a storage trait. The follow-on mission will define `DidRegistry` in `octo-ident` (or a new `octo-identity-storage` crate) and have `ResolveHandler` call it instead of computing the placeholder.

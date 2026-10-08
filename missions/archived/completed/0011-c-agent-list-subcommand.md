@@ -4,7 +4,6 @@ description: Land the `octo agent list` subcommand per RFC-0011-c
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
   v: "1.1"
   depends_on:
@@ -55,7 +54,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [x] `AgentListOutput` payload type implemented + unit-tested (`count`, `holder_did`, `agents[]` per envelope-boundary redaction contract)
 - [x] `AgentSummary` envelope wrapper implemented + unit-tested (`agent_id`, `holder_did`, `state`, `label`, `registered_at_unix`, `manifest_digest`)
 - [x] `RedactedIdentifier` envelope-boundary redaction applied to `agent_id` + `holder_did` (symmetric with `agent create` per RFC-0011-c §9.4)
-- [x] `--state`, `--limit`, `--cursor`, `--json` flags wired (`--chain-id` deferred: substrate does not filter on chain_id — substrate-faithful per `[[cipherocto-design-principles]]` no-parallel-abstractions)
+- [x] `--state`, `--limit`, `--cursor`, `--json` flags wired (`--chain-id` deferred: substrate does not filter on chain_id — substrate-faithful per `cipherocto-design-principles` no-parallel-abstractions)
 - [x] `InvalidLimit` (exit 45), `InvalidCursor` (exit 46) wired; `AgentNotFound` (exit 42) + `ForbiddenHolderMismatch` (exit 17, slot moved 37→17 to avoid RFC-0011-g `UnknownAttestationKind` collision)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib agent 17/17 PASS (9 NEW + 8 existing)
@@ -63,13 +62,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type   | Sub-step            | Notes                                                                                                                                                                                                                                |
-| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AgentListArgs`   | Sub-step 1 (clap)   | Layer C/D; clap derive struct on `AgentAction::List` (`--state <String>`, `--limit <u32>` default 1024, `--cursor <String>`, `--json`)                                                                                              |
-| `AgentSummary`    | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: RedactedIdentifier`, `holder_did: RedactedIdentifier`, `state: String`, `label: Option<String>`, `registered_at_unix: u64`, `manifest_digest: String`)                                  |
-| `AgentListOutput` | Sub-step 3 (output) | Layer C/D; CLI-output wrapper (`count: usize`, `holder_did: RedactedIdentifier`, `agents: Vec<AgentSummaryEnvelope>`)                                                                                                               |
-| `InvalidLimit`    | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 45 per RFC-0011-c §9.8 (reserved 17–63 range)                                                                                                                                            |
-| `InvalidCursor`   | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 46                                                                                                                                                                                       |
+| RFC-0011-c type   | Sub-step            | Notes                                                                                                                                                                                            |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AgentListArgs`   | Sub-step 1 (clap)   | Layer C/D; clap derive struct on `AgentAction::List` (`--state <String>`, `--limit <u32>` default 1024, `--cursor <String>`, `--json`)                                                           |
+| `AgentSummary`    | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: RedactedIdentifier`, `holder_did: RedactedIdentifier`, `state: String`, `label: Option<String>`, `registered_at_unix: u64`, `manifest_digest: String`) |
+| `AgentListOutput` | Sub-step 3 (output) | Layer C/D; CLI-output wrapper (`count: usize`, `holder_did: RedactedIdentifier`, `agents: Vec<AgentSummaryEnvelope>`)                                                                            |
+| `InvalidLimit`    | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 45 per RFC-0011-c §9.8 (reserved 17–63 range)                                                                                                        |
+| `InvalidCursor`   | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 46                                                                                                                                                   |
 
 ## Implementation Guide
 
@@ -77,7 +76,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -119,13 +118,13 @@ No new external crates required; all substrate types (`AgentSummary`, `AgentStat
 
 3 TV (TV-AGT6..TV-AGT8) covering `agent list`. Phase 1 surfaces the substrate contract + CLI error-mapping tests (no full-stack CLI integration tests — substrate registry is process-global, mock-driven):
 
-| #       | Substrate coverage                                                   | CLI coverage                                                                       |
-| ------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| TV-AGT6 | `list_owned_agents` empty registry → empty `Vec` (substrate unit TV) | N/A (covered by substrate; CLI empty-output path is substrate-faithful passthrough) |
-| TV-AGT7 | `list_owned_agents` with `state: Some(Running)` → filter applied      | `list_parse_state_filter_accepts_known_labels` + `list::validate_cursor_accepts_none_and_placeholder` |
-| TV-AGT8 | N/A                                                                  | `list_invalid_limit_exits_45` (up-front CLI validation, no substrate round-trip)   |
+| #       | Substrate coverage                                                   | CLI coverage                                                                                          |
+| ------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| TV-AGT6 | `list_owned_agents` empty registry → empty `Vec` (substrate unit TV) | N/A (covered by substrate; CLI empty-output path is substrate-faithful passthrough)                   |
+| TV-AGT7 | `list_owned_agents` with `state: Some(Running)` → filter applied     | `list_parse_state_filter_accepts_known_labels` + `list::validate_cursor_accepts_none_and_placeholder` |
+| TV-AGT8 | N/A                                                                  | `list_invalid_limit_exits_45` (up-front CLI validation, no substrate round-trip)                      |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::List` dispatch + `AgentSummary` + `AgentListOutput` payload types + 4 error variants.
 - `octo-wallet` (Layer B) — substrate `list_owned_agents`, `AgentSummary`, `AgentState` (commit `533b07a4`).
@@ -160,8 +159,8 @@ cargo test -p octo-cli --lib agent  # 17/17 PASS
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0015 §6.2.1 `list_owned_agents` substrate (caller-attestation pattern + SECURITY HIGH)
 - RFC-0011-b §7.6 Attestation Surface (optional `reputation_score` field source — deferred)
-- [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
+- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Why gate
 
@@ -174,6 +173,7 @@ No release gate. The `agent list` subcommand is substrate-only and depends only 
 **Resolved** in commit `533b07a4`: `octo_wallet::list_owned_agents(caller_did: &Did, filter: &AgentFilter)` now exists at `crates/octo-wallet/src/agent.rs` with full caller-attestation pattern (`ForbiddenHolderMismatch` on holder mismatch — SECURITY HIGH multi-DID enumeration prevention per RFC-0015 §6.2.1).
 
 Also added in commit `533b07a4`:
+
 - `lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>` (RFC-0015 §6.2.3)
 - `validate_reason(reason: &str) -> Result<(), WalletError>` (RFC-0015 §6.2.5; rejects U+0000-U+001F and U+007F control chars; pager-hijack mitigation)
 - `WalletError::{AgentNotFound, ForbiddenHolderMismatch, ReasonContainsControlChars, ReasonTooLong}` (4 new variants; `#[non_exhaustive]` on enum for additive extension per cipherocto-design-principles)

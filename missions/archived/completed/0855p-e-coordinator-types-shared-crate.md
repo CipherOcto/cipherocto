@@ -4,7 +4,6 @@ description: Extract shared coordinator types into new `octo-coordinator-types` 
 metadata:
   node_type: substrate-shared-crate
   type: substrate-extraction
-  originSessionId: RFC-0855p-e follow-on extraction session
   created: 2026-09-02
   v: "1.1"
   landing_commit: "93f1758c"
@@ -27,7 +26,7 @@ status: Closed
 
 ## Status
 
-Closed (2026-09-02) per RFC-0855p-e §Layer-C Substrate Types follow-on note + substrate LANDED at `93f1758c`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (4 TV-CT test vectors pass; clippy zero). User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
+Closed (2026-09-02) per RFC-0855p-e §Layer-C Substrate Types follow-on note + substrate LANDED at `93f1758c`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (4 TV-CT test vectors pass; clippy zero). User owns push + PR per `feedback_initiation_user_only` + `git-workflow`.
 
 ## Substrate (new crate `octo-coordinator-types`)
 
@@ -93,7 +92,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - TV-CT-3: `HandoverReasonTypeId` typed-discriminator pattern preserved across extraction
 - TV-CT-4: RFC-0855p-b substrate recipients reading `SlashReasonCode` see 0x0013-0x0016 as valid (NOT unallocated)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-coordinator-types` (Layer B) — shared coordinator types
 - `octo-network` (Layer C) — consumer; re-imports from `octo-coordinator-types`
@@ -114,7 +113,7 @@ Net-additive: new crate + new dep. `octo-network` re-imports the 3 types (no API
 ## Notes
 
 - Per RFC-0855p-e §Future Work F-7 BLOCKING ACCEPTANCE GATE: "this RFC MUST NOT be promoted to Accepted until EITHER (a) RFC-0855p-b §B amendment merges with the four `SlashReasonCode` entries above, OR (b) `SlashReasonCode` + `HandoverReasonTypeId` lift into a shared `octo-coordinator-types` crate shipping in the same release." Substrate-truth check: `crates/octo-network/src/dot/slash.rs:86` reserves `0x0013..0xFFFF` (entries NOT allocated); 4 entries have NOT landed in 0855p-b substrate as of commit `0e915618`. RFC-0855p-e promotion proceeded via option (b) deferred path — the §Future Work F-7 gate was scheduled to land via THIS mission. This mission implements option (b): extracts the 3 types AND allocates 0x0013-0x0016 in `SlashReasonCode` per RFC-0855p-e §Layer placement constants block (FalseAttestation / QuorumTimeout / TallyTamper / LateDelivery; 4 entries specified in 0855p-e §Layer placement, NOT yet materialized in 0855p-b substrate slash enum).
-- Per `[[cipherocto-design-principles]]` §Stable Abstractions Principle + §No parallel abstractions, the shared crate is the canonical home; both 0855p-b and 0855p-e re-import from it.
+- Per `cipherocto-design-principles` §Stable Abstractions Principle + §No parallel abstractions, the shared crate is the canonical home; both 0855p-b and 0855p-e re-import from it.
 
 ## Cross-references
 

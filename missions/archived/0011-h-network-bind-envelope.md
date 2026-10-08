@@ -10,7 +10,7 @@ RFC-0011-l Phase 4 §Implementation Phases + §Subcommand Taxonomy rows 322-326
 
 ## Summary
 
-CLI surface for bind-envelope read (substrate-faithful `BindEnvelope::load` lookup per G22) + rebind-* payload builder trio (`dispatch_rebind_arm_action` per G21). Substrate-faithful boundary: every call crosses typed façade per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+CLI surface for bind-envelope read (substrate-faithful `BindEnvelope::load` lookup per G22) + rebind-* payload builder trio (`dispatch_rebind_arm_action` per G21). Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle.
 
 ### Subcommands
 
@@ -33,12 +33,12 @@ CLI surface for bind-envelope read (substrate-faithful `BindEnvelope::load` look
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (390/390, +12 above Phase 3 baseline)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change; zero Layer B change beyond the 3 paired substrate slices)
-- [x] Substrate-faithful boundary: every call crosses typed façade per [[cipherocto-design-principles]] §Stable Abstractions Principle
+- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle
 
 ## Dependencies
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
-- Pairing invariant: substrate missions G22 + G21 + G25 `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per [[no-phantom-mission-pointers]]
+- Pairing invariant: substrate missions G22 + G21 + G25 `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers`
 
 ## Out of Scope
 

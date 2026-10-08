@@ -4,7 +4,6 @@ description: Migrate `octo-network/mon/governance.rs` to consume `octo-governanc
 metadata:
   node_type: substrate-consumer
   type: domain-migration
-  originSessionId: RFC-0013 author session
   created: 2026-09-10
   v: "1.0"
   depends_on:
@@ -64,10 +63,10 @@ Per RFC-0013 §Key Files to Modify SUBSTRATE row 2, the canonical `ProposalState
 
 ### Test vectors (domain-level)
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `network-discriminant-invariant` | Migrated `ProposalState` discriminant vs canonical substrate | byte-identical (`repr(u16)` value matches) |
-| `network-snapshot-preserved` | `mon::governance::snapshot` function exists + signature unchanged | succeeds (signature: `(policy, current_epoch) -> Result<Snapshot, GovernanceError>`) |
-| `network-attest-preserved` | `mon::governance::attest` function exists + signature unchanged | succeeds (signature: `(subject_did, kind, snapshot_id) -> Result<AttestationReceipt, GovernanceError>`) |
-| `network-vote-preserved` | `mon::governance::vote` function exists + signature unchanged | succeeds (signature: `(proposal_id, voter_did, choice, weight) -> Result<VoteReceipt, GovernanceError>`) |
-| `network-btreemap-vote-tally` | Vote tally iteration order | `BTreeMap`-ordered (deterministic across replicas per RFC-0013 §Cross-Replica Tally Equivalence) |
+| ID                               | Scenario                                                          | Expected                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `network-discriminant-invariant` | Migrated `ProposalState` discriminant vs canonical substrate      | byte-identical (`repr(u16)` value matches)                                                               |
+| `network-snapshot-preserved`     | `mon::governance::snapshot` function exists + signature unchanged | succeeds (signature: `(policy, current_epoch) -> Result<Snapshot, GovernanceError>`)                     |
+| `network-attest-preserved`       | `mon::governance::attest` function exists + signature unchanged   | succeeds (signature: `(subject_did, kind, snapshot_id) -> Result<AttestationReceipt, GovernanceError>`)  |
+| `network-vote-preserved`         | `mon::governance::vote` function exists + signature unchanged     | succeeds (signature: `(proposal_id, voter_did, choice, weight) -> Result<VoteReceipt, GovernanceError>`) |
+| `network-btreemap-vote-tally`    | Vote tally iteration order                                        | `BTreeMap`-ordered (deterministic across replicas per RFC-0013 §Cross-Replica Tally Equivalence)         |

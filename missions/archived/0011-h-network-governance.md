@@ -28,12 +28,12 @@ CLI surface for `governance tally` (read-only; canonical-bytes hash projection) 
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (368/368, +2 above Phase 2 baseline)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change)
-- [x] Substrate-faithful boundary: every call crosses typed façade per [[cipherocto-design-principles]] §Stable Abstractions Principle
+- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle
 
 ## Dependencies
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
-- Pairing invariant: substrate mission G3b `0011-h-s-a-voting-tally-canonical-bytes` must land BEFORE this CLI mission's CLI dispatch slice per [[no-phantom-mission-pointers]]
+- Pairing invariant: substrate mission G3b `0011-h-s-a-voting-tally-canonical-bytes` must land BEFORE this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers`
 
 ## Out of Scope
 

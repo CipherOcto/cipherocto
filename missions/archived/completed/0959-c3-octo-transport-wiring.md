@@ -55,7 +55,7 @@ The 0959-c2 Band A closure proved the cross-node delivery contract end-to-end (T
 - [x] `cargo build -p octo-wallet` green (new deps compile)
 - [x] `cargo test -p octo-wallet --test cross_node_delivery` green (4/4 pre-existing tests still pass — proves the in-process harness still works alongside the new production wiring)
 - [x] `cargo test -p octo-wallet --test cross_node_delivery_transport` green (6/6 new production-wiring tests)
-- [x] `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
+- [x] `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## Dependencies

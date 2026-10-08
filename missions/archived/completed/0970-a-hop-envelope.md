@@ -59,7 +59,7 @@ Manual redacting `Debug` impls on `HopEnvelope`, `HopCapability`, `InnerRequest`
 
 - [x] `cargo build -p octo-wallet` green (verified post-commit `2f078974`-prior)
 - [x] `cargo test -p octo-wallet --lib` green: 9/9 hop_envelope tests pass + 224 filtered-out octo-wallet lib tests pass
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## Dependencies
@@ -116,13 +116,13 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Pull Request
 
-(unset; awaiting user push instruction per [[git-workflow]])
+(unset; awaiting user push instruction per `git-workflow`)
 
 ## Closure
 
 **Closure Date:** 2026-08-06 (Band A)
 
-**Closure Status:** All 4 RFC-0970 §Data Structures types + all 4 §Algorithms landed + 9/9 unit tests green; 4/15 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]].
+**Closure Status:** All 4 RFC-0970 §Data Structures types + all 4 §Algorithms landed + 9/9 unit tests green; 4/15 ACs explicit deferrals with named owner per `deferred-vs-unspecified`.
 
 **Implementation chain (commit `2f078974`-prior — landed pre-compaction; substrate already on disk):**
 
@@ -161,17 +161,17 @@ This sub-mission implements (per top-level Type Coverage table):
 
 **Drift surface (mission text v0.1, 2026-08-04 vs RFC-0970 body):**
 
-| #   | Drift                                        | Mission text                                                                              | RFC-0970 actual + substrate                                                                                            | Resolution                                                                                                                     |
-| --- | -------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Algorithm location                           | `crates/quota-router-core/src/node/wrap.rs` (NEW)                                         | `crates/octo-wallet/src/capability/hop_envelope.rs`                                                                    | substrate co-locates with capability module (octo-wallet owns Hop types); location drift documented                            |
-| 2   | `wrap_for_hop` signature                     | `(inner: &InnerRequest, hop_key: &Ed25519Keypair, ttl_millis_unix: u64, node_epoch: u64)` | `(inner: InnerRequest, hop_key: &[u8; 32], ttl_millis_unix: u64, wrapping_node_did: &str, next_hop_did: &str)`         | substrate uses primitives; `node_epoch` deferred to follow-up; `Ed25519Keypair` deferred                                       |
-| 3   | `unwrap_at_destination` signature            | `(envelope, chain, expected_destination: Did, clock: &dyn Clock)`                         | `(envelope, expected_destination: &str, now_millis_unix: u64)`                                                         | substrate strips chain param + Clock trait; chain verify is separate `verify_chain_hash` FREE FUNCTION; `Did` newtype deferred |
-| 4   | `pure_forward` signature                     | `(inner: &InnerRequest, hop_key: &Ed25519Keypair, ttl_millis_unix: u64)`                  | `(inner: InnerRequest, hop_key: &[u8; 32], ttl_millis_unix: u64)`                                                      | minor signature drift; semantics preserved (returns `InvalidScope` by design)                                                  |
-| 5   | Hop signature                                | implied Ed25519 over `hop_envelope_id`                                                    | `signature[..32].copy_from_slice(blake3::hash(hop_key).as_bytes())` (BLAKE3 placeholder)                               | real Ed25519 verification deferred to `0970-a1`; placeholder preserves 64-byte wire shape                                      |
-| 6   | `HolderRecord::from_hop_capability` location | `crates/octo-wallet/src/capability/holder_registry.rs`                                    | `HolderRecord` lives in `crates/quota-router-storage/src/holder_record.rs` per [[stoolap-general-purpose-db]] red line | cross-crate wiring deferred to `0970-a1`                                                                                       |
-| 7   | TV11 (TTL ms resolution)                     | "200ms window determinism gate"                                                           | substrate honors `u64` ms granularity; 200ms gate is documentation contract (not runtime test)                         | documentation contract; not a test gate                                                                                        |
+| #   | Drift                                        | Mission text                                                                              | RFC-0970 actual + substrate                                                                                          | Resolution                                                                                                                     |
+| --- | -------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Algorithm location                           | `crates/quota-router-core/src/node/wrap.rs` (NEW)                                         | `crates/octo-wallet/src/capability/hop_envelope.rs`                                                                  | substrate co-locates with capability module (octo-wallet owns Hop types); location drift documented                            |
+| 2   | `wrap_for_hop` signature                     | `(inner: &InnerRequest, hop_key: &Ed25519Keypair, ttl_millis_unix: u64, node_epoch: u64)` | `(inner: InnerRequest, hop_key: &[u8; 32], ttl_millis_unix: u64, wrapping_node_did: &str, next_hop_did: &str)`       | substrate uses primitives; `node_epoch` deferred to follow-up; `Ed25519Keypair` deferred                                       |
+| 3   | `unwrap_at_destination` signature            | `(envelope, chain, expected_destination: Did, clock: &dyn Clock)`                         | `(envelope, expected_destination: &str, now_millis_unix: u64)`                                                       | substrate strips chain param + Clock trait; chain verify is separate `verify_chain_hash` FREE FUNCTION; `Did` newtype deferred |
+| 4   | `pure_forward` signature                     | `(inner: &InnerRequest, hop_key: &Ed25519Keypair, ttl_millis_unix: u64)`                  | `(inner: InnerRequest, hop_key: &[u8; 32], ttl_millis_unix: u64)`                                                    | minor signature drift; semantics preserved (returns `InvalidScope` by design)                                                  |
+| 5   | Hop signature                                | implied Ed25519 over `hop_envelope_id`                                                    | `signature[..32].copy_from_slice(blake3::hash(hop_key).as_bytes())` (BLAKE3 placeholder)                             | real Ed25519 verification deferred to `0970-a1`; placeholder preserves 64-byte wire shape                                      |
+| 6   | `HolderRecord::from_hop_capability` location | `crates/octo-wallet/src/capability/holder_registry.rs`                                    | `HolderRecord` lives in `crates/quota-router-storage/src/holder_record.rs` per `stoolap-general-purpose-db` red line | cross-crate wiring deferred to `0970-a1`                                                                                       |
+| 7   | TV11 (TTL ms resolution)                     | "200ms window determinism gate"                                                           | substrate honors `u64` ms granularity; 200ms gate is documentation contract (not runtime test)                       | documentation contract; not a test gate                                                                                        |
 
-**Sub-mission decomposition (per [[deferred-vs-unspecified]] named-owner rule):**
+**Sub-mission decomposition (per `deferred-vs-unspecified` named-owner rule):**
 
 | Follow-up mission                          | Scope                                                                                                                                                                                                                                                                                                                                                                                                                           | Owner                   | Unblocks                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------- |

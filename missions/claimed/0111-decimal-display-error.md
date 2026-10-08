@@ -10,7 +10,7 @@ RFC-0111 (Numeric): Deterministic DECIMAL
 
 ## Summary
 
-Fix DECIMAL display formatting and `decimal_to_string` error handling. Cipherocto-side `determin::Decimal` gained `Display` + `FromStr` impls (RFC-0111 v1.21 normative). External `/home/mmacedoeu/_w/databases/stoolap/` paths from original mission were stale — actual cipherocto surface is `determin/src/decimal.rs` per [[stoolap-general-purpose-db]] red line (cipherocto fork pinned via git, no local source drop).
+Fix DECIMAL display formatting and `decimal_to_string` error handling. Cipherocto-side `determin::Decimal` gained `Display` + `FromStr` impls (RFC-0111 v1.21 normative). External `/home/mmacedoeu/_w/databases/stoolap/` paths from original mission were stale — actual cipherocto surface is `determin/src/decimal.rs` per `stoolap-general-purpose-db` red line (cipherocto fork pinned via git, no local source drop).
 
 ## Acceptance Criteria
 

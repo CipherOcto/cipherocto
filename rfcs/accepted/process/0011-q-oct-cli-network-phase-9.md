@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-q promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 9 retroactive multi-round DRY gate GREEN at R3 zero per the existing closure chain culminating in `next ccf29693` (R1 + R2 + R3 zero rounds gate pair). Two subcommands wire specialized node show + bind to the CLI. Substrate absent: `SpecializedNodeRecord` struct + `NodeClass` enum + `load()` + `bind_to_did()` methods MISSING from `crates/octo-network/src/specialized/node_record.rs`; this amendment adds 1 companion substrate mission (G11 `0011-h-s-a-specialized-node-record` per RFC-0011-h row) + 0 NEW OctoCliError variants (REUSES slot 89 `NetworkSubstrateUnavailable` per RFC-0011-h §Error Handling row 89) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Ninth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q (this RFC).
+> **Amendment chain:** Ninth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q (this RFC).
 
 ## Authors
 
@@ -88,7 +88,7 @@ impl AsRef<str> for HolderDid {
 /// Variant set is bounded by RFC-0011-d role taxonomy (matches
 /// existing role surface); future role additions land via RFC
 /// amendment to the role taxonomy, NOT via in-place enum
-/// expansion. This defends [[cipherocto-design-principles]]
+/// expansion. This defends `cipherocto-design-principles`
 /// §Extension over enumeration by ensuring the enum surface
 /// does not become a central-edit chokepoint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +245,7 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 
 ## Rationale
 
-RFC-0011-q closes the G11 deferred stub per "everything included, no deferral" directive. The substrate (`SpecializedNodeRecord`) lands FIRST per [[no-phantom-mission-pointers]] pairing invariant, then CLI dispatch atop it. The trait-based dispatch surface preserves the per-extension crate pattern (trait in Layer B; concrete impls in Layer D), enabling follow-on Layer D adapter missions without changing core CLI dispatch.
+RFC-0011-q closes the G11 deferred stub per "everything included, no deferral" directive. The substrate (`SpecializedNodeRecord`) lands FIRST per `no-phantom-mission-pointers` pairing invariant, then CLI dispatch atop it. The trait-based dispatch surface preserves the per-extension crate pattern (trait in Layer B; concrete impls in Layer D), enabling follow-on Layer D adapter missions without changing core CLI dispatch.
 
 ## Version History
 

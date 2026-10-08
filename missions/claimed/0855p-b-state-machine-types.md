@@ -66,20 +66,20 @@ All types derive `BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clon
 
 `pub fn transition_valid(from: CoordinatorLifecycle, to: CoordinatorLifecycle) -> bool` + `pub fn validate_transition(record: &CoordinatorRecord, next: CoordinatorLifecycle) -> Result<(), CoordinatorError>` — encode the transition table:
 
-| From | To | Trigger |
-|------|----|---------|
-| Designated | Elected | election tally meets quorum |
-| Elected | Active | activation envelope + 1/3 ack |
-| Active | Active | heartbeat OK |
-| Active | Suspect | 2× heartbeat miss |
-| Suspect | Active | heartbeat recovered |
-| Suspect | Handover | grace period exceeded |
-| Active | Handover | signed HandoverRequest |
-| Active | Demoting | slash proof + governance vote |
-| Active | Resigned | signed ResignationRequest |
-| Handover | Inactive | successor Active |
-| Demoting | Inactive | penalty applied |
-| Resigned | Inactive | cool-down expires |
+| From       | To       | Trigger                       |
+| ---------- | -------- | ----------------------------- |
+| Designated | Elected  | election tally meets quorum   |
+| Elected    | Active   | activation envelope + 1/3 ack |
+| Active     | Active   | heartbeat OK                  |
+| Active     | Suspect  | 2× heartbeat miss             |
+| Suspect    | Active   | heartbeat recovered           |
+| Suspect    | Handover | grace period exceeded         |
+| Active     | Handover | signed HandoverRequest        |
+| Active     | Demoting | slash proof + governance vote |
+| Active     | Resigned | signed ResignationRequest     |
+| Handover   | Inactive | successor Active              |
+| Demoting   | Inactive | penalty applied               |
+| Resigned   | Inactive | cool-down expires             |
 
 ### Step 3 — Layer C re-export shim
 
@@ -93,7 +93,7 @@ pub use octo_coordinator_types::state::{
 };
 ```
 
-Honors RFC §Key Files L847 promise at Layer C while keeping the canonical home at Layer B per [[cipherocto-design-principles]] §Stable Abstractions.
+Honors RFC §Key Files L847 promise at Layer C while keeping the canonical home at Layer B per `cipherocto-design-principles` §Stable Abstractions.
 
 ### Step 4 — Canonical-blob test vectors
 
@@ -140,7 +140,7 @@ Inline `#[cfg(test)]` in `state.rs`:
 - **Layer B (canonical)** — `octo-coordinator-types/src/state.rs` (pure types + canonical encoding + transition validity + Class A determinism). Years-stable; consensus-critical.
 - **Layer C (re-export shim)** — `octo-network/src/mon/coordinator.rs` (`pub use octo_coordinator_types::state::*;`). Ergonomic consumer-side call paths; honors RFC §Key Files L847 verbatim.
 
-Per [[cipherocto-design-principles]] §Stable Abstractions: state machine survives 10-year migrations; specialization (DomainCoordinator per RFC-0855p-c §F1, mission-bound overrides per future RFC amendments) layers on top via composition, not duplication.
+Per `cipherocto-design-principles` §Stable Abstractions: state machine survives 10-year migrations; specialization (DomainCoordinator per RFC-0855p-c §F1, mission-bound overrides per future RFC amendments) layers on top via composition, not duplication.
 
 ## Out of scope
 
@@ -168,14 +168,16 @@ Per [[cipherocto-design-principles]] §Stable Abstractions: state machine surviv
 ## Dependencies
 
 **Requires:**
+
 - RFC-0855p-b (Accepted; canonical spec)
 - RFC-0008 (Accepted; Execution Class A determinism contract)
 
 **Optional:**
+
 - `octo_coordinator_types` crate (precedent set by commit `93f1758c`; provides `Borsh` + derive macros)
 
 ## Version History
 
-| Version | Date | Change |
-| ------- | ---- | ------ |
+| Version | Date       | Change                                                                                                                                                                                   |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v1.0    | 2026-09-03 | Initial filing per RFC-0855p-b §Implementation Phase 1 + user audit (2026-09-03). Mission opens with 0/8 RFC-defined types in `crates/`; unblocks Phase 2-5 + cross-RFC RFC-0855p-c §F1. |

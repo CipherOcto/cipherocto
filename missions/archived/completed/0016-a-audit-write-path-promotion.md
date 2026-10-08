@@ -3,7 +3,6 @@ name: 0016-a-audit-write-path-promotion
 description: DRY loop plus promote RFC-0016-a Draft to Accepted post-RFC-0015-b landing
 metadata:
   type: rfc-promotion
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-14
   v: "1.0"
   depends_on:
@@ -33,7 +32,7 @@ plateau declaration (only RFC-0015 + RFC-0015-a + RFC-0016 were in
 scope for the plateau). RFC-0016-a remains in Draft status pending
 its own DRY closure.
 
-Per [[memory-is-never-status-ground-truth]]: status language in this
+Per `memory-is-never-status-ground-truth`: status language in this
 file describes CURRENT state at draft time. The DRY loop + promotion
 are the implementation work; the `status:` field reflects that the
 mission is Open, not the RFC's Draft status.
@@ -57,7 +56,7 @@ The RFC-0016-a promotion is sequenced AFTER the RFC-0015-b amendment
 
 ## Hard sequencing
 
-Per [[no-phantom-mission-pointer]] + RFC-0015-a §6.4 paired-invariance:
+Per `no-phantom-mission-pointer` + RFC-0015-a §6.4 paired-invariance:
 
 1. RFC-0015-b amendment mission lands FIRST (Draft → Accepted)
 2. `0015-b-substrate-defect-impl` mission lands SECOND
@@ -95,7 +94,7 @@ Per parent trio promotion precedent (2026-09-14 commit `bac77cfd`):
 3. Update Version History table with promotion entry
 4. Grep for `rfcs/draft/process/0016-a` stale references + update to
    `rfcs/accepted/process/0016-a` (post-promotion self-ref path update)
-5. Commit (NO PUSH per [[Initiative user-only]] + [[git-workflow]])
+5. Commit (NO PUSH per the user-initiation-only mandate + `git-workflow`)
 6. User owns: `git push origin next` + `gh pr create next:main`
 
 ## Acceptance Criteria
@@ -116,7 +115,7 @@ Per parent trio promotion precedent (2026-09-14 commit `bac77cfd`):
 
 ## Substrate-faithfulness verification
 
-Per [[substrate-faithfulness-verification]], before drafting the
+Per `substrate-faithfulness-verification`, before drafting the
 DRY review prompt for RFC-0016-a, the agent MUST verify the
 following substrate claims against actual code (NOT against RFC text):
 
@@ -141,8 +140,8 @@ These verifications gate the DRY review spawn.
 - RFC-0016 (Accepted 2026-09-14) — read-path substrate contract
 - RFC-0015-a (Accepted 2026-09-14) — write-path surface contract
 - `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md` — substrate defect context
-- [[no-phantom-mission-pointer]] — paired RFC + implementation mission must both be valid
-- [[Initiative user-only]] + [[git-workflow]] — push + remote writes user-owned
+- `no-phantom-mission-pointer` — paired RFC + implementation mission must both be valid
+- the user-initiation-only mandate + `git-workflow` — push + remote writes user-owned
 
 ## Why gate
 

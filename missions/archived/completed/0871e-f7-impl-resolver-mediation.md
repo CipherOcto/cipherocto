@@ -36,13 +36,13 @@ single-instance deployments may legitimately leave the slot `None`
       `DidRegistry::register` / `revoke`.
    5. Return `RegisterResponse` / `RevokeResponse` with the canonical
       DID + chain ID for caller observability.
-   **LANDED** — 5 test vectors
-   (`register_request_borsh_round_trip`,
-   `revoke_request_borsh_round_trip`,
-   `register_handler_refuses_without_coordinator`,
-   `revoke_handler_refuses_without_coordinator`,
-   `register_handler_rejects_invalid_did`,
-   `revoke_handler_rejects_invalid_did`).
+      **LANDED** — 5 test vectors
+      (`register_request_borsh_round_trip`,
+      `revoke_request_borsh_round_trip`,
+      `register_handler_refuses_without_coordinator`,
+      `revoke_handler_refuses_without_coordinator`,
+      `register_handler_rejects_invalid_did`,
+      `revoke_handler_rejects_invalid_did`).
 3. **`write_coordinator` + `chain_id` slots** on
    `IdentityResolverNodeConfig`. `write_coordinator` defaults to
    `None` (fail-closed writes); `chain_id` defaults to
@@ -61,7 +61,8 @@ single-instance deployments may legitimately leave the slot `None`
 
 ### Layer discipline
 
-Per [[cipherocto-design-principles]] §Layer discipline:
+Per `cipherocto-design-principles` §Layer discipline:
+
 - `octo-ident` (Layer B) — `DidWriteCoordinator` trait + `ChainId` (LANDED via substrate)
 - `octo-identity-resolver-node` (Layer C) — coordinator mediator (THIS MISSION)
 - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry` stays pure local persistence (no coordinator dep)
@@ -127,10 +128,10 @@ backed coordinator impl + multi-instance test harness.
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — v1.3 `DidRegistry` substrate
-- [[mission-0871e-f7-cross-instance-did-coordination]] — substrate mission
-- [[mission-0871b-storage-backend]] — sibling mission
-- [[cipherocto-design-principles]] — Layer A additive-only rule
+- `rfc-0010-v13-storage-extension` — v1.3 `DidRegistry` substrate
+- `mission-0871e-f7-cross-instance-did-coordination` — substrate mission
+- `mission-0871b-storage-backend` — sibling mission
+- `cipherocto-design-principles` — Layer A additive-only rule
 - `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md` — RFC-0862 v1.3 (Accepted 2026-08-11)
 
 ## Follow-on

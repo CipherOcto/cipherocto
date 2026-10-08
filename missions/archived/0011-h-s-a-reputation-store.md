@@ -85,7 +85,7 @@ Layer B substrate addition lands via EXTEND pattern (additive trait extension pe
 - [x] `StoolapReputationStore` (stoolap.rs) EXTENDED with stub impls returning `Ok(Vec::new())` + `Ok(None)`
 - [x] `cargo clippy -p octo-reputation --all-targets -- -D warnings` clean (NO regression of existing 11+ modules)
 - [x] `cargo test -p octo-reputation --lib` green (≥5 unit tests added; zero regression)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [x] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin filter-mapping + empty-default + above-score + below-score + RecorderDid equality)
 
 ## Dependencies
@@ -107,4 +107,4 @@ Layer B substrate addition lands via EXTEND pattern (additive trait extension pe
 
 ## Notes
 
-Stub originally filed 2026-09-18 per [[no-phantom-mission-pointers]]. Full AC + scope land in Phase 10 stub fill-in commit at `next PENDING` per the Phase 4 paired-substrate completion pattern. Phase 10 follows the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Additive trait extension pattern preserved per Phase 4 G22 precedent (no regression of existing 11+ modules; both impls get stub implementations for new methods). `#[non_exhaustive]` not needed on `ReputationFilter` (closed enum per `#[serde(rename_all = "lowercase")]`). `PeerReputation` is a struct (not enum) so no `#[non_exhaustive]` needed. CLI handler uses `tokio::runtime::Handle::current().block_on(...)` wrapper for async trait dispatch.
+Stub originally filed 2026-09-18 per `no-phantom-mission-pointers`. Full AC + scope land in Phase 10 stub fill-in commit at `next PENDING` per the Phase 4 paired-substrate completion pattern. Phase 10 follows the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Additive trait extension pattern preserved per Phase 4 G22 precedent (no regression of existing 11+ modules; both impls get stub implementations for new methods). `#[non_exhaustive]` not needed on `ReputationFilter` (closed enum per `#[serde(rename_all = "lowercase")]`). `PeerReputation` is a struct (not enum) so no `#[non_exhaustive]` needed. CLI handler uses `tokio::runtime::Handle::current().block_on(...)` wrapper for async trait dispatch.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `323a115f`-prior): `crates/octo-wallet/src/capability/gossip.rs` (137 lines) ships `gossip_envelope_to_buyer(env, buyer_did, catalog) -> Result<(), DeliveryError>` bounded retry loop with `MAX_GOSSIP_ATTEMPTS = 5` (per RFC-0959-A1 §Future Work F5), exponential backoff constants (`INITIAL_BACKOFF = 50ms`, `MAX_BACKOFF = 2s`), fail-fast path on `CatalogGossipError::Unsupported`, and 2 unit tests (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`). **9/9 ACs GREEN** as of 2026-08-07 audit-closure roll-up: 4/9 landed in Band A (bounded loop + fail-fast + bounded constant + cross-crate compat); 5/9 closed by sub-mission roll-up — TV4 + exhaustion unit test + exponential backoff + manual redacting Debug → `0959-c1-gossip-error-variants` (Band A 2026-08-06; commit `178f25c3`); TV7 cross-node integration test → `0959-c2-cross-node-delivery` (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`). Production RFC-0862 gossip channel binding (in scope of `0959-c` long-term but out of scope of c1/c2) remains an explicit deferral to `0959-c3-octo-transport-wiring` per [[deferred-vs-unspecified]] named-owner rule (wallet-octo-transport dep inversion + async API decision).
+Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `323a115f`-prior): `crates/octo-wallet/src/capability/gossip.rs` (137 lines) ships `gossip_envelope_to_buyer(env, buyer_did, catalog) -> Result<(), DeliveryError>` bounded retry loop with `MAX_GOSSIP_ATTEMPTS = 5` (per RFC-0959-A1 §Future Work F5), exponential backoff constants (`INITIAL_BACKOFF = 50ms`, `MAX_BACKOFF = 2s`), fail-fast path on `CatalogGossipError::Unsupported`, and 2 unit tests (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`). **9/9 ACs GREEN** as of 2026-08-07 audit-closure roll-up: 4/9 landed in Band A (bounded loop + fail-fast + bounded constant + cross-crate compat); 5/9 closed by sub-mission roll-up — TV4 + exhaustion unit test + exponential backoff + manual redacting Debug → `0959-c1-gossip-error-variants` (Band A 2026-08-06; commit `178f25c3`); TV7 cross-node integration test → `0959-c2-cross-node-delivery` (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`). Production RFC-0862 gossip channel binding (in scope of `0959-c` long-term but out of scope of c1/c2) remains an explicit deferral to `0959-c3-octo-transport-wiring` per `deferred-vs-unspecified` named-owner rule (wallet-octo-transport dep inversion + async API decision).
 
 ## RFC
 
@@ -27,7 +27,7 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 ### Cross-node delivery verification
 
-- [x] Integration test: seller node builds envelope; buyer node receives via gossip; buyer node's `HolderRegistry::lookup(envelope_id)` returns the inserted record (TV7). → **GREEN** via `0959-c2-cross-node-delivery` closure (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`): `crates/octo-wallet/tests/cross_node_delivery.rs` (NEW, 230 lines) bootstraps `InProcessDeliveryCatalog` (seller) + `StoolapHolderRegistry::open_in_memory()` (buyer). 4/4 TV7 tests pass. Production RFC-0862 gossip binding still deferred to `0959-c3-octo-transport-wiring` (separate scope; [[deferred-vs-unspecified]] named-owner rule — wallet-octo-transport dep inversion + async API decision).
+- [x] Integration test: seller node builds envelope; buyer node receives via gossip; buyer node's `HolderRegistry::lookup(envelope_id)` returns the inserted record (TV7). → **GREEN** via `0959-c2-cross-node-delivery` closure (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`): `crates/octo-wallet/tests/cross_node_delivery.rs` (NEW, 230 lines) bootstraps `InProcessDeliveryCatalog` (seller) + `StoolapHolderRegistry::open_in_memory()` (buyer). 4/4 TV7 tests pass. Production RFC-0862 gossip binding still deferred to `0959-c3-octo-transport-wiring` (separate scope; `deferred-vs-unspecified` named-owner rule — wallet-octo-transport dep inversion + async API decision).
 
 ### Test vectors (RFC-0959-A1 §Test Vectors, this sub-mission owns TV4, TV7)
 
@@ -43,7 +43,7 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 - [x] `cargo build -p octo-wallet` green (verified post-commit `323a115f`-prior; workspace-level `tdlib-rs` build error is pre-existing on `next` branch and unrelated)
 - [x] `cargo test -p octo-wallet --lib` green: 2/2 gossip tests pass (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`); 231/231 total octo-wallet lib tests pass
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); workspace-level `tdlib-rs` blocker RESOLVED 2026-08-07 via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram` (legacy TDLib adapter superseded by pure-Rust `octo-adapter-telegram-mtproto`)
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`); workspace-level `tdlib-rs` blocker RESOLVED 2026-08-07 via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram` (legacy TDLib adapter superseded by pure-Rust `octo-adapter-telegram-mtproto`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## Dependencies
@@ -82,13 +82,13 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Pull Request
 
-(unset; awaiting user push instruction per [[git-workflow]])
+(unset; awaiting user push instruction per `git-workflow`)
 
 ## Closure
 
 **Closure Date:** 2026-08-06 (Band A)
 
-**Closure Status:** Gossip retry loop function landed; bounded constant + fail-fast path + 2 unit tests verified present; 5/9 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]].
+**Closure Status:** Gossip retry loop function landed; bounded constant + fail-fast path + 2 unit tests verified present; 5/9 ACs explicit deferrals with named owner per `deferred-vs-unspecified`.
 
 **Implementation chain (commit `323a115f`-prior — landed pre-compaction; substrate already on disk):**
 
@@ -113,7 +113,7 @@ This sub-mission implements (per top-level Type Coverage table):
 | AC-6: TV7 (cross-node two StoolapHolderRegistry + RFC-0862 gossip)                  | GREEN  | `0959-c2-cross-node-delivery` (commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`): `tv7_cross_node_delivery_envelope_to_registry_lookup` test passes |
 | AC-7: exhaustion unit test (5× Transient failure → `GossipFailed { attempts: 5 }`)  | GREEN  | `0959-c1-gossip-error-variants` (commit `178f25c3`): `gossip_exhausts_after_max_transient_attempts` test passes                                                                   |
 | AC-8: Manual redacting Debug on `DeliveryError::GossipFailed`                       | GREEN  | pre-existing `market_delivery.rs` Debug impl (Band A 2026-08-06); extended by `0959-c1` `debug_redacts_transient_and_permanent_reasons` test                                      |
-| AC-9: cross-crate compat (build/test/clippy/fmt)                                    | GREEN  | targeted `-p octo-wallet` (workspace-level tdlib-rs error pre-existing; out of scope per [[feedback_clippy_zero_warnings]])                                                       |
+| AC-9: cross-crate compat (build/test/clippy/fmt)                                    | GREEN  | targeted `-p octo-wallet` (workspace-level tdlib-rs error pre-existing; out of scope per `feedback_clippy_zero_warnings`)                                                         |
 
 **Drift surface (mission text v0.1, 2026-08-04 vs RFC-0959-A1 body):**
 
@@ -125,7 +125,7 @@ This sub-mission implements (per top-level Type Coverage table):
 | 4   | Cross-node test infra                  | "two StoolapHolderRegistry instances + RFC-0862 gossip channel" | §TV7 canonical text                                                                                       | substrate (`stoolap_holder_registry.rs`) exists in single-instance form; RFC-0862 gossip channel not yet bound to `CapabilityCatalog::gossip_to_buyer`; deferred to `0959-c2` |
 | 5   | Post-loop exhaustion arm accessibility | implicit "exhausts after MAX_GOSSIP_ATTEMPTS"                   | `#[allow(unreachable_code)]`-gated because fail-fast dominates                                            | arm is structurally present; activation happens when `CatalogGossipError::Transient` lands                                                                                    |
 
-**Sub-mission decomposition (per [[deferred-vs-unspecified]] named-owner rule):**
+**Sub-mission decomposition (per `deferred-vs-unspecified` named-owner rule):**
 
 | Follow-up mission                  | Scope                                                                                                                                              | Owner                   | Unblocks                                     |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------- |
@@ -139,11 +139,11 @@ This sub-mission implements (per top-level Type Coverage table):
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. RFC-0959-A1 §Phase 3 gossip retry + cross-node verification scope captured.                                                                                                                                                                                                                                                                                                                                                       |
-| v0.2    | 2026-08-06 | Closed Band A. Retry loop function landed (commit `323a115f`-prior); 4/9 ACs green; 5/9 ACs explicit deferrals with named owners. Path refs corrected (`claimed/` not `open/`).                                                                                                                                                                                                                                                                    |
-| v0.3    | 2026-08-07 | Audit-closure roll-up. 5/9 stale `[ ]` checkboxes flipped to `[x]` via `0959-c1-gossip-error-variants` (commit `178f25c3`) + `0959-c2-cross-node-delivery` (Band A 2026-08-06) closures. AC rollup table updated to 9/9 GREEN. Status header expanded to record the roll-up. Production RFC-0862 gossip channel binding remains deferred to `0959-c3-octo-transport-wiring` per [[deferred-vs-unspecified]] named-owner rule (not in c1/c2 scope). |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0959-A1 §Phase 3 gossip retry + cross-node verification scope captured.                                                                                                                                                                                                                                                                                                                                                     |
+| v0.2    | 2026-08-06 | Closed Band A. Retry loop function landed (commit `323a115f`-prior); 4/9 ACs green; 5/9 ACs explicit deferrals with named owners. Path refs corrected (`claimed/` not `open/`).                                                                                                                                                                                                                                                                  |
+| v0.3    | 2026-08-07 | Audit-closure roll-up. 5/9 stale `[ ]` checkboxes flipped to `[x]` via `0959-c1-gossip-error-variants` (commit `178f25c3`) + `0959-c2-cross-node-delivery` (Band A 2026-08-06) closures. AC rollup table updated to 9/9 GREEN. Status header expanded to record the roll-up. Production RFC-0862 gossip channel binding remains deferred to `0959-c3-octo-transport-wiring` per `deferred-vs-unspecified` named-owner rule (not in c1/c2 scope). |
 
 Last Updated: 2026-08-07
 Version: 0.3

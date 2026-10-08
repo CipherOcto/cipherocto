@@ -4,7 +4,6 @@ description: Land `octo mesh peer` subcommands (list/add/remove) per RFC-0011-f 
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-f author session
   created: 2026-08-31
   v: "1.0"
   depends_on:
@@ -28,7 +27,7 @@ review_dry_closed: 2026-09-01
 
 # 0011-f-mesh-peer-subcommand — `octo mesh peer` subcommands (list/add/remove)
 
-**Status:** Completed — release-gated on RFC-0011-d Phase 1 reaching Accepted (the role-provisioning substrate that gates `peer add` / `remove` fleet-wide per RFC-0011-f §Roles and Authorities "Role-provisioning rationale"). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears.
+**Status:** Completed — release-gated on RFC-0011-d Phase 1 reaching Accepted (the role-provisioning substrate that gates `peer add` / `remove` fleet-wide per RFC-0011-f §Roles and Authorities "Role-provisioning rationale"). Implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow` once the gate clears.
 **Substrate:** RFC-0011-f §Subcommand Taxonomy (peer list/add/remove), RFC-0855 peer model, RFC-0010 canonical DID codec
 **Parent:** RFC-0011-f
 **Depends on:**
@@ -67,7 +66,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: core substrate �
 - [x] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
 - [x] Redaction: no envelope bytes (peer list/add/remove are non-secret; endpoint URIs are public per RFC-0011-f §Subcommand Taxonomy)
 - [x] Cross-mission AC: peer commands integrate with core mission's `OutputEnvelope<T>` + `OctoCliError` + clap root
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -93,7 +92,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Phase 7 mesh extensi
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -154,7 +153,7 @@ dirs = "5"                                          # $OCTO_HOME resolution
 | TV-PEER-REMOVE-3 | remove | `peer-remove-confirm-required` — missing `--confirm` → exit 2 `ConfirmationRequired`; no remove                              |
 | TV-PEER-REMOVE-4 | remove | `peer-remove-invalid-did-shape` — legacy DID form → exit 4 `IdentityNotFound`; no remove                                     |
 
-## Layer direction (per RFC-0011-f §Rationale "Why Layer C/D placement" + [[cipherocto-design-principles]])
+## Layer direction (per RFC-0011-f §Rationale "Why Layer C/D placement" + `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `PeerAction` dispatch + 3 output structs (`PeerListOutput` + `PeerAddOutput` + `PeerRemoveOutput`)
 - `octo-mesh` (Layer C) — extended with `[ADD]` `list_peers` + `add_peer` + `remove_peer` functions + `PeerSummary` + `TrustLevel` + `EndpointUri` + `PeerFilter` types + `MeshError` enum
@@ -199,7 +198,7 @@ cargo test -p octo-mesh --lib --tests                               # green
 - RFC-0871 — Specialized Node Protocol Envelope (substrate reference; not consumed by peer mission directly)
 - RFC-0008 — Execution Class mapping (`peer list` / `add` / `remove` = Class C per RFC-0011-f §RFC-0008 Execution Class Mapping)
 - RFC-0011-d — Role Provisioning (FUTURE; Phase 1 must reach Accepted before mutating subcommands ship — release gate)
-- [[cipherocto-design-principles]] — Layer A/B stability contract
+- `cipherocto-design-principles` — Layer A/B stability contract
 
 ## Why 1 release cycle gate (peer mission)
 

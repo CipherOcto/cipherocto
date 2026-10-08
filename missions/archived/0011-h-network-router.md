@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice LANDED at `next cee393d2` + substrate companion mission G10 LANDED at `next 52a99360` (stub fill-in at `next c0c3539f`, paired-YAML Claimed at `next 334deb71`). Substrate-first ordering preserved per [[no-phantom-mission-pointers]]: G10 substrate (`QuotaRouterNode` struct + `RouterStatus` enum + `QuotaRouterNodeAccess` trait + `status()` + `peer_capacity()` methods) landed BEFORE CLI dispatch. CLI dispatch slice atop the substrate adds: `NetworkAction::Router` clap variant + nested `NetworkRouterAction` enum + `RouterStatusArgs` + `RouterPeersArgs` (with `parse_32_byte_hex` shared helper per RFC-0011-h §Pastejacking Defense pattern; mixed-case hex rejected) + 2 output envelopes (`NetworkRouterStatusOutput` + `NetworkRouterPeersOutput`) + dispatch arm + 2 handler functions (`network_router_status` + `network_router_peers`) + `router_node_registry` helper + `status_label` helper. 6 Phase 8 test vectors (`tv_net8_1` through `tv_net8_6`) added to `crates/octo-cli/src/commands/network.rs`. 415/415 octo-cli tests pass (was 409). Closes the DEFERRED gap from RFC-0011-h §Substrate-Additions row G10.
+Completed (2026-09-20) — CLI dispatch slice LANDED at `next cee393d2` + substrate companion mission G10 LANDED at `next 52a99360` (stub fill-in at `next c0c3539f`, paired-YAML Claimed at `next 334deb71`). Substrate-first ordering preserved per `no-phantom-mission-pointers`: G10 substrate (`QuotaRouterNode` struct + `RouterStatus` enum + `QuotaRouterNodeAccess` trait + `status()` + `peer_capacity()` methods) landed BEFORE CLI dispatch. CLI dispatch slice atop the substrate adds: `NetworkAction::Router` clap variant + nested `NetworkRouterAction` enum + `RouterStatusArgs` + `RouterPeersArgs` (with `parse_32_byte_hex` shared helper per RFC-0011-h §Pastejacking Defense pattern; mixed-case hex rejected) + 2 output envelopes (`NetworkRouterStatusOutput` + `NetworkRouterPeersOutput`) + dispatch arm + 2 handler functions (`network_router_status` + `network_router_peers`) + `router_node_registry` helper + `status_label` helper. 6 Phase 8 test vectors (`tv_net8_1` through `tv_net8_6`) added to `crates/octo-cli/src/commands/network.rs`. 415/415 octo-cli tests pass (was 409). Closes the DEFERRED gap from RFC-0011-h §Substrate-Additions row G10.
 
 ## RFC
 
@@ -10,7 +10,7 @@ RFC-0011-h §Implementation Phases Phase 8 + RFC-0011-p §Subcommand Taxonomy Ph
 
 ## Summary
 
-CLI surface for `octo network router status` + `octo network router peers <peer_node_id_hex>`. Surfaces quota router node operational state + per-peer capacity to operators. Per-extension transport impl crates (substrate-ext-quota-router-*) are OUT OF SCOPE per per-extension crate pattern per [[cipherocto-design-principles]] §User extensibility.
+CLI surface for `octo network router status` + `octo network router peers <peer_node_id_hex>`. Surfaces quota router node operational state + per-peer capacity to operators. Per-extension transport impl crates (substrate-ext-quota-router-*) are OUT OF SCOPE per per-extension crate pattern per `cipherocto-design-principles` §User extensibility.
 
 ### Subcommands
 
@@ -63,4 +63,4 @@ octo network router peers <peer_node_id_hex> [--json]
 
 ## Layer discipline
 
-Zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle. Layer B substrate addition (`QuotaRouterNode` struct + `RouterStatus` enum + `QuotaRouterNodeAccess` trait + methods) + Layer C CLI dispatch (subcommand + envelopes + handler). Per-extension crate pattern preserved.
+Zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle. Layer B substrate addition (`QuotaRouterNode` struct + `RouterStatus` enum + `QuotaRouterNodeAccess` trait + methods) + Layer C CLI dispatch (subcommand + envelopes + handler). Per-extension crate pattern preserved.

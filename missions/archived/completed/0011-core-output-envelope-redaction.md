@@ -4,7 +4,6 @@ description: Land CLI substrate (output envelope, error envelope, redaction laye
 metadata:
   node_type: substrate-cli
   type: cli-substrate
-  originSessionId: RFC-0011 author session
   created: 2026-08-27
   v: "1.0"
   depends_on:
@@ -25,7 +24,7 @@ review_dry_closed: 2026-08-28
 
 # 0011-core-output-envelope-redaction — CLI substrate (output + error + redaction + clap root)
 
-**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28 (R31+R32 = 2 consecutive zero-finding rounds). User owns push/PR/promotion per [[feedback_initiation_user_only]] + [[git-workflow]].
+**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28 (R31+R32 = 2 consecutive zero-finding rounds). User owns push/PR/promotion per `feedback_initiation_user_only` + `git-workflow`.
 **Landing commit:** `bc228500 feat(octo-cli): M1+M5 substrate — OutputEnvelope + OctoCliError + OctoCliRedactor + clap root + deprecation stubs` (12 files, +1233 lines)
 **Substrate:** RFC-0011 §Output Envelope (Output Envelope), §Redaction Layer (Redaction Layer), §Error Handling (Error Handling), §Binary Surface (Binary Surface)
 **Parent:** RFC-0011
@@ -58,7 +57,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 - [x] Clap root struct implemented + unit-tested
 - [x] Stub deprecation banners implemented + unit-tested (TV-DEP1..2)
 - [x] Cross-mission AC: mission's output is the substrate that identity/capability/policy missions build on
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
 - [x] Cargo test --workspace --lib green
 - [x] No new INVALID cites introduced (Guard 2 cite validator 84/84 PASS)
@@ -74,7 +73,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Sub-steps
 
-1. **`OutputEnvelope<T>`** — `crates/octo-cli/src/output.rs` (Layer C/D per [[cipherocto-design-principles]]; substrate reference RFC-0011 §Output Envelope). `#[derive(Serialize, Deserialize, Debug, Clone)]` generic struct with `schema_version: u32 = 2`, `generated_at: DateTime<Utc>` (RFC 3339 with `Z`), `data: T`, `exit_code: i32`, `preview_only: bool`. TTY-aware renderer via `std::io::IsTerminal`.
+1. **`OutputEnvelope<T>`** — `crates/octo-cli/src/output.rs` (Layer C/D per `cipherocto-design-principles`; substrate reference RFC-0011 §Output Envelope). `#[derive(Serialize, Deserialize, Debug, Clone)]` generic struct with `schema_version: u32 = 2`, `generated_at: DateTime<Utc>` (RFC 3339 with `Z`), `data: T`, `exit_code: i32`, `preview_only: bool`. TTY-aware renderer via `std::io::IsTerminal`.
 
 2. **`OctoCliError`** — `crates/octo-cli/src/error.rs` (Layer C/D; substrate reference RFC-0011 §Error Handling). 19-variant `thiserror` enum (full list at impl-guide §OctoCliError). Each variant maps to fixed exit code per §Exit Code table; `render(force_json)` writes to stderr + exits.
 
@@ -88,7 +87,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §CLI Substrate for Ru
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -103,7 +102,7 @@ builds on (full scope per original mission YAML — preserved verbatim).
 
 21 new TV total (15 baseline + tv_red6/tv_red7/tv_red8 NEW redaction vectors + tv_env6/tv_env7/tv_env8 NEW environment-error vectors) — all passing per `cargo test -p octo-cli --lib`.
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `OutputEnvelope<T>` + `OctoCliError` +
   `OctoCliRedactor` + clap structs. All Layer C operator UX.
@@ -133,9 +132,9 @@ cargo test -p octo-cli --lib --tests  # green
 - (Future work, no RFC filed yet): WhatsApp/Telegram Auth Onboarding redaction
   layer pattern (proven) — see whatsapp/telegram CLI substrate RFC when filed
 - RFC-0009 §Identity Lifecycle — substrate that identity commands consume
-- [[cipherocto-design-principles]] — Layer A/B stability contract
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure (R31+R32 zero-finding rounds)
+- `cipherocto-design-principles` — Layer A/B stability contract
+- `rfc-0011-loop-dry-gate-closure` — review loop closure (R31+R32 zero-finding rounds)
 
 ## Claimant
 
-@unassigned (mission lifecycle now Completed; archived 2026-08-28 per [[mission-close-up-2026-08-27]] pattern)
+@unassigned (mission lifecycle now Completed; archived 2026-08-28 per `mission-close-up-2026-08-27` pattern)

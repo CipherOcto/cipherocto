@@ -297,7 +297,7 @@ pub enum RoleTag {
     // extension RFC (proposed: RFC-0959-A2 Role Taxonomy) that defines the
     // discriminant byte, the wire-format inclusion rules (per `MarketDeliveryEnvelope`
     // canonical_ser coverage), and the verifier-side accept-set. Naked addition
-    // is forbidden — see [[deferred-vs-unspecified]] rule.
+    // is forbidden — see `deferred-vs-unspecified` rule.
 }
 
 /// Payload (signed). Round 3 R2 C7: this is the canonical form for event_hash.

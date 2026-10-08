@@ -1045,7 +1045,7 @@ dispatch arms from `commands::dispatch`. v2.0+ binaries do not read
 `#[non_exhaustive]` enum keeps it as a library-API soft sentinel for
 downstream consumers of `OctoCliError` that match on the variant;
 `#[non_exhaustive]` library surface must not lose variants per
-[[cipherocto-design-principles]] §Extension over enumeration).
+`cipherocto-design-principles` §Extension over enumeration).
 The prose below is preserved as the v1.0 → v1.1 transition record.
 
 In the v1.0 → v1.1 window, the v1.1 release turned the v1.0

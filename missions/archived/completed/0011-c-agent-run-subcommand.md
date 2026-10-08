@@ -4,7 +4,6 @@ description: Land the `octo agent run` subcommand per RFC-0011-c
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
   v: "1.2"
   depends_on:
@@ -76,7 +75,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [x] `AgentNotFound(Uuid)` (exit 42), `InvalidStateTransition { from, to }` (exit 43), `RuntimeSpawnFailed { reason }` (exit 44) wired (per RFC-0011-c §9.8 slot allocation 39-52)
 - [x] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
 - [x] `--detach` flag implemented (default: in-process per clap `default_value_t = false`; per RFC-0011-c §9.3.2 — substrate-faithful default aligned with substrate behavior)
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green (286 lib tests pass on `next`)
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -97,7 +96,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -154,7 +153,7 @@ No new external crates required; all substrate types are defined in `octo-wallet
 | TV-AGT5             | `agent run`                             | Terminated agent             | `InvalidStateTransition { from: terminated, to: running }` (exit 43)                                                                                         | State machine rejects (canonical lowercase `AgentState::as_str()` labels)                           |
 | TV-CLI-RUN-DETACH-1 | `agent run --detach --token-file <tmp>` | Registered agent             | `AgentRunOutput { token_written: Some(TokenWrittenReceipt { session_id_hex, bytes_written, path_redacted }), ... }` (exit 0); token file exists, 0o600 perms | Happy path emit side; paired amendment `0011-c-attach-cli-dispatch-amendment` per RFC-0011-c §F.6.1 |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::Run` dispatch + `AgentRunOutput` payload type + 3 error variants.
 - `octo-wallet` (Layer B) — substrate `transition_agent`, `AgentState` (existing types).
@@ -190,9 +189,9 @@ cargo test -p octo-cli --lib --tests  # green (286 lib tests)
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
 - RFC-0002 §Replay Protection (replay substrate)
 - RFC-0015-a Appendix A (operative `transition_agent` semantics)
-- [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
-- [[memory-is-never-status-ground-truth]] — provenance rule
+- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
+- `memory-is-never-status-ground-truth` — provenance rule
 
 ## Why gate
 
@@ -226,7 +225,7 @@ with 2 of the 7 defects:
 
 Remaining 5 defects (2 doc-comment drift, 3 lookup_agent existence-leak, 5 phantom-event window, 6 missing state-machine tests, 7 RFC parity gap) do NOT affect this mission's CLI surface.
 
-**Hard sequencing:** RFC-0015-b acceptance (Draft → Accepted) is required BEFORE this mission's CLI implementation lands (per [[no-phantom-mission-pointer]] rule; the dependency is on the amendment RFC, not on the paired substrate-implementation mission which lands post-acceptance).
+**Hard sequencing:** RFC-0015-b acceptance (Draft → Accepted) is required BEFORE this mission's CLI implementation lands (per `no-phantom-mission-pointer` rule; the dependency is on the amendment RFC, not on the paired substrate-implementation mission which lands post-acceptance).
 
 ## DRY CLOSURE chain
 

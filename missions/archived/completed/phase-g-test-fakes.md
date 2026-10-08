@@ -6,7 +6,7 @@
 **Master plan:** `docs/plans/2026-07-19-identity-master-plan.md` §4 row G
 **Sub-mission of:** Phase G of identity-master-plan; standalone (no parent RFC-mission binding)
 
-> **Availability (claim gate):** Phase G requires only RFC-0959 v1.0 + RFC-0957 + RFC-0009 all Accepted. All three reached Accepted 2026-07-20. Phase G has no per-session RFC authorship dependency (consumes existing types from `quota-router-storage` per Phase C completion 2026-07-21). Claim filed 2026-07-22 by @cipherocto per [[implementation-workflow-hook]]; implementation concurrent with claim per user "proceed phase G" directive (claim-first-implement-after workflow applied retroactively to mission file).
+> **Availability (claim gate):** Phase G requires only RFC-0959 v1.0 + RFC-0957 + RFC-0009 all Accepted. All three reached Accepted 2026-07-20. Phase G has no per-session RFC authorship dependency (consumes existing types from `quota-router-storage` per Phase C completion 2026-07-21). Claim filed 2026-07-22 by @cipherocto per `implementation-workflow-hook`; implementation concurrent with claim per user "proceed phase G" directive (claim-first-implement-after workflow applied retroactively to mission file).
 
 ---
 
@@ -14,12 +14,12 @@
 
 Phase G delivers **executable test scaffolding** covering 10 models × 5 axes × 2 NodeTypes per master plan §4 Phase G exit criterion ("fixtures cover 10 models × 5 axes × 2 nodetypes"). Three fixture JSON files + one loader test:
 
-| File | Coverage |
-|---|---|
-| `crates/quota-router-core/tests/fixtures/asks/asks.json` | 20 asks (10 models × 2 nodetypes); 5 axes (3 RFC-0959 §3.3 standard + 2 RFC-0958 F1 extensions) |
-| `crates/quota-router-core/tests/fixtures/asks/cache_responses.json` | 12 cache scenarios (hit / miss / partial / full / zero-tokens) |
-| `crates/quota-router-core/tests/fixtures/asks/provider_sim_modes.json` | 8 provider sim modes (Ok / Throttled / RateLimited / KeyExpired / SchemaChange / Timeout / Garbage / InternalError) |
-| `crates/quota-router-core/tests/fixtures_asks.rs` | 11 tests: count invariants, axes coverage, every-model-has-both-nodetypes, insert-all-into-repo, SelfHost-cheaper invariant, AskId determinism, unique nonces, unique AskIds per (model, nodetype), cache classification sanity, sim mode coverage |
+| File                                                                   | Coverage                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/quota-router-core/tests/fixtures/asks/asks.json`               | 20 asks (10 models × 2 nodetypes); 5 axes (3 RFC-0959 §3.3 standard + 2 RFC-0958 F1 extensions)                                                                                                                                                    |
+| `crates/quota-router-core/tests/fixtures/asks/cache_responses.json`    | 12 cache scenarios (hit / miss / partial / full / zero-tokens)                                                                                                                                                                                     |
+| `crates/quota-router-core/tests/fixtures/asks/provider_sim_modes.json` | 8 provider sim modes (Ok / Throttled / RateLimited / KeyExpired / SchemaChange / Timeout / Garbage / InternalError)                                                                                                                                |
+| `crates/quota-router-core/tests/fixtures_asks.rs`                      | 11 tests: count invariants, axes coverage, every-model-has-both-nodetypes, insert-all-into-repo, SelfHost-cheaper invariant, AskId determinism, unique nonces, unique AskIds per (model, nodetype), cache classification sanity, sim mode coverage |
 
 ## In Scope
 
@@ -86,7 +86,7 @@ cargo fmt --all -- --check
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-07-22 | Mission claimed; concurrent implementation per user directive.                                                                                        |
+| Version | Date       | Change                                                                                                                                              |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-07-22 | Mission claimed; concurrent implementation per user directive.                                                                                      |
 | v0.2    | 2026-08-06 | Closed Band A. Status header Claimed→Closed (Band A — 2026-08-06). 11/11 fixtures_asks tests verified green post-claim. No new impl commits needed. |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation landed F1+F2+F3 (14/16 ACs green; modules `crates/octo-wallet/src/capability/{federation,gc,audit_log}.rs` carrying 21 tests across 789 lines). 2 unchecked ACs are explicit cross-mission deferrals with named owner per [[deferred-vs-unspecified]]: F4 (2 ACs: bundle struct + TV) blocks on RFC-0009 §Identity evolution (RFC-0009 currently Accepted 2026-08-02 but §Identity evolution not yet active upstream). Future-work sub-mission `0957-f-f4-bundle` to be filed when RFC-0009 §Identity lands.
+Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation landed F1+F2+F3 (14/16 ACs green; modules `crates/octo-wallet/src/capability/{federation,gc,audit_log}.rs` carrying 21 tests across 789 lines). 2 unchecked ACs are explicit cross-mission deferrals with named owner per `deferred-vs-unspecified`: F4 (2 ACs: bundle struct + TV) blocks on RFC-0009 §Identity evolution (RFC-0009 currently Accepted 2026-08-02 but §Identity evolution not yet active upstream). Future-work sub-mission `0957-f-f4-bundle` to be filed when RFC-0009 §Identity lands.
 
 ## RFC
 
@@ -36,8 +36,8 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 
 ### F4: CapabilityCatalog V2
 
-- [ ] Defer until RFC-0009 §Identity evolves. V2 bundles 4 extensions (holder_registry, root_secret_for_ask, settlement_chain_tip, gossip_to_buyer) into a single struct. **Deferral owner:** @cipherocto. **Target:** RFC-0009-B1 / RFC-0957-A2 full signature promotion (target 2026-09-15 per the 0957-a1 / 0959-a1 / 0969 phantom-type chain) per [[deferred-vs-unspecified]] named-owner rule.
-- [ ] TV F4: NOT YET SPEC'D — when RFC-0009 §Identity lands, re-author this AC. **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Re-author AC body when F4 substrate (V2 bundling) lands.
+- [ ] Defer until RFC-0009 §Identity evolves. V2 bundles 4 extensions (holder_registry, root_secret_for_ask, settlement_chain_tip, gossip_to_buyer) into a single struct. **Deferral owner:** @cipherocto. **Target:** RFC-0009-B1 / RFC-0957-A2 full signature promotion (target 2026-09-15 per the 0957-a1 / 0959-a1 / 0969 phantom-type chain) per `deferred-vs-unspecified` named-owner rule.
+- [ ] TV F4: NOT YET SPEC'D — when RFC-0009 §Identity lands, re-author this AC. **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per `deferred-vs-unspecified` named-owner rule. Re-author AC body when F4 substrate (V2 bundling) lands.
 - [x] Concrete plan documented in RFC-0957-A1 §Future Work; blocks on RFC-0009 §Identity evolution.
 
 ### Cross-crate compat
@@ -113,18 +113,18 @@ When RFC-0009 §Identity lands, re-author the F4 AC + TV. The 4 current `Capabil
 ## Notes
 
 - Each future item has a concrete plan in RFC-0957-A1 §Future Work (F1: ~1KB per insert bound; F2: 30-day retention; F3: append-only log; F4: bundle when RFC-0009 §Identity evolves).
-- Per [[deferred-vs-unspecified]] rule: each item has a Major divergent note (R*-N* finding from R28-R64 review) + concrete plan + explicit phase gate (F1, F2, F3 trigger after 0957-c lands; F4 triggers on RFC-0009 §Identity).
+- Per `deferred-vs-unspecified` rule: each item has a Major divergent note (R*-N* finding from R28-R64 review) + concrete plan + explicit phase gate (F1, F2, F3 trigger after 0957-c lands; F4 triggers on RFC-0009 §Identity).
 - F4 is the only item not yet fully spec'd (TV F4 placeholder) because it depends on RFC-0009 §Identity evolution. The mission structure explicitly handles this: when RFC-0009 §Identity lands, re-author F4 AC + TV.
 - Manual Debug redaction on `AuditEvent` is the load-bearing security primitive for F3 (audit logs are forensics surface; cap_root_hash leakage defeats audit purpose).
 - Concrete plans for F1, F2, F3 mean this mission is CLAIMABLE; only F4 blocks on upstream.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                     |
-| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. RFC-0957-A1 §Future Work F1-F4 consolidated.                                                                                                                                              |
-| v0.2    | 2026-08-06 | Closed Band A (14/16 ACs). F4 (2 ACs) explicit deferral to `0957-f-f4-bundle` future sub-mission; blocks on RFC-0009 §Identity evolution.                                                                  |
-| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on F4 (2 ACs) per [[deferred-vs-unspecified]] named-owner rule. owner = @cipherocto, target = 2026-09-15 (sync with RFC-0009-B1 / RFC-0957-A2 phantom-type chain). |
+| Version | Date       | Change                                                                                                                                                                                                   |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0957-A1 §Future Work F1-F4 consolidated.                                                                                                                                            |
+| v0.2    | 2026-08-06 | Closed Band A (14/16 ACs). F4 (2 ACs) explicit deferral to `0957-f-f4-bundle` future sub-mission; blocks on RFC-0009 §Identity evolution.                                                                |
+| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on F4 (2 ACs) per `deferred-vs-unspecified` named-owner rule. owner = @cipherocto, target = 2026-09-15 (sync with RFC-0009-B1 / RFC-0957-A2 phantom-type chain). |
 
 Last Updated: 2026-08-07
 Version: 0.3

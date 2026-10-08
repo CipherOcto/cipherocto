@@ -4,7 +4,6 @@ description: Implement `octo role select` Phase 2 (coordinator + domain-coordina
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-d author session
   created: 2026-08-31
   v: "1.3"
   completed: 2026-09-03
@@ -45,7 +44,7 @@ This phase-aggregate mission decomposes per RFC-0011-d §Mission Decomposition i
 | M10 | `0011-d-M10-phase2-coordinator-domain-coordinator.md`      | `octo coordinator domain-coordinator {bind,unbind,list,show}` clap       | RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e Accepted |
 | M11 | `0011-d-M11-phase2-domain-coordinator-platform-binding.md` | `octo_coordinator::{bind,unbind,list,show}_domain_coordinator` substrate | RFC-0855p-e Accepted                                                                          |
 
-**Workflow:** Both atomics are GATED. Sub-step 1 of each mission is the gate verification (`git log` of Accepted RFC files). Do not claim M10/M11 until both prereq RFCs are Accepted. Per [[deferred-vs-unspecified]], deferred (not unspecified).
+**Workflow:** Both atomics are GATED. Sub-step 1 of each mission is the gate verification (`git log` of Accepted RFC files). Do not claim M10/M11 until both prereq RFCs are Accepted. Per `deferred-vs-unspecified`, deferred (not unspecified).
 
 **Ordering:** M11 (substrate) should land BEFORE M10 (CLI binding) so M10 has substrate to call. Per RFC-0011 substrate-first pattern.
 
@@ -72,11 +71,11 @@ See YAML frontmatter `depends_on` block + `release_gate` block above. Hard seque
 - [ ] Mission-level coordination surface wired (RFC-0855p-b `CoordinatorLifecycle` state machine; handover ceremony substrate)
 - [ ] Sub-group nesting respected for `domain-coordinator` role binding (RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) sub-DC authority)
 - [ ] HandoverRequest Envelope substrate wired into role binding flow (RFC-0855p-e handover ceremony)
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [ ] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [ ] Cargo clippy -p octo-cli -p octo-role --all-targets -- -D warnings clean
 - [ ] Cargo test -p octo-cli -p octo-role --lib --tests green
 - [ ] No new INVALID cites introduced (cite validator runs clean per `docs/07-developers/octo-cli-implementation-guide.md` Guard 2)
-- [ ] **release_gate verification** — verify BOTH RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table) BEFORE claiming this mission per [[feedback_no_guess_hard_check]]
+- [ ] **release_gate verification** — verify BOTH RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table) BEFORE claiming this mission per `feedback_no_guess_hard_check`
 
 ### Type Coverage
 
@@ -95,7 +94,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Role Subcommands Pha
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Risk
 
@@ -120,7 +119,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Role Subcommands Pha
 >
 > Operators see the prereq RFC names in the error message so they can track upstream RFC status. This is a UX requirement per RFC-0011-d §Compatibility partial-prereq caveat.
 >
-> **Verification per [[feedback_no_guess_hard_check]]:** Before claiming this mission, verify BOTH RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table). Substrate status ≠ RFC status; never assume.
+> **Verification per `feedback_no_guess_hard_check`:** Before claiming this mission, verify BOTH RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table). Substrate status ≠ RFC status; never assume.
 
 - `RoleKind` discriminator for `coordinator` and `domain-coordinator` follows the same RFC-0855-namespaced UUIDv5 pattern as Phase 1 (`urn:octo:role:0855:coordinator` and `urn:octo:role:0855:domain-coordinator`); integration test asserts distinct UUIDs across all 9 role slugs (7 Phase 1 + 2 Phase 2).
 - `domain-coordinator` role binding updates `RFC-0855p-c` `DomainCoordinatorRecord.platform_admin_id` per RFC-0011-d §7.2 side effects row; the platform_admin_id is the operator's DID (RFC-0009).
@@ -170,7 +169,7 @@ octo-subgroup = { path = "../octo-subgroup" }
 | TV-RDC-2  | `role select domain-coordinator` with 0855p-d Accepted but 0855p-e still Draft — exit 33; error names prereq (RFC-0855p-e)                                                                                        | (Phase 2) Domain-coordinator select               |
 | TV-RP-1   | `role select coordinator` (Phase 2 blocked) — exit 33; error names prereq (RFC-0855p-e)                                                                                                                           | Partial-prereq guard (carry-forward from Phase 1) |
 
-### Layer direction (per [[cipherocto-design-principles]])
+### Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — Phase 2 dispatch extension (no new envelopes; reuses `RoleSelectOutput`); HSM gate + redaction pass reused from Phase 1
 - `octo-role` (Layer B) — `RoleBinding` extended with `platform_admin_id` + `handover_envelope_hash`; `octo_role::select` extended with `coordinator` + `domain-coordinator` slugs
@@ -218,7 +217,7 @@ cargo test -p octo-cli -p octo-role -p octo-coordinator -p octo-handover -p octo
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping; role commands are class C)
 - RFC-0010 — Canonical DID Codec (ChainId typing for slash ledger partition)
 - RFC-0957 — Macaroon Substrate (signer trait cross-reference)
-- [[cipherocto-design-principles]] — Layer B stability contract; no central enum; typed discriminator
+- `cipherocto-design-principles` — Layer B stability contract; no central enum; typed discriminator
 
 ## Why 1 release cycle gate
 
@@ -227,7 +226,7 @@ Per the `release_gate` block in YAML frontmatter, this mission is release-gated 
 1. **Substrate dependency** — `coordinator` + `domain-coordinator` role bindings require the HandoverRequest Envelope substrate (RFC-0855p-e) for the handover ceremony. The envelope canonical form + signature ceremony are NOT defined elsewhere; the role binding cannot compile without the substrate.
 2. **Sub-group nesting dependency** — `domain-coordinator` role binding requires sub-group nesting authority (RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3)). Flat-domain coordinator binding only covers flat domains; the DomainCoordinator specialization requires the sub-group substrate to participate in mission-level handover.
 3. **Amendment chain rationale (RFC-0011-d §Why Phase 1 / Phase 2 split)** — folding Phase 2 into RFC-0011-d would force the amendment to wait for both Draft RFCs to reach Accepted — which is precisely the dependency chain the amendment chain pattern is designed to break. Phase 1 (RFC-0011-d) lands unblocked; Phase 2 (this mission) lands when the substrate RFCs mature.
-4. **Verification protocol per [[feedback_no_guess_hard_check]]** — before claiming this mission, verify BOTH prereq RFCs have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table). Substrate status ≠ RFC status; never assume. The mission frontmatter's `release_gate.require` field is the canonical gate reference.
+4. **Verification protocol per `feedback_no_guess_hard_check`** — before claiming this mission, verify BOTH prereq RFCs have reached Accepted status (per `git log` of `rfcs/accepted/` directory + VH table). Substrate status ≠ RFC status; never assume. The mission frontmatter's `release_gate.require` field is the canonical gate reference.
 5. **Partial-prereq guard until release_gate unblocks** — until both prereq RFCs reach Accepted, `coordinator` + `domain-coordinator` subcommands continue to return exit 33 (`RoleNotSelectable`) with the prereq RFC numbers named verbatim in the error message (RFC-0011-d §Implementation Phases Phase 2 + §Compatibility partial-prereq caveat + Appendix E Partial-prereq flow). The partial-prereq guard is the operator UX for the gate state.
 
 ## Claimant

@@ -4,7 +4,6 @@ description: Implement `octo governance {attest,vote}` per RFC-0011-g Phase 2; g
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-g author session
   created: 2026-08-31
   v: "1.2"
   depends_on:
@@ -17,7 +16,7 @@ metadata:
     - mission 0013-governance-substrate-extraction
     - mission 0013-governance-network-migration
   release_gate:
-    require: "user-gated per [[feedback_initiation_user_only]]; implementation kickoff awaits explicit user instruction"
+    require: "user-gated per `feedback_initiation_user_only`; implementation kickoff awaits explicit user instruction"
     gates_cleared_at: 2026-09-17
     gates_cleared:
       - "RFC-0855p-d (Accepted; rfcs/accepted/networking/0855p-d-subgroup-nesting.md + d1/d2/d3 amendments)"
@@ -44,7 +43,7 @@ landed with GovernanceSession + Arc dyn Clock + CapabilityToken +
 CapabilitySigner. Legacy vote + attest preserved via `#[deprecated]`
 for transitional callers per RFC §7.4 RFC-frozen wire compatibility.
 Mission is ready for promotion to Completed after one more 5-len DRY
-round on the substrate (R3). Per [[feedback_initiation_user_only]],
+round on the substrate (R3). Per `feedback_initiation_user_only`,
 the closure gate remains user-gated.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::attest` +
 `octo_governance::attest_v2` + `octo_governance::vote` +
@@ -79,7 +78,7 @@ Phases Phase 2, the `OctoCliError::PrereqNotAccepted { rfc_ref }` exit
 38 surface is the canonical Draft→Accepted transition gate (still
 gating during the window). Mission is ready for promotion to Completed
 after one more 5-len DRY round on the substrate (R3) per
-[[feedback_initiation_user_only]].
+`feedback_initiation_user_only`.
 
 ## RFC
 
@@ -130,7 +129,7 @@ clause. Hard sequencing per RFC-0011-g §Implementation Phases:
       DID + capability mission's macaroon substrate + role-provisioning
       mission's `vote` capability mint
 - [x] Layer direction verified (no reverse deps per
-      [[cipherocto-design-principles]])
+      `cipherocto-design-principles`)
 - [x] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
       clean
 - [x] Cargo test -p octo-cli --lib --tests green
@@ -318,7 +317,7 @@ At least 10 test vectors covering the attest subcommand + vote subcommand
 Phase 1 + Phase 2 total = 6 + 10 = 16 test vectors (RFC minimum: ≥12
 per RFC-0011-g §Test Vectors).
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `GovernanceAction::{Attest, Vote}`
   dispatch + 4 output structs (`AttestationReceipt`, `AttestOutput`,
@@ -384,7 +383,7 @@ octo governance attest <subgroup_did> route-quality:uptime-30d --confirm --confi
 - RFC-0011-d — Role Provisioning (vote capability issuance)
 - RFC-0957 — Macaroon Substrate (`Audience(proposal_id)` caveat)
 - RFC-0900 — Economic Substrate (informational; dual-stake model)
-- [[cipherocto-design-principles]] — Layer A/B/C/D/E stability contract
+- `cipherocto-design-principles` — Layer A/B/C/D/E stability contract
 
 ## Why 1 release cycle gate (Phase 2 multi-prereq)
 
@@ -419,29 +418,29 @@ acceptance).
 
 Phase 2 substrate landed in 5 sequential commits on `next` post the
 release-gate clear. Per standing kickoff direction and the §Substrate
-Gap standing pattern (see [[no-phantom-mission-pointers]] + closure
+Gap standing pattern (see `no-phantom-mission-pointers` + closure
 audit chain), this section enumerates the substrate-vs-mission gap so
 the next review cycle can target the residuals rather than re-discover
 them.
 
-| Surface                                        | Mission AC             | Substrate landing commit       | Status                                                                                                                                                  |
-| ---------------------------------------------- | ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `octo_governance::attest` legacy substrate     | AC "attest implemented"| `b8cf1bbd` (Phase 2 substrate) | LANDED — `[ADD]` substrate with append-only ledger. Caller-thread-clock reads via deprecated path; legacy function bodies byte-identical to prior baseline.      |
-| `octo_governance::vote` legacy substrate       | AC "vote implemented"  | `b8cf1bbd` (Phase 2 substrate) | LANDED — same as attest; `[deprecated(since = "0.0.0")]` annotation added in R2.5.2.                                                                      |
-| `AttestationReceipt` + `AttestOutput`          | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
-| `VoteReceipt` + `VoteOutput`                   | AC "output types"      | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
-| `OctoCliError::VoteRejected` (exit 36)         | AC "errors"            | `b8cf1bbd`                     | LANDED — DuplicateVote routed to VoteRejected per RFC §Adversarial Review.                                                                              |
-| `OctoCliError::UnknownAttestationKind` (37)    | AC "errors"            | `b8cf1bbd`                     | LANDED.                                                                                                                                                 |
-| `OctoCliError::PrereqNotAccepted` (38)         | AC "errors"            | `b8cf1bbd`                     | LANDED — `rfc_ref` field for cross-cutting prereq reporting.                                                                                             |
-| RFC §7.4 stateless `attest_v2` + `vote_v2`     | NEW (R2.5.1-R2.5.3)    | `5b4c0b1c` + `d077ab5c`        | LANDED — `GovernanceSession` caller-owned with `Arc<dyn Clock>` DI. 13 vote tests + 12 attest tests. Legacy paths preserved via `#[deprecated]`.     |
-| `attest_v2` / `vote_v2` Ledger               | NEW (R2.5.1-R2.5.2)    | `5b4c0b1c`                     | LANDED — `AttestationLog` + `VoteLog` carry append-only entries; `CapabilityRegistry` (vote) holds per-cap signers.                                  |
-| `CapabilityToken` additive newtype             | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — `CapabilityToken::new(cap_id, issuer_did, weight_bps)`. `#[non_exhaustive]` Layer A frozen additive contract preserved.                       |
-| `CapabilitySigner` trait abstraction           | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — bridges Layer A wallet substrate to Layer B attest substrate without reverse dependency.                                                        |
-| `Clock` trait + `SystemClock` + `FixedClock`   | NEW (R2.5.1)           | `5b4c0b1c`                     | LANDED — DI for substrate timestamp reads. Deterministic-substrate contract preserved.                                                                  |
-| `QuorumNotReached` substrate path              | NEW (R2.5.4)           | `5547765e`                     | LANDED — V13 test exercises the 100_000 bps saturation guard via vote_v2; documents the append-then-project pattern.                                  |
-| 4 NEW CLI tests (vote_v2 + attest_v2 end-to-end) | NEW (R2.5.4)         | DEFERRED                       | **GAP — DEFERRED**. End-to-end CLI happy-path through v2 substrate requires mock WalletSigner + IdentityKey + CapabilitySigner scaffolding; out of scope for R2.5.4 closure. Lands as a follow-on cycle when the wallet substrate mock surface is in place (see RFC-0015 substrate and Phase C wallet substrate work). |
-| Token-design §10 Phase 2 governance note       | NEW (R2.5.4)           | pending commit                 | LANDED via docs commit (paired with this YAML update).                                                                                                  |
-| Mission YAML `status: Claimed` (vs `Open`)     | NEW                    | this YAML update              | LANDED — Phase 2 substrate complete per the release_gate clear; status flips Claimed with all 16 Phase 2 ACs satisfied. Mission is ready for promotion to Completed after one more 5-len DRY round on the substrate (R3). |
+| Surface                                          | Mission AC              | Substrate landing commit       | Status                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------ | ----------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo_governance::attest` legacy substrate       | AC "attest implemented" | `b8cf1bbd` (Phase 2 substrate) | LANDED — `[ADD]` substrate with append-only ledger. Caller-thread-clock reads via deprecated path; legacy function bodies byte-identical to prior baseline.                                                                                                                                                            |
+| `octo_governance::vote` legacy substrate         | AC "vote implemented"   | `b8cf1bbd` (Phase 2 substrate) | LANDED — same as attest; `[deprecated(since = "0.0.0")]` annotation added in R2.5.2.                                                                                                                                                                                                                                   |
+| `AttestationReceipt` + `AttestOutput`            | AC "output types"       | `b8cf1bbd`                     | LANDED.                                                                                                                                                                                                                                                                                                                |
+| `VoteReceipt` + `VoteOutput`                     | AC "output types"       | `b8cf1bbd`                     | LANDED.                                                                                                                                                                                                                                                                                                                |
+| `OctoCliError::VoteRejected` (exit 36)           | AC "errors"             | `b8cf1bbd`                     | LANDED — DuplicateVote routed to VoteRejected per RFC §Adversarial Review.                                                                                                                                                                                                                                             |
+| `OctoCliError::UnknownAttestationKind` (37)      | AC "errors"             | `b8cf1bbd`                     | LANDED.                                                                                                                                                                                                                                                                                                                |
+| `OctoCliError::PrereqNotAccepted` (38)           | AC "errors"             | `b8cf1bbd`                     | LANDED — `rfc_ref` field for cross-cutting prereq reporting.                                                                                                                                                                                                                                                           |
+| RFC §7.4 stateless `attest_v2` + `vote_v2`       | NEW (R2.5.1-R2.5.3)     | `5b4c0b1c` + `d077ab5c`        | LANDED — `GovernanceSession` caller-owned with `Arc<dyn Clock>` DI. 13 vote tests + 12 attest tests. Legacy paths preserved via `#[deprecated]`.                                                                                                                                                                       |
+| `attest_v2` / `vote_v2` Ledger                   | NEW (R2.5.1-R2.5.2)     | `5b4c0b1c`                     | LANDED — `AttestationLog` + `VoteLog` carry append-only entries; `CapabilityRegistry` (vote) holds per-cap signers.                                                                                                                                                                                                    |
+| `CapabilityToken` additive newtype               | NEW (R2.5.1)            | `5b4c0b1c`                     | LANDED — `CapabilityToken::new(cap_id, issuer_did, weight_bps)`. `#[non_exhaustive]` Layer A frozen additive contract preserved.                                                                                                                                                                                       |
+| `CapabilitySigner` trait abstraction             | NEW (R2.5.1)            | `5b4c0b1c`                     | LANDED — bridges Layer A wallet substrate to Layer B attest substrate without reverse dependency.                                                                                                                                                                                                                      |
+| `Clock` trait + `SystemClock` + `FixedClock`     | NEW (R2.5.1)            | `5b4c0b1c`                     | LANDED — DI for substrate timestamp reads. Deterministic-substrate contract preserved.                                                                                                                                                                                                                                 |
+| `QuorumNotReached` substrate path                | NEW (R2.5.4)            | `5547765e`                     | LANDED — V13 test exercises the 100_000 bps saturation guard via vote_v2; documents the append-then-project pattern.                                                                                                                                                                                                   |
+| 4 NEW CLI tests (vote_v2 + attest_v2 end-to-end) | NEW (R2.5.4)            | DEFERRED                       | **GAP — DEFERRED**. End-to-end CLI happy-path through v2 substrate requires mock WalletSigner + IdentityKey + CapabilitySigner scaffolding; out of scope for R2.5.4 closure. Lands as a follow-on cycle when the wallet substrate mock surface is in place (see RFC-0015 substrate and Phase C wallet substrate work). |
+| Token-design §10 Phase 2 governance note         | NEW (R2.5.4)            | pending commit                 | LANDED via docs commit (paired with this YAML update).                                                                                                                                                                                                                                                                 |
+| Mission YAML `status: Claimed` (vs `Open`)       | NEW                     | this YAML update               | LANDED — Phase 2 substrate complete per the release_gate clear; status flips Claimed with all 16 Phase 2 ACs satisfied. Mission is ready for promotion to Completed after one more 5-len DRY round on the substrate (R3).                                                                                              |
 
 ### Pre-existing cache test failures (out of scope)
 

@@ -59,14 +59,14 @@ Architecture:
 - One GIL acquire per event (NOT per registered target) — bounded GIL overhead
 - GLOBAL_EXECUTOR singleton lazily initializes; `set_*_callback` pushes into both executor + `PY_REGISTRY` snapshot
 
-Test environment note: `cargo test --lib` for `quota-router-pyo3` requires `LD_LIBRARY_PATH=/home/mmacedoeu/.pyenv/versions/3.12.9/lib` (matches existing `e2e_proxy` env fix documented in [[proxy-strong-scenarios-status]]). The `[tool.maturin] features = ["pyo3/extension-module"]` setting in `python/pyproject.toml` enables the extension-module feature for wheel builds; the rlib test path auto-initializes Python via the `auto-initialize` pyo3 feature.
+Test environment note: `cargo test --lib` for `quota-router-pyo3` requires `LD_LIBRARY_PATH=/home/mmacedoeu/.pyenv/versions/3.12.9/lib` (matches existing `e2e_proxy` env fix documented in `proxy-strong-scenarios-status`). The `[tool.maturin] features = ["pyo3/extension-module"]` setting in `python/pyproject.toml` enables the extension-module feature for wheel builds; the rlib test path auto-initializes Python via the `auto-initialize` pyo3 feature.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                            |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| v0.2    | 2026-08-13 | LANDED. 10/10 ACs closed. 8 PyO3 callback tests pass. New `crates/quota-router-pyo3/src/callbacks.rs` + README Callback section.   |
-| v0.1    | 2026-08-13 | Mission filed. Follow-on to `0947-c-callback-executor` closure. PyO3 callback SDK + LiteLLM interface match. 10 ACs.              |
+| Version | Date       | Change                                                                                                                           |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| v0.2    | 2026-08-13 | LANDED. 10/10 ACs closed. 8 PyO3 callback tests pass. New `crates/quota-router-pyo3/src/callbacks.rs` + README Callback section. |
+| v0.1    | 2026-08-13 | Mission filed. Follow-on to `0947-c-callback-executor` closure. PyO3 callback SDK + LiteLLM interface match. 10 ACs.             |
 
 Last Updated: 2026-08-13
 Version: 0.2

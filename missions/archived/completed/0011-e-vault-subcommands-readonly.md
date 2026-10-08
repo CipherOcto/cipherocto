@@ -4,7 +4,6 @@ description: Land read-only vault subcommands (vault list, vault balance) per RF
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-e author session
   created: 2026-08-31
   v: "1.0"
   depends_on:
@@ -83,7 +82,7 @@ RFC-0011-e (vault operations amendment; Phase 6 of the RFC-0011 amendment chain)
 - [x] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set (per RFC-0011-e §Output Envelope)
 - [x] Cache hit warning surfaced when projection older than cache TTL (per RFC-0011-e §Security: Balance Projection Staleness)
 - [x] Cross-mission AC: read paths integrate with core mission's envelope + identity mission's active_did resolution
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -105,7 +104,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Vault Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -124,7 +123,7 @@ Land the 2 read-only vault subcommands per RFC-0011-e §Phase 1 (`octo vault lis
 
 ## Sub-steps
 
-1. **`VaultAction` dispatch + clap wiring** — `crates/octo-cli/src/commands/vault.rs` (NEW; Layer C/D per [[cipherocto-design-principles]]; substrate reference RFC-0011-e §Subcommand Taxonomy). `enum VaultAction { List(VaultListArgs), Balance(VaultBalanceArgs) }`. Wire into existing clap root from mission `0011-core-output-envelope-redaction`.
+1. **`VaultAction` dispatch + clap wiring** — `crates/octo-cli/src/commands/vault.rs` (NEW; Layer C/D per `cipherocto-design-principles`; substrate reference RFC-0011-e §Subcommand Taxonomy). `enum VaultAction { List(VaultListArgs), Balance(VaultBalanceArgs) }`. Wire into existing clap root from mission `0011-core-output-envelope-redaction`.
 
 2. **`VaultListOutput` + `VaultBalanceOutput` payload types** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. `schema_version: u32 = 1` envelope wrapper (per RFC-0011-e §Output Envelope).
 
@@ -160,7 +159,7 @@ No new external crates required; all substrate types (`VaultSummary`, `VaultBala
 | VLT7 | `vault balance` | `<vault-id>` for vault with no events    | `projected_balance: Dqa::ZERO`, `projected_at_unix_seconds: 0` | Vault exists but no transfers yet                                                 |
 | VLT8 | `vault balance` | `<vault-id>` for unknown vault           | `VaultNotOwned` (exit 23)                                      | Substrate rejects; CLI surfaces structured error                                  |
 
-## Layer direction (RFC-0011-e §Roles and Authorities + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-e §Roles and Authorities + per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `VaultAction` dispatch + 2 output structs (`VaultListOutput`, `VaultBalanceOutput`) + `VaultNotOwned` error variant + vault-specific redaction patterns.
 - `octo-vault` (Layer B) — substrate `[ADD]` `list_owned`, `project_balance`, `VaultSummary`, `VaultBalanceProjection`, `ProjectionSource` (landed via companion mission `0011-e-vault-substrate-additions`).
@@ -190,8 +189,8 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0960-v35 §2 Path Taxonomy (canonical vault identifier shape)
 - RFC-0960-v36 §Burn-Event DQA Migration (asset quantity wire form)
 - RFC-0010 §2 ledger_chain_registry Table (chain ID canonical form)
-- [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
+- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Claimant
 

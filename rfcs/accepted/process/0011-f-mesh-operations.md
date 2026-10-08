@@ -362,7 +362,7 @@ exit codes, and redaction requirements.
 > 1. `octo_mesh::PeerSummary` — operator-facing peer record (§Peer Summary Shape); derives `Serialize`, `Deserialize`, `Clone`, `schemars::JsonSchema` for JSON Schema export per §Output Envelope. Fields: `peer_did: Did`, `endpoint: EndpointUri`, `trust_level: TrustLevel`, `last_seen_unix: i64`, `capabilities: Vec<CapRef>`.
 > 2. `octo_mesh::EndpointUri(pub String)` — canonical endpoint URI wrapper (§Peer Summary Shape); substrate validates scheme allowlist (`tcp://`, `quic://`, `bluetooth://`) before persistence; CLI exit 28 `InvalidEndpointScheme` on disallowed scheme.
 > 3. `octo_mesh::CapRef(pub String)` — capability reference display form derived from RFC-0957 `root_id` (first 16 hex chars + ellipsis) for operator UI (§Peer Summary Shape); substrate carries the full `root_id` for caveat-set verification.
-> 4. `octo_mesh::TrustLevel(pub String)` — typed-discriminator newtype for trust classification (§Peer Summary Shape, §Trust Level Canonical UUIDs); NOT a central enum per [[cipherocto-design-principles]] "Extension over enumeration". Constructed via `TrustLevel::from_uuid(s)` which validates against the canonical UUID table; unknown discriminators fail-closed at the substrate layer with `TrustLevelParseError::UnknownDiscriminator`.
+> 4. `octo_mesh::TrustLevel(pub String)` — typed-discriminator newtype for trust classification (§Peer Summary Shape, §Trust Level Canonical UUIDs); NOT a central enum per `cipherocto-design-principles` "Extension over enumeration". Constructed via `TrustLevel::from_uuid(s)` which validates against the canonical UUID table; unknown discriminators fail-closed at the substrate layer with `TrustLevelParseError::UnknownDiscriminator`.
 > 5. `const TRUSTED_UUID: &str`, `const VERIFIED_UUID: &str`, `const UNTRUSTED_UUID: &str` — canonical trust-level UUID constants in the `urn:octo:trust-level:*` namespace (§Trust Level Canonical UUIDs); MUST be used verbatim in all mesh envelope serializations; new trust signals extend the namespace without substrate enum edits.
 > 6. `octo_mesh::PeerFilter { trust_levels: Vec<TrustLevel> }` — AND-semantics filter for `list_peers` (§Subcommand Taxonomy `peer list`); empty `trust_levels` matches all peers; CLI `--filter-trust` is repeatable and accumulates via AND.
 
@@ -548,7 +548,7 @@ pub struct PeerSummary {
     pub capabilities: Vec<CapRef>,
 }
 
-/// Trust-level classification. Per [[cipherocto-design-principles]]
+/// Trust-level classification. Per `cipherocto-design-principles`
 /// "Extension over enumeration (no central enums)", this is a typed
 /// discriminator (UUID string) per the RFC-0871 typed-discriminator
 /// pattern, NOT a substrate-wide enum. New trust signals (e.g.,
@@ -597,7 +597,7 @@ per §Trust Level Canonical UUIDs):
 
 #### Trust Level Canonical UUIDs
 
-Per [[cipherocto-design-principles]] "Extension over enumeration (no
+Per `cipherocto-design-principles` "Extension over enumeration (no
 central enums)", the canonical trust-level UUIDs are RFC-allocated and
 MUST be used verbatim in all mesh envelope serializations:
 
@@ -610,7 +610,7 @@ MUST be used verbatim in all mesh envelope serializations:
 New trust signals (e.g., RFC-0855p-c cross-platform attestation, future
 amendments) extend this table by allocating new canonical UUIDs in the
 `urn:octo:trust-level:*` namespace; old code fails-closed on unknown
-discriminators (per [[cipherocto-design-principles]] "Open/Closed").
+discriminators (per `cipherocto-design-principles` "Open/Closed").
 
 ### Forward Envelope Shape
 
@@ -1341,7 +1341,7 @@ Taxonomy. The missions are filed in `missions/archived/completed/0011-f-mesh-pee
 > **Mission YAML traceability:** Each mission YAML's `rfc:` field MUST
 > read `RFC-0011-f` (bare number per CLAUDE.md §RFC Reference Conventions).
 > The `depends_on:` field MUST list `RFC-0011` + `RFC-0871` + `RFC-0010`
-> (no phantom slugs per [[no-phantom-mission-pointers]]); for the
+> (no phantom slugs per `no-phantom-mission-pointers`); for the
 > `forward` and `rpc` missions the `depends_on:` field additionally
 > lists `RFC-0957` (capability caveat substrate) and `RFC-0855p-c`
 > (trust-level classification substrate).
@@ -1475,7 +1475,7 @@ constructing the envelope from CLI flags. Rationale:
 
 ### Why TrustLevel is a typed-discriminator newtype (not a central enum)
 
-Per [[cipherocto-design-principles]] "Extension over enumeration (no
+Per `cipherocto-design-principles` "Extension over enumeration (no
 central enums)", `TrustLevel` is a `String` newtype wrapping a canonical
 UUID discriminator (RFC-0871 typed-discriminator pattern), NOT a
 substrate-wide `pub enum`. `TrustLevel` is a CLI operator-facing
@@ -1487,7 +1487,7 @@ aggregate them into an operator-friendly discriminator string. New trust
 signals (e.g., RFC-0855p-c cross-platform attestation) extend the
 canonical UUID table (per §Trust Level Canonical UUIDs) without substrate
 or CLI enum edits; old code fails-closed on unknown discriminators per
-[[cipherocto-design-principles]] "Open/Closed".
+`cipherocto-design-principles` "Open/Closed".
 
 ## Version History
 

@@ -88,20 +88,23 @@ RFC-0870 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,gossip}
 
 94f8def8 (substrate layer)
 a059d54d (call-site migration)
-(local; push + remote writes await user instruction per [[git-workflow]])
+(local; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 
 Mission 0870-b-envelope-adoption closed in 2 commits on `next` branch:
+
 - `94f8def8` — substrate layer (UUIDs + builder + classifier + 7 test vectors)
 - `a059d54d` — call-site migration (7 outbound sites emit NodeEnvelope)
 
 **New types in `octo-protocol` (Layer 1 stable):**
+
 - 7 RFC-0870 payload_kind UUIDs (QUOTA_ROUTER_ANNOUNCE, …, QUOTA_FORWARD_REJECT)
 - `QUOTA_PAYLOAD_KINDS` array + `is_quota_payload_kind()` dispatcher
 - `verify_ed25519_signature` promoted to `pub` for downstream consumers
 
 **New module `quota-router-core/src/node/envelope_v2.rs` (mission 0870-b):**
+
 - `node_canonical_did() → WireDid` — derives signer DID from 32-byte identity key
 - `build_node_envelope()` — wraps payload body in RFC-0871 NodeEnvelope with Ed25519 signature
 - `wrap_outbound_envelope()` — single outbound helper (build + encode)
@@ -110,6 +113,7 @@ Mission 0870-b-envelope-adoption closed in 2 commits on `next` branch:
 - `encode_node_envelope` / `decode_node_envelope` — borsh wire helpers
 
 **Call-site migration (commit a059d54d) — 7 outbound sites emit NodeEnvelope:**
+
 1. `node/mod.rs::broadcast_gossip` → `QUOTA_CAPACITY_GOSSIP`
 2. `node/mod.rs::broadcast_announce` → `QUOTA_ROUTER_ANNOUNCE`
 3. `node/mod.rs::route` Remote branch → `QUOTA_FORWARD_REQUEST`
@@ -130,9 +134,9 @@ Mission 0870-b-envelope-adoption closed in 2 commits on `next` branch:
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0870 amendment adds NodeEnvelope Adoption requirement; mission captures wire format migration scope. Cross-references RFC-0871 §Implementation Phase 3 + RFC-0870 §NodeEnvelope Adoption. |
+| Version | Date       | Change                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-08 | Mission filed. RFC-0870 amendment adds NodeEnvelope Adoption requirement; mission captures wire format migration scope. Cross-references RFC-0871 §Implementation Phase 3 + RFC-0870 §NodeEnvelope Adoption. |
 
 Last Updated: 2026-08-08
 Version: 0.1

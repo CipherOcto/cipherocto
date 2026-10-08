@@ -4,7 +4,7 @@
 
 Accepted v3.1 (2026-09-14)
 
-> **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]). RFC-0015-a spec lives in `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`.
+> **KEEP-only rewrite per RFC-0015 R40 restructure.** §6.2 splits into §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §Amendment Surface (commit `e09f3e3a`; DEFERRED to RFC-0015-a per `deferred-vs-unspecified`). RFC-0015-a spec lives in `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`.
 
 ## Authors
 
@@ -21,7 +21,7 @@ Accepted v3.1 (2026-09-14)
 This RFC documents the canonical agent operations substrate on `octo-wallet` (Layer B years-stable per CLAUDE.md §Rust crate-level stability). The KEEP surface splits into two sections per the substrate-faithful principle (CLAUDE.md §Architectural Principles; RFC-0012/0013/0014 acceptance pattern):
 
 - **§6.2 §Pre-existing Substrate** (already shipped on `next` HEAD per commits `533b07a4` + `4222fb41`): `list_owned_agents` + `lookup_agent` + `validate_reason` + 4 `WalletError` variants + 2 `OctoCliError` variants per the table there.
-- **§6.2 §Amendment Surface** (DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]]): write-path substrate `transition_agent` + 3 write-path `WalletError` variants + 3 `OctoCliError` mirrors (`AlreadyInTransition` + `InvalidStateTransition` + `AuditSubstrateNotReady`). Substrate items shipped on `next` HEAD per commit `e09f3e3a`; RFC-0015-a acceptance is the formal authorization step.
+- **§6.2 §Amendment Surface** (DEFERRED to RFC-0015-a per `deferred-vs-unspecified`): write-path substrate `transition_agent` + 3 write-path `WalletError` variants + 3 `OctoCliError` mirrors (`AlreadyInTransition` + `InvalidStateTransition` + `AuditSubstrateNotReady`). Substrate items shipped on `next` HEAD per commit `e09f3e3a`; RFC-0015-a acceptance is the formal authorization step.
 
 The substrate is intentionally **read-only at RFC-0015 KEEP** — `register_agent` already exists at `cli_fns.rs`. No new persistence, no new envelopes. Domain consumers are CLI missions `0011-c-agent-{list,show,attach}-subcommand` (KEEP at acceptance) and `0011-c-agent-{run,destroy}-subcommand` (DEFERRED to RFC-0015-a acceptance). RFC-0002 §Agent State Machine is the canonical state authority.
 
@@ -42,7 +42,7 @@ The substrate is intentionally **read-only at RFC-0015 KEEP** — `register_agen
 ## Design Goals
 
 1. **Additive only** — new functions + new error variants append to the existing `octo-wallet` (Layer B) public surface; no breaking changes to existing public API per RFC migration etiquette.
-2. **Substrate-faithful** — function names, parameter shapes, return types match the canonical CLI consumer contracts in RFC-0011-c §9.3 (no parallel abstractions per [[cipherocto-design-principles]]).
+2. **Substrate-faithful** — function names, parameter shapes, return types match the canonical CLI consumer contracts in RFC-0011-c §9.3 (no parallel abstractions per `cipherocto-design-principles`).
 3. **Layer B stability** — public functions are additive within the years-stable identity substrate; no PQC-migration impact per CLAUDE.md §Architectural Principles.
 4. **No new persistence** — `list_owned_agents` + `lookup_agent` + `validate_reason` operate on the existing `AgentManifest` / `AgentSummary` registry stored in `octo-wallet`; no new IO surface, no new envelopes.
 5. **Read returns ordered results** — `list_owned_agents` returns summaries sorted by `registered_at_unix DESC` for deterministic CLI + scripting output.
@@ -87,8 +87,8 @@ Layer direction: CLI (Layer C/D) → `octo-wallet` (Layer B). No direct B→A ed
 
 Per the substrate-faithful principle (CLAUDE.md §Architectural Principles; RFC-0012/0013/0014 acceptance pattern), this RFC's public surface is split into two sections:
 
-- **§6.2 §Pre-existing Substrate** — items already shipped at the substrate layer (HEAD of `next`). This RFC documents the canonical contract for these items; the substrate is the source of truth. Cite: commit `533b07a4` (read-path surface) + `4222fb41` (state filter refinement) on `crates/octo-wallet/src/agent.rs` + `crates/octo-wallet/src/error.rs` + `crates/octo-cli/src/error.rs` per [[memory-is-never-status-ground-truth]]. The write-path substrate (commit `e09f3e3a`) lives in §6.2 §Amendment Surface per §Pairing Discipline (paired KEEP + write-path amendment per [[cipherocto-design-principles]] §Stable Abstractions Principle).
-- **§6.2 §Amendment Surface** — items DEFERRED to RFC-0015-a (write-path amendment). Fully spec-ed per [[deferred-vs-unspecified]] so the contract is locked even though acceptance is paused.
+- **§6.2 §Pre-existing Substrate** — items already shipped at the substrate layer (HEAD of `next`). This RFC documents the canonical contract for these items; the substrate is the source of truth. Cite: commit `533b07a4` (read-path surface) + `4222fb41` (state filter refinement) on `crates/octo-wallet/src/agent.rs` + `crates/octo-wallet/src/error.rs` + `crates/octo-cli/src/error.rs` per `memory-is-never-status-ground-truth`. The write-path substrate (commit `e09f3e3a`) lives in §6.2 §Amendment Surface per §Pairing Discipline (paired KEEP + write-path amendment per `cipherocto-design-principles` §Stable Abstractions Principle).
+- **§6.2 §Amendment Surface** — items DEFERRED to RFC-0015-a (write-path amendment). Fully spec-ed per `deferred-vs-unspecified` so the contract is locked even though acceptance is paused.
 
 #### §Pre-existing Substrate (KEEP — already shipped)
 
@@ -109,7 +109,7 @@ The `#[non_exhaustive]` attribute on `WalletError` was already shipped on `next`
 
 #### §Amendment Surface (DEFERRED — RFC-0015-a)
 
-Seven write-path items DEFERRED to RFC-0015-a. Fully spec-ed per [[deferred-vs-unspecified]] so the contract is locked at RFC-0015 acceptance time even though acceptance is paused:
+Seven write-path items DEFERRED to RFC-0015-a. Fully spec-ed per `deferred-vs-unspecified` so the contract is locked at RFC-0015 acceptance time even though acceptance is paused:
 
 | #   | Item                                                                                                                            | Substrate anchor (post-RFC-0015-a acceptance)                                                          | RFC-0015-a spec section |
 | --- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------- |
@@ -251,7 +251,7 @@ CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate per p
 
 ### §6.8 Forward Pointer — write-path surface lives in RFC-0015-a
 
-The write-path contract (`transition_agent` + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable(String)}` + audit append of `AuditEventKind::AgentTransition` rows + the GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode per `crates/octo-wallet/src/agent.rs` §AGENT_REGISTRY) is DEFERRED to RFC-0015-a per [[deferred-vs-unspecified]] (fully spec-ed so the contract is locked at RFC-0015 acceptance time).
+The write-path contract (`transition_agent` + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable(String)}` + audit append of `AuditEventKind::AgentTransition` rows + the GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode per `crates/octo-wallet/src/agent.rs` §AGENT_REGISTRY) is DEFERRED to RFC-0015-a per `deferred-vs-unspecified` (fully spec-ed so the contract is locked at RFC-0015 acceptance time).
 
 The write-path substrate items are already shipped on `next` HEAD per commit `e09f3e3a` (substrate-first ordering per RFC-0015 R40 restructure); RFC-0015-a acceptance is the formal acceptance step that authorizes them as the write-path contract. Until RFC-0015-a acceptance lands, RFC-0015 KEEP does NOT authorize CLI missions to invoke the write-path surface.
 
@@ -308,7 +308,7 @@ DEFER — agent read operations have no direct token cost; cite RFC-0900+ (Role 
 
 ## Compatibility
 
-1. **No breaking changes to function-level public API.** Per §6.2 §Pre-existing Substrate table, six substrate items + two CLI-side items landed on `octo-wallet` (Layer B years-stable); no existing public function modified. The `#[non_exhaustive]` attribute on `WalletError` (already shipped at substrate hard-check per §WalletError enum) is the canonical Rust additive enum-extension mechanism per [[cipherocto-design-principles]] (Extension-over-enumeration pattern) — downstream exhaustive matches stop compiling after the additive variant additions, which is the intentional trade-off (substrate-faithful semver-major addition within an additive layer; document at the CLI substrate re-export boundary per RFC-0011-a §Migration Etiquette).
+1. **No breaking changes to function-level public API.** Per §6.2 §Pre-existing Substrate table, six substrate items + two CLI-side items landed on `octo-wallet` (Layer B years-stable); no existing public function modified. The `#[non_exhaustive]` attribute on `WalletError` (already shipped at substrate hard-check per §WalletError enum) is the canonical Rust additive enum-extension mechanism per `cipherocto-design-principles` (Extension-over-enumeration pattern) — downstream exhaustive matches stop compiling after the additive variant additions, which is the intentional trade-off (substrate-faithful semver-major addition within an additive layer; document at the CLI substrate re-export boundary per RFC-0011-a §Migration Etiquette).
 2. **No `schema_version` bump.** The `OutputEnvelope<T>` envelope carries no new fields; CLI mission output schemas unchanged.
 3. **No new exit codes for the new errors.** `AgentNotFound` (42) per RFC-0011-c §9.8 slot allocation; `ForbiddenHolderMismatch` (17) per `crates/octo-cli/src/error.rs` §`ForbiddenHolderMismatch → 17` (substrate-canonical; see Appendix B). The slot-16 mappings (`ReasonContainsControlChars`, `ReasonTooLong`) reuse `InvalidFilter` (16). The slot-43 mappings (`AlreadyInTransition`, `InvalidStateTransition`) and slot-52 (`AuditUnavailable`) are formally consumed by RFC-0015-a per §6.8; the substrate items are pre-shipped on `next` HEAD per `e09f3e3a`.
 4. **No new clap variants.** Existing `AgentAction` enum (RFC-0011-c §9.3 dispatch) absorbs the new substrate calls; the missions land their variant-per-subcommand as planned.
@@ -349,7 +349,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 ## Implementation Phases
 
-- **Phase 1 (this RFC, KEEP)** — substrate surface split per §6.2: §Pre-existing Substrate documents items shipped on `next` HEAD per commits `533b07a4` + `4222fb41`; §Amendment Surface fully spec-ed per [[deferred-vs-unspecified]] for the write-path surface to RFC-0015-a.
+- **Phase 1 (this RFC, KEEP)** — substrate surface split per §6.2: §Pre-existing Substrate documents items shipped on `next` HEAD per commits `533b07a4` + `4222fb41`; §Amendment Surface fully spec-ed per `deferred-vs-unspecified` for the write-path surface to RFC-0015-a.
 - **Phase 2 (RFC-0011-c read-only missions)** — CLI missions `0011-c-agent-{create,list,show,attach}-subcommand` consume the read surface; mutation traces per RFC-0011-c §Test Vectors.
 - **Phase 2.5 (RFC-0015-a acceptance, paired with a future Layer A substrate amendment)** — `transition_agent` + paired write-path `WalletError` variants formally authorized on `octo-wallet` Layer B (substrate items already shipped on `next` HEAD per `e09f3e3a`).
 - **Phase 3 (RFC-0011-c write missions)** — CLI missions `0011-c-agent-{run,destroy}-subcommand` consume the write surface (post-RFC-0015-a acceptance); mutation traces per RFC-0011-c §Test Vectors.
@@ -384,14 +384,14 @@ No changes to Layer A crates (`octo-audit-core`, etc.) at RFC-0015 KEEP acceptan
 
 - **Substrate-faithful** — substrate is canonical per RFC-0012/0013/0014 acceptance pattern; the three-state `AgentState` enum is canonical even when it differs from the RFC-0002 spec diagram.
 - **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 8 items per §6.2 §Pre-existing Substrate are additive; the 7 write-path items per §6.2 §Amendment Surface are formally authorized via RFC-0015-a acceptance.
-- **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per [[cipherocto-design-principles]] §No parallel abstractions).
-- **Pairing discipline** — RFC-0015 (read-path) + RFC-0015-a (write-path) follow the extension-over-enumeration pattern per [[cipherocto-design-principles]]; no central enum edit at Layer A.
+- **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per `cipherocto-design-principles` §No parallel abstractions).
+- **Pairing discipline** — RFC-0015 (read-path) + RFC-0015-a (write-path) follow the extension-over-enumeration pattern per `cipherocto-design-principles`; no central enum edit at Layer A.
 
 ## Version History
 
 - 2026-09-14 — v3.1 doubling cleanup: §Test Vectors numbering scheme restated at canonical RFC-0016 §Test Vectors (collapsed from 3× restatement across 0015 + 0015-a + 0016 to 1× canonical at 0016 + 2× cross-refs).
 - 2026-09-14 — Acceptance per DRY plateau declaration (R12=30 → R13=50 not converging). R12.5 + R13.5 substantive fixes applied. 7 substrate-defect items documented in amendment backlog (RFC-0015-b paired amendment). Audit `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`.
-- 2026-09-13 — R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per [[deferred-vs-unspecified]]). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
+- 2026-09-13 — R2.5 fix per Option C split: §6.2 §Pre-existing Substrate (cite commits `533b07a4` + `4222fb41`) + §6.2 §Amendment Surface (DEFERRED to RFC-0015-a, fully spec-ed per `deferred-vs-unspecified`). Exit code 17 (substrate-canonical) for `ForbiddenHolderMismatch`. Drop redundant DEFERRED restatements. Drop `RFC-0002` version pin in prose.
 - 2026-09-11 — KEEP-only substrate-faithful rewrite. Drop `transition_agent` write-path surface + paired DEFERRED `WalletError` variants + DEFERRED TVs to RFC-0015-a (write-path amendment). Write-path GLOBAL `AGENT_REGISTRY` `std::sync::Mutex` lock-mode (paired-DEFER to RFC-0015-a acceptance).
 - 2026-09-11 — Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 + RFC-0011-c).
 
@@ -405,7 +405,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.) at RFC-0015 KEEP acceptan
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
 - RFC-0015-a — `octo-wallet` Agent Write-Path Amendment (sibling; write-path surface per §6.2 §Amendment Surface)
 - RFC-0012 — Audit Substrate (Layer A frozen `AuditEventKind` extension mechanism per Extension-over-enumeration pattern)
-- [[cipherocto-design-principles]] — Layer model + substrate-faithful principle
+- `cipherocto-design-principles` — Layer model + substrate-faithful principle
 
 ## Related Use Cases
 

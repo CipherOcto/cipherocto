@@ -25,7 +25,7 @@ Substrate-faithful CLI surface for gateway cache (peers list/get + identity show
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean (next c2fee8f3)
 - [x] `cargo test -p octo-cli --lib` green (next c2fee8f3)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change) (next c2fee8f3)
-- [x] Substrate-faithful boundary: every call crosses typed façade per [[cipherocto-design-principles]] §Stable Abstractions Principle (next c2fee8f3)
+- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle (next c2fee8f3)
 
 ## Dependencies
 
@@ -38,4 +38,4 @@ Substrate-faithful CLI surface for gateway cache (peers list/get + identity show
 
 ## Notes
 
-Stub filed 2026-09-18 per [[no-phantom-mission-pointers]]. Paired closure transition paired with RFC-0011-i Phase 1 IMPLEMENTATION COMPLETE closure card. Substrate-faithful boundary verified per [[substrate-faithfulness-verification]] R7.5 lesson: `GatewayCache` + `TrustGraph` + `GovernanceRotation` substrate PRESENT at RFC-0011-h closure verification — no companion substrate needed beyond `LocalGatewayIdentity::load` (which landed paired at `next caeb84c4`).
+Stub filed 2026-09-18 per `no-phantom-mission-pointers`. Paired closure transition paired with RFC-0011-i Phase 1 IMPLEMENTATION COMPLETE closure card. Substrate-faithful boundary verified per `substrate-faithfulness-verification` R7.5 lesson: `GatewayCache` + `TrustGraph` + `GovernanceRotation` substrate PRESENT at RFC-0011-h closure verification — no companion substrate needed beyond `LocalGatewayIdentity::load` (which landed paired at `next caeb84c4`).

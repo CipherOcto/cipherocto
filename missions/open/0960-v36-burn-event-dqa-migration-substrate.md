@@ -154,13 +154,13 @@ InvalidSignature}` for offline audit integrity check (Round 1
      - **(3) fails** → rollback (2) via
        `audit_sink.compensate(...)` + rollback (1) via
        `nonce_registry.unobserve(NonceEventKind::Burn,
-       &governance_pubkey, &nonce.0)`. Return
+&governance_pubkey, &nonce.0)`. Return
        `BurnEventError::AuditSinkFailed { sink_error:
-       AuditError::LogInsertFailed { sink: Box::AuditError,
-       nonce_rolled_back: true, audit_compensated: true } }`.
+AuditError::LogInsertFailed { sink: Box::AuditError,
+nonce_rolled_back: true, audit_compensated: true } }`.
      - **(2) fails** → rollback (1) via
        `nonce_registry.unobserve(NonceEventKind::Burn,
-       &governance_pubkey, &nonce.0)`. Return
+&governance_pubkey, &nonce.0)`. Return
        `BurnEventError::AuditSinkFailed { sink_error: AuditError::UnobserveFailed(inner) }`
        with structured log + alert (NOT silently swallowed).
      - **(1) fails** → no rollback needed (nothing to undo); return
@@ -182,7 +182,7 @@ InvalidSignature}` for offline audit integrity check (Round 1
      retry but `VaultBalanceProjection` is silently short by the
      burn amount (fund accounting drift, R7 #3 CRITICAL finding).
      **Cross-event isolation:** the `event_kind
-     = NonceEventKind::Burn` discriminator (per Mission D v3.5-r8
+= NonceEventKind::Burn` discriminator (per Mission D v3.5-r8
      PROPOSAL surface change) namespaces the observe key per event
      type; BurnEventRef vs SettlementEvent vs PaymentCaveat nonces
      each use distinct LRU buckets via `(event_kind, pk, nonce)`
@@ -191,11 +191,12 @@ InvalidSignature}` for offline audit integrity check (Round 1
      both BurnEventRef and SettlementEvent — without event_kind
      discriminator the nonces would collide; with it, they are
      distinct buckets.
+
    - GREENFIELD `AuditSink` trait + `AuditError` enum are declared
      **inline** within the same `burn_event.rs` file per RFC-0960 v3.6
      §2.2 L408-411 (NOT a separate `audit_sink.rs` file). `AuditError`
      extended (R7 CRITICAL #3) with `LogInsertFailed { sink,
-     nonce_rolled_back, audit_compensated }` variant for the
+nonce_rolled_back, audit_compensated }` variant for the
      3-sink rollback path.
 
 8. **`verify_burn_against_caveat` audit invariant** — same file. Per §2.3.
@@ -277,7 +278,7 @@ asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
 - TV-BE18: `consume()` 3-sink atomicity — `producer.log.insert` failure
   triggers `audit_sink.compensate(...)` + `nonce_registry.unobserve(...)`;
   returns `AuditSinkFailed { sink_error: LogInsertFailed { sink,
-  nonce_rolled_back: true, audit_compensated: true } }`. R7 CRITICAL #3
+nonce_rolled_back: true, audit_compensated: true } }`. R7 CRITICAL #3
   cross-sink rollback coverage.
 - TV-BE19: `body_hash` stability under perturbation (RFC-0960 v3.6 §9
   Round 3 MED #4 + Round 4 CRITICAL #2) — re-encode + perturb any
@@ -296,7 +297,7 @@ asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
   BurnEventRef with `registry_snapshot_epoch.0 > current_epoch.0`
   returns `Err(StaleSnapshot { snapshot: <future>, live: <current> })`
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-policy` (Layer C specialized node role) — `burn_event.rs` =
   **Layer B additive type hosted in Layer C node crate**; substrate-
@@ -351,7 +352,7 @@ cargo test -p octo-policy --lib burn_event
   consumes Mission F substrate
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
   cache table consumer
-- [[cipherocto-design-principles]] — Layer B additive-only rule
+- `cipherocto-design-principles` — Layer B additive-only rule
 
 ## Claimant
 

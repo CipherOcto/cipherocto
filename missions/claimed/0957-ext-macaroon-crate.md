@@ -61,10 +61,12 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 ## Implementation Guide (Phase 1 + Phase 2 history)
 
 **Phase 1 (commit `f123fe1b`):** crypto foundation
+
 - `crates/octo-cap-macaroon/` with `src/lib.rs` owning `hmac_blake3` + `macaroon_id` + `MacaroonId` + domain constants
 - Re-export shim in `octo-wallet/src/capability/macaroon.rs`
 
 **Phase 2 (commit `9d28ddc8`):** substrate migration
+
 - `cp caveat.rs → octo-cap-macaroon/src/caveat.rs` (verbatim copy; no internal cross-refs)
 - `cp macaroon.rs → octo-cap-macaroon/src/macaroon.rs` (verbatim copy + surgical import edits)
 - `octo-cap-macaroon/Cargo.toml` deps added: `serde`, `serde_json`, `rand`, `async-trait`, `thiserror`, `cipherocto-encoding`, `quota-router-storage` (cross-layer cost, documented), `octo-transport` (cross-layer cost, documented)
@@ -84,8 +86,8 @@ Per-extension crate extraction is multi-file (1 NEW crate + multiple source migr
 
 ## Pull Request
 
-Phase 1: `f123fe1b` (local; push + remote writes await user instruction per [[git-workflow]])
-Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per [[git-workflow]])
+Phase 1: `f123fe1b` (local; push + remote writes await user instruction per `git-workflow`)
+Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 
@@ -94,6 +96,7 @@ Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per [[gi
 **Phase 2 (commit `9d28ddc8`):** Migrated 3287 lines of macaroon substrate (caveat DSL + Macaroon struct + Catalog traits + InMemoryCatalog + TransportDeliveryCatalog) from `octo-wallet/src/capability/{caveat,macaroon}.rs` into `octo-cap-macaroon/src/{caveat,macaroon}.rs`. Backward compat via re-export shims — zero call-site changes across `octo-wallet`, `quota-router-core`, `octo-wallet-node`, `octo-paid-query`, etc.
 
 **Phase 2 deliverables:**
+
 - 24 caveat variants (RFC-0957 §3.1 + RFC-0965 §3) + CaveatName + CaveatSet + RawCaveat + set_subsumes
 - Macaroon struct + mint + extend_chain + attenuate + verify_signature + verify_full + compute_capability_id (RFC-0957 §3.2 + RFC-0965 §3.7)
 - CapabilityCatalog trait + CapabilityGossip trait (split for dyn-compatibility per mission 0959-c3)
@@ -105,6 +108,7 @@ Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per [[gi
 **Tests:** `octo-cap-macaroon` 97/97 (8 Phase 1 + 89 migrated), `octo-wallet` 231/231 (89 migrated out), `quota-router-core` 1529/1529 zero regressions, `octo-wallet-node` 17/17 zero regressions, `octo-paid-query` 15/15 zero regressions.
 
 **Honest scope disclosure:** Phase 2 leaves 4 follow-on items for Phase 2b:
+
 1. `CapabilityToken` + `CapabilitySpec` trait (still in `octo-wallet/src/capability/mod.rs`)
 2. `wire.rs` (439 lines, canonical serialization — still in `octo-wallet/src/capability/wire.rs`)
 3. `discharge.rs` (962 lines, 4 discharge providers — still in `octo-wallet/src/capability/discharge.rs`)
@@ -114,15 +118,15 @@ Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per [[gi
 
 - This mission is the FIRST per-extension crate extraction (the macaroon v1 reference impl). Future extractions (`0957-ext-zk`, `0957-ext-federation`, etc.) follow the same pattern.
 - Coordinate with parallel mission `0957-ext-zk-crate.md` (both touch `crates/octo-wallet/src/capability/zk_mint.rs`).
-- Per `[[stoolap-general-purpose-db]]` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
-- Per `[[cargo-fmt-workflow]]` + `[[feedback_clippy_zero_warnings]]`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
+- Per `stoolap-general-purpose-db` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
+- Per `cargo-fmt-workflow` + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures extraction scope. |
-| v0.2 | 2026-08-09 | Phase 2 closure: caveat DSL + Macaroon substrate + Catalog traits + InMemoryCatalog migrated. Phase 2b follow-on documented for CapabilityToken / wire / discharge / cross-layer cleanup. |
+| Version | Date       | Change                                                                                                                                                                                    |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures extraction scope.                                                                      |
+| v0.2    | 2026-08-09 | Phase 2 closure: caveat DSL + Macaroon substrate + Catalog traits + InMemoryCatalog migrated. Phase 2b follow-on documented for CapabilityToken / wire / discharge / cross-layer cleanup. |
 
 Last Updated: 2026-08-09
 Version: 0.2

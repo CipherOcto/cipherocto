@@ -248,7 +248,7 @@ Single sub-mission (l1) covers ONLY the state machine + activate + revoke half. 
 
 ## Pull Request
 
-(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
+(unset — local commit per `feedback_initiation_user_only`; push awaits user instruction)
 
 ## Closure Notes (2026-08-09)
 
@@ -260,7 +260,7 @@ Single sub-mission (l1) covers ONLY the state machine + activate + revoke half. 
 - **HolderRecord activated_at_millis_unix field:** DEFERRED — bundle F4 will need it, but the schema migration is split out from this sub-mission to keep l1 scope tight per BLUEPRINT §Multi-Mission Decomposition. Track in `0009-l2` or a follow-on migration mission.
 - **Net diff:** +260 lines (lifecycle.rs 196 + identity.rs +64 + hsm.rs +30 + error.rs +20 + capability tests +6 - capability test friction). Zero regressions across `octo-wallet` (222 tests pass).
 
-Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
+Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §section-name / symbol form. Per `rfc-referencing-convention` RFCs referenced by number only.
 
 **Version History:**
 

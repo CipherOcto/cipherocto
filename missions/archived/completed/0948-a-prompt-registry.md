@@ -17,7 +17,7 @@ None
 - [x] Define `PromptTemplate` struct (id, name, team_id, tags, default_version_id, created_at, created_by). (`crates/quota-router-core/src/prompts/mod.rs:65-79` — `version` is the active-version pointer; `tags` is `Vec<String>`; team_id is `Option<String>`; created_by defaults to "system" when caller omitted.)
 - [x] Define `PromptVersion` struct (id, prompt_id, template, variables, defaults, created_at, created_by). (`crates/quota-router-core/src/prompts/mod.rs:81-90` — `(prompt_id, version)` is the PK; `defaults` lives on the template as the active-version's variable defaults; `template` + `prompt_id` + `version` cover the spec'd fields.)
 - [x] Define `PromptFilter` struct (team_id, tags, name, limit, offset). (`crates/quota-router-core/src/prompts/mod.rs:92-100` — adds `model` filter for routing-tagged prompts.)
-- [x] Implement `PromptRegistry` with stoolap-backed storage (RFC-0914 Required). (`crates/quota-router-core/src/prompts/mod.rs:184-325` + `crates/quota-router-core/src/prompts/storage.rs` — `PromptStorage` is HashMap-backed in-memory; comment at `storage.rs:18` explicitly says "stoolap-backed in production". Per [[stoolap-general-purpose-db]], cipherocto consumer schema MUST live on the cipherocto side; the in-memory HashMap is the dev-mode surface and the storage trait is the swap point for a future stoolap-time migration.)
+- [x] Implement `PromptRegistry` with stoolap-backed storage (RFC-0914 Required). (`crates/quota-router-core/src/prompts/mod.rs:184-325` + `crates/quota-router-core/src/prompts/storage.rs` — `PromptStorage` is HashMap-backed in-memory; comment at `storage.rs:18` explicitly says "stoolap-backed in production". Per `stoolap-general-purpose-db`, cipherocto consumer schema MUST live on the cipherocto side; the in-memory HashMap is the dev-mode surface and the storage trait is the swap point for a future stoolap-time migration.)
 - [x] Implement `TemplateEngine` with variable substitution (`{{var}}` syntax). (`crates/quota-router-core/src/prompts/template.rs:23-25` — `TemplateEngine::render(template, variables, defaults) -> Result<String, TemplateError>`.)
 - [x] TemplateEngine filters: Default, Truncate, Upper, Lower, Strip. (`crates/quota-router-core/src/prompts/template.rs:13-22` — `TemplateFilter` enum has exactly the 5 variants.)
 - [x] Single-pass rendering (values containing `{{` rendered literally). (`crates/quota-router-core/src/prompts/template.rs:43-50` — single-pass loop: `push value literally, don't re-scan` is the load-bearing comment; verified by `test_single_pass_no_injection` at `template.rs:174`.)
@@ -39,6 +39,7 @@ None
 ## Notes
 
 Key files:
+
 - `crates/quota-router-core/src/prompts/mod.rs` — `PromptTemplate`, `PromptVersion`, `PromptFilter`, `PromptRegistry`, `SharedPromptRegistry`, 8-class `PromptError`
 - `crates/quota-router-core/src/prompts/storage.rs` — In-memory `PromptStorage` (HashMap-backed; swap point for stoolap per RFC-0914)
 - `crates/quota-router-core/src/prompts/template.rs` — `TemplateEngine` + `TemplateFilter` enum (5 variants) + single-pass renderer
@@ -56,7 +57,7 @@ Key files:
 1. **`default_version_id` field on `PromptTemplate` vs `version`**: Mission text lists `default_version_id` as a separate field; the impl uses `version` directly as the active-version pointer on the template. Behaviorally equivalent (always points to the current "live" version); the field name `version` is the natural superset used by all callers.
 2. **`PromptVersion` does not have separate `id` field**: The PK is `(prompt_id, version)` because the version string itself is the version identifier (e.g., `"1.0.0"`, `"1.1.0"`). A separate UUID id field would be redundant and would require an extra lookup indirection.
 3. **`defaults` lives on `PromptTemplate`**: Mission text puts `defaults` on `PromptVersion`; impl stores it on the template because the active version's defaults are what the renderer reads. The `TemplateEngine::render(template, variables, defaults)` API takes defaults as a separate argument so callers can override.
-4. **In-memory storage backed by `HashMap` not stoolap**: Mission text says "stoolap-backed (RFC-0914 Required)"; impl uses `PromptStorage` HashMap-backed in-memory with the explicit comment "stoolap-backed in production". Per [[stoolap-general-purpose-db]] red line, the cipherocto consumer schema (prompts table) MUST live in cipherocto-side migrations, not the stoolap fork. The storage trait is the swap point — a future mission instantiates `PromptStorage` over a stoolap-CipherOcto connection when RFC-0914 acceptance is final.
+4. **In-memory storage backed by `HashMap` not stoolap**: Mission text says "stoolap-backed (RFC-0914 Required)"; impl uses `PromptStorage` HashMap-backed in-memory with the explicit comment "stoolap-backed in production". Per `stoolap-general-purpose-db` red line, the cipherocto consumer schema (prompts table) MUST live in cipherocto-side migrations, not the stoolap fork. The storage trait is the swap point — a future mission instantiates `PromptStorage` over a stoolap-CipherOcto connection when RFC-0914 acceptance is final.
 5. **`storage` config flag is a placeholder enum**: `PromptConfig::storage` (referenced in mission text) is not yet wired because RFC-0914 is still draft; the current dev backend is the in-memory HashMap. When RFC-0914 lands, the enum gains a `Stoolap` variant and the swap is one match-arm.
 6. **HTTP status code mapping at `admin.rs` not `prompts/mod.rs`**: The 8-error → HTTP-status mapping is per-RFC but the storage surface is HTTP-agnostic. The `admin.rs` router translates `PromptError::PromptNotFound` etc. into 404/500/400/503/504 at the wire boundary; the storage layer does not embed HTTP knowledge.
 
@@ -69,9 +70,9 @@ Key files:
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                       |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. Pre-existing prompt registry framework verified; full closure narrative authored in session.                                |
+| Version | Date       | Change                                                                                                                                                               |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. Pre-existing prompt registry framework verified; full closure narrative authored in session.                                                        |
 | v0.2    | 2026-08-06 | Closed Band A. 13/13 ACs green; 36 prompts tests pass; Status header flipped Claimed→Closed (Band A — 2026-08-06); no new commits (verifies pre-existing substrate). |
 
 Last Updated: 2026-08-06

@@ -3,7 +3,6 @@ name: 0015-b-substrate-defect-impl
 description: Implement the 4 surviving substrate defects per RFC-0015-b X.1 through X.4 paired amendment (defect 5 demoted to RFC-0012-v4 paired Layer A cycle)
 metadata:
   type: substrate-implementation
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-14
   v: "1.2"
   depends_on:
@@ -82,7 +81,7 @@ Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13
 
 **File:** `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`
 
-- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per [[deferred-vs-unspecified]]).
+- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per `deferred-vs-unspecified`).
 - 1 additive row in the new §Amendment Surface table:
 
   | Substrate item                                                                 | Layer | Source                                       | Notes                                                                   |
@@ -139,8 +138,8 @@ R3 (DRY verification round 2 = DRY CLOSED) → closure artifacts
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
 - RFC-0015-a §6.1 (canonical lock primitive + acquisition order + audit append + rollback contract)
 - RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge (paired-acceptance discipline)
-- [[cipherocto-design-principles]] — Layer B stability contract
-- [[deferred-vs-unspecified]] — defect 5 deferral rationale
+- `cipherocto-design-principles` — Layer B stability contract
+- `deferred-vs-unspecified` — defect 5 deferral rationale
 
 ## Why gate
 
@@ -148,7 +147,7 @@ Release-gated on RFC-0015-b Accepted (parent amendment RFC).
 Per RFC-0015-a §6.5 paired-acceptance bridge, the amendment RFC
 lands Accepted FIRST, then this implementation mission lands
 (which references the Accepted amendment as substrate contract).
-This sequencing closes the [[no-phantom-mission-pointer]]
+This sequencing closes the `no-phantom-mission-pointer`
 violation pattern: this mission's `depends_on:` cites a real
 accepted RFC, not a phantom pointer.
 

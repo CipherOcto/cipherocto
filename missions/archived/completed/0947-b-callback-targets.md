@@ -43,7 +43,7 @@ Key files:
 - `crates/quota-router-core/src/callbacks/logging.rs` — Landed (119 lines)
 - `crates/quota-router-core/src/callbacks/mod.rs` — Landed (609 lines; `CallbackTarget` trait at `:160`, `ResponseSummary` at `:109`, `CallbackExecutor` at `:203` — executor is 0947-c scope)
 
-**Drift disclosure** (per [[deferred-vs-unspecified]] discipline):
+**Drift disclosure** (per `deferred-vs-unspecified` discipline):
 
 - HMAC crate: spec says `hmac` + `sha2`; impl uses `hmac_sha256` (higher-level binding). Same wire output, smaller API surface, no functional drift. If exact crate conformance is required, swap to `hmac` + `sha2` manual composition in a follow-on — but `hmac_sha256` is the standard idiom for HMAC-SHA256 and no consumer is affected.
 

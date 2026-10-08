@@ -18,7 +18,7 @@ DEFERRED 2026-08-13 (close-as-DEFERRED, 0871b pattern). Mission cannot be implem
 - **`0105-dqa-consensus-unblocker-3-divergence-detection`** — picks up AC-4 (DQA Merkle divergence detection + soft-fork trigger).
 - **`0105-dqa-consensus-unblocker-4-dqa-spec-version-constant`** — picks up AC-5 (add `pub const DQA_SPEC_VERSION: u32 = 1` alongside `NUMERIC_SPEC_VERSION`; document in RFC-0105).
 
-**Drift disclosure:** Per [[deferred-vs-unspecified]] discipline — explicitly DEFERRED with filed follow-on missions, concrete unblockers, and per-AC mapping. No "future / post-v1.0" placeholders.
+**Drift disclosure:** Per `deferred-vs-unspecified` discipline — explicitly DEFERRED with filed follow-on missions, concrete unblockers, and per-AC mapping. No "future / post-v1.0" placeholders.
 
 ## RFC
 

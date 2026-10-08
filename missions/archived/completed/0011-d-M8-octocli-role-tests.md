@@ -4,7 +4,6 @@ description: Author 11 YAML test vectors per RFC-0011-d §11 canonical distribut
 metadata:
   node_type: substrate-cli
   type: test-vectors
-  originSessionId: RFC-0011-d author session
   created: 2026-08-31
   v: "1.1"
   landing_commit: "90ce73bd"
@@ -54,7 +53,7 @@ RFC-0011-d §11 Test Vectors; §Mission Decomposition M8 row; RFC-0011 §Output 
 
 ## Acceptance Criteria
 
-- [x] 11 vectors authored per RFC §Mission Decomposition M8 row — **substrate-truth deviation**: vectors landed in `crates/octo-cli/tests/role_integration.rs` (`assert_cmd` integration test file) rather than exclusively in `docs/07-developers/octo-cli-implementation-guide.md` §Test Vectors section. Rationale: implementation guide Test Vectors section previously documented the 11-vector canonical distribution; M8 atomic landed executable integration tests in the Rust test crate per [[implementation-workflow-hook]] test-vectors-with-consumer pattern. Both artifacts present; implementation guide references the integration test crate.
+- [x] 11 vectors authored per RFC §Mission Decomposition M8 row — **substrate-truth deviation**: vectors landed in `crates/octo-cli/tests/role_integration.rs` (`assert_cmd` integration test file) rather than exclusively in `docs/07-developers/octo-cli-implementation-guide.md` §Test Vectors section. Rationale: implementation guide Test Vectors section previously documented the 11-vector canonical distribution; M8 atomic landed executable integration tests in the Rust test crate per `implementation-workflow-hook` test-vectors-with-consumer pattern. Both artifacts present; implementation guide references the integration test crate.
 - [x] Vector IDs match RFC §11 canonical scheme: TV-RL-1..3 (list) + TV-RS-1..3 (show) + TV-RX-1..4 (select) + TV-RP-1 (guard) = 11 total
 - [x] 11 `cargo test` integration tests pass via `assert_cmd::Command::cargo_bin("octo")`
 - [x] `cargo test -p octo-cli --test role_integration` passes (all 11 vectors)
@@ -166,10 +165,10 @@ Per RFC-0011-d §11:
     error_message_contains: ["RFC-0855p-d", "RFC-0855p-e"] # Phase 2 gate RFCs
 ```
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - Tests live with their consumers (RFC-0011-d §11 + RFC §Mission Decomp M8 row)
-- Vectors authored in impl guide per RFC §Mission Decomp M8 row (canonical location); executable integration tests in `crates/octo-cli/tests/role_integration.rs` per [[implementation-workflow-hook]] test-vectors-with-consumer pattern
+- Vectors authored in impl guide per RFC §Mission Decomp M8 row (canonical location); executable integration tests in `crates/octo-cli/tests/role_integration.rs` per `implementation-workflow-hook` test-vectors-with-consumer pattern
 
 ## Backward compat
 

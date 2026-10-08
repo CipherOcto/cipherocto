@@ -4,7 +4,6 @@ description: Migrate `quota-router-sm-engine` to consume `octo-settlement-core` 
 metadata:
   node_type: substrate-consumer
   type: domain-migration
-  originSessionId: RFC-0014 author session
   created: 2026-09-10
   v: "1.1"
   depends_on:

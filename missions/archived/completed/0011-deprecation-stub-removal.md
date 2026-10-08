@@ -4,7 +4,6 @@ description: Drop stub commands (init, join, status) per RFC-0011 stub deprecati
 metadata:
   node_type: substrate-cli
   type: cli-substrate
-  originSessionId: RFC-0011 author session
   created: 2026-08-27
   closed: 2026-09-18
   closure_basis: v2.0 stub removal cut landed at commit 2c28cbb2 on next 2026-09-17; 10 review-sweep commits culminating at 6175e71e; R11+R12 = 2 consecutive zero-finding 5-len rounds = DRY CLOSED on attempt 2 of new pair per standing rules
@@ -48,7 +47,7 @@ status: Completed
 
 ## Status
 
-Completed (2026-09-18) — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. 10 review-sweep commits culminating at 6175e71e (2026-09-18). R11+R12 = 2 consecutive zero-finding 5-len rounds = DRY CLOSED on attempt 2 of new pair per standing rules. Mission YAML archived to `missions/archived/completed/` per [[feedback_initiation_user_only]] + [[git-workflow]]. Closure audit at `docs/audits/2026-09-18-0011-deprecation-stub-removal-dry-closure.md`. Memory card at `~/.claude/projects/.../memory/0011-deprecation-stub-removal-dry-closure-2026-09-18.md`.
+Completed (2026-09-18) — v2.0 stub removal cut landed in commit 2c28cbb2 on `next` 2026-09-17. 10 review-sweep commits culminating at 6175e71e (2026-09-18). R11+R12 = 2 consecutive zero-finding 5-len rounds = DRY CLOSED on attempt 2 of new pair per standing rules. Mission YAML archived to `missions/archived/completed/` per `feedback_initiation_user_only` + `git-workflow`. Closure audit at `docs/audits/2026-09-18-0011-deprecation-stub-removal-dry-closure.md`. Memory card at `~/.claude/projects/.../memory/0011-deprecation-stub-removal-dry-closure-2026-09-18.md`.
 
 ## RFC
 
@@ -78,7 +77,7 @@ See RFC-0011 §Compatibility for the post-cut operator impact. Accepted risk: v1
 - [x] `§Stub command compatibility` section rewritten in RFC-0011: timeline table preserved; banner-emission prose removed
 - [x] `§Changelog` section ADDED with row entries covering the banner-only, hard-error, and removal phases
 - [x] Cross-mission AC: final integration — `octo` exposes only RFC-0011 subcommands + amendments (structural validity via `clap_surface_is_valid` `debug_assert`; explicit surface enumeration deferred to a follow-on per-crate list-extension test)
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy --workspace --all-targets -- -D warnings clean (octo-cli)
 - [x] Cargo test -p octo-cli --lib green (323 passed post-cut)
 - [x] No new INVALID cites introduced (manual review per CLAUDE.md §RFC Reference Conventions)
@@ -88,7 +87,7 @@ See RFC-0011 §Compatibility for the post-cut operator impact. Accepted risk: v1
 | RFC-0011 type                                                          | Sub-step                  | Notes                                                                                                                       |
 | ---------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | 3 stub commands actually removed (`init`, `join`, `status`)            | Sub-step 2 (code removal) | Layer C; pure deletion from clap derive struct in `crates/octo-cli/src/lib.rs`; `role` and `agent` were already first-class |
-| `StaleStub` exit 65 path (variant retained; `replaced_by` field added) | Sub-step 1 (substrate)    | Layer C; soft sentinel per [[cipherocto-design-principles]] §Extension over enumeration                                     |
+| `StaleStub` exit 65 path (variant retained; `replaced_by` field added) | Sub-step 1 (substrate)    | Layer C; soft sentinel per `cipherocto-design-principles` §Extension over enumeration                                       |
 
 ### Implementation Guide
 
@@ -167,7 +166,7 @@ Post-cut verification:
 - `octo join` → "error: unrecognized subcommand 'join'" (exit 2; `octo network bootstrap` DEFERRED to future amendment)
 - `octo status` → "error: unrecognized subcommand 'status'" (exit 2; `octo network status` DEFERRED)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C) — pure deletion; no new types
 - NO substrate crate changes
@@ -200,14 +199,14 @@ octo status 2>&1; echo $?  # expect 2 (unrecognized subcommand)
   `octo join` / `octo status` with `unrecognized subcommand` (exit 2)
   before the variant can be constructed; the field is preserved for
   library consumers under the `#[non_exhaustive]` additive contract
-  per [[cipherocto-design-principles]] §Extension over enumeration.
+  per `cipherocto-design-principles` §Extension over enumeration.
 
 ## Cross-references
 
 - RFC-0011 §Compatibility — stub deprecation timeline
 - RFC-0011 §Status header amendment chain — role provisioning (lands role
   select), mesh operations (lands network bootstrap + status)
-- [[cipherocto-design-principles]] — Layer C per-RFC evolution
+- `cipherocto-design-principles` — Layer C per-RFC evolution
 
 ## Claimant
 

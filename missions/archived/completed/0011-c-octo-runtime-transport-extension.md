@@ -4,7 +4,6 @@ description: Land 3 Layer D extension crates per RFC-0011-c §F.7
 metadata:
   node_type: substrate-extension
   type: layer-d-extension
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-17
   v: "1.2"
   depends_on:
@@ -34,7 +33,7 @@ closed_at: 2026-09-17
 
 **Completed 2026-09-17** — DRY CLOSURE GATE GREEN (R5+R6 = 2-consecutive-zero-finding rounds on Phase B scope). 4-commit chain landed: `84511af3` → `45120fca` → `0a4a79f2` → `b6a8ca73`. Closure audit: `docs/audits/2026-09-17-0011-c-transport-extension-phase-b-dry-closure.md`.
 
-Originally Claimed (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per [[cipherocto-design-principles]] §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
+Originally Claimed (RFC-0011-c §F.7 Layer D Extension Crates, the per-extension-crates pattern per `cipherocto-design-principles` §Extension over enumeration). **3 Layer D crates landed** per RFC-0011-c §F.7.1-§F.7.3:
 
 - `octo-runtime-transport-unix` — `UnixSocketHandler` (sync `std::os::unix::net::UnixStream` Layer D impl for `TransportKind::UnixSocket`)
 - `octo-runtime-transport-raw` — `RawHandler` (fail-CLOSED default for `TransportKind::Raw(Uuid)`; downstream crates override via `register_into(registry, scheme_id, custom_handler)`)
@@ -86,9 +85,9 @@ RFC-0011-c §F.7 (Layer D Extension Crates) + §F.8 (Per-Extension Crate Manifes
 - [x] 16 lib tests pass (5 unix + 5 raw + 6 hybrid)
 - [x] Clippy zero warnings across 3 crates
 - [x] fmt clean across workspace
-- [x] Substrate `AttachError::Internal(String)` variant landed (additive typed-discriminator per [[cipherocto-design-principles]] §Extension over enumeration)
+- [x] Substrate `AttachError::Internal(String)` variant landed (additive typed-discriminator per `cipherocto-design-principles` §Extension over enumeration)
 - [x] Layer direction verified (3 crates depend only on `octo-runtime` Layer B; no `octo-cli` / `octo-wallet` reverse-deps)
-- [x] Per-extension crates + registry pattern honored (per [[cipherocto-design-principles]])
+- [x] Per-extension crates + registry pattern honored (per `cipherocto-design-principles`)
 - [x] Fail-CLOSED on unconfigured `Raw` scheme UUIDs (substrate-visible error, never silent success)
 - [x] `register_into` identity-idempotent (shared `Arc` via `OnceLock`)
 - [x] DRY CLOSURE gate: 2 consecutive zero-finding rounds on all 3 crates (R5+R6 both 0/0/0; closure audit 2026-09-17)
@@ -106,7 +105,7 @@ RFC-0011-c §F.7 (Layer D Extension Crates) + §F.8 (Per-Extension Crate Manifes
 | `register_into`           | §F.7.1-§F.7.3  | Per-crate convenience init fn; installs handler under `TransportKind` discriminator via `Registry::register`      |
 | `AttachError::Internal`   | Substrate (B)  | Additive variant in `octo-runtime::handle::error.rs`; auto-routes via CLI `From<AttachError>` wildcard to exit 64 |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
 
 - `octo-runtime-transport-unix` (Layer D) — depends on `octo-runtime` (Layer B) for `Handler`, `Registry`, `TransportKind`, `AttachError`, `AttachHandle`, `AttachedSession`. No reverse deps.
 - `octo-runtime-transport-raw` (Layer D) — depends on `octo-runtime` (Layer B) only. `uuid` re-exported for the typed UUID discriminator.
@@ -139,8 +138,8 @@ cargo fmt --all -- --check  # clean
 - RFC-0011-c §F.7.3 — `octo-runtime-transport-hybrid` (Hybrid multiplexer Layer D extension)
 - RFC-0011-c §F.7.4 — cross-process event bridging concern (Layer D; substrate stays unaware)
 - RFC-0011-c §F.8 — Per-Extension Crate Manifest Spec
-- [[cipherocto-design-principles]] — Layer model + per-extension crates + registry pattern + no central enums
-- [[0011-c-attachhandle-dry-closure-2026-09-16]] — predecessor substrate closure state (Handler + Registry substrate landed here)
+- `cipherocto-design-principles` — Layer model + per-extension crates + registry pattern + no central enums
+- `0011-c-attachhandle-dry-closure-2026-09-16` — predecessor substrate closure state (Handler + Registry substrate landed here)
 
 ## Why gate
 
@@ -154,7 +153,7 @@ Release-gated on `Handler` trait + `Registry` substrate (RFC-0011-c §F.2 step (
 
 ## Cargo deps (3 crates)
 
-See each crate's `Cargo.toml` for the dependency rationale comments. No new external crates required for production code; `uuid` is the only typed-discriminator dep and it carries a one-line rationale comment per [[cipherocto-design-principles]] §Crate dependency rationale.
+See each crate's `Cargo.toml` for the dependency rationale comments. No new external crates required for production code; `uuid` is the only typed-discriminator dep and it carries a one-line rationale comment per `cipherocto-design-principles` §Crate dependency rationale.
 
 ## Risk
 

@@ -4,7 +4,6 @@ description: RFC-0016-a acceptance rollout — §6.10 canonical-bytes-on-write i
 metadata:
   node_type: substrate-faithful-consumer
   type: post-acceptance-rollout
-  originSessionId: RFC-0016-a promotion session (2026-09-15)
   created: 2026-09-15
   v: "1.1"
   pair: DOMAIN Adapter Paired-Acceptance
@@ -95,7 +94,7 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 - [x] AC-11: EXISTING in-source unit test `tv_rfc0016a_audit_error_envelope_mapping` at `crates/octo-cli/src/error.rs` extended with the 8th `AuditError::ChainHashMismatch { .. }` case (≤6 lines added to the test function). Full coverage = all 8 §6.7 RFC-0016-a mappings verified (ReceiptNotFound exit 17, InvalidFilter exit 16, PermissionDenied exit 13, AuditAppendFailed exit 52, SequenceGap exit 64, AlreadyExists exit 64, SinkSpecific exit 64, ChainHashMismatch exit 64)
 - [x] AC-12: RFC-0016-a §Related RFCs table appended with row pointing to RFC-0014-v2 (paired-acceptance for §6.4, existing RFC-0014 unversioned row is preserved) — row text: `RFC-0014-v2 — §S3 ReceiptId newtype paired with §6.4 verification`
 - [x] AC-13: RFC-0016 §Related RFCs table verification — RFC-0016-a row already present (paired-amendment pointer), no append required. Verification confirms row text reads `RFC-0016-a — Audit Receipt Write-Path Amendment (sibling; DEFERRED surface per §6.1 §Amendment Surface)`
-- [x] AC-14: Cite sweep clean for any RFC parent updates (`timeout 30 scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE per [[feedback-validate-cites-timeout]])
+- [x] AC-14: Cite sweep clean for any RFC parent updates (`timeout 30 scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE per `feedback-validate-cites-timeout`)
 - [x] AC-15: Prettier-clean on all new + edited `.md` files. `cargo fmt --all` clean on all new + edited `.rs` files
 - [x] AC-16: §6.11 DOMAIN adapter paired-acceptance gate sanity — atomic pre/post-write invariant holds in `crates/octo-audit/src/storage/*.rs` DOMAIN impls (R/W primitive agnostic per RFC-0016-a §6.11). If any DOMAIN impl violates atomicity, AC defers to a follow-on amendment round (user-initiated deferral per BLUEPRINT.md)
 
@@ -144,5 +143,5 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 - RFC-0015-a — write-path surface contract
 - RFC-0012-v2 — substrate amendment for audit chain
 - RFC-0014-v2 — paired settlement-receipt newtype (§S3 paired-acceptance gate for §6.4)
-- [[feedback_initiation_user_only]] + [[git-workflow]] — push + remote writes user-owned
-- [[memory-is-never-status-ground-truth]] — status language describes CURRENT state at write-time
+- `feedback_initiation_user_only` + `git-workflow` — push + remote writes user-owned
+- `memory-is-never-status-ground-truth` — status language describes CURRENT state at write-time

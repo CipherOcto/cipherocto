@@ -4,7 +4,6 @@ description: Envelope-payload redaction for `octo agent` (Phase 2 follow-on to 0
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-c author session
   created: 2026-08-31
   v: "1.0"
   depends_on:

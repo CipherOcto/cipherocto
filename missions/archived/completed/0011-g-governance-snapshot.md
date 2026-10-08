@@ -4,7 +4,6 @@ description: Implement `octo governance snapshot` per RFC-0011-g Phase 1
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-g author session
   created: 2026-08-31
   v: "1.1"
   depends_on:
@@ -29,7 +28,7 @@ closeout_audit: docs/audits/2026-09-15-0011-g-governance-snapshot-dry-closure.md
 **Status:** Open — unblocked. Phase 1 of RFC-0011-g; substrate prereqs (RFC-0011,
 RFC-0855, RFC-0855p-b, RFC-0855p-c, RFC-0010) all Accepted at RFC-0011-g
 filing time per RFC-0011-g §Implementation Phases. Implementation kickoff
-user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once
+user-gated per `feedback_initiation_user_only` + `git-workflow` once
 RFC-0011-g reaches Accepted.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::snapshot`
 **Parent:** RFC-0011-g
@@ -86,7 +85,7 @@ Phase 2 (`attest` + `vote`).
       `OutputEnvelope<T>` + identity mission's active DID plumbing + capability
       mission's `OctoCliError` shape
 - [ ] Layer direction verified (no reverse deps per
-      [[cipherocto-design-principles]])
+      `cipherocto-design-principles`)
 - [ ] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
       clean
 - [ ] Cargo test -p octo-cli --lib --tests green
@@ -94,13 +93,13 @@ Phase 2 (`attest` + `vote`).
 
 ### Type Coverage
 
-| RFC-0011-g type               | Sub-step                  | Notes                                                                                                                                          |
-| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SnapshotRef`                 | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Snapshot Ref (`snapshot_id`, `chain_id`, `taken_at_unix`, `expires_at_unix`, `root_manifest_hash`)            |
+| RFC-0011-g type               | Sub-step                  | Notes                                                                                                                                                      |
+| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SnapshotRef`                 | Sub-step 1 (output types) | Layer B/C; `[ADD]` struct per RFC-0011-g §Snapshot Ref (`snapshot_id`, `chain_id`, `taken_at_unix`, `expires_at_unix`, `root_manifest_hash`)               |
 | `SnapshotOutput`              | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper (`snapshot`, `open_proposals`, `attestation_count`, `resolved_at_unix`) per RFC-0011-g §Output Envelope                      |
 | `ProposalSummary`             | Sub-step 1 (output types) | Layer B/C; substrate return type for `open_proposals` per RFC-0011-g §Output Envelope (`proposal_id`, `chain_id`, `state`, `deadline_unix`, quorum fields) |
-| `OctoCliError::SnapshotStale` | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 35`)                                                                         |
-| `OctoGovernanceSnapshotCache` | Sub-step 2 (cache)        | Layer C/D; NEW struct in `crates/octo-governance/src/cache.rs` (LRU + 600s TTL)                                                                |
+| `OctoCliError::SnapshotStale` | Sub-step 3 (errors)       | Layer C/D; `[ADD]` enum variant per RFC-0011-g §Error Handling (`exit_code = 35`)                                                                          |
+| `OctoGovernanceSnapshotCache` | Sub-step 2 (cache)        | Layer C/D; NEW struct in `crates/octo-governance/src/cache.rs` (LRU + 600s TTL)                                                                            |
 
 ### Implementation Guide
 
@@ -116,11 +115,11 @@ patterns.
 
 Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
 
-| Canonical type | Layer A frozen home | Layer B façade |
-|----------------|---------------------|----------------|
-| `ProposalState` + `GovernancePolicy` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| Canonical type                                                  | Layer A frozen home               | Layer B façade    |
+| --------------------------------------------------------------- | --------------------------------- | ----------------- |
+| `ProposalState` + `GovernancePolicy`                            | `octo-governance-core` (RFC-0013) | `octo-governance` |
 | `GovernanceModel` (5 variants incl. Dao) + `EmergencyAuthority` | `octo-governance-core` (RFC-0013) | `octo-governance` |
-| Pure tally helpers: `voting_weight` + `tally_quorum` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| Pure tally helpers: `voting_weight` + `tally_quorum`            | `octo-governance-core` (RFC-0013) | `octo-governance` |
 
 The `octo governance snapshot` subcommand consumes canonical types via the Layer B façade (`pub use octo_governance::*`). `SnapshotOutput.remaining_seconds` is a substrate-facing field with potential future TTL semantics evolution (per RFC-0011-g v1.2 audit-table annotation); substrate-canonical type owners (`octo-governance-core`) preserve the field shape across amendments.
 
@@ -210,7 +209,7 @@ Snapshot + envelope coverage = 6 tests (RFC minimum: ≥12 spread across
 Phase 1 + Phase 2; Phase 2 carries the remaining 10 vectors per
 `0011-g-governance-attest-vote` §Test Vectors).
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `GovernanceAction::Snapshot` dispatch +
   `SnapshotOutput` envelope wrapper + `SnapshotRef` re-exposure +
@@ -258,7 +257,7 @@ octo governance snapshot --force-refresh
   context for Phase 2)
 - RFC-0010 — Canonical DID Codec (chain-ID canonical form + canonical
   DID wire form)
-- [[cipherocto-design-principles]] — Layer A/B/C/D/E stability contract
+- `cipherocto-design-principles` — Layer A/B/C/D/E stability contract
 
 ## Why 1 release cycle gate (Phase 1)
 
@@ -279,7 +278,7 @@ Layer A — frozen contract preserved):
 
 - `cache.rs` — `OctoGovernanceSnapshotCache` (LRU + 600s TTL,
   `SNAPSHOT_CACHE_CAPACITY = 64`; cache key `(active_did,
-  chain_id)` only; state filter NOT in key per v1
+chain_id)` only; state filter NOT in key per v1
   simplification since substrate projection does not change
   per filter)
 - `snapshot.rs` — `ProposalFilter`, `ProposalSummary`,
@@ -288,13 +287,13 @@ Layer A — frozen contract preserved):
   lands in RFC-0855p-d + RFC-0855p-e conjunction)
 - `error.rs` — `GovernanceSnapshotError` (non_exhaustive,
   `InvalidProposalState | InvalidChainId | SnapshotStale |
-  CacheError`)
+CacheError`)
 
 CLI wiring in `octo-cli`:
 
 - `Commands::Governance { action: GovernanceAction }` variant
 - `GovernanceAction::Snapshot { chain_id, proposal_state,
-  force_refresh }` (RFC-0011-g → substrate label translation
+force_refresh }` (RFC-0011-g → substrate label translation
   at dispatch boundary)
 - 3 new `OctoCliError` variants: `SnapshotStale { ... }` exit
   35; `InvalidProposalState { state }` exit 2;

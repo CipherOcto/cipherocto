@@ -57,7 +57,7 @@ Duration)` (capacity + TTL); `get_or_compute(...)` checks live
    `max_occurred_at_unix`/`insert`. Production impl lands at
    `crates/octo-vault-stoolap/src/transfer_event_log.rs` (Layer D
    transport adapter crate, NOT `crates/octo-vault` Layer B — port
-   trait in B, adapter in D per [[cipherocto-design-principles]]).
+   trait in B, adapter in D per `cipherocto-design-principles`).
 
 5. **`VaultAssetResolver` port trait** — NEW per RFC-0960 §2.1. Distinct from
    `VaultRegistry::contains_asset` (returns `()`, cannot return asset_id).
@@ -101,7 +101,7 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
 ### Cargo deps (NEW `crates/octo-vault-stoolap/Cargo.toml`)
 
 - `octo-vault = { path = "../octo-vault" }` (port trait dependencies per Layer D direction)
-- `stoolap = { version = "<pin>", features = ["pubsub", "wal"] }` (Layer D substrate adapter; pin per [[feedback_stoolap_persistence]])
+- `stoolap = { version = "<pin>", features = ["pubsub", "wal"] }` (Layer D substrate adapter; pin per `feedback_stoolap_persistence`)
 - `tokio = { version = "<version>", features = ["sync", "rt"] }` (pub/sub subscriber runtime)
 - `serde = { version = "<version>", features = ["derive"] }`
 - `hex = "<version>"` (channel-name encoding per §2.4)
@@ -144,10 +144,10 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
   by Mission A scope as SQL-binding conformance vector; matches the
   substrate-canonical `#[repr(u8)]` pattern used elsewhere)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-vault` (Layer B) — `VaultBalanceProjection` + cache + `TransferEventLog` port + `VaultAssetResolver` port (trait definitions only)
-- `octo-vault-stoolap` (Layer D transport adapter, NEW) — Stoolap-backed impl of `TransferEventLog` + `VaultAssetResolver` + `VaultProjectionInvalidationEmitter`. Per [[cipherocto-design-principles]] Layer D depends on Layer B; adapters live in their own crate. The `VaultProjectionInvalidationEmitter` is the RFC-0960 v3.7 §2.4 anchor; the substrate-convention `InvalidationBus` port trait referenced in Mission B derives from this emitter trait boundary.
+- `octo-vault-stoolap` (Layer D transport adapter, NEW) — Stoolap-backed impl of `TransferEventLog` + `VaultAssetResolver` + `VaultProjectionInvalidationEmitter`. Per `cipherocto-design-principles` Layer D depends on Layer B; adapters live in their own crate. The `VaultProjectionInvalidationEmitter` is the RFC-0960 v3.7 §2.4 anchor; the substrate-convention `InvalidationBus` port trait referenced in Mission B derives from this emitter trait boundary.
 - New `VaultAssetResolver` trait = Layer B-additive (does NOT modify existing `VaultRegistry` contract)
 - No cross-layer inversion; vault substrate code stays in `crates/octo-vault/`
 - Semver impact: octo-vault = semver-minor (additive ports); octo-vault-stoolap = new crate (semver-minor initial release)
@@ -177,7 +177,7 @@ cargo test --workspace  # migration-ordering test must pass
 - RFC-0960 §2.3 — bounded-LRU cache + asset-rotation mitigation
 - RFC-0960 §6 Mission A — canonical scope
 - RFC-0960 v3.7 (text)
-- [[cipherocto-design-principles]] — Layer B additive-only rule
+- `cipherocto-design-principles` — Layer B additive-only rule
 - RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check; Mission A's substrate
   shape (per-event `validate_pre_insert`) does NOT preclude the

@@ -4,7 +4,6 @@ description: Fix pre-existing borsh generic bounds defect in `crates/octo-ident/
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-24T00:00:00.000Z
   v: "1.0"
   depends_on:

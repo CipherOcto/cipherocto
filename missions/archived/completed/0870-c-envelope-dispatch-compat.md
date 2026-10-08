@@ -17,25 +17,25 @@ The result: every borsh envelope silently falls into `_ => Ok(())` and is droppe
 
 ## Scope
 
-| AC | Description |
-|----|-------------|
-| AC-1 | `QuotaRouterHandler::on_receive` classifies the inbound payload via `classify_envelope`; legacy form dispatches via discriminator byte as today, new form borsh-decodes + maps `payload_kind` UUID to legacy disc + dispatches the inner `Vec<u8>` payload |
-| AC-2 | Unknown legacy discriminator → `Ok(())` (silent drop, no surface change for unknown-discriminator unit test) |
-| AC-3 | Unknown `payload_kind` UUID → `Err(TransportError::AdapterFailure)` (RFC-0871 §Compatibility fail-closed) |
-| AC-4 | Invalid borsh bytes (legacy detection missed) → `Ok(())` (fallback to legacy no-op semantics) |
-| AC-5 | `l2_gossip_convergence` tests pass (3 tests: l2_t15, l2_t17, l2_t18) |
-| AC-6 | `l2_hmac_across_nodes` tests pass (6 tests: l2_t22..l2_t27) |
-| AC-6a | `l2_inbound_ttl_exceeded` tests pass (2 tests: l2_inbound_ttl_exceeded_emits_ttl_reject, l2_inbound_ttl_exceeded_via_route) |
-| AC-6b | `l2_lifecycle` tests pass (3 tests: l2_t30_node_startup_announce, l2_t31_node_shutdown_withdraw, l2_t32_node_restart_rejoin) |
-| AC-6c | `l2_multi_hop` tests pass (3 tests: l2_t11_three_node_fan_out, l2_t12_ttl_chain_exhaustion, l2_t14_star_topology) |
-| AC-6d | `l2_multi_hop_forwarding` tests pass (5 tests: l2_t2_single_hop_forwarding, l2_t3_policy_cheapest, l2_t4_policy_fastest, l2_t8_forward_timeout, l2_t9_max_concurrent_forwards) |
-| AC-6e | `l2_peer_discovery` tests pass (3 tests: l2_t19_known_peers_in_gossip, l2_t20_announce_then_discover, l2_t21_withdraw_removes_peer) |
-| AC-6f | `l2_rate_limiting` tests pass (1 test: l2_t29_rate_limit_forwarded_requests) |
-| AC-6g | `l2_ttl_and_staleness` tests pass (2 tests: l2_t13_ttl_prevents_infinite_forwarding, l2_t16_gossip_staleness) |
-| AC-7 | `cargo test -p quota-router-core --lib` clean (1588 tests pass) |
-| AC-8 | `cargo test -p quota-router-integration-tests --lib` clean (no regressions) |
-| AC-9 | `cargo clippy -p quota-router-core --all-targets -- -D warnings` clean |
-| AC-10 | `cargo fmt --all -- --check` clean |
+| AC    | Description                                                                                                                                                                                                                                                |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC-1  | `QuotaRouterHandler::on_receive` classifies the inbound payload via `classify_envelope`; legacy form dispatches via discriminator byte as today, new form borsh-decodes + maps `payload_kind` UUID to legacy disc + dispatches the inner `Vec<u8>` payload |
+| AC-2  | Unknown legacy discriminator → `Ok(())` (silent drop, no surface change for unknown-discriminator unit test)                                                                                                                                               |
+| AC-3  | Unknown `payload_kind` UUID → `Err(TransportError::AdapterFailure)` (RFC-0871 §Compatibility fail-closed)                                                                                                                                                  |
+| AC-4  | Invalid borsh bytes (legacy detection missed) → `Ok(())` (fallback to legacy no-op semantics)                                                                                                                                                              |
+| AC-5  | `l2_gossip_convergence` tests pass (3 tests: l2_t15, l2_t17, l2_t18)                                                                                                                                                                                       |
+| AC-6  | `l2_hmac_across_nodes` tests pass (6 tests: l2_t22..l2_t27)                                                                                                                                                                                                |
+| AC-6a | `l2_inbound_ttl_exceeded` tests pass (2 tests: l2_inbound_ttl_exceeded_emits_ttl_reject, l2_inbound_ttl_exceeded_via_route)                                                                                                                                |
+| AC-6b | `l2_lifecycle` tests pass (3 tests: l2_t30_node_startup_announce, l2_t31_node_shutdown_withdraw, l2_t32_node_restart_rejoin)                                                                                                                               |
+| AC-6c | `l2_multi_hop` tests pass (3 tests: l2_t11_three_node_fan_out, l2_t12_ttl_chain_exhaustion, l2_t14_star_topology)                                                                                                                                          |
+| AC-6d | `l2_multi_hop_forwarding` tests pass (5 tests: l2_t2_single_hop_forwarding, l2_t3_policy_cheapest, l2_t4_policy_fastest, l2_t8_forward_timeout, l2_t9_max_concurrent_forwards)                                                                             |
+| AC-6e | `l2_peer_discovery` tests pass (3 tests: l2_t19_known_peers_in_gossip, l2_t20_announce_then_discover, l2_t21_withdraw_removes_peer)                                                                                                                        |
+| AC-6f | `l2_rate_limiting` tests pass (1 test: l2_t29_rate_limit_forwarded_requests)                                                                                                                                                                               |
+| AC-6g | `l2_ttl_and_staleness` tests pass (2 tests: l2_t13_ttl_prevents_infinite_forwarding, l2_t16_gossip_staleness)                                                                                                                                              |
+| AC-7  | `cargo test -p quota-router-core --lib` clean (1588 tests pass)                                                                                                                                                                                            |
+| AC-8  | `cargo test -p quota-router-integration-tests --lib` clean (no regressions)                                                                                                                                                                                |
+| AC-9  | `cargo clippy -p quota-router-core --all-targets -- -D warnings` clean                                                                                                                                                                                     |
+| AC-10 | `cargo fmt --all -- --check` clean                                                                                                                                                                                                                         |
 
 ## Out of Scope
 
@@ -45,7 +45,8 @@ The result: every borsh envelope silently falls into `_ => Ok(())` and is droppe
 
 ## Tests currently `#[ignore]`'d (per this mission's filter list)
 
-The following integration tests are pre-existing broken tests gated `#[ignore]` (per [[deferred-vs-unspecified]] named-owner rule):
+The following integration tests are pre-existing broken tests gated `#[ignore]` (per `deferred-vs-unspecified` named-owner rule):
+
 - `crates/quota-router-integration-tests/tests/l2_gossip_convergence.rs::l2_t15_gossip_propagation`
 - `crates/quota-router-integration-tests/tests/l2_gossip_convergence.rs::l2_t17_three_node_gossip_convergence`
 - `crates/quota-router-integration-tests/tests/l2_gossip_convergence.rs::l2_t18_gossip_capacity_update`
@@ -93,7 +94,7 @@ Each test gets `#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat)"]`.
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-|---------|------------|--------|---------|
-| v0.1    | 2026-08-12 | open   | Mission filed (pre-existing CI failure surfaced by review-fix run; AC-1..AC-10 + 9-test ignore list + Layer B scope) |
+| Version | Date       | Status | Changes                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-12 | open   | Mission filed (pre-existing CI failure surfaced by review-fix run; AC-1..AC-10 + 9-test ignore list + Layer B scope)                                                                                                                                                                                                                                           |
 | v0.2    | 2026-08-12 | landed | AC-1..AC-10 closed; handler.on_receive reclassified via borsh-first classify_envelope; PricingPolicy::settlement_recipient skip_serializing_if removed (bincode tag asymmetry); l2_inbound_ttl_exceeded_emits_ttl_reject updated to wire-form-aware; 28 l2_* integration tests un-ignored; 1589 lib tests + 27 l2_* integration tests pass. Commit `005e7f16`. |

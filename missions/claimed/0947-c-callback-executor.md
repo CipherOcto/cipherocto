@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (2026-08-13). `CallbackExecutor` core landed in `crates/quota-router-core/src/callbacks/mod.rs:203` (registry + mpsc channel + parallel target dispatch + dropped-counter metrics). Proxy.rs Start fire wired. **5 wiring ACs intentionally DEFERRED** with 3 filed follow-on missions per [[feedback_initiation_user_only]] user choice (close-as-DEFERRED, 0871b-pattern).
+Closed (2026-08-13). `CallbackExecutor` core landed in `crates/quota-router-core/src/callbacks/mod.rs:203` (registry + mpsc channel + parallel target dispatch + dropped-counter metrics). Proxy.rs Start fire wired. **5 wiring ACs intentionally DEFERRED** with 3 filed follow-on missions per `feedback_initiation_user_only` user choice (close-as-DEFERRED, 0871b-pattern).
 
 **Follow-on missions (all FILED):**
 
@@ -68,11 +68,11 @@ Key files (PENDING — follow-on missions):
 - `crates/quota-router-core/src/streaming.rs` — does not exist yet (0947-c2)
 - `crates/quota-router-pyo3/src/sdk.rs` — callback bindings absent (0947-c3)
 
-**Closure rationale** (per [[feedback_initiation_user_only]] user choice 2026-08-13, "Close as DEFERRED (0871b pattern) Recommended"):
+**Closure rationale** (per `feedback_initiation_user_only` user choice 2026-08-13, "Close as DEFERRED (0871b pattern) Recommended"):
 
 The `CallbackExecutor` core is the orchestration primitive — once landed, all 5 wiring ACs are concrete additions to the request path (no new abstractions needed). Following the 0871b family closure pattern: parent mission closes when the substrate is stable and all deferred work has filed follow-ons + concrete owner.
 
-**Drift disclosure** (per [[deferred-vs-unspecified]] discipline):
+**Drift disclosure** (per `deferred-vs-unspecified` discipline):
 
 - 5 ACs explicitly DEFERRED with filed follow-on missions. Each follow-on has a clear scope (3-5 ACs, single file or single crate) and is unblocked by the executor core landing.
 - No "future / post-v1.0" placeholders — every deferred AC has a concrete follow-on mission pointer.

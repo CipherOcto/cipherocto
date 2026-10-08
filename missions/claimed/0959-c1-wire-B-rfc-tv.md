@@ -4,7 +4,6 @@ description: Land RFC-0959 v2.0 wire-format amendment documentation + test-vecto
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-24T00:00:00.000Z
   v: "1.0"
   depends_on:

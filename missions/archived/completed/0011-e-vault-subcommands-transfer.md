@@ -4,7 +4,6 @@ description: Land mutating transfer subcommand (vault transfer) per RFC-0011-e (
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-e author session
   created: 2026-08-31
   v: "1.0"
   depends_on:
@@ -127,12 +126,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 - [x] `--confirm-acknowledge` two-step gate enforced (per RFC-0011 §Confirmation Flag Matrix)
 - [x] `--dest-chain-id` required when `--to` is cross-chain (per RFC-0011-e §Security: Cross-Chain Confusion)
 - [x] `--dry-run` builds envelope WITHOUT broadcasting (per RFC-0011-e §Subcommand Taxonomy `vault transfer` flags)
-- [x] HSM signing path in-process via `octo-wallet`; CLI never holds private-key material (per [[cipherocto-design-principles]] HSM mandatory rule + RFC-0011-e §Security: HSM Downgrade)
+- [x] HSM signing path in-process via `octo-wallet`; CLI never holds private-key material (per `cipherocto-design-principles` HSM mandatory rule + RFC-0011-e §Security: HSM Downgrade)
 - [x] No `--soft-sign` flag accepted (per RFC-0011-e §Security: HSM Downgrade)
 - [x] `memo` redaction in BOTH sinks (stderr/log AND JSON payload); plaintext ONLY via `--include-memo` → `VaultTransferOutput.memo_plaintext` (per RFC-0011-e v1.2 change (a) §Redaction); TV-21 pastejacking-on-`--memo` guards operator clipboard compromise
 - [x] Transfer amounts NOT redacted (chain-public info per RFC-0011-e §Redaction)
 - [x] Stub-with-error mode: until release gate clears, `vault transfer` returns `OctoCliError::RoleNotProvisioned` (exit 25) regardless of HSM availability (per RFC-0011-e §Subcommand Taxonomy + §Implementation Phases)
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -155,7 +154,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Vault Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -187,7 +186,7 @@ Land the mutating transfer subcommand per RFC-0011-e §Phase 1 (`octo vault tran
 
 5. **Confirm gate + cross-chain validation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). `--confirm-acknowledge` two-step gate per RFC-0011 §Confirmation Flag Matrix (rejection raises existing `ConfirmationRequired` exit **2** — clap parse code; parent `error.rs` already maps it). `--dest-chain-id` required when `--from` chain_id ≠ `--to` chain_id (per RFC-0011-e §Security: Cross-Chain Confusion); omission raises `ChainIdMismatch` exit 26. `ConfirmationRequired` lives in the RFC-0011 §Exit Code Table at exit 2 (not 22).
 
-6. **HSM signing delegation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). Substrate call: `octo_vault::initiate_transfer(vault_id, dest, amount_dqa_micros, asset)` (per RFC-0011-e §Substrate Additions). Substrate coordinates HSM signing via `octo-wallet::sign_envelope`; CLI never holds private-key material. The CLI does NOT accept any flag that bypasses HSM (per RFC-0011-e §Security: HSM Downgrade + [[cipherocto-design-principles]] HSM mandatory rule).
+6. **HSM signing delegation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). Substrate call: `octo_vault::initiate_transfer(vault_id, dest, amount_dqa_micros, asset)` (per RFC-0011-e §Substrate Additions). Substrate coordinates HSM signing via `octo-wallet::sign_envelope`; CLI never holds private-key material. The CLI does NOT accept any flag that bypasses HSM (per RFC-0011-e §Security: HSM Downgrade + `cipherocto-design-principles` HSM mandatory rule).
 
 7. **Memo redaction (BOTH sinks)** — `crates/octo-cli/src/redact.rs` (Layer C/D; per RFC-0011-e v1.2 change (a) §Redaction). `--memo <text>` is redacted in stderr/log AND in the JSON envelope by default via `OctoCliRedactor`; plaintext is exposed ONLY under `--include-memo` via the `memo_plaintext: Option<String>` field of `VaultTransferOutput`. Help text advises operator that memo content is observable by destination vault owner when `--include-memo` is set. **EXPLICIT LIMITATION (RFC v1.8 §Memo Leakage):** redaction applies within the `OctoCliRedactor` envelope path; a downstream logging plugin outside that scope (e.g., a custom `tracing-subscriber` Layer added by an extension crate) could still observe plaintext. Memo must not carry credentials, payment instructions, or any value-bearing information — chain-public memos are observable by validators regardless.
 
@@ -214,7 +213,7 @@ No new external crates required; `TransferHandle`, `TransferStatus`, and `sign_e
 | XFER3 | `vault transfer` | `--from <a> --to <b> --amount 1000000000 --asset OCTO` (no `--confirm-acknowledge`) | `ConfirmationRequired` (exit 2, clap parse code per RFC-0011 §Exit Code Table) | Two-step gate enforced                      |
 | XFER4 | `vault transfer` | `--from <x> --to <b>` where `<x>` is not owned by active DID                        | `VaultNotOwned` (exit 23)                                                      | Pre-flight ownership check fails            |
 
-## Layer direction (RFC-0011-e §Roles and Authorities + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-e §Roles and Authorities + per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — `vault transfer` clap dispatch + pre-flight orchestration + `VaultTransferOutput` payload + 3 new `OctoCliError` variants (`InsufficientBalance`, `RoleNotProvisioned`, `ChainIdMismatch`) + memo redaction in BOTH sinks (per RFC v1.2 change (a)) + stub-with-error gate. **Nonce allocation is substrate-authoritative** (`last_nonce + 1` per-vault counter; CLI does not generate nonces).
 - `octo-vault` (Layer B) — substrate `[ADD]` `initiate_transfer` + `role_can_transfer` check + `VaultAssetResolver::resolve_asset_for` validation (landed via companion mission `0011-e-vault-substrate-additions`).
@@ -247,14 +246,14 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0960-v37 §Balance Projection Substrate (SUM projection, `VaultAssetResolver` trait)
 - RFC-0010 §2 ledger_chain_registry Table DID Codec (chain ID canonical form)
 - RFC-0008 §Determinism Requirements AI Execution Boundary (Class C execution class for mutating CLI surface)
-- [[cipherocto-design-principles]] — Layer B stability contract + HSM mandatory rule + no premature coupling
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
+- `cipherocto-design-principles` — Layer B stability contract + HSM mandatory rule + no premature coupling
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Why 1 release cycle gate (transfer mission: cite RFC-0011-d dependency)
 
 Per RFC-0011-e §Dependencies: "The `vault transfer` subcommand is **conditionally dependent** on RFC-0011-d role provisioning: it ships as a stub-with-error until RFC-0011-d is Accepted." Per RFC-0011-e §Why `vault transfer` depends on RFC-0011-d: "`vault transfer` is a write operation that consumes substrate resources (DQA, gas) and produces a signed envelope. Per `cipherocto-design-principles.md` (no premature coupling), the CLI must not implement role provisioning — that is RFC-0011-d's responsibility. Until RFC-0011-d is Accepted, the CLI surfaces `RoleNotProvisioned` so the operator understands the gap without the CLI silently failing."
 
-The 1-release-cycle gate is the same pattern RFC-0011 uses for stub commands: the binary lands in this release as `vault transfer` returning a structured error (`RoleNotProvisioned`, exit 25); once RFC-0011-d reaches Accepted, the surface activates without requiring a follow-on binary release. This avoids parallel abstractions (the CLI does not implement role provisioning — RFC-0011-d owns that surface per [[cipherocto-design-principles]] no-parallel-abstractions principle).
+The 1-release-cycle gate is the same pattern RFC-0011 uses for stub commands: the binary lands in this release as `vault transfer` returning a structured error (`RoleNotProvisioned`, exit 25); once RFC-0011-d reaches Accepted, the surface activates without requiring a follow-on binary release. This avoids parallel abstractions (the CLI does not implement role provisioning — RFC-0011-d owns that surface per `cipherocto-design-principles` no-parallel-abstractions principle).
 
 `released_version: TBD` reflects that the activation version is gated on when RFC-0011-d lands; per RFC migration etiquette, the version is recorded once the activation lands.
 

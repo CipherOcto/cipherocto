@@ -74,21 +74,21 @@ Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialize
 
 Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0968 + RFC-0955-R1 types mapped to this mission (Phase 3 reputation anchor):
 
-| RFC Type / Section | Implemented By |
-|---|---|
-| `ReputationAnchorNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-reputation-anchor-node/src/node.rs` (Phase 3 MVP; registry + anchor backends added in 0968a) |
-| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-reputation-anchor-node/src/node.rs` |
-| `REPUTATION_ANCHOR_QUERY` payload kind | This mission — `crates/octo-reputation-anchor-node/src/handlers/query.rs` (Phase 3 MVP stub) |
-| `REPUTATION_QUERY` payload kind | Deferred to mission `0968a-reputation-anchoring` |
-| `REPUTATION_UPDATE` payload kind | Deferred to mission `0968a-reputation-anchoring` |
-| `REPUTATION_ANCHOR` payload kind | Deferred to mission `0968a-reputation-anchoring` |
-| `ReputationAnchorNode::broadcast_announce` | This mission — Phase 3 MVP stub (full RouterAnnouncePayload shape deferred to 0870-b follow-on) |
-| `ReputationRegistry` substrate | RFC-0968 existing — `crates/quota-router-core/src/reputation/` (consumed in 0968a follow-on) |
-| `ReputationAnchor` substrate (on-chain anchoring) | RFC-0955-R1 — implemented in mission `0968a-reputation-anchoring` (this mission does NOT own `anchor.rs`) |
-| `ReputationUpdateCaveat` (RFC-0965 reserved) | Deferred to mission `0968a-reputation-anchoring` — registers caveat in `crates/octo-cap-macaroon/src/caveat/reputation.rs` |
-| `AnchorCapabilityCaveat` (RFC-0955-R1 caveat) | Mission `missions/claimed/0968a-reputation-anchoring.md` — defines the caveat |
-| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
-| Cross-chain anchoring (specialized node ↔ external chain) | Deferred to RFC-0871 §Future Work — separate future mission |
+| RFC Type / Section                                              | Implemented By                                                                                                             |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ReputationAnchorNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-reputation-anchor-node/src/node.rs` (Phase 3 MVP; registry + anchor backends added in 0968a)   |
+| `NetworkReceiver` impl (RFC-0863 substrate)                     | This mission — `crates/octo-reputation-anchor-node/src/node.rs`                                                            |
+| `REPUTATION_ANCHOR_QUERY` payload kind                          | This mission — `crates/octo-reputation-anchor-node/src/handlers/query.rs` (Phase 3 MVP stub)                               |
+| `REPUTATION_QUERY` payload kind                                 | Deferred to mission `0968a-reputation-anchoring`                                                                           |
+| `REPUTATION_UPDATE` payload kind                                | Deferred to mission `0968a-reputation-anchoring`                                                                           |
+| `REPUTATION_ANCHOR` payload kind                                | Deferred to mission `0968a-reputation-anchoring`                                                                           |
+| `ReputationAnchorNode::broadcast_announce`                      | This mission — Phase 3 MVP stub (full RouterAnnouncePayload shape deferred to 0870-b follow-on)                            |
+| `ReputationRegistry` substrate                                  | RFC-0968 existing — `crates/quota-router-core/src/reputation/` (consumed in 0968a follow-on)                               |
+| `ReputationAnchor` substrate (on-chain anchoring)               | RFC-0955-R1 — implemented in mission `0968a-reputation-anchoring` (this mission does NOT own `anchor.rs`)                  |
+| `ReputationUpdateCaveat` (RFC-0965 reserved)                    | Deferred to mission `0968a-reputation-anchoring` — registers caveat in `crates/octo-cap-macaroon/src/caveat/reputation.rs` |
+| `AnchorCapabilityCaveat` (RFC-0955-R1 caveat)                   | Mission `missions/claimed/0968a-reputation-anchoring.md` — defines the caveat                                              |
+| `NodeEnvelope` envelope shape (consumed)                        | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite                                                            |
+| Cross-chain anchoring (specialized node ↔ external chain)       | Deferred to RFC-0871 §Future Work — separate future mission                                                                |
 
 ## Dependencies
 
@@ -151,7 +151,7 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §5. Storage Schema + RF
 
 ## Pull Request
 
-# (local commit; push + remote writes await user instruction per [[git-workflow]])
+# (local commit; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 
@@ -160,6 +160,7 @@ Mission 0871c-reputation-anchor-node landed as the Phase 3 MVP adapter stub on `
 **NEW `crates/octo-reputation-anchor-node/`** Layer C crate (5 files, 8 unit tests).
 
 **New types:**
+
 - `ReputationAnchorNode` + `ReputationAnchorNodeConfig` + `ReputationAnchorNodeHandle` + `ReputationAnchorNodeError`
 - `QueryAnchorHandler` + `QueryAnchorRequest` + `QueryAnchorResponse` (single handler for Phase 3 MVP)
 - `HandlerOutput` (response envelope payload + payload kind)
@@ -167,16 +168,19 @@ Mission 0871c-reputation-anchor-node landed as the Phase 3 MVP adapter stub on `
 - `default_dispatcher()` helper (wall-clock + cache-backed `ReferenceDispatcher`)
 
 **`octo-protocol` amendment:**
+
 - `REPUTATION_ANCHOR_QUERY` payload kind constant (UUID `0x0009:0004:0000:0000:0000:0000:0000:0001`)
 - `REPUTATION_PAYLOAD_KINDS` array + `is_reputation_payload_kind()` dispatcher function
 - 5 new tests covering UUID shape + RFC namespace classification + quota-router non-collision + borsh round-trip
 
 **Verification chain:**
+
 - All inbound envelopes route through `EnvelopeDispatcher::verify_all` (replay defense + signature verification)
 - DID validation: `QueryAnchorHandler` rejects malformed DIDs + legacy bare form via `CanonicalCodec::parse(s, false)`
 - `NetworkReceiver` wrapper (`ReputationAnchorNodeReceiver`) delegates `on_receive` → `handle_envelope` → `borsh::from_slice` per RFC-0863 wiring
 
 **Phase 3 MVP disclosures (honest scope):**
+
 1. **One payload kind only** — `REPUTATION_ANCHOR_QUERY`. The full 3-kind surface (`REPUTATION_QUERY`, `REPUTATION_UPDATE`, `REPUTATION_ANCHOR`) is deferred to mission `0968a-reputation-anchoring` (in flight per DAG memory). This is the contract for Phase 3 MVP per the user's instructions ("stub crate for Phase 3 — the actual reputation anchor storage/lookup is mission 0968a").
 2. **Stub response** — `QueryAnchorResponse { anchor_score: 0, attestation_count: 0 }` (placeholder; real values sourced from RFC-0968 `ReputationRegistry` in 0968a).
 3. **No bound identity** — `ReputationAnchorNodeConfig` carries `transport: Arc<NodeTransport>` only. No `Arc<IdentityKey>` field. `broadcast_announce` derives a placeholder `from_did` from a fixed `[0u8; 32]` placeholder pubkey via `CanonicalCodec::mint`. The user's explicit dep list (`octo-protocol`, `octo-ident`, `octo-transport`, `tokio`, `async-trait`, `borsh`, `bs58`, `thiserror`) deliberately excludes `octo-wallet` / `octo-reputation`. Real HSM-routed signing + bound identity land in 0968a.

@@ -4,7 +4,6 @@ description: RFC-0012-v3 acceptance rollout — workspace Display redaction regr
 metadata:
   node_type: substrate-faithful-consumer
   type: post-acceptance-rollout
-  originSessionId: RFC-0012-v3 promotion session (2026-09-12)
   created: 2026-09-12
   v: "1.0"
   pair: 2-Cycle Atomic Promotion

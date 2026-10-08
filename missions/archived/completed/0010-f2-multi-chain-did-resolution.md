@@ -32,7 +32,7 @@ either:
 2. New `ChainId` type in `crates/octo-ident/src/chain.rs` — typed
    wrapper around a `String` namespace (e.g., `"cipherocto-mainnet"`,
    `"ethereum-attestation"`). RFC-allocated namespace + user
-   extension range per [[cipherocto-design-principles]] §Extension
+   extension range per `cipherocto-design-principles` §Extension
    over enumeration.
 3. `DidRegistry` trait amended (v1.4 in-place amendment to RFC-0010) —
    add `chain: &ChainId` parameter to `register` / `resolve` / `revoke`
@@ -76,10 +76,10 @@ cargo test --workspace --lib
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — v1.3 substrate
-- [[mission-0871b-storage-backend]] — substrate mission (DAG predecessor)
-- [[cipherocto-design-principles]] — Extension over enumeration
-- [[mission-0959-c4-composite-catalog]] — `CompositeCapabilityCatalog`
+- `rfc-0010-v13-storage-extension` — v1.3 substrate
+- `mission-0871b-storage-backend` — substrate mission (DAG predecessor)
+- `cipherocto-design-principles` — Extension over enumeration
+- `mission-0959-c4-composite-catalog` — `CompositeCapabilityCatalog`
   pattern mirror
 
 ## Claimant

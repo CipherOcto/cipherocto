@@ -43,7 +43,7 @@ The `transition_agent` write function + 3 write-path `WalletError` variants + 3 
 
 ## Design Goals
 
-1. **Substrate-faithful** — function names, parameter shapes, return types match the canonical CLI consumer contracts in RFC-0011-c §9.3 (no parallel abstractions per [[cipherocto-design-principles]]).
+1. **Substrate-faithful** — function names, parameter shapes, return types match the canonical CLI consumer contracts in RFC-0011-c §9.3 (no parallel abstractions per `cipherocto-design-principles`).
 2. **State-machine substrate authority** — `transition_agent` is the substrate-level guard for `AgentState` transitions; CLI cannot bypass. Replay protection + idempotency live in the substrate, not the CLI.
 3. **TOCTOU mitigation via GLOBAL std Mutex** — `std::sync::Mutex` lock on `AGENT_REGISTRY: OnceLock<Mutex<BTreeMap<Uuid, AgentRecord>>>` (canonical substrate pattern per §AGENT_REGISTRY); mutex poison → `WalletError::Config(String)` per `WalletError::Config` mapping (same as other call sites in the module).
 4. **Audit append + rollback contract** — every successful transition appends an `AuditEventKind::AgentTransition` row to `AppendOnlyAuditSink` per RFC-0012. On fail-closed audit-append failure the in-memory state is rolled back per §6.1 (5). The wallet substrate does NOT have special-case handling for `AlreadyExists` — if the audit-core propagates `AlreadyExists` as `Err`, the wallet's fail-closed rollback contract applies (blanket `.map_err` per `agent.rs` §transition_agent audit append branch).
@@ -359,9 +359,9 @@ No changes to Layer A crates from RFC-0015-a alone (the `AuditEventKind::AgentTr
 
 - **Substrate-faithful** — substrate is canonical per RFC-0012/0013/0014 acceptance pattern; the three-state `AgentState` enum is canonical even when it differs from the RFC-0002 spec diagram.
 - **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the new function + 3 DEFERRED error variants + `TransitionReceipt` projection struct are additive; the `AuditEventKind::AgentTransition` variant is in the paired RFC-0012 Layer A amendment (paired acceptance unblocks both RFCs together).
-- **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per [[cipherocto-design-principles]] §No parallel abstractions).
-- **Substrate-owned invariants** — state-machine validation lives in the substrate; CLI cannot bypass. Per [[cipherocto-design-principles]] §Discipline at first call site pays off.
-- **Pairing discipline** — RFC-0015 + RFC-0015-a + RFC-0012 form an acceptance triplet per [[cipherocto-design-principles]] §Extension over enumeration; no central enum edit at Layer A is performed in RFC-0015-a alone.
+- **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per `cipherocto-design-principles` §No parallel abstractions).
+- **Substrate-owned invariants** — state-machine validation lives in the substrate; CLI cannot bypass. Per `cipherocto-design-principles` §Discipline at first call site pays off.
+- **Pairing discipline** — RFC-0015 + RFC-0015-a + RFC-0012 form an acceptance triplet per `cipherocto-design-principles` §Extension over enumeration; no central enum edit at Layer A is performed in RFC-0015-a alone.
 
 #### §Amendment Surface
 
@@ -393,7 +393,7 @@ Per substrate-faithful single-source-of-truth principle, additive write-path sub
 - RFC-0011 — `octo` CLI Substrate (parent RFC; provides envelope + error + exit-code substrate)
 - RFC-0010 — Canonical DID Codec (DID parsing for `holder_did` filter field)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
-- [[cipherocto-design-principles]] — Layer model + substrate-faithful principle; RFC-0015 / RFC-0015-a / RFC-0012 triplet follows the extension-over-enumeration pattern (no central enum edit at Layer A)
+- `cipherocto-design-principles` — Layer model + substrate-faithful principle; RFC-0015 / RFC-0015-a / RFC-0012 triplet follows the extension-over-enumeration pattern (no central enum edit at Layer A)
 
 ## Related Use Cases
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; implementation + verification landed 2026-08-04 (`998debbf`); Round 2 revoke-timestamp Debug redaction landed 2026-08-06 (`3edc425c`). Band A: **22/23** ACs GREEN as of 2026-08-07 audit-closure roll-up. The 1 remaining unchecked AC is an explicit cross-mission deferral with named owner + target per [[deferred-vs-unspecified]]: RFC-0862 gossip + node-A/node-B integration test (TV5) → owner @cipherocto, target 2026-08-28, sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands. The previously-deferred AC #3 (workspace `--all-features` clippy blocked by `tdlib-rs` feature-conflict) flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (2026-08-07). The 3rd previously-deferred AC (forced-failure `TransactionExt::insert_dual` / TV11 atomicity) flipped GREEN via Path B body rewrite citing `0969-b1-insert-dual-impl` closure (Band A 2026-08-07) which delivered `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + TV9-I2 forced-failure rollback test.
+Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; implementation + verification landed 2026-08-04 (`998debbf`); Round 2 revoke-timestamp Debug redaction landed 2026-08-06 (`3edc425c`). Band A: **22/23** ACs GREEN as of 2026-08-07 audit-closure roll-up. The 1 remaining unchecked AC is an explicit cross-mission deferral with named owner + target per `deferred-vs-unspecified`: RFC-0862 gossip + node-A/node-B integration test (TV5) → owner @cipherocto, target 2026-08-28, sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands. The previously-deferred AC #3 (workspace `--all-features` clippy blocked by `tdlib-rs` feature-conflict) flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (2026-08-07). The 3rd previously-deferred AC (forced-failure `TransactionExt::insert_dual` / TV11 atomicity) flipped GREEN via Path B body rewrite citing `0969-b1-insert-dual-impl` closure (Band A 2026-08-07) which delivered `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + TV9-I2 forced-failure rollback test.
 
 ## RFC
 
@@ -36,7 +36,7 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 ### Cross-node mint verifiability (G5)
 
-- [ ] Integration test for node-A mint, RFC-0862 gossip sync, and node-B lookup — deferred cross-mission: 0957-c ships `sync_peers()` as an `Ok(())` stub; no multi-node gossip integration test is implemented here. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `none` (sync stub). **Deferral:** owner = @cipherocto, target = 2026-08-28 per [[deferred-vs-unspecified]] named-owner rule. Cross-mission substrate requires (a) RFC-0862 gossip channel binding (in scope of `0957-c-gossip` prospective sub-mission; not yet filed per [[no-phantom-mission-pointers]]); (b) two `StoolapHolderRegistry::open_in_memory()` fixture (pattern demonstrated in `0959-c2-cross-node-delivery` TV7 test). Will be filed as `0957-c-gossip` when RFC-0862 gossip channel binding lands.
+- [ ] Integration test for node-A mint, RFC-0862 gossip sync, and node-B lookup — deferred cross-mission: 0957-c ships `sync_peers()` as an `Ok(())` stub; no multi-node gossip integration test is implemented here. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `none` (sync stub). **Deferral:** owner = @cipherocto, target = 2026-08-28 per `deferred-vs-unspecified` named-owner rule. Cross-mission substrate requires (a) RFC-0862 gossip channel binding (in scope of `0957-c-gossip` prospective sub-mission; not yet filed per `no-phantom-mission-pointers`); (b) two `StoolapHolderRegistry::open_in_memory()` fixture (pattern demonstrated in `0959-c2-cross-node-delivery` TV7 test). Will be filed as `0957-c-gossip` when RFC-0862 gossip channel binding lands.
 
 ### 4-kind agnosticism (G6)
 
@@ -110,7 +110,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Claimant
 
-@mmacedoeu (CipherOcto-side implementation; cipherocto-side migration only per [[stoolap-general-purpose-db]] red line)
+@mmacedoeu (CipherOcto-side implementation; cipherocto-side migration only per `stoolap-general-purpose-db` red line)
 
 ## Pull Request
 
@@ -119,7 +119,7 @@ This sub-mission implements (per top-level Type Coverage table):
 ## Notes
 
 - The `Clock` trait used in `lookup_active(cap_root_hash, &dyn Clock)` and `revoke(cap_root_hash, &dyn Clock)` already exists from RFC-0853; this sub-mission consumes it.
-- The `stoolap` dep is the CipherOcto fork at `feat/blockchain-sql` per [[feedback_stoolap-persistence]]. Schema migration path documented in RFC-0957-A1 §Appendix A.
+- The `stoolap` dep is the CipherOcto fork at `feat/blockchain-sql` per `feedback_stoolap-persistence`. Schema migration path documented in RFC-0957-A1 §Appendix A.
 - TV11 (`insert_dual` atomicity) crosses into sub-mission 0969-b (RFC-0969 §Algorithms:mint_dual). Co-author contract: 0969-b owns the algorithm; this sub-mission owns the trait method `Transaction::insert_dual(...)` if it lives on `Transaction`, or 0969-b owns it if it lives as a free function. Pre-RFC-0957-A2 split: default `Transaction::insert_dual`.
 
 ## Closure
@@ -241,7 +241,7 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 | Cross-crate compat                 |      3 |     1 |
 | **Total**                          | **20** | **3** |
 
-**Remaining open ACs (all explicit cross-mission or out-of-scope, per [[deferred-vs-unspecified]]):**
+**Remaining open ACs (all explicit cross-mission or out-of-scope, per `deferred-vs-unspecified`):**
 
 - _Debug redaction_: 0 open — section is now fully green.
 - _Cross-node mint verifiability (G5)_: 1 open — `sync_peers()` is an `Ok(())` stub; RFC-0862 gossip + node-A / node-B integration test is owned by the prospective 0957-c-gossip sub-mission (TV5). Not a 0957-c Band A item.
@@ -260,7 +260,7 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 **Changes:**
 
 - AC #2 (Atomicity G8 / TV11 forced-failure `TransactionExt::insert_dual`) → flipped GREEN via Path B body rewrite. AC text references `TransactionExt::insert_dual` (RFC-0957-A1 §Co-author contract name); substrate delivers on `StoolapHolderRegistry::insert_dual` (concrete atomic impl) + `HolderRegistry::insert_dual` trait method. Atomic body + TV9-I2 forced-failure rollback test landed in `missions/archived/completed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN). Same atomicity invariant, substrate name. AC body now cites the closing sub-mission.
-- AC #1 (Cross-node mint verifiability G5 / TV5 gossip integration test) → augmented with named owner (@cipherocto) + target (2026-08-28) per [[deferred-vs-unspecified]] named-owner rule. Sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands (per [[no-phantom-mission-pointers]], cannot cite a non-existent mission).
+- AC #1 (Cross-node mint verifiability G5 / TV5 gossip integration test) → augmented with named owner (@cipherocto) + target (2026-08-28) per `deferred-vs-unspecified` named-owner rule. Sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands (per `no-phantom-mission-pointers`, cannot cite a non-existent mission).
 - AC #3 (Cross-crate compat / workspace `--all-features` clippy) → flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (legacy `tdlib-rs` adapter excluded from workspace).
 
 **Updated AC walk count (post-audit-closure):**

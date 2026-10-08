@@ -10,7 +10,7 @@ RFC-0011-h §Implementation Phases Phase 5 + RFC-0011-m Phase 5 §Subcommand Tax
 
 ## Summary
 
-CLI surface for discovery cache reads. Substrate-faithful boundary per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+CLI surface for discovery cache reads. Substrate-faithful boundary per `cipherocto-design-principles` §Stable Abstractions Principle.
 
 ### Subcommands
 
@@ -32,12 +32,12 @@ Both subcommands carry no confirmation flags (read-only per RFC-0011-h row 86 + 
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (396/396, +6 above Phase 4 baseline of 390)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change; zero Layer B change beyond the 2 paired substrate slices)
-- [x] Substrate-faithful boundary: every call crosses typed façade per [[cipherocto-design-principles]] §Stable Abstractions Principle
+- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle
 
 ## Dependencies
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
-- Pairing invariant: substrate missions G23 + G24 `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per [[no-phantom-mission-pointers]]
+- Pairing invariant: substrate missions G23 + G24 `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers`
 
 ## Out of Scope
 

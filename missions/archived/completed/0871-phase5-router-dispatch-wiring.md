@@ -48,19 +48,21 @@ Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel
 
 ## Cross-references
 
-- [[wave-3-gaps-2026-08-10]] — gap surface context
-- [[mission-0871e-phase5c-status]] — predecessor sub-mission (introduced duplication)
-- [[0959-placeholder-identity-binding]] — sibling sub-mission (provides real node_id)
-- [[cipherocto-design-principles]] — Stable Abstractions Principle + no parallel abstractions
+- `wave-3-gaps-2026-08-10` — gap surface context
+- `mission-0871e-phase5c-status` — predecessor sub-mission (introduced duplication)
+- `0959-placeholder-identity-binding` — sibling sub-mission (provides real node_id)
+- `cipherocto-design-principles` — Stable Abstractions Principle + no parallel abstractions
 
 ## LANDED substrate (2026-08-11)
 
 **No new files**: `RouterAnnounceBuilder` already existed in `crates/quota-router-core/src/node/announce.rs` (added in mission 0871e-phase5c). 3 of 5 call sites already migrated in prior commits.
 
 **Modified files**
+
 - `crates/octo-identity-resolver-node/src/node.rs` — `broadcast_announce` migrated to `RouterAnnounceBuilder::new(...).pricing_policy(Some(...)).build(&network_key)`. Replaces 30-line inline struct literal.
 
 **New tests (7 TV in `crates/quota-router-core/src/node/announce.rs::tests`)**
+
 - TV-1 builder_default_pricing_policy_is_none
 - TV-2 builder_with_pricing_policy_round_trip (JSON serde round-trip)
 - TV-3 builder_hmac_signs_with_non_zero_key (Phase 1 MVP compatibility via zero-key sentinel)
@@ -70,13 +72,14 @@ Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel
 - TV-7 builder_missing_field_defaults (W3C-style `Vec<T>` vs `Option<Vec<T>>`)
 
 **Migration status (5 paths)**
+
 - `QuotaRouterNode::broadcast_announce` — DONE (prior commit, uses `RouterAnnounceBuilder`)
 - `octo-wallet-node::WalletNode::broadcast_announce` — DONE (prior commit)
 - `octo-capability-issuer-node::CapabilityIssuerNode::broadcast_announce` — DONE (prior commit)
 - `octo-reputation-anchor-node::ReputationAnchorNode::broadcast_announce` — DONE (prior commit)
 - `octo-identity-resolver-node::IdentityResolverNode::broadcast_announce` — DONE (this mission)
 
-## Layer discipline (per [[cipherocto-design-principles]])
+## Layer discipline (per `cipherocto-design-principles`)
 
 - `quota-router-core` (Layer A) owns the canonical `RouterAnnounceBuilder` + `RouterAnnouncePayload` + HMAC trait surface. UNCHANGED for this mission (already in place).
 - 4 specialized nodes (Layer C) consume the builder via dep. ONE site (`octo-identity-resolver-node`) migrated in this mission; 3 were migrated in prior commits.
@@ -88,20 +91,20 @@ The mission originally called for **6 + 1 = 7 TV across 5 broadcast paths**. The
 
 ## Validation snapshot
 
-| Check | Result |
-|-------|--------|
-| `cargo build -p quota-router-core -p octo-identity-resolver-node -p octo-wallet-node -p octo-capability-issuer-node -p octo-reputation-anchor-node` | clean |
-| `cargo fmt --all -- --check` | clean |
-| `cargo clippy -p quota-router-core -p octo-identity-resolver-node -p octo-wallet-node -p octo-capability-issuer-node -p octo-reputation-anchor-node --all-targets -- -D warnings` | clean |
-| `cargo test --lib -p quota-router-core` | 1538/1538 pass (1531 prior + 7 new TV) |
-| `cargo test --lib -p octo-identity-resolver-node` | 24/24 pass (no regression) |
-| `cargo test -p octo-wallet-node` | 30/30 pass (no regression) |
-| `cargo test -p octo-capability-issuer-node` | 19/19 pass (no regression) |
-| `cargo test -p octo-reputation-anchor-node` | 8/8 pass (no regression) |
+| Check                                                                                                                                                                             | Result                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `cargo build -p quota-router-core -p octo-identity-resolver-node -p octo-wallet-node -p octo-capability-issuer-node -p octo-reputation-anchor-node`                               | clean                                  |
+| `cargo fmt --all -- --check`                                                                                                                                                      | clean                                  |
+| `cargo clippy -p quota-router-core -p octo-identity-resolver-node -p octo-wallet-node -p octo-capability-issuer-node -p octo-reputation-anchor-node --all-targets -- -D warnings` | clean                                  |
+| `cargo test --lib -p quota-router-core`                                                                                                                                           | 1538/1538 pass (1531 prior + 7 new TV) |
+| `cargo test --lib -p octo-identity-resolver-node`                                                                                                                                 | 24/24 pass (no regression)             |
+| `cargo test -p octo-wallet-node`                                                                                                                                                  | 30/30 pass (no regression)             |
+| `cargo test -p octo-capability-issuer-node`                                                                                                                                       | 19/19 pass (no regression)             |
+| `cargo test -p octo-reputation-anchor-node`                                                                                                                                       | 8/8 pass (no regression)               |
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-| ------- | ---------- | ------ | ------- |
-| v0.1    | 2026-08-10 | open   | Mission filed (wave 3a step 4; gap surfaced 2026-08-10). |
+| Version | Date       | Status | Changes                                                                                                                                                                                   |
+| ------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-10 | open   | Mission filed (wave 3a step 4; gap surfaced 2026-08-10).                                                                                                                                  |
 | v0.2    | 2026-08-11 | LANDED | `octo-identity-resolver-node::broadcast_announce` migrated to `RouterAnnounceBuilder`. 7 TV in `quota-router-core::announce.rs::tests`. All 5 broadcast paths now use the single builder. |

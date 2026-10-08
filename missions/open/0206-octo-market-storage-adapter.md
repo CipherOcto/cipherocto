@@ -4,7 +4,6 @@ description: Open 2026-08-19; RFC-0206 §Future Work phantom pointer 5/5 — `oc
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-19T23:55:00.000Z
 ---
 
@@ -26,9 +25,9 @@ B.4"). Covers:
   workspace member; `Cargo.toml` `[dependencies]` matches the
   per-owner adapter template per RFC-0206 §Cargo.toml Templates
   Per-owner adapter template (owner-trait crate + `octo-storage-core`
-  + `octo-determin` conditional).
+  - `octo-determin` conditional).
 - **(c) Stoolap migration runner** — `register(Arc<Database>) ->
-  Arc<dyn MarketState>` (or whichever traits are in scope per
+Arc<dyn MarketState>` (or whichever traits are in scope per
   step (a)); SQL migrations in `crates/<market-owner>/migrations/*.sql`
   per RFC-0206 §Wiring Pattern.
 - **(d) RFC-0959 + RFC-0969 cross-dep** — `octo-market-storage`
@@ -44,7 +43,7 @@ Mission complete when:
 1. `crates/octo-market-storage/` directory exists + workspace
    member registered
 2. The traits from step (a) declared in their owner-trait crates
-   + implemented in `octo-market-storage/`
+   - implemented in `octo-market-storage/`
 3. SQL migrations live under `crates/<market-owner>/migrations/*.sql`
    (NOT in `crates/octo-market-storage/`)
 4. `cargo build -p octo-market-storage` green

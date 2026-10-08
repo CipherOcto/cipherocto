@@ -4,7 +4,6 @@ description: Open 2026-08-20 v1.0; per-adapter fixture suites for the 5 adapter 
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
   supersedes: null
@@ -46,7 +45,7 @@ Total: 6 fixtures × 5 adapters = 30 NEW test files.
 
 ## Version History
 
-| Version | Date       | Change                                       |
-| ------- | ---------- | -------------------------------------------- |
-| v1.0    | 2026-08-20 | Initial filing; 6 fixtures × 5 adapters = 30 |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1.0    | 2026-08-20 | Initial filing; 6 fixtures × 5 adapters = 30                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v1.1    | 2026-08-22 | Phase 3.7 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-010-per-adapter-fixtures-status.md`: LANDED 5a337323 (2026-08-20). 20 NEW fixture files × 14 tests = 70 cases per-adapter (drop_table_negative + namespace_guard + 4 adversarial per adapter per Format Bypass Defense). TV-A11 + A12 PASS. RFC-only YAML edits per R10.5 scope discipline. Mission file git mv open → claimed + status open → done. |

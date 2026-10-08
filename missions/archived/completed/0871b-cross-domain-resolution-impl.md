@@ -96,10 +96,10 @@ cargo test --lib -p octo-identity-resolver-node
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — `DidRegistry` substrate
-- [[mission-0871b-storage-backend]] — `ResolverBackend` substrate
-- [[mission-0010-f2-multi-chain-did-resolution]] — multi-chain hop routing
-- [[wave-3-plan-correction-2026-08-10]] — drift context
+- `rfc-0010-v13-storage-extension` — `DidRegistry` substrate
+- `mission-0871b-storage-backend` — `ResolverBackend` substrate
+- `mission-0010-f2-multi-chain-did-resolution` — multi-chain hop routing
+- `wave-3-plan-correction-2026-08-10` — drift context
 
 ## Claimant
 
@@ -111,7 +111,7 @@ cargo test --lib -p octo-identity-resolver-node
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-|---------|------------|--------|---------|
-| v1.0    | 2026-08-11 | closed | Initial claim; substrate landed per scope items 1 + 4 + chain-traversal TV. |
+| Version | Date       | Status | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-11 | closed | Initial claim; substrate landed per scope items 1 + 4 + chain-traversal TV.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | v1.1    | 2026-08-12 | closed | Hard audit corrections: (a) removed false `backend.rs` claim — scope item #2 was deferred, never landed (`git show c14c2707 --stat` empty for `backend.rs`); (b) UUID `:0002` → `:0004` per `payload_kind.rs:156`; (c) removed scope item #3 (`ResolveDIDRequest` extension) — substrate uses separate `ChainResolveRequest` payload kind instead; (d) clarified "3-node TV" is actually 3 local hops against single `InMemoryDidRegistry`; cross-domain auth + true 3-node TV deferred to `0871b-cross-node-forwarding`. |

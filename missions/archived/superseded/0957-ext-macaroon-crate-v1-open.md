@@ -90,7 +90,7 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 ## Claimant
 
-@unassigned (per `[[feedback_initiation_user_only]]` — user initiates the claim)
+@unassigned (per `feedback_initiation_user_only` — user initiates the claim)
 
 ## Pull Request
 
@@ -100,8 +100,8 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 - This mission is the FIRST per-extension crate extraction (the macaroon v1 reference impl). Future extractions (`0957-ext-zk`, `0957-ext-federation`, etc.) follow the same pattern.
 - Coordinate with parallel mission `0957-ext-zk-crate.md` (both touch `crates/octo-wallet/src/capability/zk_mint.rs`).
-- Per `[[stoolap-general-purpose-db]]` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
-- Per `[[cargo-fmt-workflow]]` + `[[feedback_clippy_zero_warnings]]`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
+- Per `stoolap-general-purpose-db` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
+- Per `cargo-fmt-workflow` + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
 
 **Version History:**
 

@@ -36,7 +36,7 @@ The `0862m` Band A closure deferred this work because (a) the sync→network dep
 - [x] `cargo build -p octo-network -p octo-sync` green
 - [x] `cargo test -p octo-network --test dc_slash_bridge` green (5/5 new tests)
 - [x] `cargo test -p octo-sync --lib slash` green (9 pre-existing tests still pass)
-- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
+- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
 - [x] `cargo fmt --check --workspace` clean
 
 ## Dependencies
@@ -69,7 +69,7 @@ depends_on:
 ## Notes
 
 - The one-way sync→network dep direction is the load-bearing constraint: `octo-sync` MUST NOT import `octo-network`. The bridge lives in `octo-network/src/dc/` because `octo-network` already depends on `octo-sync` for sync-engine integration. Cross-crate direction is verified by `git grep "use octo_sync" crates/octo-sync/src/` returning empty.
-- The integration test uses a mock sync session (not a real WAL stream) per [[stoolap-general-purpose-db]] red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.
+- The integration test uses a mock sync session (not a real WAL stream) per `stoolap-general-purpose-db` red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.
 
 ## Closure (2026-08-06)
 
@@ -126,4 +126,4 @@ Last Updated: 2026-08-06
 Version: 0.2
 
 - The one-way sync→network dep direction is the load-bearing constraint: `octo-sync` MUST NOT import `octo-network`. The bridge lives in `octo-network/src/dc/` because `octo-network` already depends on `octo-sync` for sync-engine integration. Cross-crate direction is verified by `git grep "use octo_sync" crates/octo-sync/src/` returning empty.
-- The integration test uses a mock sync session (not a real WAL stream) per [[stoolap-general-purpose-db]] red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.
+- The integration test uses a mock sync session (not a real WAL stream) per `stoolap-general-purpose-db` red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.

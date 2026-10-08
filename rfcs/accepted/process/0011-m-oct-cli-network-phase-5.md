@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-m promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 5 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus IMPLEMENTATION COMPLETE at `next 97955c00`. Two subcommands wire mission discovery advertisement + invitation visibility to the CLI. Substrate absent: both `MissionAdvertisementCache` + `MissionInvitationCache` types MISSING; this amendment adds 2 companion substrate missions + 0 NEW OctoCliError variants (uses slot 89 already) + 2 output envelopes + 6 test vectors.
 
-> **Amendment chain:** Fifth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 6 = RFC-0011-n (closure artifacts).
+> **Amendment chain:** Fifth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 6 = RFC-0011-n (closure artifacts).
 
 ## Authors
 
@@ -23,7 +23,7 @@ RFC-0011-m lands the **mission discovery advertisement + invitation visibility**
 | `octo network discovery advertisement show` | Operator       | `MissionAdvertisementCache::get(iter)` (MISSING) | `0011-h-s-a-discovery-advertisement-cache` (G23) |
 | `octo network discovery invitation show`    | Operator       | `MissionInvitationCache::get(iter)` (MISSING)    | `0011-h-s-a-discovery-invitation-cache` (G24)    |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **2 companion missions (Layer B)**; 0 of 2 subcommands has substrate present (both require companion missions for the cache types).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **2 companion missions (Layer B)**; 0 of 2 subcommands has substrate present (both require companion missions for the cache types).
 
 ## Dependencies
 
@@ -40,10 +40,10 @@ RFC-0011-m lands the **mission discovery advertisement + invitation visibility**
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G23 + G24) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2); post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
+1. **Substrate-first ordering** — companion substrate missions (G23 + G24) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2); post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
 3. **Slot arithmetic preserved (forward-looking)** — Phase 5 lands 0 NEW OctoCliError variants; reuses slot 89 (`NetworkSubstrateUnavailable`, REUSED from Phase 2 RFC-0011-j) FORWARD-LOOKING per RFC-0011-h §Error Handling row 89. The remaining 2 (slots 87, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan. **R1 substrate-fault-class finding (cross-RFC, same as RFC-0011-n R2 + RFC-0011-k R1 + RFC-0011-l R1):** slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 2 companion missions (G23/G24); Layer C CLI dispatch = 2 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 2 companion missions (G23/G24); Layer C CLI dispatch = 2 subcommand arms. Companion missions land in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
 5. **Test vector coverage** — 6 test vectors (3 for `discovery advertisement show` + 3 for `discovery invitation show`) per RFC-0011-h §Test Vectors Phase 5 (tv-network-discovery-advert-1/2/3 + tv-network-discovery-invite-1/2 + 1 omitted).
 
 ## Motivation
@@ -85,7 +85,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per [[cipherocto-design-principles]] §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -197,7 +197,7 @@ Phase 5 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 ## Substrate-Additions Companion Missions
 
-Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 2 companion substrate missions. Both are Open as of 2026-09-20.
+Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 2 companion substrate missions. Both are Open as of 2026-09-20.
 
 | Companion mission                                | Substrate addition                                                                                                                                                            | Layer |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
@@ -213,7 +213,7 @@ Per `0011-h-multiphase-rollout-plan` §2.5:
 1. **Substrate-first slice (2 companion missions):** G23 + G24 land per companion mission YAMLs.
 2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 6 test vectors land AFTER both companion missions close per substrate-first ordering.
 
-User-gated decision on slice ordering per [[feedback_initiation_user_only]].
+User-gated decision on slice ordering per `feedback_initiation_user_only`.
 
 ## Key Files to Modify
 
@@ -231,7 +231,7 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 Phase 5 lands the **mission discovery advertisement + invitation visibility** surface. Both subcommands are read-only with no confirmation flags. Both cache types are absent in substrate TODAY; companion missions add both the type AND the lookup methods.
 
-Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

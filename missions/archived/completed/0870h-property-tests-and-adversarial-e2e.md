@@ -2,9 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-07; substrate landed in commit `4e3e5f60` (pre-existing in `quota-router/` legacy top-level crate). 11/11 ACs GREEN as of 2026-08-07 audit-closure roll-up. 12/12 property tests pass with 1000 cases (`ProptestConfig::with_cases(1000)`); 16/16 adversarial tests pass. `cargo clippy -- -D warnings` + `cargo fmt --check` clean. Per [[git-workflow]] push awaits user instruction.
+Closed (Band A — 2026-08-07). Claimed 2026-08-07; substrate landed in commit `4e3e5f60` (pre-existing in `quota-router/` legacy top-level crate). 11/11 ACs GREEN as of 2026-08-07 audit-closure roll-up. 12/12 property tests pass with 1000 cases (`ProptestConfig::with_cases(1000)`); 16/16 adversarial tests pass. `cargo clippy -- -D warnings` + `cargo fmt --check` clean. Per `git-workflow` push awaits user instruction.
 
-Per [[deferred-vs-unspecified]] named-owner rule: count discrepancy documented (spec said 8 new adversarial tests T6–T13, actual 11 new T6–T16; total spec said 19, actual 16). macOS arm64 NOT verified in this environment (Linux x86_64 only).
+Per `deferred-vs-unspecified` named-owner rule: count discrepancy documented (spec said 8 new adversarial tests T6–T13, actual 11 new T6–T16; total spec said 19, actual 16). macOS arm64 NOT verified in this environment (Linux x86_64 only).
 
 ## RFC
 
@@ -294,7 +294,7 @@ This is a **testing mission** that exercises invariants across all quota router 
 - `cargo clippy -- -D warnings`: clean
 - `cargo fmt --check`: clean
 
-**Discrepancies documented (per [[deferred-vs-unspecified]] named-owner rule):**
+**Discrepancies documented (per `deferred-vs-unspecified` named-owner rule):**
 
 1. **AC-4 count:** Spec said 8 new adversarial tests (T6–T13) + 5 pre-existing = 13 total. Actual is 11 new (T6–T16) + 5 pre-existing = 16 total. Exceeds spec.
 2. **AC-5 macOS arm64:** Linux x86_64 verified; macOS arm64 NOT verified in this environment (no macOS runner). Out-of-band for Band A.
@@ -308,7 +308,7 @@ This is a **testing mission** that exercises invariants across all quota router 
 
 **Cross-mission contract:** per RFC-0870 (Distributed Quota Router Network), property tests + adversarial tests are the "defense in depth" layer that finds bugs example tests miss. This mission closes that layer; future quota-router changes should keep the property test suite green at 1000 cases.
 
-**Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFC-0870 referenced by number only.**
+**Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §symbol-name form. Per `rfc-referencing-convention` RFC-0870 referenced by number only.**
 
 **Version History:**
 

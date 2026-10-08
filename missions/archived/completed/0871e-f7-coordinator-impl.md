@@ -2,12 +2,13 @@
 
 **Status:** claimed (2026-08-11); RFC substrate accepted same session.
 **Substrate RFCs (all Accepted 2026-08-11):**
+
 - RFC-0862 v1.3 §Specification §WriterElection + §DidWriteCoordinator + §Substrate types
 - RFC-0862 v1.4 §Concrete Impl Extension (NEW)
 - RFC-0010 v1.4 §ChainId Namespace Extension (depended on by `ChainId`)
 - RFC-0010 v1.5 §Rich DidDocument Extension (depended on by `DidDocument` chain_depth / chain_parent / verification_method)
-**Parent:** Mission `0871e-f7-cross-instance-did-coordination` (substrate) + Mission `0871e-f7-impl-resolver-mediation` (mediation; LANDED 2026-08-11)
-**DAG predecessors:** `0871e-f7-impl-resolver-mediation` (LANDED); `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
+  **Parent:** Mission `0871e-f7-cross-instance-did-coordination` (substrate) + Mission `0871e-f7-impl-resolver-mediation` (mediation; LANDED 2026-08-11)
+  **DAG predecessors:** `0871e-f7-impl-resolver-mediation` (LANDED); `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
 
 ## Scope
 
@@ -31,9 +32,9 @@ AC#17. Land 4 cross-instance TV.
    - `WalEntry` + WAL magic constants + entry layout per v1.3
      §Specification §V2 WAL header_size extension
 2. **Sealed traits** — `WriterElection` + `WriterElectionForceRelinquish`
-   + `BootstrapOrchestrator` + `DrainCoordinator` + `DidWriteCoordinator`
-   + `WalWriter` + `WalReader` + `WalNonceScanner` per v1.3 §Specification
-   §traits sections.
+   - `BootstrapOrchestrator` + `DrainCoordinator` + `DidWriteCoordinator`
+   - `WalWriter` + `WalReader` + `WalNonceScanner` per v1.3 §Specification
+     §traits sections.
 3. **`octo_sync::did::canonical_hash` free fn** (per v1.3 R11 H2) +
    `EncodedDidDocument` impl for `DidDocument`.
 4. **`verify_governance_attestation`** + `governance_signature_message`
@@ -60,7 +61,8 @@ AC#17. Land 4 cross-instance TV.
 
 ### Layer discipline
 
-Per [[cipherocto-design-principles]] §Layer direction:
+Per `cipherocto-design-principles` §Layer direction:
+
 - `octo-sync` (Layer B-substrate) — concrete `WriterElection` +
   `DidWriteCoordinator` impls + substrate types
 - `octo-ident` (Layer B) — `DidWriteCoordinator` TRAIT only (existing;
@@ -77,7 +79,7 @@ Per [[cipherocto-design-principles]] §Layer direction:
 
 ### Approach
 
-Per [[drain-coordinator-approach-2026-08-10]] Option B (centralized
+Per `drain-coordinator-approach-2026-08-10` Option B (centralized
 aggregator) — picked for `DrainCoordinator` work; same substrate,
 separate amendment applies here for `DidWriteCoordinator`. The
 `crdt` feature flag enables Option C LWW for deployments that need
@@ -110,12 +112,12 @@ cargo test --lib -p octo-identity-resolver-node
 
 ## Cross-references
 
-- [[rfc-0862-writer-election-bootstrap]] — v1.3 substrate (Accepted 2026-08-11)
-- [[drain-coordinator-approach-2026-08-10]] — Option B pick (centralized aggregator)
-- [[mission-0871e-f7-cross-instance-did-coordination]] — substrate mission
-- [[mission-0871e-f7-impl-resolver-mediation]] — mediation layer (LANDED)
-- [[mission-0871b-storage-backend]] — sibling substrate mission
-- [[cipherocto-design-principles]] — Layer direction (A→B→C→D/E)
+- `rfc-0862-writer-election-bootstrap` — v1.3 substrate (Accepted 2026-08-11)
+- `drain-coordinator-approach-2026-08-10` — Option B pick (centralized aggregator)
+- `mission-0871e-f7-cross-instance-did-coordination` — substrate mission
+- `mission-0871e-f7-impl-resolver-mediation` — mediation layer (LANDED)
+- `mission-0871b-storage-backend` — sibling substrate mission
+- `cipherocto-design-principles` — Layer direction (A→B→C→D/E)
 
 ## Follow-on
 

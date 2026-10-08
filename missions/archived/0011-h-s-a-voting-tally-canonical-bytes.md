@@ -22,12 +22,14 @@ pub fn governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32];
 ```
 
 Substrate additions land 2026-09-20 at `next 10ae8e18`:
+
 - `BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN` constant = `b"cipherocto/governance/proposal/v1"`
 - `governance_proposal_canonical_bytes(p: &GovernanceProposal) -> [u8; 32]` using BLAKE3 domain separation
-- Substrate-faithful: helper lives in Layer-B mon module (NOT on `GovernanceProposal` directly) because Layer-A `octo-governance-core` is RFC-frozen per [[cipherocto-design-principles]] §Stable Abstractions Principle
+- Substrate-faithful: helper lives in Layer-B mon module (NOT on `GovernanceProposal` directly) because Layer-A `octo-governance-core` is RFC-frozen per `cipherocto-design-principles` §Stable Abstractions Principle
 - 2 unit tests: `governance_proposal_canonical_bytes_round_trip` (deterministic), `governance_proposal_canonical_bytes_changes_with_state` (state-sensitive)
 
 CLI dispatch wired 2026-09-20 at `next 624998ba`:
+
 - `octo network governance tally --proposal-id <N>` wired at `crates/octo-cli/src/commands/network.rs` (Layer C)
 - `governance_tally` handler constructs a zero-default `GovernanceProposal` at the requested `proposal_id` then calls `governance_proposal_canonical_bytes(&proposal)` to project the canonical-bytes hash envelope
 - New output envelope: `NetworkGovernanceTallyOutput { proposal_id, canonical_hash_hex, state }` per RFC-0011-k §Output Envelope Phase 3
@@ -42,7 +44,7 @@ CLI dispatch wired 2026-09-20 at `next 624998ba`:
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (2/2 canonical_bytes tests pass)
 - [x] `cargo test -p octo-cli --lib` green (2/2 governance tally test vectors pass; +2 above Phase 2 baseline)
-- [x] Layer discipline preserved (Layer B helper; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle; Layer C consumes via re-export)
+- [x] Layer discipline preserved (Layer B helper; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle; Layer C consumes via re-export)
 - [x] ≥3 unit tests + ≥1 integration test (2 substrate unit tests + 2 CLI test vectors added; integration test deferred to governance tally persistence adapter)
 
 ## Dependencies

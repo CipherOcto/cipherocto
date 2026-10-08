@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-l promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 4 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21`. Four subcommands wire bind envelope read + payload builder surfaces to the CLI. Substrate partial: `RebindCoordinator::{prepare_envelope, commit_envelope, abort_envelope}` payload builders + `RebindEnvelope` umbrella enum + `RebindPrepare` + `RebindCommit` + `RebindAbort` structs land in substrate; this amendment adds 3 companion substrate missions + 1 OctoCliError variant + 4 output envelopes + 12 test vectors.
 
-> **Amendment chain:** Fourth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 5-6 land via RFC-0011-m + RFC-0011-n respectively.
+> **Amendment chain:** Fourth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 5-6 land via RFC-0011-m + RFC-0011-n respectively.
 
 ## Authors
 
@@ -25,7 +25,7 @@ RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-
 | `octo network bind-envelope rebind-commit`  | Operator       | `RebindCoordinator::commit_envelope(signature)` (LANDED)  | `0011-h-s-a-rebind-coordinator` (G21)   |
 | `octo network bind-envelope rebind-abort`   | Operator       | `RebindCoordinator::abort_envelope(signature)` (LANDED)   | `0011-h-s-a-rebind-coordinator` (G21)   |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **3 companion missions (Layer B)**; 3 of 4 subcommands have substrate LANDED but clap arm gated (G21), 1 subcommand has substrate absent (G22).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **3 companion missions (Layer B)**; 3 of 4 subcommands have substrate LANDED but clap arm gated (G21), 1 subcommand has substrate absent (G22).
 
 ## Dependencies
 
@@ -43,12 +43,12 @@ RFC-0011-l lands the **bind envelope read + payload builder** slice of RFC-0011-
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G21 + G22 + G25) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion:
+1. **Substrate-first ordering** — companion substrate missions (G21 + G22 + G25) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion:
    - rebind-* trio = clap arm gated (exit 2) per RFC-0011-h row 91 pattern (a)
    - bind-envelope show = substrate absent (exit 89) per pattern (b)
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
 3. **Slot arithmetic preserved (forward-looking)** — Phase 4 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 88, `NetworkDryRunDenied`). FORWARD-LOOKING per RFC-0011-h §Error Handling + §Exit Codes — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 4 implementation. The remaining 2 (slots 90, 91 pre-allocated) land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan. **R1 substrate-fault-class finding (cross-RFC, same as RFC-0011-n R2 + RFC-0011-k R1):** slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G21/G22/G25); Layer C CLI dispatch = 4 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G21/G22/G25); Layer C CLI dispatch = 4 subcommand arms. Companion missions land in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
 5. **Test vector coverage** — 12 test vectors (3 for bind-envelope show + 4 for rebind-prepare + 3 for rebind-commit + 2 for rebind-abort) per RFC-0011-h §Implementation Phases Phase 4.
 
 ## Motivation
@@ -92,7 +92,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per [[cipherocto-design-principles]] §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -176,7 +176,7 @@ Per RFC-0011-h §Security Considerations Phase 4 rows:
 
 - **3-flag confirmation on `rebind-commit`.** `bind-envelope rebind-commit` carries `--dry-run` default + `--confirm-acknowledge` required + `--confirm` SECOND flag (pastejacking defense per §Confirmation Flag + Per-Axis Exit Code Matrix row 139).
 - **Substrate idempotency on `rebind-abort`.** Per RFC-0871 §Algorithms, substrate accept-rollback makes double-abort a no-op; `--confirm` not required.
-- _*Rebind-* CI gate._* Post-G25, CI agents hit exit 90 `NetworkCIDenyDefault` on rebind-* trio per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix row 138-140 + §CI Mode Rationale (rebind-* IS in the 6 CI-DENY-default set despite reversibility per [[no-fabricated-commit-rule]] substrate-faithfulness verification against RFC-0011-h row 156).
+- _*Rebind-* CI gate._* Post-G25, CI agents hit exit 90 `NetworkCIDenyDefault` on rebind-* trio per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix row 138-140 + §CI Mode Rationale (rebind-* IS in the 6 CI-DENY-default set despite reversibility per `no-fabricated-commit-rule` substrate-faithfulness verification against RFC-0011-h row 156).
 - **Payload builders never expose raw bytes.** Per RFC-0011-h §Implicit Assumptions Audit Phase 4, payload bytes never surfaced; only envelope summary.
 
 ## Adversarial Review
@@ -219,11 +219,11 @@ Write-path tests (tv_net4_4 through tv_net4_12) only fire `--dry-run` or full-co
 
 1. _*Skip `bind-envelope show` (only wire rebind-* trio)._* Rejected; RFC-0011-h §Subcommand Taxonomy row 323 explicitly lands `bind-envelope show` in Phase 4 with companion G22 substrate mission. Operators cannot inspect bind envelopes without it.
 2. _*Defer rebind-* trio to Phase 6 closure._* Rejected; RFC-0011-h §Subcommand Taxonomy rows 324-326 already land rebind-* in Phase 4 with companion G21 substrate mission + G25 CI gate. Deferral would leave the only mutating CLI command without an RFC for 3+ months.
-3. **Split into substrate-first amendment + CLI amendment.** Rejected per [[implementation-workflow-hook]] claim-first-implement-after pattern; bundling keeps the layer-A→B→C dependency graph visible.
+3. **Split into substrate-first amendment + CLI amendment.** Rejected per `implementation-workflow-hook` claim-first-implement-after pattern; bundling keeps the layer-A→B→C dependency graph visible.
 
 ## Substrate-Additions Companion Missions
 
-Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 3 companion substrate missions. All 3 are Open as of 2026-09-20.
+Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 3 companion substrate missions. All 3 are Open as of 2026-09-20.
 
 | Companion mission                       | Substrate addition                                                                                                                | Layer |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----- |
@@ -240,7 +240,7 @@ Per `0011-h-multiphase-rollout-plan` §2.4 split recommendation:
 1. **Substrate-first slice (3 companion missions):** G22 → G21 → G25 land per companion mission YAMLs.
 2. **CLI dispatch slice:** 4 subcommand arms + 1 OctoCliError variant (slot 88) + 4 output envelopes + 12 test vectors land AFTER all 3 companion missions close per substrate-first ordering.
 
-User-gated decision on slice ordering per [[feedback_initiation_user_only]].
+User-gated decision on slice ordering per `feedback_initiation_user_only`.
 
 ## Key Files to Modify
 
@@ -262,7 +262,7 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 Phase 4 lands the **bind envelope read + payload builder** surface. The 3 mutating subcommands (rebind-* trio) have substrate LANDED but clap arm gated (G21); the read subcommand (bind-envelope show) has substrate absent (G22). The G21-blocked-clap-arm-not-registered pattern is distinct from the G22-blocked-clap-arm-registered-substrate-missing pattern per RFC-0011-h row 91 footnote.
 
-Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

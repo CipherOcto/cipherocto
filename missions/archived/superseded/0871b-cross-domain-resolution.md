@@ -13,7 +13,7 @@
 
 **Original status:** unassigned (wave 4; gap surfaced 2026-08-10)
 **Substrate:** RFC-0871 §Future Work + RFC-0010 v1.3 (gated) [NOW LANDED 2026-08-11, commit `71f8d745`]
-**Parent:** 0871b-identity-resolver-node (open) per [[mission-gap-closure-priorities-2026-08-10]]
+**Parent:** 0871b-identity-resolver-node (open) per `mission-gap-closure-priorities-2026-08-10`
 
 ## Scope
 
@@ -92,9 +92,9 @@ expires.
 
 ## Cross-references
 
-- [[wave-3-plan-correction-2026-08-10]] — drift context
-- [[wave-3-gaps-2026-08-10]] — original wave 3 gap surface
-- [[mission-gap-closure-priorities-2026-08-10]] — parent backlog
-- [[cipherocto-design-principles]] — Stable Abstractions Principle
+- `wave-3-plan-correction-2026-08-10` — drift context
+- `wave-3-gaps-2026-08-10` — original wave 3 gap surface
+- `mission-gap-closure-priorities-2026-08-10` — parent backlog
+- `cipherocto-design-principles` — Stable Abstractions Principle
 - `missions/archived/completed/0871b-cross-domain-resolution-impl.md` — successor (CLOSED)
 - `missions/archived/completed/0871b-cross-node-forwarding.md` — successor (OPEN)

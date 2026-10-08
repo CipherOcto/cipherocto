@@ -39,17 +39,17 @@ version = "4.5.0"
 creator = "anthropic"
 created = "2025-02-24T00:00:00Z"
 
-[[agent.capabilities]]
+`agent.capabilities`
 category = "rust"
 operations = ["implement", "test", "refactor"]
 confidence = "high"
 
-[[agent.capabilities]]
+`agent.capabilities`
 category = "documentation"
 operations = ["write", "update"]
 confidence = "medium"
 
-[[agent.capabilities]]
+`agent.capabilities`
 category = "protocol"
 operations = ["rfc-read", "mission-claim"]
 confidence = "high"

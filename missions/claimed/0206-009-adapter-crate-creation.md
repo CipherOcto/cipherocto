@@ -4,7 +4,6 @@ description: Open 2026-08-20 v1.0; — 5 NEW adapter crates (octo-vault-storage,
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
   supersedes: null
@@ -40,30 +39,31 @@ Land : 5 NEW per-owner adapter crates. Closes TV-0206-A6, TV-0206-A9(a), TV-0206
 
 5 NEW adapter crates created:
 
-| Crate | Owner crate | Adapter ID | Tables |
-|-------|-------------|------------|--------|
-| `crates/octo-vault-storage/` | `octo-vault` | `octo-vault-storage/v1` | `vaults` |
-| `crates/octo-reputation-storage/` | `octo-reputation` | `octo-reputation-storage/v1` | `reputation_signals` |
-| `crates/octo-cap-macaroon-vault-storage/` | `octo-cap-macaroon` + `octo-vault-storage` | `octo-cap-macaroon-vault-storage/v1` | `vaults` (read-side) |
-| `crates/octo-matrix-session-store-storage/` | `octo-matrix-session-store` | `octo-matrix-session-store-storage/v1` | `matrix_sessions` |
-| `crates/octo-policy-storage/` | `octo-policy` | `octo-policy-storage/v1` | `policy_objects` |
+| Crate                                       | Owner crate                                | Adapter ID                             | Tables               |
+| ------------------------------------------- | ------------------------------------------ | -------------------------------------- | -------------------- |
+| `crates/octo-vault-storage/`                | `octo-vault`                               | `octo-vault-storage/v1`                | `vaults`             |
+| `crates/octo-reputation-storage/`           | `octo-reputation`                          | `octo-reputation-storage/v1`           | `reputation_signals` |
+| `crates/octo-cap-macaroon-vault-storage/`   | `octo-cap-macaroon` + `octo-vault-storage` | `octo-cap-macaroon-vault-storage/v1`   | `vaults` (read-side) |
+| `crates/octo-matrix-session-store-storage/` | `octo-matrix-session-store`                | `octo-matrix-session-store-storage/v1` | `matrix_sessions`    |
+| `crates/octo-policy-storage/`               | `octo-policy`                              | `octo-policy-storage/v1`               | `policy_objects`     |
 
 Each adapter crate:
+
 - `Cargo.toml`: `octo-storage-core = { path = "../octo-storage-core" }` + owner-crate dep; NO direct `stoolap` dep (TV-0206-A9(a))
 - `src/lib.rs`: `build_allowlist()` + `<X>StoreAdapter` struct + `register()` helper
 - `tests/register_roundtrip.rs`: canonical register + execute_checked + typed INSERT/SELECT round-trip (TV-0206-A10)
 
 ## AC gates
 
-| Gate | Status | Evidence |
-|------|--------|----------|
-| TV-0206-A6 (5 dirs on disk) | PASS | `test -d` exits 0 for all 5 adapter crates |
-| TV-0206-A9(a) (no stoolap dep) | PASS | `rg '^\s*stoolap\s*=' crates/octo-*-storage/Cargo.toml` empty |
-| TV-0206-A10 (register_roundtrip fixtures) | PASS | `ls .../tests/ \| grep -c register_roundtrip` = 5 |
-| `cargo build --workspace --all-targets` | PASS | 13m 01s, exit 0 |
-| `cargo test -p octo-vault-storage -p octo-reputation-storage -p octo-cap-macaroon-vault-storage -p octo-matrix-session-store-storage -p octo-policy-storage` | PASS | all green |
-| `cargo clippy -p <all 5> --all-targets -- -D warnings` | PASS | 0 warnings |
-| `cargo fmt --all -- --check` | PASS | 0 diff |
+| Gate                                                                                                                                                         | Status | Evidence                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ------------------------------------------------------------- |
+| TV-0206-A6 (5 dirs on disk)                                                                                                                                  | PASS   | `test -d` exits 0 for all 5 adapter crates                    |
+| TV-0206-A9(a) (no stoolap dep)                                                                                                                               | PASS   | `rg '^\s*stoolap\s*=' crates/octo-*-storage/Cargo.toml` empty |
+| TV-0206-A10 (register_roundtrip fixtures)                                                                                                                    | PASS   | `ls .../tests/ \| grep -c register_roundtrip` = 5             |
+| `cargo build --workspace --all-targets`                                                                                                                      | PASS   | 13m 01s, exit 0                                               |
+| `cargo test -p octo-vault-storage -p octo-reputation-storage -p octo-cap-macaroon-vault-storage -p octo-matrix-session-store-storage -p octo-policy-storage` | PASS   | all green                                                     |
+| `cargo clippy -p <all 5> --all-targets -- -D warnings`                                                                                                       | PASS   | 0 warnings                                                    |
+| `cargo fmt --all -- --check`                                                                                                                                 | PASS   | 0 diff                                                        |
 
 ## Files / Artifacts
 
@@ -76,7 +76,7 @@ Each adapter crate:
 
 ## Cross-references
 
-- 
+-
 - (generic register helper form)
 - -Cuts lines 333-338 (REQUIRED `octo-storage-core` dep in adapter Cargo.toml)
 - (adversarial fixtures — owned by 0206-010)
@@ -104,7 +104,7 @@ Each adapter crate:
 
 ## Version History
 
-| Version | Date       | Change                                       |
-| ------- | ---------- | -------------------------------------------- |
-| v1.0    | 2026-08-20 | Initial filing; 5 adapter crates landed     |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-20 | Initial filing; 5 adapter crates landed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | v1.1    | 2026-08-22 | Phase 3.6 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-009-adapter-crate-creation-status.md`: LANDED 6ca2c943 (2026-08-20). 5 NEW adapter crates on disk (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + build_allowlist() + register() helpers + register_roundtrip fixtures per adapter. TV-A6 + A9(a) + A10 PASS. RFC-only YAML edits per R10.5 scope discipline. Mission file git mv open → claimed + status open → done. |

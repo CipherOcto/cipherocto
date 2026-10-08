@@ -5,7 +5,7 @@
 **Owner:** @cipherocto
 **Substrate:** RFC-0010 v1.5 (additive on v1.3; this mission files the substrate extension)
 **Parent:** RFC-0010 v1.3 §Storage Extension §Out of scope; DAG predecessor `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
-**RFC prerequisite:** RFC-0010 v1.5 amendment (this mission files the substrate; RFC acceptance follows per [[feedback_initiation_user_only]]).
+**RFC prerequisite:** RFC-0010 v1.5 amendment (this mission files the substrate; RFC acceptance follows per `feedback_initiation_user_only`).
 
 ## Scope
 
@@ -93,11 +93,11 @@ cargo test --workspace --lib
 
 ## Cross-references
 
-- [[rfc-0010-v13-storage-extension]] — v1.3 substrate
-- [[mission-0871b-storage-backend]] — substrate mission (DAG predecessor)
-- [[mission-0010-f2-multi-chain-did-resolution]] — chain-keyed
+- `rfc-0010-v13-storage-extension` — v1.3 substrate
+- `mission-0871b-storage-backend` — substrate mission (DAG predecessor)
+- `mission-0010-f2-multi-chain-did-resolution` — chain-keyed
   documents (rich documents compose per-chain)
-- [[cipherocto-design-principles]] — Extension over enumeration
+- `cipherocto-design-principles` — Extension over enumeration
 
 ## Claimant
 
@@ -109,18 +109,20 @@ cargo test --workspace --lib
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-| ------- | ---------- | ------ | ------- |
-| v0.1    | 2026-08-10 | open   | Mission filed (wave 5; absorbed from RFC-0010 §Storage Extension §Out of scope). |
+| Version | Date       | Status | Changes                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-10 | open   | Mission filed (wave 5; absorbed from RFC-0010 §Storage Extension §Out of scope).                                                                                                                                                                                                                                                                                                                       |
 | v0.2    | 2026-08-11 | LANDED | Substrate landed. `crates/octo-ident/src/rich_document.rs` (NEW) + `DidDocument` extended with `service_endpoints`, `controllers`, `verification_methods`, `capability_delegations` + `check_controller_cycles` 3-color DFS + `VerificationMethodKind` typed discriminator. 5 TV + 65 unit tests. 17 call sites migrated (`..Default::default()` pattern; `Copy` + `Hash` removed from `DidDocument`). |
 
 ## LANDED substrate (2026-08-11)
 
 **New files**
+
 - `crates/octo-ident/src/rich_document.rs` — `ServiceEndpoint` + `ServiceEndpointError` + `VerificationMethod` + `VerificationMethodKind` + `ControllerReference` + `CapabilityDelegation` + `check_controller_cycles` + `ControllerCycleError` + 4 MAX_* bounds.
 - `crates/octo-ident/tests/rich_did_document_tv.rs` (NEW, 5 TV).
 
 **Modified files**
+
 - `crates/octo-ident/src/registry.rs` — `DidDocument` gains 4 `Vec<>` fields. `Copy` + `Hash` dropped (Vec<String> not Copy). `Default` added.
 - `crates/octo-ident/src/lib.rs` — re-exports + module.
 - `crates/octo-ident/src/in_memory_did_registry.rs` — `.copied()` → `.cloned()` (DidDocument no longer Copy).
@@ -136,6 +138,6 @@ cargo test --workspace --lib
 
 - **StoolapDidRegistry schema migration v009** — `service_endpoints` + `controllers` + `verification_methods` JSON columns. Separate mission (Layer B-adjacent schema migration per Layer discipline).
 - **StoolapDidRegistry schema migration v010** — `capability_delegations` JSON column.
-- **RFC-0010 v1.5 acceptance** — RFC document needs to be filed + accepted per [[feedback_initiation_user_only]]. Substrate is ready.
+- **RFC-0010 v1.5 acceptance** — RFC document needs to be filed + accepted per `feedback_initiation_user_only`. Substrate is ready.
 
 #

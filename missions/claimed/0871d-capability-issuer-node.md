@@ -156,7 +156,7 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0957 §Algorithms + RFC-0957-
 
 ## Pull Request
 
-pending commit (local; push + remote writes await user instruction per [[git-workflow]])
+pending commit (local; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 

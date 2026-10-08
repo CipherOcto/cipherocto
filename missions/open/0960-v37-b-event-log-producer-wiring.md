@@ -104,7 +104,7 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
    struct (output of `SettlementEvent::new`) and feeds the EXISTING
    repository via the internal sink boundary. **Producer impl lives
    in Layer C crate (quota-router-sm-engine) per
-   [[cipherocto-design-principles]] — producer is Layer C
+   `cipherocto-design-principles` — producer is Layer C
    specialization of Layer B `EventLogProducer` trait; impl cannot
    live in `octo-vault/src/event_log_producer.rs` (Layer B) because
    that would create Layer B → Layer C dependency inversion.**
@@ -116,7 +116,7 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
    Specification). Wire site is AFTER nonce observation + audit-sink
    write, BEFORE the burn-event record is marked consumed. **Layer
    note:** producer impl lives in Layer C crate (octo-policy) per
-   [[cipherocto-design-principles]] — producer is Layer C
+   `cipherocto-design-principles` — producer is Layer C
    specialization of Layer B `EventLogProducer` trait.
 
 5. **`VaultProjectionInvalidationEmitter` trait** — same file. Emits
@@ -174,7 +174,7 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
   correctly for `source_kind = Cache` (no-op) and `FreshLogScan`/`EpochRebuild`
   (drops entry)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-vault` (Layer B) — `EventLogProducer` trait + 3 impls + `VaultProjectionInvalidationEmitter`
 - `octo-wallet-node` (Layer C) — `MintHandler` wire site

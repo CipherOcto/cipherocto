@@ -24,7 +24,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 - [x] **Bridge only (MVP):** `PaidQueryCaveat` lives in the new `crates/octo-paid-query/src/lib.rs` (Layer E extension crate), NOT inside `octo-cap-macaroon`. Shape: `(caveat_name: "paid-query/v1", budget: MicroOCTO_W, model: String, expires_at_unix_ms: u64)`.
 - [ ] **Deferred (follow-on):** Migration of `PaidQueryCaveat` into `crates/octo-cap-macaroon/src/caveat/payment.rs` with discriminator 0x1A + `Caveat::verify` + `Caveat::attenuate` impls lands in mission 0957 Phase 2 follow-on (per mission file line 122 "Phase 4 extraction recommended"). Phase 5 MVP stands up the bridge crate so the caveat has a home before the per-extension migration completes.
-- [ ] **Deferred (follow-on):** Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator. The dispatcher-level decode is not needed in Phase 5 MVP because the wallet handler decodes `PaidQueryRequest` directly via `borsh::from_slice` (no central enum — per [[cipherocto-design-principles]] §"Extension over enumeration").
+- [ ] **Deferred (follow-on):** Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator. The dispatcher-level decode is not needed in Phase 5 MVP because the wallet handler decodes `PaidQueryRequest` directly via `borsh::from_slice` (no central enum — per `cipherocto-design-principles` §"Extension over enumeration").
 
 ### Top-level: Pricing policy
 
@@ -81,19 +81,19 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 Per BLUEPRINT §Mission template. RFC-0871 §Implementation Phases Phase 5 + RFC-0965 + RFC-0957 types mapped to this mission:
 
-| RFC Type / Section | Implemented By |
-|---|---|
-| `PaymentCaveat` (RFC-0965 reserved discriminator 0x1A) | This mission — `crates/octo-cap-macaroon/src/caveat/payment.rs` |
-| `PricingPolicy` extension | This mission — `crates/quota-router-core/src/router_announce.rs` (amends existing `RouterAnnouncePayload`) |
-| `drain_payment` atomic primitive | This mission — `crates/quota-router-core/src/payment/drain.rs` |
-| `PaymentReceipt` event | This mission — RFC-0959 §Specification (receipt fields per RFC-0959 Data Structures) |
-| `WALLET_MINT_CAPABILITY` + `PaymentCaveat` flow | Mission `0871a-wallet-node.md` — wallet node's `mint.rs` handler extended to accept `PaymentCaveat` |
-| `handle_request` post-authenticate payment verification | This mission — amends `crates/quota-router-core/src/proxy.rs` |
+| RFC Type / Section                                      | Implemented By                                                                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `PaymentCaveat` (RFC-0965 reserved discriminator 0x1A)  | This mission — `crates/octo-cap-macaroon/src/caveat/payment.rs`                                                    |
+| `PricingPolicy` extension                               | This mission — `crates/quota-router-core/src/router_announce.rs` (amends existing `RouterAnnouncePayload`)         |
+| `drain_payment` atomic primitive                        | This mission — `crates/quota-router-core/src/payment/drain.rs`                                                     |
+| `PaymentReceipt` event                                  | This mission — RFC-0959 §Specification (receipt fields per RFC-0959 Data Structures)                               |
+| `WALLET_MINT_CAPABILITY` + `PaymentCaveat` flow         | Mission `0871a-wallet-node.md` — wallet node's `mint.rs` handler extended to accept `PaymentCaveat`                |
+| `handle_request` post-authenticate payment verification | This mission — amends `crates/quota-router-core/src/proxy.rs`                                                      |
 | `CapabilityToken` mint substrate (RFC-0957 §Algorithms) | Mission `0957-ext-macaroon-crate.md` — prerequisite (Phase 4 extraction); `PaymentCaveat` lives in extracted crate |
-| `HolderRegistry` substrate | RFC-0957-A1 existing |
-| `RouterAnnouncePayload` shape | Mission `0870-b-envelope-adoption.md` — RFC-0870 §NodeEnvelope Adoption |
-| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
-| Atomic transaction substrate | RFC-0862 existing |
+| `HolderRegistry` substrate                              | RFC-0957-A1 existing                                                                                               |
+| `RouterAnnouncePayload` shape                           | Mission `0870-b-envelope-adoption.md` — RFC-0870 §NodeEnvelope Adoption                                            |
+| `NodeEnvelope` envelope shape (consumed)                | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite                                                    |
+| Atomic transaction substrate                            | RFC-0862 existing                                                                                                  |
 
 ## Dependencies
 
@@ -158,51 +158,51 @@ Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §Algorithms (caveat ver
 
 ## Pull Request
 
-# (local-only — no push per [[git-workflow]])
+# (local-only — no push per `git-workflow`)
 
 ## Closure Record
 
 ### Files changed
 
-| File | Change |
-|---|---|
-| `crates/octo-protocol/src/payload_kind.rs` | AMEND — added `PAID_QUERY_VERIFY` const, `PAID_QUERY_PAYLOAD_KINDS` array, `is_paid_query_payload_kind` predicate, 5 unit tests. |
-| `crates/octo-paid-query/Cargo.toml` | NEW — Layer E extension crate manifest, deps + lints per `octo-cap-macaroon` pattern. |
-| `crates/octo-paid-query/src/lib.rs` | NEW — `PaidQueryCaveat`, `verify_paid_query`, `PaidQueryDecision`, `PaidQueryRejectionReason`, `RateLimitBudget`, `PaidQueryError`, `PaidQueryRequest`, `PaidQueryResponse` types + 15 unit tests. |
-| `crates/octo-wallet-node/Cargo.toml` | AMEND — added `octo-paid-query` dep with layer-rationale comment. |
-| `crates/octo-wallet-node/src/lib.rs` | AMEND — re-exported `PaidQueryVerifyHandler` + `PaidQueryVerifyRequest`; added `PAID_QUERY_VERIFY` to `WALLET_PAYLOAD_KINDS`; updated module doc. |
-| `crates/octo-wallet-node/src/handlers/mod.rs` | AMEND — added `pub mod paid_query` + `pub use`. |
-| `crates/octo-wallet-node/src/handlers/paid_query.rs` | NEW — `PaidQueryVerifyHandler` (delegates to `octo_paid_query::verify_paid_query`) + 3 unit tests. |
-| `crates/octo-wallet-node/src/node.rs` | AMEND — added `k if k == octo_paid_query::PAID_QUERY_VERIFY` match arm in `handle_envelope`. |
-| `missions/claimed/0871e-paid-query-caveat.md` | NEW (moved from `missions/open/`) — closure record + AC checkboxes + MVP disclosures. |
+| File                                                 | Change                                                                                                                                                                                             |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-protocol/src/payload_kind.rs`           | AMEND — added `PAID_QUERY_VERIFY` const, `PAID_QUERY_PAYLOAD_KINDS` array, `is_paid_query_payload_kind` predicate, 5 unit tests.                                                                   |
+| `crates/octo-paid-query/Cargo.toml`                  | NEW — Layer E extension crate manifest, deps + lints per `octo-cap-macaroon` pattern.                                                                                                              |
+| `crates/octo-paid-query/src/lib.rs`                  | NEW — `PaidQueryCaveat`, `verify_paid_query`, `PaidQueryDecision`, `PaidQueryRejectionReason`, `RateLimitBudget`, `PaidQueryError`, `PaidQueryRequest`, `PaidQueryResponse` types + 15 unit tests. |
+| `crates/octo-wallet-node/Cargo.toml`                 | AMEND — added `octo-paid-query` dep with layer-rationale comment.                                                                                                                                  |
+| `crates/octo-wallet-node/src/lib.rs`                 | AMEND — re-exported `PaidQueryVerifyHandler` + `PaidQueryVerifyRequest`; added `PAID_QUERY_VERIFY` to `WALLET_PAYLOAD_KINDS`; updated module doc.                                                  |
+| `crates/octo-wallet-node/src/handlers/mod.rs`        | AMEND — added `pub mod paid_query` + `pub use`.                                                                                                                                                    |
+| `crates/octo-wallet-node/src/handlers/paid_query.rs` | NEW — `PaidQueryVerifyHandler` (delegates to `octo_paid_query::verify_paid_query`) + 3 unit tests.                                                                                                 |
+| `crates/octo-wallet-node/src/node.rs`                | AMEND — added `k if k == octo_paid_query::PAID_QUERY_VERIFY` match arm in `handle_envelope`.                                                                                                       |
+| `missions/claimed/0871e-paid-query-caveat.md`        | NEW (moved from `missions/open/`) — closure record + AC checkboxes + MVP disclosures.                                                                                                              |
 
 ### Verification
 
-| Check | Result |
-|---|---|
-| `cargo build -p octo-paid-query -p octo-wallet-node` | green |
-| `cargo test -p octo-paid-query --lib` | 15/15 pass |
-| `cargo test -p octo-wallet-node --lib` | 17/17 pass (14 pre-existing + 3 new) |
-| `cargo test -p octo-protocol --lib` (regression) | 58/58 pass (53 pre-existing + 5 new) |
-| `cargo clippy -p octo-paid-query --all-targets -- -D warnings` | clean |
-| `cargo fmt --check -p octo-paid-query -p octo-wallet-node` | clean |
+| Check                                                          | Result                               |
+| -------------------------------------------------------------- | ------------------------------------ |
+| `cargo build -p octo-paid-query -p octo-wallet-node`           | green                                |
+| `cargo test -p octo-paid-query --lib`                          | 15/15 pass                           |
+| `cargo test -p octo-wallet-node --lib`                         | 17/17 pass (14 pre-existing + 3 new) |
+| `cargo test -p octo-protocol --lib` (regression)               | 58/58 pass (53 pre-existing + 5 new) |
+| `cargo clippy -p octo-paid-query --all-targets -- -D warnings` | clean                                |
+| `cargo fmt --check -p octo-paid-query -p octo-wallet-node`     | clean                                |
 
 ### MVP disclosures (Phase 5 scope vs full RFC-0871 §Implementation Phases Phase 5)
 
-| Surface | Phase 5 MVP | Full Phase 5 (follow-on missions) |
-|---|---|---|
-| Caveat home | New `crates/octo-paid-query/` Layer E extension crate | Migration into `octo-cap-macaroon::caveat::payment` with discriminator 0x1A + `Caveat::verify`/`attenuate` |
-| Verification | `verify_paid_query` (read-only; takes a `MacaroonId` and a `PaidQueryCaveat`) | Full macaroon HMAC + `PaymentCaveat` chain verification per RFC-0957 §Algorithms |
-| Rate-limit storage | `RateLimitBudget` in-memory (`std::sync::Mutex<HashMap>`) | `HolderRegistry`-backed ledger per RFC-0862 atomic transaction substrate (cross-process) |
-| Handler | `WALLET_PAID_QUERY_VERIFY` on the existing `WalletNode` (read-only delegator) | Dedicated `paid-query-node` specialized node (Layer C) per RFC-0871 §Layer C specialized-node pattern |
-| Pricing policy | Not amended | `RouterAnnouncePayload::pricing_policy` extension + `PricingPolicy { drain_per_query, accepted_payment_capabilities, settlement_recipient }` |
-| Receipt event | Not emitted | `PaymentReceipt` event per RFC-0959 §Data Structures |
-| Proxy integration | Not wired (`WALLET_PAID_QUERY_VERIFY` reachable only via direct envelope) | `crates/quota-router-core/src/proxy.rs::handle_request` post-`authenticate()` `Authorization::Capability(token)` verification + `drain_payment` + response envelope with `PaymentReceipt` |
-| End-to-end test | None | `crates/octo-wallet-node/tests/paid_query_e2e.rs` + `crates/quota-router-core/tests/payment_atomic_drain.rs` + `crates/octo-cap-macaroon/tests/payment_caveat_roundtrip.rs` |
+| Surface            | Phase 5 MVP                                                                   | Full Phase 5 (follow-on missions)                                                                                                                                                         |
+| ------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Caveat home        | New `crates/octo-paid-query/` Layer E extension crate                         | Migration into `octo-cap-macaroon::caveat::payment` with discriminator 0x1A + `Caveat::verify`/`attenuate`                                                                                |
+| Verification       | `verify_paid_query` (read-only; takes a `MacaroonId` and a `PaidQueryCaveat`) | Full macaroon HMAC + `PaymentCaveat` chain verification per RFC-0957 §Algorithms                                                                                                          |
+| Rate-limit storage | `RateLimitBudget` in-memory (`std::sync::Mutex<HashMap>`)                     | `HolderRegistry`-backed ledger per RFC-0862 atomic transaction substrate (cross-process)                                                                                                  |
+| Handler            | `WALLET_PAID_QUERY_VERIFY` on the existing `WalletNode` (read-only delegator) | Dedicated `paid-query-node` specialized node (Layer C) per RFC-0871 §Layer C specialized-node pattern                                                                                     |
+| Pricing policy     | Not amended                                                                   | `RouterAnnouncePayload::pricing_policy` extension + `PricingPolicy { drain_per_query, accepted_payment_capabilities, settlement_recipient }`                                              |
+| Receipt event      | Not emitted                                                                   | `PaymentReceipt` event per RFC-0959 §Data Structures                                                                                                                                      |
+| Proxy integration  | Not wired (`WALLET_PAID_QUERY_VERIFY` reachable only via direct envelope)     | `crates/quota-router-core/src/proxy.rs::handle_request` post-`authenticate()` `Authorization::Capability(token)` verification + `drain_payment` + response envelope with `PaymentReceipt` |
+| End-to-end test    | None                                                                          | `crates/octo-wallet-node/tests/paid_query_e2e.rs` + `crates/quota-router-core/tests/payment_atomic_drain.rs` + `crates/octo-cap-macaroon/tests/payment_caveat_roundtrip.rs`               |
 
 ### Why the bridge pattern, not the full caveat chain
 
-Per [[cipherocto-design-principles]] §"Extension over enumeration" + "User extensibility": the paid-query bridge is the smallest atomic increment that (a) allocates the `PAID_QUERY_VERIFY` payload kind namespace, (b) proves the per-extension crate shape, and (c) wires a verifier primitive the holder can call before a quota-router follow-on ships. Deferring the full `PaymentCaveat` chain migration + atomic drain to follow-on missions keeps each commit a single atomic review unit (per [[cipherocto-design-principles]] §"Discipline at first call site pays off"). The full surface lands in two follow-on missions:
+Per `cipherocto-design-principles` §"Extension over enumeration" + "User extensibility": the paid-query bridge is the smallest atomic increment that (a) allocates the `PAID_QUERY_VERIFY` payload kind namespace, (b) proves the per-extension crate shape, and (c) wires a verifier primitive the holder can call before a quota-router follow-on ships. Deferring the full `PaymentCaveat` chain migration + atomic drain to follow-on missions keeps each commit a single atomic review unit (per `cipherocto-design-principles` §"Discipline at first call site pays off"). The full surface lands in two follow-on missions:
 
 1. **Mission 0957 Phase 2 follow-on** — migrate `PaidQueryCaveat` into `octo-cap-macaroon::caveat::payment` with discriminator 0x1A + `Caveat::verify`/`attenuate` impls per RFC-0957 §Algorithms. Update `octo-paid-query` to depend on the migrated caveat.
 2. **Mission 0871e Phase 6 follow-on** (to be filed) — `RouterAnnouncePayload::pricing_policy` extension + `crates/quota-router-core/src/payment/drain.rs` atomic drain per RFC-0862 + proxy integration + `PaymentReceipt` event emission + dedicated `paid-query-node` specialized node + end-to-end tests.

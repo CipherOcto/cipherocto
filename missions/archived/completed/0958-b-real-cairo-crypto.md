@@ -1,6 +1,6 @@
 # Mission 0958-b: Real Cairo Cryptographic Body + Real-zk STWO Integration
 
-**Status:** Closed (Band A — 2026-08-06). Claimed 2026-08-05; v0.6 — **47/47** ACs green. R6 closure landed `proof_gen_latency_self_host_under_2s_10k_trace` dispatch on `zk_vendor::vendor_state()` per 0958-c AC-3 partial #3 (`4b846a1a`) substrate dependency. All Band-A ACs closed; no remaining open ACs. Mission closure pending PR (per `[[git-workflow]]`, push + PR are user-initiated).
+**Status:** Closed (Band A — 2026-08-06). Claimed 2026-08-05; v0.6 — **47/47** ACs green. R6 closure landed `proof_gen_latency_self_host_under_2s_10k_trace` dispatch on `zk_vendor::vendor_state()` per 0958-c AC-3 partial #3 (`4b846a1a`) substrate dependency. All Band-A ACs closed; no remaining open ACs. Mission closure pending PR (per `git-workflow`, push + PR are user-initiated).
 **RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass
 **Phase:** B.3 (real Cairo cryptographic body) + C.3 (real-zk STWO end-to-end)
 **Claimant:** @cipherocto
@@ -31,10 +31,10 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 - [x] `cargo clippy --workspace --lib --no-deps -- -D warnings` clean
 - [x] `bundled_casm_hash_hex()` snapshot updated automatically (BLAKE3-256 hex recomputed at compile time; no hardcoded expected value)
 
-### S1 Deviations (documented per [[deferred-vs-unspecified]])
+### S1 Deviations (documented per `deferred-vs-unspecified`)
 
 - **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` (Round 1 review F-3 — file created 2026-08-05).
-- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see the upstream `compile(...)` method's `program_offset > config.max_bytecode_size` branch (Round 3 review F-24: replaced line ref `compiler.rs:486` with symbol-form reference per `[[no-line-refs-anywhere]]`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
+- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see the upstream `compile(...)` method's `program_offset > config.max_bytecode_size` branch (Round 3 review F-24: replaced line ref `compiler.rs:486` with symbol-form reference per `no-line-refs-anywhere`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
 - **Ed25519 holder-sig verify → DEFERRED to 0958-c.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; deferred to `missions/archived/completed/0958-c-real-cairo-crypto-followup.md`.
 
 ### S2 — Real-zk STWO STARK integration (LANDED 2026-08-05)
@@ -50,7 +50,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 - [x] `cargo test -p zk-circuit --test casm_snapshot`: 8/8 pass (CASM hash stable, bundled source matches on-disk file)
 - [x] `cargo test -p octo-wallet --test bench -- --include-ignored`: 3/3 pass (G1 proof gen, G2 verify, AC-12 proof size all green)
 
-### S2 Deviations (documented per [[deferred-vs-unspecified]])
+### S2 Deviations (documented per `deferred-vs-unspecified`)
 
 - **FFI dispatch falls back to mock on `ProverNull` / upstream errors.** The S2 witness
   payload is `canonical_ser(BatchSigPublicInputs)` (a 33+N×32 byte buffer) — not a
@@ -88,7 +88,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 - [x] `cargo fmt --all` ran
 - [x] CI workflow `.github/workflows/zk-capability-circuit.yml` already lands fuzz-nightly job for 24h corpus accumulation (S3 verifies; the `-p octo-wallet-fuzz` package name matches the fuzz crate Cargo.toml)
 
-### S3 Deviations (documented per [[deferred-vs-unspecified]])
+### S3 Deviations (documented per `deferred-vs-unspecified`)
 
 - **Pre-existing clippy warnings in `crates/octo-wallet/src/key_hierarchy.rs` (count
   unsubstantiated by Round 1 reviewer F-9; current HEAD after F-1 closure shows
@@ -107,16 +107,16 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S4 — Fuzz + closeout (LANDED 2026-08-05; populated by Round 1 review F-5)
 
-- [x] `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `[[deferred-vs-unspecified]]`.
-- [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet-fuzz capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure; fuzz package reference corrected from `-p octo-wallet` (which has no `[[bin]]` fuzz targets) to `-p octo-wallet-fuzz` per Round 5 review F-31.
+- [x] `missions/archived/completed/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `deferred-vs-unspecified`.
+- [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet-fuzz capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure; fuzz package reference corrected from `-p octo-wallet` (which has no `bin` fuzz targets) to `-p octo-wallet-fuzz` per Round 5 review F-31.
 - [x] 24h cargo-fuzz nightly job confirmed in `.github/workflows/zk-capability-circuit.yml` (name `fuzz-nightly`, schedule cron + `workflow_dispatch` trigger); package reference `-p octo-wallet-fuzz` matches `crates/octo-wallet/fuzz/Cargo.toml`.
 - [x] `docs/07-developers/zk-capability-circuit-guide.md` §Build + §AC evidence updated to reflect real-zk default + stub fail-closed semantics + integration with the 0958-c follow-up mission.
 - [x] Mission file reconciled to v0.5 (Round 1 review F-7: Type Coverage section consolidated into S1..S4 subsections to prevent checkbox drift; v0.5 row in Version History covers R1+R2+R3+R4+R5 multi-round review closures). Mission closure deferred to 0958-c completion (per S4 Deviations below).
 - [x] All multi-round review findings closed across R1 (16 → 14) + R2 (4 NEW) + R3 (3 NEW + 1 NOTE) + R4 (5 NEW + 2 NOTES) + R5 (1 R4 regression + 4 NEW) for a total of 33+1 follow-up fixes; cross-referenced in `## Version History` v0.5 row. R6 convergence check verified zero NEW + zero R5 regressions.
 
-### S4 Deviations (documented per [[deferred-vs-unspecified]])
+### S4 Deviations (documented per `deferred-vs-unspecified`)
 
-- **Mission closure + PR deferred to user-initiated push/PR.** Per `[[git-workflow]]`, the mission file is updated locally on `next` but `git push` and PR creation require explicit user instruction. The closure SHA list (`aa004ad0` + `77aff4aa` + `81e2db4e` + `549c2cc2` + `e8a9ba5c` covering S1, S2, S3, R1 review closure, R2 review closure respectively) is documented in §Version History but the PR URL slot stays empty until user initiates the push.
+- **Mission closure + PR deferred to user-initiated push/PR.** Per `git-workflow`, the mission file is updated locally on `next` but `git push` and PR creation require explicit user instruction. The closure SHA list (`aa004ad0` + `77aff4aa` + `81e2db4e` + `549c2cc2` + `e8a9ba5c` covering S1, S2, S3, R1 review closure, R2 review closure respectively) is documented in §Version History but the PR URL slot stays empty until user initiates the push.
 - **24h nightly fuzz result is event-driven, not gate-bound.** The nightly job runs via `schedule: cron: "17 2 * * *"` (02:17 UTC) per `.github/workflows/zk-capability-circuit.yml`; S4 closure only verifies the workflow file + local 60s smoke. Actual 24h result will land in the next nightly cycle post-merge. This is acceptable because the 60s smoke already exercises the same harness + assertions.
 
 ### Type Coverage (consolidated by Round 1 review F-7; tracking now lives in §S1..§S4 checkboxes above to prevent parallel-list drift)

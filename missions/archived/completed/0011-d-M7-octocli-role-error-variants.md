@@ -4,7 +4,6 @@ description: Add 4 `OctoCliError` variants per RFC-0011-d §Mission Decompositio
 metadata:
   node_type: substrate-cli
   type: cli-error
-  originSessionId: RFC-0011-d author session
   created: 2026-08-31
   v: "1.1"
   landing_commit: "63ffdf94"
@@ -93,10 +92,10 @@ Error variants + exit codes only. NO new subcommand (M6 done). NO new test vecto
 - TV-ERR-5: any error variant carrying `signature_proof` is redacted in Display (defensive test)
 - TV-ERR-6: exit code 34 NOT mapped to any role variant (reserved for future amendment additions per F-16)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C; per RFC-0011) — operator UX errors
-- Error mapping: substrate `RoleError` → CLI `OctoCliError` (typed mapping; preserves structured fields per [[cipherocto-design-principles]] no-god-object)
+- Error mapping: substrate `RoleError` → CLI `OctoCliError` (typed mapping; preserves structured fields per `cipherocto-design-principles` no-god-object)
 
 ## Backward compat
 
@@ -112,11 +111,11 @@ Exit codes 31, 32, 33, 35 are NEW codes; exit 34 reserved per F-16 (parent RFC-0
 - RFC-0011 §Error Handling (error message format)
 - F-14 (#[non_exhaustive] on OctoCliError)
 - F-16 (reserved exit code slot 35)
-- [[cipherocto-design-principles]] — no premature coupling (substrate → CLI unidirectional)
+- `cipherocto-design-principles` — no premature coupling (substrate → CLI unidirectional)
 
 ## Notes
 
-- Error mapping is unidirectional: `RoleError → OctoCliError`. Never reverse (per [[cipherocto-design-principles]] no-premature-coupling)
+- Error mapping is unidirectional: `RoleError → OctoCliError`. Never reverse (per `cipherocto-design-principles` no-premature-coupling)
 - Display message format matches RFC-0011 §Error Handling for shell scriptability
 - Redaction pattern: `tracing` Layer per RFC-0011 §Redaction Layer + per-variant `Display` impl defense-in-depth
 - 4 variants per RFC §Mission Decomposition M7 row (NOT 5; no `RoleBindingConflict` or `RoleAmbiguousId` — those are substrate concerns surfaced as `RoleNotSelectable` in CLI)

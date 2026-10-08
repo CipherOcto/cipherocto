@@ -4,7 +4,6 @@ description: Land `octo mesh rpc` subcommand (remote RPC invocation via RFC-0871
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-f author session
   created: 2026-08-31
   v: "1.0"
   depends_on:
@@ -29,7 +28,7 @@ completed_at: 2026-09-01
 
 # 0011-f-mesh-rpc-subcommand — `octo mesh rpc` subcommand (remote RPC invocation)
 
-**Status:** Completed — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per [[feedback_initiation_user_only]] + [[git-workflow]]. The mission depends on `0011-f-mesh-peer-subcommands` (peer table for `peer_did` resolution) and `0011-f-mesh-forward-subcommand` (substrate `NodeEnvelope` construction pattern).
+**Status:** Completed — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per `feedback_initiation_user_only` + `git-workflow`. The mission depends on `0011-f-mesh-peer-subcommands` (peer table for `peer_did` resolution) and `0011-f-mesh-forward-subcommand` (substrate `NodeEnvelope` construction pattern).
 **Substrate:** RFC-0011-f §Subcommand Taxonomy (rpc entry), RFC-0871 envelope shape, RFC-0855 + RFC-0855p-b + RFC-0855p-c peer lifecycle hooks
 **Parent:** RFC-0011-f
 **Depends on:**
@@ -72,7 +71,7 @@ See YAML frontmatter `depends_on` block above. RFC-0855p-b / RFC-0855p-c are Acc
 - [x] Redaction: `params` JSON MAY contain secret material depending on RPC method; redactor applies to nested secret fields per RFC-0011 §Redaction Layer
 - [x] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
 - [x] Cross-mission AC: rpc command integrates with peer mission's local peer table for `peer_node_id` resolution AND forward mission's `NodeEnvelope` construction pattern
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -93,7 +92,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Phase 7 mesh extensi
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -145,7 +144,7 @@ borsh = "1"                                           # NodeEnvelope payload can
 | TV-RPC-3 | rpc            | `rpc-method-not-registered` — peer_a does NOT serve `nonexistent.method`; request envelope constructed and sent; target rejects with `ProtocolError::UnknownPayloadKind`; CLI exit 17 (`MeshError::UnknownMethod` mapped per RFC-0011-f §Error Handling)                |
 | TV-RPC-4 | envelope shape | `rpc-request-response-correlation-match` — request `envelope_id` correlates to response `envelope_id` via substrate-defined correlation field per RFC-0871 §Algorithms step 6 + reply path; both `request_envelope_id` and `response_envelope_id` appear in `RpcOutput` |
 
-## Layer direction (per RFC-0011-f §Rationale "Why Layer C/D placement" + [[cipherocto-design-principles]])
+## Layer direction (per RFC-0011-f §Rationale "Why Layer C/D placement" + `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `MeshAction::Rpc` dispatch + `RpcOutput` + 1 new `OctoCliError` variant + redaction pattern extension
 - `octo-mesh` (Layer C) — extended with `[ADD]` `rpc` function
@@ -205,7 +204,7 @@ cargo test -p octo-mesh --lib --tests                                   # green
 - RFC-0010 §2 ledger_chain_registry Table Codec — `did:octo:z<base58btc>` wire form validation
 - RFC-0008 — Execution Class mapping (`rpc` = Class B per RFC-0011-f §RFC-0008 Execution Class Mapping)
 - RFC-0011-d — Role Provisioning (NOT consumed by this mission; this mission is not role-gated per RFC-0011-f §Roles and Authorities)
-- [[cipherocto-design-principles]] — Layer A/B stability contract
+- `cipherocto-design-principles` — Layer A/B stability contract
 
 ## Why 1 release cycle gate (rpc mission)
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 commit. Pivoted scope from phantom-laden predecessor per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]]; renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 13/13 ACs green (5 HolderRecord ACs collapse to substrate confirmation per `quota-router-storage/src/holder_record.rs:204`; 8 crypto + replay + audit + epoch + TV ACs implemented).
+Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 commit. Pivoted scope from phantom-laden predecessor per `no-phantom-mission-pointers` + `deferred-vs-unspecified`; renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 13/13 ACs green (5 HolderRecord ACs collapse to substrate confirmation per `quota-router-storage/src/holder_record.rs:204`; 8 crypto + replay + audit + epoch + TV ACs implemented).
 
 **Sub-mission of:** `missions/archived/completed/0970-a-hop-envelope.md` (Band A closed 2026-08-06; commit `11921128`).
 
@@ -11,7 +11,7 @@ Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 c
 1. `cipherocto-crypto::X25519Keypair` — no such crate. X25519 substrate = `x25519_dalek::{StaticSecret, PublicKey}` at `crates/octo-network/src/ocrypt/session.rs:134` (`x25519_shared_secret`).
 2. `cipherocto-crypto::Ed25519PublicKey` — no such crate. Ed25519 substrate = `ed25519_dalek::{SigningKey, Verifier, VerifyingKey, Signature}` used widely in `octo-wallet` + `octo-network`.
 3. `HolderRecord::from_hop_capability(hop_envelope, holder_did)` — substrate signature is `from_hop_capability(hop_capacity_id: [u8;32], wrapping_node_did: &str, wrapping_node_pub: &[u8;32], next_hop_did: &str, ttl_millis_unix: u64)` at `crates/quota-router-storage/src/holder_record.rs:204`. Constructor ALREADY EXISTS; the §HolderRecord binding ACs collapse to substrate confirmation.
-4. `crates/quota-router-core/src/registry.rs` — `HolderRecord` lives at `crates/quota-router-storage/src/holder_record.rs` (per [[stoolap-general-purpose-db]] red line, holder schema is cipherocto-side).
+4. `crates/quota-router-core/src/registry.rs` — `HolderRecord` lives at `crates/quota-router-storage/src/holder_record.rs` (per `stoolap-general-purpose-db` red line, holder schema is cipherocto-side).
 5. `audit_replay_log.rs` (NEW) — distinct from existing `audit_log.rs`. Intentional new file.
 
 ## RFC
@@ -47,7 +47,7 @@ The canonical 0970-a1 owned pieces are: real crypto in `wrap_for_hop`/`unwrap_at
 
 - [x] `verify_chain_hash` (or new `verify_hop_signature`) performs real Ed25519 verification over `(chain_hash || audience_did || ttl_millis_unix)` via `ed25519_dalek::{Verifier, VerifyingKey, Signature}`. Replaces the BLAKE3 placeholder.
 - [x] New `HopError::SignatureInvalid` variant on `ed25519_dalek::SignatureError`.
-- [x] Signer key derived from `wrapping_node_did` via `cipherocto-identity::Did::to_public_key()` (or equivalent lookup) — substrate resolution path; if absent, document as future work per [[deferred-vs-unspecified]].
+- [x] Signer key derived from `wrapping_node_did` via `cipherocto-identity::Did::to_public_key()` (or equivalent lookup) — substrate resolution path; if absent, document as future work per `deferred-vs-unspecified`.
 - [x] Forgery test: mutated `chain_hash` → `HopError::SignatureInvalid` (replaces 0970-a's BLAKE3 placeholder test).
 
 ### DestinationNonceStore
@@ -72,7 +72,7 @@ The canonical 0970-a1 owned pieces are: real crypto in `wrap_for_hop`/`unwrap_at
 ### HolderRecord::from_hop_capability (substrate confirmation)
 
 - [x] `crates/quota-router-storage/src/holder_record.rs::HolderRecord::from_hop_capability` constructor ALREADY EXISTS at symbol-form reference (line 204; signature `from_hop_capability(hop_capacity_id: [u8;32], wrapping_node_did: &str, wrapping_node_pub: &[u8;32], next_hop_did: &str, ttl_millis_unix: u64)`). Mission text "HolderRecord::from_hop_capability(hop_envelope, holder_did)" was a phantom pointer; the canonical constructor takes the primitive surface (5 params), not the wrapped envelope. AC closed by substrate.
-- [x] Cross-crate per [[stoolap-general-purpose-db]] — HolderRecord stays cipherocto-side (quota-router-storage crate); no stoolap fork PR.
+- [x] Cross-crate per `stoolap-general-purpose-db` — HolderRecord stays cipherocto-side (quota-router-storage crate); no stoolap fork PR.
 - [x] Test `from_hop_capability_distinguishes_holder_and_audience` at `holder_record.rs:433` covers TV15 (holder vs audience).
 
 ### Cross-crate compat
@@ -80,7 +80,7 @@ The canonical 0970-a1 owned pieces are: real crypto in `wrap_for_hop`/`unwrap_at
 - [x] `cargo build --workspace` green
 - [x] `cargo test -p octo-wallet --lib capability::hop_envelope` green (17/17 pass; 8 pre-existing + 4 TV + 5 invariant)
 - [x] `cargo test --workspace --lib` green (existing tests + new TVs)
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); downstream consumers (octo-network, quota-router-storage) also clean
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`); downstream consumers (octo-network, quota-router-storage) also clean
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## AC Reconciliation (2026-08-07)
@@ -191,7 +191,7 @@ cargo fmt -p octo-wallet -- --check                 # clean
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Filed open as `0970-a1-holder-binding-and-crypto.md` (phantom-laden, 5 drift items: `cipherocto-crypto` crate, `X25519Keypair` type, `from_hop_capability(hop_envelope, holder_did)` wrong signature, `quota-router-core/src/registry.rs` wrong path, `audit_replay_log` conflation).                                                                                                                                             |
-| v0.2    | 2026-08-07 | Reconciled per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]]: pivoted scope to canonical 0970-a1 owned pieces (real crypto + replay defense + epoch + audit + TVs); renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 5 HolderRecord ACs collapse to substrate confirmation. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Filed open as `0970-a1-holder-binding-and-crypto.md` (phantom-laden, 5 drift items: `cipherocto-crypto` crate, `X25519Keypair` type, `from_hop_capability(hop_envelope, holder_did)` wrong signature, `quota-router-core/src/registry.rs` wrong path, `audit_replay_log` conflation).                                                                                                                                         |
+| v0.2    | 2026-08-07 | Reconciled per `no-phantom-mission-pointers` + `deferred-vs-unspecified`: pivoted scope to canonical 0970-a1 owned pieces (real crypto + replay defense + epoch + audit + TVs); renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 5 HolderRecord ACs collapse to substrate confirmation. |

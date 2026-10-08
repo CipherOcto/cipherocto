@@ -11,7 +11,6 @@ depends_on:
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-20T00:00:00.000Z
 ---
 

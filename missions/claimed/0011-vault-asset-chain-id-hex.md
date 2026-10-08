@@ -4,7 +4,6 @@ description: "Land the Layer B wire-format migration for the three 32-byte id ne
 metadata:
   node_type: mission
   type: layer-b-wire-format
-  originSessionId: 6b66c09a-4979-47ba-b92f-e3a757ecff92
   created: 2026-10-02
   v: "1.0"
   depends_on:

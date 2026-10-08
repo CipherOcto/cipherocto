@@ -22,7 +22,7 @@ ships the production storage wiring:
 3. **`crates/quota-router-storage/src/stoolap_did_registry.rs`** (NEW)
    — `StoolapDidRegistry` impl per RFC-0010 v1.3 §Storage Extension
    §StoolapDidRegistry. Cipherocto-side migration v008 per
-   [[stoolap-general-purpose-db]].
+   `stoolap-general-purpose-db`.
 4. **`crates/quota-router-storage/migrations/v008__create_did_registry.sql`**
    (NEW) — `did_registry` table + `did_registry_updated_at` index per
    RFC-0010 v1.3 §Storage Extension §StoolapDidRegistry.
@@ -43,7 +43,7 @@ B-adjacent storage), mirror to `StoolapSpendLedger` pattern (mission
 DID Documents explicitly OUT of scope per RFC-0010 v1.3 §Storage
 Extension §Out of scope.
 
-### Layer direction (per [[cipherocto-design-principles]])
+### Layer direction (per `cipherocto-design-principles`)
 
 - `octo-ident` (Layer B) — `DidRegistry` trait + `InMemoryDidRegistry`
 - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
@@ -209,7 +209,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --lib
 ```
 
-Per [[feedback_stoolap_test_performance]] use `--lib` (full build
+Per `feedback_stoolap_test_performance` use `--lib` (full build
 compiles ~150 test files = 2+ min).
 
 ## Backward compat
@@ -235,15 +235,15 @@ compiles ~150 test files = 2+ min).
 
 ## Cross-references
 
-- [[mission-0871b-identity-resolver-node]] — Phase 1 MVP predecessor
-- [[mission-0871b-cross-domain-resolution]] — F6 follow-on (gated on
+- `mission-0871b-identity-resolver-node` — Phase 1 MVP predecessor
+- `mission-0871b-cross-domain-resolution` — F6 follow-on (gated on
   this mission + RFC-0871 §Future Work)
-- [[wave-3-plan-correction-2026-08-10]] — drift context (RFC-0010
+- `wave-3-plan-correction-2026-08-10` — drift context (RFC-0010
   v1.3 unblocking this mission)
-- [[cipherocto-design-principles]] — Layer B additive-only rule
-- [[stoolap-general-purpose-db]] — cipherocto-side migration convention
-- [[feedback_clippy_zero_warnings]] — clippy invariant
-- [[feedback_stoolap_test_performance]] — `--lib` test convention
+- `cipherocto-design-principles` — Layer B additive-only rule
+- `stoolap-general-purpose-db` — cipherocto-side migration convention
+- `feedback_clippy_zero_warnings` — clippy invariant
+- `feedback_stoolap_test_performance` — `--lib` test convention
 
 ## Claimant
 

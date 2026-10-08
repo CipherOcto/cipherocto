@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-r promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 10 retroactive multi-round DRY gate GREEN at R4 zero per the existing closure chain culminating in `next 6588aaf2` (4 rounds R1 fail → R1.5 fix → R2 fail → R2.5 fix → R3 fail → R3.5 fix → R4 zero = GATE GREEN).
 
-> **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r (this RFC).
+> **Amendment chain:** Tenth amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 3 = RFC-0011-k. Phase 4 = RFC-0011-l. Phase 5 = RFC-0011-m. Phase 6 = RFC-0011-n. Phase 7 = RFC-0011-o. Phase 8 = RFC-0011-p. Phase 9 = RFC-0011-q. Phase 10 = RFC-0011-r (this RFC).
 
 ## Authors
 
@@ -223,7 +223,7 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 
 ## Rationale
 
-RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" directive. The substrate extension (2 new async trait methods on existing `ReputationStore`) lands FIRST per [[no-phantom-mission-pointers]] pairing invariant, then CLI dispatch atop it. The additive trait extension pattern (Phase 4 G22 precedent) preserves backward compatibility: existing callers unchanged; new callers can use new methods.
+RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" directive. The substrate extension (2 new async trait methods on existing `ReputationStore`) lands FIRST per `no-phantom-mission-pointers` pairing invariant, then CLI dispatch atop it. The additive trait extension pattern (Phase 4 G22 precedent) preserves backward compatibility: existing callers unchanged; new callers can use new methods.
 
 ## Version History
 

@@ -34,7 +34,7 @@ Substrate additions land 2026-09-20 at `next c9121aa5`:
 - [x] Substrate additions land in `crates/octo-network/src/mon/bootstrap.rs` per RFC-0011-h §Substrate-Additions row G1
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (4/4 from_toml/save_toml tests pass)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (4 unit tests added)
 
 ## Dependencies

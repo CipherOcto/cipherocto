@@ -47,7 +47,7 @@ The substrate-level atomicity guarantee depends on the Stoolap transaction (`Dat
 - [x] `cargo build --workspace` green (verified post-impl)
 - [x] `cargo test -p quota-router-storage --lib` green: 165/165 pass (162 pre-existing + 3 new TV9-I1/I2/I3)
 - [x] `cargo test --workspace --lib` green (verified post-impl; `--exclude octo-whatsapp` to skip tdlib-rs dev-dep link)
-- [x] `cargo clippy -p quota-router-storage --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); also clean on `octo-wallet` + `octo-network` (downstream consumers of `quota-router-storage` types)
+- [x] `cargo clippy -p quota-router-storage --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`); also clean on `octo-wallet` + `octo-network` (downstream consumers of `quota-router-storage` types)
 - [x] `cargo fmt -p quota-router-storage -- --check` clean
 
 ## Dependencies
@@ -92,20 +92,20 @@ depends_on:
 
 **Implementation surface:**
 
-| Change | File | Detail |
-|---|---|---|
-| `INSERT_HOLDER_SQL` constant | `crates/quota-router-storage/src/stoolap_holder_registry.rs` | Single source of truth for the 10-column INSERT statement shared by `insert` + `insert_dual` |
-| `InsertParams` type alias | same file | Named tuple alias (clippy `type_complexity` mitigation) for the 10-tuple parameter shape |
-| `insert_params` helper | same file | Builds `InsertParams` from `&HolderRecord` |
-| `classify_insert_err` helper | same file | Maps `stoolap::Error` to `RegistryError::AlreadyExists` (UNIQUE/PK collision) or `RegistryError::Storage` (everything else) |
-| `execute_insert_db` helper | same file | Runs `INSERT_HOLDER_SQL` against `stoolap::Database` |
-| `execute_insert_tx` helper | same file | Runs `INSERT_HOLDER_SQL` against `stoolap::ApiTransaction` |
-| `insert` refactor | same file | Delegates to `execute_insert_db` (single-record path unchanged) |
-| `StoolapHolderRegistry::insert_dual` | same file | Concrete atomic impl: `db.begin()` → bearer → capability → `tx.commit()`; auto-rollback on Drop on any failure |
-| `HolderRegistry::insert_dual` trait method | `crates/quota-router-storage/src/holder_registry.rs` | Default impl falls back to non-atomic sequential `insert` calls; concrete impls (e.g., `StoolapHolderRegistry`) override with the atomic path |
-| `Transaction::insert_dual` comment update | `crates/quota-router-storage/src/transaction.rs` | Structural-stub body comment updated to point at `StoolapHolderRegistry::insert_dual` (concrete impl landed); same pattern as `insert_holder_record` |
-| TV9-I1/I2/I3 tests | `crates/quota-router-storage/src/stoolap_holder_registry.rs` | `tv9_i1_insert_dual_happy_path`, `tv9_i2_insert_dual_rollback_on_capability_failure`, `tv9_i3_insert_dual_aborts_on_bearer_pk_collision` |
-| Helpers (`bearer_with_pub_and_hash`, `capability_v1`) | same file | Test fixtures for TV9-I1/I2/I3 |
+| Change                                                | File                                                         | Detail                                                                                                                                               |
+| ----------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INSERT_HOLDER_SQL` constant                          | `crates/quota-router-storage/src/stoolap_holder_registry.rs` | Single source of truth for the 10-column INSERT statement shared by `insert` + `insert_dual`                                                         |
+| `InsertParams` type alias                             | same file                                                    | Named tuple alias (clippy `type_complexity` mitigation) for the 10-tuple parameter shape                                                             |
+| `insert_params` helper                                | same file                                                    | Builds `InsertParams` from `&HolderRecord`                                                                                                           |
+| `classify_insert_err` helper                          | same file                                                    | Maps `stoolap::Error` to `RegistryError::AlreadyExists` (UNIQUE/PK collision) or `RegistryError::Storage` (everything else)                          |
+| `execute_insert_db` helper                            | same file                                                    | Runs `INSERT_HOLDER_SQL` against `stoolap::Database`                                                                                                 |
+| `execute_insert_tx` helper                            | same file                                                    | Runs `INSERT_HOLDER_SQL` against `stoolap::ApiTransaction`                                                                                           |
+| `insert` refactor                                     | same file                                                    | Delegates to `execute_insert_db` (single-record path unchanged)                                                                                      |
+| `StoolapHolderRegistry::insert_dual`                  | same file                                                    | Concrete atomic impl: `db.begin()` → bearer → capability → `tx.commit()`; auto-rollback on Drop on any failure                                       |
+| `HolderRegistry::insert_dual` trait method            | `crates/quota-router-storage/src/holder_registry.rs`         | Default impl falls back to non-atomic sequential `insert` calls; concrete impls (e.g., `StoolapHolderRegistry`) override with the atomic path        |
+| `Transaction::insert_dual` comment update             | `crates/quota-router-storage/src/transaction.rs`             | Structural-stub body comment updated to point at `StoolapHolderRegistry::insert_dual` (concrete impl landed); same pattern as `insert_holder_record` |
+| TV9-I1/I2/I3 tests                                    | `crates/quota-router-storage/src/stoolap_holder_registry.rs` | `tv9_i1_insert_dual_happy_path`, `tv9_i2_insert_dual_rollback_on_capability_failure`, `tv9_i3_insert_dual_aborts_on_bearer_pk_collision`             |
+| Helpers (`bearer_with_pub_and_hash`, `capability_v1`) | same file                                                    | Test fixtures for TV9-I1/I2/I3                                                                                                                       |
 
 **Verification output:**
 
@@ -135,11 +135,11 @@ cargo fmt -p quota-router-storage -- --check                         # clean
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-07 | Filed open as `0969-b1-mint-dual-impl.md` (phantom-laden, 5+ drift items: `Ask` shape, `Ed25519Keypair`, `IdentityKey::from_public_bytes`, `BearerCapsule::build`, `MintError` variant shapes).                                                                                                                                                                                                                                       |
-| v0.2    | 2026-08-07 | Reconciled per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]]: pivoted scope to `Transaction::insert_dual` atomic body (the canonical 0969-b owned piece per `transaction.rs:46`); renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0969-b1` slot, renamed to `0969-b1-insert-dual-impl.md`. 12 ACs. |
-| v0.3    | 2026-08-07 | Claimed + closed Band A same-session. 12/12 ACs green. `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + `INSERT_HOLDER_SQL` shared helpers + 3 TV9-I tests + structural-stub comment update. 165/165 quota-router-storage lib tests pass; clippy + fmt clean; workspace build green. Single commit on `next`.                                                                             |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-07 | Filed open as `0969-b1-mint-dual-impl.md` (phantom-laden, 5+ drift items: `Ask` shape, `Ed25519Keypair`, `IdentityKey::from_public_bytes`, `BearerCapsule::build`, `MintError` variant shapes).                                                                                                                                                                                 |
+| v0.2    | 2026-08-07 | Reconciled per `no-phantom-mission-pointers` + `deferred-vs-unspecified`: pivoted scope to `Transaction::insert_dual` atomic body (the canonical 0969-b owned piece per `transaction.rs:46`); renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0969-b1` slot, renamed to `0969-b1-insert-dual-impl.md`. 12 ACs. |
+| v0.3    | 2026-08-07 | Claimed + closed Band A same-session. 12/12 ACs green. `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + `INSERT_HOLDER_SQL` shared helpers + 3 TV9-I tests + structural-stub comment update. 165/165 quota-router-storage lib tests pass; clippy + fmt clean; workspace build green. Single commit on `next`.           |
 
 Last Updated: 2026-08-07
 Version: 0.3

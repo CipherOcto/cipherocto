@@ -109,9 +109,10 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
    > the v3.5-r8 §3.11 amendment is Accepted. If the amendment is
    > rejected or deferred, Mission D MUST back out these additions
    > and conform to the canonical 2-arg `observe(pk, nonce) → Result`
-   > + `observe_readonly(pk, nonce) → bool` form. The proposal is
-   > documented here in advance of amendment landing so consumer
-   > missions (E, F, G) can be designed against the proposed surface.
+   >
+   > - `observe_readonly(pk, nonce) → bool` form. The proposal is
+   >   documented here in advance of amendment landing so consumer
+   >   missions (E, F, G) can be designed against the proposed surface.
 
    ```rust
    #[repr(u8)]   // MANDATORY (R7 CRITICAL #1): explicit discriminants
@@ -156,12 +157,12 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
    cross-event nonce collision when the same `pk + nonce` pair
    would otherwise race across event types (BurnEventRef vs
    SettlementEvent on the same sovereign asset). The `#[repr(u8)]`
-   + explicit discriminants (Burn=1, Settlement=2, Payment=3)
-   guarantee that future additive variants cannot shift existing
-   tags — reserved 0 (nil) + 128-255 (vendor extension) bounds
-   the discriminant space. This is the substrate precondition
-   Mission F step 7 + Mission G validate() (h) require for
-   cross-event isolation.
+   - explicit discriminants (Burn=1, Settlement=2, Payment=3)
+     guarantee that future additive variants cannot shift existing
+     tags — reserved 0 (nil) + 128-255 (vendor extension) bounds
+     the discriminant space. This is the substrate precondition
+     Mission F step 7 + Mission G validate() (h) require for
+     cross-event isolation.
 
    `unobserve` (NEW v3.5-r8 PROPOSAL per the blockquote at §9) is the
    atomicity rollback primitive Mission F consume() requires for
@@ -170,7 +171,7 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
    bucket (R2 carry atomicity gap).
 
    `NonceError` has **4 variants**: `AlreadyObserved { event_kind,
-   pk, nonce }` (R7 #9 LOW: `prior_height` removed from public
+pk, nonce }` (R7 #9 LOW: `prior_height` removed from public
    variant — internal log only, info-disclosure mitigation) /
    `NotObserved { event_kind, pk, nonce }` (NEW v3.5-r8 PROPOSAL —
    returned by `unobserve` when target was never observed or
@@ -192,16 +193,16 @@ pubkey` (L629). TTL tied to asset revocation grace period.
       before blake3; `event_kind_tag_u8` is the `#[repr(u8)]`
       discriminant byte per R7 #1 CRITICAL — pins bucket tag
       across additive variant insertions); writes `(event_kind, pk,
-      nonce) → observed_at_height` to WAL
+nonce) → observed_at_height` to WAL
     - `observe_readonly(event_kind, pk, nonce)` — same hash but read-only
       (no WAL write; for `validate()` path per RFC-0959 v2.8 §2.2 L334-342
-      + RFC-0965 v2.1 §2.3 L341-372 patterns)
+      - RFC-0965 v2.1 §2.3 L341-372 patterns)
     - `unobserve(event_kind, pk, nonce)` — removes from LRU + writes
       `unobserved_at_height` to WAL; returns `Err(NotObserved)` if target
       was never observed or already rolled back. Failure during
       unobserve (WAL outage) bubbles up to caller — Mission F
       consume() maps to `BurnEventError::AuditSinkFailed { sink_error:
-      AuditError::UnobserveFailed(e) }` per R6 finding.
+AuditError::UnobserveFailed(e) }` per R6 finding.
 
 11. **`InMemoryNonceRegistry` impl (test-only)** — same file. Per §3.11
     L631. Gated by `#[cfg(test)]`. Production binaries MUST NOT link.
@@ -212,7 +213,7 @@ pubkey` (L629). TTL tied to asset revocation grace period.
     **v3.5-r8 PROPOSAL impl additions (gated on RFC §3.11 amendment
     acceptance per the blockquote at §9):** `observe` / `observe_readonly`
     / `unobserve` all delegate to in-memory `HashMap<(NonceEventKind,
-    [u8;32], [u8;32]), ObservationRecord>`. Test-only — production
+[u8;32], [u8;32]), ObservationRecord>`. Test-only — production
     binaries MUST NOT link.
 
 12. **`newtypes` module** — `crates/octo-vault/src/newtypes.rs` (NEW).
@@ -253,7 +254,7 @@ pubkey` (L629). TTL tied to asset revocation grace period.
     `octo-cap-macaroon` itself stays Layer B-additive.
     Alternative: place `verify_governance_signature` + `blake3_hash` at a
     NEW Layer A crate (e.g., `octo-canonical-primitives`) to isolate blast
-    radius (Stable Abstractions Principle per [[cipherocto-design-principles]]).
+    radius (Stable Abstractions Principle per `cipherocto-design-principles`).
 
 14. **`sovereign_nonce_namespace` helper** — `crates/octo-vault/src/bridge_chain_namespace.rs`
     OR NEW `crates/octo-vault/src/sovereign_nonce.rs`. Per RFC-0965 v2.1
@@ -283,7 +284,7 @@ pubkey` (L629). TTL tied to asset revocation grace period.
 - `bls12_381 = "<version>"` (BLS12-381 aggregated signatures for
   bridge quorum verifier per §3.6 L362-364 + L488-496; verify exact
   substrate-fork version pin at landing per
-  [[feedback_stoolap_persistence]])
+  `feedback_stoolap_persistence`)
 
 ### Cargo deps (add to `crates/octo-cap-macaroon/Cargo.toml`)
 
@@ -361,7 +362,7 @@ Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:
 - TV-CP2: `blake3_hash(data)` returns canonical 32-byte form
   (NOT `blake3::hash(data).as_bytes()`)
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-vault` (Layer B) — `asset_registry` + `bridge_identity_registry` +
   `nonce_registry` + `bridge_chain_namespace` + `newtypes` + sovereign
@@ -387,7 +388,7 @@ cargo test -p octo-vault --lib nonce_registry  # InMemoryNonceRegistry (test-onl
 ```
 
 **Cargo dep audit:** verify `bls12_381` is sourced from a pinned substrate
-version per [[feedback_stoolap_persistence]] (CipherOcto fork pin). If
+version per `feedback_stoolap_persistence` (CipherOcto fork pin). If
 non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only`.
 
 ## Backward compat
@@ -428,8 +429,8 @@ non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only
 - RFC-0960 v3.6 §2.1 — BurnEventRef imports from Mission D substrate (L53-60)
 - RFC-0959 v2.8 §2.1 — SettlementEvent imports from Mission D substrate (L50-56)
 - RFC-0960 v3.7 — VaultBalanceProjection consumes AssetRegistry + newtypes
-- [[cipherocto-design-principles]] — Layer B additive-only rule
-- [[feedback_stoolap_persistence]] — CipherOcto fork pin
+- `cipherocto-design-principles` — Layer B additive-only rule
+- `feedback_stoolap_persistence` — CipherOcto fork pin
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — depends on Mission D for AssetRegistry/MAX_SCALE/newtypes imports
 - Mission B (`0960-v37-b-event-log-producer-wiring.md`) — depends on Mission D for producer boundary types
 - Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — depends on Mission D

@@ -48,6 +48,6 @@
 
 ## Cross-references
 
-- `[[mission-gap-closure-priorities-2026-08-10]]` — Wave 2 plan
-- `[[mission-0871e-paid-query-caveat]]` — parent mission
-- `[[mission-0871e-phase5b-atomic-drain]]` — sibling sub-mission (this Wave 2 step 1)
+- `mission-gap-closure-priorities-2026-08-10` — Wave 2 plan
+- `mission-0871e-paid-query-caveat` — parent mission
+- `mission-0871e-phase5b-atomic-drain` — sibling sub-mission (this Wave 2 step 1)

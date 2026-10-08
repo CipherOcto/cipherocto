@@ -108,7 +108,7 @@ NEW module `crates/octo-network/src/mon/envelope_inspector.rs`. No existing modu
 - [x] `pub mod envelope_inspector;` added to `crates/octo-network/src/mon/mod.rs`
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (≥3 unit tests added; zero regression)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (substrate-faithful boundary tests pin unknown-envelope semantics + from_fields projection + EnvelopeKind enum variants)
 
 ## Dependencies
@@ -127,4 +127,4 @@ NEW module `crates/octo-network/src/mon/envelope_inspector.rs`. No existing modu
 
 ## Notes
 
-Stub originally filed 2026-09-18 per [[no-phantom-mission-pointers]]. Stub note pinned path `crates/octo-network/src/mon/envelope_inspector.rs (NEW)` — substrate-faithful per Phase 7 RFC-0011-o SlashBridge NEW module precedent. Full AC + scope land in Phase 13 stub fill-in commit at `next PENDING` per the Phase 5 RFC-0011-m 5-commit pattern. Phase 13 follows the Phase 5 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). BTreeMap-based deterministic iteration ordering preserved per RFC-0011-h §Output Envelope determinism. `EnvelopeInspector::inspect()` operates on in-memory snapshot only; live envelope store in follow-on Layer D adapter mission per per-extension crate pattern.
+Stub originally filed 2026-09-18 per `no-phantom-mission-pointers`. Stub note pinned path `crates/octo-network/src/mon/envelope_inspector.rs (NEW)` — substrate-faithful per Phase 7 RFC-0011-o SlashBridge NEW module precedent. Full AC + scope land in Phase 13 stub fill-in commit at `next PENDING` per the Phase 5 RFC-0011-m 5-commit pattern. Phase 13 follows the Phase 5 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). BTreeMap-based deterministic iteration ordering preserved per RFC-0011-h §Output Envelope determinism. `EnvelopeInspector::inspect()` operates on in-memory snapshot only; live envelope store in follow-on Layer D adapter mission per per-extension crate pattern.

@@ -3,7 +3,6 @@ name: 0015-b-substrate-defect-amendment
 description: Draft RFC-0015-b paired amendment addressing 7 substrate defects from plateau declaration
 metadata:
   type: rfc-amendment-draft
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-14
   v: "1.0"
   depends_on:
@@ -198,7 +197,7 @@ defects from plateau declaration 2026-09-14)".
 - [x] Cross-reference to plateau declaration audit doc
 - [x] Cross-reference to paired implementation mission `0015-b-substrate-defect-impl`
 - [x] Multi-round DRY review loop on RFC-0015-b (per parent RFC pattern)
-- [x] Promoted Draft → Accepted (paired with implementation mission landing per `[[no-phantom-mission-pointer]]` rule)
+- [x] Promoted Draft → Accepted (paired with implementation mission landing per `no-phantom-mission-pointer` rule)
 
 ## DRY review pattern (parent RFC mirror)
 
@@ -221,8 +220,8 @@ CLOSED) → closure artifacts (audit doc + memory card).
 - RFC-0015 (read-path) §Pre-existing Substrate
 - RFC-0015-a (write-path) §6.1 + §6.4 (operative intent — substrate implementation references §6.1, amendment brings §6.1 into alignment)
 - RFC-0016 (audit read-path) §Pre-existing Substrate
-- `[[substrate-faithfulness-verification]]` — verify reviewer substrate claims against actual code BEFORE acting on briefs
-- `[[no-phantom-mission-pointer]]` — paired RFC + implementation mission must both be valid
+- `substrate-faithfulness-verification` — verify reviewer substrate claims against actual code BEFORE acting on briefs
+- `no-phantom-mission-pointer` — paired RFC + implementation mission must both be valid
 
 ## Why gate
 

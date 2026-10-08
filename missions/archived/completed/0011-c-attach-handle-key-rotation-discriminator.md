@@ -4,7 +4,6 @@ description: Land the KeyId discriminator + KeySet registry + sign_v2 + verify_v
 metadata:
   node_type: substrate-runtime-extension
   type: layer-b-substrate-extension
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-09-17
   v: "1.0"
   depends_on:
@@ -41,7 +40,7 @@ Completed (RFC-0011-c §F.5.1 D2.1 discriminator-only additive slice; Phase D2.1
 
 ## Substrate (RFC-0011-c §F.5.1)
 
-Per RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge. Algorithm-independent discriminator mechanism (Layer B substrate-faithful per [[cipherocto-design-principles]] §Stable Abstractions Principle). NO `key_set` population policy — that lands as D2.2 post-PQC direction.
+Per RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge. Algorithm-independent discriminator mechanism (Layer B substrate-faithful per `cipherocto-design-principles` §Stable Abstractions Principle). NO `key_set` population policy — that lands as D2.2 post-PQC direction.
 
 ## Parent
 
@@ -73,19 +72,19 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C/D1 A
 
 ### Type Coverage
 
-| RFC-0011-c type                             | Sub-step                     | Notes                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pub type KeyId`                            | Sub-step 1 (discriminator)   | Layer B; `u32` covers 4B key generations; `NonZeroU32` not used because `key_id == 0` is canonical-acceptance bootstrap slot per RFC-0015-a §6.5                                                                                                                                                                                                                            |
-| `pub struct KeySet`                         | Sub-step 2 (registry)        | Layer B; `keys: BTreeMap<KeyId, [u8; 32]>` + `grace_keys: BTreeMap<KeyId, [u8; 32]>`; pubkey retained in grace_keys so the v2 grace fallback can attempt a per-pubkey verify                                                                                                                                                                                                |
-| `KeySet::new / insert / move_to_grace`      | Sub-step 3 (mutators)        | Layer B; `move_to_grace` atomically moves pubkey from active to grace; `insert` clears grace on re-promotion                                                                                                                                                                                                                                                                |
-| `KeySet::lookup / grace_key / grace_period` | Sub-step 4 (lookups)         | Layer B; `lookup` = active get; `grace_key(claimed_id)` = single grace entry for the claimed key_id (NOT iteration — bound by the `key_id` discriminator per [[cipherocto-design-principles]] §Extension over enumeration); `grace_period()` returns ascending `Vec<KeyId>` of all grace entries (diagnostic, `#[allow(dead_code)]`; not used by the verify path post-R1.5) |
-| `KeySet::known_key_ids / len / is_empty`    | Sub-step 5 (diagnostics)     | Layer B; `known_key_ids` = active + grace union; `len / is_empty` count active-only                                                                                                                                                                                                                                                                                         |
-| `canonical_payload_bytes_v2`                | Sub-step 6 (canonical bytes) | Layer B; additive: v1 canonical bytes ++ `key_id.to_be_bytes()` (4-byte big-endian suffix); single source of truth for sign_v2 + verify_v2                                                                                                                                                                                                                                  |
-| `sign_attach_handle_payload_v2`             | Sub-step 7 (sign)            | Layer B; composes `canonical_payload_bytes_v2` + `IdentityKey::sign` per RFC-0015-a Appendix A; Signature captured via `to_bytes()` (avoids Layer A type leak per §F.5 stable-abstraction pattern)                                                                                                                                                                          |
-| `verify_attach_handle_payload_v2`           | Sub-step 8 (verify)          | Layer B; 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration) → `UnknownKeyId`; v1 verify body shape factored into private `verify_bytes` helper (DRY across v1 + v2 paths)                                                                                                                                                   |
-| `AttachError::UnknownKeyId`                 | Sub-step 9 (error envelope)  | Layer B; additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration; CLI mapping is follow-on (defaults to `Internal(reason)` wildcard)                                                                                                                                                                                          |
-| 11 NEW tests                                | Sub-step 10 (TV)             | Layer B; 5 KeySet + 6 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                                                                                                                                                                                                                 |
-| `octo-attach-key-rotation` Cargo feature    | Sub-step 11 (cfg-gate)       | Build-system; RFC-0015-a §6.5 paired-acceptance bridge; default OFF preserves v1 byte-identical baseline                                                                                                                                                                                                                                                                    |
+| RFC-0011-c type                             | Sub-step                     | Notes                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pub type KeyId`                            | Sub-step 1 (discriminator)   | Layer B; `u32` covers 4B key generations; `NonZeroU32` not used because `key_id == 0` is canonical-acceptance bootstrap slot per RFC-0015-a §6.5                                                                                                                                                                                                                          |
+| `pub struct KeySet`                         | Sub-step 2 (registry)        | Layer B; `keys: BTreeMap<KeyId, [u8; 32]>` + `grace_keys: BTreeMap<KeyId, [u8; 32]>`; pubkey retained in grace_keys so the v2 grace fallback can attempt a per-pubkey verify                                                                                                                                                                                              |
+| `KeySet::new / insert / move_to_grace`      | Sub-step 3 (mutators)        | Layer B; `move_to_grace` atomically moves pubkey from active to grace; `insert` clears grace on re-promotion                                                                                                                                                                                                                                                              |
+| `KeySet::lookup / grace_key / grace_period` | Sub-step 4 (lookups)         | Layer B; `lookup` = active get; `grace_key(claimed_id)` = single grace entry for the claimed key_id (NOT iteration — bound by the `key_id` discriminator per `cipherocto-design-principles` §Extension over enumeration); `grace_period()` returns ascending `Vec<KeyId>` of all grace entries (diagnostic, `#[allow(dead_code)]`; not used by the verify path post-R1.5) |
+| `KeySet::known_key_ids / len / is_empty`    | Sub-step 5 (diagnostics)     | Layer B; `known_key_ids` = active + grace union; `len / is_empty` count active-only                                                                                                                                                                                                                                                                                       |
+| `canonical_payload_bytes_v2`                | Sub-step 6 (canonical bytes) | Layer B; additive: v1 canonical bytes ++ `key_id.to_be_bytes()` (4-byte big-endian suffix); single source of truth for sign_v2 + verify_v2                                                                                                                                                                                                                                |
+| `sign_attach_handle_payload_v2`             | Sub-step 7 (sign)            | Layer B; composes `canonical_payload_bytes_v2` + `IdentityKey::sign` per RFC-0015-a Appendix A; Signature captured via `to_bytes()` (avoids Layer A type leak per §F.5 stable-abstraction pattern)                                                                                                                                                                        |
+| `verify_attach_handle_payload_v2`           | Sub-step 8 (verify)          | Layer B; 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration) → `UnknownKeyId`; v1 verify body shape factored into private `verify_bytes` helper (DRY across v1 + v2 paths)                                                                                                                                                 |
+| `AttachError::UnknownKeyId`                 | Sub-step 9 (error envelope)  | Layer B; additive typed-discriminator variant per `cipherocto-design-principles` §Extension over enumeration; CLI mapping is follow-on (defaults to `Internal(reason)` wildcard)                                                                                                                                                                                          |
+| 11 NEW tests                                | Sub-step 10 (TV)             | Layer B; 5 KeySet + 6 sign/verify + 1 UnknownKeyId Display; all gated on `octo-attach-key-rotation` feature                                                                                                                                                                                                                                                               |
+| `octo-attach-key-rotation` Cargo feature    | Sub-step 11 (cfg-gate)       | Build-system; RFC-0015-a §6.5 paired-acceptance bridge; default OFF preserves v1 byte-identical baseline                                                                                                                                                                                                                                                                  |
 
 ## Implementation Guide
 
@@ -93,7 +92,7 @@ See `docs/07-developers/octo-runtime-implementation-guide.md` §AttachHandle Tok
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -130,7 +129,7 @@ Land the KeyId discriminator + KeySet registry + sign_v2 + verify_v2 + UnknownKe
 
 6. **`verify_attach_handle_payload_v2`** — same file (Layer B; cfg-gated). 3-step lookup: active → grace fallback (CLAIMED `key_id` only — single grace entry, NOT iteration, per the `key_id` discriminator binding invariant) → `UnknownKeyId`. Private `verify_bytes` helper factors the v1 verify body shape so the v2 verifier can re-use the canonical bytes across the v1 + v2 code paths.
 
-7. **`AttachError::UnknownKeyId` variant** — `crates/octo-runtime/src/handle/error.rs` (Layer B; cfg-gated). Additive typed-discriminator variant per [[cipherocto-design-principles]] §Extension over enumeration. CLI mapping is follow-on (defaults to `Internal(reason)` wildcard via the existing `From<AttachError>` arm).
+7. **`AttachError::UnknownKeyId` variant** — `crates/octo-runtime/src/handle/error.rs` (Layer B; cfg-gated). Additive typed-discriminator variant per `cipherocto-design-principles` §Extension over enumeration. CLI mapping is follow-on (defaults to `Internal(reason)` wildcard via the existing `From<AttachError>` arm).
 
 8. **`octo-attach-key-rotation` Cargo feature** — `crates/octo-runtime/Cargo.toml`. Default OFF. When OFF, the entire D2.1 surface (KeySet + sign_v2 + verify_v2 + UnknownKeyId + their tests) compiles-out via `#[cfg(feature = "octo-attach-key-rotation")]` — the v1 baseline is byte-identical.
 
@@ -167,7 +166,7 @@ No new external crates required; D2.1 is pure substrate-extension on the existin
 | TV-KR-D2-S5 | `verify_v2_active_lookup_mismatch_returns_bad_signature` — multi-key set, active lookup mismatch rejects as BadSignature (not UnknownKeyId) |
 | TV-KR-D2-E1 | `unknown_key_id_display_includes_id_and_known` — Display includes key_id + known_keys set                                                   |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
 
 - `octo-runtime` (Layer B) — `KeyId` + `KeySet` + `sign_v2 / verify_v2 / canonical_payload_bytes_v2` + `AttachError::UnknownKeyId` + 11 tests
 - `octo-wallet` (Layer B) — UNCHANGED; `IdentityKey::sign` (RFC-0015-a Appendix A) is the sole Layer B dependency
@@ -198,11 +197,11 @@ cargo build --workspace --all-targets                                       # EX
 - RFC-0015-a §6.5 — Layer A Paired-Acceptance Bridge (cfg-gate cite)
 - RFC-0015-a Appendix A — `IdentityKey::sign` substrate
 - RFC-0016-a §6.10 — canonical-bytes invariant (carries through to v2)
-- [[cipherocto-design-principles]] — Layer A/B stability contract + extension over enumeration + per-extension crate + registry pattern
-- [[0011-c-octowallet-agents-substrate-phase-d1-dry-closure-2026-09-17]] — Phase D1 predecessor
-- [[0011-c-phase-c-cross-process-revocation-dry-closure]] — Phase C pattern (substrate-faithful additive variant)
-- [[0011-c-transport-extension-phase-b-dry-closure-2026-09-17]] — Phase B pattern (3 Layer D extension crates)
-- [[0011-c-attachhandle-followon-phase-a]] — Phase A pattern (variant arithmetic + slot allocation)
+- `cipherocto-design-principles` — Layer A/B stability contract + extension over enumeration + per-extension crate + registry pattern
+- `0011-c-octowallet-agents-substrate-phase-d1-dry-closure-2026-09-17` — Phase D1 predecessor
+- `0011-c-phase-c-cross-process-revocation-dry-closure` — Phase C pattern (substrate-faithful additive variant)
+- `0011-c-transport-extension-phase-b-dry-closure-2026-09-17` — Phase B pattern (3 Layer D extension crates)
+- `0011-c-attachhandle-followon-phase-a` — Phase A pattern (variant arithmetic + slot allocation)
 
 ## Why gate
 

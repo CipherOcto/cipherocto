@@ -4,7 +4,6 @@ description: Scaffold new `crates/octo-role/` Layer B crate per RFC-0011-d §7.4
 metadata:
   node_type: substrate-cli
   type: substrate-crate-skeleton
-  originSessionId: RFC-0011-d author session
   created: 2026-08-31
   v: "1.1"
   landing_commit: "003a7b0f"
@@ -47,7 +46,7 @@ Hard sequence: M1 (this mission) → M2 → M3 → M4 → M5 → M6 → M7 → M
 ## Acceptance Criteria
 
 - [x] `crates/octo-role/` directory created (NEW per RFC-0011-d §7.4)
-- [x] `crates/octo-role/Cargo.toml` with deps — **substrate-truth deviation**: mission text specified `octo-slash-ledger` + `octo-policy`; actual deps landed are `cipherocto-encoding` (Layer A encoding), `octo-ident` (Layer B identity `Did` type), `octo-cap-macaroon` (Layer A `CapabilitySigner`), `octo-wallet` (Layer B `next_nonce_counter` per M5), `stoolap` (CipherOcto fork per [[feedback_stoolap_persistence]]). Rationale: M4 last-writer-wins semantics eliminated the need for `octo-slash-ledger` at substrate level (slashing handled at governance layer per RFC-0900); `octo-policy` filter integration deferred to a follow-on amendment.
+- [x] `crates/octo-role/Cargo.toml` with deps — **substrate-truth deviation**: mission text specified `octo-slash-ledger` + `octo-policy`; actual deps landed are `cipherocto-encoding` (Layer A encoding), `octo-ident` (Layer B identity `Did` type), `octo-cap-macaroon` (Layer A `CapabilitySigner`), `octo-wallet` (Layer B `next_nonce_counter` per M5), `stoolap` (CipherOcto fork per `feedback_stoolap_persistence`). Rationale: M4 last-writer-wins semantics eliminated the need for `octo-slash-ledger` at substrate level (slashing handled at governance layer per RFC-0900); `octo-policy` filter integration deferred to a follow-on amendment.
 - [x] `crates/octo-role/src/lib.rs` with module-level doc comment referencing RFC-0011-d §7.4 + §7.5 (also includes `Mission sequence` annotation listing M1-M5 status)
 - [x] `crates/octo-role/src/types.rs` with doc comment explaining the canonical types per RFC-0011-d §7.4 (no longer placeholder — M2 landed in same cycle, populating `RoleSummary` / `RoleRecord` / `RoleFilter` / `SlashingRule` / `RoleBinding` / `RoleError`)
 - [x] `crates/octo-role/README.md` (NEW) summarizing crate purpose + RFC-0011-d anchor — added at mission close-out (2026-09-01) per Rec 1 of the audit report; documents public surface + Layer model + cross-references
@@ -55,7 +54,7 @@ Hard sequence: M1 (this mission) → M2 → M3 → M4 → M5 → M6 → M7 → M
 - [x] `cargo build -p octo-role` succeeds with zero warnings
 - [x] `cargo clippy -p octo-role --all-targets -- -D warnings` clean (workspace clippy zero per Phase 1 DRY closure)
 - [x] `cargo fmt -p octo-role -- --check` clean
-- [x] `octo-role` registered in workspace — satisfied via `members = ["crates/*"]` glob in workspace `Cargo.toml` (line 5) per [[feedback_stoolap_persistence]] Stoolap-fork workspace pattern
+- [x] `octo-role` registered in workspace — satisfied via `members = ["crates/*"]` glob in workspace `Cargo.toml` (line 5) per `feedback_stoolap_persistence` Stoolap-fork workspace pattern
 - [x] No `octo-cli` changes in M1 atomic — **substrate-truth deviation**: M6 atomic `63ffdf94` (feat: M6 + M7 role subcommand surface) added `crates/octo-cli/src/commands/role.rs` in a separate cycle; M1's intent (no CLI binding in this atomic) was satisfied; the `octo-cli` integration landed in M6 as the plan anticipated.
 
 ## Scope
@@ -76,7 +75,7 @@ Scaffold only. NO type definitions (M2), NO substrate entrypoints (M3, M4), NO C
 
 N/A — skeleton mission. Type/entrypoint tests land in M2/M3/M4/M8.
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-role` (Layer B; NEW per RFC-0011-d §7.4) — foundation crate for role substrate. No consumers yet (M3-M8 add consumers in substrate + CLI).
 - `octo-slash-ledger` (Layer B; per RFC-0900) — pre-existing crate; `octo-role` depends on it (slash ledger substrate for `select` envelope per M4) — **deviation noted**: dependency not materialized in Cargo.toml (slashing handled at governance layer)
@@ -93,13 +92,13 @@ Additive: new crate, no existing crates modified. No RFC migration etiquette tri
 - RFC-0900 §Slash Ledger Substrate
 - RFC-0855 §Mission Overlay Networks (role namespace)
 - RFC-0011 — `octo` CLI substrate (parent of RFC-0011-d)
-- [[cipherocto-design-principles]] — Layer B stability contract; no central enum
+- `cipherocto-design-principles` — Layer B stability contract; no central enum
 
 ## Notes
 
 - Foundation mission — empty crate skeleton only; types land in M2, entrypoints in M3+M4, CLI binding in M6
 - NO business logic in this mission; pure scaffolding per RFC §Mission Decomp M1 row
-- Per [[implementation-workflow-hook]]: skeleton missions are normal Phase 1 work (NOT deferred); claim once M2-M8 prereqs are tracked
+- Per `implementation-workflow-hook`: skeleton missions are normal Phase 1 work (NOT deferred); claim once M2-M8 prereqs are tracked
 - Lands as first PR in the 9-mission Phase 1 chain
 - Substrate-truth deviations documented per the M2 close-out pattern (see AC #2, #6, #11 inline)
 - Per audit 2026-09-01: mission YAML bookkeeping lag (file not moved to archived/completed/ + ACs not flipped) addressed at mission close-out via this revision

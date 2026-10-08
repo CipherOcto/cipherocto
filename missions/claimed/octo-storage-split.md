@@ -12,7 +12,7 @@
   Accepted per `docs/BLUEPRINT.md` §RFC Process; RFC body filed in S7 per
   plan §2 A.2.
 - Related: RFC-0914-a `0914-a-stoolap-persistence` (persistence convention).
-- Related: [[stoolap-general-purpose-db]] (CipherOcto fork convention).
+- Related: `stoolap-general-purpose-db` (CipherOcto fork convention).
 - Source review: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
   §4.6 / §4.6.1.
 
@@ -203,16 +203,16 @@ wall-clock across 1-2 sessions.
 
 ## Reference
 
-- [[stoolap-general-purpose-db]] — CipherOcto fork convention
-- [[cipherocto-design-principles]] — Layer A/B/C/D/E stability model
-- [[mission-stoolap-fork-stability-audit-status]] — S1 LANDED
+- `stoolap-general-purpose-db` — CipherOcto fork convention
+- `cipherocto-design-principles` — Layer A/B/C/D/E stability model
+- `mission-stoolap-fork-stability-audit-status` — S1 LANDED
 - `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6 / §4.6.1
 - `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §2 B.2 + §3 S2 + §4 S2 (verification gates)
 - `docs/BLUEPRINT.md` §RFC Process (Draft → Accepted lifecycle)
-- [[git-workflow]] — push + remote writes await user instruction
-- [[feedback_initiation_user_only]] — local commits free; push + remote writes need explicit user instruction
-- [[feedback_clippy_zero_warnings]] — clippy invariant
-- [[cargo-fmt-workflow]] — fmt invariant
+- `git-workflow` — push + remote writes await user instruction
+- `feedback_initiation_user_only` — local commits free; push + remote writes need explicit user instruction
+- `feedback_clippy_zero_warnings` — clippy invariant
+- `cargo-fmt-workflow` — fmt invariant
 
 ## Version History
 

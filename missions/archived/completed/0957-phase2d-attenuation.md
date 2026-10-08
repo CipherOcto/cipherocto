@@ -90,7 +90,7 @@ never deployed; no migration concern).
 
 ## Cross-references
 
-- `[[0957-phase2-unblocker-map]]` — phase2d sub-mission
-- `[[cipherocto-design-principles]]` — Layer C specialized-node pattern
-- `[[mission-gap-closure-priorities-2026-08-10]]` — Wave 1 plan
-- `[[mission-0957-ext-macaroon-phase2b-status]]` — substrate predecessor
+- `0957-phase2-unblocker-map` — phase2d sub-mission
+- `cipherocto-design-principles` — Layer C specialized-node pattern
+- `mission-gap-closure-priorities-2026-08-10` — Wave 1 plan
+- `mission-0957-ext-macaroon-phase2b-status` — substrate predecessor

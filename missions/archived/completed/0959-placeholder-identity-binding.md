@@ -2,7 +2,7 @@
 
 **Status:** LANDED 2026-08-13 (commit db75a0e7). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0009 HSM routing + RFC-0870 announce wire
-**Parent:** 0870-b envelope adoption (closed) per [[mission-0870-b-envelope-adoption-status]]
+**Parent:** 0870-b envelope adoption (closed) per `mission-0870-b-envelope-adoption-status`
 
 ## Scope
 
@@ -44,7 +44,7 @@ After wave 2 commits (`ebdbf4cd` + `0a5570bb`), 4 specialized nodes (wallet-node
 
 ## Cross-references
 
-- [[wave-3-gaps-2026-08-10]] — gap surface context
-- [[mission-0871e-phase5c-status]] — sibling sub-mission (introduced the RouterAnnouncePayload extension)
-- [[mission-0009-a-impl-status]] — HSM substrate
-- [[cipherocto-design-principles]] — Layer C + HSM routing rule
+- `wave-3-gaps-2026-08-10` — gap surface context
+- `mission-0871e-phase5c-status` — sibling sub-mission (introduced the RouterAnnouncePayload extension)
+- `mission-0009-a-impl-status` — HSM substrate
+- `cipherocto-design-principles` — Layer C + HSM routing rule

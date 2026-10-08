@@ -4,7 +4,6 @@ description: Wire the AttachHandle token pathway into `octo agent run --detach -
 metadata:
   node_type: cli-substrate-extension
   type: cli-dispatch-amendment
-  originSessionId: 0011-c-attachhandle-closure-session
   created: 2026-09-16
   v: "1.0"
   depends_on:
@@ -122,7 +121,7 @@ Out of scope (deferred to follow-on amendment cycles per §F.6.5):
    (Layer: spec). Append §F.6 CLI Dispatch Wiring section (5 sub-sections:
    §F.6.1 emit side, §F.6.2 consume side, §F.6.3 OctoCliError mirror, §F.6.4
    pairing invariant, §F.6.5 out-of-scope). Pair-commit with this mission YAML
-   per [[no-phantom-mission-pointers]].
+   per `no-phantom-mission-pointers`.
 
 2. **CLI clap arg: `Run.token_file`** — `crates/octo-cli/src/commands/agent.rs`
    (Layer C/D). Extend `AgentAction::Run` variant with
@@ -187,13 +186,13 @@ attached_at_unix, event_cursor: Some(cursor), session_id_hex }`
 
 8. **Closure artifacts**:
    - `docs/audits/2026-09-16-0011-c-attach-cli-dispatch-dry-closure.md`
-     (gitignored scratchpad per [[docs-audits-scratchpad]])
+     (gitignored scratchpad per `docs-audits-scratchpad`)
    - `~/.claude/projects/.../memory/0011-c-attach-cli-dispatch-dry-closure-2026-09-16.md`
      (machine-loadable memory card per persistent memory pattern)
    - `~/.claude/projects/.../memory/MEMORY.md` — APPEND closure card line
      (replaces the AttachHandle substrate closure card line per established
      convention)
-   - Commit (NO PUSH per [[feedback_initiation_user_only]] + [[git-workflow]])
+   - Commit (NO PUSH per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Cargo deps
 
@@ -223,7 +222,7 @@ Token round-trip via in-process `mint_attach_handle` + `encode_token` + `fs::wri
   verify the substrate-faithful signature verify + revocation set check pipelines
   that are already wired in the substrate cycle (no substrate gaps blocking these).
 
-## Layer direction (RFC-0011-c §9.1 Architecture + [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `--token-file` clap args on `Run` + `Attach`;
   dispatch body extensions; 4 new CLI test vectors
@@ -280,18 +279,18 @@ npx prettier --check <modified .md files>        # clean (RFC §F.6 + 3 mission 
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0015-a Appendix A (operative `IdentityKey::sign` semantics)
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
-- [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
-- [[memory-is-never-status-ground-truth]] — provenance rule
-- [[no-phantom-mission-pointers]] — paired-commit convention for RFC + mission YAML
-- [[docs-audits-scratchpad]] — closure audit location
-- [[0011-c-attachhandle-dry-closure-2026-09-16]] — predecessor substrate closure state
+- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
+- `memory-is-never-status-ground-truth` — provenance rule
+- `no-phantom-mission-pointers` — paired-commit convention for RFC + mission YAML
+- `docs-audits-scratchpad` — closure audit location
+- `0011-c-attachhandle-dry-closure-2026-09-16` — predecessor substrate closure state
 
 ## Why gate
 
 Release-gated on companion substrate mission `0011-c-octo-runtime-attachhandle-substrate`
 landing (per RFC-0011-c §Implementation Phases Phase 1). Substrate mission DRY CLOSED
-2026-09-16 per [[0011-c-attachhandle-dry-closure-2026-09-16]]; release gate cleared.
+2026-09-16 per `0011-c-attachhandle-dry-closure-2026-09-16`; release gate cleared.
 
 The cross-process happy-path attach (TV-CLI-ATTACH-1 exit 0) is bounded by
 substrate §F.2 step (e) session-registry-wiring deferral (per §F.6.5 out-of-scope).

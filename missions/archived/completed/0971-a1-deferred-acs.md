@@ -33,10 +33,10 @@ Verification artifacts (2026-08-07):
 
 - `cargo test -p quota-router-core --lib node::role_binding`: 28/28 pass (existing 11 + 7 from AC-B1 + 7 from AC-A1 + 3 new for `validate_deal_settled_emission`)
 - `cargo test -p quota-router-core --test cross_role_data_flow`: 5/5 pass (AC-A1+AC-A2 full pipeline + AC-A3 pure_forwarder rejection + AC-A3 router_only rejection + AC-A4 TV2 + AC-A5 TV3)
-- `cargo clippy -p quota-router-core --all-targets -- -D warnings`: clean (per [[feedback_clippy_zero_warnings]])
-- `cargo fmt --check -p quota-router-core`: clean (per [[cargo-fmt-workflow]])
+- `cargo clippy -p quota-router-core --all-targets -- -D warnings`: clean (per `feedback_clippy_zero_warnings`)
+- `cargo fmt --check -p quota-router-core`: clean (per `cargo-fmt-workflow`)
 
-Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only. Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions or RFC substrate.
+Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §symbol-name form. Per `rfc-referencing-convention` RFCs referenced by number only. Per `no-phantom-mission-pointers` all `depends_on` cites real missions or RFC substrate.
 
 ## RFC
 
@@ -64,7 +64,7 @@ Real missions + RFC substrate only. No phantom pointers.
 
 ## Summary
 
-Mission 0971-a landed 11/22 ACs at commit `67a47ace` (RoleBindingAuditEntry + RoleBindingAuditLog + Manual redacting Debug + 4 audit tests + RoleBindingError enum + validate_lifecycle_transition + router_resigned + 7 new role_binding tests + RFC-0957 + RFC-0959 §Roles cross-refs + cross-crate compat). 9 ACs were explicitly deferred per [[deferred-vs-unspecified]] named-owner rule. This follow-up mission absorbs those 9 deferred ACs with concrete owner + target dates per [[deferred-vs-unspecified]].
+Mission 0971-a landed 11/22 ACs at commit `67a47ace` (RoleBindingAuditEntry + RoleBindingAuditLog + Manual redacting Debug + 4 audit tests + RoleBindingError enum + validate_lifecycle_transition + router_resigned + 7 new role_binding tests + RFC-0957 + RFC-0959 §Roles cross-refs + cross-crate compat). 9 ACs were explicitly deferred per `deferred-vs-unspecified` named-owner rule. This follow-up mission absorbs those 9 deferred ACs with concrete owner + target dates per `deferred-vs-unspecified`.
 
 The 9 deferred ACs are functionally two units:
 
@@ -93,24 +93,24 @@ The 9 deferred ACs are functionally two units:
 
 - [x] **AC-B1.** `crates/octo-wallet/src/capability/audit_replay_log.rs` cross-crate consumer wiring (consumer-side replay audit log per RFC-0971 §Adversary A16). The producer-side is `audit_replay_log` (mission 0970-a1, commit `2ffb1fc8` prior); this AC adds the consumer-side wiring: `Node::record_replay_detection(node_did, envelope_id, nonce, at_millis_unix) -> Result<(), AuditError>` method on `RoleBindingDeclaration` consumer side, plus a `RoleBindingConsumerAuditLog` (NEW, in `crates/quota-router-core/src/node/role_binding_consumer_audit.rs`) that records replay detections against the `RoleBindingAuditLog`.
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** Commit `0bdbcb38` (2026-08-07) — `crates/quota-router-core/src/node/role_binding_consumer_audit.rs` (NEW, 237 lines) + `crates/quota-router-core/src/node/mod.rs` (added `pub mod role_binding_consumer_audit;`). New `RoleBindingConsumerAuditLog` struct with `record_replay_detection` method + `ConsumerReplayAuditEntry` (manual redacting Debug) + `ConsumerAuditError::Full` capacity error. 7 tests pass.
-- [x] **AC-B2.** RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. RFC-0955-R1 currently has no §Roles section — anchoring is mechanism, not role. Either (a) create §Roles section in `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` documenting the `ReputationAnchor` role binding + cross-reference to RFC-0971, or (b) explicitly omit per RFC scope rationale (anchoring is mechanism-only, no role binding). Per [[deferred-vs-unspecified]] named-owner rule: even an "omit" decision needs rationale documentation.
+- [x] **AC-B2.** RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. RFC-0955-R1 currently has no §Roles section — anchoring is mechanism, not role. Either (a) create §Roles section in `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` documenting the `ReputationAnchor` role binding + cross-reference to RFC-0971, or (b) explicitly omit per RFC scope rationale (anchoring is mechanism-only, no role binding). Per `deferred-vs-unspecified` named-owner rule: even an "omit" decision needs rationale documentation.
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** Option (a) — added new `## Roles` section to RFC-0955-R1 (after `## Tuple-Fanout Defense` + before `## Wire Compatibility`) documenting: (i) `ReputationAnchor` OPTIONAL role binding + RFC-0971 cross-reference; (ii) mechanism vs role distinction; (iii) cross-crate wiring (RoleBindingDeclaration + RoleTag::ReputationAnchor + destination_optional_roles helper + validate_destination_binding predicate); (iv) audit trail (RoleBindingAuditLog tied to RFC-0955-R1 ReputationAnchorBatch).
 - [x] **AC-B3.** §Developer Guide section authored inline in `missions/archived/completed/0971-a-role-binding.md` (full inline; not separate file). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. Per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required.
       Owner: @cipherocto. Target: 2026-08-21. **Closure:** New `## Developer Guide` section in `missions/archived/completed/0971-a-role-binding.md` (before `## Dependencies`) with 6 subsections: `Role-Binding Declaration` + `Pure Forwarder Exception` + `ReputationAnchor Opt-In` + `Cross-Role Data Flow` + `Audit Trail` + `Troubleshooting`. Each subsection includes canonical code patterns + RF-0971 references + security/redaction notes.
 - [x] **AC-B4.** `cargo doc --workspace --no-deps` builds without broken-doc-link warnings. Currently `-p quota-router-core` clippy is clean; workspace doc build unverified. Substrate: `cargo doc --workspace --no-deps -- -D warnings` (treat warnings as errors). If broken links surface, fix by inlining cross-references or adding `#[allow(rustdoc::broken_intra_doc_links)]` per Rust 1.71+ policy.
-      Owner: @cipherocto. Target: 2026-08-21. **Closure:** `cargo doc --workspace --no-deps` build succeeds (target/doc/cipherocto_encoding/index.html + 85 other files generated). Pre-existing warnings remain in 4 crates (NOT in 0971-a1 scope per [[no-phantom-mission-pointers]]): `octo-adapter-whatsapp` (2 broken-doc-links: `PlatformAdapter::send_envelope` + `InboundEvent::Unknown`); `octo-matrix-onboard` (1 bare URL: `matrix.example.com`); `quota-router-cli` (2 unclosed HTML tags: `<path>` + `<u64>`); `octo-reputation` (1 warning); `octo-adapter-bluesky` (1 warning). All pre-existing infrastructure debt; 0971-a1 does not introduce new warnings. Cleanup follow-up filed under §Post-closure Follow-up.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** `cargo doc --workspace --no-deps` build succeeds (target/doc/cipherocto_encoding/index.html + 85 other files generated). Pre-existing warnings remain in 4 crates (NOT in 0971-a1 scope per `no-phantom-mission-pointers`): `octo-adapter-whatsapp` (2 broken-doc-links: `PlatformAdapter::send_envelope` + `InboundEvent::Unknown`); `octo-matrix-onboard` (1 bare URL: `matrix.example.com`); `quota-router-cli` (2 unclosed HTML tags: `<path>` + `<u64>`); `octo-reputation` (1 warning); `octo-adapter-bluesky` (1 warning). All pre-existing infrastructure debt; 0971-a1 does not introduce new warnings. Cleanup follow-up filed under §Post-closure Follow-up.
 
 ### Cross-crate compat (stays in 0971-a, not duplicated)
 
 - [x] `cargo build -p quota-router-core` green (substrate unchanged; verified per 0971-a commit `67a47ace` + 0971-a1 commits).
 - [x] `cargo test -p quota-router-core --lib node::role_binding`: 28/28 pass (existing 11 + 7 from 0971-a commit `67a47ace` + 7 from AC-B1 commit `0bdbcb38` + 3 from AC-A3 commit `9a46e06f`).
-- [x] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]] + [[mode-gate-never-equals-interface]]).
+- [x] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per `feedback_clippy_zero_warnings` + `mode-gate-never-equals-interface`).
 - [x] `cargo fmt --check -p quota-router-core` clean.
 - [x] `cargo test -p quota-router-core --test cross_role_data_flow` GREEN (Group A TV2 + TV3 live here; 5/5 pass).
 
 ## Acceptance Deviations
 
-Each entry follows [[deferred-vs-unspecified]] form: unfulfilled AC + concrete plan to close + owner + target date. Active deviations: every entry has concrete Owner + concrete Target date.
+Each entry follows `deferred-vs-unspecified` form: unfulfilled AC + concrete plan to close + owner + target date. Active deviations: every entry has concrete Owner + concrete Target date.
 
 ### Group A Deviations
 
@@ -122,7 +122,7 @@ Each entry follows [[deferred-vs-unspecified]] form: unfulfilled AC + concrete p
 
 ### Group B Deviations
 
-- **RFC-0955-R1 §Roles section creation is the missing piece.** Either create §Roles section (option a) or omit per RFC scope rationale (option b). Per [[deferred-vs-unspecified]] named-owner rule: even option (b) requires rationale documentation. Owner: @cipherocto. Target: 2026-08-21.
+- **RFC-0955-R1 §Roles section creation is the missing piece.** Either create §Roles section (option a) or omit per RFC scope rationale (option b). Per `deferred-vs-unspecified` named-owner rule: even option (b) requires rationale documentation. Owner: @cipherocto. Target: 2026-08-21.
 - **Inline §Developer Guide section is a doc-only task.** Substrate coverage is adequate (rustdoc on `RoleBindingDeclaration` + `RoleBindingAuditLog` + `RoleBindingError`); full inline §Developer Guide authoring is the operator-facing reference. Owner: @cipherocto. Target: 2026-08-21.
 - **audit_replay_log consumer-side wiring is the only code piece in Group B.** Producer-side lands at commit `2ffb1fc8` prior (mission 0970-a1); consumer-side is a small `RoleBindingConsumerAuditLog` wrapper. Owner: @cipherocto. Target: 2026-08-21.
 - **`cargo doc --workspace --no-deps` build is a verification step.** Trip any broken-doc-link warnings, fix per Rust 1.71+ policy. Owner: @cipherocto. Target: 2026-08-21.
@@ -151,12 +151,12 @@ This follow-up implements (per 0971-a §Type Coverage deferred entries):
 
 ## Notes
 
-- This follow-up mission is the canonical home for the 9 ACs deferred from 0971-a. The 0971-a mission text per [[deferred-vs-unspecified]] named-owner rule explicitly states "tracked under follow-up mission TBD per [[deferred-vs-unspecified]]" — this mission is the follow-up.
+- This follow-up mission is the canonical home for the 9 ACs deferred from 0971-a. The 0971-a mission text per `deferred-vs-unspecified` named-owner rule explicitly states "tracked under follow-up mission TBD per `deferred-vs-unspecified`" — this mission is the follow-up.
 - Group A (target 2026-09-15) is the larger unit; Group B (target 2026-08-21) is the smaller unit. Group B can close independently of Group A.
-- Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions (0969-b1, 0970-a1, 0971-a) + RFC substrate (RFC-0957, RFC-0959, RFC-0970). No phantom slugs.
-- Per [[no-line-refs-anywhere]] all references use §symbol-name form (no line refs in this mission).
-- Per [[rfc-referencing-convention]] RFCs referenced by number only (no status / version pins).
-- Per [[implementation-workflow-hook]] this mission is filed in `claimed/` directly (planning + owner + target set; substrate work follows in subsequent commits).
+- Per `no-phantom-mission-pointers` all `depends_on` cites real missions (0969-b1, 0970-a1, 0971-a) + RFC substrate (RFC-0957, RFC-0959, RFC-0970). No phantom slugs.
+- Per `no-line-refs-anywhere` all references use §symbol-name form (no line refs in this mission).
+- Per `rfc-referencing-convention` RFCs referenced by number only (no status / version pins).
+- Per `implementation-workflow-hook` this mission is filed in `claimed/` directly (planning + owner + target set; substrate work follows in subsequent commits).
 
 ## Submission Date
 

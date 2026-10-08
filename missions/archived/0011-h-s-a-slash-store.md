@@ -38,7 +38,7 @@ Paired CLI dispatch landed 2026-09-20 at `next 8649ca4d`:
 - [x] Substrate additions land in `crates/octo-network/src/reputation/slash_store.rs` per RFC-0011-h §Substrate-Additions row G6
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (19/19 slash_store tests pass)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (5 unit tests added)
 - [x] Paired CLI dispatch wired through G6 substrate surface (per `0011-h-network-slash-stats` mission closed at `next 8649ca4d`)
 

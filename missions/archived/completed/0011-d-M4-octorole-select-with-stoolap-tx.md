@@ -4,7 +4,6 @@ description: Implement `octo_role::select(role_id, operator_did, signer)` per RF
 metadata:
   node_type: substrate-cli
   type: substrate-entrypoint-write
-  originSessionId: RFC-0011-d author session
   created: 2026-08-31
   v: "1.1"
   landing_commit: "3842e8c6"
@@ -105,7 +104,7 @@ Per RFC-0011-d §11:
 - TV-RX-8: `role_binding_hash` deterministic for same input
 - TV-RX-9: `signature_proof` field redacted in return value
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-role` (Layer B; per RFC-0011-d §7.4) — owns the write-path substrate + slash-ledger row creation
 - `octo-cap-macaroon` (Layer B; per RFC-0957) — owns `CapabilitySigner` trait

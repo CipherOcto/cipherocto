@@ -4,7 +4,6 @@ description: Migrate `octo-wallet/capability/audit_log.rs` to consume `octo-audi
 metadata:
   node_type: substrate-consumer
   type: domain-migration
-  originSessionId: RFC-0012 author session
   created: 2026-09-10
   v: "1.1"
   depends_on:

@@ -20,8 +20,8 @@ Verification artifacts (2026-08-07):
 - `cargo test -p octo-wallet --lib capability::gateway_authenticator`: 15/15 pass (Group B)
 - `cargo test -p octo-wallet --lib capability::dispatch`: all dispatch unit tests pass (Group A)
 - `cargo test -p octo-wallet --test dispatch_tv`: 12/12 pass (Group C — 11 ACs + 1 indeterminate-path TV12 variant)
-- `cargo clippy -p octo-wallet --all-targets -- -D warnings`: clean (per [[feedback_clippy_zero_warnings]])
-- `cargo fmt --check`: clean (per [[cargo-fmt-workflow]])
+- `cargo clippy -p octo-wallet --all-targets -- -D warnings`: clean (per `feedback_clippy_zero_warnings`)
+- `cargo fmt --check`: clean (per `cargo-fmt-workflow`)
 - `bash .github/linters/braces-balanced.sh authenticate`: `OK: authenticate() braces balanced`
 
 The 17 deferred ACs are functionally three units:
@@ -30,7 +30,7 @@ The 17 deferred ACs are functionally three units:
 - **Group B (3 ACs) — GatewayAuthenticator struct + authenticate() algorithm + brace-balance CI lint.** Medium unit. Requires `BearerVerifier` + `CapabilityVerifier` traits (RFC-0903 + RFC-0957 substrate) + `Clock` trait + `HolderRegistry` trait (already shipped at `crates/quota-router-storage/src/holder_registry.rs:33`).
 - **Group C (11 ACs) — Test vectors TV1-TV8 + TV10-TV12.** Largest unit. Pure test surface; depends on Group A + Group B wiring.
 
-Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only. Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions or RFC substrate.
+Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §symbol-name form. Per `rfc-referencing-convention` RFCs referenced by number only. Per `no-phantom-mission-pointers` all `depends_on` cites real missions or RFC substrate.
 
 ## RFC
 
@@ -59,7 +59,7 @@ Real missions + RFC substrate only. No phantom pointers.
 
 ## Summary
 
-Mission 0969-a landed 7/24 ACs at commit `ab0261f7` (`AuthHeader` enum + `ParseError` enum + `LinkageResult` enum + `DispatchSet` struct + `parse_auth_headers` function + `AuthError` enum + 7 unit tests). 17 ACs were explicitly deferred per [[deferred-vs-unspecified]] named-owner rule. This follow-up mission absorbs those 17 deferred ACs with concrete owner + target dates per [[deferred-vs-unspecified]] + `0969-a` §Closure footnote.
+Mission 0969-a landed 7/24 ACs at commit `ab0261f7` (`AuthHeader` enum + `ParseError` enum + `LinkageResult` enum + `DispatchSet` struct + `parse_auth_headers` function + `AuthError` enum + 7 unit tests). 17 ACs were explicitly deferred per `deferred-vs-unspecified` named-owner rule. This follow-up mission absorbs those 17 deferred ACs with concrete owner + target dates per `deferred-vs-unspecified` + `0969-a` §Closure footnote.
 
 The 17 deferred ACs are functionally three units (above). The smallest unit (Group A: 5 ACs) can close independently. Groups B + C require Group A substrate (identity linkage evaluation feeds into `authenticate()` algorithm; `AuthError` Debug redaction feeds into TV10).
 
@@ -133,18 +133,18 @@ The 17 deferred ACs are functionally three units (above). The smallest unit (Gro
 
 ## Acceptance Deviations
 
-- **AC-B2.1 hardening (deferred):** `authenticate()` does NOT yet surface `AuthError::UnsupportedScheme` or `AuthError::AskBindingMismatch` — both substrate variants exist (TV8 + TV11 assertions cover them) but the routing through `authenticate()` is a follow-up. Per [[deferred-vs-unspecified]] named-owner rule: owner @cipherocto, target 2026-09-04 (1-week post 0969-a2 closure). Tracked as AC-B2.1 in follow-up mission `0969-a3-hardening` (TBD file).
+- **AC-B2.1 hardening (deferred):** `authenticate()` does NOT yet surface `AuthError::UnsupportedScheme` or `AuthError::AskBindingMismatch` — both substrate variants exist (TV8 + TV11 assertions cover them) but the routing through `authenticate()` is a follow-up. Per `deferred-vs-unspecified` named-owner rule: owner @cipherocto, target 2026-09-04 (1-week post 0969-a2 closure). Tracked as AC-B2.1 in follow-up mission `0969-a3-hardening` (TBD file).
 
 ### Cross-crate compat (stays in 0969-a, not duplicated)
 
 - [x] `cargo build --workspace` green (re-verified 2026-08-07: built 2m 34s, no errors).
 - [x] `cargo test --workspace` green (re-verified 2026-08-07; 7/7 dispatch tests + new TV tests pass).
-- [x] `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean (verified 2026-08-07, per [[feedback_clippy_zero_warnings]]).
-- [x] `cargo fmt --check` clean (verified 2026-08-07, per [[cargo-fmt-workflow]]).
+- [x] `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean (verified 2026-08-07, per `feedback_clippy_zero_warnings`).
+- [x] `cargo fmt --check` clean (verified 2026-08-07, per `cargo-fmt-workflow`).
 
 ## Acceptance Deviations
 
-Per [[deferred-vs-unspecified]] form: unfulfilled AC + concrete plan + owner + target.
+Per `deferred-vs-unspecified` form: unfulfilled AC + concrete plan + owner + target.
 
 ### Group A Deviations
 
@@ -161,7 +161,7 @@ Per [[deferred-vs-unspecified]] form: unfulfilled AC + concrete plan + owner + t
 ### Group C Deviations
 
 - **Test file location deviation:** mission text specified `crates/quota-router-core/tests/dispatch_tv.rs`. Actual location: `crates/octo-wallet/tests/dispatch_tv.rs` (per AC-B1 deviation — substrate lives in octo-wallet; tests colocate with substrate to avoid cross-crate Arc<dyn> wiring for now). Future 0969-b migration: tests move to `crates/quota-router-core/tests/` when `AuthenticatedRequest` is consumed cross-crate.
-- **AC-C8 TV8 partial surfacing:** `AuthError::UnsupportedScheme` substrate variant exists + Debug redaction contract holds; but `authenticate()` does NOT yet route the unsupported-only scheme through `UnsupportedScheme` (returns `NoAuthHeader` first). AC-B2.1 hardening scheduled in follow-up `0969-a3-hardening` (TBD file). Target: 2026-09-04. Per [[deferred-vs-unspecified]] named-owner rule: unfulfilled AC + concrete plan + owner + target.
+- **AC-C8 TV8 partial surfacing:** `AuthError::UnsupportedScheme` substrate variant exists + Debug redaction contract holds; but `authenticate()` does NOT yet route the unsupported-only scheme through `UnsupportedScheme` (returns `NoAuthHeader` first). AC-B2.1 hardening scheduled in follow-up `0969-a3-hardening` (TBD file). Target: 2026-09-04. Per `deferred-vs-unspecified` named-owner rule: unfulfilled AC + concrete plan + owner + target.
 - **AC-C10 TV11 partial surfacing:** same pattern as TV8 — `AuthError::AskBindingMismatch` substrate exists, `authenticate()` collapses ask-only + identity mismatches into `IdentityMismatch`. AC-B2.1 hardening scheduled alongside TV8. Target: 2026-09-04.
 
 ## Type Coverage
@@ -190,12 +190,12 @@ This follow-up implements (per 0969-a §Type Coverage deferred entries):
 
 ## Notes
 
-- This follow-up mission is the canonical home for the 17 ACs deferred from 0969-a. The 0969-a mission text per [[deferred-vs-unspecified]] named-owner rule explicitly states "full GatewayAuthenticator deferred" (L109) and "bearer path mission (RFC-0903 bearer mission) is the upstream for `BearerVerification`" (L119) — this mission is the follow-up.
+- This follow-up mission is the canonical home for the 17 ACs deferred from 0969-a. The 0969-a mission text per `deferred-vs-unspecified` named-owner rule explicitly states "full GatewayAuthenticator deferred" (L109) and "bearer path mission (RFC-0903 bearer mission) is the upstream for `BearerVerification`" (L119) — this mission is the follow-up.
 - Group A (target 2026-08-14) is the smallest unit; can close independently. Groups B + C require Group A substrate.
-- Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions (0969-a, 0969-b, 0969-b1, 0957-c) + RFC substrate (RFC-0903, RFC-0957, RFC-0957-A1). No phantom slugs.
-- Per [[no-line-refs-anywhere]] all references use §symbol-name form (no line refs in this mission).
-- Per [[rfc-referencing-convention]] RFCs referenced by number only (no status / version pins).
-- Per [[implementation-workflow-hook]] this mission is filed in `claimed/` directly (planning + owner + target set; substrate work follows in subsequent commits).
+- Per `no-phantom-mission-pointers` all `depends_on` cites real missions (0969-a, 0969-b, 0969-b1, 0957-c) + RFC substrate (RFC-0903, RFC-0957, RFC-0957-A1). No phantom slugs.
+- Per `no-line-refs-anywhere` all references use §symbol-name form (no line refs in this mission).
+- Per `rfc-referencing-convention` RFCs referenced by number only (no status / version pins).
+- Per `implementation-workflow-hook` this mission is filed in `claimed/` directly (planning + owner + target set; substrate work follows in subsequent commits).
 
 ## Submission Date
 

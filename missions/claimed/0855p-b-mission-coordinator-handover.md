@@ -46,6 +46,7 @@ Wire the §Phase 4 handover protocol on top of the partial RFC-0855p-e substrate
 ### Step 1 — HandoverRequestEnvelope handler
 
 Append to `crates/octo-network/src/dot/handover.rs`:
+
 - `HandoverRequest` envelope (signed by departing coordinator).
 - Voluntary path: existing coordinator signs + transitions Active→Handover.
 - Forced path: liveness subsystem signals grace-period-exceeded → Handover.
@@ -66,6 +67,7 @@ Transfer on HandoverRequest acknowledgment. Flush on successor Active.
 ### Step 3 — Canonical handover vectors
 
 3 pinned vectors:
+
 - Voluntary Active→Handover→Inactive (signed HandoverRequest + preservation queue ack).
 - Forced Suspect→Handover (Phase 3 trigger).
 - Emergency Emergency→Handover (governance override).
@@ -81,21 +83,23 @@ Transfer on HandoverRequest acknowledgment. Flush on successor Active.
 - [ ] 3 canonical handover vectors pinned in `crates/octo-network/tests/canonical_handover_blobs.rs`; all PASS.
 - [ ] Composition with `HandoverReasonTypeId` (Layer B event type, `octo-coordinator-types/src/lib.rs:171`).
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean.
-- [ ] Reuses (does NOT duplicate) Layer B event types from `octo-coordinator-types` per [[cipherocto-design-principles]] §Stable Abstractions.
+- [ ] Reuses (does NOT duplicate) Layer B event types from `octo-coordinator-types` per `cipherocto-design-principles` §Stable Abstractions.
 
 ## Dependencies
 
 **Requires:**
+
 - RFC-0855p-b
 - RFC-0855p-e (handover envelope substrate at `crates/octo-network/src/dot/handover.rs`)
 - Mission `0855p-b-state-machine-types`
 - Mission `0855p-b-mission-coordinator-liveness`
 
 **Optional:**
+
 - Mission `0855p-e-coordinator-types-shared-crate` (commit `93f1758c`; provides HandoverReasonTypeId)
 
 ## Version History
 
-| Version | Date | Change |
-| ------- | ---- | ------ |
+| Version | Date       | Change                                                                                                                                                      |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v1.0    | 2026-09-03 | Initial filing per RFC-0855p-b §Implementation Phase 4 + user audit (2026-09-03). Builds on partial RFC-0855p-e substrate (commits `93f1758c`, `b0f14119`). |

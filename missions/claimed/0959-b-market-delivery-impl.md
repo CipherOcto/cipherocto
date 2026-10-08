@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed 2026-08-04; implementation landed (commit `0ba67943`): 6 structs + 1 enum + 1 newtype authored in `crates/octo-wallet/src/capability/market_delivery.rs`; `BearerCapsule` re-exported from `crates/quota-router-storage/src/bearer_capsule_stub.rs` (canonical home per [[stoolap-general-purpose-db]] red line). 7/7 unit tests pass (envelope_id hash Eq, Debug redaction × 5, DeliveryError variant coverage). Remaining Band-A ACs (algorithm, chain_tip_lock CAS, append_deal_settled, settlement chain extension, test vectors) explicit cross-mission deferrals. Drift surfaced vs RFC-0959-A1 §Data Structures + §Error Handling: `RoleTag` shipped with `{Buyer, Seller, Router}` variants (RFC-0971 §Roles role-binding consolidation expected `{Asker, Router, TokenIssuer}`); `DeliveryError` shipped with 6 variants (RFC-0959-A1 §Error Handling defines 14 variants including `RoleBindingMismatch`, `InvalidSettledAtUnix`, `AskNotFound`, `CasError`, `OutboxError`, `ChainError`, `ChainAppendError`, `SettlementChainError`, etc.). Both drift items explicitly deferred to `0959-b1-mdelivery-types-drift` follow-up + `0959-b2-deliver-algorithm` mission per [[deferred-vs-unspecified]].
+Closed (Band A — 2026-08-06). Claimed 2026-08-04; implementation landed (commit `0ba67943`): 6 structs + 1 enum + 1 newtype authored in `crates/octo-wallet/src/capability/market_delivery.rs`; `BearerCapsule` re-exported from `crates/quota-router-storage/src/bearer_capsule_stub.rs` (canonical home per `stoolap-general-purpose-db` red line). 7/7 unit tests pass (envelope_id hash Eq, Debug redaction × 5, DeliveryError variant coverage). Remaining Band-A ACs (algorithm, chain_tip_lock CAS, append_deal_settled, settlement chain extension, test vectors) explicit cross-mission deferrals. Drift surfaced vs RFC-0959-A1 §Data Structures + §Error Handling: `RoleTag` shipped with `{Buyer, Seller, Router}` variants (RFC-0971 §Roles role-binding consolidation expected `{Asker, Router, TokenIssuer}`); `DeliveryError` shipped with 6 variants (RFC-0959-A1 §Error Handling defines 14 variants including `RoleBindingMismatch`, `InvalidSettledAtUnix`, `AskNotFound`, `CasError`, `OutboxError`, `ChainError`, `ChainAppendError`, `SettlementChainError`, etc.). Both drift items explicitly deferred to `0959-b1-mdelivery-types-drift` follow-up + `0959-b2-deliver-algorithm` mission per `deferred-vs-unspecified`.
 
 ## RFC
 
@@ -12,13 +12,13 @@ RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-
 
 ### Settlement chain extension (DEFERRED — not in Band A)
 
-- [ ] `crates/quota-router-storage/src/ask.rs` (EXTEND) — `append_deal_settled` chain hash update logic. **NOT** `crates/quota-router-core/src/settlement/chain.rs` as original mission text claimed — that file path does not exist on disk; actual settlement chain lives in `crates/quota-router-storage/src/ask.rs` (the consolidated store per 0959-a landing). **DEFERRED to `0959-b3-settlement-chain` mission per [[deferred-vs-unspecified]]** — substrate-extension phase owns `SettlementChainEvent::DealSettled` variant + `append_settlement_event` overload + chain hash continuity rule.
+- [ ] `crates/quota-router-storage/src/ask.rs` (EXTEND) — `append_deal_settled` chain hash update logic. **NOT** `crates/quota-router-core/src/settlement/chain.rs` as original mission text claimed — that file path does not exist on disk; actual settlement chain lives in `crates/quota-router-storage/src/ask.rs` (the consolidated store per 0959-a landing). **DEFERRED to `0959-b3-settlement-chain` mission per `deferred-vs-unspecified`** — substrate-extension phase owns `SettlementChainEvent::DealSettled` variant + `append_settlement_event` overload + chain hash continuity rule.
 - [ ] `settled_at_unix` derived from prior `SettlementEvent::settled_at_unix` field per RFC-0959-A1 §Determinism Requirements. NOT a separate timestamp.
 
 ### Drift fixes (DEFERRED — explicit cross-mission)
 
-- [ ] `RoleTag` variants `{Buyer, Seller, Router}` → RFC-0971 §Roles expected `{Asker, Router, TokenIssuer}`. **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per [[deferred-vs-unspecified]]** — drift surfaced in Band A; promotion requires RFC-0971 role-binding signature update (cross-mission with `0971-a-role-binding`).
-- [ ] `DeliveryError` 6 → 14 variants (adds `AskNotFound`, `GossipError`, `InvalidSettledAtUnix`, `RoleBindingMismatch`, `StoolapTxnError`, `StoolapDbError`, `CasError`, `OutboxError`, `ChainError`, `SerializationError`, `RegistryError`, `ChainAppendError` + `SettlementChainError` 4 variants). **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per [[deferred-vs-unspecified]]** — named owners per RFC-0959-A1 §Error Handling cascade.
+- [ ] `RoleTag` variants `{Buyer, Seller, Router}` → RFC-0971 §Roles expected `{Asker, Router, TokenIssuer}`. **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `deferred-vs-unspecified`** — drift surfaced in Band A; promotion requires RFC-0971 role-binding signature update (cross-mission with `0971-a-role-binding`).
+- [ ] `DeliveryError` 6 → 14 variants (adds `AskNotFound`, `GossipError`, `InvalidSettledAtUnix`, `RoleBindingMismatch`, `StoolapTxnError`, `StoolapDbError`, `CasError`, `OutboxError`, `ChainError`, `SerializationError`, `RegistryError`, `ChainAppendError` + `SettlementChainError` 4 variants). **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `deferred-vs-unspecified`** — named owners per RFC-0959-A1 §Error Handling cascade.
 
 ### Test vectors (RFC-0959-A1 §Test Vectors, this sub-mission owns TV1, TV2, TV3, TV5, TV6, TV8, TV9, TV10, TV11, TV12)
 
@@ -39,7 +39,7 @@ RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-
 - [x] `cargo test -p octo-wallet --lib capability::market_delivery` green (7/7 unit tests pass)
 - [ ] `cargo build --workspace` green — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
 - [ ] `cargo test --workspace` green — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
-- [x] `cargo fmt --check` clean (per [[cargo-fmt-workflow]])
+- [x] `cargo fmt --check` clean (per `cargo-fmt-workflow`)
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
 
 ## Dependencies
@@ -116,19 +116,19 @@ This sub-mission implements (per top-level Type Coverage table):
 
 **Closure Date:** 2026-08-06 (Band A)
 
-**Closure Status:** 6 types + 1 enum + 1 newtype landed (commit `0ba67943`); 7/7 unit tests green; substantial drift vs RFC-0959-A1 §Data Structures + §Error Handling + settlement chain topology documented; remaining scope decomposed into 3 follow-up missions with named owners per [[deferred-vs-unspecified]].
+**Closure Status:** 6 types + 1 enum + 1 newtype landed (commit `0ba67943`); 7/7 unit tests green; substantial drift vs RFC-0959-A1 §Data Structures + §Error Handling + settlement chain topology documented; remaining scope decomposed into 3 follow-up missions with named owners per `deferred-vs-unspecified`.
 
 **Implementation chain (commit `0ba67943`):**
 
 | Change                                 | File                                                                  | Detail                                                                                                                                           |
 | -------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Author `market_delivery` module        | `crates/octo-wallet/src/capability/market_delivery.rs` (NEW)          | 6 structs + 1 enum + 1 newtype + 7 unit tests                                                                                                    |
-| Re-export `BearerCapsule` from storage | `crates/octo-wallet/src/capability/bearer_capsule_re_export.rs` (NEW) | thin wrapper per [[stoolap-general-purpose-db]] red line                                                                                         |
+| Re-export `BearerCapsule` from storage | `crates/octo-wallet/src/capability/bearer_capsule_re_export.rs` (NEW) | thin wrapper per `stoolap-general-purpose-db` red line                                                                                           |
 | `BearerCapsule` stub 3-field shape     | `crates/quota-router-storage/src/bearer_capsule_stub.rs` (EXTEND)     | `#[non_exhaustive]` per 0957-c; `bearer_capsule_hash` + `encrypted_capsule` + `seller_signature`                                                 |
 | Module + `pub use` exports             | `crates/octo-wallet/src/capability/mod.rs` (MODIFY)                   | expose `DealSettled`, `DealSettledPayload`, `DeliveryError`, `EnvelopeId`, `MarketDeliveryEnvelope`, `MarketDeliveryEnvelopePreimage`, `RoleTag` |
 | Cargo deps                             | `crates/octo-wallet/Cargo.toml` (MODIFY)                              | `serde_bytes` adapter for `[u8; 32]` + `[u8; 64]`                                                                                                |
 
-**AC rollup:** 7/26 ACs green (Band A types + 6-variant DeliveryError + 7 unit tests + Cargo build/test/fmt). 19/26 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]].
+**AC rollup:** 7/26 ACs green (Band A types + 6-variant DeliveryError + 7 unit tests + Cargo build/test/fmt). 19/26 ACs explicit deferrals with named owner per `deferred-vs-unspecified`.
 
 **Drift surfaced (Band A vs RFC-0959-A1 §Data Structures + §Error Handling):**
 
@@ -144,7 +144,7 @@ This sub-mission implements (per top-level Type Coverage table):
 | `DeliveryError::ChainTipMismatch` field types | `ChainTip`                                                                                                                                                                                       | `[u8; 32]`                                                                                                                                                                                                                                                         | typed-as-raw-bytes per RFC-0959-A1 actual                                |
 | `deliver_at_settlement` signature             | `deliver_at_settlement(ask: Ask, settlement: SettlementEvent, seller_signing_key: &Ed25519Keypair, buyer_pub: &IdentityKey, ask_ttl_unix: u64) -> Result<MarketDeliveryEnvelope, DeliveryError>` | `deliver_at_settlement(buyer_did: &str, buyer_holder_pub: &[u8; 32], seller_did: &str, ask_id: &[u8; 32], ask_ttl_unix: u64, catalog: &dyn CapabilityCatalog, wallet: &dyn WalletCrypto, db: &stoolap::Database) -> Result<MarketDeliveryEnvelope, DeliveryError>` | DEFERRED to `0959-b2-deliver-algorithm` (signature uses 8 params, not 5) |
 
-**Sub-mission decomposition (all explicit cross-mission deferrals per [[deferred-vs-unspecified]]):**
+**Sub-mission decomposition (all explicit cross-mission deferrals per `deferred-vs-unspecified`):**
 
 | Sub-mission                           | Scope                                                                                                                                                                                                                                                                                                                             | ACs owned                                                           |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -159,10 +159,10 @@ This sub-mission implements (per top-level Type Coverage table):
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                         |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. RFC-0959-A1 §Phase 1 + §Phase 2 scope captured.                                                                                                                                                                                                                                                                                               |
-| v0.2    | 2026-08-06 | Closed Band A. 6 types + 1 enum + 1 newtype landed (commit `0ba67943`); 7/7 unit tests green; 19/26 ACs explicit deferrals to `0959-b1-mdelivery-types-drift` + `0959-b2-deliver-algorithm` + `0959-b3-settlement-chain` follow-up missions per [[deferred-vs-unspecified]]. Path refs corrected (claimed/ not open/); drift vs RFC-0959-A1 actual documented. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0959-A1 §Phase 1 + §Phase 2 scope captured.                                                                                                                                                                                                                                                                                             |
+| v0.2    | 2026-08-06 | Closed Band A. 6 types + 1 enum + 1 newtype landed (commit `0ba67943`); 7/7 unit tests green; 19/26 ACs explicit deferrals to `0959-b1-mdelivery-types-drift` + `0959-b2-deliver-algorithm` + `0959-b3-settlement-chain` follow-up missions per `deferred-vs-unspecified`. Path refs corrected (claimed/ not open/); drift vs RFC-0959-A1 actual documented. |
 
 Last Updated: 2026-08-06
 Version: 0.2

@@ -54,6 +54,6 @@ Adversary A10 (post-expiry queries) closed end-to-end: drain refuses on expired 
 
 ## Cross-references
 
-- `[[mission-gap-closure-priorities-2026-08-10]]` — Wave 2 plan
-- `[[0957-phase2-unblocker-map]]` — master unblocker predecessor
-- `[[mission-0871e-paid-query-caveat]]` — parent mission
+- `mission-gap-closure-priorities-2026-08-10` — Wave 2 plan
+- `0957-phase2-unblocker-map` — master unblocker predecessor
+- `mission-0871e-paid-query-caveat` — parent mission

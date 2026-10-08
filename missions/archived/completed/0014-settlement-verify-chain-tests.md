@@ -4,7 +4,6 @@ description: 21 substrate-level property tests for verify_receipt_chain + receip
 metadata:
   node_type: substrate-tests
   type: chain-property-tests
-  originSessionId: RFC-0014 author session
   created: 2026-09-10
   v: "1.1"
   depends_on:

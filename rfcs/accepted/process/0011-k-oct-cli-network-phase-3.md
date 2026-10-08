@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-k promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 3 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21` plus `next 0afcc26a` (R1.5 fix sweep). Three subcommands wire coordinator lifecycle + governance tally surfaces to the CLI. Substrate partial: `VotingTally` struct + `CoordinatorRecord` canonical type land in substrate; this amendment adds 3 companion substrate missions + 1 OctoCliError variant + 3 output envelopes + 8 test vectors.
 
-> **Amendment chain:** Third amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 4-6 land via RFC-0011-l through RFC-0011-n respectively.
+> **Amendment chain:** Third amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 2 = RFC-0011-j. Phase 4-6 land via RFC-0011-l through RFC-0011-n respectively.
 
 ## Authors
 
@@ -24,7 +24,7 @@ RFC-0011-k lands the **coordinator lifecycle + governance tally visibility** sli
 | `octo network coordinator admin` | Coordinator      | `CoordinatorAdmin` trait with default implementations at `crates/octo-network/src/dot/adapters/coordinator_admin.rs` (PRESENT per RFC-0011-h row 537, no CLI-dispatchable `transfer_ownership` / `ban_member` / `promote_to_admin` methods) | `0011-h-s-a-coordinator-admin-trait` (G12)      |
 | `octo network governance tally`  | Governance Voter | `VotingTally` + `into_canonical` signature                                                                                                                                                                                                  | `0011-h-s-a-voting-tally-canonical-bytes` (G3b) |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **3 companion missions (Layer B)**; 0 of 3 subcommands has full substrate present (all 3 require companion missions for at least one entry point).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **3 companion missions (Layer B)**; 0 of 3 subcommands has full substrate present (all 3 require companion missions for at least one entry point).
 
 ## Dependencies
 
@@ -44,10 +44,10 @@ RFC-0011-k lands the **coordinator lifecycle + governance tally visibility** sli
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G12/G12b/G3b) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
+1. **Substrate-first ordering** — companion substrate missions (G12/G12b/G3b) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
 3. **Slot arithmetic preserved (forward-looking)** — Phase 3 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants (slot 84, `NetworkCoordinatorNotFound`). FORWARD-LOOKING per RFC-0011-h §Error Handling + §Exit Codes — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 3 implementation. The remaining 3 (slots 87, 88, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan. **R1 substrate-fault-class finding (cross-RFC, same as RFC-0011-n R2):** slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G12/G12b/G3b); Layer C CLI dispatch = 3 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 companion missions (G12/G12b/G3b); Layer C CLI dispatch = 3 subcommand arms. Companion missions land in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
 5. **Test vector coverage** — 8 test vectors (3 for coordinator show + 3 for coordinator admin + 2 for governance tally) per RFC-0011-h §Implementation Phases Phase 3.
 
 ## Motivation
@@ -91,7 +91,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per [[cipherocto-design-principles]] §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -205,11 +205,11 @@ Write-path tests (tv_net3_4 + tv_net3_5 + tv_net3_6) only fire `--dry-run` path 
 
 1. **Defer `coordinator admin` to Phase 6 closure.** Rejected; RFC-0011-h §Subcommand Taxonomy already lands `coordinator admin` in Phase 3 with companion G12 substrate mission. Deferral would leave the only write-path coordinator CLI command without an RFC for 3+ months.
 2. **Roll `governance tally` into RFC-0011-g governance amendment.** Rejected; `governance tally` operates on `VotingTally` from `crates/octo-network/src/mon/governance.rs` (network tier substrate), not governance tier substrate. The split between governance tier (`octo governance vote`) and network tier (`octo network governance tally`) preserves substrate ownership per RFC-0011-h §Subcommand Taxonomy row 113 ("lives in RFC-0011-g Phase 2; not exposed via octo network since substrate is the same VotingTally instance owned by governance tier").
-3. **Split into substrate-first amendment + CLI amendment.** Rejected per [[implementation-workflow-hook]] claim-first-implement-after pattern; bundling keeps the layer-A→B→C dependency graph visible.
+3. **Split into substrate-first amendment + CLI amendment.** Rejected per `implementation-workflow-hook` claim-first-implement-after pattern; bundling keeps the layer-A→B→C dependency graph visible.
 
 ## Substrate-Additions Companion Missions
 
-Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 3 companion substrate missions. All 3 are Open as of 2026-09-20.
+Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 3 companion substrate missions. All 3 are Open as of 2026-09-20.
 
 | Companion mission                               | Substrate addition                                                     | Layer |
 | ----------------------------------------------- | ---------------------------------------------------------------------- | ----- |
@@ -226,7 +226,7 @@ Per `0011-h-multiphase-rollout-plan` §2.3 split recommendation:
 1. **Substrate-first slice (3 companion missions):** G12b → G12 → G3b land per companion mission YAMLs.
 2. **CLI dispatch slice:** 3 subcommand arms + 1 OctoCliError variant (slot 84) + 3 output envelopes + 8 test vectors land AFTER all 3 companion missions close per substrate-first ordering.
 
-User-gated decision on slice ordering per [[feedback_initiation_user_only]].
+User-gated decision on slice ordering per `feedback_initiation_user_only`.
 
 ## Key Files to Modify
 
@@ -249,7 +249,7 @@ User-gated decision on slice ordering per [[feedback_initiation_user_only]].
 
 Phase 3 lands the **coordinator lifecycle + governance tally visibility** surface. The 2 read-only operations (`coordinator show`, `governance tally`) require companion substrate missions for their entry points (G12b + G3b). The 1 write operation (`coordinator admin`) carries 3-flag confirmation gates and requires G12 substrate mission for the trait method surface.
 
-Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

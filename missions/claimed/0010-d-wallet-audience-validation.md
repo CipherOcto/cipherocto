@@ -83,7 +83,7 @@ RFC-0010 F4 is a 1-source-file modification. Below the BLUEPRINT §Multi-Mission
 
 ## Pull Request
 
-d9070a78 (local; push + remote writes await user instruction per [[git-workflow]])
+d9070a78 (local; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 
@@ -109,7 +109,7 @@ Next serial-path mission: **`0957-ext-macaroon-crate`** — extract macaroon
 
 - This mission was surfaced by the 2026-08-08 specialized node protocol research + RFC-0871. It is **independent of RFC-0871 acceptance** — the wallet DID validation gap is real today and exists regardless of the broader envelope work. Claiming this mission before RFC-0871 reaches Accepted is encouraged.
 - Mission `0010-c-canonical-did-deprecation.md` is the open follow-up to close the legacy `did:octo:b<base32>` form. Coordinate: this mission (`0010-d`) tightens the parse path; `0010-c` flips the default `allow_legacy_bare` flag. Both are small surgical changes.
-- Per `[[deferred-vs-unspecified]]` named-owner rule: this mission has a concrete target (RFC-0010 F4 closure). No further deferral.
+- Per `deferred-vs-unspecified` named-owner rule: this mission has a concrete target (RFC-0010 F4 closure). No further deferral.
 
 **Version History:**
 

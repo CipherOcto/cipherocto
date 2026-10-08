@@ -3,10 +3,10 @@
 **Status:** Accepted (2026-08-11)
 
 > **Promotion note (2026-08-11):** Promoted from `rfcs/draft/process/0009-identity-evolution-v12.md` → `rfcs/accepted/process/0009-identity-evolution-v12.md` after multi-round adversarial review. 40 review rounds completed (R1-R40); convergence reached at R40 (zero NEW substantive findings). Round-by-round fix history lives in this file's git log; per-round commit hashes form the audit trail.
-**Author:** @cipherocto + @mmacedoeu
-**Maintainers:** @cipherocto (primary), @mmacedoeu (review)
-**Substrate:** RFC-0009 §Capability Keys + §HsmAdapter Integration
-**Parent:** Mission `0957-f-v2-bundle` (V2 spec per R8 H1 rewrite)
+> **Author:** @cipherocto + @mmacedoeu
+> **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
+> **Substrate:** RFC-0009 §Capability Keys + §HsmAdapter Integration
+> **Parent:** Mission `0957-f-v2-bundle` (V2 spec per R8 H1 rewrite)
 
 > **Promotion note:** In-place additive amendment to RFC-0009. This
 > RFC ratifies two capability-key extensions originally listed as
@@ -31,6 +31,7 @@ Extend RFC-0009 §Capability Keys with:
   zero NEW findings.
 
 ## Breaking Changes (10 main items + BC#9 ADDITIVE mirrored per
+
 R28 M3 / R30 L3 / R31 L1 — corrected language per R11 M6 + R25 L4;
 BC#1 expanded into 9 sub-items (1a-1i); section totals 20 numbered
 items (9 sub-items BC#1a-1i + 11 main items BC#2-12 including BC#9
@@ -38,56 +39,54 @@ mirrored to §Additive Changes) per R18 M6 + R24 L3 + R25 L4 +
 R27 L2 + R30 L3 + R31 L1)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
-    `sign_combined`; no prior equivalent exists).
+`sign_combined`; no prior equivalent exists).
 1b. **NEW enum: `ThresholdShare`** (replaces `KeyShare`; no prior
-    equivalent exists).
+equivalent exists).
 1c. **NEW type: `BoundedShareVec`** (replaces `Vec<KeyShare>`; no
-    prior equivalent exists).
+prior equivalent exists).
 1d. **NEW error: `ThresholdError`** (replaces `MpcError`; no prior
-    equivalent exists).
+equivalent exists).
 1e. **NEW error variant: `HsmError::ThresholdSignerRequired`** (per
-    R13 M1 — fail-closed sentinel for `IdentityKey::sign` when
-    `threshold_signer` configured).
+R13 M1 — fail-closed sentinel for `IdentityKey::sign` when
+`threshold_signer` configured).
 1f. **RENAMED: `ThresholdSigner::threshold()` + `share_count()` →
-    single `threshold_params() -> (M, N)`** (per R13 M3 — actual
-    `crates/octo-wallet/src/mpc.rs` §ThresholdSigner has 4 methods
-    including `threshold` + `share_count`; spec replaces with
-    single tuple-returning method).
+single `threshold_params() -> (M, N)`** (per R13 M3 — actual
+`crates/octo-wallet/src/mpc.rs` §ThresholdSigner has 4 methods
+including `threshold` + `share_count`; spec replaces with
+single tuple-returning method).
 1g. **NEW trait: `ThresholdCoordinator`** (per R13 L4 — `async
     collect_shares` + `aggregate` methods; RFC-0853 §F3 substrate
-    contract).
+contract).
 1h. **NEW method: `IdentityKey::sign_threshold`** (per R13 M5 —
-    companion to fail-closed `sign` from BC#11; dispatches to
-    `threshold_signer.threshold_sign`).
+companion to fail-closed `sign` from BC#11; dispatches to
+`threshold_signer.threshold_sign`).
 1i. **NEW method: `ThresholdSigner::group_public_key()`** (per
-    R12 M7 — group PK exposed for `Authorization::ThresholdSignature`
-    aggregated_pk_check).
-2. **`Xor2Of3Signer` additive `threshold_signer` field.**
-3. **`CapabilityBundleV2` NEW struct.**
-4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
-   ADDED** (per R9 H1 + R16 M4 + R23 H1 — `threshold_signer` +
-   `coordinator` + `shareholders` fields added by R9 H1 / R15 M3 /
-   R19 M2 respectively; `warned_threshold_misconfig` field removed
-   per R22 M2 as write-only dead code).
-5. **`Authorization::ThresholdSignature` struct variant EXTENDED
-   in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
-   RFC-0871; this RFC documents the EXTENSION SCHEMA only;
-   `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
-   semantics land in `crates/octo-cap-threshold-mpc/` per
-   RFC-0871 §Future Work).
-   - **Per R13 M2:** RFC-0871 §Future Work currently lists
-     "Threshold-MPC for high-value transitions (BLS via
-     `Authorization::ThresholdSignature`)" but does NOT carry the
-     `aggregated_pk_check` + `dkg_proof` concrete fields. The
-     forward-pointer is dangling. Resolution: RFC-0871 amendment
-     (out of scope for RFC-0009 v1.2) MUST add the concrete
-     fields to §Future Work OR §Specification before v1.2
-     acceptance of this RFC. Until then, this RFC's cross-ref is
-     ASPIRATIONAL.
-   - **Per R25 H1:** softened — this is a SHOULD not a hard MUST;
-     RFC-0009 v1.2 documents the extension schema; verifier MUST
-     semantics gated by AC#9 (RFC-0871 amendment FILED before
-     RFC-0009 v1.2 promotion to Accepted).
+R12 M7 — group PK exposed for `Authorization::ThresholdSignature`
+aggregated_pk_check). 2. **`Xor2Of3Signer` additive `threshold_signer` field.** 3. **`CapabilityBundleV2` NEW struct.** 4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
+ADDED** (per R9 H1 + R16 M4 + R23 H1 — `threshold_signer` +
+`coordinator` + `shareholders` fields added by R9 H1 / R15 M3 /
+R19 M2 respectively; `warned_threshold_misconfig` field removed
+per R22 M2 as write-only dead code). 5. **`Authorization::ThresholdSignature` struct variant EXTENDED
+in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
+RFC-0871; this RFC documents the EXTENSION SCHEMA only;
+`aggregated_pk_check` + `dkg_proof` fields + verifier MUST
+semantics land in `crates/octo-cap-threshold-mpc/` per
+RFC-0871 §Future Work).
+
+- **Per R13 M2:** RFC-0871 §Future Work currently lists
+  "Threshold-MPC for high-value transitions (BLS via
+  `Authorization::ThresholdSignature`)" but does NOT carry the
+  `aggregated_pk_check` + `dkg_proof` concrete fields. The
+  forward-pointer is dangling. Resolution: RFC-0871 amendment
+  (out of scope for RFC-0009 v1.2) MUST add the concrete
+  fields to §Future Work OR §Specification before v1.2
+  acceptance of this RFC. Until then, this RFC's cross-ref is
+  ASPIRATIONAL.
+- **Per R25 H1:** softened — this is a SHOULD not a hard MUST;
+  RFC-0009 v1.2 documents the extension schema; verifier MUST
+  semantics gated by AC#9 (RFC-0871 amendment FILED before
+  RFC-0009 v1.2 promotion to Accepted).
+
 6. **`BoundedShareVec::new` enforces m == threshold.**
 7. **`HsmAdapter::get_public_key` return type change** (per R18 L8 —
    from `[u8; 32]` to `Result<[u8; 32], HsmError>`; device transport
@@ -130,16 +129,16 @@ additive/non-breaking scope explicitly.
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Chain depth bounded | ≤ 8 levels (W3C VC-DID best practice) |
-| G2 | Unlinkability | v1 root ↔ v2 child cryptographically independent |
-| G3 | Threshold signing latency | ≤ 2x single-key for 2-of-3 |
-| G4 | Key-share loss tolerance | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1) |
-| G5 | Cascading revocation | Cryptographic walk |
-| G6a | Root mint back-compat | v1.1 callers via `derive_capability_key_v11` shim |
-| G6b | Child mint is new | 4-param signature |
-| G7 | Migration | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption |
+| Goal | Target                    | Metric                                                                                                                   |
+| ---- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| G1   | Chain depth bounded       | ≤ 8 levels (W3C VC-DID best practice)                                                                                    |
+| G2   | Unlinkability             | v1 root ↔ v2 child cryptographically independent                                                                         |
+| G3   | Threshold signing latency | ≤ 2x single-key for 2-of-3                                                                                               |
+| G4   | Key-share loss tolerance  | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1)                        |
+| G5   | Cascading revocation      | Cryptographic walk                                                                                                       |
+| G6a  | Root mint back-compat     | v1.1 callers via `derive_capability_key_v11` shim                                                                        |
+| G6b  | Child mint is new         | 4-param signature                                                                                                        |
+| G7   | Migration                 | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption |
 
 ## Acceptance Criteria
 
@@ -154,11 +153,11 @@ This RFC is ready for promotion to Accepted when:
      signature update (per R18 M4 — phase boundary matches
      §Implementation Phases Commit 1) + `OperatorId` struct (per
      R33 L4) + `OperatorId::pubkey()` method (per R19 L3)
-     + Clippy lint registration in
-     `clippy.toml` (per R21 L6 + R25 M2) + `[[test]]` entry in
-     Cargo.toml mapping `frost_nonce_determinism` to
-     `tests/integration/frost_nonce_determinism.rs` (per R22 M3
-     + R25 M2).
+     - Clippy lint registration in
+       `clippy.toml` (per R21 L6 + R25 M2) + `test` entry in
+       Cargo.toml mapping `frost_nonce_determinism` to
+       `tests/integration/frost_nonce_determinism.rs` (per R22 M3
+     - R25 M2).
    - Commit 2: `BLS12381ThresholdSigner` +
      `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
      field + `IdentityKey::sign` fail-closed when `threshold_signer`
@@ -178,7 +177,7 @@ This RFC is ready for promotion to Accepted when:
 5. **Phase 3 atomic with Phase 2** per RFC-0870 §NodeEnvelope
    Adoption.
 6. **`cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep
-   -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"`**
+-qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"`**
    passes (per R11 H2 + R22 L6 — enumerates all 3 TV functions;
    previous grep pattern was too loose).
 7. **RFC-0870 §NodeEnvelope:PayloadKindId ordering:** all 7
@@ -187,19 +186,19 @@ This RFC is ready for promotion to Accepted when:
    scope: consumer migration to V2 wire form across wallet +
    capability issuer + `octo-cap-macaroon` + `octo-cap-zk`;
    distinct from AC#2 mission V2 authoring scope).
-8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
-    and asserts 100K ops produce deterministic nonces; gated by
-    `cargo test -p octo-wallet --test frost_nonce_determinism`
-    (per R21 L4 — file path `tests/integration/...` requires
-    `[[test]]` entry in Cargo.toml mapping binary name
-    `frost_nonce_determinism` to the file path; cargo `--test`
-    flag matches binary name, NOT file basename).
+   8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
+   and asserts 100K ops produce deterministic nonces; gated by
+   `cargo test -p octo-wallet --test frost_nonce_determinism`
+   (per R21 L4 — file path `tests/integration/...` requires
+   `test` entry in Cargo.toml mapping binary name
+   `frost_nonce_determinism` to the file path; cargo `--test`
+   flag matches binary name, NOT file basename).
 9. **RFC-0871 amendment FILED** (per R25 H1) with concrete
-    `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
-    semantics added to §Future Work OR §Specification, BEFORE
-    RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
-    forward-pointer is ASPIRATIONAL (downgraded from MUST per
-    R25 H1).
+   `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
+   semantics added to §Future Work OR §Specification, BEFORE
+   RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
+   forward-pointer is ASPIRATIONAL (downgraded from MUST per
+   R25 H1).
 10. **RFC-0871 amendment covers BC#12 `nonce_proof` field**
     (per R28 M5) for FROST signatures; gates parallel to AC#9
     for BC#5 `aggregated_pk_check` + `dkg_proof`. FROST
@@ -225,17 +224,17 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 
 ## Roles and Authorities
 
-| Role | Identifier | Authority Scope | Lifecycle | Source |
-|------|------------|-----------------|-----------|--------|
-| Identity Holder | `IdentityHolderId` | Owns IdentityKey; revokes | Persistent | This RFC v1.2 |
-| HSM | `Arc<dyn HsmAdapter>` | Persists IdentityKey | Persistent per device | RFC-0009 §HsmAdapter Integration |
-| IdentityKey (logical) | `IdentityKey` (base + additive fields) | Sign; derive capability keys | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 §Capability Keys |
-| Capability Issuer | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1) | Mint child keys | Stateless | RFC-0009 §Capability Keys |
-| Capability Holder | `CapabilityTokenV2` (NOT CapabilityKey) | Redeem | Per-capability expiry | RFC-0009 §Capability Keys |
-| Threshold Signer (object) | role ID `threshold-signer` (impl types: `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` per R31 L4) | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
-| Key-Share Holder | `ShareHolderId` | Custody of one share | Persistent per device | This RFC |
-| Threshold Coordinator | `ThresholdCoordinator` (RFC-0853 §F3) | Collect M shares; aggregate | Per signing request | RFC-0853 §F3 |
-| Operator | `OperatorId` (per R15 L8 — NEW in v1.2) | Sign governance attestations (M-of-N) | Per ceremony | This RFC §MPC threshold identity |
+| Role                      | Identifier                                                                                               | Authority Scope                       | Lifecycle                                                                        | Source                                              |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Identity Holder           | `IdentityHolderId`                                                                                       | Owns IdentityKey; revokes             | Persistent                                                                       | This RFC v1.2                                       |
+| HSM                       | `Arc<dyn HsmAdapter>`                                                                                    | Persists IdentityKey                  | Persistent per device                                                            | RFC-0009 §HsmAdapter Integration                    |
+| IdentityKey (logical)     | `IdentityKey` (base + additive fields)                                                                   | Sign; derive capability keys          | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 §Capability Keys                           |
+| Capability Issuer         | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1)                               | Mint child keys                       | Stateless                                                                        | RFC-0009 §Capability Keys                           |
+| Capability Holder         | `CapabilityTokenV2` (NOT CapabilityKey)                                                                  | Redeem                                | Per-capability expiry                                                            | RFC-0009 §Capability Keys                           |
+| Threshold Signer (object) | role ID `threshold-signer` (impl types: `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` per R31 L4) | Sign via M-of-N                       | Persistent per IdentityKey                                                       | `octo-wallet` §threshold (impls) + This RFC (trait) |
+| Key-Share Holder          | `ShareHolderId`                                                                                          | Custody of one share                  | Persistent per device                                                            | This RFC                                            |
+| Threshold Coordinator     | `ThresholdCoordinator` (RFC-0853 §F3)                                                                    | Collect M shares; aggregate           | Per signing request                                                              | RFC-0853 §F3                                        |
+| Operator                  | `OperatorId` (per R15 L8 — NEW in v1.2)                                                                  | Sign governance attestations (M-of-N) | Per ceremony                                                                     | This RFC §MPC threshold identity                    |
 
 ### Threshold Coordinator interface
 
@@ -275,14 +274,14 @@ enforces `m == M`.
 
 **Authority matrix:**
 
-| Action | Identity Holder | Key-Share Holders (collectively) | Threshold Coordinator |
-|---|---|---|---|
-| Initiate signing | YES | NO | NO |
-| Provide share | NO | YES (M of N) | NO |
-| Aggregate shares | NO | NO | YES |
-| Revoke IdentityKey | YES (cascades) | NO | NO |
-| Dispute resolution | YES | NO | NO |
-| Re-key ceremony | YES (initiates) | YES (M of N) | NO |
+| Action             | Identity Holder | Key-Share Holders (collectively) | Threshold Coordinator |
+| ------------------ | --------------- | -------------------------------- | --------------------- |
+| Initiate signing   | YES             | NO                               | NO                    |
+| Provide share      | NO              | YES (M of N)                     | NO                    |
+| Aggregate shares   | NO              | NO                               | YES                   |
+| Revoke IdentityKey | YES (cascades)  | NO                               | NO                    |
+| Dispute resolution | YES             | NO                               | NO                    |
+| Re-key ceremony    | YES (initiates) | YES (M of N)                     | NO                    |
 
 **Out-of-scope roles:** key-share ceremony operator (governance);
 DID method registrar (separate RFC); vault offline recovery operator.
@@ -301,14 +300,14 @@ pub fn derive_capability_key(
 ```
 
 - **Root** (`None`): HKDF-BLAKE3 with `salt =
-  identity_key.seed_bytes_for_hkdf()` (per R21 L5 — matches actual
+identity_key.seed_bytes_for_hkdf()` (per R21 L5 — matches actual
   substrate API; hardware adapters refuse plain `seed_bytes()` by
   design per mission `0009-a`), `ikm = audience_did`,
   `info = "cipherocto/cap/v1/" + channel_id`.
 - **Child** (`Some(key)`): HKDF-BLAKE3 with `salt =
-  parent_cap_key.as_bytes()` (per R11 M1 — extraction), `ikm =
-  audience_did`, `info = "cipherocto/cap/v2/child/" +
-  parent_depth_be_bytes`.
+parent_cap_key.as_bytes()` (per R11 M1 — extraction), `ikm =
+audience_did`, `info = "cipherocto/cap/v2/child/" +
+parent_depth_be_bytes`.
 
 **Invariant:** `parent_depth_be_bytes = V2 token chain_depth - 1`.
 **Per R11 H1:** `chain_depth` lives ONLY on `CapabilityTokenV2`
@@ -686,6 +685,7 @@ enum Scheme { Bls12381, SchnorrEd25519 }
 **Cargo deps pinned exact** in `crates/octo-wallet/Cargo.toml`
 (per R12 M6 — actual file at commit `bf58559d` does NOT contain
 these; AC#1 Commit 1 must ADD them):
+
 ```toml
 [dependencies]
 # Layer A — BLS12-381 threshold primitives.
@@ -722,36 +722,36 @@ BLS subgroup check via `blst` + Schnorr scalar range via
 
 Per RFC-0008 Execution Class mapping:
 
-| Operation | Class | Justification |
-|---|---|---|
-| HKDF-BLAKE3 derivation | **A** | Pure function |
-| BLS12-381 signature aggregation | **A** | IETF BLS Signatures + `hash_to_curve` deterministic |
-| FROST Ed25519 signing | **A** | RFC-9591 §5.3 deterministic nonce |
-| Cascading revocation verification | **A** | Pure cryptographic walk |
-| Share collection coordination | **B** | Coordinator-dependent |
-| **Share aggregation (sorted)** | **A** | Per R11 H5 — sort by full 32-byte slice |
-| IdentityKey dispatch routing | **B** | Init-time decision |
+| Operation                         | Class | Justification                                       |
+| --------------------------------- | ----- | --------------------------------------------------- |
+| HKDF-BLAKE3 derivation            | **A** | Pure function                                       |
+| BLS12-381 signature aggregation   | **A** | IETF BLS Signatures + `hash_to_curve` deterministic |
+| FROST Ed25519 signing             | **A** | RFC-9591 §5.3 deterministic nonce                   |
+| Cascading revocation verification | **A** | Pure cryptographic walk                             |
+| Share collection coordination     | **B** | Coordinator-dependent                               |
+| **Share aggregation (sorted)**    | **A** | Per R11 H5 — sort by full 32-byte slice             |
+| IdentityKey dispatch routing      | **B** | Init-time decision                                  |
 
 ## Implicit Assumptions Audit
 
-| Category | Assumption | Risk | Mitigation |
-|---|---|---|---|
-| Operator | Key-share ceremony with secure RNG | Ceremony compromise | Per-scheme ceremony + audit log |
-| Platform | BLS12-381 deterministic across x86_64 + ARM64 | Cross-arch divergence | blst `DISABLE_PREFETCH` + cross-arch CI |
-| Platform | FROST Ed25519 deterministic (RFC-9591 §5.3) | Same | frost-ed25519 deterministic nonce + cross-arch CI |
-| Platform | Linux baseline | BSD/Windows divergence | x86_64 Ubuntu 22.04 + ARM64 macOS runners in CI per A6 + A9 cross-arch defenses (per R28 L4 — concrete CI matrix documented; was tautological "Linux baseline") |
-| Platform | stoolap fork at pin | API drift | Pin commit hash |
-| Time | Chain depth ≤ 8 | Migration if raised | Depth cap constant |
-| Network | Threshold coordinator timeout | Coordinator failure stalls | Timeout (default 30s) + retry |
-| Upgrade | v1.1 → v1.2 capability keys valid | v1.1 wallets reject `v2/child/` | Info-string discriminator check |
-| Config | `parent_cap_key` default `None` | Forgetting = security regression | `derive_capability_key_v11` shim + Clippy lint |
-| Identity | BLS threshold master key independent from Ed25519 | Cross-scheme confusion | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9) |
-| Identity | FROST Ed25519 threshold master key independent | Same | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9) |
-| Identity | `chain_parent` bound via `blake3(parent || child || depth)` | Spoofing | `verify_chain_parent` predicate (per R11 C2 — binds child too) |
-| Identity | **M of N holders mutually distrusting AND evictable by Identity Holder** | Collusion attack | Governance + economic stake (RFC-0853 §F3 per R11 L2) |
-| Storage | M shares persist on ShareHolder devices | Host memory compromise | HSM-internal share persistence |
-| Resource | `BoundedShareVec::new` enforces m == threshold | Unbounded M | Runtime check |
-| Hash Construction | HKDF-BLAKE3 | Implementer picks one | HKDF-BLAKE3 documented (HMAC-BLAKE3 has zero callsites per R15 M2 — dropped from audit) |
+| Category          | Assumption                                                               | Risk                             | Mitigation                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operator          | Key-share ceremony with secure RNG                                       | Ceremony compromise              | Per-scheme ceremony + audit log                                                                                                                                 |
+| Platform          | BLS12-381 deterministic across x86_64 + ARM64                            | Cross-arch divergence            | blst `DISABLE_PREFETCH` + cross-arch CI                                                                                                                         |
+| Platform          | FROST Ed25519 deterministic (RFC-9591 §5.3)                              | Same                             | frost-ed25519 deterministic nonce + cross-arch CI                                                                                                               |
+| Platform          | Linux baseline                                                           | BSD/Windows divergence           | x86_64 Ubuntu 22.04 + ARM64 macOS runners in CI per A6 + A9 cross-arch defenses (per R28 L4 — concrete CI matrix documented; was tautological "Linux baseline") |
+| Platform          | stoolap fork at pin                                                      | API drift                        | Pin commit hash                                                                                                                                                 |
+| Time              | Chain depth ≤ 8                                                          | Migration if raised              | Depth cap constant                                                                                                                                              |
+| Network           | Threshold coordinator timeout                                            | Coordinator failure stalls       | Timeout (default 30s) + retry                                                                                                                                   |
+| Upgrade           | v1.1 → v1.2 capability keys valid                                        | v1.1 wallets reject `v2/child/`  | Info-string discriminator check                                                                                                                                 |
+| Config            | `parent_cap_key` default `None`                                          | Forgetting = security regression | `derive_capability_key_v11` shim + Clippy lint                                                                                                                  |
+| Identity          | BLS threshold master key independent from Ed25519                        | Cross-scheme confusion           | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
+| Identity          | FROST Ed25519 threshold master key independent                           | Same                             | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
+| Identity          | `chain_parent` bound via `blake3(parent                                  |                                  | child                                                                                                                                                           |     | depth)` | Spoofing | `verify_chain_parent` predicate (per R11 C2 — binds child too) |
+| Identity          | **M of N holders mutually distrusting AND evictable by Identity Holder** | Collusion attack                 | Governance + economic stake (RFC-0853 §F3 per R11 L2)                                                                                                           |
+| Storage           | M shares persist on ShareHolder devices                                  | Host memory compromise           | HSM-internal share persistence                                                                                                                                  |
+| Resource          | `BoundedShareVec::new` enforces m == threshold                           | Unbounded M                      | Runtime check                                                                                                                                                   |
+| Hash Construction | HKDF-BLAKE3                                                              | Implementer picks one            | HKDF-BLAKE3 documented (HMAC-BLAKE3 has zero callsites per R15 M2 — dropped from audit)                                                                         |
 
 ## Security Considerations
 
@@ -775,6 +775,7 @@ Per RFC-0008 Execution Class mapping:
 ## Adversary Analysis (per R11 H3 — full body content)
 
 ### A1 — Child key leak via parent.
+
 - **Threat:** attacker observes child capability key on the wire.
 - **Attack:** derive parent capability key from child.
 - **Defense:** HKDF-BLAKE3 PRF property (RFC-5869 analogue); child key
@@ -784,16 +785,18 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `root_vs_child_distinct_keys`.
 
 ### A2 — Chain depth > `MAX_CHAIN_DEPTH` DoS.
+
 - **Threat:** attacker mints chain at depth > `MAX_CHAIN_DEPTH`.
 - **Attack:** verifier does exponential walk over chain.
 - **Defense:** `CapabilityError::ChainTooDeep` at mint time
   (`depth > MAX_CHAIN_DEPTH` returns error); no chain at depth
   > `MAX_CHAIN_DEPTH` exists. (Per R22 L4 — literal 8 replaced
-  with constant.)
+  > with constant.)
 - **Residual:** soft cap (amendable).
 - **Test:** `chain-depth-bounded-at-MAX_CHAIN_DEPTH`.
 
 ### A3 — Threshold signing race.
+
 - **Threat:** attacker requests two concurrent sign ops.
 - **Attack:** produce two signatures that look identical.
 - **Defense (FROST):** nonce per request (RFC-9591 §5.3);
@@ -802,9 +805,10 @@ Per RFC-0008 Execution Class mapping:
   no bypass.
 - **Residual:** none (both schemes covered).
 - **Test:** `threshold_race_distinct_nonces_produce_distinct_sigs`
-  + `bls_aggregation_deterministic_given_shares_msg`.
+  - `bls_aggregation_deterministic_given_shares_msg`.
 
 ### A4 — Threshold fallback bypass.
+
 - **Threat:** operator misconfigures threshold as (1, 1) and falls
   back to single-key.
 - **Attack:** produce single-key signatures when M-of-N was intended.
@@ -816,6 +820,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `sign_fails_closed_when_threshold_signer_configured`.
 
 ### A5 — BLS aggregation malicious key.
+
 - **Threat:** attacker submits a malicious BLS PK share.
 - **Attack:** aggregate signature over unintended message.
 - **Defense:** BLS aggregate verification includes PK check
@@ -827,6 +832,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `bls_threshold_2_of_3_with_malicious_pk_share_fails`.
 
 ### A6 — FROST nonce reuse.
+
 - **Threat:** attacker exploits FROST nonce reuse.
 - **Attack:** recover private key from two signatures with same nonce.
 - **Defense (per R11 H6 — quartet):** (a) `frost-ed25519 = "=2.2.0"`
@@ -847,6 +853,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `frost_nonce_determinism_100k_iterations`.
 
 ### A7 — Cascading revocation false negative.
+
 - **Threat:** holder of a child capability whose parent was revoked.
 - **Attack:** continue using revoked capability.
 - **Defense:** `check_wrapped_chain` (per R20 M2 — defined in
@@ -857,6 +864,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `cascading_revocation_kills_descendants`.
 
 ### A8 — Share-loss DoS.
+
 - **Threat:** single shareholder refuses participation.
 - **Attack:** stall signing past coordinator timeout.
 - **Defense:** shareholder liveness monitoring + replaceable share
@@ -866,6 +874,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `shareholder_unresponsive_triggers_coordinator_timeout`.
 
 ### A9 — BLS rogue-key attack.
+
 - **Threat:** malicious BLS shareholder constructs PK that aggregates
   with honest shares.
 - **Attack:** rogue-key attack on aggregate signature.
@@ -878,6 +887,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `rogue_pk_attack_mitigated_by_dkg`.
 
 ### A10 — `chain_parent` forgery.
+
 - **Threat:** attacker constructs `chain_parent` claiming a parent
   that doesn't exist.
 - **Attack:** child capability accepted without real parent chain.
@@ -888,6 +898,7 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `chain_parent_forgery_breaks_verification`.
 
 ### A11 — Caller-supplied malicious shares.
+
 - **Threat:** caller passes malformed `ThresholdShare` bytes.
 - **Attack:** aggregate signature over unintended message.
 - **Defense:** `BoundedShareVec::new` runtime check (m ≤ MAX_M +
@@ -954,6 +965,7 @@ pub struct CapabilityTokenV2 {
 ## Implementation Phases
 
 **Commit 1 — substrate trait + Cargo deps:**
+
 - NEW `ThresholdSigner::threshold_sign`
 - NEW `BoundedShareVec::new` (enforces m == threshold)
 - NEW `ThresholdCoordinator` trait interface
@@ -964,15 +976,16 @@ pub struct CapabilityTokenV2 {
   owns struct definition, not just `pubkey()`)
 - **Clippy lint registration in `clippy.toml`** (per R21 L6 — owns
   §Configuration Validation threshold misconfig lint)
-- **`[[test]]` entry in `crates/octo-wallet/Cargo.toml`** (per R22 M3):
+- **`test` entry in `crates/octo-wallet/Cargo.toml`** (per R22 M3):
   ```toml
-  [[test]]
+  `test`
   name = "frost_nonce_determinism"
   path = "tests/integration/frost_nonce_determinism.rs"
   ```
   Maps AC#8b subdirectory test path to binary name.
 
 **Commit 2 — impls + Xor2Of3Signer additive field:**
+
 - `BLS12381ThresholdSigner` impl
 - `SchnorrThresholdSigner` impl
 - `Xor2Of3Signer` additive `threshold_signer` field
@@ -981,6 +994,7 @@ pub struct CapabilityTokenV2 {
   (per R11 M4)
 
 **Commit 3 — derive + Phase 1 TV + fixture:**
+
 - `derive_capability_key` 4-param signature (with `as_bytes()`
   extraction per R11 M1)
 - `derive_capability_key_v11` shim
@@ -989,19 +1003,22 @@ pub struct CapabilityTokenV2 {
 
 **Commit 4 — V2 wire form** (atomic with Commit 5 per RFC-0870
 §NodeEnvelope Adoption):
+
 - `CapabilityBundleV2` struct (per R29 L5 — embeds existing
   `HolderRecord` + `DischargeMacaroon` types; these are
   pre-existing substrate types from RFC-0009 §Capability Keys
-  + RFC-0957 §Capability Macaroon, NOT new in Commit 4)
+  - RFC-0957 §Capability Macaroon, NOT new in Commit 4)
 - `CapabilityTokenV2` struct (carries `chain_depth` + `chain_parent`
   — per R11 H1; `CapabilityKey` does NOT)
 
 **Commit 5 — V2 consumer migration** (atomic with Commit 4):
+
 - Wallet + Capability issuer + `octo-cap-macaroon` + `octo-cap-zk`
 
 ### Configuration Validation
 
 A4 enforced via:
+
 - `IdentityKey::sign` fails-closed with `ThresholdSignerRequired`
   when `threshold_signer` configured (per R11 M4)
 - `tracing::warn!` at construction when threshold_signer configured
@@ -1070,6 +1087,7 @@ is L4 registers into B, not B → L4. The macaroon substrate uses
   glue crate to TransportDeliveryCatalog)
 
 Dependency direction:
+
 - `octo-wallet` → `octo-protocol` (B → A; OK)
 - `octo-cap-zk` → `octo-wallet` (L4 → B registrar; OK)
 - `octo-cap-macaroon-transport` → `octo-cap-macaroon` (L4↔D glue

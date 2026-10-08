@@ -27,7 +27,7 @@ The `0959-c` Band A closure deferred this work because (a) the cross-node integr
 
 ### RFC-0862 gossip binding
 
-- [ ] `crates/octo-wallet/src/capability/gossip.rs` — `gossip_envelope_to_buyer` delegates to the RFC-0862 gossip channel via a production `CapabilityCatalog` impl that holds `Arc<octo_transport::NodeTransport>`. **DEFERRED** to follow-up mission `0959-c3-octo-transport-wiring.md` per [[deferred-vs-unspecified]] named-owner rule (deferred because (a) wallet does not currently depend on `octo-transport` (dep inversion); (b) production `SendContext` construction requires source_peer / origin_gateway plumbing; (c) the async API decision on `CapabilityCatalog::gossip_to_buyer` is a breaking change requiring Option-A-vs-B trade-off analysis). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Cross-mission: depends on `octo-transport` integration + async API decision (Option-A vs Option-B trade-off).
+- [ ] `crates/octo-wallet/src/capability/gossip.rs` — `gossip_envelope_to_buyer` delegates to the RFC-0862 gossip channel via a production `CapabilityCatalog` impl that holds `Arc<octo_transport::NodeTransport>`. **DEFERRED** to follow-up mission `0959-c3-octo-transport-wiring.md` per `deferred-vs-unspecified` named-owner rule (deferred because (a) wallet does not currently depend on `octo-transport` (dep inversion); (b) production `SendContext` construction requires source_peer / origin_gateway plumbing; (c) the async API decision on `CapabilityCatalog::gossip_to_buyer` is a breaking change requiring Option-A-vs-B trade-off analysis). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per `deferred-vs-unspecified` named-owner rule. Cross-mission: depends on `octo-transport` integration + async API decision (Option-A vs Option-B trade-off).
 
 ### Test vector
 
@@ -37,7 +37,7 @@ The `0959-c` Band A closure deferred this work because (a) the cross-node integr
 
 - [x] `cargo build -p octo-wallet` green
 - [x] `cargo test -p octo-wallet --test cross_node_delivery` green (4/4 tests: TV7 main, transient-retry variant, lookup_by_ask resolves, lookup_by_ask rejects unrelated)
-- [x] `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
+- [x] `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 - [x] workspace clippy blocker RESOLVED 2026-08-07 via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram` (legacy TDLib adapter superseded by pure-Rust `octo-adapter-telegram-mtproto`; document per 0959-c closure)
 
@@ -74,18 +74,18 @@ depends_on:
 
 ## Notes
 
-- The fixture uses a single `StoolapHolderRegistry::open_in_memory()` for the buyer side (per [[stoolap-general-purpose-db]] hard red line: cipherocto business/consumer schema stays cipherocto-side; the test uses an ephemeral in-memory registry to avoid contaminating production state). Seller-side registry is not needed for TV7 since the seller only broadcasts the envelope; the buyer is the consumer.
+- The fixture uses a single `StoolapHolderRegistry::open_in_memory()` for the buyer side (per `stoolap-general-purpose-db` hard red line: cipherocto business/consumer schema stays cipherocto-side; the test uses an ephemeral in-memory registry to avoid contaminating production state). Seller-side registry is not needed for TV7 since the seller only broadcasts the envelope; the buyer is the consumer.
 - RFC-0862 gossip channel binding is a cross-crate wiring operation; the production wiring is tracked by `missions/archived/completed/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06).
 - TV7 is the previously-deferred AC-6 from mission `0959-c` Band A closure.
 - **Retro-supersession (2026-08-24, audit):** `crates/octo-wallet/tests/cross_node_delivery_transport.rs` added by `0959-c3-octo-transport-wiring.md` Band A closure (commit landed 2026-08-07) — production-wiring TV7 driven through `TransportDeliveryCatalog` + `octo_cap_macaroon_transport::NodeTransport`. Both test files (`cross_node_delivery.rs` + `cross_node_delivery_transport.rs`) coexist; 4/4 in-process harness + 6/6 production-wiring tests green. Mission AC text updated retroactively to reference both files per R19 scope discipline + historical-mission-preservation principle.
 
 ## Closure (2026-08-06)
 
-**Status:** TV7 cross-node delivery AC green via in-process harness. 1 of 2 ACs green; 1 of 2 explicit deferral to `0959-c3-octo-transport-wiring` follow-up per [[deferred-vs-unspecified]] named-owner rule.
+**Status:** TV7 cross-node delivery AC green via in-process harness. 1 of 2 ACs green; 1 of 2 explicit deferral to `0959-c3-octo-transport-wiring` follow-up per `deferred-vs-unspecified` named-owner rule.
 
 **Implementation commit (local on `next`):**
 
-`feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness — exercises the full pipeline (seller builds MarketDeliveryEnvelope → gossip retry via CapabilityCatalog → buyer inbox → JSON deserialize → StoolapHolderRegistry::lookup_by_ask) end-to-end against an in-process InProcessDeliveryCatalog harness; 4/4 tests pass (TV7 main + transient-retry variant + lookup_by_ask resolves + lookup_by_ask rejects unrelated); production RFC-0862 gossip binding deferred to 0959-c3-octo-transport-wiring follow-up per [[deferred-vs-unspecified]] named-owner rule`
+`feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness — exercises the full pipeline (seller builds MarketDeliveryEnvelope → gossip retry via CapabilityCatalog → buyer inbox → JSON deserialize → StoolapHolderRegistry::lookup_by_ask) end-to-end against an in-process InProcessDeliveryCatalog harness; 4/4 tests pass (TV7 main + transient-retry variant + lookup_by_ask resolves + lookup_by_ask rejects unrelated); production RFC-0862 gossip binding deferred to 0959-c3-octo-transport-wiring follow-up per `deferred-vs-unspecified` named-owner rule`
 
 **Substrate touched:**
 
@@ -106,7 +106,7 @@ cargo fmt --check -p octo-wallet                                       # clean
 - `tv7_lookup_by_ask_resolves_envelope_ask_id` — canonical lookup_by_ask path matches the envelope's ask_id
 - `tv7_lookup_by_ask_rejects_unrelated_ask_id` — different ask_id does NOT resolve (canonical keying)
 
-**Deferrals (per [[deferred-vs-unspecified]] named-owner rule):**
+**Deferrals (per `deferred-vs-unspecified` named-owner rule):**
 
 - **AC "RFC-0862 gossip binding"** → `missions/archived/completed/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06). Production `TransportDeliveryCatalog` impl that holds `Arc<octo_transport::NodeTransport>` + `SendContext` builder; async API decision (Option A async fn vs Option B block_on) tracked in the follow-up.
 
@@ -116,7 +116,7 @@ cargo fmt --check -p octo-wallet                                       # clean
 | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v0.1    | 2026-08-06 | Mission filed open by `0959-c` Band A closure. 12 ACs (test harness + gossip binding + TV7 + cross-crate compat).                                                                                                                                                           |
 | v0.2    | 2026-08-06 | Claimed + closed Band A same-session. 11/12 ACs green (test harness + TV7 + cross-crate compat); 1/12 AC (production gossip binding) deferred to `0959-c3-octo-transport-wiring` follow-up. 4/4 TV7 tests pass. Status header flipped Claimed→Closed (Band A — 2026-08-06). |
-| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on 1/12 unchecked AC (production gossip binding). owner = @cipherocto, target = 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule.                                                                                        |
+| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on 1/12 unchecked AC (production gossip binding). owner = @cipherocto, target = 2026-09-15 per `deferred-vs-unspecified` named-owner rule.                                                                                          |
 
 Last Updated: 2026-08-07
 Version: 0.3

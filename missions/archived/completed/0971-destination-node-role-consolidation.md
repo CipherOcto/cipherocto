@@ -136,7 +136,7 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 
 **Cross-crate compat:** 4/4 sub-points GREEN (verified 2026-08-07): `cargo build --workspace` green; `cargo test --workspace --lib` green; `cargo fmt --check` clean; `cargo clippy --workspace --all-targets --features full -- -D warnings` green (2m 10s, post workspace-exclude commit `b99b1709` resolving the legacy `tdlib-rs` feature-conflict blocker). Package-scoped clippy on `octo-wallet` + `quota-router-core` clean. 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B).
 
-**Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only.**
+**Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §symbol-name form. Per `rfc-referencing-convention` RFCs referenced by number only.**
 
 ## Notes
 

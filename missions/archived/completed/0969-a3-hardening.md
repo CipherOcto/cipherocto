@@ -7,9 +7,9 @@
 GREEN). Substrate work landed at commit `2ec21e01`. Total: 2/2 ACs GREEN.
 Owner: @cipherocto.
 
-Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
-all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs
-referenced by number only. Per [[no-phantom-mission-pointers]] all `depends_on`
+Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere`
+all references use §symbol-name form. Per `rfc-referencing-convention` RFCs
+referenced by number only. Per `no-phantom-mission-pointers` all `depends_on`
 cites real missions or RFC substrate.
 
 ## RFC
@@ -141,7 +141,7 @@ Verification artifacts (2026-08-07):
 
 ## Notes
 
-- Per [[implementation-workflow-hook]] this mission is filed in `claimed/`
+- Per `implementation-workflow-hook` this mission is filed in `claimed/`
   directly (planning + owner + target set; substrate work follows in
   subsequent commits). Closed in same session.
 - `evaluate_linkage` move (gateway_authenticator.rs → dispatch.rs) is a

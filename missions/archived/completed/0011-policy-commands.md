@@ -4,7 +4,6 @@ description: Land policy subcommands (policy show/list) per RFC-0011
 metadata:
   node_type: substrate-cli
   type: cli-substrate
-  originSessionId: RFC-0011 author session
   created: 2026-08-27
   v: "1.0"
   depends_on:
@@ -24,7 +23,7 @@ review_dry_closed: 2026-08-28
 
 # 0011-policy-commands — Policy subcommands (policy show, policy list)
 
-**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28. User owns push/PR/promotion per [[feedback_initiation_user_only]] + [[git-workflow]].
+**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28. User owns push/PR/promotion per `feedback_initiation_user_only` + `git-workflow`.
 **Landing commit:** `1bec9296 feat(octo-cli): M4 policy commands — show/list` (2 files, +385 lines; 6 test vectors TV-POL1..POL6)
 **Substrate:** RFC-0011 §Subcommand Taxonomy (PolicyAction), RFC-0967 Policy Object Graph
 **Parent:** RFC-0011
@@ -53,7 +52,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 - [x] Version resolution implemented + unit-tested (CLI distinguishes name-not-found from version-not-found via `NameHashIndex`)
 - [x] Filter parsing implemented + unit-tested (CLI-side `InvalidFilter` only — no substrate `PolicyError::InvalidFilter`)
 - [x] Cross-mission AC: policy commands integrate with core mission's `OutputEnvelope<T>` + `OctoCliRedactor`
-- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator 84/84 PASS)
@@ -75,7 +74,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Policy Subcommands f
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -89,7 +88,7 @@ Land 2 policy subcommands per RFC-0011 §Subcommand Taxonomy (full scope per ori
 
 5+ TV (TV-POL1..POL8) — all passing per `cargo test -p octo-cli --test policy`.
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `PolicyAction` dispatch + 3 output structs +
   filter parser + body redactor + `PolicySummary` CLI-output type
@@ -121,9 +120,9 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0967 — Policy Object Graph substrate
 - RFC-0965 — Caveat envelope (policy body may embed caveats; redactor applies
   to nested fields)
-- [[cipherocto-design-principles]] — Layer B stability contract
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure
+- `cipherocto-design-principles` — Layer B stability contract
+- `rfc-0011-loop-dry-gate-closure` — review loop closure
 
 ## Claimant
 
-@unassigned (mission lifecycle now Completed; archived 2026-08-28 per [[mission-close-up-2026-08-27]] pattern)
+@unassigned (mission lifecycle now Completed; archived 2026-08-28 per `mission-close-up-2026-08-27` pattern)

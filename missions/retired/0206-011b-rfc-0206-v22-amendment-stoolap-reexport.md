@@ -4,7 +4,6 @@ description: OPEN 2026-08-20 v1.0; RFC-0206 v2.1 → v2.2 amendment to add `pub 
 metadata:
   node_type: mission
   type: project
-  originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
   supersedes: null

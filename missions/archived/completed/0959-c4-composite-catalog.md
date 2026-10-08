@@ -2,7 +2,7 @@
 
 **Status:** LANDED 2026-08-13 (commit bbb70bc0). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0862 gossip + RFC-0959-A1 market delivery + RFC-0957-A1 holder registry
-**Parent:** 0959-c3 (closed Band A) per [[mission-0959-c3-octo-transport-wiring]]
+**Parent:** 0959-c3 (closed Band A) per `mission-0959-c3-octo-transport-wiring`
 
 ## Scope
 
@@ -54,6 +54,6 @@ Closes 0959-c3 Notes "out of scope for Band A" (gossip + storage delegation in o
 
 ## Cross-references
 
-- [[wave-3-gaps-2026-08-10]] — gap surface context
-- [[mission-gap-closure-priorities-2026-08-10]] — Wave 2 plan (origin reference)
-- [[cipherocto-design-principles]] — Layer B→D boundary rules
+- `wave-3-gaps-2026-08-10` — gap surface context
+- `mission-gap-closure-priorities-2026-08-10` — Wave 2 plan (origin reference)
+- `cipherocto-design-principles` — Layer B→D boundary rules

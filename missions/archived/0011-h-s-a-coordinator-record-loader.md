@@ -22,11 +22,13 @@ impl CoordinatorRecord {
 ```
 
 Substrate additions land 2026-09-20 at `next 10ae8e18`:
+
 - `CoordinatorRecord::load(coordinator_id: &CoordinatorId) -> Option<Self>`
 - Substrate-faithful: returns `None` until the persistence adapter lands (Phase 6 follow-on per `0011-h-s-a-coordinator-record-persistence`). The CLI receives `None` and translates to exit 84 `NetworkCoordinatorNotFound`.
 - 2 unit tests: `t_load_returns_none_substrate_faithful`, `t_load_idempotent_for_same_id`
 
 CLI dispatch wired 2026-09-20 at `next 624998ba`:
+
 - `octo network coordinator show <coordinator_id_hex>` wired at `crates/octo-cli/src/commands/network.rs` (Layer C)
 - `CoordinatorRecord::load(&args.coordinator_id)` returns `None` → CLI surfaces `OctoCliError::NetworkCoordinatorNotFound { coordinator_id_redacted }` (exit 84)
 - New OctoCliError variant slot 84 LANDED: `NetworkCoordinatorNotFound { coordinator_id_redacted: String }` per RFC-0011-k §Error Handling row 537
@@ -44,7 +46,7 @@ CLI dispatch wired 2026-09-20 at `next 624998ba`:
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-coordinator-types --lib` green (2/2 load tests pass)
 - [x] `cargo test -p octo-cli --lib` green (3/3 coordinator show test vectors pass; +3 above Phase 2 baseline)
-- [x] Layer discipline preserved (Layer A additive surface per [[cipherocto-design-principles]] §Stable Abstractions Principle; Layer C consumes via re-export; zero parallel abstractions)
+- [x] Layer discipline preserved (Layer A additive surface per `cipherocto-design-principles` §Stable Abstractions Principle; Layer C consumes via re-export; zero parallel abstractions)
 - [x] ≥3 unit tests + ≥1 integration test (2 substrate unit tests + 3 CLI test vectors added; integration test deferred to Phase 6 persistence adapter)
 
 ## Dependencies

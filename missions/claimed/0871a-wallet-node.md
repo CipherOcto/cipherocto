@@ -59,19 +59,19 @@ Build `crates/octo-wallet-node/` — the wallet's specialized-node adapter. `Wal
 
 Per BLUEPRINT §Mission template. RFC-0871 §Wallet Node Lifecycle types mapped to this mission (Phase 2 wallet):
 
-| RFC-0871 Type / Section | Implemented By |
-|---|---|
-| `WalletNode` struct (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/node.rs` |
-| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-wallet-node/src/node.rs` |
-| `WALLET_SIGN_ED25519` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/sign.rs` |
-| `WALLET_MINT_CAPABILITY` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/mint.rs` |
-| `WALLET_ATTENUATE_CAPABILITY` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/attenuate.rs` |
-| `WALLET_RESOLVE_DID` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/resolve.rs` |
-| `WalletNode::broadcast_announce` (§Wallet Node Lifecycle) | This mission — uses `RouterAnnouncePayload` extension |
-| `RouterAnnouncePayload` extension shape | Mission `0870-b-envelope-adoption.md` — RFC-0870 v2.0 §NodeEnvelope Adoption defines the shape; this mission reuses |
-| `IdentityKey::sign` HSM routing (gap closure) | Mission `0009-a-hsm-routing.md` — prerequisite |
-| `AudienceId` canonical validation (gap closure) | Mission `0010-d-wallet-audience-validation.md` — prerequisite |
-| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
+| RFC-0871 Type / Section                                             | Implemented By                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `WalletNode` struct (§Wallet Node Lifecycle)                        | This mission — `crates/octo-wallet-node/src/node.rs`                                                                |
+| `NetworkReceiver` impl (RFC-0863 substrate)                         | This mission — `crates/octo-wallet-node/src/node.rs`                                                                |
+| `WALLET_SIGN_ED25519` payload kind (§Wallet Node Lifecycle)         | This mission — `crates/octo-wallet-node/src/handlers/sign.rs`                                                       |
+| `WALLET_MINT_CAPABILITY` payload kind (§Wallet Node Lifecycle)      | This mission — `crates/octo-wallet-node/src/handlers/mint.rs`                                                       |
+| `WALLET_ATTENUATE_CAPABILITY` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/attenuate.rs`                                                  |
+| `WALLET_RESOLVE_DID` payload kind (§Wallet Node Lifecycle)          | This mission — `crates/octo-wallet-node/src/handlers/resolve.rs`                                                    |
+| `WalletNode::broadcast_announce` (§Wallet Node Lifecycle)           | This mission — uses `RouterAnnouncePayload` extension                                                               |
+| `RouterAnnouncePayload` extension shape                             | Mission `0870-b-envelope-adoption.md` — RFC-0870 v2.0 §NodeEnvelope Adoption defines the shape; this mission reuses |
+| `IdentityKey::sign` HSM routing (gap closure)                       | Mission `0009-a-hsm-routing.md` — prerequisite                                                                      |
+| `AudienceId` canonical validation (gap closure)                     | Mission `0010-d-wallet-audience-validation.md` — prerequisite                                                       |
+| `NodeEnvelope` envelope shape (consumed)                            | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite                                                     |
 
 ## Dependencies
 
@@ -134,7 +134,7 @@ Per RFC-0871 §Implementation Phases Phase 2:
 
 ## Pull Request
 
-5cf67956 (local; push + remote writes await user instruction per [[git-workflow]])
+5cf67956 (local; push + remote writes await user instruction per `git-workflow`)
 
 ## Closure Summary
 
@@ -142,17 +142,20 @@ Mission 0871a-wallet-node landed in commit `5cf67956` on `next` branch.
 NEW `crates/octo-wallet-node/` Layer C crate (8 files, 14 unit tests).
 
 **New types:**
+
 - `WalletNode` + `WalletNodeConfig` + `WalletNodeHandle` + `WalletNodeError`
 - `SignHandler` / `MintHandler` / `AttenuateHandler` / `ResolveDIDHandler`
 - `HandlerOutput` (response envelope payload + payload kind)
 - `WALLET_PAYLOAD_KINDS` array + `is_wallet_payload_kind()` dispatcher
 
 **Verification chain:**
+
 - All inbound envelopes route through `EnvelopeDispatcher` (replay defense + signature verification)
 - DID validation: Mint/Resolve handlers refute malformed DIDs via `CanonicalCodec::parse(s, false)`
 - HSM routing: signing flows through `Arc<IdentityKey>` → `Arc<dyn HsmAdapter>`, no direct ed25519_dalek access in production code
 
 **Phase 1 MVP disclosures:**
+
 - Minted wire form is a placeholder `CIPHEROCTO_MINT_V1:<holder_did>` prefix (full macaroon wire format lands in 0957 Phase 2 follow-on)
 - `broadcast_announce` is a stub envelope (full RouterAnnouncePayload extend in 0870-b follow-on; opcode already allocated)
 - Attenuation is a stub (caveats pass through opaquely; full caveat substrate in 0957 Phase 2 follow-on)

@@ -26,7 +26,7 @@ DEFERRED 2026-08-13 (close-as-DEFERRED, 0871b pattern). Mission partially-landed
 - **`0110-bigint-consensus-unblocker-4-block-header-spec-version`** — Phase 4 (needs `BlockHeader.numeric_spec_version` integration)
 - **`0110-bigint-consensus-unblocker-5-vm-opcodes`** — Phase 5 VM opcodes (BigIntLiteral + BigIntOp variant in `/home/mmacedoeu/_w/databases/stoolap/src/vm/mod.rs`)
 
-**Drift disclosure:** Per [[deferred-vs-unspecified]] discipline — explicitly DEFERRED with filed follow-on missions, concrete unblockers, and per-phase rationale. Mission's proposed `NUMERIC_SPEC_VERSION = 1` is superseded by RFC-0202-A's `= 2`; no "future / post-v1.0" placeholders.
+**Drift disclosure:** Per `deferred-vs-unspecified` discipline — explicitly DEFERRED with filed follow-on missions, concrete unblockers, and per-phase rationale. Mission's proposed `NUMERIC_SPEC_VERSION = 1` is superseded by RFC-0202-A's `= 2`; no "future / post-v1.0" placeholders.
 
 ## RFC
 

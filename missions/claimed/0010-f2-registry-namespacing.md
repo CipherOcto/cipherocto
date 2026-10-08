@@ -67,7 +67,7 @@ hit the PK index.
 ### `DidRegistry` trait — additive evolution
 
 Layer B (years-stable). Per
-[[cipherocto-design-principles]] §Open/Closed Principle + §Stable
+`cipherocto-design-principles` §Open/Closed Principle + §Stable
 Abstractions Principle, the trait gains two ADDITIVE methods
 with default impls (back-compat: existing impls work unchanged):
 

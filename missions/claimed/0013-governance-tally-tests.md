@@ -4,7 +4,6 @@ description: 10 canonical tally test vectors for `voting_weight` + `tally_quorum
 metadata:
   node_type: substrate-tests
   type: tally-property-tests
-  originSessionId: RFC-0013 author session
   created: 2026-09-10
   v: "1.0"
   depends_on:
@@ -63,15 +62,15 @@ Per RFC-0013 §Test Vectors, 10 substrate-level property tests for the pure tall
 
 ### Test vectors (10 canonical, RFC-0013 §Test Vectors)
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `policy-default-dao` | `GovernancePolicy::default_dao()` | model=Dao, num=2, den=3, deadline=10, authority=Coordinator |
-| `voting-weight-zero-reputation` | `voting_weight(dao, 0)` | `0` |
-| `voting-weight-max-reputation` | `voting_weight(dao, u64::MAX)` | ≤ u64::MAX (no overflow) |
-| `tally-quorum-supermajority-met` | `tally_quorum(dao, total=100, approvals=67)` | `true` (67/100 ≥ 2/3) |
-| `tally-quorum-supermajority-fail` | `tally_quorum(dao, total=100, approvals=66)` | `false` (66/100 < 2/3) |
-| `tally-quorum-exact-boundary` | `tally_quorum(dao, total=99, approvals=66)` | `true` (66/99 = 2/3 exact) |
-| `governance-model-discriminant-invariant` | `GovernanceModel::Dao as u16` | byte-identical to RFC-0855 §11.1 (Dao=1) |
-| `proposal-state-discriminant-invariant` | `ProposalState::Voting as u16` | byte-identical to RFC-0855 §11.3 (Voting=1) |
-| `decision-type-discriminant-invariant` | `DecisionType::EmergencyRekey as u16` | byte-identical to RFC-0855 §11.3 (EmergencyRekey=5) |
-| `cross-replica-btreemap-equivalence` | Vote tally `BTreeMap` iteration across 2 deterministic shuffles | identical sequence (deterministic cross-replica) |
+| ID                                        | Scenario                                                        | Expected                                                    |
+| ----------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------- |
+| `policy-default-dao`                      | `GovernancePolicy::default_dao()`                               | model=Dao, num=2, den=3, deadline=10, authority=Coordinator |
+| `voting-weight-zero-reputation`           | `voting_weight(dao, 0)`                                         | `0`                                                         |
+| `voting-weight-max-reputation`            | `voting_weight(dao, u64::MAX)`                                  | ≤ u64::MAX (no overflow)                                    |
+| `tally-quorum-supermajority-met`          | `tally_quorum(dao, total=100, approvals=67)`                    | `true` (67/100 ≥ 2/3)                                       |
+| `tally-quorum-supermajority-fail`         | `tally_quorum(dao, total=100, approvals=66)`                    | `false` (66/100 < 2/3)                                      |
+| `tally-quorum-exact-boundary`             | `tally_quorum(dao, total=99, approvals=66)`                     | `true` (66/99 = 2/3 exact)                                  |
+| `governance-model-discriminant-invariant` | `GovernanceModel::Dao as u16`                                   | byte-identical to RFC-0855 §11.1 (Dao=1)                    |
+| `proposal-state-discriminant-invariant`   | `ProposalState::Voting as u16`                                  | byte-identical to RFC-0855 §11.3 (Voting=1)                 |
+| `decision-type-discriminant-invariant`    | `DecisionType::EmergencyRekey as u16`                           | byte-identical to RFC-0855 §11.3 (EmergencyRekey=5)         |
+| `cross-replica-btreemap-equivalence`      | Vote tally `BTreeMap` iteration across 2 deterministic shuffles | identical sequence (deterministic cross-replica)            |

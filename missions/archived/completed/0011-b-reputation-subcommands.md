@@ -4,7 +4,6 @@ description: Implement `octo reputation show` per RFC-0011-b
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: RFC-0011-b author session
   created: 2026-08-31
   v: "1.1"
   depends_on:
@@ -68,7 +67,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per RFC-0011 §Im
 - [x] Auditor mode fail-closed on revoked DID (exit 21 regardless of mode per RFC-0011-b §Security Considerations 3)
 - [x] `--limit` hard cap 1000 enforced via clap `value_parser` range (rejects `--limit 1001` with exit 2)
 - [x] All three new `OctoCliError` `Display` strings pass through `sanitize_substrate_error` per parent §Error Handling variant sanitization rule
-- [x] Layer direction verified (CLI Layer C → substrate Layer B; no reverse dep per [[cipherocto-design-principles]])
+- [x] Layer direction verified (CLI Layer C → substrate Layer B; no reverse dep per `cipherocto-design-principles`)
 - [x] Cross-mission AC: `octo reputation show` composes with `octo identity show` (DID lookup) and `octo capability list` (auditor capability attestation); substrate ordering 1 → 2 → 3 → 4 → reputation holds
 - [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
 - [x] Cargo test --workspace --lib green
@@ -178,7 +177,7 @@ Per RFC-0011-b §Test Vectors, all 11 vectors are substrate-side test fixtures (
 
 Cross-mission AC: final integration — `octo reputation show` composes with `octo identity show` (DID lookup) and `octo capability list` (auditor capability attestation) without substrate ordering inversion.
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — adds one clap subcommand struct + three `OctoCliError` variants; depends on Layer B
 - `octo-reputation` (Layer B) — adds one new module `projection.rs` + re-exports; depends on Layer A only (`octo-determin::Dfp` per RFC-0104 + RFC-0968 substrate)
@@ -220,7 +219,7 @@ octo reputation show --no-anchor-verify; echo $?  # expect 2 (rejected in Human 
 - RFC-0009 — Identity Management (lifecycle state machine + rotation grace; substrate for `IdentityRecord.rotation_history`)
 - RFC-0957 — Macaroon Substrate (capability token structure; `AuditorAuth` derives from macaroon caveats)
 - RFC-0011-d — Role Provisioning (follow-on amendment; required for `--role` catalog enumeration; per §Notes)
-- [[cipherocto-design-principles]] — Layer A/B/C/D/E; no central enums; per-extension crates; no wallet→storage coupling
+- `cipherocto-design-principles` — Layer A/B/C/D/E; no central enums; per-extension crates; no wallet→storage coupling
 
 ## Why 1 release cycle gate
 

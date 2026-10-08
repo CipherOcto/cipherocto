@@ -33,7 +33,7 @@ This sub-mission is purely additive — no new types, no new algorithms. It is t
 
 - [x] `cargo build -p octo-wallet` green (verified post-commit `11921128`-prior)
 - [x] `cargo test -p octo-wallet --lib` green: 2/2 ForwardRequestPayload unit tests pass (`forward_request_payload_new_has_no_hop_envelope`, `forward_request_payload_with_hop_envelope`)
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## Dependencies
@@ -70,7 +70,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Pull Request
 
-(unset; awaiting user push instruction per [[git-workflow]])
+(unset; awaiting user push instruction per `git-workflow`)
 
 ## Closure
 

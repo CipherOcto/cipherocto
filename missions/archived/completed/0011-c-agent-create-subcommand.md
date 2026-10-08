@@ -4,7 +4,6 @@ description: Land the `octo agent create` subcommand per RFC-0011-c
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension
-  originSessionId: d23cf564-d553-4e7d-be82-070883125eed
   created: 2026-08-31
   v: "1.0"
   closed: 2026-09-15
@@ -56,7 +55,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-core-outpu
 - [ ] `ManifestParseError` (exit 39), `CapabilityValidationFailed(usize)` (exit 40), `AgentAlreadyExists(Uuid)` (exit 41) wired (per RFC-0011-c §9.8 slot allocation 39-52)
 - [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
 - [ ] Cross-mission AC: clap root from `0011-core-output-envelope-redaction` reused; no parallel envelope
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [ ] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
 - [ ] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [ ] Cargo test -p octo-cli --lib --tests green
 - [ ] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -78,7 +77,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per [[feedback_initiation_user_only]] + [[git-workflow]])
+# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
 
 ## Notes
 
@@ -97,7 +96,7 @@ Land the `octo agent create` subcommand per RFC-0011-c §9.3.1. The four sibling
 
 ## Sub-steps
 
-1. **`AgentAction::Create` dispatch + clap wiring** — `crates/octo-cli/src/commands/agent.rs` (NEW; Layer C/D per [[cipherocto-design-principles]]; substrate reference RFC-0011-c §9.2). `enum AgentAction { Create(AgentCreateArgs), Run(...), List(...), Destroy(...), Attach(...) }`. Wire into existing clap root from mission `0011-core-output-envelope-redaction`.
+1. **`AgentAction::Create` dispatch + clap wiring** — `crates/octo-cli/src/commands/agent.rs` (NEW; Layer C/D per `cipherocto-design-principles`; substrate reference RFC-0011-c §9.2). `enum AgentAction { Create(AgentCreateArgs), Run(...), List(...), Destroy(...), Attach(...) }`. Wire into existing clap root from mission `0011-core-output-envelope-redaction`.
 
 2. **`AgentCreateOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
@@ -127,7 +126,7 @@ No new external crates required; all substrate types (`AgentManifest`, `AgentSta
 | TV-AGT3  | `agent create` | Duplicate `agent_id`                        | `AgentAlreadyExists(uuid)` (exit 41)                    | Substrate rejects duplicate manifest digest                              |
 | TV-AGT13 | `agent create` | yesterday's manifest digest                 | `ReplayDetected { digest }` (exit 50)                   | RFC-0011-c §9.7 Replay Protection; per RFC-0002 §Security Considerations |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
+## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::Create` dispatch + `AgentCreateOutput` payload type + 3 error variants + agent-specific redaction patterns.
 - `octo-wallet` (Layer B) — substrate `register_agent`, `AgentManifest`, `AgentState` (existing types).
@@ -164,8 +163,8 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0002 §Capability Validation (6-step pipeline substrate)
 - RFC-0002 §Agent Manifest (manifest wire form substrate)
 - RFC-0002 §Security Considerations (replay substrate)
-- [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
-- [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
+- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Why gate
 

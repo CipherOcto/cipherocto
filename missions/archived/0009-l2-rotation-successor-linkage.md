@@ -10,7 +10,7 @@ Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/000
 **DEFERRED (out of l2 pushable-unit scope):**
 
 - `HolderRecord` rotation columns (`rotation_started_at_millis_unix` + `deprecated: bool`) — separate migration mission
-- Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per [[cipherocto-design-principles]]); track in `0959-c3` or new mission
+- Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per `cipherocto-design-principles`); track in `0959-c3` or new mission
 - `IdentityRotated` + `IdentityRotationAborted` event structs — split to follow-on mission; l2 closures produce the proof signature but don't emit events yet (events depend on observability layer wiring)
 
 **Cross-crate compat:** `cargo test -p octo-wallet --lib` 229/229 pass (7 new rotation tests + 222 from l1); `cargo clippy -p octo-wallet --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
@@ -273,7 +273,7 @@ Sub-mission `l2` covers rotation + successor linkage + grace + revocation gossip
 
 ## Pull Request
 
-(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
+(unset — local commit per `feedback_initiation_user_only`; push awaits user instruction)
 
 ## Closure Notes (2026-08-09)
 
@@ -282,11 +282,11 @@ Sub-mission `l2` covers rotation + successor linkage + grace + revocation gossip
 - **`successor_key: Option<Box<IdentityKey>>`:** Box breaks the recursive type size; rotation creates a small graph (max depth 1 in practice — successor has no successor during the grace window).
 - **`deprecated: bool`:** flipped to `true` on `complete_rotation`; historical signatures remain verifiable (RFC-0009 row 3: "old key still valid during grace"), new signatures should target the successor.
 - **24h grace per RFC-0853 §12:** `ROTATION_GRACE_PERIOD_SECS` constant; `complete_rotation` rejects with `GracePeriodNotElapsed` if `now - rotation_started_at < 24h`.
-- **Gossip fan-out DEFERRED:** revocation + activation event broadcasting via `octo_transport::NodeTransport` would couple Layer B → Layer D (forbidden per [[cipherocto-design-principles]]). Tracked for `0959-c3` or new mission.
+- **Gossip fan-out DEFERRED:** revocation + activation event broadcasting via `octo_transport::NodeTransport` would couple Layer B → Layer D (forbidden per `cipherocto-design-principles`). Tracked for `0959-c3` or new mission.
 
 **Net diff:** +284 lines (rotation methods + tests + error variants). Zero regressions across `octo-wallet` (229 tests pass).
 
-Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
+Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere` all references use §section-name / symbol form. Per `rfc-referencing-convention` RFCs referenced by number only.
 
 **Version History:**
 

@@ -53,8 +53,8 @@ wire-stable identifier `cipherocto/cap/v1/caveat/payment`.
 
 ## Test vector discipline
 
-Per `[[mission-gap-closure-priorities-2026-08-10]]` §Test vector
-discipline + `[[0957-phase2-unblocker-map]]` phase2b scope, byte-exact
+Per `mission-gap-closure-priorities-2026-08-10` §Test vector
+discipline + `0957-phase2-unblocker-map` phase2b scope, byte-exact
 TV preservation across migration:
 
 - All 14 existing `octo-paid-query` tests pass unchanged (the crate
@@ -111,9 +111,9 @@ response envelopes)" — the caveat data type lives in cap-macaroon.
 
 ## Cross-references
 
-- `[[0957-phase2-unblocker-map]]` — phase2b sub-mission
-- `[[cipherocto-design-principles]]` — per-extension crate model
+- `0957-phase2-unblocker-map` — phase2b sub-mission
+- `cipherocto-design-principles` — per-extension crate model
   (caveat data type lives in Layer 4 substrate; the E-extension
   crate is reduced to primitives)
-- `[[mission-gap-closure-priorities-2026-08-10]]` — Wave 1 plan
-- `[[mission-0957-ext-macaroon-phase2b-status]]` — substrate predecessor
+- `mission-gap-closure-priorities-2026-08-10` — Wave 1 plan
+- `mission-0957-ext-macaroon-phase2b-status` — substrate predecessor

@@ -4,7 +4,7 @@
 
 Accepted (2026-09-21) — RFC-0011-j promoted from Draft per the goal directive that all RFC-0011-h phases 7 to 14 plus retroactive Phases 1 to 6 + 8 to 10 + 12 must achieve 5-len DRY CLOSURE. Phase 2 retroactive multi-round DRY gate GREEN at R3 zero per the existing 6-phase gate closure chain culminating in `next 02097d21`. Eight subcommands wire `octo-network` runtime + bootstrap lifecycle + slash reputation surfaces to the CLI. Substrate partial: `BootstrapMode` enum + `SeedListAuthority` + 8 public methods on `SlashReputationStoreCompat` (per `crates/octo-network/src/reputation/slash_store.rs` L58-L151) land in substrate; this amendment adds 4 companion substrate missions + 2 OctoCliError variants + 8 output envelopes + 17 test vectors.
 
-> **Amendment chain:** Second amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per [[docs-plans-scratchpad]]). Phase 1 = RFC-0011-i. Phase 3-6 land via RFC-0011-k through RFC-0011-n respectively. Substrate-faithfulness verified per §Substrate-Additions Companion Missions.
+> **Amendment chain:** Second amendment in the `0011-h-multiphase-rollout-plan` (see `docs/plans/2026-09-20-0011-h-multiphase-rollout-plan.md`, gitignored scratchpad per `docs-plans-scratchpad`). Phase 1 = RFC-0011-i. Phase 3-6 land via RFC-0011-k through RFC-0011-n respectively. Substrate-faithfulness verified per §Substrate-Additions Companion Missions.
 
 ## Authors
 
@@ -29,7 +29,7 @@ RFC-0011-j lands the **bootstrap lifecycle + slash reputation visibility + autho
 | `octo network slash list`           | Operator            | `SlashReputationStoreCompat::list(filter)`                 | `0011-h-s-a-slash-store` (G6)                |
 | `octo network slash show`           | Operator            | `SlashReputationStoreCompat::show(slash_id)`               | `0011-h-s-a-slash-store` (G6)                |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per [[cipherocto-design-principles]]). CLI dispatch lands Layer C; substrate additions in this RFC = **4 companion missions (Layer B)**; 1 of 8 subcommands has substrate already present (`authority show`), 4 require G6/G6b, 2 require G1, 1 requires G8.
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **4 companion missions (Layer B)**; 1 of 8 subcommands has substrate already present (`authority show`), 4 require G6/G6b, 2 require G1, 1 requires G8.
 
 ## Dependencies
 
@@ -48,10 +48,10 @@ RFC-0011-j lands the **bootstrap lifecycle + slash reputation visibility + autho
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G1/G6/G6b/G8) land BEFORE CLI dispatch per [[no-phantom-mission-pointers]] pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per [[cipherocto-design-principles]] §No premature coupling.
+1. **Substrate-first ordering** — companion substrate missions (G1/G6/G6b/G8) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
 3. **Slot arithmetic preserved** — Phase 2 lands exactly 2 of the 10 RFC-0011-h-defined OctoCliError variants (slots 82 + 89). The remaining 4 (slots 87, 88, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 4 companion missions (G1/G6/G6b/G8); Layer C CLI dispatch = 8 subcommand arms. Companion missions land in Layer B only per [[cipherocto-design-principles]] §Stable Abstractions Principle.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 4 companion missions (G1/G6/G6b/G8); Layer C CLI dispatch = 8 subcommand arms. Companion missions land in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
 5. **Test vector coverage** — 17 test vectors (3 for mode + 3 for authority + 5 for slash stats + 6 for slash list/show) per RFC-0011-h §Implementation Phases Phase 2.
 
 ## Motivation
@@ -102,7 +102,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per [[cipherocto-design-principles]] §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -246,13 +246,13 @@ Write-path tests (tv_net2_16 + tv_net2_17) only fire `--dry-run` path; `--confir
 
 ## Alternatives Considered
 
-1. **Substrate-first amendment (G1/G6/G6b/G8) + CLI amendment separately.** Rejected per [[implementation-workflow-hook]] claim-first-implement-after pattern; bundling substrate + CLI in single RFC keeps the layer-A→B→C dependency graph visible. User-gated decision on split per `0011-h-multiphase-rollout-plan` §2.2.
+1. **Substrate-first amendment (G1/G6/G6b/G8) + CLI amendment separately.** Rejected per `implementation-workflow-hook` claim-first-implement-after pattern; bundling substrate + CLI in single RFC keeps the layer-A→B→C dependency graph visible. User-gated decision on split per `0011-h-multiphase-rollout-plan` §2.2.
 2. **Defer `mode set` / `authority rotate` writes to Phase 3.** Rejected; RFC-0011-h §Subcommand Taxonomy already lands these as Phase 2 scope, and substrate companions (G1 + G8) provide the write surfaces. Deferral would leave a 6+ month gap in bootstrap lifecycle visibility.
 3. **Roll `slash list/show` into Phase 3 (Coordinator phase).** Rejected; `slash list/show` is a pure read on `SlashReputationStoreCompat`, fully independent of coordinator substrate. Phase 3 lands governance tally which has different substrate.
 
 ## Substrate-Additions Companion Missions
 
-Per [[no-phantom-mission-pointers]] pairing invariant, this RFC cites 4 companion substrate missions. All 4 are Open as of 2026-09-20.
+Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 4 companion substrate missions. All 4 are Open as of 2026-09-20.
 
 | Companion mission                            | Substrate addition                                                        | Layer |
 | -------------------------------------------- | ------------------------------------------------------------------------- | ----- |
@@ -270,7 +270,7 @@ Per `0011-h-multiphase-rollout-plan` §2.2 split recommendation:
 1. **Substrate-first slice (4 companion missions, BLOCKED pre-Phase 2 IMPLEMENTATION):** G1 → G6 → G6b → G8 land in `crates/octo-network/src/mon/bootstrap.rs` + `crates/octo-network/src/reputation/slash_store.rs` + `crates/octo-reputation/src/...` per companion mission YAMLs.
 2. **CLI dispatch slice (Phase 2 IMPLEMENTATION):** 8 subcommand arms + 2 OctoCliError variants (slots 82 + 89) + 8 output envelopes + 17 test vectors land AFTER all 4 companion missions close per substrate-first ordering.
 
-User-gated decision on slice ordering: bundled RFC (current proposal) vs split RFC (substrate-first then CLI-first). Per [[feedback_initiation_user_only]], user decides.
+User-gated decision on slice ordering: bundled RFC (current proposal) vs split RFC (substrate-first then CLI-first). Per `feedback_initiation_user_only`, user decides.
 
 ## Key Files to Modify
 
@@ -294,7 +294,7 @@ User-gated decision on slice ordering: bundled RFC (current proposal) vs split R
 
 Phase 2 lands the **bootstrap lifecycle + slash reputation visibility + authority rotation** surface. The 4 read-only operations (`mode show`, `authority show`, `slash excluded`, `slash stats`) are safe to expose with minimal substrate additions; the 2 read operations on the slash envelope log (`slash list`, `slash show`) require G6 substrate additions for the list/show readers; the 2 write operations (`mode set`, `authority rotate`) carry heavy 3-flag confirmation gates and require G1 + G8 substrate additions for the writer + builder respectively.
 
-Substrate-first ordering preserves [[cipherocto-design-principles]] §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

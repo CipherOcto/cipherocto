@@ -4,7 +4,6 @@ description: "Land the Layer B substrate change for RFC-0011-caveat-form-amendme
 metadata:
   node_type: mission
   type: substrate-conformance
-  originSessionId: 6b66c09a-4979-47ba-b92f-e3a757ecff92
   created: 2026-10-02
   v: "1.0"
   depends_on:

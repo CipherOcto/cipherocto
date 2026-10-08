@@ -30,6 +30,7 @@ pub fn dispatch_coordinator_admin_action(action: &CoordinatorAdminAction) -> Res
 ```
 
 Substrate additions land 2026-09-20 at `next 10ae8e18`:
+
 - `CoordinatorAdminAction` `#[non_exhaustive]` enum with 3 variants
 - `CoordinatorAdminActionError` enum with `AdapterUnwired` variant
 - `dispatch_coordinator_admin_action` sync helper returns `AdapterUnwired` for all actions (substrate-faithful: no `CoordinatorAdmin` adapter wired at the CLI dispatch boundary)
@@ -37,6 +38,7 @@ Substrate additions land 2026-09-20 at `next 10ae8e18`:
 - Re-exports through `crates/octo-network/src/dot/mod.rs`
 
 CLI dispatch wired 2026-09-20 at `next 624998ba`:
+
 - `octo network coordinator admin --action <LABEL> --group-id <ID> --target <peer_hex>` wired at `crates/octo-cli/src/commands/network.rs` (Layer C)
 - `CoordinatorAdminActionLabel` CLI-only enum translates string label to typed `CoordinatorAdminAction` at the dispatch boundary (parse via `parse_coordinator_admin_action_label`)
 - 3 action labels: `transfer_ownership`, `ban_member`, `promote_to_admin`
@@ -54,7 +56,7 @@ CLI dispatch wired 2026-09-20 at `next 624998ba`:
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (4/4 dispatch tests pass)
 - [x] `cargo test -p octo-cli --lib` green (3/3 coordinator admin test vectors pass; +3 above Phase 2 baseline)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle; Layer C consumes via re-export)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle; Layer C consumes via re-export)
 - [x] ≥3 unit tests + ≥1 integration test (4 substrate unit tests + 3 CLI test vectors added)
 
 ## Dependencies

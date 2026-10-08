@@ -37,14 +37,14 @@ pub enum LocalGatewayIdentityError {
 
 Storage path: `$OCTO_HOME/network/local-gateway-identity.toml` per octo-home substrate convention.
 
-(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per [[no-phantom-mission-pointers]].)
+(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per `no-phantom-mission-pointers`.)
 
 ## Acceptance Criteria
 
 - [x] Substrate additions land in `crates/octo-network/src/mon/local_gateway_identity.rs (NEW)` per RFC-0011-i §Substrate-Additions row (NEW)
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo test -p octo-network --lib` green
-- [ ] Layer discipline preserved (Layer B only; zero Layer A change per [[cipherocto-design-principles]] §Stable Abstractions Principle)
+- [ ] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
 - [ ] ≥3 unit tests (load/save/exists round-trip + not-initialized error path) + ≥1 integration test (CLI consumes loaded state to construct GatewayIdentity)
 - [ ] CLI predicate `octo network identity show` reads `LocalGatewayIdentity::load(octo_home)`; if `NotInitialized` → exit 83 `NetworkLocalKeyUnavailable` (per RFC-0011-i §Error Handling row 83)
 
@@ -52,7 +52,7 @@ Storage path: `$OCTO_HOME/network/local-gateway-identity.toml` per octo-home sub
 
 Hard sequencing:
 
-1. **RFC-0011-i must be Accepted** before this mission's substrate additions land (mission YAML cites real RFC per [[no-phantom-mission-pointers]])
+1. **RFC-0011-i must be Accepted** before this mission's substrate additions land (mission YAML cites real RFC per `no-phantom-mission-pointers`)
 2. **This mission must land BEFORE Phase 1 implementation** — `octo network identity show` cannot be implemented faithfully against existing substrate without these additions (verified by RFC-0011-i R1 finding F2)
 3. Mission YAML `0011-h-network-peers-identity` (CLI dispatch) waits for this mission to land per substrate-first ordering invariant
 
@@ -66,4 +66,4 @@ Hard sequencing:
 
 ## Notes
 
-Stub filed 2026-09-20 per [[no-phantom-mission-pointers]] + RFC-0011-i R1 review finding F2. The substrate gap was identified at RFC-0011-i draft time: substrate `GatewayIdentity::new` requires 4 args but CLI source provides 1 (public_key from wallet). Without this mission, `octo network identity show` would either panic on missing args OR derive a deterministic-but-wrong gateway_id using zero-defaults (network_id=0, creation_epoch=0) that mismatches the network's view of the local gateway. This mission establishes the substrate contract for the missing 3 fields per [[cipherocto-design-principles]] §No premature coupling.
+Stub filed 2026-09-20 per `no-phantom-mission-pointers` + RFC-0011-i R1 review finding F2. The substrate gap was identified at RFC-0011-i draft time: substrate `GatewayIdentity::new` requires 4 args but CLI source provides 1 (public_key from wallet). Without this mission, `octo network identity show` would either panic on missing args OR derive a deterministic-but-wrong gateway_id using zero-defaults (network_id=0, creation_epoch=0) that mismatches the network's view of the local gateway. This mission establishes the substrate contract for the missing 3 fields per `cipherocto-design-principles` §No premature coupling.

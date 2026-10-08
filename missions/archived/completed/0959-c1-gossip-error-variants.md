@@ -39,7 +39,7 @@ The `0959-c` Band A closure deferred this work because the only existing `Catalo
 
 - [x] `cargo build -p octo-wallet` green → **GREEN** (commit `178f25c3`)
 - [x] `cargo test -p octo-wallet --lib` green (238/238 — 231 pre-existing + 5 new gossip tests + 2 pre-existing gossip tests = 238 total) → **GREEN** (commit `178f25c3`)
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]) → **GREEN** (commit `178f25c3`)
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per `feedback_clippy_zero_warnings`) → **GREEN** (commit `178f25c3`)
 - [x] `cargo fmt --check -p octo-wallet` clean → **GREEN** (commit `178f25c3`)
 
 ## Dependencies
@@ -70,7 +70,7 @@ depends_on:
 
 ## Pull Request
 
-(unset; awaiting user push instruction per [[git-workflow]])
+(unset; awaiting user push instruction per `git-workflow`)
 
 ## Closure
 

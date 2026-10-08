@@ -4,7 +4,6 @@ description: Create sub-DC delegation lifecycle substrate per RFC-0855p-d2 (SDCD
 metadata:
   node_type: substrate-network
   type: substrate-creation
-  originSessionId: RFC-0855p-d2 author session
   created: 2026-09-02
   v: "1.1"
   landing_commit: "ffc61377"
@@ -35,7 +34,7 @@ status: Closed
 
 ## Status
 
-Closed (2026-09-02) per RFC-0855p-d2 promotion to Accepted at commit `0e915618` + substrate LANDED at `ffc61377` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
+Closed (2026-09-02) per RFC-0855p-d2 promotion to Accepted at commit `0e915618` + substrate LANDED at `ffc61377` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per `feedback_initiation_user_only` + `git-workflow`.
 
 ## Substrate (RFC-0855p-d2)
 
@@ -99,7 +98,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - TV-SG-6: valid SDCD acceptance; delegation policy check passes; replay-key rejected on duplicate
 - TV-SG-7: invalid SDRV → reject; `RevocationReasonCode` exhaustiveness preserved; subgroup not `Bound` → reject
 
-## Layer direction (per [[cipherocto-design-principles]])
+## Layer direction (per `cipherocto-design-principles`)
 
 - `subgroup_delegation.rs` (Layer C) — delegation lifecycle logic
 - `SDCD/SDRV/SDRT` envelopes (Layer B) — wire format + canonical encoding

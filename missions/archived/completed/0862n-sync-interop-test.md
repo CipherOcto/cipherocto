@@ -29,6 +29,7 @@ Rust Node (StoolapAdapter)     Mock Cairo Node (test double)
 ### Why a mock Cairo node?
 
 The actual Cairo/Move port (F5 in RFC-0862 Future Work) does not exist yet. This mission creates a **mock Cairo node** that:
+
 - Accepts the same WAL V2 binary format
 - Applies entries to a simplified in-memory store
 - Computes BLAKE3-256 hashes for comparison
@@ -119,15 +120,15 @@ cargo fmt --manifest-path sync-e2e-tests/Cargo.toml -- --check  # clean (after r
 - **Shared `apply_entry_to` + `state_hash` helpers**: the Rust receiver and the mock Cairo node share these helpers to keep the assertion purely on `WalTailChunk::decode` (wire format) + apply semantics. The decode path is the canonical encryption-free bottleneck the future Cairo port must implement.
 - **Entry layout `(key_len:u32_le || key || value)`**: deliberately simple, decoupled from cipherocto's eventual row-level WAL format (owned by Stoolap, not `octo-sync`). The mock is interop-grade for the **wire format**; the row-format interop is a Stoolap-side concern, not in scope here.
 
-**Future work (deferred per [[deferred-vs-unspecified]] named-owner rule is NOT applicable — this is the Band A closure; no follow-up mission filed because the mock is the deliverable, not a stepping stone):**
+**Future work (deferred per `deferred-vs-unspecified` named-owner rule is NOT applicable — this is the Band A closure; no follow-up mission filed because the mock is the deliverable, not a stepping stone):**
 
 - When the real Cairo/Move port lands, the mock + RustReceiver test pair can be retained as a regression check against wire-format drift. The `MockCairoNode` struct intentionally mirrors the receiver-API shape so a real Cairo port can replace just the storage backend without touching the decode path or the interop assertion.
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                       |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | (filed)    | Mission filed open with planned status. 6 ACs (mock impl + harness + state-hash compare + passing test + regression test + shared decode). |
+| Version | Date       | Change                                                                                                                                                           |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | (filed)    | Mission filed open with planned status. 6 ACs (mock impl + harness + state-hash compare + passing test + regression test + shared decode).                       |
 | v0.2    | 2026-08-07 | Claimed + closed Band A same-session. 6/6 ACs green. 7/7 tests pass; clippy scoped-clean; fmt clean. Status header flipped Claimed→Closed (Band A — 2026-08-07). |
 
 Last Updated: 2026-08-07

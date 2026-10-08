@@ -2,7 +2,7 @@
 
 **Status:** claimed 2026-08-11 (@claude) — `RaftLikeDrainCoordinator` substrate + 4 cross-instance TV + `StoolapSpendLedger` coordinator injection.
 **Substrate:** RFC-0862 v1.3 (Draft 2026-08-10) + RFC-0855p-c (handover)
-**Parent:** 0871e-phase5b-stoolap-ledger (landed `2b24796c`) per [[mission-0871e-phase5b-status]]
+**Parent:** 0871e-phase5b-stoolap-ledger (landed `2b24796c`) per `mission-0871e-phase5b-status`
 
 ## Scope
 
@@ -105,9 +105,9 @@ swaps the impl to LWW without changing the trait surface.
 
 ## Cross-references
 
-- [[mission-0871e-phase5b-status]] — substrate predecessor
-- [[wave-3-plan-correction-2026-08-10]] — drift context
-- [[wave-3-gaps-2026-08-10]] — original wave 3 gap surface
-- [[cipherocto-design-principles]] — Layer A additive-only rule
+- `mission-0871e-phase5b-status` — substrate predecessor
+- `wave-3-plan-correction-2026-08-10` — drift context
+- `wave-3-gaps-2026-08-10` — original wave 3 gap surface
+- `cipherocto-design-principles` — Layer A additive-only rule
 - `rfcs/draft/networking/0862-writer-election-bootstrap-v120.md` —
   RFC-0862 v1.3 amendment (substrate)

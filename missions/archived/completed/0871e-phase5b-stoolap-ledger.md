@@ -2,11 +2,11 @@
 
 **Status:** LANDED 2026-08-13 (commit 2b24796c). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0862 atomic transaction + stoolap-fork substrate
-**Parent:** 0871e-phase5b (landed `ebdbf4cd`) per [[mission-0871e-phase5b-status]]
+**Parent:** 0871e-phase5b (landed `ebdbf4cd`) per `mission-0871e-phase5b-status`
 
 ## Scope
 
-`SpendLedger` trait landed in `ebdbf4cd`; only `InMemorySpendLedger` impl exists. Production needs persistent ledger backed by stoolap-fork per [[stoolap-general-purpose-db]]. Migration target: cipherocto-side schema (NOT stoolap fork hosting cipherocto business schema per [[stoolap-general-purpose-db]] red line).
+`SpendLedger` trait landed in `ebdbf4cd`; only `InMemorySpendLedger` impl exists. Production needs persistent ledger backed by stoolap-fork per `stoolap-general-purpose-db`. Migration target: cipherocto-side schema (NOT stoolap fork hosting cipherocto business schema per `stoolap-general-purpose-db` red line).
 
 1. `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (NEW) — `StoolapSpendLedger` impl. Schema:
    - Table `spend_ledger` with columns `(holder_did BLOB, macaroon_id BLOB, balance INTEGER, updated_at_unix_ms INTEGER, PK(holder_did, macaroon_id))`.
@@ -30,7 +30,7 @@
 ## Depends on
 
 - 0871e-phase5b landed (`ebdbf4cd`) — `SpendLedger` trait + `InMemorySpendLedger`
-- stoolap-fork substrate ([[stoolap-general-purpose-db]])
+- stoolap-fork substrate (`stoolap-general-purpose-db`)
 
 ## Blocks
 
@@ -53,7 +53,7 @@
 
 ## Cross-references
 
-- [[mission-0871e-phase5b-status]] — trait substrate (this mission adds the persistent impl)
-- [[wave-3-gaps-2026-08-10]] — gap surface context
-- [[stoolap-general-purpose-db]] — schema placement rule (cipherocto-side, NOT stoolap fork)
-- [[cipherocto-design-principles]] — Layer B-adjacent storage layout
+- `mission-0871e-phase5b-status` — trait substrate (this mission adds the persistent impl)
+- `wave-3-gaps-2026-08-10` — gap surface context
+- `stoolap-general-purpose-db` — schema placement rule (cipherocto-side, NOT stoolap fork)
+- `cipherocto-design-principles` — Layer B-adjacent storage layout

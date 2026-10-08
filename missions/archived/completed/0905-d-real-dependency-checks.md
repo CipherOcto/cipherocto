@@ -21,7 +21,7 @@ real per-dependency health probes.
 ## Deferred work (explicit, not unspecified)
 
 The 0905-c checklist flagged "reserved for future real dependency checks" without
-naming an owner. This mission files the follow-up per [[deferred-vs-unspecified]].
+naming an owner. This mission files the follow-up per `deferred-vs-unspecified`.
 
 ## Scope
 
@@ -58,5 +58,5 @@ naming an owner. This mission files the follow-up per [[deferred-vs-unspecified]
 
 | Version | Date       | Status | Changes                                                                                                                                                                                                                                                   |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-12 | open   | Mission filed (follow-on to 0905-c-health-endpoints per [[deferred-vs-unspecified]])                                                                                                                                                                      |
+| v0.1    | 2026-08-12 | open   | Mission filed (follow-on to 0905-c-health-endpoints per `deferred-vs-unspecified`)                                                                                                                                                                        |
 | v0.2    | 2026-08-13 | landed | 8/8 ACs landed: StoolapDependencyChecker + ConfigDependencyChecker + ProvidersDependencyChecker + CompositeDependencyChecker + HealthContext + handle_readiness_async + proxy.rs wiring + 10 unit tests + 1 integration test (503 on stoolap unreachable) |

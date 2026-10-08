@@ -14,6 +14,16 @@ metadata:
 
 # Mission `0205-001-stewards-meta-bootstrap` — OPEN 2026-08-20
 
+## Status
+
+Open (2026-08-20). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Post-acceptance Phase 0.1 gap closure for RFC-0205 v2.0 (Accepted 2026-08-20). Bootstrap `cipherocto-stewards-meta` external trust-anchor repository at https://github.com/CipherOcto/cipherocto-stewards-meta. Satisfies RFC-0205 v2.0 §Promotion Path Condition 2 ("Phase 0-1 complete") by closing the Phase 0.1 gap (trust-anchor repo instantiation).
@@ -30,18 +40,18 @@ Covers:
 - Key ceremony held **off-site** with no CipherOcto personnel present; all 3 FPR holders are external (no CipherOcto-affiliated FPRs participate)
 - Repo branch protection enforced: `gh api repos/CipherOcto/cipherocto-stewards-meta/branches/main/protection/required_signatures | jq -r .enabled` == true AND org 2FA enforced
 
-## Acceptance Criterion
+## Acceptance Criteria
 
-- `https://github.com/CipherOcto/cipherocto-stewards-meta` repo exists (created via `gh repo create`) and is **public**: `gh api repos/CipherOcto/cipherocto-stewards-meta | jq -r .private` == false
-- `trusted-keys.txt` at HEAD has exactly 3 FPRs (validated by `awk '/^[A-F0-9]{40}$/' | wc -l`)
-- First commit SHA captured via `git rev-list --max-parents=0 HEAD` (robust against subsequent README + `bootstrap-v0` tag commits)
-- Each FPR in `trusted-keys.txt` verified via `ykman fido attest` as **FIDO2-only non-exportable** (no SSH, no S/MIME, no resident-key-only fallback) per RFC-0205 §HW Key Custody §Firmware Attestation clause a.1
-- All 3 FPR holders are external (no CipherOcto personnel); key-ceremony held **off-site** with no CipherOcto personnel present; ceremony minutes filed as new file `docs/runbooks/stoolap-steward-external-trust-root-subsection.md` (owned by this mission; merged into parent runbook by `0205-002-phase1-deliverables`)
-- Branch protection on `main`: `gh api repos/CipherOcto/cipherocto-stewards-meta/branches/main/protection/required_signatures | jq -r .enabled` == true
-- Org 2FA enforced: `gh api orgs/CipherOcto | jq -r .two_factor_requirement_enabled` == true
-- Bootstrap commit SHA recorded in `docs/runbooks/stoolap-steward-external-trust-root-subsection.md`
-- Phase 0.1 tree-hash byte-equal: `diff <(git -C cipherocto-stewards-meta show bootstrap-v0:trusted-keys.txt) <(curl -s https://raw.githubusercontent.com/CipherOcto/cipherocto-stewards-meta/bootstrap-v0/trusted-keys.txt) | wc -l` returns 0 (replaces TV-0205-05; Phase 0.1-appropriate since `bootstrap-v0` tag is minted by this mission itself; full TV-0205-05 freeze-tag gate deferred to first freeze-tag ceremony — TBD by `0205-002-phase1-deliverables`). Note: `bootstrap-v0` tags the README commit (commit 2), not the root commit; `^` is invalid since `bootstrap-v0` is not the root commit.
-- Compromise window: bootstrap key rotated + re-signed by ≥1 distinct holder within 7 days of mission close as a hard gate. SLA documentation moved to separate handoff AC in `0205-002-phase1-deliverables`.
+- [ ] `https://github.com/CipherOcto/cipherocto-stewards-meta` repo exists (created via `gh repo create`) and is **public**: `gh api repos/CipherOcto/cipherocto-stewards-meta | jq -r .private` == false
+- [ ] `trusted-keys.txt` at HEAD has exactly 3 FPRs (validated by `awk '/^[A-F0-9]{40}$/' | wc -l`)
+- [ ] First commit SHA captured via `git rev-list --max-parents=0 HEAD` (robust against subsequent README + `bootstrap-v0` tag commits)
+- [ ] Each FPR in `trusted-keys.txt` verified via `ykman fido attest` as **FIDO2-only non-exportable** (no SSH, no S/MIME, no resident-key-only fallback) per RFC-0205 §HW Key Custody §Firmware Attestation clause a.1
+- [ ] All 3 FPR holders are external (no CipherOcto personnel); key-ceremony held **off-site** with no CipherOcto personnel present; ceremony minutes filed as new file `docs/runbooks/stoolap-steward-external-trust-root-subsection.md` (owned by this mission; merged into parent runbook by `0205-002-phase1-deliverables`)
+- [ ] Branch protection on `main`: `gh api repos/CipherOcto/cipherocto-stewards-meta/branches/main/protection/required_signatures | jq -r .enabled` == true
+- [ ] Org 2FA enforced: `gh api orgs/CipherOcto | jq -r .two_factor_requirement_enabled` == true
+- [ ] Bootstrap commit SHA recorded in `docs/runbooks/stoolap-steward-external-trust-root-subsection.md`
+- [ ] Phase 0.1 tree-hash byte-equal: `diff <(git -C cipherocto-stewards-meta show bootstrap-v0:trusted-keys.txt) <(curl -s https://raw.githubusercontent.com/CipherOcto/cipherocto-stewards-meta/bootstrap-v0/trusted-keys.txt) | wc -l` returns 0 (replaces TV-0205-05; Phase 0.1-appropriate since `bootstrap-v0` tag is minted by this mission itself; full TV-0205-05 freeze-tag gate deferred to first freeze-tag ceremony — TBD by `0205-002-phase1-deliverables`). Note: `bootstrap-v0` tags the README commit (commit 2), not the root commit; `^` is invalid since `bootstrap-v0` is not the root commit.
+- [ ] Compromise window: bootstrap key rotated + re-signed by ≥1 distinct holder within 7 days of mission close as a hard gate. SLA documentation moved to separate handoff AC in `0205-002-phase1-deliverables`.
 
 ## Files / Artifacts
 

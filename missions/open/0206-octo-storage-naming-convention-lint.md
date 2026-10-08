@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0206-octo-storage-naming-convention-lint` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Define + land the Clippy lint crate `crates/octo-clippy-lints/`
@@ -36,18 +46,18 @@ crate purity + per-owner adapter naming convention. Covers:
   `tests/`, `examples/`, `benches/`, `build.rs`, doc-tests) per
   RFC-0206 §Cargo.toml Templates Layer A.2 v1.5 requirement.
 
-## Acceptance Criterion
+## Acceptance Criteria
 
 Mission complete when:
 
-1. `crates/octo-clippy-lints/` exists + workspace member
-2. `cargo clippy --all-targets --all-features -D warnings` runs
-   both lints across the workspace without false positives on
-   the 7 owner-trait crates today
-3. `cargo clippy --all-targets --all-features -D warnings` flags
-   any owner-trait crate that adds `use stoolap::*` (regression TV)
-4. `crates/cipherocto-policy/` still flagged for the naming
-   divergence (regression TV until the rename lands)
+- [ ] `crates/octo-clippy-lints/` exists + workspace member
+- [ ] `cargo clippy --all-targets --all-features -D warnings` runs
+      both lints across the workspace without false positives on
+      the 7 owner-trait crates today
+- [ ] `cargo clippy --all-targets --all-features -D warnings` flags
+      any owner-trait crate that adds `use stoolap::*` (regression TV)
+- [ ] `crates/cipherocto-policy/` still flagged for the naming
+      divergence (regression TV until the rename lands)
 
 ## Cross-references
 

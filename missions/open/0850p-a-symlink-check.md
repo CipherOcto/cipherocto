@@ -41,18 +41,16 @@ fn check_session_path_safe(session_path: &Path) -> Result<(), CoreError> {
 - [ ] Unit test: a normal `tempdir/session.db` is accepted
 - [ ] Integration test: the CLI exits non-zero with the new error when the path is a symlink
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-whatsapp-onboard-core/src/session.rs` (where session_path is created); `std::fs::metadata` and `std::fs::canonicalize` from std.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| Symlink resolution check | This mission |
-| `CoreError::SessionPathSymlink` error variant | This mission |
+| RFC-0850p-a Type                              | Implemented By |
+| --------------------------------------------- | -------------- |
+| Symlink resolution check                      | This mission   |
+| `CoreError::SessionPathSymlink` error variant | This mission   |
 
 ## Dependencies
 

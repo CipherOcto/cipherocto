@@ -64,6 +64,13 @@ substrate; Mission B wires the producers; Mission C deletes the legacy.
 Each cycle spans 1 release. Total 3-cycle window: 3 releases from Mission A
 landing. RFC-0960 §5.1 table is canonical for what each cycle touches.
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 - TV-LD1: Cycle 1 — `Balance::new` produces `#[deprecated]` warning

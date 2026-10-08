@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0205-stoolap-quarterly-reviews` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Per-Phase-2 quarterly split-review audit of the Stoolap fork substrate.
@@ -24,12 +34,11 @@ Covers:
   verify tag signatures per TV-0205-05)
 - CVE audit (any unresolved upstream CRITICAL CVEs this quarter)
 
-## Acceptance Criterion
+## Acceptance Criteria
 
-Audit log file `docs/audits/stoolap-quarterly-reviews.md` exists and
-has one entry per 90-day cycle post-v0; each entry covers all 5 audit
-points above; entry is signed by 1-of-3 quorum steward + linked to
-the corresponding TV-0205-09 audit invocation.
+- [ ] Audit log file `docs/audits/stoolap-quarterly-reviews.md` exists and has one entry per 90-day cycle post-v0
+- [ ] each entry covers all 5 audit points above
+- [ ] entry is signed by 1-of-3 quorum steward + linked to the corresponding TV-0205-09 audit invocation.
 
 ## Cross-references
 

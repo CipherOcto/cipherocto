@@ -66,6 +66,13 @@ canonical place to derive the child capability key from the parent
 - `frost-ed25519` (FROST threshold Ed25519)
 - `zeroize` (already in deps for seed handling)
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors (per RFC-0009 v1.2 §Test Vectors)
 
 - 6 new TV:

@@ -205,7 +205,7 @@ meta.governance_pubkey.unwrap_or_else(||
 sovereign_nonce_namespace(&self.cost_asset_id));
 if nonce_registry.observe_readonly(NonceEventKind::Settlement,
 &observe_key, &self.nonce.0)? == true {
-    return Err(SettlementEventError::Replay);
+return Err(SettlementEventError::Replay);
 }` —
   R7 #5 HIGH fix: `observe_readonly` (not `observe`) because
   validate() is a pure read-only check; the marking observe lives
@@ -257,6 +257,13 @@ asset_kind | cost | evidence_ref | ledger_height | created_at_unix_ms
 registry_snapshot_epoch | nonce`. JSON equivalent.
     `LegacyFormOnNonOctoWContext` variant is the wire-form migration
     rejection (per §3.2).
+
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
 
 ## Test Vectors
 

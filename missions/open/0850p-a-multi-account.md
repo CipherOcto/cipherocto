@@ -39,6 +39,7 @@ impl MultiAccountStore {
 ```
 
 CLI subcommands:
+
 - `session list` (already exists) — extended to read from the index DB
 - `session use <ACCOUNT_ID>` — sets the active account (writes to a symlink at `~/.local/share/octo/whatsapp/active`)
 - `session import <DB>` — registers an existing session DB
@@ -55,23 +56,22 @@ CLI subcommands:
 - [ ] Integration test: import → list → use → whoami round-trip
 - [ ] Documentation: migration guide for operators currently using `--session-path`
 
-
 ### Implementation Guide
 
 Companion guide needed: `docs/07-developers/whatsapp-multi-account-implementation-guide.md`. Stoolap schema for the account index, store migration plan, and sidecar management.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `MultiAccountStore` struct | This mission |
-| `session {list,use,import,export}` CLI subcommands | This mission |
-| `whoami --store <PATH>` | This mission |
+| RFC-0850p-a Type                                   | Implemented By |
+| -------------------------------------------------- | -------------- |
+| `MultiAccountStore` struct                         | This mission   |
+| `session {list,use,import,export}` CLI subcommands | This mission   |
+| `whoami --store <PATH>`                            | This mission   |
 
 ## Dependencies
 
 Depends on:
+
 - RFC-0850p-a status: Accepted
 - Stoolap `CipherOcto/stoolap` fork (branch `feat/blockchain-sql`) — required for the multi-account index
 - The `whoami` subcommand (mission 0850p-a base, not yet created)

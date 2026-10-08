@@ -40,18 +40,16 @@ fn check_ws_url_allowed(args: &Cli) -> Result<(), CliError> {
 - [ ] `--help` text for `--ws-url` documents the env-var override
 - [ ] Unit test: simulated release build (compile-time check) refuses without env-var
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-whatsapp-onboard/src/cli.rs` (CLI arg parsing); `cfg!(debug_assertions)` macro.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `CliError::WsUrlReleaseForbidden` variant | This mission |
-| `OCTO_WHATSAPP_ALLOW_WS_URL` env var check | This mission |
+| RFC-0850p-a Type                           | Implemented By |
+| ------------------------------------------ | -------------- |
+| `CliError::WsUrlReleaseForbidden` variant  | This mission   |
+| `OCTO_WHATSAPP_ALLOW_WS_URL` env var check | This mission   |
 
 ## Dependencies
 

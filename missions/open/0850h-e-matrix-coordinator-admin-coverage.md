@@ -31,7 +31,7 @@ a shared test homeserver.
 - [ ] Each test uses the same pre-scan guard + room-create +
       `octo-test-mx-mx{nn}-{ts}` naming convention as mx09–mx14
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
-    --test live_matrix_test -- --ignored --nocapture` — all 19
+--test live_matrix_test -- --ignored --nocapture` — all 19
       tests pass (mx00–mx08 + mx09–mx14 + mx15–mx20) when run with
       `--test-threads=1`
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`

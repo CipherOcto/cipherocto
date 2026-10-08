@@ -59,18 +59,16 @@ pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration)
 - [ ] Unit test: `wait_for_connected` returns immediately on a pre-set `Notify`
 - [ ] Integration test: full `qr-link` flow completes in <2s after `Event::Connected` (vs. current 250ms-2s lag)
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-adapter-whatsapp/src/lib.rs` (existing `Event` stream); `tokio::sync::watch` documentation.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `tokio::sync::watch` (or `Notify`) channel in `WhatsAppWebAdapter` | This mission |
-| `wait_for_connected()` async function | This mission |
+| RFC-0850p-a Type                                                   | Implemented By |
+| ------------------------------------------------------------------ | -------------- |
+| `tokio::sync::watch` (or `Notify`) channel in `WhatsAppWebAdapter` | This mission   |
+| `wait_for_connected()` async function                              | This mission   |
 
 ## Dependencies
 

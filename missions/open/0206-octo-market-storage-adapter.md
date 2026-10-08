@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0206-octo-market-storage-adapter` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Land the `octo-market-storage/` per-owner adapter crate,
@@ -36,20 +46,20 @@ Arc<dyn MarketState>` (or whichever traits are in scope per
   server-side market delivery, 100% bearer-only); the adapter
   must satisfy the bearer-only invariant.
 
-## Acceptance Criterion
+## Acceptance Criteria
 
 Mission complete when:
 
-1. `crates/octo-market-storage/` directory exists + workspace
-   member registered
-2. The traits from step (a) declared in their owner-trait crates
-   - implemented in `octo-market-storage/`
-3. SQL migrations live under `crates/<market-owner>/migrations/*.sql`
-   (NOT in `crates/octo-market-storage/`)
-4. `cargo build -p octo-market-storage` green
-5. `cargo test -p octo-market-storage --tests` green
-6. The bearer-only invariant from RFC-0969 verified via a TV
-   added to the adapter's test suite
+- [ ] `crates/octo-market-storage/` directory exists + workspace
+      member registered
+- [ ] The traits from step (a) declared in their owner-trait crates
+  - implemented in `octo-market-storage/`
+- [ ] SQL migrations live under `crates/<market-owner>/migrations/*.sql`
+      (NOT in `crates/octo-market-storage/`)
+- [ ] `cargo build -p octo-market-storage` green
+- [ ] `cargo test -p octo-market-storage --tests` green
+- [ ] The bearer-only invariant from RFC-0969 verified via a TV
+      added to the adapter's test suite
 
 ## Cross-references
 

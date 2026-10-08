@@ -228,6 +228,13 @@ governance_pubkey | registry_snapshot_epoch | nonce`. JSON
     equivalent. `LegacyFormOnNonOctoWContext` variant is the wire-form
     migration rejection (per §3.2).
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 Per RFC-0960 v3.6 §9 (Pending, concrete test vectors).

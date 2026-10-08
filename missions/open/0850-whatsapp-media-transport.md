@@ -80,9 +80,9 @@ See RFC-0850 Platform Translation Layer for the transport-mode selection algorit
   - Compute `let caps = self.capabilities();` and `let mode = octo_network::dot::transport::select_mode_with_max_text(encoded.len(), &caps, 65_536)?;` (R1-H2 fix: pass `65_536` as `max_text_bytes`, NOT the RFC default `4096`. WhatsApp's text message limit is ~65 KB; using the RFC default would route envelopes >4 KB to native mode unnecessarily, adding CDN round-trip latency and bandwidth waste for envelopes that fit in a single text message.) **R8-H1 fix:** the threshold argument is `encoded.len()` (the on-wire text-message body — base64-enveloped form, ~33% larger than the wire bytes), NOT `wire_bytes.len()`. This is the actual constraint on the text-mode send: the base64-expanded body must fit in a single 65 KB WhatsApp text message. The RFC's `payload.len()` wording in the mode-selection text-mode branch is read by the adapter as "the bytes that would actually be transmitted on the wire in text mode", not the pre-encoding envelope size. The earlier spec text (`wire_bytes.len()`) was a simplification that would have routed envelopes between 49 KB and 65 KB wire-bytes into text mode where they'd fail to fit after base64 expansion — see R8-H1 in `docs/reviews/2026-06-20-r8-mission-0850-review.md` for the original finding.
   - On `TransportMode::Text`: existing path — `Self::encode_envelope(&wire_bytes)` then `client.send_message(to, Message { conversation: Some(encoded), .. })`
   - On `TransportMode::Native`:
-    1. Call `self.upload_media("envelope.bin", &wire_bytes, "application/octet-stream").await` to obtain the `DOT/2/{media_ref}` token
-    2. Build `Message { conversation: Some(octo_network::dot::transport::encode_native_ref(&media_ref)), .. }` and send via `client.send_message`
-    3. R1-M4: `upload_media` internally allocates `data.to_vec()` because `Client::upload` takes `Vec<u8>` by value (`whatsapp-rust/src/upload.rs`); this is the current wacore API contract and cannot be avoided without an SDK bump
+- [ ] Call `self.upload_media("envelope.bin", &wire_bytes, "application/octet-stream").await` to obtain the `DOT/2/{media_ref}` token
+- [ ] Build `Message { conversation: Some(octo_network::dot::transport::encode_native_ref(&media_ref)), .. }` and send via `client.send_message`
+- [ ] R1-M4: `upload_media` internally allocates `data.to_vec()` because `Client::upload` takes `Vec<u8>` by value (`whatsapp-rust/src/upload.rs`); this is the current wacore API contract and cannot be avoided without an SDK bump
   - On `TransportMode::PayloadTooLarge` error: return `PlatformAdapterError::PayloadTooLarge { size: encoded.len(), max: caps.max_payload_bytes, platform: "whatsapp" }` (R8-H1: consistent with the threshold — the size reported is the on-wire body, which is what actually exceeded the platform's payload limit per RFC-0850 Platform Translation Layer).
   - **R1-H1 (RFC-0850 MUST fallback):** if step 1 returns `PlatformAdapterError::Unreachable` AND `encoded.len() <= 65_536` (the on-wire text-message body fits in a single WhatsApp text message — see R8-H1 clarification above for why this is `encoded.len()` rather than `wire_bytes.len()`), fall back to `TransportMode::Text` and retry the send. Log the fallback at `tracing::warn!` level with the redacted error message (no `media_key` in the log — see R1-H4 below). If `encoded.len() > 65_536`, propagate the `Unreachable` error (no fallback possible; envelope is too large for text mode). The fallback is a single retry attempt — exponential backoff is the gateway's responsibility, not the adapter's.
 
@@ -111,89 +111,89 @@ See RFC-0850 Platform Translation Layer for the transport-mode selection algorit
 
 - [ ] `crates/octo-adapter-whatsapp/src/adapter.rs` (`accept_message` prefix check): **R2-M1 fix:** the actual prefix check `if !text_trimmed.starts_with("DOT/1/")` is in `accept_message` (function body). Extend the check from `text_trimmed.starts_with("DOT/1/")` to `if !text_trimmed.starts_with("DOT/1/") && !text_trimmed.starts_with("DOT/2/")`. R1-M2 fix: the new test cases `accept_message_accepts_dot1` (existing behavior preserved), `accept_message_accepts_dot2` (new), and `accept_message_rejects_other_prefix` (e.g., `DOT/F/` rejected; the `DOT/F/` receive path is out of scope for this mission) pin the dispatch.
 - [ ] `crates/octo-adapter-whatsapp/src/adapter.rs` (`on_event` closure span — full closure, not just the `Event::Message` arm): when `accept_message` returns `Accept` AND the text starts with `DOT/2/`, dispatch to a new pre-download branch. **R2-C1 fix (CRITICAL):** the `on_event` closure does NOT capture `self` — only `inbound_tx`, `self_phone`, `groups`, `runtime_groups`, `sender_allowlist`, and `connected_notify` are captured (see the captured-fields comment block in the closure definition). The R1-C1 AC's `self.download_media(media_ref).await` will NOT compile because `self` is not in scope. Use the **download-request channel pattern** (option 2 in the R2 review):
-  1. **Field declaration on `WhatsAppWebAdapter`** (near the `inbound_tx` field declaration — **R4-C1 fix:** the R3-M1 attempt to init the channel in `new` was broken because `download_rx` (the receiver) had no owner and would drop immediately when `new` returned, closing the channel before any consumer task could be spawned). New field:
-     ```rust
-     /// Channel for routing DOT/2/ download requests from the sync on_event
-     /// closure to the async download_rx consumer task. The `on_event`
-     /// closure (which does not capture `self`) pushes a `DownloadRequest`;
-     /// the consumer task does the actual wacore `Client::download` call
-     /// and pushes the resulting wire bytes to `inbound_tx`.
-     /// Wrapped in `Arc<tokio::sync::Mutex<Option<...>>>` (mirrors the
-     /// existing `client` field declaration on `WhatsAppWebAdapter`) so `start_bot(&self)`
-     /// can populate the `Some(_)` variant without `&mut self` and the
-     /// `on_event` closure can hold an `Arc` clone without owning `self`.
-     /// Initialized to `None` in `new`; populated in `start_bot` (R4-C1).
-     download_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DownloadRequest>>>>,
-     ```
-     And in `new` (in the `WhatsAppWebAdapter::new` body), add `download_tx: Arc::new(tokio::sync::Mutex::new(None)),` to the struct literal (mirrors the `client` field init).
-  2. **Define `pub(crate) struct DownloadRequest { pub(crate) msg_id: String, pub(crate) chat: String, pub(crate) sender: String }`** near `RawPlatformMessage` definitions in the adapter module.
-  3. **R3-C1 fix (CRITICAL):** introduce a `WhatsAppHandlerHandle` struct + `clone_for_handler` method on `WhatsAppWebAdapter`. The R2-C1 design assumed `WhatsAppWebAdapter: Clone` (NOT implemented) OR `Arc<WhatsAppWebAdapter>` constructor (currently returns bare `Self` per `pub fn new(config) -> Self` at adapter.rs). NEITHER is available. Use **Option A: `clone_for_handler` helper** (preferred — no public API change, no Clone refactor, type-level least-privilege — the handle only exposes `client` and `inbound_tx`, NOT `config`/`bot_handle`/`inbound_rx`/`self_phone`/`runtime_groups`):
-     ```rust
-     // New struct near the bottom of adapter.rs (after the impl block):
-     #[derive(Clone)]
-     pub(crate) struct WhatsAppHandlerHandle {
-         pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
-         pub(crate) inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
-     }
+- [ ] **Field declaration on `WhatsAppWebAdapter`** (near the `inbound_tx` field declaration — **R4-C1 fix:** the R3-M1 attempt to init the channel in `new` was broken because `download_rx` (the receiver) had no owner and would drop immediately when `new` returned, closing the channel before any consumer task could be spawned). New field:
+  ```rust
+  /// Channel for routing DOT/2/ download requests from the sync on_event
+  /// closure to the async download_rx consumer task. The `on_event`
+  /// closure (which does not capture `self`) pushes a `DownloadRequest`;
+  /// the consumer task does the actual wacore `Client::download` call
+  /// and pushes the resulting wire bytes to `inbound_tx`.
+  /// Wrapped in `Arc<tokio::sync::Mutex<Option<...>>>` (mirrors the
+  /// existing `client` field declaration on `WhatsAppWebAdapter`) so `start_bot(&self)`
+  /// can populate the `Some(_)` variant without `&mut self` and the
+  /// `on_event` closure can hold an `Arc` clone without owning `self`.
+  /// Initialized to `None` in `new`; populated in `start_bot` (R4-C1).
+  download_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DownloadRequest>>>>,
+  ```
+  And in `new` (in the `WhatsAppWebAdapter::new` body), add `download_tx: Arc::new(tokio::sync::Mutex::new(None)),` to the struct literal (mirrors the `client` field init).
+- [ ] **Define `pub(crate) struct DownloadRequest { pub(crate) msg_id: String, pub(crate) chat: String, pub(crate) sender: String }`** near `RawPlatformMessage` definitions in the adapter module.
+- [ ] **R3-C1 fix (CRITICAL):** introduce a `WhatsAppHandlerHandle` struct + `clone_for_handler` method on `WhatsAppWebAdapter`. The R2-C1 design assumed `WhatsAppWebAdapter: Clone` (NOT implemented) OR `Arc<WhatsAppWebAdapter>` constructor (currently returns bare `Self` per `pub fn new(config) -> Self` at adapter.rs). NEITHER is available. Use **Option A: `clone_for_handler` helper** (preferred — no public API change, no Clone refactor, type-level least-privilege — the handle only exposes `client` and `inbound_tx`, NOT `config`/`bot_handle`/`inbound_rx`/`self_phone`/`runtime_groups`):
+  ```rust
+  // New struct near the bottom of adapter.rs (after the impl block):
+  #[derive(Clone)]
+  pub(crate) struct WhatsAppHandlerHandle {
+      pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+      pub(crate) inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
+  }
 
-     impl WhatsAppWebAdapter {
-         /// Clone the fields needed by background tasks (the download_rx consumer task).
-         /// Does NOT clone `inbound_rx` because the consumer pushes via `inbound_tx`,
-         /// not drains `inbound_rx`. `receive_messages()` still holds the original `inbound_rx`.
-         pub(crate) fn clone_for_handler(&self) -> WhatsAppHandlerHandle {
-             WhatsAppHandlerHandle {
-                 client: self.client.clone(),
-                 inbound_tx: self.inbound_tx.clone(),
-             }
-         }
-     }
-     ```
-  4. **Spawn a tokio task in `start_bot` (after `start_bot`'s initialization phase) — R4-C1 fix:** create the channel INSIDE `start_bot` (NOT in `new`) so the receiver has an immediate owner (the spawned task). After the existing `let inbound_tx = self.inbound_tx.clone();` initialization, add:
-     ```rust
-     // R4-C1 fix: create the download channel here, not in `new`.
-     let (download_tx, mut download_rx) = tokio::sync::mpsc::channel::<DownloadRequest>(64);
-     *self.download_tx.lock().await = Some(download_tx);
-     let download_handle = self.clone_for_handler();
-     let inbound_tx_for_consumer = self.inbound_tx.clone();
-     tokio::spawn(async move {
-         while let Some(req) = download_rx.recv().await {
-             let wire_bytes = match download_handle.client.lock().await.as_ref() {
-                 Some(client) => match client.download(&req.msg_id).await {
-                     Ok(bytes) => bytes,
-                     Err(e) => {
-                         // R1-H4: redacted reason; msg_id is not logged.
-                         tracing::warn!("download failed: {}", e);
-                         continue;
-                     }
-                 },
-                 None => {
-                     tracing::warn!("download failed: client not connected");
-                     continue;
-                 }
-             };
-             let raw = RawPlatformMessage {
-                 platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
-                 payload: wire_bytes,
-                 metadata: [
-                     ("chat".to_string(), req.chat),
-                     ("sender".to_string(), req.sender),
-                     ("dot_mode".to_string(), "native".to_string()),  // R2-M5
-                 ]
-                 .into_iter()
-                 .collect(),
-             };
-             if let Err(e) = inbound_tx_for_consumer.try_send(raw) {
-                 tracing::warn!("inbound channel full or closed: {e}");
-             }
-         }
-         tracing::debug!("download_rx consumer task exiting (channel closed)");
-     });
-     ```
-     The task exits cleanly when the `Sender` stored in `self.download_tx` is dropped — which happens when the user drops the adapter (`Arc<Mutex<Option<Sender>>>` is dropped, the inner `Sender` is dropped, `download_rx.recv()` returns `None`, the `while let` loop ends).
-     **R4-L1 fix:** the consumer task does NOT call `download_handle.download_media(...)` (because `WhatsAppHandlerHandle` doesn't have that method — by design, least-privilege). Instead it calls the wacore `Client::download` API directly via `download_handle.client.lock().await.as_ref().unwrap().download(&req.msg_id).await`. This duplicates ~10 lines of error-handling vs. `WhatsAppWebAdapter::download_media` but avoids the indirection. R4-L1 alternative (extract a free function `pub(crate) async fn download_via_client(client: &Client, msg_id: &str) -> Result<Vec<u8>, PlatformAdapterError>` that both `WhatsAppWebAdapter::download_media` and this consumer task call) is recommended but not required.
-  5. **In the `on_event` closure span:** when text starts with `DOT/2/`, do NOT call `self.download_media` — instead call `self.download_tx.lock().await.as_ref().and_then(|tx| tx.try_send(DownloadRequest { msg_id, chat: chat.clone(), sender: sender.clone() }).ok())` (capturing `download_tx` in the closure like `inbound_tx` is captured). The download task does the actual `Client::download` call and pushes the wire bytes to `inbound_tx`. **R4-C1 fix:** the closure captures `download_tx` by cloning the `Arc<Mutex<Option<Sender>>>` (NOT the inner `Sender` — the inner `Sender` is only set by `start_bot`, which is called AFTER the closure is registered).
-  6. The receive-path pipeline becomes: `wacore Event::Message` → `on_event` closure (sync, pushes to `download_tx`) → `download_rx` consumer task (async, calls `client.download` + pushes wire bytes to `inbound_tx`) → `receive_messages()` drains `inbound_rx` → `canonicalize` (dispatches on `metadata["dot_mode"] == "native"` → wire-bytes path; else → text-decode path).
-  7. **Why Option A over B/C:** Option A adds ONE new private struct (`WhatsAppHandlerHandle`) + ONE new method (`clone_for_handler`) — no public API change, no Clone refactor. Option B (implement Clone on `WhatsAppWebAdapter`) requires changing `inbound_rx` to `Arc<Mutex<Receiver<...>>>` (already done!) and refactoring every test that uses `inbound_rx`. Option C (`Arc<Self>` constructor) is BREAKING — affects 9 call sites in 4 files (`pair_link.rs`, `qr_link.rs`, 6 adapter.rs tests, 1 live_e2e test). Option A is the locked design. **R4 refutation note:** all fields of `WhatsAppWebAdapter` are Arc-wrapped or inherently Clone (verified at adapter.rs), so `#[derive(Clone)]` would technically compile — but it would give the consumer task access to `config` (session path, groups, sender allowlist), `bot_handle` (shutdown control), `inbound_rx` (could drain messages), `self_phone`/`runtime_groups` (state that should not be touched by download tasks). The handle is a type-level firewall.
+  impl WhatsAppWebAdapter {
+      /// Clone the fields needed by background tasks (the download_rx consumer task).
+      /// Does NOT clone `inbound_rx` because the consumer pushes via `inbound_tx`,
+      /// not drains `inbound_rx`. `receive_messages()` still holds the original `inbound_rx`.
+      pub(crate) fn clone_for_handler(&self) -> WhatsAppHandlerHandle {
+          WhatsAppHandlerHandle {
+              client: self.client.clone(),
+              inbound_tx: self.inbound_tx.clone(),
+          }
+      }
+  }
+  ```
+- [ ] **Spawn a tokio task in `start_bot` (after `start_bot`'s initialization phase) — R4-C1 fix:** create the channel INSIDE `start_bot` (NOT in `new`) so the receiver has an immediate owner (the spawned task). After the existing `let inbound_tx = self.inbound_tx.clone();` initialization, add:
+  ```rust
+  // R4-C1 fix: create the download channel here, not in `new`.
+  let (download_tx, mut download_rx) = tokio::sync::mpsc::channel::<DownloadRequest>(64);
+  *self.download_tx.lock().await = Some(download_tx);
+  let download_handle = self.clone_for_handler();
+  let inbound_tx_for_consumer = self.inbound_tx.clone();
+  tokio::spawn(async move {
+      while let Some(req) = download_rx.recv().await {
+          let wire_bytes = match download_handle.client.lock().await.as_ref() {
+              Some(client) => match client.download(&req.msg_id).await {
+                  Ok(bytes) => bytes,
+                  Err(e) => {
+                      // R1-H4: redacted reason; msg_id is not logged.
+                      tracing::warn!("download failed: {}", e);
+                      continue;
+                  }
+              },
+              None => {
+                  tracing::warn!("download failed: client not connected");
+                  continue;
+              }
+          };
+          let raw = RawPlatformMessage {
+              platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
+              payload: wire_bytes,
+              metadata: [
+                  ("chat".to_string(), req.chat),
+                  ("sender".to_string(), req.sender),
+                  ("dot_mode".to_string(), "native".to_string()),  // R2-M5
+              ]
+              .into_iter()
+              .collect(),
+          };
+          if let Err(e) = inbound_tx_for_consumer.try_send(raw) {
+              tracing::warn!("inbound channel full or closed: {e}");
+          }
+      }
+      tracing::debug!("download_rx consumer task exiting (channel closed)");
+  });
+  ```
+  The task exits cleanly when the `Sender` stored in `self.download_tx` is dropped — which happens when the user drops the adapter (`Arc<Mutex<Option<Sender>>>` is dropped, the inner `Sender` is dropped, `download_rx.recv()` returns `None`, the `while let` loop ends).
+  **R4-L1 fix:** the consumer task does NOT call `download_handle.download_media(...)` (because `WhatsAppHandlerHandle` doesn't have that method — by design, least-privilege). Instead it calls the wacore `Client::download` API directly via `download_handle.client.lock().await.as_ref().unwrap().download(&req.msg_id).await`. This duplicates ~10 lines of error-handling vs. `WhatsAppWebAdapter::download_media` but avoids the indirection. R4-L1 alternative (extract a free function `pub(crate) async fn download_via_client(client: &Client, msg_id: &str) -> Result<Vec<u8>, PlatformAdapterError>` that both `WhatsAppWebAdapter::download_media` and this consumer task call) is recommended but not required.
+- [ ] **In the `on_event` closure span:** when text starts with `DOT/2/`, do NOT call `self.download_media` — instead call `self.download_tx.lock().await.as_ref().and_then(|tx| tx.try_send(DownloadRequest { msg_id, chat: chat.clone(), sender: sender.clone() }).ok())` (capturing `download_tx` in the closure like `inbound_tx` is captured). The download task does the actual `Client::download` call and pushes the wire bytes to `inbound_tx`. **R4-C1 fix:** the closure captures `download_tx` by cloning the `Arc<Mutex<Option<Sender>>>` (NOT the inner `Sender` — the inner `Sender` is only set by `start_bot`, which is called AFTER the closure is registered).
+- [ ] The receive-path pipeline becomes: `wacore Event::Message` → `on_event` closure (sync, pushes to `download_tx`) → `download_rx` consumer task (async, calls `client.download` + pushes wire bytes to `inbound_tx`) → `receive_messages()` drains `inbound_rx` → `canonicalize` (dispatches on `metadata["dot_mode"] == "native"` → wire-bytes path; else → text-decode path).
+- [ ] **Why Option A over B/C:** Option A adds ONE new private struct (`WhatsAppHandlerHandle`) + ONE new method (`clone_for_handler`) — no public API change, no Clone refactor. Option B (implement Clone on `WhatsAppWebAdapter`) requires changing `inbound_rx` to `Arc<Mutex<Receiver<...>>>` (already done!) and refactoring every test that uses `inbound_rx`. Option C (`Arc<Self>` constructor) is BREAKING — affects 9 call sites in 4 files (`pair_link.rs`, `qr_link.rs`, 6 adapter.rs tests, 1 live_e2e test). Option A is the locked design. **R4 refutation note:** all fields of `WhatsAppWebAdapter` are Arc-wrapped or inherently Clone (verified at adapter.rs), so `#[derive(Clone)]` would technically compile — but it would give the consumer task access to `config` (session path, groups, sender allowlist), `bot_handle` (shutdown control), `inbound_rx` (could drain messages), `self_phone`/`runtime_groups` (state that should not be touched by download tasks). The handle is a type-level firewall.
 - [ ] `crates/octo-adapter-whatsapp/src/adapter.rs` (`canonicalize`): since the `download_rx` consumer task now pre-downloads `DOT/2/` and pushes raw wire bytes with a `dot_mode: "native"` metadata tag (per R2-C1 fix), `canonicalize` needs to handle TWO payload shapes. **R2-M5 fix:** the discriminator is the `dot_mode` metadata field, NOT a sniff of the payload bytes (which is fragile to future wire-format changes — see R2-M5 refutation note):
   - For `dot_mode == "native"` (wire bytes from `DOT/2/` pre-download): pass `raw.payload` directly to `DeterministicEnvelope::from_wire_bytes` (no decode)
   - For `dot_mode == "text"` OR missing `dot_mode` (legacy `DOT/1/` text): existing path — `decode_envelope(text)` → base64-decode → wire bytes

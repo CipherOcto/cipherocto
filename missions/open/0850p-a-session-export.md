@@ -15,6 +15,7 @@ Add a `session export <ACCOUNT_ID> --out <BUNDLE>` subcommand that produces a po
 ## Design
 
 The bundle is a tarball (gzip-compressed) containing:
+
 - `session.db` — the stoolap session DB
 - `session_meta.json` — the sidecar
 - `config.json` — the per-account WhatsAppConfig
@@ -35,23 +36,22 @@ The `session import` command decompresses, validates the sidecar (checksum match
 - [ ] Unit test: round-trip export → import → list shows the account
 - [ ] Documentation: security warning about exporting session DBs (they contain Signal keys)
 
-
 ### Implementation Guide
 
 Reference: TDLib database format (`sqlite3` file); `tar` crate for the portable bundle.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `session export <DB> --out <FILE>` CLI subcommand | This mission |
-| `session import <FILE>` CLI subcommand | This mission |
-| Portable bundle format (DB + sidecar + config) | This mission |
+| RFC-0850p-a Type                                  | Implemented By |
+| ------------------------------------------------- | -------------- |
+| `session export <DB> --out <FILE>` CLI subcommand | This mission   |
+| `session import <FILE>` CLI subcommand            | This mission   |
+| Portable bundle format (DB + sidecar + config)    | This mission   |
 
 ## Dependencies
 
 Depends on:
+
 - Mission 0850p-a-multi-account (the stoolap store for cross-host import)
 - RFC-0850p-a status: Accepted
 

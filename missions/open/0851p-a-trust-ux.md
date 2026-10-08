@@ -33,18 +33,16 @@ A `dot-trust graph` CLI command that renders the web-of-trust graph (the `signed
 - [ ] Unit tests: ASCII output for 5-node graph, DOT output for 100-node graph
 - [ ] Documentation: example output in `docs/operations/trust-graph.md`
 
-
 ### Implementation Guide
 
 Reference: `petgraph` crate (graph data structure); Graphviz `dot` binary (for DOT format).
 
-
 ### Type Coverage
 
-| RFC-0851p-a Type | Implemented By |
-|-----------------|----------------|
-| `dot-trust graph` CLI subcommand | This mission |
-| `crates/octo-bootstrap-cli/src/trust_graph.rs` | This mission |
+| RFC-0851p-a Type                               | Implemented By |
+| ---------------------------------------------- | -------------- |
+| `dot-trust graph` CLI subcommand               | This mission   |
+| `crates/octo-bootstrap-cli/src/trust_graph.rs` | This mission   |
 
 ## Dependencies
 

@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0205-stoolap-fork-feature-upstreaming` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Track upstream-contribution strategy for fork-only Stoolap features that
@@ -18,12 +28,11 @@ which covers the DQA-driver upstreaming track; this mission covers the
 broader set of fork-only features (16-byte MVCC DQA extension,
 `encode_decimal_lexicographic`, `Value::quant`, `as_dqa`, etc.).
 
-## Acceptance Criterion
+## Acceptance Criteria
 
-Per feature, file an upstream PR against the Stoolap repository with a
-linked CipherOcto RFC explaining why the feature is fork-only; track
-acceptance + merge in `docs/audits/stoolap-upstream-prs.md`; quarterly
-review of unresolved PRs.
+- [ ] Per feature, file an upstream PR against the Stoolap repository with a linked CipherOcto RFC explaining why the feature is fork-only
+- [ ] track acceptance + merge in `docs/audits/stoolap-upstream-prs.md`
+- [ ] quarterly review of unresolved PRs.
 
 ## Cross-references
 

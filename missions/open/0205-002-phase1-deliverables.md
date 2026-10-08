@@ -70,6 +70,16 @@ R2 review (12 findings: 3 CRIT + 4 HIGH + 3 MED + 2 LOW) applied:
 
 # Mission `0205-002-phase1-deliverables` — OPEN 2026-08-20
 
+## Status
+
+Open (2026-08-20). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Land RFC-0205 v2.0 §Implementation Phases 1.3-1.11 deliverables in the cipherocto workspace. These are the substrate + allowlist + runbook + audit-log artifacts that gate RFC-0205 acceptance-path Conditions 2.
@@ -99,33 +109,33 @@ Covers (per RFC-0205 v2.0 §Implementation Phases 1.3-1.11):
 
 **Note on `[features] default = ["allow-listed-ddl"]`:** Per RFC-0206 v2.0 §Cargo.toml Templates, the substrate `Cargo.toml` must include `[features] default = ["allow-listed-ddl"]`. This is owned by `0206-001-substrate-newtype` (substrate skeleton) — AC is gated via handoff: `0205-002` Phase 1.3 does NOT land until `0206-001` skeleton (with `[features]`) is in place.
 
-## Acceptance Criterion
+## Acceptance Criteria
 
 **Artifact count (9 deliverables + 1 vendor dependency):**
 
-- 9 deliverables exist (1 Cargo.toml edit + 3 allowlist toml files + 1 config.toml + 1 runbook + 3 directory-or-markdown entries)
-- 1 vendor dependency exists (`vendor/stoolap/` directory required by Phase 1.6 + TV-0205-22; not a deliverable produced by this mission's code, but a precondition artifact created by an external step)
-- The "commit pinning cipherocto-stewards-meta SHA" is a property of 1.7 (`external-root-config.toml`), not a separate deliverable
+- [ ] 9 deliverables exist (1 Cargo.toml edit + 3 allowlist toml files + 1 config.toml + 1 runbook + 3 directory-or-markdown entries)
+- [ ] 1 vendor dependency exists (`vendor/stoolap/` directory required by Phase 1.6 + TV-0205-22; not a deliverable produced by this mission's code, but a precondition artifact created by an external step)
+- [ ] The "commit pinning cipherocto-stewards-meta SHA" is a property of 1.7 (`external-root-config.toml`), not a separate deliverable
 
 **Substrate sole-consumer gate (HIGH 2 + MED 1):**
 
-- `rg '^\s*stoolap\s*=' crates/*/Cargo.toml | grep -v 'crates/octo-storage-core/' | grep -v 'sync-e2e-tests/stoolap-node' | wc -l` equals 0 (test-harness allowance per RFC-0205 §Cargo.toml Pinging — substrate is SOLE direct consumer; test-harness crates may reference `stoolap` for fixture purposes)
-- `diff <(rg '^path\s*=' crates/octo-storage-core/test-harness-allowlist.toml | cut -d= -f2 | tr -d ' "') <(rg '^\s*stoolap\s*=' crates/*/Cargo.toml -l | grep -v 'octo-storage-core' | grep -v 'sync-e2e-tests/stoolap-node') | wc -l` equals 0 (test-harness allowlist `path =` entries MUST enumerate every `stoolap`-depending crate outside `octo-storage-core` and outside `sync-e2e-tests/stoolap-node`; the diff is empty when allowlist is complete)
-- `rg '^\s*branch\s*=' crates/octo-storage-core/Cargo.toml` exits 1 (no `branch =` line per RFC §Cargo.toml Pinning "branch = removed entirely" + TV-0205-01)
+- [ ] `rg '^\s*stoolap\s*=' crates/*/Cargo.toml | grep -v 'crates/octo-storage-core/' | grep -v 'sync-e2e-tests/stoolap-node' | wc -l` equals 0 (test-harness allowance per RFC-0205 §Cargo.toml Pinging — substrate is SOLE direct consumer; test-harness crates may reference `stoolap` for fixture purposes)
+- [ ] `diff <(rg '^path\s*=' crates/octo-storage-core/test-harness-allowlist.toml | cut -d= -f2 | tr -d ' "') <(rg '^\s*stoolap\s*=' crates/*/Cargo.toml -l | grep -v 'octo-storage-core' | grep -v 'sync-e2e-tests/stoolap-node') | wc -l` equals 0 (test-harness allowlist `path =` entries MUST enumerate every `stoolap`-depending crate outside `octo-storage-core` and outside `sync-e2e-tests/stoolap-node`; the diff is empty when allowlist is complete)
+- [ ] `rg '^\s*branch\s*=' crates/octo-storage-core/Cargo.toml` exits 1 (no `branch =` line per RFC §Cargo.toml Pinning "branch = removed entirely" + TV-0205-01)
 
 **Preconditions (HIGH 5 + MED 5):**
 
-- Freeze-tag ceremony (owned by `0205-002` — this mission) has completed BEFORE Phase 1.3 lands — verified by `git rev-parse octo-stoolap-frozen-v0` exit 0; the `<sha-0>` value in the Phase 1.3 `rev =` pin equals `git rev-parse octo-stoolap-frozen-v0^{commit}` output
-- Fork repo was cloned with `git clone --object-format=sha256 <fork-url>` — verified by `git rev-parse --show-object-format` returning `sha256` per RFC-0205 §Determinism Requirements row 1 (note: `git config --get core.repositoryformatversion` returns `1` for BOTH SHA-1 and SHA-256 and is therefore the WRONG primitive — use `git rev-parse --show-object-format` which returns `sha1` or `sha256` distinctly)
-- Git client version ≥ 2.42 — verified by semver-aware awk check: `git --version | awk '{ver=$3; gsub("v",""); split(ver,a,"."); if (a[1]>2 || (a[1]==2 && a[2]>=42)) print "ok"; else print "fail"}'` returns `ok` (note: the regex `git version 2.4[2-9]` only matches 2.42-2.49; use semver-aware comparison to cover 2.50+ as well)
+- [ ] Freeze-tag ceremony (owned by `0205-002` — this mission) has completed BEFORE Phase 1.3 lands — verified by `git rev-parse octo-stoolap-frozen-v0` exit 0; the `<sha-0>` value in the Phase 1.3 `rev =` pin equals `git rev-parse octo-stoolap-frozen-v0^{commit}` output
+- [ ] Fork repo was cloned with `git clone --object-format=sha256 <fork-url>` — verified by `git rev-parse --show-object-format` returning `sha256` per RFC-0205 §Determinism Requirements row 1 (note: `git config --get core.repositoryformatversion` returns `1` for BOTH SHA-1 and SHA-256 and is therefore the WRONG primitive — use `git rev-parse --show-object-format` which returns `sha1` or `sha256` distinctly)
+- [ ] Git client version ≥ 2.42 — verified by semver-aware awk check: `git --version | awk '{ver=$3; gsub("v",""); split(ver,a,"."); if (a[1]>2 || (a[1]==2 && a[2]>=42)) print "ok"; else print "fail"}'` returns `ok` (note: the regex `git version 2.4[2-9]` only matches 2.42-2.49; use semver-aware comparison to cover 2.50+ as well)
 
 **Runbook content gates (LOW 2) — `docs/runbooks/stoolap-steward.md` MUST include all of:**
 
-- `rg '^\s*## SHA256SUMS wrapper ceremony 4-step procedure' docs/runbooks/stoolap-steward.md` exits 0 (SHA256SUMS wrapper, NOT freeze-tag)
-- `rg '^\s*## Bump ceremony' docs/runbooks/stoolap-steward.md` exits 0
-- `rg '^\s*## Key revocation procedure' docs/runbooks/stoolap-steward.md` exits 0
-- `rg '^\s*## Firmware CVE replacement procedure' docs/runbooks/stoolap-steward.md` exits 0
-- `rg '^\s*## Emergency revocation procedure' docs/runbooks/stoolap-steward.md` exits 0
+- [ ] `rg '^\s*## SHA256SUMS wrapper ceremony 4-step procedure' docs/runbooks/stoolap-steward.md` exits 0 (SHA256SUMS wrapper, NOT freeze-tag)
+- [ ] `rg '^\s*## Bump ceremony' docs/runbooks/stoolap-steward.md` exits 0
+- [ ] `rg '^\s*## Key revocation procedure' docs/runbooks/stoolap-steward.md` exits 0
+- [ ] `rg '^\s*## Firmware CVE replacement procedure' docs/runbooks/stoolap-steward.md` exits 0
+- [ ] `rg '^\s*## Emergency revocation procedure' docs/runbooks/stoolap-steward.md` exits 0
 
 **Forward-requirement TVs (HIGH 3):** TV-0205-05, TV-0205-07, TV-0205-21, TV-0205-22, TV-0205-23, TV-0205-24 are forward-requirement — they gate Phase 2 / Phase 3 missions, NOT this mission's close-out AC. Their gates must pass at the close-out of the respective Phase 2 / Phase 3 mission that introduces them. This mission only ENSURES the artifacts (allowlist files, runbook, audit dirs) that those TVs will eventually validate.
 

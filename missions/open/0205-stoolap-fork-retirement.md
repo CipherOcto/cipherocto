@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0205-stoolap-fork-retirement` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Drop-fork migration procedure for the scenario where upstream Stoolap
@@ -42,18 +52,18 @@ of the same drop-fork retirement. Claim one and you must claim the
 other in the same session, because both halves edit the same
 `Cargo.toml` handle dependency and both must land green together.
 
-## Acceptance Criterion
+## Acceptance Criteria
 
 Mission complete when:
 
-1. Every Layer B crate's `Cargo.toml` shows `stoolap` (crates-io semver)
-   instead of `octo-storage-core` (path dep) for the handle
-2. `crates/octo-storage-core/` directory removed + workspace
-   `Cargo.toml` member list updated
-3. TV-0206-A1 (`pub use stoolap::Database;` exact-once in
-   `crates/octo-storage-core/src/lib.rs`) returns 0 matches
-4. RFC-0205 file moved from `rfcs/draft/storage/` to
-   `rfcs/archived/storage/`
+- [ ] Every Layer B crate's `Cargo.toml` shows `stoolap` (crates-io semver)
+      instead of `octo-storage-core` (path dep) for the handle
+- [ ] `crates/octo-storage-core/` directory removed + workspace
+      `Cargo.toml` member list updated
+- [ ] TV-0206-A1 (`pub use stoolap::Database;` exact-once in
+      `crates/octo-storage-core/src/lib.rs`) returns 0 matches
+- [ ] RFC-0205 file moved from `rfcs/draft/storage/` to
+      `rfcs/archived/storage/`
 
 ## Cross-references
 

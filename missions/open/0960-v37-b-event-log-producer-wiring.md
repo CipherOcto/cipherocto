@@ -147,6 +147,13 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
 - Wire sites use the default `produce` body OR explicitly re-call
   `validate_pre_insert` if overriding (grep + clippy lint)
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 - TV-VP13: `PaymentEventProducer` — happy-path mint issuance → log row

@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0205-octo-stoolap-frozen-release-process` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Define the tagging + signing convention for `octo-stoolap-frozen-vN`
@@ -23,7 +33,7 @@ Covers:
   leg (b))
 - Force-push retargeting defense (TV-0205-05 leg (b))
 
-## Acceptance Criterion
+## Acceptance Criteria
 
 Documented in `docs/runbooks/stoolap-steward.md` (per RFC-0205 §Key
 Files to Modify checklist): the `git tag -s` + `git verify-tag`

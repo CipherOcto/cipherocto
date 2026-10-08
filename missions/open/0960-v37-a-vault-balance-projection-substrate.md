@@ -106,6 +106,13 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
 - `serde = { version = "<version>", features = ["derive"] }`
 - `hex = "<version>"` (channel-name encoding per §2.4)
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 - TV-VP1: empty log → `projected_balance = DQA::zero()` + `source_kind = FreshLogScan`

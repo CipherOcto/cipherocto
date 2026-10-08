@@ -292,6 +292,13 @@ AuditError::UnobserveFailed(e) }` per R6 finding.
 - `ed25519-dalek = { version = "<version>", features = ["serde"] }`
   (governance signature scheme per §3.12)
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:

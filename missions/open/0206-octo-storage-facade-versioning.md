@@ -9,6 +9,16 @@ metadata:
 
 # Mission `0206-octo-storage-facade-versioning` — OPEN 2026-08-19
 
+## Status
+
+Open (2026-08-19). Claimable — no claimant assigned.
+
+## Dependencies
+
+Declared in the frontmatter `depends_on` list. This mission has no
+prerequisite mission files; its gating condition is the parent RFC acceptance
+recorded in Scope.
+
 ## Scope
 
 Define the semver policy for the `octo-storage` Layer B facade crate.
@@ -22,12 +32,11 @@ Covers:
   facade) is a hard constraint — adding a 9th requires both an RFC
   AND a major version bump
 
-## Acceptance Criterion
+## Acceptance Criteria
 
-`Cargo.toml` `[package].version` policy documented in `docs/runbooks/octo-storage-release.md`;
-CI gate verifies that any `Cargo.toml` edit to `crates/octo-storage/`
-that adds a new `pub use` also bumps `version.minor`; TV-0206-A2
-(`pub use` count = 8) gates the build.
+- [ ] `Cargo.toml` `[package].version` policy documented in `docs/runbooks/octo-storage-release.md`
+- [ ] CI gate verifies that any `Cargo.toml` edit to `crates/octo-storage/` that adds a new `pub use` also bumps `version.minor`
+- [ ] TV-0206-A2 (`pub use` count = 8) gates the build.
 
 ## Cross-references
 

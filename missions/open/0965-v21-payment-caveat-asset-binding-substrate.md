@@ -186,6 +186,13 @@ expires_at_unix_ms | registry_snapshot_epoch | nonce`. JSON
     serde visitor support preserved for legacy-form deserialization
     rejection (Round 1 mitigation close at serde layer).
 
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
 ## Test Vectors
 
 Per RFC-0965 v2.1 §10 (Pending, concrete test vectors).

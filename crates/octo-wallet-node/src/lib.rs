@@ -57,8 +57,14 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod attestation_host;
 pub mod handlers;
 pub mod node;
+
+pub use attestation_host::{
+    advertised_acceptance_set, allocation_record, boot_validate, build_registry,
+    register_hosted_strategies, HostRegistrationError,
+};
 
 pub use handlers::{
     AttenuateHandler, AttenuateRequest, HandlerOutput, MintHandler, MintRequest,

@@ -200,6 +200,12 @@ proptest = "1"
 # Mission 0957 Phase 2c-1: production `TransportDeliveryCatalog` lives
 # in this glue crate; the integration test imports it directly.
 octo-cap-macaroon-transport = { path = "../octo-cap-macaroon-transport" }
+# RFC-0973 TV16 determinism fixture: a second implementation of the
+# `root_secret_knowledge` relation, so a verdict difference cannot be blamed on
+# the relation. Dev-only and Layer-E-to-Layer-B-by-test, which is the one
+# direction mission 0973-v36-d's lint must permit — the production library edge
+# is what it forbids, and this is not one.
+octo-cap-zk = { path = "../octo-cap-zk" }
 # Mission 0957-ext-zk-crate: ZK substrate moved to octo-cap-zk but tests
 # still reach into `zk_circuit` + `zk_vendor` + `zk_verifier` directly
 # for `verify_mock_batch_proof` + `vendor_state()` + stub_commitment

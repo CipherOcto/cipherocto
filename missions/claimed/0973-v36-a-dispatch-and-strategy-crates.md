@@ -80,8 +80,14 @@ reference strategies plus a fixture that lets determinism be measured at all.
    `CostFigure::Unmeasured` — not `None`. A `None` means "this strategy carries
    no circuit cost", which would be a false claim about a proof-bearing crate
    and would skip both budget gates at boot. `Unmeasured` is what makes the
-   gate decisive on an unknown cost. `octo-cap-poi` carries no proof, so it
-   either omits the trait or answers `None`; both are truthful and equivalent.
+   gate decisive on an unknown cost.
+
+   `octo-cap-poi` also carries a circuit cost — it is a proof-of-inference trace
+   bound to the token — so it answers `Unmeasured` too. An earlier revision of
+   this mission said it "either omits the trait or answers `None`; both are
+   truthful"; that is wrong, and the reasoning is recorded under
+   §Implementation notes. `None` would only be truthful of a strategy carrying
+   no proof.
 
    Register `in_boundary_execution` in this phase once its profile is measured
    and its relation is verified against the trace the boundary actually
@@ -114,18 +120,19 @@ reference strategies plus a fixture that lets determinism be measured at all.
 - [x] Boot refuses an unresolvable strategy id, a missing payload kind, an
       unmeasured cost, and an exceeded budget — each naming what was missing
 - [x] The producing-side branch does not consume the verification-side gate
-- [ ] The registration host is a binary or node crate, not core
-- [ ] Strategy crates are linked from the host
+- [x] The registration host is a binary or node crate, not core
+- [x] Strategy crates are linked from the host
 - [ ] `in_boundary_execution` is registered with the profile measured in this
       phase, and `root_secret_knowledge` implements `AttestationAdmission`
       answering `CostFigure::Unmeasured` rather than `None`
-- [ ] `root_secret_knowledge` ships unregistered
-- [ ] Neither reference strategy declares payload kinds
-- [ ] A second implementation of one relation exists as a fixture
+- [x] `root_secret_knowledge` ships unregistered
+- [x] Neither reference strategy declares payload kinds
+- [x] A second implementation of one relation exists as a fixture
 - [ ] A node accepting no attestations **starts and advertises an empty
       acceptance set**. Refusing to start is not the behaviour: running a node
       that verifies nothing is a permitted operator choice, and the mitigation
       is that it is visible rather than silent, not that it is impossible
+- [x] Back-compat corpus re-verified through the dispatch, not just as bytes
 - [x] The dispatch is reachable from the wallet's verification path, not only
       from its own tests: `VerifyContext` gains the registry and acceptance-set
       slots and `VerifyError` gains the attestation reason, so an attested token
@@ -220,11 +227,11 @@ traffic.
 
 #
 
-## Implementation notes (Phase 2, part 1)
+## Implementation notes (Phase 2)
 
-Landed the dispatch, boot validation, the operator policy and acceptance-set
-types, and the production wiring. The strategy crates and the determinism
-fixture are still open — see below.
+Landed: the dispatch, boot validation, the operator policy and acceptance-set
+types, the production wiring, both strategy crates, the registration host, the
+TV16 determinism fixture, and the back-compat corpus re-verification.
 
 **The registry was changed to store the full `Registration`, not a bare
 strategy.** Phase 1 registered `Arc<dyn AttestationStrategy>`, which left the
@@ -278,11 +285,92 @@ the same trait objects, so:
 
 Mission D's dependency-removal work is unaffected and still outstanding.
 
+### `in_boundary_execution` is NOT registered — the profile cannot be measured
+
+The RFC makes registration conditional on two preconditions, "the profile
+measured in this phase, and the relation verified against the trace the boundary
+actually produces". **Neither holds, and the first one cannot be discharged by
+any amount of work in this phase.**
+
+The relation is RFC-0630's proof-of-inference trace. Folding that trace to a
+commitment is a Poseidon fold over felt252, performed in Cairo by
+`verify_inference_fold_flat`. There is **no host-side Rust implementation**:
+`derive_trace_hash` and `derive_step_hash` are named in `octo-cap-zk`'s
+documentation but were never written — mission 0958-a AC-6 records this as a
+deferred disclosure, deferred to 0958-b. The STARK prover is likewise not
+reachable: `prove_batch_signature` returns `ProverError::Internal("full path
+unimplemented")`.
+
+So there is no trace to verify against and no program on which to measure a
+CASM figure. Writing a host-side Poseidon that must agree bit-for-bit with
+corelib Poseidon across every node in the fleet is not something to improvise
+while landing a dispatch, and inventing a cheaper relation to have something to
+measure would be worse: it would register a strategy that establishes a
+different fact from the one the RFC names.
+
+The strategy therefore ships **unregistered**, and answers
+`CostFigure::Unmeasured` — never `None`. It is a proof-bearing crate, so `None`
+would assert it carries no circuit cost and would skip both budget gates. An
+RFC-range id with no registry entry, named in an acceptance set, refuses boot as
+unresolvable. That is the fail-closed behaviour the RFC provides for exactly
+this case, not a hole in it.
+
+**The mission text said `octo-cap-poi` "either omits the trait or answers
+`None`; both are truthful". That is wrong** and was corrected during
+implementation. The truthfulness of `None` rests on the crate carrying no
+proof, and this crate carries one. The RFC's own §Reference Strategies states
+the circuit cost is "unmeasured — Phase 2", and §Performance Targets names
+"unmeasured" as the correct entry until a figure is measured on the real
+program.
+
+### The determinism fixture found two real bugs
+
+TV16 requires two _independently built_ implementations of **one** relation. The
+fixture re-derives `root_secret_knowledge`'s relation from the specification
+rather than delegating to it, so agreement means something. Writing it caught
+two defects that no single-implementation test could have found:
+
+1. **The fixture invented a domain separator.** RFC-0973 §Root-Secret Binding
+   states the relation as `BLAKE3(s) == macaroon.root_secret_hash` and says
+   explicitly that the binding "needs no new commitment and no second hash
+   primitive". A separator in the fixture made it a _different_ relation, and the
+   two disagreed on a witness that was in fact valid. Removed.
+
+2. **`root_secret_knowledge` never consulted `PolicySource`.** The dispatch
+   already gates the acceptance set at step 2, so this was not a hole in the
+   dispatch — but it made the two reference strategies behave differently under
+   the same context, which is precisely the divergence TV16 exists to detect. It
+   surfaced as a test failure rather than as a code review finding. The strategy
+   now consults policy and may only ever refuse, matching
+   `in_boundary_execution`.
+
+Both are regressions the fixture now prevents.
+
+### The fixture lives in the wallet's test surface, not in a strategy crate
+
+It depends on `octo-cap-zk`, which the wallet's library must not depend on —
+that edge is exactly what mission D removes from the library, and re-adding it
+as a normal dependency to host a test fixture would undo Phase 5's work. It is a
+`dev-dependency` instead, which is the one Layer-E-to-Layer-B-by-test direction
+mission D's lint must permit.
+
+The fixture registers under a **user-range id**, so it can never be configured
+into an operator's acceptance set by naming an RFC-allocated id.
+
+### Back-compat corpus re-verified as behaviour, not bytes
+
+The base mission froze the corpus and pinned its canonical bytes. Re-running
+those byte assertions here would prove nothing new — this phase touches
+`Macaroon`, so what needed re-verifying is that a pre-RFC capability still
+**verifies**, end to end, through the new dispatch. The corpus is run across
+three context shapes, including one where the operator's acceptance set names an
+unrelated strategy: the shape an operator actually runs. A dispatch that
+consulted the acceptance set on the unattested branch would refuse these, and a
+byte-only test would pass regardless.
+
 ### Still open in this mission
 
-- The `octo-cap-poi` crate. `root_secret_knowledge` is landed in
-  `octo-cap-zk` and ships unregistered, awaiting mission B
-- The determinism fixture, a second implementation of one relation
-- The registration host in `octo-wallet-node` and the strategy links it carries
-- `in_boundary_execution`'s measured profile
-- The back-compat corpus re-verification
+- `in_boundary_execution`'s measured profile and its registration. Both are
+  blocked on a host-side PoI fold and a reachable prover, neither of which this
+  phase can produce. The RFC assigns the measurement to Phase 2; it cannot be
+  discharged until mission 0973-v36-c builds the real prover path.

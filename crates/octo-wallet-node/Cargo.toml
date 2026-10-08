@@ -48,6 +48,17 @@ serde_json = "1"
 # Mission B (RFC-0960 §2.5): PaymentEventProducer lives at Layer C
 # (octo-wallet-node) and depends on Layer B substrate crate (octo-vault).
 octo-vault = { path = "../octo-vault" }
+# Layer E attestation strategy crates (RFC-0973 §Registration Host).
+#
+# These two edges are the entire point of the host. The registry compares an
+# RFC-range id's owner against a claimant the host observes at link time, so
+# registration is not performable without a crate that actually links the
+# strategies — and it must not be a Layer-B core crate, which would invert the
+# dependency direction the layer model forbids (RFC-0973 Lifecycle
+# Requirement 8). `octo-cap-poi` is the only strategy linked here today;
+# `root_secret_knowledge` in `octo-cap-zk` ships unregistered, and linking a
+# crate that registers nothing would not make it reachable.
+octo-cap-poi = { path = "../octo-cap-poi" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

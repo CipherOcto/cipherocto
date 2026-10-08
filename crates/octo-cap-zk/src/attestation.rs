@@ -48,6 +48,23 @@ impl AttestationStrategy for RootSecretKnowledge {
         &self,
         ctx: &AttestationVerifyCtx<'_>,
     ) -> Result<AttestationOutcome, AttestationError> {
+        // Operator policy is consulted before the relation is evaluated, and
+        // may only ever cause a refusal. The dispatch already gates the
+        // acceptance set at step 2, so this is not the only place the
+        // acceptance set is applied — it is the place a strategy that *has* a
+        // policy opinion gets to express one.
+        //
+        // `in_boundary_execution` consults policy the same way, and the two
+        // must: TV16 compares two implementations of one relation over the
+        // same context, so a posture difference here would surface as a
+        // determinism failure rather than as the inconsistency it is.
+        if !ctx.policy.accepts(&self.type_id()) {
+            return Err(AttestationError::StrategyRefused {
+                reason: "operator policy does not accept this attestation".to_owned(),
+            });
+        }
+        ctx.policy.validate(ctx)?;
+
         // The payload is the witness `s`. Its length is checked before hashing
         // so an arbitrary-length payload cannot be fed to the hasher directly.
         let witness = &ctx.envelope.payload;
@@ -176,6 +193,54 @@ mod tests {
                 .casm_cost_hint_words,
             CostFigure::Unmeasured
         );
+    }
+
+    /// A policy refusal must be an error, never an outcome a caller could read
+    /// as acceptance. The witness here is genuinely valid, so a strategy that
+    /// consulted policy only after evaluating the relation — or not at all —
+    /// would return `Satisfied`.
+    #[test]
+    fn a_policy_refusal_is_an_error_even_when_the_relation_holds() {
+        struct Refuse;
+        impl PolicySource for Refuse {
+            fn accepts(&self, _t: &AttestationTypeId) -> bool {
+                false
+            }
+            fn validate(&self, _c: &AttestationVerifyCtx<'_>) -> Result<(), AttestationError> {
+                Ok(())
+            }
+        }
+
+        let secret = [42u8; 32];
+        let declared = *blake3::hash(&secret).as_bytes();
+        let mac = Macaroon::mint(&[31u8; 32]).unwrap();
+        let env = AttestationEnvelope::new(ROOT_SECRET_KNOWLEDGE, secret.to_vec());
+        let expect = Expect(declared.to_vec());
+        let ctx = AttestationVerifyCtx {
+            capability: &mac,
+            envelope: &env,
+            expectation: &expect,
+            policy: &Refuse,
+        };
+        match RootSecretKnowledge.verify(&ctx) {
+            Err(AttestationError::StrategyRefused { reason }) => assert!(!reason.is_empty()),
+            other => panic!("a valid witness under a refusing policy must refuse, got {other:?}"),
+        }
+    }
+
+    /// The relation is exactly `BLAKE3(witness) == root_secret_hash`, with no
+    /// domain separator — RFC-0973 §Root-Secret Binding states this binding
+    /// needs no new commitment and no second hash primitive. A separator added
+    /// here would make the macaroon's own `root_secret_hash` no longer satisfy
+    /// it, which would silently refuse every honest witness.
+    #[test]
+    fn the_relation_is_the_raw_blake3_hop_with_no_domain_separator() {
+        let secret = [42u8; 32];
+        let declared = *blake3::hash(&secret).as_bytes();
+        assert!(check(&secret, declared).is_satisfied());
+        // And the declared target is exactly the raw BLAKE3 of the witness,
+        // with nothing prepended.
+        assert_eq!(declared, *blake3::hash(&secret).as_bytes());
     }
 
     #[test]

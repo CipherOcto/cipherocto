@@ -300,6 +300,81 @@ fn hmac_sha256_chain_step(prev: @ByteArray, key: @ByteArray, caveat: @ByteArray)
 // compact CASM), whereas corelib SHA-256 + the helper byte-packing
 // loops were the dominant CASM cost in the R18 fail-closed path.
 
+/// Domain tag separating the MAC use from the commitment use.
+///
+/// Without it, a value produced as a chain MAC could be replayed as a chain
+/// commitment and vice versa. The two consume different attacker-chosen inputs,
+/// so the separation is load-bearing rather than cosmetic.
+pub const MAC_DOMAIN: felt252 = 0x4d41432d434841494e; // b"MAC-CHAIN"
+
+/// Domain-separated keyed MAC over felts, built as a sponge prefix.
+///
+/// `MAC(k, m) = H(MAC_DOMAIN, k, m)`. Absorbing the key as a prefix under a
+/// domain the commitment path never uses is the standard sponge MAC. This is
+/// NOT the same construction as RFC-0957 §Algorithms `blake3::keyed_hash`: the
+/// host must adopt this construction for the chain tip to match, which is a
+/// token-format change and is recorded as such rather than papered over.
+pub fn poseidon_mac(key: felt252, msg: Span<felt252>) -> felt252 {
+    let mut arr: Array<felt252> = array![];
+    arr.append(MAC_DOMAIN);
+    arr.append(key);
+    let len: u32 = msg.len();
+    let mut i: u32 = 0;
+    loop {
+        if i == len {
+            break;
+        }
+        arr.append(*msg.at(i));
+        i += 1;
+    }
+    poseidon_hash_span(arr.span())
+}
+
+/// Step 2 + Step 4: re-derive a caveat chain and bind it to a **verifier
+/// supplied** tip.
+///
+/// The distinction from [`verify_chain`] is the whole point. `verify_chain`
+/// hashes prover-supplied material and the stage asserted only that the result
+/// was non-zero, which constrains nothing — a prover could return any value at
+/// all. Here the expected tip is a public input, so a prover who cannot produce
+/// the chain preimage cannot satisfy the equality.
+///
+/// Returns the derived tip so the caller can bind it further.
+///
+/// # Panics
+/// - `ChainTipMismatch` when the derived tip differs from the public tip.
+pub fn verify_chain_against_tip(
+    root_secret_lo: felt252,
+    root_secret_hi: felt252,
+    caveat_felts: Span<felt252>,
+    expected_tip: felt252,
+) -> felt252 {
+    // chain[0] = H(MAC_DOMAIN, root_secret_lo, root_secret_hi)
+    let mut seed: Array<felt252> = array![];
+    seed.append(MAC_DOMAIN);
+    seed.append(root_secret_lo);
+    seed.append(root_secret_hi);
+    let mut state: felt252 = poseidon_hash_span(seed.span());
+
+    // chain[i+1] = MAC(chain[i], caveat_i) — the macaroon step, in order.
+    let len: u32 = caveat_felts.len();
+    let mut i: u32 = 0;
+    loop {
+        if i == len {
+            break;
+        }
+        let mut msg: Array<felt252> = array![];
+        msg.append(*caveat_felts.at(i));
+        state = poseidon_mac(state, msg.span());
+        i += 1;
+    };
+
+    // The one assertion that carries meaning: a verifier-supplied value, not a
+    // "is it non-zero" tautology.
+    assert!(state == expected_tip, "ChainTipMismatch");
+    state
+}
+
 /// `verify_chain` sub-circuit: Poseidon commitment over
 /// `[secret_lo, secret_hi, caveat_0, caveat_1, ...]`. Both the secret and the
 /// caveat felts are prover-supplied. Returns a single felt252 commitment.
@@ -487,12 +562,21 @@ pub fn stage2_main(
     assert!(priv_witness.caveats_count == caveat_felts.len(), "CaveatChainDepthMismatch");
     assert!(caveat_felts.len() >= CHAIN_DEPTH_MIN, "CaveatChainDepthMismatch");
 
-    // ---------- Sub-circuit 1: Poseidon chain commitment (AC-4 verify_chain) ----------
-    // Now bound to the prover-supplied secret and caveats, not constants.
-    let chain_commitment: felt252 = verify_chain(
-        priv_witness.cap_root_secret_lo, priv_witness.cap_root_secret_hi, caveat_felts,
+    // ---------- Sub-circuit 1: chain re-derivation (RFC-0958 step 2) ----------
+    // Now an actual MAC chain bound to a VERIFIER-SUPPLIED tip.
+    //
+    // This replaces the previous `verify_chain` commitment plus a
+    // `!= 0` assertion. That assertion could not fail, so it constrained
+    // nothing: a prover could satisfy it with any non-zero value and no
+    // relation to the macaroon was checked. Here the derived tip must equal
+    // `cap_root_hash`, which the verifier supplies.
+    let chain_tip: felt252 = verify_chain_against_tip(
+        priv_witness.cap_root_secret_lo,
+        priv_witness.cap_root_secret_hi,
+        caveat_felts,
+        pub_inputs.cap_root_hash_lo,
     );
-    assert!(chain_commitment != 0, "ChainCommitmentZero");
+    assert!(chain_tip != 0, "ChainCommitmentZero");
 
     // ---------- Sub-circuit 2: Ed25519 holder-sig (AC-4 verify_holder_sig) ----------
     // Bind the public inputs the holder signature covers. RFC 8032 verification

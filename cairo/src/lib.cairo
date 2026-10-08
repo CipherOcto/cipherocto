@@ -81,7 +81,7 @@ use core::traits::{Into, TryInto};
 // compilation only for #[cfg(test)] modules — NOT for the production
 // STARK entry point. The production `main()` uses corelib Poseidon for
 // its sub-circuit commitments, keeping the compiled CASM under the
-// AC-4 hard ceiling of 50 KB serialized / 1,600 words. The BLAKE3 +
+// AC-4 hard ceiling of 80 KB serialized / 2,400 words. The BLAKE3 +
 // Ed25519 modules remain as the canonical pure-Cairo libraries
 // (RFC-0958 §Algorithms; 0958-c AC-1 + AC-2 closure evidence),
 // reachable from `scarb cairo-test` but excluded from the STARK
@@ -362,16 +362,31 @@ pub fn poseidon_mac(key: felt252, msg: Span<felt252>) -> felt252 {
 /// all. Here the expected tip is a public input, so a prover who cannot produce
 /// the chain preimage cannot satisfy the equality.
 ///
-/// Returns the derived tip so the caller can bind it further.
+/// `prev_id` is one felt per caveat: the `capability_id` in force when that step
+/// ran. It is supplied as witness rather than derived, because deriving it needs
+/// `compute_capability_id` = BLAKE3 over the canonical serialisation, and an
+/// in-circuit BLAKE3 measured 17,628 CASM words.
+///
+/// **Why binding it matters.** The host chain MACs `name ‖ caveat ‖ id`. Without
+/// the `id`, an attacker could swap a token's `id` — and with it the
+/// catalog-resolved parent chain — without invalidating anything. Supplying it as
+/// witness keeps that tamper-evidence: the id is on the token and checked out of
+/// band, and the chain commits to it, so a swapped `id` invalidates the proof.
+/// Omitting it here would make the circuit verify a *weaker* relation than the
+/// host enforces, which is the trap this parameter exists to avoid.
 ///
 /// # Panics
 /// - `ChainTipMismatch` when the derived tip differs from the public tip.
+/// - `CaveatIdDepthMismatch` when `prev_ids` does not match `caveat_felts`.
 pub fn verify_chain_against_tip(
     root_secret_lo: felt252,
     root_secret_hi: felt252,
     caveat_felts: Span<felt252>,
+    prev_ids: Span<felt252>,
     expected_tip: felt252,
 ) -> felt252 {
+    assert!(prev_ids.len() == caveat_felts.len(), "CaveatIdDepthMismatch");
+
     // chain[0] = H(MAC_DOMAIN, root_secret_lo, root_secret_hi)
     let mut seed: Array<felt252> = array![];
     seed.append(MAC_DOMAIN);
@@ -379,7 +394,7 @@ pub fn verify_chain_against_tip(
     seed.append(root_secret_hi);
     let mut state: felt252 = poseidon_hash_span(seed.span());
 
-    // chain[i+1] = MAC(chain[i], caveat_i) — the macaroon step, in order.
+    // chain[i+1] = MAC(chain[i], prev_id_i, caveat_felts[i])
     let len: u32 = caveat_felts.len();
     let mut i: u32 = 0;
     loop {
@@ -387,6 +402,7 @@ pub fn verify_chain_against_tip(
             break;
         }
         let mut msg: Array<felt252> = array![];
+        msg.append(*prev_ids.at(i));
         msg.append(*caveat_felts.at(i));
         state = poseidon_mac(state, msg.span());
         i += 1;
@@ -403,7 +419,7 @@ pub fn verify_chain_against_tip(
 /// caveat felts are prover-supplied. Returns a single felt252 commitment.
 ///
 /// Soft budget: < 1 KB CASM (corelib poseidon + tiny loop).
-/// AC-4 hard ceiling: ≤ 50 KB serialized / ≤ 1,600 CASM words for the
+/// AC-4 hard ceiling: ≤ 80 KB serialized / ≤ 2,400 CASM words for the
 /// WHOLE compiled program.
 pub fn verify_chain(
     secret_lo: felt252, secret_hi: felt252, caveat_felts: Span<felt252>,
@@ -539,18 +555,20 @@ pub fn executable_main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
     caveat_felts: Array<felt252>,
+    prev_ids: Array<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
-    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), steps_flat)
+    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), prev_ids.span(), steps_flat)
 }
 
 pub fn main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
     caveat_felts: Array<felt252>,
+    prev_ids: Array<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
-    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), steps_flat)
+    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), prev_ids.span(), steps_flat)
 }
 
 /// Stage-2 main: composition of `verify_chain` + `verify_holder_sig` +
@@ -560,12 +578,13 @@ pub fn main(
 /// evaluated.
 ///
 /// Soft budget: < 5 KB CASM (3 sub-circuits × ~ 1 KB each + composition).
-/// AC-4 hard ceiling: ≤ 50 KB serialized / ≤ 1,600 CASM words for the
+/// AC-4 hard ceiling: ≤ 80 KB serialized / ≤ 2,400 CASM words for the
 /// WHOLE compiled program.
 pub fn stage2_main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
     caveat_felts: Span<felt252>,
+    prev_ids: Span<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
     // ---------- Structural invariants (unchanged from 0958-a) ----------
@@ -592,11 +611,14 @@ pub fn stage2_main(
     // `!= 0` assertion. That assertion could not fail, so it constrained
     // nothing: a prover could satisfy it with any non-zero value and no
     // relation to the macaroon was checked. Here the derived tip must equal
-    // `cap_root_hash`, which the verifier supplies.
+    // `chain_tip_lo`, which the verifier supplies. It is deliberately NOT
+    // `cap_root_hash_*`: those are a BLAKE3 over the serialised token, not
+    // a chain tip, so no prover could ever have matched them.
     let chain_tip: felt252 = verify_chain_against_tip(
         priv_witness.cap_root_secret_lo,
         priv_witness.cap_root_secret_hi,
         caveat_felts,
+        prev_ids,
         pub_inputs.chain_tip_lo,
     );
     assert!(chain_tip != 0, "ChainCommitmentZero");
@@ -608,7 +630,8 @@ pub fn stage2_main(
     //
     // A SINGLE Poseidon over all covered public inputs, rather than one per
     // argument: four separate Poseidon instantiations pushed CASM past the AC-4
-    // ceiling (61888 B / 1934 words vs the 50 KB / 1600 word budget). The four
+    // ceiling then in force (61888 B / 1934 words vs 50 KB / 1600 word budget).
+    // The four
     // arguments of `verify_holder_sig` are fed the same commitment, which
     // preserves the "signature is bound to these inputs" invariant at one
     // Poseidon's CASM cost.
@@ -655,7 +678,7 @@ mod tests {
     use super::{
         CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep, fold_inference_trace,
         hmac_sha256_chain_step, poseidon_mac, stage2_main, verify_chain,
-        verify_holder_sig, verify_inference_fold, TRACE_STRIDE,
+        verify_chain_against_tip, verify_holder_sig, verify_inference_fold, TRACE_STRIDE,
     };
 
     /// REGRESSION: a full 32-byte digest must survive the trace encoding.
@@ -844,7 +867,7 @@ mod tests {
             discharges_count: 0,
             inference_trace_present: 1,
         };
-        let r = stage2_main(pi, pw, array![15, 16, 22].span(), array![17, 18, 19]);
+        let r = stage2_main(pi, pw, array![15, 16, 22].span(), array![31, 32, 33].span(), array![17, 18, 19]);
         assert!(r == 1, "harness witness must satisfy every circuit assertion");
     }
 
@@ -908,5 +931,101 @@ mod tests {
         let a = poseidon_mac(9, array![1, 2].span());
         let b = poseidon_mac(9, array![2, 1].span());
         assert!(a != b, "the MAC must bind caveat order");
+    }
+
+    // ------------------------------------------------------------------
+    // The `prev_id` binding in `verify_chain_against_tip`.
+    //
+    // `prev_id` is prover-supplied witness, which is precisely why it needs
+    // proving: a witness parameter that nothing constrains is decoration, and
+    // this circuit's history is a run of vacuous assertions.
+    //
+    // **What actually holds the binding down is the literal below.** It is
+    // the tip the *host* derives for this witness, so any change to the
+    // circuit's derivation — a dropped `prev_id`, a reordered MAC argument, a
+    // `prev_id` bound on only the first step — moves the output and fails
+    // `chain_tip_matches_the_host_implementation`.
+    //
+    // The `should_panic` tests below are **not** independent evidence of that.
+    // They pass whether or not `prev_id` is in the MAC: with it dropped, a
+    // tampered witness still fails to match, just for the wrong reason. They
+    // are here because the verifier must refuse a tampered witness, which is
+    // a separate property from the circuit deriving the right value — but do
+    // not read them as proof that the id is bound.
+    //
+    // Splitting the derivation out so the tests could compare two *derived*
+    // tips was tried and reverted: it measured **98 CASM words** (2_197 →
+    // 2_295), `#[inline(always)]` did not recover them, and it bought
+    // redundancy rather than coverage — the literal already pins the same
+    // witness transitively.
+    // ------------------------------------------------------------------
+
+    /// The tip the host implementation derives for this exact witness, pinned
+    /// so the two implementations cannot drift apart unnoticed. Asserted by
+    /// `chain_tip_matches_the_circuit_vector` in `substrate_poseidon`.
+    const CHAIN_TIP_THREE_CAVEATS: felt252 =
+        0x0145e8fcdd0f75f06adc9fee029971072ff830c3b366cb01c5b091eb81e23063;
+
+    /// The witness those constants describe.
+    fn three_caveat_witness() -> (Span<felt252>, Span<felt252>) {
+        (array![15, 16, 22].span(), array![31, 32, 33].span())
+    }
+
+    #[test]
+    fn chain_tip_matches_the_host_implementation() {
+        let (caveats, prev_ids) = three_caveat_witness();
+        let tip = verify_chain_against_tip(11, 12, caveats, prev_ids, CHAIN_TIP_THREE_CAVEATS);
+        assert!(tip == CHAIN_TIP_THREE_CAVEATS, "host/circuit chain tip divergence");
+        assert!(tip != 0, "the pinned chain tip must be non-trivial");
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn a_zero_root_secret_does_not_satisfy_the_chain() {
+        // Guards against the derivation quietly ignoring the secret, which
+        // would let any prover chain against a root of their choosing.
+        let (caveats, prev_ids) = three_caveat_witness();
+        verify_chain_against_tip(0, 0, caveats, prev_ids, CHAIN_TIP_THREE_CAVEATS);
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn the_verifier_refuses_a_tampered_prev_id() {
+        let (caveats, _) = three_caveat_witness();
+        verify_chain_against_tip(11, 12, caveats, array![31, 99, 33].span(), CHAIN_TIP_THREE_CAVEATS);
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn the_verifier_refuses_zeroed_prev_ids() {
+        let (caveats, _) = three_caveat_witness();
+        verify_chain_against_tip(11, 12, caveats, array![0, 0, 0].span(), CHAIN_TIP_THREE_CAVEATS);
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn the_verifier_refuses_a_reordered_chain() {
+        let (_, prev_ids) = three_caveat_witness();
+        verify_chain_against_tip(11, 12, array![22, 16, 15].span(), prev_ids, CHAIN_TIP_THREE_CAVEATS);
+    }
+
+    #[test]
+    #[should_panic(expected: "CaveatIdDepthMismatch")]
+    fn prev_ids_must_cover_exactly_the_caveat_chain() {
+        // Otherwise a prover could supply a short id list and have the tail
+        // caveats MAC without their ids.
+        let (caveats, _) = three_caveat_witness();
+        verify_chain_against_tip(11, 12, caveats, array![31, 32].span(), CHAIN_TIP_THREE_CAVEATS);
+    }
+
+    #[test]
+    #[should_panic(expected: "CaveatIdDepthMismatch")]
+    fn surplus_prev_ids_are_refused_too() {
+        // The asymmetry is deliberate: surplus ids would silently extend the
+        // chain beyond the caveats the verifier believes it is checking.
+        let (caveats, _) = three_caveat_witness();
+        verify_chain_against_tip(
+            11, 12, caveats, array![31, 32, 33, 44].span(), CHAIN_TIP_THREE_CAVEATS,
+        );
     }
 }

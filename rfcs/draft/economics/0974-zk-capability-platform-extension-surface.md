@@ -593,38 +593,62 @@ The host chain step MACs `name ‖ canonical_ser(caveat) ‖ capability_id`. The
 token's `id` — and with it the catalog-resolved parent chain — without
 invalidating the signature. That is tamper-evidence, not decoration.
 
-The circuit chain step MACs the caveat felt alone. It cannot include the
-`capability_id`, because `compute_capability_id` is
+The circuit chain step MACed the caveat felt alone. It cannot derive the
+`capability_id` itself, because `compute_capability_id` is
 `BLAKE3(CAPABILITY_ID_DOMAIN ‖ canonical_ser_unsigned(macaroon))` — and an
 in-circuit BLAKE3 measured **17,628 CASM words**, which is the cost wall this
 whole line of work exists to avoid.
 
 So the three options are:
 
-| Option                                     | What it costs                                                                                                                                                                 |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Host adopts the circuit's construction     | **Drops the `id` binding.** Fails closed today, but reopens id-swap. Not acceptable.                                                                                          |
-| Circuit also derives the `id`              | Needs in-circuit BLAKE3. 17,628 words. Unaffordable.                                                                                                                          |
-| Circuit MACs `prev_id` supplied as witness | Viable. The `id` is on the token and verified out of band; the chain binds it so a swapped `id` invalidates the proof. Costs one extra felt per step, and needs re-measuring. |
+| Option                                     | What it costs                                                                                                                                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host adopts the circuit's construction     | **Drops the `id` binding.** Fails closed today, but reopens id-swap. Not acceptable.                                                                                               |
+| Circuit also derives the `id`              | Needs in-circuit BLAKE3. 17,628 words. Unaffordable.                                                                                                                               |
+| Circuit MACs `prev_id` supplied as witness | **Taken.** The `id` is on the token and verified out of band; the chain binds it so a swapped `id` invalidates the proof. One extra felt per step. Measured at **+15 CASM words**. |
 
-The third is the intended path, and it is why the swap is sequenced rather than
-attempted. Its cost is unmeasured, and claiming otherwise would be exactly the
-kind of estimate-by-analogy this RFC keeps rejecting.
+The third option is now built and measured. `verify_chain_against_tip` takes
+`prev_ids: Span<felt252>` and MACs `chain[i+1] = MAC(chain[i], prev_id_i,
+caveat_felt_i)`, refusing a `prev_ids` that does not cover the chain exactly
+(`CaveatIdDepthMismatch`, on both sides of the boundary). The whole program went
+from 2,182 to **2,197 CASM words**; the AC-4 ceiling moved 2,200 → 2,400 words
+and 75 → 80 KB alongside it, both increases now on record in
+`crates/zk-circuit/tests/casm_snapshot.rs`.
+
+Host and circuit are pinned to one shared chain tip, asserted as a literal on
+both sides. Pinning the tip rather than the MAC is deliberate: MAC-level parity
+would still pass if the loop drifted — a different seed, a dropped `prev_id`, a
+reordered MAC argument — and each of those makes every circuit proof fail against
+a real token while both implementations keep running and producing plausible
+felts.
+
+**What holds the `prev_id` binding down is that literal, not the tamper tests.**
+The `should_panic` tamper cases pass whether or not `prev_id` is in the MAC —
+with it dropped, a tampered witness still fails to match, just for the wrong
+reason. This was verified by mutation rather than assumed: dropping `prev_id`
+from the MAC and re-running the suite left every tamper test green. Splitting the
+derivation out so tests could compare two _derived_ tips was tried and reverted;
+it measured **98 CASM words** (2,197 → 2,295), `#[inline(always)]` recovered none
+of them, and it bought redundancy rather than coverage.
 
 A fourth option — running _two_ chains, the BLAKE3 credential chain alongside a
 Poseidon ZK chain — is rejected: it is the parallel abstraction the crate
 principles forbid, and it would give every token two chain values to keep in
 agreement forever.
 
+Validation for the `prev_id` change: 89 Cairo tests (7 new, 2 of them verified
+against a deliberate mutation), 390 `octo-cap-macaroon` lib tests (4 new), 12
+CASM snapshot tests, clippy clean with `-D warnings` on all targets and all
+features.
+
 ### Remaining gaps, stated plainly
 
-- **Host chain swap to Poseidon** — blocks steps 2 and 4 together.
+- **Host chain swap to Poseidon** — blocks steps 2 and 4 together. The circuit
+  side is unblocked: it now enforces the same `name ‖ caveat ‖ id` construction
+  the host does, so adopting this construction on the host no longer drops
+  tamper-evidence. The remaining work is the three HMAC-BLAKE3 call sites in
+  `macaroon.rs` and the token-format consequence of it.
 - **RFC-0958 step 1** — real SHA-512 in-circuit, or a STARK-friendly curve.
-- **Byte→felt packing convention for arbitrary-length caveat messages.** The
-  16-byte `_lo`/`_hi` convention is established for 32-byte values and proven
-  here; packing a _variable-length_ caveat message needs its own convention (31
-  bytes per felt, not 32, or roughly half of all inputs exceed the field prime)
-  and its own parity vectors. Deliberately not guessed.
 - **`stwo-sys` executable fixture** — stale by one slot after the `chain_tip_lo`
   ABI change; it cannot be regenerated here because that crate does not compile in
   this environment (pre-existing nightly/rustc mismatch).
@@ -891,12 +915,18 @@ The correct next step is to measure a MAC.
       tip, replacing an assertion that could not fail.
 - [x] Chain re-derivation measured and compared against the native alternative.
 - [x] Host/circuit MAC parity proven on shared vectors, plus order sensitivity.
+- [x] Host/circuit **chain** parity pinned to one shared tip literal, which is
+      what holds the derivation down (MAC-level parity would survive a drifted
+      loop).
 - [x] RFC-0958 step 1: the in-circuit Ed25519 verifier's non-conformance found
       and pinned, and the module kept out of the production path.
+- [x] Circuit MACs `prev_id` as witness, so it enforces the same
+      `name ‖ caveat ‖ id` construction the host does. Measured at +15 words;
+      ceiling moved to 2,400 / 80 KB with the reason recorded.
 - [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
-      **Not mechanical** — see §Why the host chain swap is not a mechanical
-      change. The circuit must MAC `prev_id` as witness before the host can adopt
-      the same construction without dropping tamper-evidence.
+      The circuit side no longer blocks it — see §Why the host chain swap is not
+      a mechanical change. What remains is the three HMAC-BLAKE3 call sites in
+      `macaroon.rs` and the token-format change they imply.
 - [x] Byte-to-felt packing convention for variable-length caveat messages:
       31 bytes per felt, length-prefixed, with round-trip, injectivity and
       range properties proven by test.

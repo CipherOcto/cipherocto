@@ -794,10 +794,10 @@ fn ac9_public_input_mismatch_detected_under_slot_binding_drift() {
 //      combinations of sub-proof validity (loaded by
 //      `_fixture_baseline` as part of the test fixture catalog).
 //
-// Note: the AC-4 hard size gates (≤50 KB serialized / ≤1,600 CASM
+// Note: the AC-4 hard size gates (≤80 KB serialized / ≤2,400 CASM
 // words) are tested in crates/zk-circuit/tests/casm_snapshot.rs
-// (currently fail-closed — see `casm_bytes_under_50kb_after_stage2_split`
-// and `casm_words_under_1600_after_stage2`); TV9 exercises only the
+// (see `casm_bytes_under_80kb_after_stage2_split`
+// and `casm_words_under_2400_after_stage2`); TV9 exercises only the
 // composition surface, not the size budget.
 // ============================================================
 #[test]

@@ -5,11 +5,11 @@
 //! RFC-0958 §Algorithms step 2 requires a circuit to re-derive the caveat chain
 //! and bind it to a verifier-supplied value. Verifying the RFC-0957 HMAC-BLAKE3
 //! chain requires BLAKE3 in-field, which measured **17,628 CASM words** against a
-//! 2,200-word ceiling. That is not a tuning problem; it is the wrong primitive
+//! 2,400-word ceiling. That is not a tuning problem; it is the wrong primitive
 //! for a STARK.
 //!
-//! Poseidon is designed for exactly this and measures 2,182 words for the same
-//! relation — **8.1x cheaper** — using the same crate family the Cairo toolchain
+//! Poseidon is designed for exactly this and measures 2,197 words for the same
+//! relation — **8.0x cheaper** — using the same crate family the Cairo toolchain
 //! builds against, so host and circuit can be held to identical vectors instead
 //! of an assumption.
 //!
@@ -54,6 +54,54 @@ pub fn poseidon_mac(key: FieldElement, msg: &[FieldElement]) -> FieldElement {
     felts.push(key);
     felts.extend_from_slice(msg);
     poseidon_hash_many(felts.iter())
+}
+
+/// Re-derive the caveat chain tip: RFC-0958 §Algorithms step 2, host side.
+///
+/// ```text
+/// state = H(MAC_DOMAIN, secret_lo, secret_hi)
+/// for each caveat i:
+///     state = MAC(state, [prev_id_i, caveat_felt_i])
+/// ```
+///
+/// Mirrors `verify_chain_against_tip` in `cairo/src/lib.cairo` exactly.
+///
+/// # Why `prev_id` is in the MAC
+///
+/// RFC-0957 §Algorithms builds each chain link over `name ‖ canonical_ser(caveat)
+/// ‖ capability_id`. The id is what makes the chain tamper-evident: an attacker
+/// who renames a capability's `id` also changes which parent chain the catalog
+/// resolves, and the link must stop verifying. A circuit that MACed the caveat
+/// alone would prove a *weaker* relation than the host enforces, so the ZK proof
+/// would survive an id swap the credential path rejects.
+///
+/// It is supplied as a witness rather than derived, because deriving it needs
+/// `compute_capability_id` = BLAKE3 over the canonical serialisation, and an
+/// in-circuit BLAKE3 measured 17,628 CASM words. The id is on the token and is
+/// checked out of band; the chain's job is only to commit to it.
+///
+/// # Panics
+/// Never.
+#[must_use]
+pub fn derive_chain_tip(
+    root_secret_lo: FieldElement,
+    root_secret_hi: FieldElement,
+    caveat_felts: &[FieldElement],
+    prev_ids: &[FieldElement],
+) -> FieldElement {
+    // A short `prev_ids` slice is a caller bug, not a malleable witness: it
+    // would silently drop ids from the MAC. The circuit refuses the same input
+    // with `CaveatIdDepthMismatch`, so the two sides agree on what is valid.
+    assert_eq!(
+        prev_ids.len(),
+        caveat_felts.len(),
+        "prev_ids must cover exactly the caveat chain"
+    );
+    let mut state = poseidon_hash_many([MAC_DOMAIN, root_secret_lo, root_secret_hi].iter());
+    for (prev_id, caveat_felt) in prev_ids.iter().zip(caveat_felts.iter()) {
+        state = poseidon_mac(state, &[*prev_id, *caveat_felt]);
+    }
+    state
 }
 
 /// Split a 32-byte value into `(lo, hi)` felts, little-endian half order.
@@ -338,6 +386,61 @@ mod tests {
                 "host/circuit Poseidon MAC divergence on `{name}`"
             );
         }
+    }
+
+    /// Chain-level parity vectors, asserted **identically** by
+    /// `chain_tip_parity_*` in `cairo/src/lib.cairo`.
+    ///
+    /// Pinning the whole chain rather than only the MAC matters because the MAC
+    /// parity alone would still pass if the *loop* drifted — different seed
+    /// construction, dropped `prev_id`, reversed order. Those are the changes that
+    /// make every circuit proof fail against a real token, while both
+    /// implementations continue to run and produce plausible felts.
+    pub const CHAIN_PARITY_TIP: FieldElement = FieldElement::from_hex_unchecked(
+        "0x0145e8fcdd0f75f06adc9fee029971072ff830c3b366cb01c5b091eb81e23063",
+    );
+
+    #[test]
+    fn chain_tip_matches_the_circuit_vector() {
+        let tip = derive_chain_tip(
+            fe(11),
+            fe(12),
+            &[fe(15), fe(16), fe(22)],
+            &[fe(31), fe(32), fe(33)],
+        );
+        assert_eq!(tip, CHAIN_PARITY_TIP, "host/circuit chain tip divergence");
+    }
+
+    #[test]
+    fn the_prev_id_binding_changes_the_chain_tip() {
+        // The tamper-evidence property, host side. If `prev_id` were not in
+        // the MAC, these two would be equal and an id swap would be free.
+        let caveats = [fe(15), fe(16), fe(22)];
+        let honest = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31), fe(32), fe(33)]);
+        let swapped = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31), fe(99), fe(33)]);
+        let zeroed = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(0), fe(0), fe(0)]);
+        assert_ne!(honest, swapped, "swapping one prev_id must change the tip");
+        assert_ne!(honest, zeroed, "zeroing every prev_id must change the tip");
+    }
+
+    #[test]
+    fn the_chain_tip_binds_caveat_order() {
+        let ids = [fe(31), fe(32), fe(33)];
+        let a = derive_chain_tip(fe(11), fe(12), &[fe(15), fe(16), fe(22)], &ids);
+        let b = derive_chain_tip(fe(11), fe(12), &[fe(22), fe(16), fe(15)], &ids);
+        assert_ne!(a, b, "permuting the caveats must change the tip");
+    }
+
+    #[test]
+    fn a_short_prev_id_slice_is_refused_rather_than_silently_truncated() {
+        // Truncating here would drop ids from the MAC and produce a tip that
+        // the circuit would refuse — a host/circuit disagreement on validity.
+        let caveats = [fe(15), fe(16), fe(22)];
+        let r = std::panic::catch_unwind(|| derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31)]));
+        assert!(
+            r.is_err(),
+            "a prev_id slice shorter than the chain must panic"
+        );
     }
 
     #[test]

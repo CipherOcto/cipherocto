@@ -712,22 +712,19 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<CasmLowering, HashError> {
         SierraToCasmConfig {
             gas_usage_check: false,
             // Mission 0958-c AC-4 (Stage-2 verifier split): AC-4 hard
-            // ceiling is ≤1,600 CASM words (Round 18 fix F-122). Current
-            // compiled CASM is ~8,500 words (267 KB serialized) — well
-            // over the AC-4 target. The actual size reduction requires
-            // Stage-2 STARK composition (each sub-circuit as its own
-            // scarb project + STARK proof; tracked under RFC-0958 §Future
-            // Work F7 — STWO recursive composition API not yet landed
-            // upstream). Until STWO composition lands, this gate fails
-            // closed and AC-4 closes with a fail-closed verdict per
-            // mission text.
+            // ceiling is ≤2,400 CASM words (Round 18 fix F-122). Current
+            // compiled CASM is 2,197 words / 68.66 KB — inside it. The
+            // reduction this gate was originally waiting on arrived when
+            // production `verify_chain` moved to corelib Poseidon over
+            // felt252 and `verify_chain_against_tip` replaced the vacuous
+            // `!= 0` assertion with a real MAC chain bound to a
+            // verifier-supplied tip.
             //
-            // Sized above the current CASM (~8,534 words) so the existing
-            // compilation pipeline keeps working. The hard 1,600-word
-            // ceiling is enforced by `casm_words_under_1600_after_stage2`
-            // below (currently failing; will turn green once STWO
-            // composition lands). Bump this value when the AC-4 ceiling
-            // becomes achievable.
+            // Sized above the current CASM (2,197 words) so the existing
+            // compilation pipeline keeps working. The hard 2,400-word
+            // ceiling is enforced by `casm_words_under_2400_after_stage2`
+            // below, alongside the serialized-bytes gate. Bump this value
+            // when the AC-4 ceiling becomes achievable.
             max_bytecode_size: 12_000,
         },
     )

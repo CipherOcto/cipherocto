@@ -160,13 +160,35 @@ pub fn boot_validate(
 
 /// The acceptance set this host advertises.
 ///
-/// Empty today, and empty is a legitimate advertised value rather than a
-/// missing one: an operator running a node that verifies no attestations is a
-/// permitted choice, and the mitigation RFC-0973 specifies is that it is
-/// visible. Returning an empty set from one named function is what makes it
-/// visible; a defaulting call site would hide it.
+/// RFC-0973 Lifecycle Requirement 7: a node announces which attestation types
+/// it will verify, so a peer relying on "this node verifies proofs" can detect
+/// a node that verifies none. An operator downgrade is otherwise invisible to
+/// everyone but the operator.
+///
+/// Delegates to the substrate's shared predicate, so the advertisement and
+/// dispatch step 4 cannot disagree about what this node verifies. Two copies of
+/// that condition would eventually diverge, and a node advertising a strategy
+/// its own dispatch refuses is exactly the downgrade this makes detectable.
+///
+/// An empty result is an advertisement, not an absence — see
+/// [`advertised_acceptance_set`]'s documentation. Running a node that verifies
+/// no attestations is a permitted operator choice; the mitigation is that it is
+/// visible.
 #[must_use]
-pub fn advertised_acceptance_set() -> AcceptanceSet {
+pub fn advertised_acceptance_set(
+    accept_set: &AcceptanceSet,
+    registry: &AttestationRegistry,
+    coverage: &dyn octo_cap_macaroon::attestation::PayloadCoverage,
+) -> AcceptanceSet {
+    octo_cap_macaroon::attestation::advertised_acceptance_set(accept_set, registry, coverage)
+}
+
+/// The acceptance set this host advertises when nothing is configured.
+///
+/// A named function rather than a default at the call site, so "advertises
+/// nothing" is a value a caller had to choose rather than an omission.
+#[must_use]
+pub fn empty_advertised_acceptance_set() -> AcceptanceSet {
     AcceptanceSet::empty()
 }
 
@@ -244,7 +266,7 @@ mod tests {
         let registry = build_registry().expect("an empty registry must build");
         assert!(registry.is_empty());
 
-        let accept_set = advertised_acceptance_set();
+        let accept_set = empty_advertised_acceptance_set();
         assert!(accept_set.is_empty());
 
         let node = Node { headroom: 0 };

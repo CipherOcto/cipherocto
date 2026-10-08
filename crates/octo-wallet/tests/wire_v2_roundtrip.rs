@@ -11,10 +11,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::caveat::Caveat;
+use octo_wallet::capability::CapabilityToken;
 use octo_wallet::capability::{
     deserialize_wire, deserialize_wire_v2, serialize_wire, serialize_wire_v2,
 };
-use octo_wallet::capability::{CapabilityToken, ProofBundle, PublicInputs};
+// RFC-0973 §Phase 5: owned by the Layer-E `octo-cap-zk` crate, not re-exported
+// through the wallet.
+use octo_cap_zk::{ProofBundle, PublicInputs};
 use octo_wallet::identity::IdentityKey;
 
 fn sample_token() -> (CapabilityToken, IdentityKey) {
@@ -87,8 +90,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
         witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
         capability_v2: None,
     };
-    let pb_bytes =
-        octo_wallet::capability::zk_mint::proof_bundle_to_wire(&pb).expect("proof_bundle_to_wire");
+    let pb_bytes = octo_cap_zk::proof_bundle_to_wire(&pb).expect("proof_bundle_to_wire");
 
     let wire_v2 = serialize_wire_v2(&token, Some(&pb_bytes)).expect("v2 serialize");
     let parsed =
@@ -101,8 +103,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
 
     // The extracted bytes are valid: deserialize back to ProofBundle.
     let back_pb: ProofBundle =
-        octo_wallet::capability::zk_mint::proof_bundle_from_wire(&back_bytes)
-            .expect("proof_bundle_from_wire");
+        octo_cap_zk::proof_bundle_from_wire(&back_bytes).expect("proof_bundle_from_wire");
     assert_eq!(back_pb.casm_hash, pb.casm_hash);
     assert_eq!(back_pb.security_bits, pb.security_bits);
     assert_eq!(back_pb.stark_proof, pb.stark_proof);

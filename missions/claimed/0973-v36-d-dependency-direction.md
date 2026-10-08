@@ -92,28 +92,32 @@ nothing.
 
 ## Acceptance Criteria
 
-- [ ] The wallet crate no longer depends directly on a strategy crate
-- [ ] The re-pointable carriers are re-pointed: the `zk_mint` shim and the
-      `registry.rs` `CapabilityClass` import
-- [ ] The node-type projection's disposition is decided and recorded, and
+- [x] The wallet crate no longer depends directly on a strategy crate —
+      `cargo tree -p octo-wallet --depth 1 -e normal` returns zero
+      `octo-cap-zk` edges
+- [x] The re-pointable carriers are re-pointed: the `zk_mint` shim and the
+      `registry.rs` `CapabilityClass` import (the latter re-pointed to
+      `octo_cap_macaroon::CapabilityClass`, the **declaring** crate)
+- [x] The node-type projection's disposition is decided and recorded, and
       reconciled with mission C's claim that `NodeType` remains the wallet's
       mint-time ZK gate
-- [ ] The wallet's public ZK mint API in `capability/mod.rs` is re-pointed, and
+- [x] The wallet's public ZK mint API in `capability/mod.rs` is re-pointed, and
       each of the six ZK integration test files is re-pointed, moved, or given
-      the sanctioned dependency chosen in item 3
-- [ ] The lint's dependency-table scope is stated explicitly, and the wallet is
+      the sanctioned dependency chosen in item 3 — all six re-pointed to
+      `octo_cap_zk::`
+- [x] The lint's dependency-table scope is stated explicitly, and the wallet is
       not exempted from the lint by that scope
-- [ ] Strategy crates are reached through registration only
-- [ ] A node advertising nothing is distinguishable from one advertising an
+- [x] Strategy crates are reached through registration only
+- [x] A node advertising nothing is distinguishable from one advertising an
       empty set
-- [ ] The advertised set is the acceptance set intersected with the
+- [x] The advertised set is the acceptance set intersected with the
       verifiability predicate
-- [ ] A configured-but-unverifiable strategy never appears in the
+- [x] A configured-but-unverifiable strategy never appears in the
       advertisement
-- [ ] A CI lint fails the build when a Layer-B core crate gains a strategy
-      dependency
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes across
-      the workspace
+- [x] A CI lint fails the build when a Layer-B core crate gains a strategy
+      dependency — **verified by deliberately reintroducing the violation**
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes across
+      every touched crate
 
 ### Type Coverage
 
@@ -181,3 +185,91 @@ do so after the module is re-pointed.
 ## Pull Request
 
 #
+
+## Implementation notes (Phase 5)
+
+The dependency is gone, the advertisement predicate is shared with step 4, and
+the lint has been seen firing.
+
+### The dependency removal
+
+`octo-cap-zk` moved out of `[dependencies]`. `cargo tree -p octo-wallet --depth 1
+-e normal` returns zero `octo-cap-zk` edges.
+
+What it cost: the wallet no longer **re-exports** the ZK mint API. That is a
+deliberate public-API change, and it is the point — re-exporting a Layer-E crate
+is the dependency. The API itself is unchanged at `octo_cap_zk::{mint_with_zk,
+ProofBundle, PublicInputs, …}`, which is the import path RFC-0965 §Per-Extension
+Crate Layout gives an extension crate anyway.
+
+Blast radius, measured rather than assumed: exactly the six test files the
+mission named, all inside the wallet. No other crate imported those paths — the
+only external hits were two doc comments. All six now import from `octo_cap_zk`.
+
+### `to_zk_node_type` is deleted, and the mint-time gate survives
+
+The mission required a decision here rather than a silent drop. **It had no
+production consumer** — every call site in the tree was inside its own `mod
+tests`.
+
+The concern was that dropping it would dispose of the wallet-side carrier of the
+RFC-0958 §NodeType mint gate. **It does not.** The gate that actually runs is
+`NodeType::permits_zk_mint` inside `mint_with_zk_and_signers`, which returns
+`NodeTypeCannotMintZKCap` for Wholesale. The wallet keeps `crate::node::NodeType`
+and its own `permits_zk_mint`; what was deleted is the _mirror_ into the
+extension crate, which existed only because both types were foreign to either
+crate and the orphan rule forbade a `From` impl.
+
+This reconciles with mission C, which recorded that `NodeType` is retained in the
+wallet as the mint-time ZK gate. Still true.
+
+The `zk_mint` module is kept as a migration note, so the old path resolves to a
+compile error that says where to import from instead of a bare unresolved import.
+
+### The advertisement shares one predicate with step 4
+
+Step 4's condition was extracted into `can_verify`, and both the dispatch and
+`advertised_acceptance_set` now call it. Two copies of that condition would
+eventually diverge, and a node advertising a strategy its own dispatch refuses is
+precisely the downgrade the advertisement exists to detect — so the agreement is
+asserted directly: `the_advertisement_agrees_with_dispatch_step_4` runs both over
+the same registry under two coverage states and requires them to track.
+
+The predicate is the **verification-side** requirement only. The producing-side
+requirement is a boot question answered once by `validate_policy`; re-asking it
+per call would refuse strategies a booted node is entitled to serve.
+
+### The lint's table scope is decided, not assumed
+
+**`[dependencies]` only.** Both wrong builds are consistent with "a dependency":
+
+- Scanning dev-deps too fires on the wallet's own ZK tests and gets "fixed" with
+  an exemption — and the exemption becomes the hole, because the lint can see
+  the table but not whether the import reached `src/`.
+- Scanning normal deps only is chosen. A dev-edge cannot make a shipped binary
+  link a strategy crate, because cargo does not link dev-dependencies into a
+  non-test build.
+
+The asymmetry decides it: choosing this scope makes a dev-edge that grew into a
+production import **fail the build loudly** (`octo_cap_zk::` is not in scope for
+`cargo build -p octo-wallet`), while the other choice makes it fail _silently_
+behind an exemption.
+
+**The lint was verified by deliberately reintroducing the violation** — the
+wallet's dependency was restored, the lint fired with exit 1 and named the crate
+and the strategy, and the manifest was restored and re-checked clean. A lint
+never seen firing is not a lint.
+
+One correction along the way: the lint initially listed `octo-wallet-node` among
+the core crates and immediately flagged its `octo-cap-poi` edge. That was wrong
+— the node **is** the registration host, and linking strategy crates is the
+property being protected. It is Layer D and is now deliberately excluded, with
+the reason in the lint header.
+
+### Scope note
+
+The mission's clippy AC says "across the workspace". This was run across every
+touched crate, not the full workspace: the standing constraint on this work is
+never to run the full workspace suite. One pre-existing failure,
+`eleven_step_batch_zk_round_trip`, was confirmed identical at HEAD by stashing,
+so it is not from this work.

@@ -1761,13 +1761,11 @@ pub fn verify_capability_attestation(
     // Step 4. The verification-side coverage gate, reachable per call. Boot
     // deliberately does not evaluate it, so this stays reachable for a node
     // whose coverage changed after boot.
-    let admission = admission_of(registration);
-    if admission.verifier_needs_producing_kinds
-        && !inputs
-            .node
-            .coverage()
-            .serves_all(&admission.required_payload_kinds)
-    {
+    //
+    // The predicate is the shared one the node-metadata advertisement reads,
+    // so the advertisement and this gate cannot disagree about which
+    // strategies a node claims.
+    if !can_verify(registration, inputs.node.coverage()) {
         return Err(DispatchRejection::CannotVerifyWhatItCannotProduce);
     }
 
@@ -2252,6 +2250,77 @@ impl fmt::Display for BootRefusal {
 
 impl std::error::Error for BootRefusal {}
 
+/// Whether a node can currently **verify** what a strategy requires.
+///
+/// This is the **single definition** of the verifiability predicate. Dispatch
+/// step 4 evaluates it per call, and RFC-0973 Lifecycle Requirement 7's
+/// node-metadata advertisement reads it when metadata is announced. Both must
+/// use this function: two copies of this condition would eventually disagree,
+/// and a node advertising a strategy its own dispatch refuses is precisely the
+/// downgrade the advertisement exists to make detectable.
+///
+/// The condition is narrower than "the node can serve everything the strategy
+/// produces". Only the **verification-side** requirement counts. The
+/// producing-side requirement is a boot question, answered once by
+/// [`validate_policy`]; re-asking it per call would refuse strategies a booted
+/// node is entitled to serve.
+#[must_use]
+pub fn can_verify(registration: &Registration, coverage: &dyn PayloadCoverage) -> bool {
+    let admission = admission_of(registration);
+    !admission.verifier_needs_producing_kinds
+        || coverage.serves_all(&admission.required_payload_kinds)
+}
+
+/// The acceptance set this node should **advertise**.
+///
+/// RFC-0973 Lifecycle Requirement 7: a node announces which attestation types
+/// it will verify, so a peer relying on "this node verifies proofs" can detect a
+/// node that verifies none. Without it, an operator downgrade is invisible to
+/// everyone but the operator.
+///
+/// **The acceptance set intersected with the verifiability predicate.** An id
+/// the operator accepts but the node cannot verify right now is omitted — the
+/// dispatch would refuse it at step 4 anyway, so advertising it would be a
+/// false claim.
+///
+/// **An empty result is an advertisement, not an absence.** The two are
+/// different and must stay distinguishable: a node that verifies no
+/// attestations is a permitted operator choice, and the mitigation is that it is
+/// *visible*. Returning a distinct value from this function is what makes it
+/// visible. An `Option`-shaped API would collapse "advertises nothing" into
+/// "did not advertise", which is the downgrade this exists to prevent.
+///
+/// # Staleness
+///
+/// Evaluated when the metadata is announced, so it is a claim about the node at
+/// that moment, not an invariant for its whole run. Coverage can narrow
+/// afterwards, in which case the node advertises stale until it re-announces.
+/// Staleness is a weaker claim than falsehood and is the accepted consequence of
+/// advertising at all.
+///
+/// An id that does not resolve is omitted rather than advertised. Boot already
+/// refuses an unresolvable id in the acceptance set, so this cannot normally
+/// happen — but if it does, advertising an id nothing can serve would be the
+/// false claim, and omission is merely conservative.
+#[must_use]
+pub fn advertised_acceptance_set(
+    accept_set: &AcceptanceSet,
+    registry: &AttestationRegistry,
+    coverage: &dyn PayloadCoverage,
+) -> AcceptanceSet {
+    let advertised: Vec<AttestationTypeId> = accept_set
+        .ids()
+        .iter()
+        .copied()
+        .filter(|type_id| {
+            registry
+                .resolve_registration(type_id)
+                .is_some_and(|registration| can_verify(registration, coverage))
+        })
+        .collect();
+    AcceptanceSet::from_ids(advertised)
+}
+
 /// Validate the operator's policy against what the node can actually serve.
 ///
 /// Runs before the node serves anything. Four refusals, each decisive:
@@ -2532,5 +2601,221 @@ mod boot_tests {
         };
         assert!(validate_policy(&set, &reg, &node).is_ok());
         assert!(set.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod advertisement_tests {
+    use super::*;
+    use octo_protocol::payload_kind::PayloadKindId;
+
+    fn user_tid(n: u8) -> AttestationTypeId {
+        let mut b = [0x80u8; 16];
+        b[15] = n;
+        AttestationTypeId::from_bytes(b)
+    }
+
+    /// A strategy with no requirements: verifiable wherever it is registered.
+    struct Simple;
+    impl AttestationStrategy for Simple {
+        fn type_id(&self) -> AttestationTypeId {
+            user_tid(1)
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Satisfied)
+        }
+    }
+
+    /// A strategy that needs a producing node to **verify**. The name is the
+    /// RFC's: verification is a different question from production.
+    struct NeedsProducing;
+    impl NeedsProducing {
+        const REQUIRED: [PayloadKindId; 1] = [PayloadKindId::from_bytes([9u8; 16])];
+    }
+    impl AttestationStrategy for NeedsProducing {
+        fn type_id(&self) -> AttestationTypeId {
+            user_tid(2)
+        }
+        fn verify(
+            &self,
+            _c: &AttestationVerifyCtx<'_>,
+        ) -> Result<AttestationOutcome, AttestationError> {
+            Ok(AttestationOutcome::Satisfied)
+        }
+    }
+    impl AttestationAdmission for NeedsProducing {
+        fn required_payload_kinds(&self) -> &[PayloadKindId] {
+            &Self::REQUIRED
+        }
+        fn verifier_needs_producing_kinds(&self) -> bool {
+            true
+        }
+        fn admission_profile(&self) -> Option<AdmissionProfile> {
+            Some(AdmissionProfile {
+                casm_cost_hint_words: CostFigure::Measured(5),
+                security_bits: SecurityFigure::from_prover_parameters(128),
+            })
+        }
+    }
+
+    struct Coverage {
+        serves: bool,
+    }
+    impl PayloadCoverage for Coverage {
+        fn serves_all(&self, kinds: &[PayloadKindId]) -> bool {
+            self.serves || kinds.is_empty()
+        }
+    }
+
+    fn registry_with_both() -> AttestationRegistry {
+        let mut reg = AttestationRegistry::empty();
+        let allocations = AllocationRecord::empty();
+        reg.register_strategy(std::sync::Arc::new(Simple), None, "simple", &allocations)
+            .unwrap();
+        reg.register_strategy(
+            std::sync::Arc::new(NeedsProducing),
+            Some(std::sync::Arc::new(NeedsProducing)),
+            "np",
+            &allocations,
+        )
+        .unwrap();
+        reg
+    }
+
+    /// A node accepting nothing advertises an **empty set**, which is a value
+    /// and not an absence. This is the downgrade mitigation: a peer must be
+    /// able to tell "verifies nothing" from "did not say".
+    #[test]
+    fn an_empty_acceptance_set_advertises_an_empty_set() {
+        let reg = registry_with_both();
+        let advertised =
+            advertised_acceptance_set(&AcceptanceSet::empty(), &reg, &Coverage { serves: false });
+        assert!(advertised.is_empty());
+        // Distinguishable from a registry that holds nothing: the registry here
+        // resolves both ids, so an empty advertisement is a *decision*, not a
+        // consequence of having nothing to advertise.
+        assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn a_verifiable_strategy_is_advertised() {
+        let reg = registry_with_both();
+        let set = AcceptanceSet::from_ids([user_tid(1)]);
+        let advertised = advertised_acceptance_set(&set, &reg, &Coverage { serves: false });
+        assert!(advertised.accepts(&user_tid(1)));
+    }
+
+    /// The intersection is the whole point. A configured-but-unverifiable
+    /// strategy must never be advertised: the dispatch would refuse it at step 4,
+    /// so advertising it would be a false claim about this node.
+    #[test]
+    fn a_configured_but_unverifiable_strategy_is_not_advertised() {
+        let reg = registry_with_both();
+        let set = AcceptanceSet::from_ids([user_tid(1), user_tid(2)]);
+
+        // Coverage present: both are verifiable.
+        let with = advertised_acceptance_set(&set, &reg, &Coverage { serves: true });
+        assert!(with.accepts(&user_tid(1)));
+        assert!(with.accepts(&user_tid(2)));
+
+        // Coverage absent: the producing-dependent one drops out.
+        let without = advertised_acceptance_set(&set, &reg, &Coverage { serves: false });
+        assert!(
+            without.accepts(&user_tid(1)),
+            "no requirement, still advertised"
+        );
+        assert!(
+            !without.accepts(&user_tid(2)),
+            "a strategy the node cannot verify must not be advertised"
+        );
+    }
+
+    /// An unresolvable id is omitted rather than advertised. Boot normally
+    /// refuses such an id before this runs, but if one reaches here, advertising
+    /// an id nothing can serve would be the false claim.
+    #[test]
+    fn an_unresolvable_id_is_omitted_rather_than_advertised() {
+        let reg = AttestationRegistry::empty();
+        let set = AcceptanceSet::from_ids([user_tid(9)]);
+        let advertised = advertised_acceptance_set(&set, &reg, &Coverage { serves: true });
+        assert!(advertised.is_empty());
+    }
+
+    /// The advertisement and dispatch step 4 must not disagree. This is the
+    /// property that makes sharing `can_verify` worth having: if these ever
+    /// diverged, a node would advertise a strategy its own dispatch refuses.
+    #[test]
+    fn the_advertisement_agrees_with_dispatch_step_4() {
+        let reg = registry_with_both();
+        let set = AcceptanceSet::from_ids([user_tid(1), user_tid(2)]);
+        let mac = crate::macaroon::Macaroon::mint(&[5u8; 32]).unwrap();
+
+        for serves in [true, false] {
+            let coverage = Coverage { serves };
+            let advertised = advertised_acceptance_set(&set, &reg, &coverage);
+
+            for id in [user_tid(1), user_tid(2)] {
+                let mut m = mac.clone();
+                attach_envelope(&mut m, AttestationEnvelope::new(id, vec![1]), true).unwrap();
+
+                struct Node {
+                    set: AcceptanceSet,
+                    coverage: Coverage,
+                }
+                impl PayloadCoverage for Node {
+                    fn serves_all(&self, kinds: &[PayloadKindId]) -> bool {
+                        self.coverage.serves_all(kinds)
+                    }
+                }
+                impl NodeView for Node {
+                    fn accept_set(&self) -> &AcceptanceSet {
+                        &self.set
+                    }
+                    fn coverage(&self) -> &dyn PayloadCoverage {
+                        &self.coverage
+                    }
+                    fn policy(&self) -> &dyn PolicySource {
+                        &PermissivePolicy
+                    }
+                }
+
+                let node = Node {
+                    set: set.clone(),
+                    coverage: Coverage { serves },
+                };
+                let inputs = DispatchInputs {
+                    lookup_active: true,
+                    present: true,
+                    macaroon_ok: Ok(()),
+                    registry: &reg,
+                    node: &node,
+                    expectation: Some(Box::new(TestExpectation)),
+                };
+                let result = verify_capability_attestation(&m, &inputs);
+
+                // Step 4 is the only gate whose outcome the advertisement
+                // mirrors, so a rejection of that specific kind must track the
+                // advertisement exactly.
+                let refused_at_step_4 = matches!(
+                    result,
+                    Err(DispatchRejection::CannotVerifyWhatItCannotProduce)
+                );
+                assert_eq!(
+                    advertised.accepts(&id),
+                    !refused_at_step_4,
+                    "advertisement and step 4 disagree for {id:?} (serves={serves})"
+                );
+            }
+        }
+    }
+
+    struct TestExpectation;
+    impl Expectation for TestExpectation {
+        fn bindable_value(&self, _c: &AttestationVerifyCtx<'_>) -> Option<Vec<u8>> {
+            Some(vec![0u8; 32])
+        }
     }
 }

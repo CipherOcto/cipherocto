@@ -99,13 +99,20 @@ borsh = { version = "1", optional = true }
 # in a future RFC if a tighter canonicalization is adopted; until then
 # the dep is removed to avoid carrying an unused surface.
 
-# ZK circuit substrate (mission 0957-ext-zk-crate). Per-extension crate
-# layout per RFC-0965: ZK capability lives in `octo-cap-zk` (Layer 4
-# sibling of `octo-cap-macaroon`). Re-exported via the `zk_mint`
-# shim module. `zk-circuit` / `zk-verifier` / `zk-vendor` /
-# `cipherocto-zkp-canonical` deps moved to octo-cap-zk (no longer used
-# directly in the wallet lib).
-octo-cap-zk = { path = "../octo-cap-zk" }
+# ZK circuit substrate (mission 0957-ext-zk-crate).
+#
+# REMOVED from `[dependencies]` by RFC-0973 §Phase 5. `octo-cap-zk` is a
+# Layer-E strategy crate and the wallet is Layer B, so a dependency between
+# them inverts the layer model (RFC-0973 Lifecycle Requirement 8). Strategy
+# crates are reached through registration from a host, never by a core crate
+# naming one. The lint in `.github/linters/no-core-strategy-dep.sh` is what
+# keeps it removed.
+#
+# The ZK mint API is not gone, it is no longer *re-exported*. It lives in
+# `octo-cap-zk` and is imported from there directly, which is the import path
+# the extension crate exists to own (RFC-0965 §Per-Extension Crate Layout).
+# A `[dev-dependencies]` edge remains below: the wallet's own ZK tests exercise
+# the extension crate's API, and the lint scans `[dependencies]` only.
 
 # Federation delta wire format (RFC-0957-A1 §F1) — uses JSON (already in
 # workspace deps). Bounded via length-prefixed encoding (see federation.rs).

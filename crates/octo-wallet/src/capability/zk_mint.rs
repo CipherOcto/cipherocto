@@ -1,73 +1,72 @@
-//! Re-export shim — ZK capability substrate now lives in `octo-cap-zk`
-//! (Layer 4 extension crate per RFC-0965 per-extension crate layout
-//! mandate).
+//! ZK capability substrate — **import-path guide** (RFC-0973 §Phase 5).
 //!
-//! Mission 0957-ext-zk-crate migration moved the canonical implementation
-//! into `octo_cap_zk`. This shim preserves the existing
-//! `octo_wallet::capability::zk_mint::*` import paths for backward
-//! compatibility. No new code lives here — all behavior lives in the
-//! extension crate.
+//! # What moved
+//!
+//! This module used to be a `pub use octo_cap_zk::*` re-export shim, plus a
+//! `to_zk_node_type` projection. Both are gone, deliberately:
+//!
+//! - The wallet is Layer B and `octo-cap-zk` is Layer E. Re-exporting it made
+//!   the wallet depend on a strategy crate, which inverts the layer model that
+//!   RFC-0973 Lifecycle Requirement 8 forbids. A core crate may not depend on a
+//!   strategy crate to discover one.
+//! - The ZK mint API is unchanged and still available. It now lives at
+//!   `octo_cap_zk::{mint_with_zk, ProofBundle, PublicInputs, …}`, which is the
+//!   path RFC-0965 §Per-Extension Crate Layout gives an extension crate. Import
+//!   it from there.
+//!
+//! This module remains so the old import path resolves to a **compile error
+//! that says what to do**, rather than to a bare "unresolved import".
+//!
+//! # What was here
+//!
+//! - `mint_with_zk`, `mint_with_zk_and_signers`, `ProofBundle`, `PublicInputs`,
+//!   `PrivateWitness`, `ExecutionTrace`, `TraceStep`, `CapabilityClass`,
+//!   `ZkMintError`, `proof_bundle_to_wire`, `proof_bundle_from_wire`,
+//!   `bundled_casm_hash`, `COMPILED_CASM_BLAKE3_HASH`
+//! - `to_zk_node_type`, a projection from the wallet's `NodeType` to
+//!   `octo_cap_zk::NodeType`.
+//!
+//! # `to_zk_node_type` is deleted, and why that is the right call
+//!
+//! RFC-0973 §Phase 5 requires deciding the projection's disposition rather than
+//! silently dropping it, because dropping it would dispose of the wallet-side
+//! carrier of the RFC-0958 §NodeType mint gate.
+//!
+//! **It had no production consumer.** Every call site in the tree was inside
+//! this file's own `mod tests`. Nothing outside the wallet called it, and no
+//! wallet production path used it.
+//!
+//! **The mint-time ZK gate does not live here.** The gate that actually runs is
+//! `NodeType::permits_zk_mint` in `octo_cap_zk`, enforced inside
+//! `mint_with_zk_and_signers` — which returns `NodeTypeCannotMintZKCap` for
+//! Wholesale. The wallet's own `crate::node::NodeType` carries the same
+//! predicate, so the wallet-side gate survives the removal. Deleting the
+//! projection removes a duplicate, not the gate.
+//!
+//! This reconciles with mission `0973-v36-c-substrate-corrections`, which
+//! recorded that `NodeType` is retained in the wallet as the mint-time ZK gate.
+//! That remains true: the wallet keeps `crate::node::NodeType` and its
+//! `permits_zk_mint`. What is gone is the *mirror* into the extension crate,
+//! which existed only because both types were foreign to either crate and the
+//! orphan rule forbade a `From` impl.
+//!
+//! # Migration
+//!
+//! ```ignore
+//! // before
+//! use octo_wallet::capability::zk_mint::{PublicInputs, mint_with_zk};
+//! use octo_wallet::capability::{PublicInputs, mint_with_zk};
+//!
+//! // after
+//! use octo_cap_zk::{PublicInputs, mint_with_zk};
+//! ```
 
-pub use octo_cap_zk::*;
-
-/// Convert the wallet's canonical `NodeType` (Layer B substrate in
-/// `crates/octo-wallet/src/node.rs`) to the local `octo_cap_zk::NodeType`
-/// mirror enum. The mirror-enum approach is the Layer 4 boundary
-/// strategy: `NodeType` is a 3-variant enum with a single boolean method,
-/// and a trait abstraction would add indirection for zero benefit.
+/// The re-export shim was removed by RFC-0973 §Phase 5.
 ///
-/// **Orphan rule:** we cannot write `impl From<crate::node::NodeType>
-/// for octo_cap_zk::NodeType` because both types are foreign to either
-/// crate. The free function form is the clean alternative.
-#[must_use]
-pub fn to_zk_node_type(node_type: &crate::node::NodeType) -> octo_cap_zk::NodeType {
-    use crate::node::NodeType as WalletNodeType;
-    match node_type {
-        WalletNodeType::Wholesale => octo_cap_zk::NodeType::Wholesale,
-        WalletNodeType::SelfHost => octo_cap_zk::NodeType::SelfHost,
-        WalletNodeType::Hybrid => octo_cap_zk::NodeType::Hybrid,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn to_zk_node_type_wholesale() {
-        let wallet = crate::node::NodeType::Wholesale;
-        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::Wholesale);
-    }
-
-    #[test]
-    fn to_zk_node_type_self_host() {
-        let wallet = crate::node::NodeType::SelfHost;
-        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::SelfHost);
-    }
-
-    #[test]
-    fn to_zk_node_type_hybrid() {
-        let wallet = crate::node::NodeType::Hybrid;
-        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::Hybrid);
-    }
-
-    #[test]
-    fn to_zk_node_type_preserves_permits_zk_mint_semantics() {
-        // Mirror the RFC-0958 §NodeType Gating Rule (Wholesale fail-closed,
-        // SelfHost default, Hybrid opt-in). If the wallet's NodeType gating
-        // rules drift from the ZK crate's, this test surfaces the mismatch.
-        let cases = [
-            (crate::node::NodeType::Wholesale, false),
-            (crate::node::NodeType::SelfHost, true),
-            (crate::node::NodeType::Hybrid, true),
-        ];
-        for (wallet_nt, expected) in cases {
-            let zk_nt = to_zk_node_type(&wallet_nt);
-            assert_eq!(
-                zk_nt.permits_zk_mint(),
-                expected,
-                "NodeType::{wallet_nt:?} gating mismatch",
-            );
-        }
-    }
-}
+/// Import the ZK mint API from `octo_cap_zk` — it is a Layer-E extension crate
+/// and owns that API under RFC-0965 §Per-Extension Crate Layout.
+///
+/// The wallet keeps `octo_wallet::capability::attestation`, which is the
+/// RFC-0973 attestation substrate, and `octo_wallet::node::NodeType`, which
+/// carries the mint-time ZK gate.
+pub const ZK_MINT_MOVED: () = ();

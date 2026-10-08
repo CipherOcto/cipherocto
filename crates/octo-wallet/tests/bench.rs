@@ -31,7 +31,7 @@ use octo_ident::test_helpers::sample_did;
 use std::time::Instant;
 
 use ed25519_dalek::Signature;
-use octo_wallet::capability::zk_mint::{
+use octo_cap_zk::{
     bundled_casm_hash, mint_with_zk_and_signers, ExecutionTrace, PrivateWitness, ProofBundle,
     PublicInputs, TraceStep,
 };

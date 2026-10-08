@@ -48,11 +48,11 @@ pub use wire::{
     compute_cap_root_hash_from_wire, deserialize_wire, deserialize_wire_v2, serialize_wire,
     serialize_wire_v2, WireError, WireV2,
 };
-pub use zk_mint::{
-    bundled_casm_hash, mint_with_zk, mint_with_zk_and_signers, proof_bundle_from_wire,
-    proof_bundle_to_wire, CapabilityClass, ExecutionTrace, PrivateWitness, ProofBundle,
-    PublicInputs, TraceStep, ZkMintError, COMPILED_CASM_BLAKE3_HASH,
-};
+// The ZK mint API is no longer re-exported here. RFC-0973 §Phase 5 removed the
+// wallet's dependency on the Layer-E `octo-cap-zk` crate; re-exporting it made
+// a Layer-B core crate depend on a strategy crate, which Lifecycle Requirement
+// 8 forbids. Import the API from `octo_cap_zk` directly — see
+// `zk_mint`'s module docs for the migration note.
 
 // Mission 0957 Phase 2b-3: `CapabilityToken` + `MintError` moved into
 // the `octo-cap-macaroon` extension crate. Re-exports here preserve

@@ -55,7 +55,12 @@ use std::collections::HashMap;
 
 use crate::node::NodeType;
 
-use super::zk_mint::CapabilityClass;
+// `CapabilityClass` is declared in `octo-cap-macaroon` (Layer A) and
+// re-exported by `octo-cap-zk` (Layer E). The wallet imports it from the Layer-A
+// declaring crate, not through the Layer-E strategy crate — RFC-0973 §Phase 5
+// removed the wallet's dependency on `octo-cap-zk`, and this import was
+// re-pointed rather than left dangling.
+use octo_cap_macaroon::CapabilityClass;
 
 /// CapabilityClass registry entry: maps `node_did → CapabilityClass`.
 #[derive(Debug, Clone)]

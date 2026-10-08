@@ -26,9 +26,11 @@ use std::collections::{HashMap, HashSet};
 use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::{
     macaroon::{CapabilityCatalog, Macaroon},
-    zk_mint::{CapabilityClass, PrivateWitness, ProofBundle},
     CapabilityToken, Caveat,
 };
+// RFC-0973 §Phase 5: the ZK types live in the Layer-E `octo-cap-zk` crate. The
+// wallet no longer re-exports them, so tests import them from the owner.
+use octo_cap_zk::{CapabilityClass, PrivateWitness, ProofBundle};
 use octo_wallet::hsm::{InMemorySigner, LedgerSigner};
 use octo_wallet::identity::IdentityKey;
 use octo_wallet::key_hierarchy::{KeyHierarchy, MissionId};
@@ -290,7 +292,7 @@ fn proof_bundle_debug_does_not_leak_stark_proof_bytes() {
     // alone.
     let bundle = ProofBundle {
         stark_proof: vec![0x99; 1024],
-        public_inputs: octo_wallet::capability::zk_mint::PublicInputs {
+        public_inputs: octo_cap_zk::PublicInputs {
             ask_id: [0xAB; 32],
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
             cap_root_hash: ROOT_SECRET_MARKER,

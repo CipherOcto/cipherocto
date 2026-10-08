@@ -15,10 +15,8 @@
 //! commitment layout for the same inputs, so the full mint -> verify
 //! round-trip is exercised.
 
+use octo_cap_zk::{bundled_casm_hash, mint_with_zk_and_signers, PrivateWitness, PublicInputs};
 use octo_ident::test_helpers::sample_did;
-use octo_wallet::capability::zk_mint::{
-    bundled_casm_hash, mint_with_zk_and_signers, PrivateWitness, PublicInputs,
-};
 // Mission 0957-ext-zk-crate: use `octo_cap_zk::NodeType` directly in
 // tests (the wallet's `NodeType` is converted via the `to_zk_node_type`
 // shim in production code paths; tests exercise the ZK substrate
@@ -47,9 +45,9 @@ fn eleven_step_batch_zk_round_trip() {
         holder_sig: Signature::from_bytes(&[0xab; 64]),
         caveats_full: vec![],
         discharges_full: vec![],
-        inference_trace: Some(octo_wallet::capability::zk_mint::ExecutionTrace {
+        inference_trace: Some(octo_cap_zk::ExecutionTrace {
             step_count: 1,
-            step_records: vec![octo_wallet::capability::zk_mint::TraceStep {
+            step_records: vec![octo_cap_zk::TraceStep {
                 op_code: 0,
                 input_hash: [0x33; 32],
                 output_hash: [0x44; 32],
@@ -180,7 +178,7 @@ fn eleven_step_wholesale_mint_fails_closed() {
     .unwrap_err();
     assert!(matches!(
         err,
-        octo_wallet::capability::zk_mint::ZkMintError::NodeTypeCannotMintZKCap
+        octo_cap_zk::ZkMintError::NodeTypeCannotMintZKCap
     ));
 }
 
@@ -196,9 +194,9 @@ fn eleven_step_batch_proof_is_deterministic() {
         caveats_full: vec![],
         discharges_full: vec![],
         // SelfHost → inference_trace required (v1.2 M5 rename, AC-6)
-        inference_trace: Some(octo_wallet::capability::zk_mint::ExecutionTrace {
+        inference_trace: Some(octo_cap_zk::ExecutionTrace {
             step_count: 1,
-            step_records: vec![octo_wallet::capability::zk_mint::TraceStep {
+            step_records: vec![octo_cap_zk::TraceStep {
                 op_code: 0,
                 input_hash: [0x33; 32],
                 output_hash: [0x44; 32],

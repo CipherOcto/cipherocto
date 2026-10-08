@@ -15,13 +15,13 @@
 #![allow(clippy::too_many_lines)] // acceptance smoke is intentionally one big test
 
 use ed25519_dalek::Signature;
-use octo_ident::test_helpers::sample_did;
-use octo_wallet::capability::registry::{CapabilityClassRegistry, RegistryError};
-use octo_wallet::capability::zk_mint::{
+use octo_cap_zk::CapabilityClass;
+use octo_cap_zk::{
     bundled_casm_hash, mint_with_zk, mint_with_zk_and_signers, ExecutionTrace, PrivateWitness,
     TraceStep,
 };
-use octo_wallet::capability::CapabilityClass;
+use octo_ident::test_helpers::sample_did;
+use octo_wallet::capability::registry::{CapabilityClassRegistry, RegistryError};
 // Mission 0957-ext-zk-crate: `NodeType` defaults to `octo_cap_zk::NodeType`
 // (used for ZK mint API). `WalletNodeType` aliases the wallet's
 // `CapabilityClassRegistry::register` argument.
@@ -90,8 +90,8 @@ fn no_trace_witness() -> PrivateWitness {
     }
 }
 
-fn selfhost_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
-    octo_wallet::capability::zk_mint::PublicInputs {
+fn selfhost_pub() -> octo_cap_zk::PublicInputs {
+    octo_cap_zk::PublicInputs {
         ask_id: [0x11; 32],
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         cap_root_hash: [0x22; 32],
@@ -103,8 +103,8 @@ fn selfhost_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
     }
 }
 
-fn hybrid_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
-    octo_wallet::capability::zk_mint::PublicInputs {
+fn hybrid_pub() -> octo_cap_zk::PublicInputs {
+    octo_cap_zk::PublicInputs {
         ask_id: [0x55; 32],
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 2000)],
         cap_root_hash: [0x66; 32],
@@ -116,8 +116,8 @@ fn hybrid_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
     }
 }
 
-fn wholesale_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
-    octo_wallet::capability::zk_mint::PublicInputs {
+fn wholesale_pub() -> octo_cap_zk::PublicInputs {
+    octo_cap_zk::PublicInputs {
         ask_id: [0x88; 32],
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 500)],
         cap_root_hash: [0x99; 32],
@@ -129,7 +129,7 @@ fn wholesale_pub() -> octo_wallet::capability::zk_mint::PublicInputs {
     }
 }
 
-fn qr_bundle_from(o: &octo_wallet::capability::ProofBundle) -> QrProofBundle {
+fn qr_bundle_from(o: &octo_cap_zk::ProofBundle) -> QrProofBundle {
     QrProofBundle {
         stark_proof: o.stark_proof.clone(),
         public_inputs: QrPublicInputs {
@@ -151,9 +151,9 @@ fn qr_bundle_from(o: &octo_wallet::capability::ProofBundle) -> QrProofBundle {
 fn mint_with_stub_proof(
     node_type: NodeType,
     witness: &PrivateWitness,
-    pi: &octo_wallet::capability::zk_mint::PublicInputs,
+    pi: &octo_cap_zk::PublicInputs,
     casm: [u8; 32],
-) -> octo_wallet::capability::ProofBundle {
+) -> octo_cap_zk::ProofBundle {
     let signers: Vec<[u8; 32]> = vec![[0x42; 32]];
     mint_with_zk_and_signers(node_type, witness, pi, casm, &signers)
         .expect("batch mint with stub proof")
@@ -218,10 +218,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let err3 = mint_with_zk(NodeType::Wholesale, &w3, &pi3, casm);
     report.push(VectorReport {
         name: "TV3 Wholesale reject",
-        outcome: if matches!(
-            err3,
-            Err(octo_wallet::capability::zk_mint::ZkMintError::NodeTypeCannotMintZKCap)
-        ) {
+        outcome: if matches!(err3, Err(octo_cap_zk::ZkMintError::NodeTypeCannotMintZKCap)) {
             "OK"
         } else {
             "FAIL"
@@ -417,7 +414,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
         name: "AC-10 CASM drift at mint",
         outcome: if matches!(
             err_casm,
-            Err(octo_wallet::capability::zk_mint::ZkMintError::CasmHashMismatch { .. })
+            Err(octo_cap_zk::ZkMintError::CasmHashMismatch { .. })
         ) {
             "OK"
         } else {

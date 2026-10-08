@@ -491,28 +491,30 @@ fn casm_words_under_1600_after_stage2() {
 /// unregistered.
 #[test]
 fn blake3_circuit_cost_is_recorded_and_rejected() {
-    // Measured with `max_bytecode_size: usize::MAX` so the compile is not
-    // refused before the size can be read.
-    const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
-    const MEASURED_WITH_BLAKE3_BYTES: usize = 564_096;
     // The R19 baseline this mission measured against, and the ceiling.
     const BASELINE_WORDS: usize = 1_522;
     const CEILING_WORDS: usize = 1_600;
-    const CEILING_BYTES: usize = 50 * 1024;
 
-    assert!(
-        MEASURED_WITH_BLAKE3_WORDS > CEILING_WORDS,
-        "if BLAKE3 ever fits under the ceiling, this decision must be revisited \
-         rather than left standing"
-    );
-    assert!(
-        MEASURED_WITH_BLAKE3_BYTES > CEILING_BYTES,
-        "the serialized ceiling must be breached too, or the word count alone is not decisive"
-    );
-    assert!(
-        BASELINE_WORDS < CEILING_WORDS,
-        "the baseline must have been under the ceiling, or the overrun is not attributable to BLAKE3"
-    );
+    const {
+        // With BLAKE3 compiled in.
+        const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
+        const MEASURED_WITH_BLAKE3_BYTES: usize = 564_096;
+        const CEILING_BYTES: usize = 50 * 1024;
+
+        assert!(
+            MEASURED_WITH_BLAKE3_WORDS > CEILING_WORDS,
+            "if BLAKE3 ever fits under the ceiling, this decision must be revisited \
+             rather than left standing"
+        );
+        assert!(
+            MEASURED_WITH_BLAKE3_BYTES > CEILING_BYTES,
+            "the serialized ceiling must be breached too, or the word count alone is not decisive"
+        );
+        assert!(
+            BASELINE_WORDS < CEILING_WORDS,
+            "the baseline must have been under the ceiling, or the overrun is not attributable to BLAKE3"
+        );
+    }
 
     // The current program must still be the affordable one.
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");

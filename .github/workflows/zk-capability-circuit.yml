@@ -150,6 +150,19 @@ jobs:
         # (permits_zk_mint) + the registry (Wholesale → V1 only).
         run: bash .github/linters/no-wholesale-zk.sh
 
+  no-core-strategy-dep:
+    name: Layer-B to Layer-E dependency-direction linter (RFC-0973 Phase 5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run dependency-direction linter
+        # RFC-0973 Lifecycle Requirement 8: core may not link a strategy
+        # crate to discover one. Registration belongs to the host, and the
+        # host's link-time observation is the only claim of crate ownership
+        # worth believing. Scans [dependencies] only — see the lint's header
+        # for why a dev-edge is deliberately out of scope.
+        run: bash .github/linters/no-core-strategy-dep.sh
+
   prod-gate:
     name: Production stub-verifier gate (AC-#1 R3 fix)
     runs-on: ubuntu-latest

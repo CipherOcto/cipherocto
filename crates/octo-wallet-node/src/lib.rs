@@ -63,7 +63,7 @@ pub mod node;
 
 pub use attestation_host::{
     advertised_acceptance_set, allocation_record, boot_validate, build_registry,
-    register_hosted_strategies, HostRegistrationError,
+    empty_advertised_acceptance_set, register_hosted_strategies, HostRegistrationError,
 };
 
 pub use handlers::{

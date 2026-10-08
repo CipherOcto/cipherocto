@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dqa_serde;
 
+pub mod evaluator;
 pub mod payment;
 #[allow(deprecated)]
 pub use payment::{
@@ -737,6 +738,24 @@ fn cache_policy_subsumes(parent: &CachePolicy, child: &CachePolicy) -> bool {
 }
 
 impl Caveat {
+    /// Registry key for caveat predicate evaluation (RFC-0974 §Amendment 1).
+    ///
+    /// A core variant keys on its RFC-0964 short tag — the same string
+    /// `CaveatName::short_name` returns and the same string
+    /// `CaveatName::from_short_tag` parses. A [`Caveat::Raw`] keys on the
+    /// caller-supplied `name`, which is what makes third-party caveats
+    /// evaluable without editing this crate.
+    ///
+    /// Borrowed for both cases: the short tag is `'static` and `RawCaveat.name`
+    /// outlives the borrow of `self`.
+    #[must_use]
+    pub fn evaluator_key(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Raw(raw) => std::borrow::Cow::Borrowed(raw.name.as_str()),
+            other => std::borrow::Cow::Borrowed(other.name().short_name()),
+        }
+    }
+
     /// Wire-stable name (used as HMAC info).
     #[must_use]
     pub fn name(&self) -> CaveatName {

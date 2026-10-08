@@ -55,6 +55,7 @@
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
+pub mod attestation;
 pub mod caveat;
 pub mod discharge;
 pub mod dqa_serde;
@@ -93,6 +94,10 @@ pub mod cli_fns;
 pub mod cli_summary;
 
 // Re-exports for ergonomic single-import paths.
+pub use attestation::{
+    decode_envelope, encode_envelope, write_envelope, AttestationEnvelope, AttestationTypeId,
+    EnvelopeDecodeError, DEFAULT_MAX_ENVELOPE_PAYLOAD,
+};
 pub use bearer_capsule_stub::BearerCapsule;
 // Re-export CLI substrate facade (mission 0011-capability-commands
 // Phase 1; RFC-0011 §Subcommand Taxonomy). Single-import path so the

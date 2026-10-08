@@ -105,31 +105,31 @@ produces the substrate the later missions build on.
 
 ## Acceptance Criteria
 
-- [ ] `AttestationTypeId` declared in `octo-cap-macaroon`, re-exported to the
+- [x] `AttestationTypeId` declared in `octo-cap-macaroon`, re-exported to the
       wallet, no dependency cycle
-- [ ] Both traits land with no defaults; absence means "declared no
+- [x] Both traits land with no defaults; absence means "declared no
       requirement", not "unspecified"
-- [ ] `SecurityFigure` has no constructor taking a bare integer: the field is
+- [x] `SecurityFigure` has no constructor taking a bare integer: the field is
       private, `from_prover_parameters` is the only way in, and `bits()` is the
       only way out, so a caller cannot read the value as a struct field and
       supply it another way
-- [ ] `AttestationVerifyCtx.expectation` is a required field, not an `Option`
-- [ ] `AttestationOutcome` carries a reason on rejection, and none on
+- [x] `AttestationVerifyCtx.expectation` is a required field, not an `Option`
+- [x] `AttestationOutcome` carries a reason on rejection, and none on
       satisfaction
-- [ ] Registry resolution is fail-closed and unregistered ids reject
-- [ ] Registration refuses an RFC-range id absent from the allocation record,
+- [x] Registry resolution is fail-closed and unregistered ids reject
+- [x] Registration refuses an RFC-range id absent from the allocation record,
       and one present but allocated to a different crate
-- [ ] The claimant is supplied by the registration host, not the strategy
-- [ ] An unattested capability's canonical bytes are unchanged
-- [ ] Envelope is inside the hashed canonical form and outside the
+- [x] The claimant is supplied by the registration host, not the strategy
+- [x] An unattested capability's canonical bytes are unchanged
+- [x] Envelope is inside the hashed canonical form and outside the
       proof-bundle segment
-- [ ] Malformed and oversized envelopes both reject at decode, before strategy
+- [x] Malformed and oversized envelopes both reject at decode, before strategy
       resolution
-- [ ] Mint registers under the post-attestation id
-- [ ] Mint refuses an attestation on a form carrying no bindable value
-- [ ] Attenuation refuses stripping and substitution
-- [ ] Attenuation refuses when the parent record is absent, revoked, or expired
-- [ ] No attested capability is minted by this mission
+- [x] Mint registers under the post-attestation id
+- [x] Mint refuses an attestation on a form carrying no bindable value
+- [x] Attenuation refuses stripping and substitution
+- [x] Attenuation refuses when the parent record is absent, revoked, or expired
+- [x] No attested capability is minted by this mission
 
 ### Type Coverage
 
@@ -231,3 +231,36 @@ mechanism, not an assertion.
 ## Pull Request
 
 #
+
+## Implementation notes (Phase 1)
+
+Landed in `octo-cap-macaroon::attestation` and `octo-wallet::capability::attestation`.
+
+**Byte compatibility is pinned, not asserted against itself.** The
+unattested-canonical-bytes criterion is tested against a literal byte layout
+rather than by comparing the new serialiser to the new serialiser, which would
+pass whatever the code did. A companion test pins the capability id the same
+way, and two further tests show the envelope moving the id and show two
+envelopes on the same capability producing different keys.
+
+**No trait upcast was faked.** There is deliberately no
+`admission_for(&dyn AttestationStrategy)` helper. Stable Rust cannot upcast
+`dyn AttestationStrategy` to `dyn AttestationAdmission`, and a helper that
+returned `None` in that case would collapse "implements nothing" into
+"implements the trait and answers None", which is precisely the fail-open path
+the split exists to prevent. `Registration` carries both sides and
+`admission_of` reads them.
+
+**The decode limit is checked before the copy.** An oversized envelope is
+refused from its declared length, so an oversized payload is never allocated
+into memory first, and trailing bytes after a well-formed envelope are a
+malformed decode rather than something ignored.
+
+**Register and decode error types carry no attestation bytes.** Rejection
+reasons are strategy-chosen strings that name a condition, never the proof
+payload, for the same reason `Macaroon`'s `Debug` redacts its root-secret hash.
+
+**Not ticked here.** `register_strategy` execution needs the registration host
+from mission A, so the two registration-refusal vectors stay open even though
+the gate they exercise is landed. `AttestationVerifyCtx` verification belongs to
+mission A. The back-compat corpus is re-verified there.

@@ -118,6 +118,21 @@ pub struct Macaroon {
     pub chain: Vec<[u8; 32]>,
     /// Caveat list (in attenuation order).
     pub caveats: Vec<Caveat>,
+    /// Attestation envelope carried by this capability (RFC-0973).
+    ///
+    /// `None` for every capability minted before RFC-0973, and `None` remains a
+    /// valid state: an unattested capability must serialise byte-identically to
+    /// its pre-RFC form, so an absent envelope contributes **zero bytes** to the
+    /// canonical form, not an empty marker.
+    ///
+    /// This sits inside `canonical_ser_unsigned`, which is what makes the
+    /// capability id cover it. It is deliberately *not* in the proof-bundle
+    /// segment the id excludes: that placement is normative, because it is what
+    /// makes an attestation transplanted onto another capability produce a
+    /// different registry key rather than verifying against the key it was
+    /// minted under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<crate::attestation::AttestationEnvelope>,
 }
 
 impl std::fmt::Debug for Macaroon {
@@ -170,6 +185,11 @@ impl Macaroon {
             id: [0u8; 32], // placeholder — overwritten below
             chain: vec![hmac_state],
             caveats: Vec::new(),
+            // RFC-0973 standing invariant: this mission never attaches an
+            // envelope at mint. A capability carrying an attestation MUST NOT be
+            // accepted unchecked, and the dispatch that would check it does not
+            // exist yet, so minting one would create an unenforced attestation.
+            attestation: None,
         };
         // Derived capability_id per RFC-0965 §3.7.
         macaroon.id = compute_capability_id(&macaroon);
@@ -216,6 +236,10 @@ impl Macaroon {
                 buf.extend_from_slice(&ser);
             }
         }
+        // RFC-0973: the attestation envelope is part of the hashed canonical
+        // form. `None` contributes nothing, which is what keeps an unattested
+        // capability's id unchanged.
+        crate::attestation::write_envelope(&mut buf, self.attestation.as_ref());
         buf
     }
 

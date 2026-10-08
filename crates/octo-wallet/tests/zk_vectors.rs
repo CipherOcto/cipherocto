@@ -796,8 +796,8 @@ fn ac9_public_input_mismatch_detected_under_slot_binding_drift() {
 //
 // Note: the AC-4 hard size gates (≤80 KB serialized / ≤2,400 CASM
 // words) are tested in crates/zk-circuit/tests/casm_snapshot.rs
-// (see `casm_bytes_under_80kb_after_stage2_split`
-// and `casm_words_under_2400_after_stage2`); TV9 exercises only the
+// (see `casm_bytes_under_110kb_after_stage2_split`
+// and `casm_words_under_3300_after_stage2`); TV9 exercises only the
 // composition surface, not the size budget.
 // ============================================================
 #[test]

@@ -56,13 +56,92 @@ pub fn poseidon_mac(key: FieldElement, msg: &[FieldElement]) -> FieldElement {
     poseidon_hash_many(felts.iter())
 }
 
-/// Re-derive the caveat chain tip: RFC-0958 §Algorithms step 2, host side.
+/// Encode a felt as a 32-byte chain entry, big-endian and left-padded.
+///
+/// Chain entries are stored as `[u8; 32]` on the token. A felt is at most
+/// ~2^251.5, so the top four bits are always zero and the encoding is
+/// injective over the values a chain can actually hold.
+#[must_use]
+pub fn felt_to_chain_bytes(felt: FieldElement) -> [u8; 32] {
+    felt.to_bytes_be()
+}
+
+/// Decode a chain entry back to a felt, **refusing** values at or above the
+/// field prime.
+///
+/// `FieldElement::from_bytes_be` reduces modulo the prime without complaint, so
+/// an attacker-supplied token whose `chain[i]` is `p + k` would decode to `k`
+/// and verify against a chain the issuer never produced. Round-tripping through
+/// [`felt_to_chain_bytes`] catches exactly that: reduction changes the bytes.
+#[must_use]
+pub fn chain_bytes_to_felt(bytes: &[u8; 32]) -> Option<FieldElement> {
+    let felt = FieldElement::from_bytes_be(bytes);
+    (felt_to_chain_bytes(felt) == *bytes).then_some(felt)
+}
+
+/// `chain[0]`: the mint-time chain seed.
 ///
 /// ```text
-/// state = H(MAC_DOMAIN, secret_lo, secret_hi)
-/// for each caveat i:
-///     state = MAC(state, [prev_id_i, caveat_felt_i])
+/// H(MAC_DOMAIN, secret_lo, secret_hi, ...mint_felts)
 /// ```
+///
+/// `mint_felts` is [`bytes_to_felts`] of `MACAR_ID_DOMAIN ‖ nonce`. The mint
+/// nonce is not stored on the token — `root_id` is a one-way summary of it — so
+/// this cannot be recomputed from the token alone and must cross into the
+/// circuit as witness. It is folded into the seed rather than appended as a
+/// chain step because that is where the domain separation belongs: `chain[0]` is
+/// the bearer token, and without the nonce every capability minted from the same
+/// root secret would share an identical signature.
+///
+/// # Panics
+/// Never.
+#[must_use]
+pub fn chain_seed(
+    root_secret_lo: FieldElement,
+    root_secret_hi: FieldElement,
+    mint_felts: &[FieldElement],
+) -> FieldElement {
+    let mut seed = Vec::with_capacity(3 + mint_felts.len());
+    seed.push(MAC_DOMAIN);
+    seed.push(root_secret_lo);
+    seed.push(root_secret_hi);
+    seed.extend_from_slice(mint_felts);
+    poseidon_hash_many(seed.iter())
+}
+
+/// `chain[i+1]`: one attenuation link.
+///
+/// ```text
+/// MAC(state, [id_lo, id_hi, ...msg_felts])
+/// ```
+///
+/// `msg_felts` is [`bytes_to_felts`] of `name ‖ canonical_ser(caveat)`, keeping
+/// RFC-0957 §Algorithms' message layout intact — only its encoding into the
+/// field changes.
+///
+/// The id is split rather than passed whole because `capability_id` is a full
+/// 256-bit BLAKE3 digest and the field prime is only ~2^251.5: roughly one id in
+/// twenty-three is out of range, and reducing it would silently collide with a
+/// different id. Two 128-bit halves are both well inside the prime and the pair
+/// is injective.
+///
+/// # Panics
+/// Never.
+#[must_use]
+pub fn chain_step(
+    state: FieldElement,
+    prev_id: &[u8; 32],
+    msg_felts: &[FieldElement],
+) -> FieldElement {
+    let (id_lo, id_hi) = split_felts(prev_id);
+    let mut msg = Vec::with_capacity(2 + msg_felts.len());
+    msg.push(id_lo);
+    msg.push(id_hi);
+    msg.extend_from_slice(msg_felts);
+    poseidon_mac(state, &msg)
+}
+
+/// Re-derive the caveat chain tip: RFC-0958 §Algorithms step 2, host side.
 ///
 /// Mirrors `verify_chain_against_tip` in `cairo/src/lib.cairo` exactly.
 ///
@@ -81,25 +160,26 @@ pub fn poseidon_mac(key: FieldElement, msg: &[FieldElement]) -> FieldElement {
 /// checked out of band; the chain's job is only to commit to it.
 ///
 /// # Panics
-/// Never.
+/// Panics when `prev_ids` does not cover `caveat_msgs` exactly.
 #[must_use]
 pub fn derive_chain_tip(
     root_secret_lo: FieldElement,
     root_secret_hi: FieldElement,
-    caveat_felts: &[FieldElement],
-    prev_ids: &[FieldElement],
+    mint_felts: &[FieldElement],
+    caveat_msgs: &[Vec<u8>],
+    prev_ids: &[[u8; 32]],
 ) -> FieldElement {
     // A short `prev_ids` slice is a caller bug, not a malleable witness: it
     // would silently drop ids from the MAC. The circuit refuses the same input
     // with `CaveatIdDepthMismatch`, so the two sides agree on what is valid.
     assert_eq!(
         prev_ids.len(),
-        caveat_felts.len(),
+        caveat_msgs.len(),
         "prev_ids must cover exactly the caveat chain"
     );
-    let mut state = poseidon_hash_many([MAC_DOMAIN, root_secret_lo, root_secret_hi].iter());
-    for (prev_id, caveat_felt) in prev_ids.iter().zip(caveat_felts.iter()) {
-        state = poseidon_mac(state, &[*prev_id, *caveat_felt]);
+    let mut state = chain_seed(root_secret_lo, root_secret_hi, mint_felts);
+    for (prev_id, msg) in prev_ids.iter().zip(caveat_msgs.iter()) {
+        state = chain_step(state, prev_id, &bytes_to_felts(msg));
     }
     state
 }
@@ -389,58 +469,216 @@ mod tests {
     }
 
     /// Chain-level parity vectors, asserted **identically** by
-    /// `chain_tip_parity_*` in `cairo/src/lib.cairo`.
+    /// `chain_tip_matches_the_host_implementation` in `cairo/src/lib.cairo`.
     ///
     /// Pinning the whole chain rather than only the MAC matters because the MAC
     /// parity alone would still pass if the *loop* drifted — different seed
     /// construction, dropped `prev_id`, reversed order. Those are the changes that
     /// make every circuit proof fail against a real token, while both
     /// implementations continue to run and produce plausible felts.
+    ///
+    /// The witness is deliberately a realistic one: a mint seed of the actual
+    /// `MACAR_ID_DOMAIN ‖ nonce` shape, and three byte caveats. A parity vector
+    /// built from bare felts would pass even if the host and circuit disagreed
+    /// about how bytes enter the field, which is the half that actually drifts.
     pub const CHAIN_PARITY_TIP: FieldElement = FieldElement::from_hex_unchecked(
-        "0x0145e8fcdd0f75f06adc9fee029971072ff830c3b366cb01c5b091eb81e23063",
+        "0x074c6537d07b0b1ee7e99240c6185b939e890f78b9652cb6a1328b91a7794d40",
     );
+
+    fn parity_mint_nonce() -> [u8; 16] {
+        *b"0123456789abcdef"
+    }
+
+    fn parity_mint_felts() -> Vec<FieldElement> {
+        let mut seed = crate::MACAR_ID_DOMAIN.as_bytes().to_vec();
+        seed.extend_from_slice(&parity_mint_nonce());
+        bytes_to_felts(&seed)
+    }
+
+    fn parity_caveats() -> Vec<Vec<u8>> {
+        vec![
+            b"ValidUntil".to_vec(),
+            b"ModelWhitelist".to_vec(),
+            b"VaultScoped".to_vec(),
+        ]
+    }
+
+    fn parity_prev_ids() -> [[u8; 32]; 3] {
+        [
+            core::array::from_fn(|i| i as u8),
+            core::array::from_fn(|i| (i + 100) as u8),
+            core::array::from_fn(|i| (i + 200) as u8),
+        ]
+    }
+
+    fn parity_tip() -> FieldElement {
+        derive_chain_tip(
+            fe(11),
+            fe(12),
+            &parity_mint_felts(),
+            &parity_caveats(),
+            &parity_prev_ids(),
+        )
+    }
 
     #[test]
     fn chain_tip_matches_the_circuit_vector() {
-        let tip = derive_chain_tip(
-            fe(11),
-            fe(12),
-            &[fe(15), fe(16), fe(22)],
-            &[fe(31), fe(32), fe(33)],
+        assert_eq!(
+            parity_tip(),
+            CHAIN_PARITY_TIP,
+            "host/circuit chain tip divergence"
         );
-        assert_eq!(tip, CHAIN_PARITY_TIP, "host/circuit chain tip divergence");
     }
 
     #[test]
     fn the_prev_id_binding_changes_the_chain_tip() {
         // The tamper-evidence property, host side. If `prev_id` were not in
         // the MAC, these two would be equal and an id swap would be free.
-        let caveats = [fe(15), fe(16), fe(22)];
-        let honest = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31), fe(32), fe(33)]);
-        let swapped = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31), fe(99), fe(33)]);
-        let zeroed = derive_chain_tip(fe(11), fe(12), &caveats, &[fe(0), fe(0), fe(0)]);
+        let mint = parity_mint_felts();
+        let caveats = parity_caveats();
+        let honest = derive_chain_tip(fe(11), fe(12), &mint, &caveats, &parity_prev_ids());
+        let mut swapped_ids = parity_prev_ids();
+        swapped_ids[1][7] ^= 0xff;
+        let swapped = derive_chain_tip(fe(11), fe(12), &mint, &caveats, &swapped_ids);
+        let zeroed = derive_chain_tip(
+            fe(11),
+            fe(12),
+            &mint,
+            &caveats,
+            &[[0u8; 32], [0u8; 32], [0u8; 32]],
+        );
         assert_ne!(honest, swapped, "swapping one prev_id must change the tip");
         assert_ne!(honest, zeroed, "zeroing every prev_id must change the tip");
     }
 
     #[test]
     fn the_chain_tip_binds_caveat_order() {
-        let ids = [fe(31), fe(32), fe(33)];
-        let a = derive_chain_tip(fe(11), fe(12), &[fe(15), fe(16), fe(22)], &ids);
-        let b = derive_chain_tip(fe(11), fe(12), &[fe(22), fe(16), fe(15)], &ids);
+        let mint = parity_mint_felts();
+        let ids = parity_prev_ids();
+        let a = derive_chain_tip(fe(11), fe(12), &mint, &parity_caveats(), &ids);
+        let mut reordered = parity_caveats();
+        reordered.swap(0, 2);
+        let b = derive_chain_tip(fe(11), fe(12), &mint, &reordered, &ids);
         assert_ne!(a, b, "permuting the caveats must change the tip");
+    }
+
+    #[test]
+    fn the_mint_nonce_changes_the_chain_tip() {
+        // Without the nonce folded into the seed, every capability minted from
+        // the same root secret would share an identical chain[0].
+        let caveats = parity_caveats();
+        let ids = parity_prev_ids();
+        let honest = parity_tip();
+        let mut other_seed = crate::MACAR_ID_DOMAIN.as_bytes().to_vec();
+        other_seed.extend_from_slice(b"fedcba9876543210");
+        let other = derive_chain_tip(fe(11), fe(12), &bytes_to_felts(&other_seed), &caveats, &ids);
+        assert_ne!(honest, other, "a different mint nonce must change the tip");
+    }
+
+    #[test]
+    fn the_root_secret_changes_the_chain_tip() {
+        let mint = parity_mint_felts();
+        let caveats = parity_caveats();
+        let ids = parity_prev_ids();
+        assert_ne!(
+            derive_chain_tip(fe(11), fe(12), &mint, &caveats, &ids),
+            derive_chain_tip(fe(11), fe(13), &mint, &caveats, &ids),
+            "the root secret must be bound into the chain"
+        );
+    }
+
+    #[test]
+    fn an_empty_caveat_message_advances_the_walk() {
+        // A zero-length caveat occupies exactly its one-element prefix. If the
+        // group arithmetic gave 0 the walk would stall and a prover could pad
+        // the chain with caveats that carry nothing.
+        let mut seed = crate::MACAR_ID_DOMAIN.as_bytes().to_vec();
+        seed.extend_from_slice(b"0123456789abcdef");
+        let tip = derive_chain_tip(
+            fe(11),
+            fe(12),
+            &bytes_to_felts(&seed),
+            &[Vec::new()],
+            &[core::array::from_fn(|i| i as u8)],
+        );
+        println!("EMPTY_CAVEAT_TIP={tip:#066x}");
+        assert_ne!(tip, FieldElement::from(0_u64));
     }
 
     #[test]
     fn a_short_prev_id_slice_is_refused_rather_than_silently_truncated() {
         // Truncating here would drop ids from the MAC and produce a tip that
         // the circuit would refuse — a host/circuit disagreement on validity.
-        let caveats = [fe(15), fe(16), fe(22)];
-        let r = std::panic::catch_unwind(|| derive_chain_tip(fe(11), fe(12), &caveats, &[fe(31)]));
+        let mint = parity_mint_felts();
+        let caveats = parity_caveats();
+        let r = std::panic::catch_unwind(|| {
+            derive_chain_tip(fe(11), fe(12), &mint, &caveats, &parity_prev_ids()[..1])
+        });
         assert!(
             r.is_err(),
             "a prev_id slice shorter than the chain must panic"
         );
+    }
+
+    #[test]
+    fn a_chain_entry_at_or_above_the_field_prime_is_refused() {
+        // The silent-reduction hazard. `capability_id` is a full 256-bit BLAKE3
+        // digest and the prime is ~2^251.5, so roughly one id in twenty-three is
+        // out of range. An attacker who put `p + k` in `chain[i]` would otherwise
+        // have it decode to `k` and verify against a chain nobody issued.
+        let felt = FieldElement::from(7_u64);
+        let bytes = felt_to_chain_bytes(felt);
+        assert_eq!(chain_bytes_to_felt(&bytes), Some(felt));
+
+        // `2^252` — above the prime, which is ~2^251.5. Reduce it and the round-trip
+        // no longer matches.
+        let mut over = [0u8; 32];
+        over[0] = 0x10;
+        assert_eq!(chain_bytes_to_felt(&over), None);
+
+        // `2^251 + 1` is just *below* the starknet prime, so it must still be
+        // accepted. Without this the test above would pass on any large value
+        // and prove nothing about the boundary.
+        let mut just_under = [0u8; 32];
+        just_under[0] = 0x08;
+        just_under[31] = 0x01;
+        assert_eq!(
+            chain_bytes_to_felt(&just_under),
+            Some(FieldElement::from_bytes_be(&just_under))
+        );
+
+        // All-ones is far above the prime for the same reason.
+        assert_eq!(chain_bytes_to_felt(&[0xff; 32]), None);
+    }
+
+    #[test]
+    fn chain_entries_round_trip_through_the_token_representation() {
+        // Every chain value the host produces must survive the trip into the
+        // token's `[u8; 32]` and back, or the verifier re-derives something the
+        // issuer never wrote.
+        for i in 0..64_u8 {
+            let felt = poseidon_hash_many([fe(u64::from(i))].iter());
+            let bytes = felt_to_chain_bytes(felt);
+            assert_eq!(bytes.len(), 32);
+            assert_eq!(chain_bytes_to_felt(&bytes), Some(felt));
+        }
+    }
+
+    #[test]
+    fn a_capability_id_split_halves_are_always_inside_the_field() {
+        // Why the id is split rather than passed whole: a 32-byte BLAKE3 digest
+        // exceeds the prime about 4.4% of the time, and each 16-byte half is
+        // always in range.
+        let digest = [0xffu8; 32];
+        let (lo, hi) = split_felts(&digest);
+        // Right-aligned: the 16 source bytes land in the HIGH half of the
+        // 32-byte field representation, i.e. scaled by 2^128.
+        assert_eq!(lo.to_bytes_be()[16..32], [0xff; 16]);
+        assert_eq!(hi.to_bytes_be()[16..32], [0xff; 16]);
+        assert_eq!(lo.to_bytes_be()[..16], [0u8; 16]);
+        // The worst case is all ones: if that survives, so does every digest.
+        assert_eq!(chain_bytes_to_felt(&felt_to_chain_bytes(lo)), Some(lo));
+        assert_eq!(chain_bytes_to_felt(&felt_to_chain_bytes(hi)), Some(hi));
     }
 
     #[test]

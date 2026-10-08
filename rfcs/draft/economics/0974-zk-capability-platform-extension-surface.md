@@ -608,12 +608,42 @@ So the three options are:
 | Circuit MACs `prev_id` supplied as witness | **Taken.** The `id` is on the token and verified out of band; the chain binds it so a swapped `id` invalidates the proof. One extra felt per step. Measured at **+15 CASM words**. |
 
 The third option is now built and measured. `verify_chain_against_tip` takes
-`prev_ids: Span<felt252>` and MACs `chain[i+1] = MAC(chain[i], prev_id_i,
-caveat_felt_i)`, refusing a `prev_ids` that does not cover the chain exactly
-(`CaveatIdDepthMismatch`, on both sides of the boundary). The whole program went
-from 2,182 to **2,197 CASM words**; the AC-4 ceiling moved 2,200 → 2,400 words
-and 75 → 80 KB alongside it, both increases now on record in
-`crates/zk-circuit/tests/casm_snapshot.rs`.
+`prev_ids: Span<felt252>` and MACs `chain[i+1] = MAC(chain[i], id_lo, id_hi,
+...caveat_felts_i)`, refusing a `prev_ids` that is not two felts per caveat
+(`CaveatIdDepthMismatch`, on both sides of the boundary).
+
+Two encoding decisions were forced here, and both are silent-collision traps if
+gotten wrong:
+
+- **The id is split into two 128-bit halves.** `capability_id` is a full 256-bit
+  BLAKE3 digest and the field prime is only ~2^251.5, so roughly one id in
+  twenty-three is out of field range. Reducing it would collide it with a
+  different id — not error, collide.
+- **Chain entries are decoded with a round-trip check.** `from_bytes_be` reduces
+  modulo the prime without complaint, so an attacker-supplied `chain[i]` of
+  `p + k` would decode to `k` and verify against a chain nobody issued.
+  Re-encoding and comparing catches exactly that.
+
+Cost: 2,182 → 2,197 → **3,004 CASM words**. The second jump is the chain
+learning the host's `chain[0]`, which cost 807 words for two extra spans and
+their loops; the AC-4 ceiling moved 2,400 → 3,300 words and 80 → 110 KB
+alongside it, all on record in `crates/zk-circuit/tests/casm_snapshot.rs`.
+
+Two guards fired on the way and are recorded rather than quietly relaxed:
+
+- The `prev_ids` bounds check was missing, so a short witness raised an unnamed
+  "Index out of bounds" instead of the intended refusal. Found by running the
+  test that was supposed to prove the refusal.
+- The "Poseidon must be 8x cheaper than BLAKE3" assertion stopped holding —
+  the real margin at 3,004 words is 5.9x. The assertion was lowered to 5x with
+  the reasoning written down, not deleted, so a future drift back toward the
+  BLAKE3 cost still fails there.
+
+Parsing each caveat's width out of the data in-circuit, rather than taking it as
+witness, was implemented and measured first: **127 words more** (3,131) and it
+buys nothing, because the tip equality already binds the structure. A prover
+claiming the wrong widths MACs a different message and lands on a different tip
+regardless.
 
 Host and circuit are pinned to one shared chain tip, asserted as a literal on
 both sides. Pinning the tip rather than the MAC is deliberate: MAC-level parity
@@ -923,10 +953,17 @@ The correct next step is to measure a MAC.
 - [x] Circuit MACs `prev_id` as witness, so it enforces the same
       `name ‖ caveat ‖ id` construction the host does. Measured at +15 words;
       ceiling moved to 2,400 / 80 KB with the reason recorded.
+- [x] Circuit adopts the host's `chain[0]`, carrying the unrecoverable mint nonce
+      as witness. Cost 807 words; ceiling moved to 3,300 / 110 KB.
+- [x] Host-side `derive_chain_tip` / `chain_seed` / `chain_step` built, with the
+      id-split and chain-entry decode decisions proven by test, and pinned to the
+      circuit by a shared chain-tip literal over a realistic witness.
 - [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
       The circuit side no longer blocks it — see §Why the host chain swap is not
-      a mechanical change. What remains is the three HMAC-BLAKE3 call sites in
-      `macaroon.rs` and the token-format change they imply.
+      a mechanical change. The host primitives and their cross-implementation
+      parity are built; what remains is rewiring the three HMAC-BLAKE3 call sites
+      in `macaroon.rs` onto them, which changes every minted token's signature
+      value and needs a migration story.
 - [x] Byte-to-felt packing convention for variable-length caveat messages:
       31 bytes per felt, length-prefixed, with round-trip, injectivity and
       range properties proven by test.

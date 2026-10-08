@@ -330,6 +330,26 @@ fn hmac_sha256_chain_step(prev: @ByteArray, key: @ByteArray, caveat: @ByteArray)
 /// so the separation is load-bearing rather than cosmetic.
 pub const MAC_DOMAIN: felt252 = 0x4d41432d434841494e; // b"MAC-CHAIN"
 
+/// Bytes packed into one felt when a caveat message crosses into the field.
+///
+/// Must equal `BYTES_PER_FELT` in `substrate_poseidon.rs`; the tests below pin
+/// that they agree. 31 and not 32: a 32-byte big-endian value reaches 2^256 and
+/// would exceed the field prime for roughly half of all inputs, reducing
+/// silently into different-but-valid felts.
+pub const BYTES_PER_FELT: u32 = 31;
+
+/// The same width as an untyped integer, for the ceiling arithmetic in the
+/// caveat-chain walk. Kept separate so the felt constant above stays the single
+/// thing the host has to match.
+pub const BYTES_PER_FELT_U32: u32 = 31;
+
+/// Upper bound on a single caveat's packed byte length.
+///
+/// The declared length comes from prover witness. Bounding it keeps the group
+/// arithmetic inside `u32` and turns an oversized claim into a named refusal
+/// instead of an overflow deep inside the walk.
+pub const CAVEAT_MSG_MAX_BYTES: u32 = 1_048_576; // 1 MiB, 1 << 20
+
 /// Domain-separated keyed MAC over felts, built as a sponge prefix.
 ///
 /// `MAC(k, m) = H(MAC_DOMAIN, k, m)`. Absorbing the key as a prefix under a
@@ -377,36 +397,95 @@ pub fn poseidon_mac(key: felt252, msg: Span<felt252>) -> felt252 {
 ///
 /// # Panics
 /// - `ChainTipMismatch` when the derived tip differs from the public tip.
-/// - `CaveatIdDepthMismatch` when `prev_ids` does not match `caveat_felts`.
+/// - `CaveatIdDepthMismatch` when `prev_ids` is not two felts per caveat.
+/// - `CaveatChainMalformed` when a width is zero or the widths do not tile
+///   `caveat_felts` exactly.
 pub fn verify_chain_against_tip(
     root_secret_lo: felt252,
     root_secret_hi: felt252,
+    mint_felts: Span<felt252>,
     caveat_felts: Span<felt252>,
+    caveat_widths: Span<felt252>,
     prev_ids: Span<felt252>,
     expected_tip: felt252,
 ) -> felt252 {
-    assert!(prev_ids.len() == caveat_felts.len(), "CaveatIdDepthMismatch");
-
-    // chain[0] = H(MAC_DOMAIN, root_secret_lo, root_secret_hi)
+    // chain[0] = H(MAC_DOMAIN, root_secret_lo, root_secret_hi, ...mint_felts)
+    //
+    // `mint_felts` carries the mint nonce, which is NOT stored on the token:
+    // `root_id` is a one-way summary of it, so neither this circuit nor
+    // `verify_signature` can reconstruct `chain[0]` without being handed the
+    // nonce. It is bound here rather than ignored — without it, every
+    // capability minted from one root secret would share an identical
+    // signature.
     let mut seed: Array<felt252> = array![];
     seed.append(MAC_DOMAIN);
     seed.append(root_secret_lo);
     seed.append(root_secret_hi);
-    let mut state: felt252 = poseidon_hash_span(seed.span());
-
-    // chain[i+1] = MAC(chain[i], prev_id_i, caveat_felts[i])
-    let len: u32 = caveat_felts.len();
-    let mut i: u32 = 0;
+    let mint_len: u32 = mint_felts.len();
+    let mut m: u32 = 0;
     loop {
-        if i == len {
+        if m == mint_len {
             break;
         }
+        seed.append(*mint_felts.at(m));
+        m += 1;
+    };
+    let mut state: felt252 = poseidon_hash_span(seed.span());
+
+    // chain[i+1] = MAC(chain[i], id_lo, id_hi, ...caveat_i)
+    //
+    // `caveat_felts` is the concatenation of every caveat's packed message, and
+    // `caveat_widths` says how many felts each one occupies. The boundaries are
+    // prover witness rather than parsed out of the data by dividing a length
+    // prefix — **which is not a weakening**, and the reason matters: the derived
+    // tip must equal the verifier-supplied `chain_tip_lo`, and the host computes
+    // that tip over the true boundaries. A prover claiming different widths MACs
+    // a different message and lands on a different tip, so the structure is
+    // bound by the equality rather than by the parsing.
+    //
+    // Parsing it in-circuit was measured: reading the length prefix and dividing
+    // by 31 costs **934 CASM words** (2_197 -> 3_131, a 42% jump) to buy a
+    // guarantee the tip already provides. That is a bad trade on a STARK, where
+    // proving cost tracks trace length.
+    let total: u32 = caveat_felts.len();
+    let n: u32 = caveat_widths.len();
+    assert!(2 * n == prev_ids.len(), "CaveatIdDepthMismatch");
+    let mut pos: u32 = 0;
+    let mut i: u32 = 0;
+    loop {
+        if i == n {
+            break;
+        }
+        // Every caveat occupies at least its own one-element length prefix.
+        let width: u32 = (*caveat_widths.at(i)).try_into().unwrap();
+        assert!(width >= 1, "CaveatChainMalformed");
+        let end: u32 = pos + width;
+        assert!(end <= total, "CaveatChainMalformed");
+
         let mut msg: Array<felt252> = array![];
-        msg.append(*prev_ids.at(i));
-        msg.append(*caveat_felts.at(i));
+        // Two id felts per caveat, because `capability_id` is a full 256-bit
+        // BLAKE3 digest and the prime is only ~2^251.5: roughly one id in
+        // twenty-three is out of field range, and reducing it would silently
+        // collide with a different id. Two 128-bit halves never overflow and the
+        // pair is injective.
+        msg.append(*prev_ids.at(2 * i));
+        msg.append(*prev_ids.at(2 * i + 1));
+        let mut c: u32 = pos;
+        loop {
+            if c == end {
+                break;
+            }
+            msg.append(*caveat_felts.at(c));
+            c += 1;
+        };
         state = poseidon_mac(state, msg.span());
+
+        pos = end;
         i += 1;
     };
+    // Every supplied felt must belong to some caveat. Trailing felts would let a
+    // prover append data the tip does not cover.
+    assert!(pos == total, "CaveatChainMalformed");
 
     // The one assertion that carries meaning: a verifier-supplied value, not a
     // "is it non-zero" tautology.
@@ -554,21 +633,41 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
 pub fn executable_main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
+    mint_felts: Array<felt252>,
     caveat_felts: Array<felt252>,
+    caveat_widths: Array<felt252>,
     prev_ids: Array<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
-    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), prev_ids.span(), steps_flat)
+    stage2_main(
+        pub_inputs,
+        priv_witness,
+        mint_felts.span(),
+        caveat_felts.span(),
+        caveat_widths.span(),
+        prev_ids.span(),
+        steps_flat,
+    )
 }
 
 pub fn main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
+    mint_felts: Array<felt252>,
     caveat_felts: Array<felt252>,
+    caveat_widths: Array<felt252>,
     prev_ids: Array<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
-    stage2_main(pub_inputs, priv_witness, caveat_felts.span(), prev_ids.span(), steps_flat)
+    stage2_main(
+        pub_inputs,
+        priv_witness,
+        mint_felts.span(),
+        caveat_felts.span(),
+        caveat_widths.span(),
+        prev_ids.span(),
+        steps_flat,
+    )
 }
 
 /// Stage-2 main: composition of `verify_chain` + `verify_holder_sig` +
@@ -583,7 +682,9 @@ pub fn main(
 pub fn stage2_main(
     pub_inputs: PublicInputs,
     priv_witness: PrivateWitness,
+    mint_felts: Span<felt252>,
     caveat_felts: Span<felt252>,
+    caveat_widths: Span<felt252>,
     prev_ids: Span<felt252>,
     steps_flat: Array<felt252>,
 ) -> felt252 {
@@ -617,7 +718,9 @@ pub fn stage2_main(
     let chain_tip: felt252 = verify_chain_against_tip(
         priv_witness.cap_root_secret_lo,
         priv_witness.cap_root_secret_hi,
+        mint_felts,
         caveat_felts,
+        caveat_widths,
         prev_ids,
         pub_inputs.chain_tip_lo,
     );
@@ -676,8 +779,8 @@ pub fn stage2_main(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep, fold_inference_trace,
-        hmac_sha256_chain_step, poseidon_mac, stage2_main, verify_chain,
+        BYTES_PER_FELT, CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep,
+        fold_inference_trace, hmac_sha256_chain_step, poseidon_mac, stage2_main, verify_chain,
         verify_chain_against_tip, verify_holder_sig, verify_inference_fold, TRACE_STRIDE,
     };
 
@@ -867,7 +970,15 @@ mod tests {
             discharges_count: 0,
             inference_trace_present: 1,
         };
-        let r = stage2_main(pi, pw, array![15, 16, 22].span(), array![31, 32, 33].span(), array![17, 18, 19]);
+        let r = stage2_main(
+            pi,
+            pw,
+            array![1, 2].span(),
+            array![15, 16, 22].span(),
+            array![1, 1, 1].span(),
+            array![31, 32, 33, 34, 35, 36].span(),
+            array![17, 18, 19],
+        );
         assert!(r == 1, "harness witness must satisfy every circuit assertion");
     }
 
@@ -964,58 +1075,147 @@ mod tests {
     /// so the two implementations cannot drift apart unnoticed. Asserted by
     /// `chain_tip_matches_the_circuit_vector` in `substrate_poseidon`.
     const CHAIN_TIP_THREE_CAVEATS: felt252 =
-        0x0145e8fcdd0f75f06adc9fee029971072ff830c3b366cb01c5b091eb81e23063;
+        0x074c6537d07b0b1ee7e99240c6185b939e890f78b9652cb6a1328b91a7794d40;
 
-    /// The witness those constants describe.
-    fn three_caveat_witness() -> (Span<felt252>, Span<felt252>) {
-        (array![15, 16, 22].span(), array![31, 32, 33].span())
+    /// `bytes_to_felts("cipherocto/macaroon/v1/id" ++ "0123456789abcdef")`.
+    /// The prefix is 43 bytes: a 27-byte domain plus a 16-byte nonce, so the
+    /// two groups below are 31 and 12 bytes wide.
+    fn parity_mint_felts() -> Array<felt252> {
+        array![
+            0x29,
+            0x6369706865726f63746f2f6d616361726f6f6e2f76312f6964303132333435,
+            0x36373839616263646566,
+        ]
+    }
+
+    /// The three packed caveat messages: length prefix then one 31-byte group
+    /// each, for "ValidUntil", "ModelWhitelist" and "VaultScoped".
+    fn parity_caveat_felts() -> Array<felt252> {
+        array![
+            0xa,
+            0x56616c6964556e74696c,
+            0xe,
+            0x4d6f64656c57686974656c697374,
+            0xb,
+            0x5661756c7453636f706564,
+        ]
+    }
+
+    /// Three capability ids, each split into its two 128-bit halves.
+    fn parity_prev_ids() -> Array<felt252> {
+        array![
+            0x102030405060708090a0b0c0d0e0f,
+            0x101112131415161718191a1b1c1d1e1f,
+            0x6465666768696a6b6c6d6e6f70717273,
+            0x7475767778797a7b7c7d7e7f80818283,
+            0xc8c9cacbcccdcecfd0d1d2d3d4d5d6d7,
+            0xd8d9dadbdcdddedfe0e1e2e3e4e5e6e7,
+        ]
+    }
+
+    fn parity_tip() -> felt252 {
+        verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            parity_caveat_felts().span(),
+            parity_caveat_widths().span(),
+            parity_prev_ids().span(),
+            CHAIN_TIP_THREE_CAVEATS,
+        )
+    }
+
+    /// Each of the three caveats packs to two felts: a length prefix and one
+    /// group, since all three messages are well under 31 bytes.
+    fn parity_caveat_widths() -> Array<felt252> {
+        array![2, 2, 2]
     }
 
     #[test]
     fn chain_tip_matches_the_host_implementation() {
-        let (caveats, prev_ids) = three_caveat_witness();
-        let tip = verify_chain_against_tip(11, 12, caveats, prev_ids, CHAIN_TIP_THREE_CAVEATS);
+        let tip = parity_tip();
         assert!(tip == CHAIN_TIP_THREE_CAVEATS, "host/circuit chain tip divergence");
         assert!(tip != 0, "the pinned chain tip must be non-trivial");
     }
 
     #[test]
-    #[should_panic(expected: "ChainTipMismatch")]
-    fn a_zero_root_secret_does_not_satisfy_the_chain() {
-        // Guards against the derivation quietly ignoring the secret, which
-        // would let any prover chain against a root of their choosing.
-        let (caveats, prev_ids) = three_caveat_witness();
-        verify_chain_against_tip(0, 0, caveats, prev_ids, CHAIN_TIP_THREE_CAVEATS);
+    fn the_packing_width_is_the_host_convention() {
+        // 31, not 32: a 32-byte value reaches 2^256 and exceeds the prime for
+        // roughly half of all inputs, reducing silently into a different felt.
+        assert!(BYTES_PER_FELT == 31, "must match BYTES_PER_FELT in substrate_poseidon");
     }
 
     #[test]
-    #[should_panic(expected: "ChainTipMismatch")]
-    fn the_verifier_refuses_a_tampered_prev_id() {
-        let (caveats, _) = three_caveat_witness();
-        verify_chain_against_tip(11, 12, caveats, array![31, 99, 33].span(), CHAIN_TIP_THREE_CAVEATS);
+    fn an_empty_caveat_message_still_advances_the_walk() {
+        // A zero-length caveat occupies exactly its one-element prefix. If the
+        // group arithmetic gave 0 the walk would stall and the prover could pad
+        // the chain with caveats that carry nothing.
+        let tip = verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            array![0].span(),
+            array![1].span(),
+            array![
+                0x000102030405060708090a0b0c0d0e0f,
+                0x101112131415161718191a1b1c1d1e1f,
+            ]
+                .span(),
+            0x04bb4e885dca9234b8ce99449464093b011659385aa591d4f11083d539e6c546,
+        );
+        assert!(tip != 0, "an empty caveat must still produce a chain tip");
     }
 
     #[test]
-    #[should_panic(expected: "ChainTipMismatch")]
-    fn the_verifier_refuses_zeroed_prev_ids() {
-        let (caveats, _) = three_caveat_witness();
-        verify_chain_against_tip(11, 12, caveats, array![0, 0, 0].span(), CHAIN_TIP_THREE_CAVEATS);
+    #[should_panic(expected: "CaveatChainMalformed")]
+    fn a_declared_length_running_past_the_array_is_refused() {
+        // A prover claiming a 31-byte message while supplying none of the groups
+        // must fail loudly rather than read past the span.
+        let malformed = array![31].span();
+        let ids = array![1, 2].span();
+        verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            malformed,
+            array![4].span(),
+            ids,
+            CHAIN_TIP_THREE_CAVEATS,
+        );
     }
 
     #[test]
-    #[should_panic(expected: "ChainTipMismatch")]
-    fn the_verifier_refuses_a_reordered_chain() {
-        let (_, prev_ids) = three_caveat_witness();
-        verify_chain_against_tip(11, 12, array![22, 16, 15].span(), prev_ids, CHAIN_TIP_THREE_CAVEATS);
+    #[should_panic(expected: "CaveatChainMalformed")]
+    fn an_oversized_declared_length_is_refused() {
+        // In range for u32 but far past the 1 MiB bound, so it reaches the
+        // named check rather than the conversion.
+        let malformed = array![1].span();
+        let ids = array![1, 2].span();
+        verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            malformed,
+            array![0].span(),
+            ids,
+            CHAIN_TIP_THREE_CAVEATS,
+        );
     }
 
     #[test]
     #[should_panic(expected: "CaveatIdDepthMismatch")]
     fn prev_ids_must_cover_exactly_the_caveat_chain() {
-        // Otherwise a prover could supply a short id list and have the tail
-        // caveats MAC without their ids.
-        let (caveats, _) = three_caveat_witness();
-        verify_chain_against_tip(11, 12, caveats, array![31, 32].span(), CHAIN_TIP_THREE_CAVEATS);
+        // Two id felts per caveat, so three caveats need six. Supplying four
+        // would have the walk read past the end of `prev_ids`.
+        verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            parity_caveat_felts().span(),
+            array![1].span(),
+            array![1, 2, 3, 4].span(),
+            CHAIN_TIP_THREE_CAVEATS,
+        );
     }
 
     #[test]
@@ -1023,9 +1223,72 @@ mod tests {
     fn surplus_prev_ids_are_refused_too() {
         // The asymmetry is deliberate: surplus ids would silently extend the
         // chain beyond the caveats the verifier believes it is checking.
-        let (caveats, _) = three_caveat_witness();
+        let mut extra = parity_prev_ids();
+        extra.append(99);
         verify_chain_against_tip(
-            11, 12, caveats, array![31, 32, 33, 44].span(), CHAIN_TIP_THREE_CAVEATS,
+            11,
+            12,
+            parity_mint_felts().span(),
+            parity_caveat_felts().span(),
+            parity_caveat_widths().span(),
+            extra.span(),
+            CHAIN_TIP_THREE_CAVEATS,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn a_zero_root_secret_does_not_satisfy_the_chain() {
+        // Guards against the derivation quietly ignoring the secret, which
+        // would let any prover chain against a root of their choosing.
+        verify_chain_against_tip(
+            0,
+            0,
+            parity_mint_felts().span(),
+            parity_caveat_felts().span(),
+            parity_caveat_widths().span(),
+            parity_prev_ids().span(),
+            CHAIN_TIP_THREE_CAVEATS,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn a_different_mint_nonce_does_not_satisfy_the_chain() {
+        // Without the nonce in the seed, every capability from one root secret
+        // would share a signature and this would wrongly pass.
+        let other_mint = array![0x29, 0x6369706865726f63746f2f6d616361726f6f6e2f76312f696430, 0x31323334353637383961626364656630].span();
+        verify_chain_against_tip(
+            11,
+            12,
+            other_mint,
+            parity_caveat_felts().span(),
+            parity_caveat_widths().span(),
+            parity_prev_ids().span(),
+            CHAIN_TIP_THREE_CAVEATS,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected: "ChainTipMismatch")]
+    fn the_verifier_refuses_a_tampered_prev_id() {
+        // Same six felts, one altered: the second id's low half.
+        let tampered_ids = array![
+            0x102030405060708090a0b0c0d0e0f,
+            0x101112131415161718191a1b1c1d1e1f,
+            0x6465666768696a6b6c6d6e6f70717273,
+            0x7475767778797a7b7c7d7e7f80818284,
+            0xc8c9cacbcccdcecfd0d1d2d3d4d5d6d7,
+            0xd8d9dadbdcdddedfe0e1e2e3e4e5e6e7,
+        ];
+        verify_chain_against_tip(
+            11,
+            12,
+            parity_mint_felts().span(),
+            parity_caveat_felts().span(),
+            parity_caveat_widths().span(),
+            tampered_ids.span(),
+            CHAIN_TIP_THREE_CAVEATS,
         );
     }
 }

@@ -417,12 +417,12 @@ fn measure_current_casm_size() {
     let kb = bytes_to_kb(bytes_len);
     let words = bytes_len / 32;
     println!("AC-4 baseline: CASM bytes={bytes_len} ({kb:.2} KB), words={words}");
-    println!("AC-4 hard ceilings: 80 KB serialized / 2400 words (raised twice, when the vacuous chain assertion became a real MAC chain and when that chain began binding prev_id)");
+    println!("AC-4 hard ceilings: 110 KB serialized / 3300 words (raised three times, as the vacuous chain assertion became a real MAC chain, that chain began binding prev_id, and it adopted the host's nonce-seeded chain[0])");
 }
 
-/// AC-4 hard gate: serialized CASM bytes ≤ 80 KB after Stage-2 split.
+/// AC-4 hard gate: serialized CASM bytes ≤ 110 KB after Stage-2 split.
 ///
-/// Raised from 50 KB, then from 75 KB, alongside the word ceiling and on the
+/// Raised from 50 KB, then 75 KB, then 80 KB, alongside the word ceiling and on the
 /// same evidence: the program verifies a relation it previously did not.
 ///
 /// **Status (mission 0958-c AC-4, 2026-08-06):** GREEN as of R19 closure.
@@ -432,13 +432,13 @@ fn measure_current_casm_size() {
 /// figure has moved on since; the current measurement is in
 /// `blake3_circuit_cost_is_recorded_and_rejected`.
 #[test]
-fn casm_bytes_under_80kb_after_stage2_split() {
+fn casm_bytes_under_110kb_after_stage2_split() {
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
     let bytes_len = bytes.len();
     let kb = bytes_to_kb(bytes_len);
     assert!(
-        bytes_len <= 80 * 1024,
-        "AC-4 size regression: serialized CASM = {bytes_len} bytes ({kb:.2} KB) > 80 KB ceiling.",
+        bytes_len <= 110 * 1024,
+        "AC-4 size regression: serialized CASM = {bytes_len} bytes ({kb:.2} KB) > 110 KB ceiling.",
     );
 }
 
@@ -446,24 +446,26 @@ fn casm_bytes_under_80kb_after_stage2_split() {
 /// (Round 18 fix F-122 — `max_bytecode_size` measures CASM words,
 /// NOT Sierra statements or serialized bytes).
 ///
-/// The ceiling has moved twice, from 1,600 to 2,200 and then to 2,400. The
-/// first move was `verify_chain_against_tip` replacing a vacuous assertion
-/// with a real MAC chain bound to a verifier-supplied tip; the second was that
-/// chain beginning to MAC `prev_id` per step, so the circuit enforces the same
-/// `name ‖ caveat ‖ id` construction the host does. See
+/// The ceiling has moved three times, from 1,600 to 2,200 to 2,400 to 3,300.
+/// The first move was `verify_chain_against_tip` replacing a vacuous assertion
+/// with a real MAC chain bound to a verifier-supplied tip. The second made that
+/// chain MAC `prev_id` per step, so the circuit enforces the same
+/// `name ‖ caveat ‖ id` construction the host does. The third gave the chain the
+/// host's `chain[0]` — carrying the unrecoverable mint nonce as witness, and
+/// spanning variable-length caveat messages. See
 /// `blake3_circuit_cost_is_recorded_and_rejected` for the full rationale, the
-/// rejected BLAKE3 alternative at 17,628 words, and the current 2,197-word
+/// rejected BLAKE3 alternative at 17,628 words, and the current 3,004-word
 /// measurement.
 ///
 /// Budget changes must amend the ceiling explicitly, not be absorbed by
 /// trimming elsewhere.
 #[test]
-fn casm_words_under_2400_after_stage2() {
+fn casm_words_under_3300_after_stage2() {
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
     let words = bytes.len() / 32;
     assert!(
-        words <= 2400,
-        "AC-4 size regression: CASM word count = {words} > 2400 ceiling.",
+        words <= 3300,
+        "AC-4 size regression: CASM word count = {words} > 3300 ceiling.",
     );
 }
 
@@ -474,8 +476,8 @@ fn casm_words_under_2400_after_stage2() {
 /// logic**. `unkeyed_hash_one_chunk` exists in `cairo/src/blake3.cairo` and is
 /// parity-anchored to host BLAKE3 by four vectors. What it is not is affordable:
 /// un-gating the module and compiling it puts the program at **17,628 CASM
-/// words / 550.88 KB**, against a ceiling of 2,400 words / 80 KB. That is a 7x
-/// overrun on a ceiling with 203 words of headroom.
+/// words / 550.88 KB**, against a ceiling of 3,300 words / 110 KB. That is a 5x
+/// overrun on a ceiling with 296 words of headroom.
 ///
 /// Slimming the module to the unkeyed path — gating the keyed and HMAC surface
 /// behind `#[cfg(test)]` — does not bring it under. The compression function
@@ -518,19 +520,33 @@ fn blake3_circuit_cost_is_recorded_and_rejected() {
     // dropping the id from the host was rejected. The extra MAC input costs
     // 15 words, which is the whole of the second increase.
     //
+    // It moved a third time when the chain was taught to match the host's
+    // `chain[0]`. The mint nonce is not stored on the token — `root_id` is a
+    // one-way summary of it — so it has to cross into the circuit as witness,
+    // which added a seed array; and a caveat is now a variable-length byte
+    // message spanning several felts, which added a width array. Two extra
+    // spans and their loops cost 807 words (2_197 → 3_004).
+    //
+    // Parsing those widths out of the data in-circuit, by reading each caveat's
+    // length prefix and dividing by 31, was implemented and measured first: it
+    // costs **127 words more** (3_131) and buys nothing. The derived tip must
+    // equal the verifier-supplied one, so a prover claiming the wrong widths
+    // lands on a different tip regardless of whether the circuit parsed the
+    // structure itself.
+    //
     // Each increase is justified by what the program now proves, and the result
     // is still an order of magnitude below the alternative: re-deriving the
     // RFC-0957 HMAC-BLAKE3 chain in-circuit measured 17_628 words, so the
     // honest ceiling is the cheaper primitive plus a measured allowance, not
     // the native one. The allowance is ~200 words; at 3 words it was not an
     // allowance, only the next change's failure waiting to happen.
-    const CEILING_WORDS: usize = 2_400;
-    const CEILING_BYTES: usize = 80 * 1024;
+    const CEILING_WORDS: usize = 3_300;
+    const CEILING_BYTES: usize = 110 * 1024;
 
     const {
         // The STARK-native chain re-derivation, measured.
-        const MEASURED_CHAIN_WORDS: usize = 2_197;
-        const MEASURED_CHAIN_BYTES: usize = 70_304;
+        const MEASURED_CHAIN_WORDS: usize = 3_004;
+        const MEASURED_CHAIN_BYTES: usize = 96_128;
         // The RFC-0957 native chain, measured and rejected.
         const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
         const MEASURED_WITH_BLAKE3_BYTES: usize = 564_096;
@@ -552,9 +568,19 @@ fn blake3_circuit_cost_is_recorded_and_rejected() {
             MEASURED_CHAIN_WORDS * 32 == MEASURED_CHAIN_BYTES,
             "the recorded word and byte figures must describe the same program"
         );
-        // The reason this primitive was chosen: an 8x saving over BLAKE3.
+        // The reason this primitive was chosen: a large saving over BLAKE3.
+        //
+        // This threshold was 8x when the measurement was 2_182 words. Teaching
+        // the chain the host's `chain[0]` and spanning variable-length caveat
+        // messages moved the program to 3_004 words, and the real margin is now
+        // 5.9x. The assertion is deliberately NOT deleted at that point: it
+        // fired, the number was checked against the alternative, and the
+        // primitive swap is still overwhelmingly worth a token-format change.
+        // It stays at 5x so a future change that drifts the circuit back toward
+        // the BLAKE3 cost still fails here rather than quietly erasing the
+        // reason the primitive was swapped in the first place.
         assert!(
-            MEASURED_CHAIN_WORDS * 8 < MEASURED_WITH_BLAKE3_WORDS,
+            MEASURED_CHAIN_WORDS * 5 < MEASURED_WITH_BLAKE3_WORDS,
             "the STARK-native chain must stay far cheaper than the native one, \
              or swapping primitives was not worth a token-format change"
         );
@@ -588,8 +614,8 @@ fn blake3_circuit_cost_is_recorded_and_rejected() {
         "the compiled program must stay under its ceiling, got {words} words"
     );
     assert!(
-        words <= 2_197,
-        "the circuit grew past its recorded measurement of 2197 words (now {words}); \
+        words <= 3_004,
+        "the circuit grew past its recorded measurement of 3004 words (now {words}); \
          re-measure and record the new figure"
     );
 }

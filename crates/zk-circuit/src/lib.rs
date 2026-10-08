@@ -712,17 +712,17 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<CasmLowering, HashError> {
         SierraToCasmConfig {
             gas_usage_check: false,
             // Mission 0958-c AC-4 (Stage-2 verifier split): AC-4 hard
-            // ceiling is ≤2,400 CASM words (Round 18 fix F-122). Current
-            // compiled CASM is 2,197 words / 68.66 KB — inside it. The
+            // ceiling is ≤3,300 CASM words (Round 18 fix F-122). Current
+            // compiled CASM is 3,004 words / 93.88 KB — inside it. The
             // reduction this gate was originally waiting on arrived when
             // production `verify_chain` moved to corelib Poseidon over
             // felt252 and `verify_chain_against_tip` replaced the vacuous
             // `!= 0` assertion with a real MAC chain bound to a
             // verifier-supplied tip.
             //
-            // Sized above the current CASM (2,197 words) so the existing
-            // compilation pipeline keeps working. The hard 2,400-word
-            // ceiling is enforced by `casm_words_under_2400_after_stage2`
+            // Sized above the current CASM (3,004 words) so the existing
+            // compilation pipeline keeps working. The hard 3,300-word
+            // ceiling is enforced by `casm_words_under_3300_after_stage2`
             // below, alongside the serialized-bytes gate. Bump this value
             // when the AC-4 ceiling becomes achievable.
             max_bytecode_size: 12_000,

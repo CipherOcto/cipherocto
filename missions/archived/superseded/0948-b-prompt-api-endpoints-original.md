@@ -1,8 +1,12 @@
 # Mission: 0948-b — Prompt API Endpoints
 
+> **Superseded.** This is the original unclaimed stub, retained for history.
+> The worked mission closed at `missions/archived/completed/0948-b-prompt-api-endpoints.md`
+> (Closed 2026-08-13, 11 of 12 ACs green, rate limiting deferred).
+
 ## Status
 
-Open
+Superseded — see completed mission.
 
 ## RFC
 
@@ -38,5 +42,6 @@ RFC-0948 (Economics): Prompt Management
 ## Notes
 
 Key files:
+
 - `crates/quota-router-core/src/admin.rs` — Add prompt CRUD endpoints
 - `crates/quota-router-core/src/prompts/mod.rs` — Registry methods

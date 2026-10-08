@@ -1,8 +1,12 @@
 # Mission: 0957-ext-macaroon — Extract Macaroon to Per-Extension Crate (RFC-0957)
 
+> **Superseded.** This is the v1 Open draft (2026-08-08), retained for history.
+> The current mission is `missions/claimed/0957-ext-macaroon-crate.md`
+> (Phase 2 closed 2026-08-09).
+
 ## Status
 
-Open (2026-08-08). RFC-0957 + RFC-0965 amendments mandate per-extension crate layout.
+Superseded — see current claimed mission.
 
 ## RFC
 
@@ -101,9 +105,9 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures extraction scope. |
+| Version | Date       | Change                                                                                                               |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures extraction scope. |
 
 Last Updated: 2026-08-08
 Version: 0.1

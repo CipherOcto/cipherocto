@@ -35,8 +35,8 @@ Per substrate redesign plan (`/home/mmacedoeu/.claude/plans/sparkling-mapping-ka
 
 R2 findings applied:
 
-- **CRIT 1**: `src/spend_ledger.rs:48, :121` was fabricated — actual file is `stoolap_spend_ledger.rs` with hits at `:3` (doc), `:195`, `:248`, `:295`. Fixed.
-- **CRIT 2**: `src/holder_registry.rs:81, :155` removed — `rg` confirms `holder_registry.rs` has zero `stoolap::Database` matches on disk. Site dropped.
+- **CRIT 1**: The fabricated `src/spend_ledger.rs` pointers were replaced — actual file is `stoolap_spend_ledger.rs` (doc comment + 3 code hits). Fixed.
+- **CRIT 2**: Fabricated `src/holder_registry.rs` pointers removed — `rg` confirms `holder_registry.rs` has zero `stoolap::Database` matches on disk. Site dropped.
 - **CRIT 3**: Entire Explicit Sites table regenerated from on-disk `rg -n 'stoolap::Database' crates/quota-router-storage/src crates/octo-vault/src` (run 2026-08-20). Discovered 42 grep hits across 9 files: 35 TYPE positions + 7 doc comments. v2.0's "17 explicit sites" was substantially understated; v2.1 table is ground-truth.
 - **CRIT 4**: AC rg gate expanded to cover all 9 files in scope (was missing `consumed_receipt_repo.rs` + `stoolap_spend_ledger.rs` + `stoolap_holder_registry.rs` + `stoolap_did_registry.rs`). New gate covers all on-disk hits.
 - **HIGH 1**: Dropped `0206-003-trait-moves` from `depends_on:` (creates cycle; 0206-003 already lists 0206-002 as its dep). Ordering clause lives in 0206-003's dep on 0206-002.
@@ -56,7 +56,7 @@ R2 findings applied:
 R1 findings applied:
 
 - HIGH: 29-site count split — 17 explicit sites + 12 deferred to `0206-002b-layer-b-type-renames-audit` BLOCKED-ON-AUDIT
-- HIGH: `holder_registry.rs:33` removed from list (it's `pub trait HolderRegistry`, not `stoolap::Database`); owned by `0206-003-trait-moves`
+- HIGH: bogus `holder_registry.rs` pointer removed from list (it's `pub trait HolderRegistry`, not `stoolap::Database`); owned by `0206-003-trait-moves`
 - HIGH: Scope "must drop" + AC "no NEW stoolap deps" — wording aligned
 - HIGH: Ordering pinned — `0206-002` runs FIRST (renames in place); `0206-003` runs AFTER (moves renamed files)
 - MED: 0206-003 added to `depends_on:` (TV-0206-A7 scope covers `octo-cap-macaroon/src`)
@@ -78,79 +78,79 @@ Generated from `rg -n 'stoolap::Database' crates/quota-router-storage/src crates
 
 **octo-vault (4 hits):**
 
-- `src/lib.rs:351` [TYPE] — `pub fn apply(db: &stoolap::Database) -> Result<(), VaultError>`
-- `src/lib.rs:371` [DOC] — `/// handle, never through raw \`stoolap::Database\` re-export)`
-- `src/lib.rs:378` [TYPE] — `db: Arc<stoolap::Database>` field
-- `src/lib.rs:395` [TYPE] — `pub fn new(db: Arc<stoolap::Database>) -> Self`
+- `src/lib.rs` [TYPE] — `pub fn apply(db: &stoolap::Database) -> Result<(), VaultError>`
+- `src/lib.rs` [DOC] — `/// handle, never through raw \`stoolap::Database\` re-export)`
+- `src/lib.rs` [TYPE] — `db: Arc<stoolap::Database>` field
+- `src/lib.rs` [TYPE] — `pub fn new(db: Arc<stoolap::Database>) -> Self`
 
 **quota-router-storage/src/ask_repo.rs (5 hits):**
 
-- `:200` [TYPE] — `db: stoolap::Database` field
-- `:209` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:219` [TYPE] — `let db = stoolap::Database::open(path)`
-- `:228` [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
-- `:787` [TYPE] — test `let db = stoolap::Database::open_in_memory().unwrap();`
+- [TYPE] — `db: stoolap::Database` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
+- [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
+- [TYPE] — test `let db = stoolap::Database::open_in_memory.unwrap;`
 
 **quota-router-storage/src/consumed_receipt_repo.rs (4 hits, NEW in v2.1):**
 
-- `:57` [TYPE] — `db: stoolap::Database` field
-- `:66` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:76` [TYPE] — `let db = stoolap::Database::open(path)`
-- `:85` [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
+- [TYPE] — `db: stoolap::Database` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
+- [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
 
 **quota-router-storage/src/migrations.rs (5 hits):**
 
-- `:185` [TYPE] — `pub fn apply_pending(db: &stoolap::Database)`
-- `:274` [TYPE] — test `let db = stoolap::Database::open_in_memory().unwrap();`
-- `:327` [TYPE] — test
-- `:339` [TYPE] — test
-- `:451` [TYPE] — test
+- [TYPE] — `pub fn apply_pending(db: &stoolap::Database)`
+- [TYPE] — test `let db = stoolap::Database::open_in_memory.unwrap;`
+- [TYPE] — test
+- [TYPE] — test
+- [TYPE] — test
 
 **quota-router-storage/src/settlement_event_repo.rs (4 hits):**
 
-- `:26` [TYPE] — `db: stoolap::Database` field
-- `:69` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:79` [TYPE] — `let db = stoolap::Database::open(path)`
-- `:99` [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
+- [TYPE] — `db: stoolap::Database` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
+- [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
 
 **quota-router-storage/src/slash_store.rs (5 hits):**
 
-- `:113` [DOC] — `/// Wraps a \`stoolap::Database\` handle.`
-- `:117` [TYPE] — `db: stoolap::Database` field
-- `:125` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:136` [TYPE] — `let db = stoolap::Database::open(path)`
-- `:145` [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
+- [DOC] — `/// Wraps a \`stoolap::Database\` handle.`
+- [TYPE] — `db: stoolap::Database` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
+- [TYPE] — `pub fn from_db(db: stoolap::Database) -> Self`
 
-**quota-router-storage/src/stoolap_did_registry.rs (4 hits; `:139` and `:201` from RFC table do NOT exist on disk):**
+**quota-router-storage/src/stoolap_did_registry.rs (4 hits; and from RFC table do NOT exist on disk):**
 
-- `:3` [DOC] — module-level doc `//! Persistent DID-document registry backed by a \`stoolap::Database\``
-- `:95` [TYPE] — `db: Arc<stoolap::Database>` field
-- `:110` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:123` [TYPE] — `let db = stoolap::Database::open(path)`
+- [DOC] — module-level doc `//! Persistent DID-document registry backed by a \`stoolap::Database\``
+- [TYPE] — `db: Arc<stoolap::Database>` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
 
 **quota-router-storage/src/stoolap_holder_registry.rs (7 hits; `holder_registry.rs` file has zero matches):**
 
-- `:3` [DOC] — module-level doc
-- `:81` [DOC] — `/// Execute \`INSERT_HOLDER_SQL\` against a \`stoolap::Database\`.`
-- `:82` [TYPE] — `fn execute_insert_db(db: &stoolap::Database, ...)`
-- `:101` [TYPE] — `db: stoolap::Database` field
-- `:114` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:120` [DOC] — `/// Wrap an existing \`stoolap::Database\` (does NOT call \`apply_pending\`).`
-- `:121` [TYPE] — `pub fn from_database(db: stoolap::Database) -> Self`
+- [DOC] — module-level doc
+- [DOC] — `/// Execute \`INSERT_HOLDER_SQL\` against a \`stoolap::Database\`.`
+- [TYPE] — `fn execute_insert_db(db: &stoolap::Database,...)`
+- [TYPE] — `db: stoolap::Database` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [DOC] — `/// Wrap an existing \`stoolap::Database\` (does NOT call \`apply_pending\`).`
+- [TYPE] — `pub fn from_database(db: stoolap::Database) -> Self`
 
 **quota-router-storage/src/stoolap_spend_ledger.rs (4 hits, NEW in v2.1; `spend_ledger.rs` file does NOT exist):**
 
-- `:3` [DOC] — module-level doc
-- `:195` [TYPE] — `db: Arc<stoolap::Database>` field
-- `:248` [TYPE] — `let db = stoolap::Database::open_in_memory()`
-- `:295` [TYPE] — `let db = stoolap::Database::open(path)`
+- [DOC] — module-level doc
+- [TYPE] — `db: Arc<stoolap::Database>` field
+- [TYPE] — `let db = stoolap::Database::open_in_memory`
+- [TYPE] — `let db = stoolap::Database::open(path)`
 
 **Notes on RFC-0206 §Layer B TYPE Renames table discrepancies (v2.1 fix):**
 
-- `stoolap_did_registry.rs:139, :201` (RFC table) do NOT exist on disk; real TYPE positions at `:95, :110, :123`.
-- `holder_registry.rs:81, :155` (RFC table) do NOT exist; file has zero `stoolap::Database` matches. Trait decl moves to `octo-cap-macaroon` per `0206-003-trait-moves` and is out of scope here. The actual stoolap-backed holder impl lives in `stoolap_holder_registry.rs` (7 hits at `:3, :81, :82, :101, :114, :120, :121`) — entirely absent from RFC §Layer B TYPE Renames table.
-- `spend_ledger.rs` (RFC table) does NOT exist; real file is `stoolap_spend_ledger.rs` at `:195, :248, :295` (plus `:3` doc).
-- `ask_repo.rs:42, :189`, `slash_store.rs:67, :289`, `settlement_event_repo.rs:36, :96`, `migrations.rs:14` (RFC table) are wrong line numbers; see regenerated table above for actual on-disk hits.
+- The `stoolap_did_registry.rs` (RFC table) TYPE positions do NOT exist on disk; the real ones were regenerated above.
+- The `holder_registry.rs` (RFC table) TYPE positions do NOT exist; the file has zero `stoolap::Database` matches. Trait decl moves to `octo-cap-macaroon` per `0206-003-trait-moves` and is out of scope here. The actual stoolap-backed holder impl lives in `stoolap_holder_registry.rs` (7 hits) — entirely absent from RFC §Layer B TYPE Renames table.
+- `spend_ledger.rs` (RFC table) does NOT exist; real file is `stoolap_spend_ledger.rs` at `:195, :248, :295` (plus doc).
+- The `ask_repo.rs`, `slash_store.rs`, `settlement_event_repo.rs`, `migrations.rs` (RFC table) TYPE positions are wrong; see regenerated table above for actual on-disk hits.
 
 ### Deferred Sites
 
@@ -167,7 +167,7 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 ### Cargo.toml Deps Update
 
 - Each renamed crate MUST drop `stoolap` direct dep (verified by AC gate; see "stoolap = line absent" gate below)
-- `octo-storage-core = { path = "../octo-storage-core" }` dep is ALREADY present in both `crates/quota-router-storage/Cargo.toml:23` and `crates/octo-vault/Cargo.toml:16` (verified 2026-08-20); no Cargo.toml edit required for substrate dep
+- `octo-storage-core = { path = "../octo-storage-core" }` dep is ALREADY present in both `crates/quota-router-storage/Cargo.toml` and `crates/octo-vault/Cargo.toml` (verified 2026-08-20); no Cargo.toml edit required for substrate dep
 - **HIGH 6 exemption rationale**: RFC-0206 (Cargo.toml Cross-Cuts section in v2.4 body) scopes the "Adapter crates MUST declare `octo-storage` (NOT direct substrate)" rule to Tier 3 adapter crates. `quota-router-storage` + `octo-vault` are Layer B consumer crates that hold the `Database` newtype directly in struct fields and constructor signatures; they require direct substrate path access for the type alias. Routing through the `octo-storage` facade would also be valid (facade re-exports substrate) but adds an unnecessary dependency layer; direct `octo-storage-core` is the substrate's documented public API. (Section name §Cargo.toml Cross-Cuts refers to v2.4 RFC body; v3.0 draft renames this section.)
 - Exception: typed-query allowlist sites per RFC §Substrate Newtype Refactor — use `From<Database> for stoolap::Database` escape hatch. Escape-hatch sites are documented in `docs/audits/0206-002-escape-hatch-audit.md` and SUBTRACTED from the rg count (rg gate accommodates escape-hatch sites).
 
@@ -190,8 +190,8 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 
 ## Files / Artifacts
 
-- Edit: `crates/quota-router-storage/Cargo.toml` (drop `stoolap` dep at `:16`; `octo-storage-core` at `:23` already present)
-- Edit: `crates/octo-vault/Cargo.toml` (drop `stoolap` dep at `:22`; `octo-storage-core` at `:16` already present)
+- Edit: `crates/quota-router-storage/Cargo.toml` (drop `stoolap` dep at; `octo-storage-core` at already present)
+- Edit: `crates/octo-vault/Cargo.toml` (drop `stoolap` dep at; `octo-storage-core` at already present)
 - Edit: 9 source files per Explicit Sites table (35 TYPE + 7 DOC rename sites)
 - New: `docs/audits/0206-002-escape-hatch-audit.md` (From<Database> site list with line subtraction count)
 - New: `docs/audits/0206-002-deref-surface-audit.md` (Deref access site list)

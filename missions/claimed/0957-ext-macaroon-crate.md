@@ -22,7 +22,7 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 ### Top-level: Extraction
 
 - [x] NEW: `crates/octo-cap-macaroon/` crate created with `Cargo.toml` + `src/lib.rs` (Phase 1 commit `f123fe1b`)
-- [x] Phase 1 extraction: `hmac_blake3`, `macaroon_id`, `MacaroonId`, `CAPABILITY_ID_DOMAIN`, `MACAR_ID_DOMAIN` constants moved from `crates/octo-wallet/src/capability/macaroon.rs` (lines 40-76) to `crates/octo-cap-macaroon/src/lib.rs`
+- [x] Phase 1 extraction: `hmac_blake3`, `macaroon_id`, `MacaroonId`, `CAPABILITY_ID_DOMAIN`, `MACAR_ID_DOMAIN` constants moved from `crates/octo-wallet/src/capability/macaroon.rs` to `crates/octo-cap-macaroon/src/lib.rs`
 - [x] Phase 2 extraction: `caveat.rs` (1382 lines, 24 caveat variants) + `Macaroon` struct + `mint`/`attenuate`/`verify_signature`/`verify_full`/`extend_chain`/`compute_capability_id` + `CapabilityCatalog` trait + `CapabilityGossip` trait + `InMemoryCatalog` + `TransportDeliveryCatalog` + `MacaroonError` + `CatalogGossipError` + `check_wrapped_chain`/`check_wrapped_depth` + proptest property tests moved from `crates/octo-wallet/src/capability/{caveat,macaroon}.rs` to `crates/octo-cap-macaroon/src/{caveat,macaroon}.rs` (Phase 2 commit `9d28ddc8`)
 - [x] `octo-wallet::capability::{caveat,macaroon}` modules converted to re-export shims: `pub use octo_cap_macaroon::{caveat,macaroon}::*;` (backward compat for all call sites)
 - [x] `octo-wallet` `Cargo.toml` adds `octo-cap-macaroon = { path = "../octo-cap-macaroon" }` dep

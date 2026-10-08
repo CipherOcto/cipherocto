@@ -10,7 +10,7 @@ RFC-0011-n §Substrate-Additions Companion Missions row G18 + RFC-0862p-a Writer
 
 ## Summary
 
-Adds a thin `WriterElection` struct wrapper around the existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs:222` (verified substrate-faithful signature: 7 args returning `Result<ElectionTally, CoordinatorError>`). Required by `octo network status` (Phase 6 G18 substrate companion) so the CLI can query writer-election state without depending on the free function directly.
+Adds a thin `WriterElection` struct wrapper around the existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs` (verified substrate-faithful signature: 7 args returning `Result<ElectionTally, CoordinatorError>`). Required by `octo network status` (Phase 6 G18 substrate companion) so the CLI can query writer-election state without depending on the free function directly.
 
 ### Substrate additions target
 
@@ -110,7 +110,7 @@ The struct intentionally does NOT carry candidates: the `elect_coordinator` free
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands
 - Hard sequencing: RFC-0011-n must be Accepted (Draft v0.2, DRY CLOSED)
-- Soft sequencing: `elect_coordinator` free function at `octo-coordinator-types/src/election.rs:222` (LANDED) is consumed by the struct method (verified substrate-faithful 7-arg signature)
+- Soft sequencing: `elect_coordinator` free function at `octo-coordinator-types/src/election.rs` (LANDED) is consumed by the struct method (verified substrate-faithful 7-arg signature)
 
 ## Out of Scope
 
@@ -118,9 +118,9 @@ The struct intentionally does NOT carry candidates: the `elect_coordinator` free
 - Wire format versioning (deferred to substrate-additions companion)
 - Per-extension transport impl (deferred to per-extension crate pattern)
 - Persistence adapter (Phase 6 follow-on companion `0011-h-s-a-writer-election-persistence`)
-- Tie-break logic (consumed from existing `tie_break` free function at `octo-coordinator-types/src/election.rs:494`)
+- Tie-break logic (consumed from existing `tie_break` free function at `octo-coordinator-types/src/election.rs`)
 - Candidates list (NOT consumed by `elect_coordinator` free function; omitted from struct per substrate-faithfulness)
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The struct method `WriterElection::elect_coordinator` DELEGATES to the free function `elect_coordinator` to keep the canonical election logic in one place — the struct is purely a state-aggregation surface for the CLI's `status` subcommand. The struct does NOT introduce parallel abstractions per `cipherocto-design-principles` §No parallel abstractions: the free function remains the authoritative election logic. Signature verified substrate-faithful (7-arg form returning `Result<ElectionTally, CoordinatorError>`) per direct read of `octo-coordinator-types/src/election.rs:222` during this stub fill-in.
+Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The struct method `WriterElection::elect_coordinator` DELEGATES to the free function `elect_coordinator` to keep the canonical election logic in one place — the struct is purely a state-aggregation surface for the CLI's `status` subcommand. The struct does NOT introduce parallel abstractions per `cipherocto-design-principles` §No parallel abstractions: the free function remains the authoritative election logic. Signature verified substrate-faithful (7-arg form returning `Result<ElectionTally, CoordinatorError>`) per direct read of `octo-coordinator-types/src/election.rs` during this stub fill-in.

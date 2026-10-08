@@ -36,10 +36,10 @@ Fallback: 1-epoch timeout on `DC_CONSENSUS_PREPARE` → manual operator reconcil
 
 ## Acceptance Criteria
 
-- [x] `DC_CONSENSUS_PREPARE` / `DC_CONSENSUS_COMMIT` / `DC_CONSENSUS_ABORT` envelope types — **LANDED** (`ConsensusEnvelope` enum at `crates/octo-network/src/dc/consensus.rs:77`, tagged by `dc_consensus_prepare` / `dc_consensus_commit` / `dc_consensus_abort`)
-- [x] `crates/octo-network/src/dc/consensus.rs` — 2-phase commit coordinator — **LANDED** (493 lines, `DcConsensusCoordinator` at `:117`)
-- [x] `DC_CONSENSUS_TIMEOUT_EPOCHS = 1` constant — **LANDED** at `:22`
-- [x] Quorum: N=1 unilateral, N=2 unanimous, N≥3 2/3 — **LANDED** (`Quorum::for_n()` at `:271`, `is_met()` at `:281`, with defensive N=0 guard at `:288-290`)
+- [x] `DC_CONSENSUS_PREPARE` / `DC_CONSENSUS_COMMIT` / `DC_CONSENSUS_ABORT` envelope types — **LANDED** (`ConsensusEnvelope` enum at `crates/octo-network/src/dc/consensus.rs`, tagged by `dc_consensus_prepare` / `dc_consensus_commit` / `dc_consensus_abort`)
+- [x] `crates/octo-network/src/dc/consensus.rs` — 2-phase commit coordinator — **LANDED** (493 lines, `DcConsensusCoordinator` at)
+- [x] `DC_CONSENSUS_TIMEOUT_EPOCHS = 1` constant — **LANDED** at
+- [x] Quorum: N=1 unilateral, N=2 unanimous, N≥3 2/3 — **LANDED** (`Quorum::for_n` at, `is_met` at, with defensive N=0 guard at `:288-290`)
 - [x] Unit tests: each quorum case, tie-break, timeout — **LANDED** (16 unit tests: N=0/1/2/3/4 quorum + tie-break-rejection + deadline-timeout + unknown-DC-abort + outcome-reporting + topic-format + 0-participants-construction-guard)
 - [ ] Integration test: 3 simulated platforms, simultaneous REBIND → one wins (2 of 3) — **DEFERRED** (sim-network harness for libp2p mesh doesn't exist yet; full state-machine logic is unit-tested with N=3 + N=4 + reject-paths)
 - [ ] Documentation: operator guide for `dc-reconcile` manual reconciliation — **DEFERRED** (operator docs are post-launch scope; protocol-correctness logic is fully tested)

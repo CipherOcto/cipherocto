@@ -10,6 +10,7 @@ are pre-requisites for the PK promotion; they tighten the substrate
 shape and TV coverage.
 
 **Scope as landed (5/7 implementable ACs + 1/2 deferred to 0900-d2):**
+
 - AC-3 ✅ — `HashMap<([u8; 32], String), ProviderStake>` tuple-key
   restructure in `SlashingLedger::stakes`. Public API keeps
   single-arg `provider_id`; internal `stake_key(provider_id)` helper
@@ -43,9 +44,9 @@ shape and TV coverage.
     (stoolap fork Dqa driver upstreaming). Mission 0900-d2 filed
     (`8dac8bf0`) on 2026-08-18.
 - AC-6 ✅ — 192/192 storage lib tests + 23/23 migration chain tests
-  + 4/4 new TVs + 2/2 pre-existing migration test fixes (v012 → v015
-  hardcoded MAX(version) assertions in `stoolap_idempotent_alter.rs`
-  + `stoolap_migration_chain.rs`).
+  - 4/4 new TVs + 2/2 pre-existing migration test fixes (v012 → v015
+    hardcoded MAX(version) assertions in `stoolap_idempotent_alter.rs`
+  - `stoolap_migration_chain.rs`).
 - AC-7 ✅ — `cargo fmt --all` clean,
   `cargo clippy -p quota-router-storage --all-targets -- -D warnings`
   clean,
@@ -53,10 +54,12 @@ shape and TV coverage.
   clean.
 
 **Deferred to 0900-d2 (2/9 TVs):**
+
 - TV-0900-D-01 (DQA(12) byte-exact round-trip)
 - TV-0900-D-04 (scale=0 invariant via DQA(12))
 
 **Out-of-scope (per AC-10):**
+
 - `cargo test -p quota-router-core --lib` runtime — blocked by
   pre-existing missing libpython3.12 in current env (sysadmin track).
   Compile-check verified via `cargo build --tests`.
@@ -71,12 +74,12 @@ shape and TV coverage.
 
 ## Dependency edges
 
-| From | To | Why | Layer direction |
-| --- | --- | --- | --- |
-| `crates/quota-router-storage/src/slash_store.rs` (modify) | Stoolap fork Dqa driver | DQA(12) codec | substrate → upstream fork |
-| `crates/quota-router-core/src/marketplace/slashing.rs` (modify) | `HashMap<([u8;32], String), ProviderStake>` | tuple-key map | lib → lib |
-| `crates/quota-router-core/src/marketplace/slashing.rs` (modify) | `SlashOutcome.chain_id: [u8; 32]` | Outcome chain tag | lib → lib |
-| `crates/quota-router-storage/tests/tv_0900_d1_chain_slash_remaining.rs` (NEW) | 9 TV tests | coverage closure | lib → tests |
+| From                                                                          | To                                          | Why               | Layer direction           |
+| ----------------------------------------------------------------------------- | ------------------------------------------- | ----------------- | ------------------------- |
+| `crates/quota-router-storage/src/slash_store.rs` (modify)                     | Stoolap fork Dqa driver                     | DQA(12) codec     | substrate → upstream fork |
+| `crates/quota-router-core/src/marketplace/slashing.rs` (modify)               | `HashMap<([u8;32], String), ProviderStake>` | tuple-key map     | lib → lib                 |
+| `crates/quota-router-core/src/marketplace/slashing.rs` (modify)               | `SlashOutcome.chain_id: [u8; 32]`           | Outcome chain tag | lib → lib                 |
+| `crates/quota-router-storage/tests/tv_0900_d1_chain_slash_remaining.rs` (NEW) | 9 TV tests                                  | coverage closure  | lib → tests               |
 
 Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
 
@@ -94,14 +97,14 @@ Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
    a follow-on**-2** mission tied to the upstream fork Dqa driver.
 
 2. **HashMap tuple-key** (MED) — `HashMap<String, ProviderStake>`
-   at `marketplace/slashing.rs:520` area uses single-key. With
+   at `marketplace/slashing.rs` area uses single-key. With
    `ProviderStake.chain_id: [u8; 32]` already in the struct, the
    key should be `(ChainId, String)` to match the substrate PK
    shape. Production paths use `DEFAULT_CHAIN_ID` only today;
    tuple-key lands before any multi-chain slashing path activates.
 
 3. **`SlashOutcome.chain_id`** (LOW) — `SlashOutcome` at
-   `marketplace/slashing.rs:370` carries the dispute-resolution
+   `marketplace/slashing.rs` carries the dispute-resolution
    outcome record. Adding `chain_id` mirrors `SlashLedgerRow` +
    `ProviderStake` chain tag. Required for audit-table chain
    attribution.
@@ -114,7 +117,7 @@ Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
    no TV at the HashMap tuple-key lookup layer.
 
 5. **Core test infra** (INFRA, pre-existing) — `cargo test
-   -p quota-router-core --lib` blocked by missing libpython3.12
+-p quota-router-core --lib` blocked by missing libpython3.12
    in current env. Pre-existing infra issue, not 0900-d
    regression. Out of scope for this mission; clean up in a
    separate sysadmin track.
@@ -220,10 +223,10 @@ Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
 
 ## Version history
 
-| Date       | Author     | Change |
-| ---------- | ---------- | ------ |
+| Date       | Author     | Change                                                                                                                                                           |
+| ---------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-18 | @mmacedoeu | LANDED. AC-3 (HashMap tuple-key) + AC-4 (SlashOutcome.chain_id) + 7/9 TVs landed. AC-1 + AC-2 + TV-01 + TV-04 deferred to 0900-d2 (fork Dqa driver upstreaming). |
-| 2026-08-18 | @mmacedoeu | Initial filing immediately after 0900-d LANDED (commit `58c4c2ce`). Closes 5 deferred ACs. |
+| 2026-08-18 | @mmacedoeu | Initial filing immediately after 0900-d LANDED (commit `58c4c2ce`). Closes 5 deferred ACs.                                                                       |
 
 ## Out of scope
 

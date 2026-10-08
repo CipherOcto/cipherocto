@@ -43,7 +43,7 @@ Per RFC-0855p-d1 §Data Structure + §State Machine + §Layer-C Substrate Surfac
 - `SubGroupRecord` — wire-stable record (sub_domain_id + parent_domain_id + state + bind_epoch + members)
 - `SubGroupState` — `#[non_exhaustive]` enum (PendingBind / Bound / Dissolving / Dissolved)
 - `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` — typed Layer-C query boundary
-- `sub_domain_id` canonical derivation: `BLAKE3_keyed(SUBGROUP_DOMAIN_CONTEXT, parent_domain_id || sub_label)` (where `SUBGROUP_DOMAIN_CONTEXT = "DOT/1/CGROUP_SUB/domain"` per RFC-0855p-d1 line 158; expanded to 32-byte key via `blake3::derive_key`)
+- `sub_domain_id` canonical derivation: `BLAKE3_keyed(SUBGROUP_DOMAIN_CONTEXT, parent_domain_id || sub_label)` (where `SUBGROUP_DOMAIN_CONTEXT = "DOT/1/CGROUP_SUB/domain"` per RFC-0855p-d1; expanded to 32-byte key via `blake3::derive_key`)
 - Nonce + duplicate + parent-binding + depth-cap indexes
 - `MAX_BIND_AWAIT_EPOCHS = 32` + `MAX_BIND_RETRY_COUNT = 3` + `MAX_SUBGROUP_DEPTH = 8` + `MAX_FSKEW_EPOCHS = 4` + `MAX_ROOT_DEPTH = 1` enforcement
 - Cross-node `PendingBind → Dissolving` reconciliation

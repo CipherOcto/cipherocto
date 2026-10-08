@@ -24,6 +24,7 @@ Accepted
 Extend RFC-0902 (Multi-Provider Routing) and RFC-0936 (Pre-Call Checks) with enhanced routing features: Model Group Alias, improved Context Window Fallbacks, and per-model Allowed Fails configuration.
 
 **Relationship to existing RFCs:**
+
 - RFC-0936 (Accepted) already specifies Context Window Check and Health Check — this RFC extends those with per-model configuration
 - RFC-0902 (Accepted) already specifies `context_window_fallbacks` in `router_settings` — this RFC adds per-model overrides
 - This RFC adds Model Group Alias as genuinely new functionality
@@ -42,16 +43,17 @@ Extend RFC-0902 (Multi-Provider Routing) and RFC-0936 (Pre-Call Checks) with enh
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Context-aware fallback | Auto-switch on context overflow |
-| G2 | Model aliasing | Flexible model naming |
-| G3 | Failure thresholds | Configurable resilience |
-| G4 | Zero config | Sensible defaults |
+| Goal | Target                 | Metric                          |
+| ---- | ---------------------- | ------------------------------- |
+| G1   | Context-aware fallback | Auto-switch on context overflow |
+| G2   | Model aliasing         | Flexible model naming           |
+| G3   | Failure thresholds     | Configurable resilience         |
+| G4   | Zero config            | Sensible defaults               |
 
 ## Motivation
 
 litellm provides sophisticated routing features that quota-router lacks:
+
 - Context Window Fallbacks: Auto-switch to larger context model when input exceeds limit
 - Model Group Alias: Use friendly names that map to multiple models
 - Allowed Fails: Configure how many failures before removing a model from rotation
@@ -62,7 +64,7 @@ These features are critical for production deployments where resilience and flex
 
 ### Context Window Fallbacks (Extends RFC-0936)
 
-RFC-0936 Section 2 defines the Context Window Check. This RFC extends it with per-model fallback configuration in `router_settings` (consistent with RFC-0902 line 219):
+RFC-0936 Section 2 defines the Context Window Check. This RFC extends it with per-model fallback configuration in `router_settings` (consistent with RFC-0902):
 
 ```yaml
 # config.yaml (extends RFC-0902 format)
@@ -384,6 +386,7 @@ struct HealthModelsResponse {
 ```
 
 **Example response:**
+
 ```json
 GET /health/models
 
@@ -425,14 +428,14 @@ GET /health/models
 
 ## Key Files
 
-| File | Change |
-|------|--------|
+| File                                                       | Change                         |
+| ---------------------------------------------------------- | ------------------------------ |
 | `crates/quota-router-core/src/routing/context_fallback.rs` | New - context window fallbacks |
-| `crates/quota-router-core/src/routing/model_alias.rs` | New - model group alias |
-| `crates/quota-router-core/src/routing/health_tracker.rs` | New - allowed fails tracking |
-| `crates/quota-router-core/src/routing/mod.rs` | Integrate new features |
-| `crates/quota-router-core/src/config.rs` | Add routing config |
-| `crates/quota-router-core/src/handlers/health.rs` | Expose model health |
+| `crates/quota-router-core/src/routing/model_alias.rs`      | New - model group alias        |
+| `crates/quota-router-core/src/routing/health_tracker.rs`   | New - allowed fails tracking   |
+| `crates/quota-router-core/src/routing/mod.rs`              | Integrate new features         |
+| `crates/quota-router-core/src/config.rs`                   | Add routing config             |
+| `crates/quota-router-core/src/handlers/health.rs`          | Expose model health            |
 
 ## Security Considerations
 
@@ -442,6 +445,6 @@ GET /health/models
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1.0 | 2026-05-18 | Initial draft |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 0.1.0   | 2026-05-18 | Initial draft |

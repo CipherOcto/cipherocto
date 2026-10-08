@@ -14,7 +14,7 @@ biggest LoC.
 Acceptance criteria completed:
 
 - [x] `const MAX_SAML_XML_BYTES: usize = 64 * 1024` landed at
-      `crates/quota-router-core/src/auth/sso/saml.rs:178`
+      `crates/quota-router-core/src/auth/sso/saml.rs`
       (next to `SamlAssertionParserImpl` impl block). `parse()`
       early-rejects above this size with descriptive
       `ProviderError` (length-only echo).
@@ -38,27 +38,27 @@ Acceptance criteria completed:
       (asserts the error message does NOT echo the attacker
       URI bytes — OWASP A09 logging hygiene).
 - [x] `cargo clippy -p quota-router-core --all-targets
-      --features full -- -D warnings` clean.
+    --features full -- -D warnings` clean.
 - [x] 1650/1650 lib tests pass.
 
 ### Stage 2 / 3 — deferred to `M6-b-error-path-newtypes`
 
 - [ ] `Secret<T>` newtype (Layer B substrate boundary) +
-        per-field substitution on `ProviderConfig.client_secret`
-        / `scim_token` / `idp_certificate`.
+      per-field substitution on `ProviderConfig.client_secret`
+      / `scim_token` / `idp_certificate`.
 - [ ] `EntityId` / `Audience` / `Recipient` / `Email` newtypes
-        across `SamlAssertion`, `ProviderConfig`, `IdpMetadata`,
-        `TokenClaims`, `SsoUser`.
+      across `SamlAssertion`, `ProviderConfig`, `IdpMetadata`,
+      `TokenClaims`, `SsoUser`.
 - [ ] `BlacklistQuery` port-trait refactor (move
-        `Arc<dyn TokenBlacklistStorage>` behind a Layer B
-        substrate trait).
+      `Arc<dyn TokenBlacklistStorage>` behind a Layer B
+      substrate trait).
 - [ ] HTTP-boundary `Content-Length ≤ 64 KiB` enforcement
-        on the SAML POST body at
-        `crates/quota-router-core/src/admin.rs:573-590`.
+      on the SAML POST body at
+      `crates/quota-router-core/src/admin.rs`.
 - [ ] Carrier-error type widening (`SamlAudienceMismatch`
-        could become a struct variant like
-        `SamlAudienceMismatch { expected: Audience, got:
-        Audience }` per M2 cross-ref).
+      could become a struct variant like
+      `SamlAudienceMismatch { expected: Audience, got:
+      Audience }` per M2 cross-ref).
 
 ### Deferral rationale
 
@@ -69,10 +69,10 @@ accessors, type signatures, and serde shape). The
 newtype work in particular requires either:
 
 (a) Custom `serde_with` shim on every secret-field accessor
-    (transparent-on-the-wire), OR
+(transparent-on-the-wire), OR
 
 (b) A custom `Secret<T>` newtype with manual
-    `Serialize`/`Deserialize` impls delegating to inner `T`.
+`Serialize`/`Deserialize` impls delegating to inner `T`.
 
 Either path is correct and substantial. Landing it in a
 dedicated follow-on mission (rather than bolting onto this
@@ -108,7 +108,7 @@ quota-router-cli / py-sdk territory).
 - M2 (`SamlAudienceMismatch` struct variant) — Stage 2 → M6-b
 - M4 (`Secret<T>` dependency) — landed at the parser
   side; config-side wrap is M6-b's first item
-- admin.rs:573-590 (HTTP Content-Length) — Stage 2 → M6-b
+- admin.rs (HTTP Content-Length) — Stage 2 → M6-b
   (admin-side, deployment-coupled)
 
 ## RFC
@@ -147,28 +147,28 @@ RFC-0949 (Economics): Enterprise SSO
 - [ ] Add `const MAX_SAML_XML_BYTES: usize = 64 * 1024` (64 KiB
       — generous for a real assertion; bounded for DoS).
       `parse()` early-rejects above this size.
-- [ ] At the admin HTTP boundary (`admin.rs:573-590`), enforce
+- [ ] At the admin HTTP boundary (`admin.rs`), enforce
       `Content-Length` ≤ 64 KiB on the SAML POST body before
       calling `handle_saml_callback`.
 - [ ] Replace every `attr.unescape_value().unwrap_or_default()`
       with `.map_err(|e| SsoError::ProviderError(format!(
-    "attribute unescape failed: {}", e)))?`.
+  "attribute unescape failed: {}", e)))?`.
       Replace every `unescape(...).unwrap_or_default()` similarly.
       15+ call sites; mechanical fix.
 - [ ] Replace `format!("Recipient mismatch: expected {}, got {}",
-    self.acs_url, recip)` with the length-only variant
+  self.acs_url, recip)` with the length-only variant
       `format!("Recipient mismatch: expected len={}, got len={}",
-    self.acs_url.len(), recip.len())`. Apply same sanitization
+  self.acs_url.len(), recip.len())`. Apply same sanitization
       to other format!s in saml.rs that include attacker data.
 - [ ] Newtype identity-bearing fields at the Layer B substrate
       boundary:
       `rust
-    pub struct EntityId(String);
-    pub struct Audience(String);
-    pub struct Recipient(String);
-    pub struct Email(String);
-    pub struct Secret<T: Zeroize + AsRef<[u8]>>(T);
-    `
+  pub struct EntityId(String);
+  pub struct Audience(String);
+  pub struct Recipient(String);
+  pub struct Email(String);
+  pub struct Secret<T: Zeroize + AsRef<[u8]>>(T);
+  `
       Implement `CanonicalCodec` + `Display` + `FromStr` for
       each. Update `SamlAssertion`, `ProviderConfig`, `IdpMetadata`,
       `TokenClaims`, `SsoUser`.

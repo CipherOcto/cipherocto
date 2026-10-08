@@ -52,10 +52,10 @@ produces docs + checklist (no CipherOcto code change required).
    - **emergency-bypass** — one-off commit advance under
      `feedback_initiative_user_only` + post-hoc RFC amendment
 4. **Cargo.toml pin verification.** Confirm current workspace-wide
-   pin (root `Cargo.toml [patch.crates-io]` block at lines 152-156)
-   + every per-crate `stoolap` git dep reference in `Cargo.toml`
-   resolves to the audited fork commit. Per §8.1.7: release-tag pin
-   policy must be diagnosable from `Cargo.lock` alone.
+   pin (root `Cargo.toml [patch.crates-io]` block)
+   - every per-crate `stoolap` git dep reference in `Cargo.toml`
+     resolves to the audited fork commit. Per §8.1.7: release-tag pin
+     policy must be diagnosable from `Cargo.lock` alone.
 5. **Certification checklist.** Concrete checklist (≥10 items) that
    any future Stoolap fork upgrade must satisfy before being declared
    Layer A certified. Cover: upstream-sync procedure, semantic-unchanged
@@ -81,7 +81,7 @@ produces docs + checklist (no CipherOcto code change required).
       pass/fail criterion + verification method (§5 audit doc).
 - [x] Cargo.toml + Cargo.lock pin verified: SHA matches fork head byte-for-byte.
       Workspace-wide mechanism is `[patch.crates-io]` at root
-      `Cargo.toml:152-156` (NOT a separate `octo-stoolap-frozen` crate
+      `Cargo.toml` (NOT a separate `octo-stoolap-frozen` crate
       as initially hypothesized; see AC correction).
 - [x] Active-workspace raw-SQLite red-line: 0 hits (5 hits in
       excluded legacy crates per workspace exclude list).

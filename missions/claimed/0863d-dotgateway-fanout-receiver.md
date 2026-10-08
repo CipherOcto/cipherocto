@@ -22,7 +22,7 @@ Complete the inbound transport path: implement the `DotGateway::process_envelope
 
 ## Design
 
-### 1. DotGateway fan-out (`crates/octo-network/src/dot/mod.rs:175`)
+### 1. DotGateway fan-out (`crates/octo-network/src/dot/mod.rs`)
 
 Replace the TODO stub with actual adapter dispatch:
 

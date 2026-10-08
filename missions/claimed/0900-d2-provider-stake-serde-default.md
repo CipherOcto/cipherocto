@@ -17,7 +17,7 @@ depends_on:
 
 Round-3 inline adversarial review surfaced a `MISSING SERDE DEFAULT` finding
 (N4) on `ProviderStake.chain_id` at
-`crates/quota-router-core/src/marketplace/slashing.rs:354`. The struct gained
+`crates/quota-router-core/src/marketplace/slashing.rs`. The struct gained
 the `chain_id` field in mission `0900-d1` (per RFC-0010 v1.4 typed `ChainId`)
 without `#[serde(default)]`, so any pre-`0900-d1` JSON payload missing
 `chain_id` would fail to deserialize.
@@ -28,7 +28,7 @@ without `#[serde(default)]`, so any pre-`0900-d1` JSON payload missing
 
 - No production code path serializes `ProviderStake` via serde today.
   All stake mutation flows through an in-memory `HashMap<(chain_id,
-  provider_id), ProviderStake>` in `SlashingLedger` (no DB round-trip;
+provider_id), ProviderStake>` in `SlashingLedger` (no DB round-trip;
   persistence is via `SlashLedgerRow` which is a SEPARATE struct in
   `quota-router-storage`).
 - The `#[derive(Deserialize)]` on `ProviderStake` exists for forward-
@@ -46,11 +46,11 @@ after a hypothetical schema-rev would crash without `#[serde(default)]`.
 ## Acceptance criteria
 
 - **AC-1:** `#[serde(default)]` decorator present above
-  `pub chain_id: [u8; 32]` at `crates/quota-router-core/src/marketplace/slashing.rs:354`.
+  `pub chain_id: [u8; 32]` in `crates/quota-router-core/src/marketplace/slashing.rs`.
 - **AC-2:** Default value matches production `DEFAULT_CHAIN_ID` sentinel
   (`[0_u8; 32]`). The `<[u8; 32] as Default>::default()` impl returns
   `[0_u8; 32]`, which equals the `DEFAULT_CHAIN_ID` const in
-  `quota-router-storage/src/slash_store.rs:25`. Verified via const-eval.
+  `quota-router-storage/src/slash_store.rs`. Verified via const-eval.
 - **AC-3:** TV test added: JSON round-trip without `chain_id` field
   deserializes with `chain_id = [0_u8; 32]`. Test name:
   `provider_stake_json_without_chain_id_defaults_to_zero_sentinel`
@@ -67,18 +67,18 @@ after a hypothetical schema-rev would crash without `#[serde(default)]`.
 - **AC-6:** `cargo test -p quota-router-core --features full --tests` —
   full green (no regressions in slashing/marketplace tests).
 - **AC-7:** `cargo clippy --all-targets -p quota-router-core --features
-  full -- -D warnings` — clean.
+full -- -D warnings` — clean.
 - **AC-8:** `cargo fmt --all -- --check` — clean.
 
 ## Risks
 
 - **LOW**: `#[serde(default)]` on `[u8; 32]` uses `<[u8; 32] as
-  Default>::default()` which is `[0_u8; 32]`. The `ChainId::default()`
-  impl (in `octo-ident/src/chain.rs:167`) returns the non-zero
+Default>::default()` which is `[0_u8; 32]`. The `ChainId::default()`
+  impl (in `octo-ident/src/chain.rs`) returns the non-zero
   `CIPHEROCTO_MAINNET` namespace — DIFFERENT from `DEFAULT_CHAIN_ID`.
   Mitigation: the field type is `[u8; 32]` (raw bytes), not `ChainId`;
   sentinel-zero is correct here per production usage at all 9 call
-  sites in `slashing.rs` (lines 597/609/681/849/1203 + keys 476/1468).
+  sites in `slashing.rs`.
 - **LOW**: serde attribute ordering matters — `#[serde(default)]` must
   precede the field declaration. Convention is to place it directly
   above the field, similar to other `#[serde(with = "...")]`

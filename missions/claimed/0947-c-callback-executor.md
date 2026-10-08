@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (2026-08-13). `CallbackExecutor` core landed in `crates/quota-router-core/src/callbacks/mod.rs:203` (registry + mpsc channel + parallel target dispatch + dropped-counter metrics). Proxy.rs Start fire wired. **5 wiring ACs intentionally DEFERRED** with 3 filed follow-on missions per `feedback_initiation_user_only` user choice (close-as-DEFERRED, 0871b-pattern).
+Closed (2026-08-13). `CallbackExecutor` core landed in `crates/quota-router-core/src/callbacks/mod.rs` (registry + mpsc channel + parallel target dispatch + dropped-counter metrics). Proxy.rs Start fire wired. **5 wiring ACs intentionally DEFERRED** with 3 filed follow-on missions per `feedback_initiation_user_only` user choice (close-as-DEFERRED, 0871b-pattern).
 
 **Follow-on missions (all FILED):**
 
@@ -23,19 +23,19 @@ RFC-0947 (Economics): Callback System
 
 ### Executor core
 
-- [x] `CallbackExecutor` struct with `register(callback_type, target)` + `fire(event)` — **LANDED** at `crates/quota-router-core/src/callbacks/mod.rs:203`
-- [x] Non-blocking channel-based delivery (mpsc, configurable capacity) — **LANDED** (`CallbackExecutor::new(capacity)` at `:220`)
+- [x] `CallbackExecutor` struct with `register(callback_type, target)` + `fire(event)` — **LANDED** in `crates/quota-router-core/src/callbacks/mod.rs`
+- [x] Non-blocking channel-based delivery (mpsc, configurable capacity) — **LANDED** (`CallbackExecutor::new(capacity)` at)
 - [x] Parallel target dispatch (per-event `tokio::spawn` fan-out) — **LANDED** (`worker_loop` at `:284-321`)
 - [x] Failures logged but not propagated to request path — **LANDED** (`tracing::warn!` at `:305-310`)
-- [x] Dropped event counter + Prometheus integration — **LANDED** (`install_dropped_counter` at `:245` + `:268`)
-- [x] Graceful shutdown via `shutdown()` — **LANDED** at `:324`
-- [x] All 6 `CallbackType` variants supported: Input, Success, Failure, Start, End, Service — **LANDED** (verified at `mod.rs:369-378`)
+- [x] Dropped event counter + Prometheus integration — **LANDED** (`install_dropped_counter` at +)
+- [x] Graceful shutdown via `shutdown` — **LANDED** at
+- [x] All 6 `CallbackType` variants supported: Input, Success, Failure, Start, End, Service — **LANDED** (verified in `mod.rs`)
 - [x] Clippy passes with zero warnings — **VERIFIED** (`cargo clippy -p quota-router-core --features full --lib -- -D warnings` clean)
 - [x] All existing tests pass — **VERIFIED** (24 callback tests pass)
 
 ### Proxy wiring (DEFERRED — follow-on missions)
 
-- [ ] Fire Start callback after key validation — **PARTIAL** (wired at `proxy.rs:812-852`) but with stub request body (empty `model`, empty `messages`)
+- [ ] Fire Start callback after key validation — **PARTIAL** (wired in `proxy.rs`) but with stub request body (empty `model`, empty `messages`)
 - [ ] Fire End/Success/Failure after provider response — **DEFERRED** to follow-on `0947-c1-proxy-end-success-failure-wiring`
 - [ ] Streaming callback semantics: fire once per request (not per chunk) — **DEFERRED** to follow-on `0947-c2-streaming-callback-semantics`
 - [ ] Input callback: fire before provider call (abort-on-error) — **DEFERRED** (no firing site in proxy.rs)
@@ -59,7 +59,7 @@ RFC-0947 (Economics): Callback System
 
 Key files (LANDED):
 
-- `crates/quota-router-core/src/callbacks/mod.rs` — `CallbackExecutor` at `:203` (136 lines, incl. tests)
+- `crates/quota-router-core/src/callbacks/mod.rs` — `CallbackExecutor` at (136 lines, incl. tests)
 - `crates/quota-router-core/src/proxy.rs` — Start fire at `:812-852`
 
 Key files (PENDING — follow-on missions):
@@ -79,10 +79,10 @@ The `CallbackExecutor` core is the orchestration primitive — once landed, all 
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | (filed)    | Mission filed. RFC-0947 §Callback System defines executor + 6 callback types + Python SDK surface.                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| v0.2    | 2026-08-13 | **MISSION CLOSED (DEFERRED pattern, 0871b-style).** `CallbackExecutor` core LANDED at `mod.rs:203`: registry, mpsc channel, parallel target dispatch, dropped counter + Prometheus, graceful shutdown. Start fire wired at `proxy.rs:812-852`. 9 ACs PASS. **5 ACs DEFERRED** to 3 filed follow-on missions: `0947-c1-proxy-end-success-failure-wiring` (End/Success/Failure firing), `0947-c2-streaming-callback-semantics` (once-per-request streaming), `0947-c3-pyo3-callback-sdk` (PyO3 bindings + LiteLLM match). |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | (filed)    | Mission filed. RFC-0947 §Callback System defines executor + 6 callback types + Python SDK surface.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v0.2    | 2026-08-13 | **MISSION CLOSED (DEFERRED pattern, 0871b-style).** `CallbackExecutor` core LANDED in `mod.rs`: registry, mpsc channel, parallel target dispatch, dropped counter + Prometheus, graceful shutdown. Start fire wired in `proxy.rs`. 9 ACs PASS. **5 ACs DEFERRED** to 3 filed follow-on missions: `0947-c1-proxy-end-success-failure-wiring` (End/Success/Failure firing), `0947-c2-streaming-callback-semantics` (once-per-request streaming), `0947-c3-pyo3-callback-sdk` (PyO3 bindings + LiteLLM match). |
 
 Last Updated: 2026-08-13
 Version: 0.2 (CLOSED — DEFERRED pattern)

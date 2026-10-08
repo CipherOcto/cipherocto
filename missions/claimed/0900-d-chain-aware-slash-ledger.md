@@ -102,13 +102,13 @@ asset_id)` per §20.3 Model B. Slash ledger should be parallel —
 
 3. **`ProviderStake` no chain_id field** (HIGH) — `pub struct
 ProviderStake { pub provider_id: String, ... }` at
-   `crates/quota-router-core/src/marketplace/slashing.rs:346`. In-
+   `crates/quota-router-core/src/marketplace/slashing.rs`. In-
    memory state mirrors storage schema. If storage moves to
    chain-aware, in-memory must follow.
 
 4. **Open flow cross-coupling** (MED) — `SlashLedgerRow.provider_id:
 String` used as `HashMap` key at
-   `crates/quota-router-core/src/marketplace/slashing.rs:520`.
+   `crates/quota-router-core/src/marketplace/slashing.rs`.
    Restructure to `HashMap<(ChainId, String), ProviderStake>` or
    `HashMap<ChainId, HashMap<String, ProviderStake>>`. Mirror the
    vault substrate's two-tier mapping pattern.
@@ -131,7 +131,7 @@ slash_ledger `BIGINT`.
 
 - [x] AC-1: v015 migration lands. **`chain_id BLOB` column added** + composite UNIQUE INDEX `slash_ledger_chain_provider_idx` on `(chain_id, provider_id)` created + column-level UNIQUE on `provider_id` dropped (triple-named drop for fork naming quirks). **`DEFAULT X'00...00'` clause DEFERRED** to follow-on: stoolap fork rejects `x'...'` literals in DEFAULT (per v011 recon). v015 uses `ALTER TABLE ADD COLUMN chain_id BLOB` (NULLABLE during migration window) + `UPDATE ... WHERE chain_id IS NULL` backfill pattern. **DQA(12) promotion DEFERRED** to follow-on: fork does not expose native Dqa driver; columns remain BIGINT with `dqa_to_i64` / `i64_to_dqa` scale=0 bridge (text form matches canonical 16-byte BE DqaEncoding).
 - [x] AC-2: `SlashLedgerRow.chain_id: [u8; 32]` field added (first position). DQA(12) codec → follow-on (same reason as AC-1). `dqa_to_i64` / `i64_to_dqa` helpers present.
-- [x] AC-3: `ProviderStake.chain_id: [u8; 32]` field added. 4 construction sites updated (line 569, 640, 807, 1159 in `marketplace/slashing.rs`).
+- [x] AC-3: `ProviderStake.chain_id: [u8; 32]` field added. 4 construction sites updated in `marketplace/slashing.rs`.
 - [ ] AC-4: `SlashOutcome.chain_id: [u8; 32]` field → DEFERRED to follow-on (not on the SQL-PK critical path).
 - [ ] AC-5: In-memory `HashMap<String, ProviderStake>` → tuple-keyed → DEFERRED to follow-on. Production paths use `DEFAULT_CHAIN_ID` (single-key map still correct).
 - [x] AC-6: `append_outcome(chain_id, provider_id, ...)` signature widened; default impl no-op.
@@ -140,7 +140,7 @@ slash_ledger `BIGINT`.
 - [x] AC-9: 3 existing slash_store tests updated with `chain_id: DEFAULT_CHAIN_ID` field. 1 new test added (chain discriminator).
 - [/] AC-10: `cargo test -p quota-router-storage --lib` = 192/192 pass. `cargo build -p quota-router-core --features full` green. `cargo test -p quota-router-core --lib --features full` blocked by missing libpython3.12 (pre-existing infra, not 0900-d regression).
 - [x] AC-11: clippy + fmt both green on touched crates.
-- AC-2: `SlashLedgerRow` (at `crates/quota-router-storage/src/slash_store.rs:19`) gains:
+- AC-2: `SlashLedgerRow` (in `crates/quota-router-storage/src/slash_store.rs`) gains:
   ```rust
   pub chain_id: [u8; 32],
   ```
@@ -149,15 +149,15 @@ slash_ledger `BIGINT`.
   stoolap Dqa driver support; if missing, fall back to
   `dqa_to_i64` / `i64_to_dqa` bridge at scale=0 with documented
   invariant).
-- AC-3: `ProviderStake` (at `crates/quota-router-core/src/marketplace/slashing.rs:346`) gains `pub chain_id: [u8; 32]` field. Matches Row.site shape.
-- AC-4: `SlashOutcome` (at `crates/quota-router-core/src/marketplace/slashing.rs:370`) gains `pub chain_id: [u8; 32]` field.
+- AC-3: `ProviderStake` (in `crates/quota-router-core/src/marketplace/slashing.rs`) gains `pub chain_id: [u8; 32]` field. Matches Row.site shape.
+- AC-4: `SlashOutcome` (in `crates/quota-router-core/src/marketplace/slashing.rs`) gains `pub chain_id: [u8; 32]` field.
 - AC-5: In-memory `HashMap<String, ProviderStake>` →
   `HashMap<([u8; 32], String), ProviderStake>` (tuple-keyed map;
   mirror vault substrate's `vault_id_unchecked` two-tier pattern).
   All call sites: `register`, `slash`, `slash_with_pct`, `withdraw_stake`,
-  `stake`, `is_banned`, `load_all` flow at line 520 area re-key.
+  `stake`, `is_banned`, `load_all` flow area re-key.
 - AC-6: `append_outcome` (SlashStore trait at
-  `crates/quota-router-storage/src/slash_store.rs:66`) gains
+  `crates/quota-router-storage/src/slash_store.rs`) gains
   `chain_id: [u8; 32]` parameter. NO-OP default impl keeps
   signature widening for audit-table extension.
 - AC-7: RFC-0900 §Slash Ledger Substrate subsection added:
@@ -184,7 +184,7 @@ slash_ledger `BIGINT`.
   - TV-0900-D-08: cumulative_loss_pct_micro stays BIGINT (not amount-bearing, not DQA)
   - TV-0900-D-09: chain_id discriminator — rows in different chains do NOT collapse on `load_all`
   - TV-0900-D-10: cross-crate `marketplace/slashing.rs` open() flow loads chain-tagged rows correctly into `HashMap<([u8;32], String), ProviderStake>`
-- AC-9: Existing TV in `crates/quota-router-storage/src/slash_store.rs` tests (lines 270-322 — `load_all_empty_on_fresh_db`, `upsert_then_load_round_trips_row`, `upsert_overwrites_existing_provider`) updated to include `chain_id` field. Tests migrate to `Dqa` schema codec.
+- AC-9: Existing TV in `crates/quota-router-storage/src/slash_store.rs` tests (`load_all_empty_on_fresh_db`, `upsert_then_load_round_trips_row`, `upsert_overwrites_existing_provider`) updated to include `chain_id` field. Tests migrate to `Dqa` schema codec.
 - AC-10: No regressions:
   - `cargo test -p quota-router-storage --lib`
   - `cargo test -p quota-router-core --lib`
@@ -262,7 +262,7 @@ slash_ledger `BIGINT`.
   derivation pattern (not used here; PK is composite without BLAKE3
   per §20.3 lattice note)
 - `octo_determin::Dqa` Display + scale=0 invariant — same pattern
-  as `crates/quota-router-storage/src/stoolap_spend_ledger.rs:74`
+  as `crates/quota-router-storage/src/stoolap_spend_ledger.rs`
   reference for `MicroOctoW` + scale=0 (x-mission/0862-c9 will
   centralize the alias)
 - `crates/quota-router-storage/src/dqa_serde.rs` — DQA wire

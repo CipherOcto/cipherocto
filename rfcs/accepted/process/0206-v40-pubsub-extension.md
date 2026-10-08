@@ -25,6 +25,7 @@ depends_on:
 RFC-0206 v2.4 amends the Substrate Re-export Block (§Substrate Re-export Block) to add the `pubsub` module re-export. The v2.3 block re-exports 6 stoolap types (`DataType`, `Error`, `ApiTransaction`, `ResultRow`, `Rows`, `Value`); v2.4 adds the `pubsub` module with 6 type re-exports (`EventBus`, `WalPubSub`, `DatabaseEvent`, `InvalidationReason`, `SchemaChangeType`, `OperationType`) + 1 fn re-export (`generate_event_id`) + nested `pub mod wal_pubsub` (`parse_event`).
 
 **Total surface:**
+
 - v2.3: 6 top-level re-exports
 - v2.4: 6 top-level re-exports + 1 nested module (`pubsub`) + 6 pubsub types + 1 pubsub fn + 1 nested module (`wal_pubsub`) + 1 wal_pubsub fn = **14 names total** under `octo_storage_core::stoolap::*`
 
@@ -117,10 +118,10 @@ Drop `stoolap = { git = "..." }` direct dep from `crates/quota-router-core/Cargo
 
 - On Accept: substrate code lands per §1 diff (mandatory substrate re-export block narrowing).
 - On Accept: v2.3 → v2.4 state bump; YYYY-MM-DD amendment date row appended to RFC-0206 VH.
-- On Accept: `crates/octo-storage-core/src/lib.rs` line 84-98 comment block updated to reflect v2.4 surface.
+- On Accept: `crates/octo-storage-core/src/lib.rs` comment block updated to reflect v2.4 surface.
 
 ## §6 Version History
 
-| Version | Date | Change |
-|---|---|---|
-| 0.1.0 | 2026-08-24 | Initial draft. v2.3 → v2.4 amendment adds `pub mod pubsub` extension (6 types + 1 fn + nested `wal_pubsub::parse_event`). 14 names total under substrate. 8 top-level `pub use` cap UNCHANGED. |
+| Version | Date       | Change                                                                                                                                                                                         |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.0   | 2026-08-24 | Initial draft. v2.3 → v2.4 amendment adds `pub mod pubsub` extension (6 types + 1 fn + nested `wal_pubsub::parse_event`). 14 names total under substrate. 8 top-level `pub use` cap UNCHANGED. |

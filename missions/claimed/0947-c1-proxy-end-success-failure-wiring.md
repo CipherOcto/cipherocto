@@ -2,7 +2,7 @@
 
 ## Status
 
-LANDED 2026-08-13. Follow-on to `0947-c-callback-executor` (CLOSED 2026-08-13, DEFERRED pattern). `CallbackExecutor` core landed at `crates/quota-router-core/src/callbacks/mod.rs:203`; Start fire wired at `proxy.rs:812-852`. This mission wires the remaining 3 callback types into the request path.
+LANDED 2026-08-13. Follow-on to `0947-c-callback-executor` (CLOSED 2026-08-13, DEFERRED pattern). `CallbackExecutor` core landed in `crates/quota-router-core/src/callbacks/mod.rs`; Start fire wired in `proxy.rs`. This mission wires the remaining 3 callback types into the request path.
 
 **Landing scope:** 3 builder functions (`build_end_event` / `build_success_event` / `build_failure_event`) + 2 async helpers (`fire_end_success` / `fire_end_failure`) in `callbacks/mod.rs`. End/Success/Failure fires wired in `proxy.rs` `handle_request` at the final `result` return point (after rate-limit header injection block). 6 new unit tests added (all 30 callback tests pass; 228 proxy tests pass). Clippy `-D warnings` clean.
 
@@ -39,20 +39,20 @@ RFC-0947 (Economics): Callback System
 Key files:
 
 - `crates/quota-router-core/src/proxy.rs` — 11684 lines; locate existing Start fire at `:812-852` and add End/Success/Failure firing at the provider-response + error branches
-- `crates/quota-router-core/src/callbacks/mod.rs` — `CallbackExecutor::fire` at `:263`
+- `crates/quota-router-core/src/callbacks/mod.rs` — `CallbackExecutor::fire` at
 
 Reference points:
 
-- `proxy.rs:659` — `callback_executor: Option<Arc<CallbackExecutor>>` field on request handler
-- `proxy.rs:813` — Start fire pattern (clone + build event + `fire().await`)
+- `proxy.rs` — `callback_executor: Option<Arc<CallbackExecutor>>` field on request handler
+- `proxy.rs` — Start fire pattern (clone + build event + `fire().await`)
 
 Drift inheritance: none — this is greenfield wiring work, not closing existing drift.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                   |
-| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-13 | Mission filed. Follow-on to `0947-c-callback-executor` closure. End/Success/Failure firing into proxy.rs after provider response. 9 ACs. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | Mission filed. Follow-on to `0947-c-callback-executor` closure. End/Success/Failure firing into proxy.rs after provider response. 9 ACs.                                                                                                                                                                                                                                                                            |
 | v0.2    | 2026-08-13 | **LANDED.** 3 builders + 2 async helpers in `callbacks/mod.rs` (`build_end_event` / `build_success_event` / `build_failure_event` / `fire_end_success` / `fire_end_failure`). End/Success/Failure wired in `proxy.rs handle_request` at final `result` return. 6 new unit tests; 30 callback + 228 proxy tests pass. Clippy `-D warnings` clean. AC-6 streaming-chunk-skip semantics PARTIAL (deferred to 0947-c2). |
 
 Last Updated: 2026-08-13

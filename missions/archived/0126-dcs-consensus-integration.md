@@ -4,15 +4,18 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `determin/src/consensus.rs:178` `DcsErrorCode` enum + 6 variants + `as_str()` mapping. All 12 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `determin/src/consensus.rs` `DcsErrorCode` enum + 6 variants + `as_str()` mapping. All 12 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
+
 RFC-0126: Deterministic Serialization
 
 ## Summary
+
 Integrate DCS with consensus: add gas constants, error codes, and ensure all DCS operations are registered in the consensus module.
 
 ## Acceptance Criteria
+
 - [x] Add DCS error codes to consensus module:
   - [x] DCS_INVALID_BOOL
   - [x] DCS_INVALID_SCALE
@@ -27,27 +30,33 @@ Integrate DCS with consensus: add gas constants, error codes, and ensure all DCS
 - [x] All tests pass
 
 ## Dependencies
+
 Mission 0126-dcs-core-types
 Mission 0126-dcs-composite-types
 Mission 0126-dcs-verification-probe
 
 ## Location
+
 `determin/src/consensus.rs`
 `determin/src/lib.rs`
 
 ## Complexity
+
 Low — integration work
 
 ## Implementation Notes
+
 - DCS errors are fatal (TRAP) — no recovery
 - Error codes defined in RFC-0126 §DCS Serialization Errors
 - Ensure dcs module is publicly exported from lib.rs
 
 ## Reference
+
 - RFC-0126 §Error Handling
 - RFC-0126 §DCS Serialization Errors
 
 ## Changes Made
+
 - Added `DcsErrorCode` enum with all 6 DCS error codes
 - Added `dcs_op_ids` module with 13 DCS operation IDs (0x0300-0x030C)
 - Added DCS gas constants: `DCS_GAS_PER_BYTE`, `DCS_GAS_MIN`, `DCS_GAS_MAX`

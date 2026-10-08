@@ -19,15 +19,15 @@ builds_on:
 
 **Promotion trail:** R1-R9 multi-round adversarial review 2026-08-25 → DRY closure at R9 2026-08-26 → Accepted 2026-08-26 per BLUEPRINT.md RFC process. R1-R9 = 5-lens reviews; loop-until-DRY pattern reached 2 consecutive zero-finding rounds (R8=2 LOW, R9=0) per closure audit docs/audits/asset-generic-payment-caveat-review-DRY-2026-08-26.md.
 
-**Substrate anchor (Round 2 corrected):** the substrate has NO `SettlementEvent` struct as a top-level type. The settlement pathway runs through `crates/quota-router-sm-engine/src/lib.rs:266` (`SettlementError::AlreadyConsumed(String)`) + `crates/quota-router-storage/src/consumed_receipt_repo.rs:26` (`AlreadyConsumed` arm) + `crates/quota-router-sm-engine/src/store.rs:163,211` (`SettlementError::AlreadyConsumed` arm). `AlreadyConsumed` is the canonical substrate variant (no rename history; `ReceiptReplay` was never a substrate name).
+**Substrate anchor (Round 2 corrected):** the substrate has NO `SettlementEvent` struct as a top-level type. The settlement pathway runs through `crates/quota-router-sm-engine/src/lib.rs` (`SettlementError::AlreadyConsumed(String)`) + `crates/quota-router-storage/src/consumed_receipt_repo.rs` (`AlreadyConsumed` arm) + `crates/quota-router-sm-engine/src/store.rs` (`SettlementError::AlreadyConsumed` arm). `AlreadyConsumed` is the canonical substrate variant (no rename history; `ReceiptReplay` was never a substrate name).
 
-`SettlementEvent` is **GREENFIELD** (introduced by this RFC as a Layer B additive type). `VaultId(pub [u8; 32])` at `crates/octo-vault/src/lib.rs:82` is a tuple struct (single 32-byte wrapper) — not a struct with chain_id/vault_id/asset_id fields. Round 2 keeps `cost_vault_id: VaultId` (tuple, frozen Layer A) and adds a NEW `cost_asset_id: AssetId` field for the audit-invariant. This preserves Layer A stability per the substrate model.
+`SettlementEvent` is **GREENFIELD** (introduced by this RFC as a Layer B additive type). `VaultId(pub [u8; 32])` at `crates/octo-vault/src/lib.rs` is a tuple struct (single 32-byte wrapper) — not a struct with chain_id/vault_id/asset_id fields. Round 2 keeps `cost_vault_id: VaultId` (tuple, frozen Layer A) and adds a NEW `cost_asset_id: AssetId` field for the audit-invariant. This preserves Layer A stability per the substrate model.
 
 **NonceRegistry anchor (Round 5 fix):** `NonceRegistry` trait + `NonceError` enum at **RFC-0105 §3.11** (GREENFIELD; canonical home).
 
 ## 1. Motivation
 
-The settlement pathway today records cost as `amount_micro_octo_w: Dqa` (already migrated from `u128` to `Dqa` per mission 0105-x; verified at `crates/quota-router-core/src/marketplace/escrow.rs:159` + `EscrowSnapshot` line 172 + `crates/quota-router-storage/src/slash_store.rs:95`) and as `SettlementError::AlreadyConsumed(String)` on the engine (`crates/quota-router-sm-engine/src/lib.rs:266`). There is no canonical `SettlementEvent` substrate type. The `i64` claim in the prior draft was incorrect (the carrier is already `Dqa`; only the field NAME `amount_micro_octo_w` is outstanding — see §5 Naming Cleanup for the rename plan). This amendment:
+The settlement pathway today records cost as `amount_micro_octo_w: Dqa` (already migrated from `u128` to `Dqa` per mission 0105-x; verified at `crates/quota-router-core/src/marketplace/escrow.rs` + `EscrowSnapshot` + `crates/quota-router-storage/src/slash_store.rs`) and as `SettlementError::AlreadyConsumed(String)` on the engine (`crates/quota-router-sm-engine/src/lib.rs`). There is no canonical `SettlementEvent` substrate type. The `i64` claim in the prior draft was incorrect (the carrier is already `Dqa`; only the field NAME `amount_micro_octo_w` is outstanding — see §5 Naming Cleanup for the rename plan). This amendment:
 
 - Introduces `SettlementEvent` as a new Layer B type (greenfield, additive).
 - Migrates the cost carrier to `cost: Dqa` with explicit `cost_asset_id: AssetId` (replaces implicit OCTO-W at wire scale 0).
@@ -526,14 +526,14 @@ The NonceRegistry observation namespace for sovereign assets uses a **per-asset 
 | --------------------- | ------------------------ | --------- |
 | (implicit cost asset) | `cost_asset_id: AssetId` | NEW field |
 
-`SettlementEvent.cost` is `Dqa` from inception; the retired `MicroOctoW` alias (retired 2026-08-17 per `crates/octo-cap-macaroon/src/caveat/payment.rs:23` + `crates/octo-paid-query/src/lib.rs:103`) is never reintroduced. `AlreadyConsumed` is canonical substrate (no rename history; `ReceiptReplay` was never a substrate variant — no rename row needed).
+`SettlementEvent.cost` is `Dqa` from inception; the retired `MicroOctoW` alias (retired 2026-08-17 per `crates/octo-cap-macaroon/src/caveat/payment.rs` + `crates/octo-paid-query/src/lib.rs`) is never reintroduced. `AlreadyConsumed` is canonical substrate (no rename history; `ReceiptReplay` was never a substrate variant — no rename row needed).
 
 **Note (Round 3 fix #15):** `cost_vault_id` is GREENFIELD; no substrate rename history. The design adopts `VaultId` (Layer A typed wrapper) per RFC-0105 §3.1 convention — see §2.1 annotation. No rename row needed.
 
 ## 6. Backward Compatibility
 
-- **Existing settlement outcomes** via `SettlementError::AlreadyConsumed(String)` at `crates/quota-router-sm-engine/src/lib.rs:266`: continue to work. Engine migration to emit `SettlementEvent` is a separate RFC.
-- **`amount_micro_octo_w: Dqa` field NAME on `Escrow` + `EscrowSnapshot` + `slash_store`**: the carrier is already `Dqa` (Round 1 MED #6 corrected: the prior draft claimed `i64`; substrate has `Dqa`). Only the field NAME is outstanding — `amount_micro_octo_w: Dqa` → `amount: Dqa` paired with `asset_id: AssetId`, with the rename tracked in RFC-0105 §6 Naming Cleanup. Sites: `crates/quota-router-core/src/marketplace/escrow.rs:159` + `EscrowSnapshot` line 172 + `crates/quota-router-storage/src/slash_store.rs:95` + 6 test assertions at `quota-router-core/tests/task_market.rs:397,452,464,469,600,667`.
+- **Existing settlement outcomes** via `SettlementError::AlreadyConsumed(String)` at `crates/quota-router-sm-engine/src/lib.rs`: continue to work. Engine migration to emit `SettlementEvent` is a separate RFC.
+- **`amount_micro_octo_w: Dqa` field NAME on `Escrow` + `EscrowSnapshot` + `slash_store`**: the carrier is already `Dqa` (Round 1 MED #6 corrected: the prior draft claimed `i64`; substrate has `Dqa`). Only the field NAME is outstanding — `amount_micro_octo_w: Dqa` → `amount: Dqa` paired with `asset_id: AssetId`, with the rename tracked in RFC-0105 §6 Naming Cleanup. Sites: `crates/quota-router-core/src/marketplace/escrow.rs` + `EscrowSnapshot` + `crates/quota-router-storage/src/slash_store.rs` + 6 test assertions at `quota-router-core/tests/task_market.rs`.
 - **JSON-RPC envelopes** carrying `cost: { amount_micro_octo_w: i64 }`: read path accepts the legacy form and constructs `SettlementEvent::new(..., cost: Dqa { value, wire_scale: 0 }, ..., cost_asset_id: OCTO_W_ASSET_ID, ...)`. A `#[deprecated]` warning fires for one substrate release cycle (≈6 weeks per RFC-0965 §3.1).
 - **After one cycle**: legacy `cost: { amount_micro_octo_w }` form is REJECTED if the event also carries a non-OCTO-W `cost_asset_id` (asset-binding bypass close).
 

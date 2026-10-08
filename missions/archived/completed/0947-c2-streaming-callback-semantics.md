@@ -15,7 +15,7 @@ RFC-0947 (Economics): Callback System §Streaming Semantics
 ## Acceptance Criteria
 
 - [x] Document streaming callback semantics in `crates/quota-router-core/src/callbacks/mod.rs` module-level doc — LANDED (header table + breaking-change note)
-- [x] Define `StreamingCallbackPolicy { OncePerRequest, PerChunk, Disabled }` enum — LANDED (callbacks/mod.rs:41 with `#[default] OncePerRequest`)
+- [x] Define `StreamingCallbackPolicy { OncePerRequest, PerChunk, Disabled }` enum — LANDED (callbacks/mod.rs with `#[default] OncePerRequest`)
 - [x] Default policy: `OncePerRequest` (matches LiteLLM) — LANDED (`#[derive(Default)]` with `#[default] OncePerRequest`)
 - [x] Wire policy lookup into proxy.rs streaming path (SSE / chunked transfer) — LANDED (proxy.rs `handle_streaming` + `StreamingCallbackWiring` struct)
 - [x] End callback fires at stream completion (not first chunk arrival) — LANDED (Start fires once at entry via `fire_streaming_start`; End fires at completion via `fire_end_success`/`fire_end_failure` from mission 0947-c1)
@@ -44,7 +44,7 @@ Key files:
 
 Reference points:
 
-- `proxy.rs:659` — request handler has streaming path (find via `Content-Type: text/event-stream` / chunked handling)
+- `proxy.rs` — request handler has streaming path (find via `Content-Type: text/event-stream` / chunked handling)
 - RFC-0947 §Streaming Semantics — design rationale for once-per-request vs per-chunk
 
 Coupling:

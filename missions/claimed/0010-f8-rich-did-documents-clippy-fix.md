@@ -36,11 +36,11 @@ Per F-P5.2-3 RETAIN framework (substrate fabrication category), this defect is o
 
 Inspect `crates/octo-ident/tests/rich_did_document_tv.rs` for 6 round-trip types missing `borsh::BorshDeserialize` derive:
 
-- `ServiceEndpoint` — `derive(borsh::BorshSerialize, borsh::BorshDeserialize)` at `crates/octo-ident/src/rich_document.rs:71` ✓ has both
-- `VerificationMethod` — same at `:181` ✓
-- `VerificationMethodKind` — same at `:216` ✓
-- `ControllerReference` — same at `:253` ✓
-- `CapabilityDelegation` — same at `:277` ✓
+- `ServiceEndpoint` — `derive(borsh::BorshSerialize, borsh::BorshDeserialize)` in `crates/octo-ident/src/rich_document.rs` ✓ has both
+- `VerificationMethod` — same at ✓
+- `VerificationMethodKind` — same at ✓
+- `ControllerReference` — same at ✓
+- `CapabilityDelegation` — same at ✓
 
 5 rich types already have borsh derives. Likely culprit = TEST wrapper type (e.g., `RichDocumentFixture`) or feature-gated derive misconfiguration on `octo-ident/borsh` feature flag.
 
@@ -86,7 +86,7 @@ cargo test -p octo-ident --test rich_did_document_tv
 - Mission `0010-c-32-byte-addendum` (AC-7 blocked by this defect; resolution unblocks 0010-c AC-7 closure)
 - Mission `0010-alignment-coordination` (coordination summary parent)
 - `crates/octo-ident/src/rich_document.rs` (5 rich types — all have borsh derives; culprit = TV file test wrapper type)
-- `crates/octo-ident/Cargo.toml` (`borsh` feature gate at `:33` per mission `0010-f8-rich-did-documents` LANDED)
+- `crates/octo-ident/Cargo.toml` (`borsh` feature gate at per mission `0010-f8-rich-did-documents` LANDED)
 
 ## Out of scope
 

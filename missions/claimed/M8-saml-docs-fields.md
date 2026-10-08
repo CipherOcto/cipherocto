@@ -25,7 +25,7 @@ clarity value.
       block so stub verifier accepts; non-empty byte blob
       threads the validation path
 - [x] Clippy zero warnings (`cargo clippy -p quota-router-core --all-targets
-      --features full -- -D warnings` clean)
+    --features full -- -D warnings` clean)
 - [x] All existing tests pass (42/42 in `auth::sso::saml` module)
 - [x] SAML module's own doc-build clean under `-D warnings`
 
@@ -33,8 +33,8 @@ clarity value.
 
 - [ ] `cargo doc --no-deps -- -D warnings` for the full
       `quota-router-core` crate: BLOCKED by 5 pre-existing
-      unrelated doc warnings in `sso_context.rs:347`,
-      `secret_manager.rs:177`, `llm_router.rs` (URL not
+      unrelated doc warnings in `sso_context.rs`,
+      `secret_manager.rs`, `llm_router.rs` (URL not
       auto-linked), plus 2-3 unresolved intra-doc-link
       warnings (`sign_envelope_with`, `0`, `EMAIL_REDACTED`).
       None introduced by M8. Fix tracked separately under
@@ -42,7 +42,7 @@ clarity value.
       The M8-specific intent — that saml.rs itself has no
       doc warnings — is satisfied; verified by
       `RUSTDOCFLAGS="-D warnings" cargo doc -p quota-router-core
-      --no-deps 2>&1 | grep saml.rs` returning empty.
+    --no-deps 2>&1 | grep saml.rs` returning empty.
 
 ### Diff summary
 
@@ -60,7 +60,7 @@ clarity value.
   - `validate_signature` + `verify_xml_signature` STUB notices
   - 2 new test functions (XML augmented with
     `<ds:Signature><ds:SignatureValue>YWJjMTIz</ds:SignatureValue></ds:Signature>`)
-  - 1 doc-comment URL auto-linked (`SP entity ID` at line 100)
+  - 1 doc-comment URL auto-linked (`SP entity ID`)
   - 2 existing test-construction sites updated for new fields
 
 ## RFC
@@ -73,15 +73,15 @@ RFC-0949 (Economics): Enterprise SSO
 
 ## Findings covered
 
-- **F3-001:** Doc comment on `verify_xml_signature` (line 410-417)
+- **F3-001:** Doc comment on `verify_xml_signature`
   claims "Verifies: 1. Signature element exists 2. SignedInfo
   digest matches assertion digest 3. Signature value is valid using
   IdP certificate (RSA-SHA256)". The function does NONE of these.
   Doc materially false.
-- **F3-011:** Module doc (line 1-5) references RFC-0949 but omits
+- **F3-011:** Module doc references RFC-0949 but omits
   ALL SAML 2.0 spec sections covered (or partially covered).
   Reader assumes full conformance.
-- **F3-013:** `SamlAssertion` struct (line 23-34) does not expose
+- **F3-013:** `SamlAssertion` struct does not expose
   `assertion_id` or `issuer`. Downstream replay-protection or
   issuer-pinning must re-parse XML.
 
@@ -89,63 +89,63 @@ RFC-0949 (Economics): Enterprise SSO
 
 - [ ] Expand module doc to enumerate coverage explicitly:
       `rust
-    //! SAML 2.0 Authentication (RFC-0949)
-    //!
-    //! ## Coverage
-    //! - §5.4.2 Conditions / NotBefore / NotOnOrAfter + clock skew
-    //! - §2.5.1.4 AudienceRestriction (single-value; multi-value
-    //!   enforcement in M2-saml-audience-subject-conf)
-    //! - §5.4.3 SubjectConfirmationData.Recipient
-    //! - §5.5 partial: AuthnStatement/SessionIndex only
-    //!   (SessionNotOnOrAfter + Assertion/@ID + replay in
-    //!   M3-saml-replay-protection)
-    //!
-    //! ## DEFERRED (known gaps)
-    //! - ⚠️ §5.4.1 real RSA-SHA256 verification is a STUB.
-    //!   See M1-saml-signature-real.
-    //! - ⚠️ §5.4.3 SubjectConfirmationMethod NOT enforced
-    //!   (any method accepted). See M2.
-    //! - ⚠️ §6.3.5 EncryptedAssertion NOT supported (returns
-    //!   ProviderError). No mission filed yet.
-    //! - ⚠️ §5.4.2 replay / AssertionID NOT enforced (no cache).
-    //!   See M3.
-    //! - ⚠️ Constant-time compare NOT used. See M4.
-    //! - ⚠️ Zeroize NOT used on cert / secrets. See M4.
-    //!
-    //! Until the DEFERRED items land, this module is
-    //! SUITABLE FOR DEVELOPMENT ONLY — production deployments
-    //! MUST pin to a SAML IdP that:
-    //!   1. Replays assertions only to signed-and-verified SPs,
-    //!      AND
-    //!   2. Uses audience restrictions compatible with
-    //!      single-value matching, AND
-    //!   3. Pins AuthnRequest IDs out-of-band (InResponseTo
-    //!      correlation is not yet enforced).
-    `
+  //! SAML 2.0 Authentication (RFC-0949)
+  //!
+  //! ## Coverage
+  //! - §5.4.2 Conditions / NotBefore / NotOnOrAfter + clock skew
+  //! - §2.5.1.4 AudienceRestriction (single-value; multi-value
+  //!   enforcement in M2-saml-audience-subject-conf)
+  //! - §5.4.3 SubjectConfirmationData.Recipient
+  //! - §5.5 partial: AuthnStatement/SessionIndex only
+  //!   (SessionNotOnOrAfter + Assertion/@ID + replay in
+  //!   M3-saml-replay-protection)
+  //!
+  //! ## DEFERRED (known gaps)
+  //! - ⚠️ §5.4.1 real RSA-SHA256 verification is a STUB.
+  //!   See M1-saml-signature-real.
+  //! - ⚠️ §5.4.3 SubjectConfirmationMethod NOT enforced
+  //!   (any method accepted). See M2.
+  //! - ⚠️ §6.3.5 EncryptedAssertion NOT supported (returns
+  //!   ProviderError). No mission filed yet.
+  //! - ⚠️ §5.4.2 replay / AssertionID NOT enforced (no cache).
+  //!   See M3.
+  //! - ⚠️ Constant-time compare NOT used. See M4.
+  //! - ⚠️ Zeroize NOT used on cert / secrets. See M4.
+  //!
+  //! Until the DEFERRED items land, this module is
+  //! SUITABLE FOR DEVELOPMENT ONLY — production deployments
+  //! MUST pin to a SAML IdP that:
+  //!   1. Replays assertions only to signed-and-verified SPs,
+  //!      AND
+  //!   2. Uses audience restrictions compatible with
+  //!      single-value matching, AND
+  //!   3. Pins AuthnRequest IDs out-of-band (InResponseTo
+  //!      correlation is not yet enforced).
+  `
 - [ ] Replace the false doc on `verify_xml_signature`:
       `rust
-    /// ⚠️ STUB: Verifies only that the certificate and
-    /// SignatureValue byte blobs are non-empty. Does NOT
-    /// load the cert as a public key, canonicalize SignedInfo,
-    /// or verify RSA-SHA256. See M1-saml-signature-real.
-    fn verify_xml_signature(
-        _signed_info_xml: &[u8],
-        signature_value: &[u8],
-        certificate_der: &[u8],
-    ) -> Result<(), SsoError>
-    `
+  /// ⚠️ STUB: Verifies only that the certificate and
+  /// SignatureValue byte blobs are non-empty. Does NOT
+  /// load the cert as a public key, canonicalize SignedInfo,
+  /// or verify RSA-SHA256. See M1-saml-signature-real.
+  fn verify_xml_signature(
+      _signed_info_xml: &[u8],
+      signature_value: &[u8],
+      certificate_der: &[u8],
+  ) -> Result<(), SsoError>
+  `
 - [ ] Add fields to `SamlAssertion`:
       `rust
-    pub struct SamlAssertion {
-        pub name_id: String,
-        pub issuer: Option<String>,        // NEW — Issuer entity
-        pub session_index: Option<String>,
-        pub assertion_id: Option<String>,   // NEW — Assertion/@ID
-        pub attributes: HashMap<String, Vec<String>>,
-        pub not_before: DateTime<Utc>,
-        pub not_on_or_after: DateTime<Utc>,
-    }
-    `
+  pub struct SamlAssertion {
+      pub name_id: String,
+      pub issuer: Option<String>,        // NEW — Issuer entity
+      pub session_index: Option<String>,
+      pub assertion_id: Option<String>,   // NEW — Assertion/@ID
+      pub attributes: HashMap<String, Vec<String>>,
+      pub not_before: DateTime<Utc>,
+      pub not_on_or_after: DateTime<Utc>,
+  }
+  `
 - [ ] Parse `Issuer` element text (only the immediate child of
       Assertion or Response). Truncate to 256 chars as
       defense-in-depth.

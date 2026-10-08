@@ -18,7 +18,7 @@ This is a Phase 4 requirement per RFC-0862 §Implementation Phases Phase 4: "Per
 
 ### What already exists
 
-- `MissionKeyRing` (`octo-sync/src/keyring.rs:52,145`) already provides `encrypt(plaintext, aad) -> (ciphertext, nonce)` and `decrypt(ciphertext, nonce, aad) -> Result<Vec<u8>>` with ChaCha20-Poly1305 AEAD.
+- `MissionKeyRing` (`octo-sync/src/keyring.rs`) already provides `encrypt(plaintext, aad) -> (ciphertext, nonce)` and `decrypt(ciphertext, nonce, aad) -> Result<Vec<u8>>` with ChaCha20-Poly1305 AEAD.
 - `MultiCarrierSync` (`octo-sync/src/carrier.rs`) broadcasts raw `&[u8]` envelopes without encryption.
 
 ### What's missing: integration glue
@@ -73,6 +73,7 @@ impl MissionCrypto {
 ### Integration with carrier layer
 
 `MultiCarrierSync` gains a `crypto: Option<Arc<MissionCrypto>>` field. In `broadcast`:
+
 ```rust
 let (payload, nonce) = match &self.crypto {
     Some(crypto) => {
@@ -160,7 +161,7 @@ cargo fmt --manifest-path octo-sync/Cargo.toml -- --check  # clean
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                       |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | (filed)    | Mission filed with `Status: Completed` header (incorrect — actual status was open). 7 ACs (MissionPrivacy + MissionCrypto + MultiCarrierSync wiring + tests). |
+| Version | Date       | Change                                                                                                                                                           |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | (filed)    | Mission filed with `Status: Completed` header (incorrect — actual status was open). 7 ACs (MissionPrivacy + MissionCrypto + MultiCarrierSync wiring + tests).    |
 | v0.2    | 2026-08-07 | Status header corrected to Claimed→Closed (Band A — 2026-08-07). 7/7 ACs green; substrate pre-existed on `next` ahead of claim. 13/13 mission_crypto tests pass. |

@@ -53,7 +53,7 @@ the DRY loop with diminishing returns.
 
 ### Defect 1 — `WalletError::AlreadyInTransition(Uuid)` activation
 
-**Current state:** variant declared at `crates/octo-wallet/src/error.rs:184-190`
+**Current state:** variant declared at `crates/octo-wallet/src/error.rs`
 but never constructed by `transition_agent`. Dead surface at parent
 RFC-0015-a acceptance.
 
@@ -73,9 +73,9 @@ parent RFC-0015-a acceptance; re-verified at amendment landing).
 
 ### Defect 2 — doc-comment drift on `AlreadyInTransition`
 
-**Current state:** `error.rs:184-190` doc-comment references
+**Current state:** `error.rs` doc-comment references
 `parking_lot::Mutex::try_lock` but substrate implements
-`std::sync::Mutex::lock` at `crates/octo-wallet/src/agent.rs:488`.
+`std::sync::Mutex::lock` at `crates/octo-wallet/src/agent.rs`.
 
 **RFC-0015-b requirement §X.2:** once §X.1 lands, the doc-comment
 becomes accurate (matches implementation). Pre-amendment landing:
@@ -86,7 +86,7 @@ substrate implementation is upgraded to match.
 
 ### Defect 3 — `lookup_agent` existence-leak
 
-**Current state:** `agent.rs:486-500` returns `WalletError::AgentNotFound`
+**Current state:** `agent.rs` returns `WalletError::AgentNotFound`
 for unknown Uuid but `WalletError::ForbiddenHolderMismatch` for
 caller-DID mismatch. Existence leak enables enumeration: caller can
 probe for Uuids belonging to other DIDs.

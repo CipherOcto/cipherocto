@@ -14,17 +14,17 @@ RFC-0946 (Economics): Guardrails Framework
 
 ## Acceptance Criteria
 
-- [x] Define `Guardrail` enum (PiiDetection, PromptInjection, ContentModeration, TopicRestriction, TokenLimit, RegexFilter, Custom). (`crates/quota-router-core/src/guardrails/mod.rs:42-104`)
-- [x] Define `GuardrailAction` enum (Block, Warn, Log, Transform). (`crates/quota-router-core/src/guardrails/mod.rs:138-148`)
-- [x] Define `GuardrailResult` enum (Allow, Block, Warn, Transform, Error). (`crates/quota-router-core/src/guardrails/mod.rs:152-170`)
-- [x] Define `GuardrailFallback` enum (FailOpen, FailClosed). (`crates/quota-router-core/src/guardrails/mod.rs:174-181`)
-- [x] Define `Guardrail` trait with `check_input()` and `check_output()` methods. (`GuardrailChecker` trait at `crates/quota-router-core/src/guardrails/mod.rs:220-237` — `Guardrail` enum is the configuration, `GuardrailChecker` is the runtime trait that operates over the enum config.)
+- [x] Define `Guardrail` enum (PiiDetection, PromptInjection, ContentModeration, TopicRestriction, TokenLimit, RegexFilter, Custom). (`crates/quota-router-core/src/guardrails/mod.rs`)
+- [x] Define `GuardrailAction` enum (Block, Warn, Log, Transform). (`crates/quota-router-core/src/guardrails/mod.rs`)
+- [x] Define `GuardrailResult` enum (Allow, Block, Warn, Transform, Error). (`crates/quota-router-core/src/guardrails/mod.rs`)
+- [x] Define `GuardrailFallback` enum (FailOpen, FailClosed). (`crates/quota-router-core/src/guardrails/mod.rs`)
+- [x] Define `Guardrail` trait with `check_input()` and `check_output()` methods. (`GuardrailChecker` trait at `crates/quota-router-core/src/guardrails/mod.rs` — `Guardrail` enum is the configuration, `GuardrailChecker` is the runtime trait that operates over the enum config.)
 - [x] Implement `GuardrailRegistry` with `HashMap<String, Box<dyn Guardrail>>`. (`crates/quota-router-core/src/guardrails/registry.rs` — LazyLock<RwLock<HashMap<&'static str, fn() -> Arc<dyn GuardrailChecker>>>> using factory pattern, equivalent to native_http::PROVIDER_REGISTRY.)
-- [x] Implement `init_guardrails()` function to register all built-in guardrails. (`crates/quota-router-core/src/guardrails/registry.rs:58` registers 5 built-ins: pii_detection, prompt_injection, topic_restriction, regex_filter, custom.)
-- [x] Implement `GuardrailExecutor` with global/model/key override merging. (`crates/quota-router-core/src/guardrails/mod.rs:720-963`)
-- [x] Execution order: global → model → key, short-circuit on Block. (`check_input` at `mod.rs:749-818`, `check_output` at `mod.rs:821-890`)
-- [x] Add `GuardrailConfig` to `config.rs`. (`crates/quota-router-core/src/config.rs:560,614-629`)
-- [x] Error variant: `GuardrailResult::Error` consumed by executor (FailOpen → Allow with warning, FailClosed → Block). (`resolve_error` at `mod.rs:905-929`)
+- [x] Implement `init_guardrails()` function to register all built-in guardrails. (`crates/quota-router-core/src/guardrails/registry.rs` registers 5 built-ins: pii_detection, prompt_injection, topic_restriction, regex_filter, custom.)
+- [x] Implement `GuardrailExecutor` with global/model/key override merging. (`crates/quota-router-core/src/guardrails/mod.rs`)
+- [x] Execution order: global → model → key, short-circuit on Block. (`check_input` at `mod.rs`, `check_output` at `mod.rs`)
+- [x] Add `GuardrailConfig` to `config.rs`. (`crates/quota-router-core/src/config.rs`)
+- [x] Error variant: `GuardrailResult::Error` consumed by executor (FailOpen → Allow with warning, FailClosed → Block). (`resolve_error` at `mod.rs`)
 - [x] Clippy passes with zero warnings. (`cargo clippy -p quota-router-core --lib -- -D warnings` clean)
 - [x] All existing tests pass. (`cargo test -p quota-router-core --lib guardrails`: 20 tests pass)
 
@@ -39,6 +39,7 @@ RFC-0946 (Economics): Guardrails Framework
 ## Notes
 
 Key files:
+
 - `crates/quota-router-core/src/guardrails/mod.rs` — New
 - `crates/quota-router-core/src/guardrails/registry.rs` — New
 - `crates/quota-router-core/src/config.rs` — Add GuardrailConfig
@@ -62,9 +63,9 @@ Key files:
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                       |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. Pre-existing guardrails framework verified; full closure narrative authored in session.                                     |
+| Version | Date       | Change                                                                                                                                                                  |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. Pre-existing guardrails framework verified; full closure narrative authored in session.                                                                |
 | v0.2    | 2026-08-06 | Closed Band A. 13/13 ACs green; 20 guardrails tests pass; Status header flipped Claimed→Closed (Band A — 2026-08-06); no new commits (verifies pre-existing substrate). |
 
 Last Updated: 2026-08-06

@@ -170,7 +170,7 @@ Additive: 1 new public fn + 1 new struct + reuse existing error types on existin
 - Substrate-first ordering: M11 must land BEFORE M10 (M10 calls M11 substrate)
 - Sub-step 1 = gate check; if unmet, mission pauses
 - v1.3 drift-fix supersedes v1.2 substrate-home reconciliation: `crates/octo-network/src/mon/domain_coordinator.rs` (file never existed) → `crates/octo-network/src/dc/admin_attest.rs` (REAL; contains `PlatformAdminAttestError`)
-- v1.3 drift-fix supersedes v1.2 error type rename: `DomainCoordinatorError` (fictional) → canonical `BindingError` (existing at `crates/octo-network/src/dot/binding.rs:648`; Layer C; semantically correct for binding ceremony state transitions)
+- v1.3 drift-fix supersedes v1.2 error type rename: `DomainCoordinatorError` (fictional) → canonical `BindingError` (existing at `crates/octo-network/src/dot/binding.rs`; Layer C; semantically correct for binding ceremony state transitions)
 
 ## Cross-references
 

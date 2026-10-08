@@ -5,7 +5,7 @@ metadata:
   node_type: substrate-coordinator
   type: substrate-handover-protocol
   rfc_source: RFC-0855p-b
-  rfc_section: Implementation Phases §Phase 4 (L827-833) + §Appendix A State Machine (Active → Handover + Handover → Inactive) + Round 4 adversarial review (L832)
+  rfc_section: Implementation Phases §Phase 4 + §Appendix A State Machine (Active → Handover + Handover → Inactive) + Round 4 adversarial review
   substrate_home:
     canonical: crates/octo-network/src/dot/handover.rs (append handlers; existing RFC-0855p-e substrate)
     tests: crates/octo-network/tests/canonical_handover_blobs.rs
@@ -31,15 +31,15 @@ Claimed (2026-09-03) by @mmacedoeu — partial land via RFC-0855p-e substrate (`
 
 ## RFC
 
-RFC-0855p-b §Implementation Phase 4 (L827-833) + §Appendix A State Machine (Active → Handover, Handover → Inactive transitions) + RFC-0855p-e handover envelope substrate (already landed).
+RFC-0855p-b §Implementation Phase 4 + §Appendix A State Machine (Active → Handover, Handover → Inactive transitions) + RFC-0855p-e handover envelope substrate (already landed).
 
 ## Summary
 
 Wire the §Phase 4 handover protocol on top of the partial RFC-0855p-e substrate + §Phase 1 + §Phase 3 state machine. Three trigger paths: (1) signed `HandoverRequest` (voluntary Active→Handover), (2) liveness-driven Suspect→Handover (from Phase 3), (3) emergency (governance override → Emergency→Handover). Each path produces a `HandoverRequestEnvelope`, propagates the message-pending queue to the successor, then transitions Handover→Inactive after successor Active.
 
-**Layer-model note (intentional divergence from Phases 1/2/3/5):** RFC §Key Files L847-851 assigns the handover file to `crates/octo-network/src/dot/handover.rs` (Layer C, per RFC-0855p-e §Key Files). This Phase-4 mission therefore lives at **Layer C** and APPENDS handlers to the existing `crates/octo-network/src/dot/handover.rs` (not at Layer B). The companion Phase-1 state-machine substrate (`CoordinatorSource::Handover`, `CoordinatorRecord` for successors) IS at Layer B per Phase-1 mission; this Phase-4 mission consumes those types via `pub use` re-export from `crates/octo-network/src/mon/coordinator.rs`. Do NOT duplicate Phase 1 types here.
+**Layer-model note (intentional divergence from Phases 1/2/3/5):** RFC §Key Files assigns the handover file to `crates/octo-network/src/dot/handover.rs` (Layer C, per RFC-0855p-e §Key Files). This Phase-4 mission therefore lives at **Layer C** and APPENDS handlers to the existing `crates/octo-network/src/dot/handover.rs` (not at Layer B). The companion Phase-1 state-machine substrate (`CoordinatorSource::Handover`, `CoordinatorRecord` for successors) IS at Layer B per Phase-1 mission; this Phase-4 mission consumes those types via `pub use` re-export from `crates/octo-network/src/mon/coordinator.rs`. Do NOT duplicate Phase 1 types here.
 
-`MessagePreservationQueue` is the canonical RFC §Phase 4 L828 reference: every message destined for the predecessor-but-not-yet-handled queue MUST move to the successor before transition Handover→Inactive.
+`MessagePreservationQueue` is the canonical RFC §Phase 4 reference: every message destined for the predecessor-but-not-yet-handled queue MUST move to the successor before transition Handover→Inactive.
 
 ## Substrate work scope
 
@@ -81,7 +81,7 @@ Transfer on HandoverRequest acknowledgment. Flush on successor Active.
 - [ ] `crates/octo-network/src/dot/handover.rs` extended with §Phase 4 handlers (voluntary + forced + emergency paths).
 - [ ] `MessagePreservationQueue` declared; transfer + flush semantics.
 - [ ] 3 canonical handover vectors pinned in `crates/octo-network/tests/canonical_handover_blobs.rs`; all PASS.
-- [ ] Composition with `HandoverReasonTypeId` (Layer B event type, `octo-coordinator-types/src/lib.rs:171`).
+- [ ] Composition with `HandoverReasonTypeId` (Layer B event type, `octo-coordinator-types/src/lib.rs`).
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean.
 - [ ] Reuses (does NOT duplicate) Layer B event types from `octo-coordinator-types` per `cipherocto-design-principles` §Stable Abstractions.
 

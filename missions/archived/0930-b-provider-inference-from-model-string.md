@@ -23,7 +23,7 @@ Currently, `to_provider_map()` requires explicit `litellm_params.provider` field
 
 ### infer_provider() Function
 
-- [x] Implement `infer_provider(model: &str) -> Option<String>` in `config.rs` (line 170)
+- [x] Implement `infer_provider(model: &str) -> Option<String>` in `config.rs`
 - [x] Split on `/` separator: `openai/gpt-4o` → `Some("openai")`
 - [x] Split on `:` separator: `openai:gpt-4o` → `Some("openai")`
 - [x] Lowercase provider name (factory.rs lookup is case-sensitive)
@@ -67,14 +67,16 @@ Currently, `to_provider_map()` requires explicit `litellm_params.provider` field
 ## Notes
 
 This mission is separate from Mission-0930-a (registry expansion) because:
+
 - Mission-0930-a creates `get_provider_default_api_base()` and adds `MissingProvider` variant
 - This mission implements `infer_provider()` and wires it into `to_provider_map()`
 
 Both missions are needed for RFC-0930 full implementation. Mission-0930-a should be completed first (provides `get_provider_default_api_base()` needed by RFC-0931's tier 4).
 
 **model_name vs litellm_params.model:** `model_name` is used for inference (may have prefix), `litellm_params.model` is used for API calls and auto_id (no prefix). Example:
+
 ```yaml
-model_name: openai/gpt-4o    # ← used for inference
+model_name: openai/gpt-4o # ← used for inference
 litellm_params:
-  model: gpt-4o              # ← used for API calls and auto_id
+  model: gpt-4o # ← used for API calls and auto_id
 ```

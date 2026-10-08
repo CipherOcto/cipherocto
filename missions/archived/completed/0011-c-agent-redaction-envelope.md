@@ -117,26 +117,26 @@ strictly additive: no Phase 1 surface is removed or weakened.
 
 ## Acceptance Criteria
 
-| #   | Criterion                                                                                  | Status     | Evidence                                                                                         |
-| --- | ------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
-| 1   | `RedactedIdentifier` newtype with custom `Serialize`/`Display`/`Debug` masking inner value | [x] LANDED | `crates/octo-cli/src/redact.rs:190-244`; doctest pins contract                                   |
-| 2   | `AgentCreateOutput.agent_id` + `.holder_did` wrapped in `RedactedIdentifier`               | [x] LANDED | `crates/octo-cli/src/commands/agent.rs:222-223`                                                  |
-| 3   | `OutputEnvelope::render` integrates `RedactionContext` walker                              | [x] LANDED | `crates/octo-cli/src/output.rs:235-263` `render_with_redaction`                                  |
-| 4   | 4+ redaction test vectors in `tests/agent.rs`                                              | [x] LANDED | 6 vectors: `tv_agt_redact_*` (`TV-AGT-ENV-1..6`)                                                 |
-| 5   | Conditional `holder_did` un-redact when `holder_did_raw == active_did`                     | [x] LANDED | `redact.rs:320-348` walker branch                                                                |
-| 6   | `agent_id` truncation to first 8 chars + `...`                                             | [x] LANDED | `redact.rs:403-406` `truncate_id`                                                                |
-| 7   | Audit emission `holder_did_un_redacted` fires only on match                                | [x] LANDED | `redact.rs:344-347`                                                                              |
-| 8   | Audit emission `redacted_identifier_revealed` on `reveal()`                                | [x] LANDED | `redact.rs:213-220`                                                                              |
-| 9   | Dry-run skip via `if !self.redacted` gate                                                  | [x] LANDED | `output.rs:251` + `tv_env_redact_dry_run_envelope_skips_redactor`                                |
-| 10  | `#[schemars(with = "String")]` annotations on `RedactedIdentifier` fields                  | [x] LANDED | `commands/agent.rs:292, 302`; `agent_create_output_schema_declares_agent_id_as_string` test pins |
-| 11  | Phase 1 log-time `FIELD_TABLE` redaction untouched                                         | [x] LANDED | additive-only diff; `redact.rs:80-155` unchanged                                                 |
-| 12  | NO new Layer A types; octo-wallet (B) record shape unchanged                               | [x] LANDED | R6 layer-model CLEAN                                                                             |
-| 13  | `cargo clippy --workspace --features full --all-targets -- -D warnings` clean              | [x] LANDED | R7 verification                                                                                  |
-| 14  | `cargo test -p octo-cli --lib --tests` PASS                                                | [x] LANDED | 228 lib + 18 agent + (binary integration) all PASS                                               |
-| 15  | `scripts/validate_cites.sh` 6/6 VALID                                                      | [x] LANDED | R7 verification                                                                                  |
-| 16  | `cargo fmt --all` clean                                                                    | [x] LANDED | R7 verification                                                                                  |
-| 17  | 7-round multi-lens DRY review converges                                                    | [x] LANDED | R6+R7 = 2 consecutive zero-finding rounds = DRY CLOSED                                           |
-| 18  | Substrate-Faithful Amendment Trail documents 4 spec deviations                             | [x] LANDED | §Substrate-Faithful Amendment Trail below                                                        |
+| #   | Criterion                                                                                  | Status     | Evidence                                                                                |
+| --- | ------------------------------------------------------------------------------------------ | ---------- | --------------------------------------------------------------------------------------- |
+| 1   | `RedactedIdentifier` newtype with custom `Serialize`/`Display`/`Debug` masking inner value | [x] LANDED | `crates/octo-cli/src/redact.rs`; doctest pins contract                                  |
+| 2   | `AgentCreateOutput.agent_id` + `.holder_did` wrapped in `RedactedIdentifier`               | [x] LANDED | `crates/octo-cli/src/commands/agent.rs`                                                 |
+| 3   | `OutputEnvelope::render` integrates `RedactionContext` walker                              | [x] LANDED | `crates/octo-cli/src/output.rs` `render_with_redaction`                                 |
+| 4   | 4+ redaction test vectors in `tests/agent.rs`                                              | [x] LANDED | 6 vectors: `tv_agt_redact_*` (`TV-AGT-ENV-1..6`)                                        |
+| 5   | Conditional `holder_did` un-redact when `holder_did_raw == active_did`                     | [x] LANDED | `redact.rs` walker branch                                                               |
+| 6   | `agent_id` truncation to first 8 chars + `...`                                             | [x] LANDED | `redact.rs` `truncate_id`                                                               |
+| 7   | Audit emission `holder_did_un_redacted` fires only on match                                | [x] LANDED | `redact.rs`                                                                             |
+| 8   | Audit emission `redacted_identifier_revealed` on `reveal()`                                | [x] LANDED | `redact.rs`                                                                             |
+| 9   | Dry-run skip via `if !self.redacted` gate                                                  | [x] LANDED | `output.rs` + `tv_env_redact_dry_run_envelope_skips_redactor`                           |
+| 10  | `#[schemars(with = "String")]` annotations on `RedactedIdentifier` fields                  | [x] LANDED | `commands/agent.rs`; `agent_create_output_schema_declares_agent_id_as_string` test pins |
+| 11  | Phase 1 log-time `FIELD_TABLE` redaction untouched                                         | [x] LANDED | additive-only diff; `redact.rs` unchanged                                               |
+| 12  | NO new Layer A types; octo-wallet (B) record shape unchanged                               | [x] LANDED | R6 layer-model CLEAN                                                                    |
+| 13  | `cargo clippy --workspace --features full --all-targets -- -D warnings` clean              | [x] LANDED | R7 verification                                                                         |
+| 14  | `cargo test -p octo-cli --lib --tests` PASS                                                | [x] LANDED | 228 lib + 18 agent + (binary integration) all PASS                                      |
+| 15  | `scripts/validate_cites.sh` 6/6 VALID                                                      | [x] LANDED | R7 verification                                                                         |
+| 16  | `cargo fmt --all` clean                                                                    | [x] LANDED | R7 verification                                                                         |
+| 17  | 7-round multi-lens DRY review converges                                                    | [x] LANDED | R6+R7 = 2 consecutive zero-finding rounds = DRY CLOSED                                  |
+| 18  | Substrate-Faithful Amendment Trail documents 4 spec deviations                             | [x] LANDED | §Substrate-Faithful Amendment Trail below                                               |
 
 ## Validation
 

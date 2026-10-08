@@ -4,7 +4,7 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/octo-network/src/dot/sub_group.rs` — `:26` `SUBGROUP_TAG = b"CGSB"` + `:81` `SubGroupExtension` + `:157` `CreateSubGroupEnvelope` (633 LOC, 19 `#[test]`). All 21 ACs were unmarked in the AC list despite the implementation landing in `next`; the Status header was correct from 2026-06-17. Did not pass through `claimed/` or `with-pr/` — work landed via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/octo-network/src/dot/sub_group.rs` — `SUBGROUP_TAG = b"CGSB"` + `SubGroupExtension` + `CreateSubGroupEnvelope` (633 LOC, 19 `#[test]`). All 21 ACs were unmarked in the AC list despite the implementation landing in `next`; the Status header was correct from 2026-06-17. Did not pass through `claimed/` or `with-pr/` — work landed via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

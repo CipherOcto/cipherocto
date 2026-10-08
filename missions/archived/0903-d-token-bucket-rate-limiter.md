@@ -15,6 +15,7 @@ Upgrade the current simple counter-based rate limiter to the RFC-0903 TokenBucke
 ## Motivation
 
 Current implementation gaps:
+
 1. **TokenBucket not implemented:** RFC-0903 specifies TokenBucket algorithm with per-minute refill rates; current implementation uses simple 60-second window counters
 2. **DashMap not used:** Current uses `HashMap` + `RwLock`; RFC-0903 requires `DashMap` for concurrent access
 3. **Stale eviction missing:** No `cleanup_stale_buckets()` for memory management
@@ -62,11 +63,11 @@ Current implementation gaps:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
+| File                                               | Change                                            |
+| -------------------------------------------------- | ------------------------------------------------- |
 | `crates/quota-router-core/src/key_rate_limiter.rs` | Replace with TokenBucket + DashMap implementation |
-| `crates/quota-router-core/src/storage.rs` | Verify record_spend_with_team lock ordering |
-| `crates/quota-router-core/src/keys/mod.rs` | Add cleanup helper if needed |
+| `crates/quota-router-core/src/storage.rs`          | Verify record_spend_with_team lock ordering       |
+| `crates/quota-router-core/src/keys/mod.rs`         | Add cleanup helper if needed                      |
 
 ## Complexity
 
@@ -74,11 +75,11 @@ Medium — algorithmic change from simple counter to token bucket with memory ma
 
 ## Reference
 
-- RFC-0903 §Rate Limiting Algorithm (lines 498-577)
-- RFC-0903 §Rate Limiter Storage (lines 579-664)
-- RFC-0903 §Rate Limiting Determinism (lines 1672-1680)
-- RFC-0903 §Rate Limiter Memory Management (lines 2165-2186)
-- RFC-0903 §Lock Ordering Invariant (lines 1700-1711)
+- RFC-0903 §Rate Limiting Algorithm
+- RFC-0903 §Rate Limiter Storage
+- RFC-0903 §Rate Limiting Determinism
+- RFC-0903 §Rate Limiter Memory Management
+- RFC-0903 §Lock Ordering Invariant
 
 ## Claimant
 

@@ -6,7 +6,7 @@ open (filed 2026-08-11). Builds on
 `0010-f2-multi-chain-did-resolution` (commit `f6478bda`, RFC-0010
 ACCEPTED) + `0010-f8-rich-did-storage` (commit `269cf923`).
 
-> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11 (commit `a7efaabb`). `pub trait DidRegistry: Send + Sync + 'static` at `crates/octo-ident/src/registry.rs:71` (gains two ADDITIVE methods `register_in_chain` at `:199` + `resolve_in_chain` at `:219` with default impls forwarding to single-chain methods per Layer B additive-only rule). `MAINNET_CHAIN_ID_BYTES` const + 4 SQL filter updates in `crates/octo-ident-storage/src/did_registry.rs` (re-exported from `crates/octo-ident-storage/src/lib.rs:34`). Migration file `v011__add_chain_id_namespace.sql` exists in `crates/quota-router-storage/migrations/` (per `0206-009` adapter crate pattern — substrate moved to `octo-ident-storage` crate but migrations remained in quota-router-storage path; cross-references corrected). 1 TV `register_in_chain_isolates_dids_across_chains` in `crates/octo-ident-storage/tests/chain_namespace.rs`. Mission status preserved `open` per historical-mission-preservation + R19 scope discipline; bare version pin (`RFC-0010 v1.4`) → `RFC-0010` per CLAUDE.md §RFC Reference Conventions.
+> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11 (commit `a7efaabb`). `pub trait DidRegistry: Send + Sync + 'static` in `crates/octo-ident/src/registry.rs` (gains two ADDITIVE methods `register_in_chain` + `resolve_in_chain` with default impls forwarding to single-chain methods per Layer B additive-only rule). `MAINNET_CHAIN_ID_BYTES` const + 4 SQL filter updates in `crates/octo-ident-storage/src/did_registry.rs` (re-exported from `crates/octo-ident-storage/src/lib.rs`). Migration file `v011__add_chain_id_namespace.sql` exists in `crates/quota-router-storage/migrations/` (per `0206-009` adapter crate pattern — substrate moved to `octo-ident-storage` crate but migrations remained in quota-router-storage path; cross-references corrected). 1 TV `register_in_chain_isolates_dids_across_chains` in `crates/octo-ident-storage/tests/chain_namespace.rs`. Mission status preserved `open` per historical-mission-preservation + R19 scope discipline; bare version pin (`RFC-0010 v1.4`) → `RFC-0010` per CLAUDE.md §RFC Reference Conventions.
 
 ## Problem
 
@@ -25,10 +25,10 @@ Recon:
 - `quota-router-storage` (Layer B-adjacent) — `did_registry`
   schema PK = `(canonical_hash)` only. No chain column.
 - Stoolap fork supports `ALTER TABLE ADD COLUMN` (parser path
-  confirmed at `stoolap/.../parser/statements.rs:2304` via
+  confirmed in `stoolap/.../parser/statements.rs` via
   `parse_column_definition`).
 - Stoolap fork supports `CREATE UNIQUE INDEX IF NOT EXISTS`
-  (parser path at `stoolap/.../parser/statements.rs:1927`).
+  (parser path in `stoolap/.../parser/statements.rs`).
 - Stoolap fork supports `DROP PRIMARY KEY` — NOT VERIFIED; the
   v008 PK is preserved and a new composite UNIQUE INDEX is added
   for the (chain_id, canonical_hash) namespace.
@@ -178,7 +178,7 @@ AND canonical_hash = ?`.
   the default `list` / `revoke` signatures cover the single-chain
   use case. Multi-chain list/revoke lands when
   `0010-f2-multi-chain-routing` is filed.
-- `IdentityResolverConfig.chains: Vec<ChainId>` (per chain.rs:29
+- `IdentityResolverConfig.chains: Vec<ChainId>` (per chain.rs
   follow-on) — NOT in scope; resolver-node config change.
 
 ## Cross-references
@@ -188,7 +188,7 @@ AND canonical_hash = ?`.
   `ChainId` + `ChainNamespace` substrate
 - `0010-f8-rich-did-storage` (commit `269cf923`) — previous
   migration in the same chain
-- `crates/octo-ident/src/chain.rs:55` —
+- `crates/octo-ident/src/chain.rs` —
   `CIPHEROCTO_MAINNET_TAG` const (15-byte tag)
-- `crates/octo-ident/src/chain.rs:236` —
+- `crates/octo-ident/src/chain.rs` —
   `ChainNamespace::canonical_bytes()` (17-byte form)

@@ -213,21 +213,20 @@ impl VaultStore for StoolapVaultStore {
 // crates/octo-storage/src/lib.rs (facade — registry site)
 pub fn register<V: VaultStore + ?Sized>(
     db: Arc<octo_storage_core::Database>,
-    store: Arc<V>,
-) -> Arc<VaultStore> {
+    store: Arc<V>) -> Arc<VaultStore> {
     Arc::new(StoolapVaultStoreAdapter::new(db, store))
 }
 ```
 
 **Owner-trait method signatures (v2.1 — concrete shapes):**
 
-| Trait             | Owner crate                                              | Adapter crate                       | Methods                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VaultStore`      | `octo-vault` (NEW file `src/vault_store.rs`)             | `octo-vault-storage`                | `get(&[u8]) -> Result<Option<Vec<u8>>, SubstrateError>` + `put(&[u8], &[u8]) -> Result<(), SubstrateError>` + `delete(&[u8]) -> Result<(), SubstrateError>` |
-| `ReputationStore` | `octo-reputation` (existing `src/store/mod.rs:51`)       | `octo-reputation-storage`           | `add(&str, i64) -> Result<(), SubstrateError>` + `get(&str) -> Result<Option<i64>, SubstrateError>`                                                         |
-| `VaultLookup`     | `octo-cap-macaroon` (existing `src/vault_lookup.rs`)     | `octo-cap-macaroon-vault-storage`   | (existing trait signature preserved per RFC §Wiring Pattern move schedule)                                                                                  |
-| `SessionStore`    | `octo-matrix-session-store` (existing `src/store.rs:54`) | `octo-matrix-session-store-storage` | `insert(&str, &[u8]) -> Result<(), SubstrateError>` + `fetch(&str) -> Result<Option<Vec<u8>>, SubstrateError>`                                              |
-| `PolicyStore`     | `octo-policy` (NEW file `src/policy_store.rs`)           | `octo-policy-storage`               | `check(&str, &str) -> Result<bool, SubstrateError>` + `grant(&str, &str) -> Result<(), SubstrateError>`                                                     |
+| Trait             | Owner crate                                           | Adapter crate                       | Methods                                                                                                                                                     |
+| ----------------- | ----------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VaultStore`      | `octo-vault` (NEW file `src/vault_store.rs`)          | `octo-vault-storage`                | `get(&[u8]) -> Result<Option<Vec<u8>>, SubstrateError>` + `put(&[u8], &[u8]) -> Result<(), SubstrateError>` + `delete(&[u8]) -> Result<(), SubstrateError>` |
+| `ReputationStore` | `octo-reputation` (existing `src/store/mod.rs`)       | `octo-reputation-storage`           | `add(&str, i64) -> Result<(), SubstrateError>` + `get(&str) -> Result<Option<i64>, SubstrateError>`                                                         |
+| `VaultLookup`     | `octo-cap-macaroon` (existing `src/vault_lookup.rs`)  | `octo-cap-macaroon-vault-storage`   | (existing trait signature preserved per RFC §Wiring Pattern move schedule)                                                                                  |
+| `SessionStore`    | `octo-matrix-session-store` (existing `src/store.rs`) | `octo-matrix-session-store-storage` | `insert(&str, &[u8]) -> Result<(), SubstrateError>` + `fetch(&str) -> Result<Option<Vec<u8>>, SubstrateError>`                                              |
+| `PolicyStore`     | `octo-policy` (NEW file `src/policy_store.rs`)        | `octo-policy-storage`               | `check(&str, &str) -> Result<bool, SubstrateError>` + `grant(&str, &str) -> Result<(), SubstrateError>`                                                     |
 
 Adapter crates register at startup via `octo_storage::register(db_arc, store_arc)`. Substrate stores `AdapterAllowlist` per `adapter_id`; DDL outside allowlist fails-closed at runtime.
 
@@ -247,9 +246,9 @@ Adapter crates register at startup via `octo_storage::register(db_arc, store_arc
 
 **Trait move schedule:**
 
-- `VaultLookup` → `crates/octo-cap-macaroon-vault-storage/src/vault_lookup.rs:33` (today: `crates/octo-cap-macaroon/src/vault_lookup.rs`)
-- `HolderRegistry` → `crates/octo-cap-macaroon/src/holder_registry.rs:33` (moved FROM `crates/quota-router-storage/src/holder_registry.rs`)
-- `StoolapDidRegistry` impl → `crates/octo-ident-storage/src/did_registry.rs:139` (moved FROM `crates/quota-router-storage/src/stoolap_did_registry.rs:139`)
+- `VaultLookup` → `crates/octo-cap-macaroon-vault-storage/src/vault_lookup.rs` (today: `crates/octo-cap-macaroon/src/vault_lookup.rs`)
+- `HolderRegistry` → `crates/octo-cap-macaroon/src/holder_registry.rs` (moved FROM `crates/quota-router-storage/src/holder_registry.rs`)
+- `StoolapDidRegistry` impl → `crates/octo-ident-storage/src/did_registry.rs` (moved FROM `crates/quota-router-storage/src/stoolap_did_registry.rs`)
 
 ## §Layer B TYPE Renames (90+ sites across 11 crates — v2.1 expansion)
 
@@ -257,49 +256,49 @@ Adapter crates register at startup via `octo_storage::register(db_arc, store_arc
 
 ### `crates/octo-vault/` (4 sites)
 
-| Site                    | From                                                             | To                                                                                                                   |
-| ----------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `src/lib.rs:351` [TYPE] | `pub fn apply(db: &stoolap::Database) -> Result<(), VaultError>` | `pub fn apply(db: &octo_storage_core::Database) -> Result<(), VaultError>`                                           |
-| `src/lib.rs:371` [DOC]  | `/// handle, never through raw \`stoolap::Database\` re-export)` | `/// handle, never through raw \`stoolap::Database\` re-export)` (doc only — unchanged text, but ensure consistency) |
-| `src/lib.rs:378` [TYPE] | `db: Arc<stoolap::Database>` field                               | `db: Arc<octo_storage_core::Database>`                                                                               |
-| `src/lib.rs:395` [TYPE] | `pub fn new(db: Arc<stoolap::Database>) -> Self`                 | `pub fn new(db: Arc<octo_storage_core::Database>) -> Self`                                                           |
+| Site                | From                                                             | To                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `src/lib.rs` [TYPE] | `pub fn apply(db: &stoolap::Database) -> Result<(), VaultError>` | `pub fn apply(db: &octo_storage_core::Database) -> Result<(), VaultError>`                                           |
+| `src/lib.rs` [DOC]  | `/// handle, never through raw \`stoolap::Database\` re-export)` | `/// handle, never through raw \`stoolap::Database\` re-export)` (doc only — unchanged text, but ensure consistency) |
+| `src/lib.rs` [TYPE] | `db: Arc<stoolap::Database>` field                               | `db: Arc<octo_storage_core::Database>`                                                                               |
+| `src/lib.rs` [TYPE] | `pub fn new(db: Arc<stoolap::Database>) -> Self`                 | `pub fn new(db: Arc<octo_storage_core::Database>) -> Self`                                                           |
 
 ### `crates/quota-router-storage/` (25 sites across 9 files)
 
-Per `missions/claimed/0206-002-layer-b-type-renames.md` v2.1 Explicit Sites table (regenerated from `rg -n 'stoolap::Database' crates/quota-router-storage/src crates/octo-vault/src` run 2026-08-20):
+Per `missions/claimed/0206-002-layer-b-type-renames.md` v2.1 Explicit Sites table, keyed by file and symbol (regenerated from `rg -n 'stoolap::Database' crates/quota-router-storage/src crates/octo-vault/src` run 2026-08-20):
 
-| File                             | Sites                                                                                                                                                                                                                                                      | Kind           |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `src/ask_repo.rs`                | `:200` [TYPE] `db: stoolap::Database`, `:209` [TYPE] `stoolap::Database::open_in_memory()`, `:219` [TYPE] `stoolap::Database::open(path)`, `:228` [TYPE] `pub fn from_db(db: stoolap::Database) -> Self`, `:787` [TYPE] test                               | 5 TYPE         |
-| `src/consumed_receipt_repo.rs`   | `:57` `:66` `:76` `:85` (all [TYPE] field + open + from_db)                                                                                                                                                                                                | 4 TYPE         |
-| `src/migrations.rs`              | `:185` [TYPE] `pub fn apply_pending(db: &stoolap::Database)`, `:274` `:327` `:339` `:451` [TYPE] tests                                                                                                                                                     | 5 TYPE         |
-| `src/settlement_event_repo.rs`   | `:26` `:69` `:79` `:99` (all [TYPE])                                                                                                                                                                                                                       | 4 TYPE         |
-| `src/slash_store.rs`             | `:113` [DOC], `:117` `:125` `:136` `:145` (all [TYPE])                                                                                                                                                                                                     | 1 DOC + 4 TYPE |
-| `src/stoolap_did_registry.rs`    | `:3` [DOC] module-level, `:95` `:110` `:123` (all [TYPE]); `:139` `:201` from v2.0 table do NOT exist on disk                                                                                                                                              | 1 DOC + 3 TYPE |
-| `src/stoolap_holder_registry.rs` | `:3` [DOC], `:81` [DOC] `INSERT_HOLDER_SQL` against `stoolap::Database`, `:82` [TYPE] `fn execute_insert_db(db: &stoolap::Database, ...)`, `:101` `:114` `:121` (all [TYPE]); `holder_registry.rs:33` trait moves to octo-cap-macaroon (out of scope here) | 2 DOC + 5 TYPE |
-| `src/stoolap_spend_ledger.rs`    | `:3` [DOC], `:195` `:248` `:295` (all [TYPE]); `spend_ledger.rs:48` `:121` from v2.0 table do NOT exist on disk                                                                                                                                            | 1 DOC + 3 TYPE |
+| File                             | Sites                                                                                                                                                                                                             | Kind           |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `src/ask_repo.rs`                | [TYPE] `db: stoolap::Database`, [TYPE] `stoolap::Database::open_in_memory()`, [TYPE] `stoolap::Database::open(path)`, [TYPE] `pub fn from_db(db: stoolap::Database) -> Self`, [TYPE] test                         | 5 TYPE         |
+| `src/consumed_receipt_repo.rs`   | (all [TYPE] field + open + from_db)                                                                                                                                                                               | 4 TYPE         |
+| `src/migrations.rs`              | [TYPE] `pub fn apply_pending(db: &stoolap::Database)`, [TYPE] tests                                                                                                                                               | 5 TYPE         |
+| `src/settlement_event_repo.rs`   | (all [TYPE])                                                                                                                                                                                                      | 4 TYPE         |
+| `src/slash_store.rs`             | [DOC], (all [TYPE])                                                                                                                                                                                               | 1 DOC + 4 TYPE |
+| `src/stoolap_did_registry.rs`    | [DOC] module-level, 3 TYPE sites; the 2 v2.0-table sites do NOT exist on disk                                                                                                                                     | 1 DOC + 3 TYPE |
+| `src/stoolap_holder_registry.rs` | [DOC], [DOC] `INSERT_HOLDER_SQL` against `stoolap::Database`, [TYPE] `fn execute_insert_db(db: &stoolap::Database, ...)`, (all [TYPE]); `holder_registry.rs` trait moves to octo-cap-macaroon (out of scope here) | 2 DOC + 5 TYPE |
+| `src/stoolap_spend_ledger.rs`    | [DOC], 3 TYPE sites; the `spend_ledger.rs` v2.0-table site does NOT exist on disk                                                                                                                                 | 1 DOC + 3 TYPE |
 
-**RFC-0206 §Layer B TYPE Renames v2.0 table line refs superseded:** `:42, :189, :67, :289, :14, :139, :201, :33, :81, :155, :48, :121, :36, :96, :351, :378, :395` (v2.0 table) → use regenerated 35 TYPE + 7 DOC sites from on-disk `rg` output above.
+**RFC-0206 §Layer B TYPE Renames v2.0 table superseded:** the v2.0 table pinned 17 sites by line position, which is no longer accurate. Use the regenerated 35 TYPE + 7 DOC sites from on-disk `rg` output above, identified by file and symbol rather than by position.
 
 ### `crates/octo-reputation/` (6 sites — 0206-008 scope)
 
-| File                   | Sites                                                                                                                                                    | Kind   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `src/store/stoolap.rs` | `:72` [TYPE] `db: std::sync::Arc<stoolap::Database>`, `:88` `:98` `:110` [TYPE] open paths, `:117` [TYPE] `pub fn database(&self) -> &stoolap::Database` | 6 TYPE |
-| `src/migrations.rs`    | `:146` [TYPE] `pub fn apply(db: &stoolap::Database)`                                                                                                     | 1 TYPE |
+| File                   | Sites                                                                                                                    | Kind   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------ |
+| `src/store/stoolap.rs` | [TYPE] `db: std::sync::Arc<stoolap::Database>`, [TYPE] open paths, [TYPE] `pub fn database(&self) -> &stoolap::Database` | 6 TYPE |
+| `src/migrations.rs`    | [TYPE] `pub fn apply(db: &stoolap::Database)`                                                                            | 1 TYPE |
 
 ### `crates/octo-matrix-session-store/` (4 sites — 0206-008 scope)
 
-| File            | Sites                                                                                                                                      | Kind   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
-| `src/store.rs`  | `:128` [TYPE] `db: stoolap::Database,`, `:150` [TYPE] `stoolap::Database::open(&dsn)`, `:160` [TYPE] `stoolap::Database::open_in_memory()` | 3 TYPE |
-| `src/schema.rs` | `:47` [TYPE] `pub fn init_schema(db: &stoolap::Database)`                                                                                  | 1 TYPE |
+| File            | Sites                                                                                                                 | Kind   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------- | ------ |
+| `src/store.rs`  | [TYPE] `db: stoolap::Database,`, [TYPE] `stoolap::Database::open(&dsn)`, [TYPE] `stoolap::Database::open_in_memory()` | 3 TYPE |
+| `src/schema.rs` | [TYPE] `pub fn init_schema(db: &stoolap::Database)`                                                                   | 1 TYPE |
 
 ### `crates/octo-cap-macaroon-vault/` (1 site + Cargo.toml — 0206-008 scope)
 
-| File                       | Sites                                                                          | Kind  |
-| -------------------------- | ------------------------------------------------------------------------------ | ----- |
-| `src/octo_vault_lookup.rs` | `:24` [DOC] `stoolap::Database` from octo-vault (forbidden — fork-persistence) | 1 DOC |
+| File                       | Sites                                                                    | Kind  |
+| -------------------------- | ------------------------------------------------------------------------ | ----- |
+| `src/octo_vault_lookup.rs` | [DOC] `stoolap::Database` from octo-vault (forbidden — fork-persistence) | 1 DOC |
 
 ### `crates/octo-adapter-whatsapp/` (7+ sites — 0206-008 scope)
 
@@ -539,7 +538,7 @@ impl AdapterAllowlist {
 | TV-0206-A5  | Substrate-level DDL allowlist runtime enforcement                                                                                                                                                                     | ACTIVE         | `crates/octo-storage-core/tests/ddl_allowlist_rejects_unregistered.rs`: typed query against unregistered table → `SubstrateError::DdlNotInAllowlist`                                                                                          |
 | TV-0206-A6  | 5 adapter crates on disk (`octo-vault-storage`, `octo-reputation-storage`, `octo-cap-macaroon-vault-storage`, `octo-matrix-session-store-storage`, `octo-policy-storage`)                                             | ACTIVE         | `test -d crates/octo-vault-storage crates/octo-reputation-storage crates/octo-cap-macaroon-vault-storage crates/octo-matrix-session-store-storage crates/octo-policy-storage` exits 0                                                         |
 | TV-0206-A7  | 29 Layer B TYPE renames applied (zero `stoolap::Database` outside substrate + test-harness exemption)                                                                                                                 | ACTIVE         | `rg 'stoolap::Database' crates/quota-router-storage crates/octo-vault/src crates/octo-ident/src crates/octo-cap-macaroon/src 2>/dev/null \| wc -l` equals 0                                                                                   |
-| TV-0206-A8  | `HolderRegistry` declared in `crates/octo-cap-macaroon/src/holder_registry.rs:33`, NOT quota-router-storage                                                                                                           | ACTIVE         | `rg '^\s*pub trait\s+HolderRegistry' crates/` returns `crates/octo-cap-macaroon/src/holder_registry.rs:33` only                                                                                                                               |
+| TV-0206-A8  | `HolderRegistry` declared in `crates/octo-cap-macaroon/src/holder_registry.rs`, NOT quota-router-storage                                                                                                              | ACTIVE         | `rg '^\s*pub trait\s+HolderRegistry' crates/` returns `crates/octo-cap-macaroon/src/holder_registry.rs` only                                                                                                                                  |
 | TV-0206-A9  | (a) No `stoolap` dep in `crates/octo-vault/Cargo.toml`; (b) no `[patch.crates-io] stoolap = ...` in workspace root or downstream; (c) `crates/octo-vault-storage/Cargo.toml` IS the sole fork consumer at crate-level | ACTIVE         | (a) `rg '^\s*stoolap\s*=' crates/octo-vault/Cargo.toml` exits 1; (b) `rg 'stoolap\s*=' Cargo.toml crates/*/Cargo.toml \| wc -l` ≤ 5 (4 adapter + substrate); (c) substrate deps documented per Phase 1.3                                      |
 | TV-0206-A10 | Per-adapter fixtures: `crates/<adapter>/tests/register_roundtrip.rs` exists for all 5 adapters                                                                                                                        | ACTIVE on land | `ls crates/octo-vault-storage/tests crates/octo-reputation-storage/tests crates/octo-cap-macaroon-vault-storage/tests crates/octo-matrix-session-store-storage/tests crates/octo-policy-storage/tests \| grep -c register_roundtrip` equals 5 |
 | TV-0206-A11 | Per-adapter DROP TABLE negative test fixtures                                                                                                                                                                         | ACTIVE on land | `crates/octo-vault-storage/tests/drop_table_rejected.rs` returns `SubstrateError::DdlNotInAllowlist` on `DdlRegistered(DropTable("tenants"))`                                                                                                 |
@@ -561,8 +560,8 @@ impl AdapterAllowlist {
 - **1.3** Create `crates/octo-storage-core/src/lib.rs` (8 top-level pub-use + `pub mod migrations` per §Cargo.toml Templates Layer A v2.1) + `crates/octo-storage-core/Cargo.toml` ([features] section per §Cargo.toml Templates Layer A v2.1) + facade `crates/octo-storage/src/lib.rs` (4-item re-export + `register` helper per §Cargo.toml Templates Layer B v2.1)
 - **1.4a** Apply 35 TYPE + 7 DOC renames in `crates/quota-router-storage/src/` + `crates/octo-vault/src/` per §Layer B TYPE Renames table v2.1 RFC-table part (owned by `0206-002-layer-b-type-renames-v3.0`)
 - **1.4b** Apply 60+ TYPE renames across 9 other crates per §Layer B TYPE Renames table v2.1 expansion + drop `stoolap` direct dep from 11 consumer crates' `Cargo.toml` (owned by `0206-008-layer-b-type-renames-expansion`)
-- **1.5** Move `HolderRegistry` trait to `crates/octo-cap-macaroon/src/holder_registry.rs:33`
-- **1.6** Move `StoolapDidRegistry` impl to `crates/octo-ident-storage/src/did_registry.rs:139`
+- **1.5** Move `HolderRegistry` trait to `crates/octo-cap-macaroon/src/holder_registry.rs`
+- **1.6** Move `StoolapDidRegistry` impl to `crates/octo-ident-storage/src/did_registry.rs`
 - **1.7** Create 5 adapter crates (`octo-vault-storage`, `octo-reputation-storage`, `octo-cap-macaroon-vault-storage`, `octo-matrix-session-store-storage`, `octo-policy-storage`) with `Cargo.toml` + `src/lib.rs` + `tests/register_roundtrip.rs` (template-driven per §Wiring Pattern v2.1) + 5 owner-trait declarations (VaultStore NEW in `octo-vault/src/vault_store.rs`; PolicyStore NEW in `octo-policy/src/policy_store.rs`; others existing)
 - **1.8** Create per-adapter DROP TABLE negative test + namespace guard test for all 5 adapters (10 test files) + 4 adversarial fixtures per adapter per §Format Bypass Defense (35 test files total)
 - **1.9** TV-0206-A1..A14 gate commands pass + workspace `stoolap` direct deps ≤ 5 (4 adapter + 1 substrate)
@@ -652,7 +651,7 @@ Cross-RFC atomicity mechanism is BLUEPRINT.md amendment, not RFC-internal langua
 | "SOLE workspace crate directly consuming fork"                                  | INCORRECT — substrate is sole consumer; 12 downstream crates today use stoolap via workspace `[patch.crates-io]` block (per `docs/audits/octo-storage-trait-surface-2026-08-19.md`). v2.0 corrects statement. |
 | "12 `pub use` items"                                                            | INCORRECT — was 5 `pub use` statements + 1 `pub const` + 1 `pub fn`. v2.0 actually has 11 `pub use` items per §Cargo.toml Templates Layer A.                                                                  |
 | "VaultLookup declared in `octo-cap-macaroon/vault_lookup.rs`"                   | CORRECT (no change)                                                                                                                                                                                           |
-| "HolderRegistry declared in `octo-cap-macaroon/holder_registry.rs`"             | PARTIAL — trait moves from `quota-router-storage/src/holder_registry.rs` to `octo-cap-macaroon/src/holder_registry.rs:33` in Phase 1.5.                                                                       |
+| "HolderRegistry declared in `octo-cap-macaroon/holder_registry.rs`"             | PARTIAL — trait moves from `quota-router-storage/src/holder_registry.rs` to `octo-cap-macaroon/src/holder_registry.rs` in Phase 1.5.                                                                          |
 | "DidRegistry trait declared in `octo-ident/` and impl in `octo-ident-storage/`" | PARTIAL — trait dual-scope (declarer: octo-ident, impl: octo-ident-storage). v2.0 §Adapter Crate List row reflects.                                                                                           |
 | "5 adapter crates pending creation"                                             | CONFIRMED — Phase 1.7 creates them                                                                                                                                                                            |
 | "Status v1.7 → v1.8"                                                            | INCORRECT — was actually v1.7 stale at both Status header changelog; v2.0 sets Status header to 2.0 directly.                                                                                                 |
@@ -698,8 +697,8 @@ Cross-RFC atomicity mechanism is BLUEPRINT.md amendment, not RFC-internal langua
 
 - Create substrate `crates/octo-storage-core/src/{database,typed_statement,allowlist,error}.rs`
 - Apply 29 Layer B TYPE renames per §Layer B TYPE Renames table
-- Move `HolderRegistry` trait → `octo-cap-macaroon/src/holder_registry.rs:33`
-- Move `StoolapDidRegistry` impl → `crates/octo-ident-storage/src/did_registry.rs:139`
+- Move `HolderRegistry` trait → `octo-cap-macaroon/src/holder_registry.rs`
+- Move `StoolapDidRegistry` impl → `crates/octo-ident-storage/src/did_registry.rs`
 - Create 5 adapter crates with `Cargo.toml` + `src/lib.rs` + `tests/register_roundtrip.rs`
 - Per-adapter DROP TABLE negative test + namespace guard test
 - TV-0206-A1..A14 gate commands green

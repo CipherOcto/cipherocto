@@ -73,8 +73,8 @@ RFC-0206 v2.1 → v2.2 changes:
 
 - `octo_storage_core::typed_statement` (existing `pub mod`) — pattern reference for `pub mod stoolap` block
 - `octo_storage_core::migrations` (existing `pub mod`) — pattern reference for nested pub-use surface
-- 0206-002 v3.0 audit `docs/audits/0206-002-layer-b-type-renames-audit.md` — D1 deviation commentary (line 64-66)
-- 0206-008 audit `docs/audits/0206-008-layer-b-type-renames-expansion-audit.md` — D1 deviation commentary (line 101-114)
+- 0206-002 v3.0 audit `docs/audits/0206-002-layer-b-type-renames-audit.md` — D1 deviation commentary
+- 0206-008 audit `docs/audits/0206-008-layer-b-type-renames-expansion-audit.md` — D1 deviation commentary
 
 ## Verification
 

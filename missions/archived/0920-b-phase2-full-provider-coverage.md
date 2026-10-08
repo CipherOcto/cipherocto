@@ -13,6 +13,7 @@ RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 **RFC-0920 is ONLY for API surface and type marshaling (binding layer).**
 
 **RFC-0917 is the definitive source for ALL heavy lifting:**
+
 - Routing strategies (8 strategies) in Rust core
 - Provider dispatch logic
 - State management (ProviderWithState, RouterState)
@@ -28,10 +29,10 @@ RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 ## Architecture (per RFC-0917)
 
-| Mode | Implementation | Provider Integration | Heavy Lifting Location |
-|------|---------------|---------------------|------------------------|
-| **any-llm-mode** (current) | `quota-router-pyo3` (Python binding) | PyO3 → official Python SDKs | ⚠️ WRONG: Heavy lifting in PyO3 bindings |
-| **liteLLM-mode** | `quota-router-core` (Rust) | `reqwest` → provider REST APIs | ❌ NOT implemented |
+| Mode                       | Implementation                       | Provider Integration           | Heavy Lifting Location                   |
+| -------------------------- | ------------------------------------ | ------------------------------ | ---------------------------------------- |
+| **any-llm-mode** (current) | `quota-router-pyo3` (Python binding) | PyO3 → official Python SDKs    | ⚠️ WRONG: Heavy lifting in PyO3 bindings |
+| **liteLLM-mode**           | `quota-router-core` (Rust)           | `reqwest` → provider REST APIs | ❌ NOT implemented                       |
 
 ---
 
@@ -70,13 +71,15 @@ watsonx, xai, zai
 `parse_openai_sse` and `parse_anthropic_sse` in `streaming.rs` are for **parsing SSE bytes** (litellm-mode use case: reqwest receives SSE bytes from provider REST API).
 
 For **any-llm-mode**, the streaming path is different:
+
 1. Python SDK returns Python streaming objects (not SSE bytes)
 2. PyO3 bridge converts Python objects → OpenAI-compatible SSE format
 3. SSE bytes are streamed through HTTP response
 
 So `parse_openai_sse`/`parse_anthropic_sse` are **correctly unused in any-llm-mode** — we're not parsing SSE bytes, we're creating SSE from Python objects.
 
-**RFC spec for any-llm streaming (lines 3260-3288):**
+**RFC spec for any-llm streaming:**
+
 - Python SDK streaming APIs return Python objects
 - PyO3 bridge converts to OpenAI SSE format via `AsyncChunkIterator` (spawn_blocking + oneshot)
 - `#[allow(dead_code)]` on parse functions is appropriate — these are for litellm-mode, not any-llm-mode
@@ -107,6 +110,7 @@ LiteLLM-mode provider integration (Rust `reqwest`) is a separate effort and NOT 
 **Current architecture violation (RFC-0917 thin-binding constraint):**
 
 PyO3 bindings (`quota-router-pyo3/src/completion.rs`) contain:
+
 - 55+ provider if-statements doing provider dispatch (HEAVY LIFTING)
 - Direct Python SDK initialization and calls
 

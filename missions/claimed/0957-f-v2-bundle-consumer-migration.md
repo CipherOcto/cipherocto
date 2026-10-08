@@ -80,7 +80,7 @@ macaroon_id, not by full bundle bytes).
 
 **File:** `crates/octo-capability-issuer-node/src/handlers/issue.rs`
 
-**Current behavior** (per recon line 70): the issue handler constructs
+**Current behavior** (per recon): the issue handler constructs
 a `Macaroon` directly via `octo_cap_macaroon::macaroon_id` and returns
 it as the wire form.
 
@@ -94,7 +94,7 @@ per hop (per RFC-0009 v1.2 §Chain Attenuation).
 
 **File:** `crates/octo-cap-zk/src/lib.rs`
 
-**Current behavior** (per recon line 601): `ProofBundle::from_bytes`
+**Current behavior** (per recon): `ProofBundle::from_bytes`
 round-trips `canonical_ser` bytes for the AC-3 zk-circuit rewrite.
 
 **V2 adoption:** `ProofBundle` gains an optional `capability_v2:
@@ -151,30 +151,30 @@ impl CapabilityBundleV2Envelope {
 ## Acceptance Criteria
 
 - [ ] `CapabilityBundleV2Envelope` struct in
-  `crates/octo-cap-macaroon/src/bundle_v2.rs` with
-  `CIPHEROCTO_V2_BUNDLE_PREFIX` + `wrap` + `canonical_ser` +
-  `canonical_de`.
+      `crates/octo-cap-macaroon/src/bundle_v2.rs` with
+      `CIPHEROCTO_V2_BUNDLE_PREFIX` + `wrap` + `canonical_ser` +
+      `canonical_de`.
 - [ ] `octo-wallet-node` mint handler emits
-  `CapabilityBundleV2Envelope::canonical_ser()` bytes (not raw
-  `Macaroon`).
+      `CapabilityBundleV2Envelope::canonical_ser()` bytes (not raw
+      `Macaroon`).
 - [ ] `octo-capability-issuer-node` issue handler emits
-  `CapabilityBundleV2Envelope` (root: `chain_depth = 0`,
-  `chain_parent = [0; 32]`).
+      `CapabilityBundleV2Envelope` (root: `chain_depth = 0`,
+      `chain_parent = [0; 32]`).
 - [ ] `octo-cap-zk::ProofBundle` gains
-  `capability_v2: Option<CapabilityBundleV2>` field; `from_bytes`
-  dispatch via 16-byte prefix.
+      `capability_v2: Option<CapabilityBundleV2>` field; `from_bytes`
+      dispatch via 16-byte prefix.
 - [ ] V1 `CapabilityBundle` deleted (file + re-exports + 11 unit TV).
 - [ ] V2 envelope unit TV (new): `v2_envelope_prefix_is_16_bytes`,
-  `v2_envelope_canonical_ser_roundtrip`, `v2_envelope_rejects_wrong_prefix`,
-  `v2_envelope_rejects_truncated_bytes`,
-  `v2_envelope_legacy_v1_bytes_fail_decode` (V1 raw macaroon bytes do
-  NOT parse as V2 envelope — discriminator catches them).
+      `v2_envelope_canonical_ser_roundtrip`, `v2_envelope_rejects_wrong_prefix`,
+      `v2_envelope_rejects_truncated_bytes`,
+      `v2_envelope_legacy_v1_bytes_fail_decode` (V1 raw macaroon bytes do
+      NOT parse as V2 envelope — discriminator catches them).
 - [ ] Integration TV: `octo-wallet-node` mint end-to-end produces
-  envelope bytes verifiable by `octo-cap-zk::ProofBundle::from_bytes`.
+      envelope bytes verifiable by `octo-cap-zk::ProofBundle::from_bytes`.
 - [ ] All existing 188 `octo-cap-macaroon` lib tests still pass.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-  passes across all 4 touched crates (`octo-cap-macaroon`,
-  `octo-wallet-node`, `octo-capability-issuer-node`, `octo-cap-zk`).
+      passes across all 4 touched crates (`octo-cap-macaroon`,
+      `octo-wallet-node`, `octo-capability-issuer-node`, `octo-cap-zk`).
 - [ ] `cargo fmt --all -- --check` passes.
 
 ## Implementation Guide
@@ -217,6 +217,6 @@ half (substrate only) already landed in commit `b6bc190b`.
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-| ------- | ---------- | ------ | ------- |
+| Version | Date       | Status | Changes                                                                                                                                                           |
+| ------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v0.1    | 2026-08-11 | open   | Filed after recon revealed V1 substrate is dead; scope pivoted from "V1→V2 migration" to "introduce V2 envelope at raw-Macaroon boundaries + delete V1 substrate" |

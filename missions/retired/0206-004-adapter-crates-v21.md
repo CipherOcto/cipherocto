@@ -34,12 +34,12 @@ tvs:
 
 R1 findings applied (19 total: 4 CRIT + 4 HIGH + 8 MED + 3 LOW):
 
-- **CRIT 1**: `VaultLookup` is declared at `octo-cap-macaroon/src/vault_lookup.rs:62` (NOT `:33`). Line ref updated.
+- **CRIT 1**: `VaultLookup` is declared at `octo-cap-macaroon/src/vault_lookup.rs` (NOT). Line ref updated.
 - **CRIT 2**: `crates/octo-policy/src/lib.rs` does NOT exist on disk — on-disk is `crates/cipherocto-policy/`. `0206-006-cipherocto-policy-rename-alignment` added to `depends_on:` and referenced in Cross-references + Files/Artifacts.
 - **CRIT 3**: `depends_on:` lacked `0206-006-cipherocto-policy-rename-alignment`. Added.
 - **CRIT 4**: Facade assumed 4-item re-export set but current `crates/octo-storage/src/lib.rs` re-exports 8 items (`apply_pending`, `open`, `open_in_memory`, `ApplyConfig`, `Migration`, `StaticMigration`, `StorageError`, `DEFAULT_TRACKER_TABLE`). Added precondition: migration from current `octo-storage-core` surface (migration runner + `StorageError`) to RFC v2.0 surface (`Database` + `TypedStatement` + `AdapterAllowlist` + `register`) is the breaking-change boundary owned by `0206-001`. Acknowledged in §Files/Artifacts.
 - **HIGH 1**: Naming resolution claim was wrong — workspace `Cargo.toml` uses `members = ["crates/*"]` glob (NOT `[workspace] members` per-crate list). Replaced claim with package-name-only reference + 0206-006 dep acknowledged.
-- **HIGH 2**: Mission cited "RFC §Summary Updates vs v1.8" as authority for naming. Wrong cite — actual source is RFC §Adapter Crate List line 181 + 183. Replaced.
+- **HIGH 2**: Mission cited "RFC §Summary Updates vs v1.8" as authority for naming. Wrong cite — actual source is RFC §Adapter Crate List. Replaced.
 - **HIGH 3**: Mission cross-references only listed §Adapter Crate List. RFC §Adapter Crate List does NOT include facade (facade is in §Cargo.toml Templates Layer B / Tier 2 in §Three-Tier Architecture). Both added to cross-references.
 - **HIGH 4**: Mission added redundant `octo-storage-core` dep on adapter crates (facade re-exports substrate). Per RFC §Cargo.toml Cross-Cuts "NOT direct substrate" rule, adapter crates use ONLY facade. Dropped `octo-storage-core` from adapter Cargo.toml template; escape hatch documented as exception.
 - **MED 1**: AC items said "5 directory existence check green" without reproducing exact `test -d` command per RFC TV-0206-A6. Replaced with RFC §Test Vectors exact gate commands for A6, A10, A11, A12.
@@ -58,13 +58,13 @@ R1 findings applied (19 total: 4 CRIT + 4 HIGH + 8 MED + 3 LOW):
 
 R2 findings applied (12 total: 3 CRIT + 4 HIGH + 3 MED + 2 LOW):
 
-- **CRIT 1**: Restored `octo-storage-core = { path = "../octo-storage-core" }` to adapter Cargo.toml template per RFC §Cargo.toml Cross-Cuts lines 333-338 (REVERTS v2.0 HIGH 4; RFC explicitly REQUIRES substrate dep in adapter Cargo.toml).
+- **CRIT 1**: Restored `octo-storage-core = { path = "../octo-storage-core" }` to adapter Cargo.toml template per RFC §Cargo.toml Cross-Cuts (REVERTS v2.0 HIGH 4; RFC explicitly REQUIRES substrate dep in adapter Cargo.toml).
 - **CRIT 2**: §A "Per-trait register fns" claim DROPPED. Replaced with RFC §Wiring Pattern generic helper form `pub fn register<V: VaultStore>(db: Arc<octo_storage_core::Database>, store: Arc<V>) -> Arc<VaultStore>` (VaultStore shown as exemplar; one generic helper per trait per RFC §Wiring Pattern — NOT five per-trait register fns).
-- **CRIT 3**: Resolved facade migration ownership contradiction. Line 50 Precondition (owned by `0206-001-substrate-newtype`) is authoritative. Section A title rewritten to "A. Register Wiring (Facade Cargo.toml + lib.rs owned by `0206-001`)"; Files/Artifacts facade edits removed entirely per HIGH 4.
+- **CRIT 3**: Resolved facade migration ownership contradiction. Precondition (owned by `0206-001-substrate-newtype`) is authoritative. Section A title rewritten to "A. Register Wiring (Facade Cargo.toml + lib.rs owned by `0206-001`)"; Files/Artifacts facade edits removed entirely per HIGH 4.
 - **HIGH 1**: AC clippy command updated `cargo clippy --workspace --all-targets --all-features -- -D warnings` → `--features full` per `quota-router-core-feature-mutex` memory (`--all-features` ALWAYS fails on this codebase).
 - **HIGH 2**: DAG cycle with `0206-002-layer-b-type-renames` resolved by dropping `0206-002` from this mission's `depends_on:` (mission AC narrowed to specific crates; 0206-002 still referenced in Out of scope + Cross-references for traceability).
-- **HIGH 3**: Added owner-crate dep per adapter Cargo.toml (e.g., `octo-vault-storage` needs `octo-vault = { path = "../octo-vault" }` to reference the `VaultStore` trait declared in owner crate per §C line 84-88).
-- **HIGH 4**: Removed `crates/octo-storage/Cargo.toml` + `crates/octo-storage/src/lib.rs` facade edits from Files/Artifacts entirely per CRIT 3. Compile-time test at `crates/octo-storage/src/lib.rs:44-77` (references all 8 items) is now owned by `0206-001-substrate-newtype`.
+- **HIGH 3**: Added owner-crate dep per adapter Cargo.toml (e.g., `octo-vault-storage` needs `octo-vault = { path = "../octo-vault" }` to reference the `VaultStore` trait declared in owner crate per §C).
+- **HIGH 4**: Removed `crates/octo-storage/Cargo.toml` + `crates/octo-storage/src/lib.rs` facade edits from Files/Artifacts entirely per CRIT 3. Compile-time test at `crates/octo-storage/src/lib.rs` (references all 8 items) is now owned by `0206-001-substrate-newtype`.
 - **MED 1**: DAG cycle `0206-002 ↔ 0206-003` cross-cutting — added "Known DAG cycle" note in Dependencies section; AC narrowed to omit cross-cutting crates.
 - **MED 2**: Mission scope (5 adapter crates + 6th in 0206-005 = 6 total) exceeds RFC TV-0206-A9(b) ≤ 5 (4 adapter + substrate). RFC TV-0206-A9(b) undercounts the 6th adapter crate; flagged for v2.1 amendment.
 - **MED 3**: Added `0206-003-trait-moves` to `depends_on:` with ordering constraint (must land before adapter trait declarations that depend on HolderRegistry + StoolapDidRegistry moves).
@@ -89,7 +89,7 @@ Land RFC-0206 v2.0 §Adapter Crate List: 5 per-owner adapter crates + 5 trait de
 
 For each of `octo-vault-storage`, `octo-reputation-storage`, `octo-cap-macaroon-vault-storage`, `octo-matrix-session-store-storage`, `octo-policy-storage`:
 
-- `Cargo.toml`: declares `octo-storage-core = { path = "../octo-storage-core" }` (REQUIRED per RFC §Cargo.toml Cross-Cuts lines 333-338) + owner-crate dep (e.g., `octo-vault = { path = "../octo-vault" }` for `octo-vault-storage`, needed to reference trait declared in owner crate); NO direct `stoolap` dep (TV-0206-A9(a))
+- `Cargo.toml`: declares `octo-storage-core = { path = "../octo-storage-core" }` (REQUIRED per RFC §Cargo.toml Cross-Cuts) + owner-crate dep (e.g., `octo-vault = { path = "../octo-vault" }` for `octo-vault-storage`, needed to reference trait declared in owner crate); NO direct `stoolap` dep (TV-0206-A9(a))
 - `Cargo.toml` escape hatch: if a specific adapter needs to import a substrate-only type (e.g. `TypedStatement` variant) BEYOND what `octo-storage-core` exposes, document the exception in an inline `# WHY` comment referencing the RFC §Cargo.toml Cross-Cuts rule
 - `src/lib.rs`: declares trait (NEW) + impl + calls generic register helper from facade
 - `tests/register_roundtrip.rs`: generic register helper + select + insert round-trip TV
@@ -107,16 +107,16 @@ Per RFC-0206 v2.0 §Adapter Crate List:
 
 - `VaultStore` (declarer: octo-vault, impl: octo-vault-storage) — NEW
 - `ReputationStore` (declarer: octo-reputation, impl: octo-reputation-storage) — NEW
-- `VaultLookup` (declarer: octo-cap-macaroon, impl: octo-cap-macaroon-vault-storage — trait move from `octo-cap-macaroon/src/vault_lookup.rs:62`) — MOVE
+- `VaultLookup` (declarer: octo-cap-macaroon, impl: octo-cap-macaroon-vault-storage — trait move from `octo-cap-macaroon/src/vault_lookup.rs`) — MOVE
 - `SessionStore` (declarer: octo-matrix-session-store, impl: octo-matrix-session-store-storage) — NEW
 - `PolicyStore` (declarer: octo-policy, impl: octo-policy-storage) — NEW
 
-(NOTE: 5 adapters, but `VaultLookup` already declared today in `octo-cap-macaroon/src/vault_lookup.rs:62`; count = 4 NEW + 1 MOVE.)
+(NOTE: 5 adapters, but `VaultLookup` already declared today in `octo-cap-macaroon/src/vault_lookup.rs`; count = 4 NEW + 1 MOVE.)
 
 ### D. Workspace Registration
 
 - Workspace root `Cargo.toml` uses `members = ["crates/*"]` glob; creating the adapter directory is sufficient for workspace pickup — NO explicit `[workspace] members` edit needed
-- Package name resolution: crate name is `octo-policy` per RFC-0206 v2.0 §Adapter Crate List line 181 + 183 (canonical naming) — directory rename owed by `0206-006-cipherocto-policy-rename-alignment`
+- Package name resolution: crate name is `octo-policy` per RFC-0206 v2.0 §Adapter Crate List (canonical naming) — directory rename owed by `0206-006-cipherocto-policy-rename-alignment`
 
 ## Acceptance Criterion
 
@@ -147,7 +147,7 @@ Per RFC-0206 v2.0 §Adapter Crate List:
 - Edit: workspace root `Cargo.toml` (no-op — `members = ["crates/*"]` glob auto-picks up new directories)
 - Edit: `crates/octo-vault/src/lib.rs` (declare `VaultStore` trait)
 - Edit: `crates/octo-reputation/src/lib.rs` (declare `ReputationStore` trait)
-- Edit: `crates/octo-cap-macaroon/src/vault_lookup.rs:62` (move trait to new adapter crate — relocate `pub trait VaultLookup` declaration)
+- Edit: `crates/octo-cap-macaroon/src/vault_lookup.rs` (move trait to new adapter crate — relocate `pub trait VaultLookup` declaration)
 - Edit: `crates/octo-matrix-session-store/src/lib.rs` (declare `SessionStore` trait)
 - Edit: `crates/octo-policy/src/lib.rs` (declare `PolicyStore` trait; directory exists per `0206-006-cipherocto-policy-rename-alignment`)
 
@@ -156,11 +156,11 @@ Per RFC-0206 v2.0 §Adapter Crate List:
 - RFC-0206 v2.0 §Three-Tier Architecture (Tier 2 = facade, owned by `0206-001` per CRIT 3)
 - RFC-0206 v2.0 §Cargo.toml Templates Layer B facade (owned by `0206-001` per CRIT 3)
 - RFC-0206 v2.0 §Adapter Crate List
-- RFC-0206 v2.0 §Cargo.toml Cross-Cuts lines 333-338 (REQUIRED `octo-storage-core` dep in adapter Cargo.toml per CRIT 1; HIGH 3 adds owner-crate dep)
+- RFC-0206 v2.0 §Cargo.toml Cross-Cuts (REQUIRED `octo-storage-core` dep in adapter Cargo.toml per CRIT 1; HIGH 3 adds owner-crate dep)
 - RFC-0206 v2.0 §Wiring Pattern (generic register helper form per CRIT 2)
 - RFC-0206 v2.0 §Format Bypass Defense (adversarial fixtures)
 - RFC-0206 v2.0 §Test Vectors TV-0206-A6, A8 (cross-ref), A9(a/b — A9(b) undercounts per MED 2), A10, A11, A12, A14 (3 cross-ref; facade side gated post-`0206-001`)
-- RFC-0206 v2.0 §Adapter Crate List line 181 + 183 (canonical naming for `octo-policy`)
+- RFC-0206 v2.0 §Adapter Crate List (canonical naming for `octo-policy`)
 - RFC-0205 v2.0 (coupled pair per BLUEPRINT.md §Dependency Validation Rules → 2-Cycle Atomic Promotion rule 5)
 - Mission `0206-001-substrate-newtype` (substrate `Database` type + TypedStatement enum + AdapterAllowlist + facade `crates/octo-storage/` migration owner per CRIT 3)
 - Mission `0206-003-trait-moves` (HolderRegistry + StoolapDidRegistry moves — must land before adapter trait declarations per MED 3)

@@ -1,6 +1,6 @@
 # Mission: 0968-b — Marketplace Read-Side Integration
 
-> **Path B closure:** AC + code verified 2026-07-30 via hard-ground-truth mission audit. Code anchors: `crates/octo-reputation/src/presentation.rs:51` `reputation_score_0_100`; `election.rs:110` `election_priority_v2` (with 6 boundary tests + 1000-candidate differential at `:214,228,242,251,261,279,306`); `crates/quota-router-core/src/marketplace/reputation_compat.rs:95` `ProviderReputationRegistryCompat`; `parity_daemon.rs:64,88` `parity_score` + 16 parity tests; `prometheus.rs:23-89` parity + invalid-triple + frozen gauges; `compat/mod.rs:173` `declare_retirement_eligible`; `error.rs:187` `CutoverFrozen = 0x2C`; `commands.rs:357` `reputation_show --did` with `--strict-deprecation` flag; `crates/quota-router-core/src/marketplace/scoring.rs:84,96,116,128` `#[deprecated]` annotations on `set_min_reputation` / `record` / `set_score` (this session). Phase A routing of `Marketplace::cheapest_with_ranking` through the compat is deferred — requires async surface refactor (compat methods are async, the marketplace method is sync). Mission lived in `missions/claimed/` since 2026-07-27 with stale `[ ]` ACs; AC text corrected in this audit; closed via Path B.
+> **Path B closure:** AC + code verified 2026-07-30 via hard-ground-truth mission audit. Code anchors: `crates/octo-reputation/src/presentation.rs` `reputation_score_0_100`; `election.rs` `election_priority_v2` (with 6 boundary tests + 1000-candidate differential at `:214,228,242,251,261,279,306`); `crates/quota-router-core/src/marketplace/reputation_compat.rs` `ProviderReputationRegistryCompat`; `parity_daemon.rs` `parity_score` + 16 parity tests; `prometheus.rs` parity + invalid-triple + frozen gauges; `compat/mod.rs` `declare_retirement_eligible`; `error.rs` `CutoverFrozen = 0x2C`; `commands.rs` `reputation_show --did` with `--strict-deprecation` flag; `crates/quota-router-core/src/marketplace/scoring.rs` `#[deprecated]` annotations on `set_min_reputation` / `record` / `set_score` (this session). Phase A routing of `Marketplace::cheapest_with_ranking` through the compat is deferred — requires async surface refactor (compat methods are async, the marketplace method is sync). Mission lived in `missions/claimed/` since 2026-07-27 with stale `[ ]` ACs; AC text corrected in this audit; closed via Path B.
 
 ## Status
 
@@ -18,7 +18,7 @@ Completed (Archived 2026-07-30 — Path B)
 Replace the legacy `quota-router-core::marketplace::ProviderReputationRegistry::success_rate: f64` (and the pre-RFC-0968 `f64` EWMA in the same module) with the persisted RFC-0968 read-side path. Mission `0968-b` owns:
 
 1. The **compatibility adapter** (`ProviderReputationRegistryCompat`, RFC-0968-A1.25) that reads from the new `ReputationStore` and implements the legacy public API for the dual-read window.
-2. The **`0-100` Reputation Score presentation layer** (RFC-0968 §22 + §28.5 amendment 23 (0-100 presentation layer derivation)): `round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))` derived at read time, documented in `docs/00-meta/GLOSSARY.md` and `docs/01-foundation/whitepaper/v0.1-draft.md` §6 (Reputation Score Structure (GRS/RRS)). **[LANDED]** at `crates/octo-reputation/src/presentation.rs:51` with full boundary tests (NaN/+Inf/-Inf/-0.001/0.0/1.0/2.0). CLI consumer wired at `crates/quota-router-cli/src/commands.rs:422, 435`. **(Round 2 review R3 C1: phantom §12.6 reference was wrong; actual section is §6 in v0.1-draft.md and v1.0 §13 of the GRS/RRS subsection — text needs §/cross-ref cleanup; deferred to R3 fix sweep.)**
+2. The **`0-100` Reputation Score presentation layer** (RFC-0968 §22 + §28.5 amendment 23 (0-100 presentation layer derivation)): `round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))` derived at read time, documented in `docs/00-meta/GLOSSARY.md` and `docs/01-foundation/whitepaper/v0.1-draft.md` §6 (Reputation Score Structure (GRS/RRS)). **[LANDED]** at `crates/octo-reputation/src/presentation.rs` with full boundary tests (NaN/+Inf/-Inf/-0.001/0.0/1.0/2.0). CLI consumer wired at `crates/quota-router-cli/src/commands.rs`. **(Round 2 review R3 C1: phantom §12.6 reference was wrong; actual section is §6 in v0.1-draft.md and v1.0 §13 of the GRS/RRS subsection — text needs §/cross-ref cleanup; deferred to R3 fix sweep.)**
 3. The **`election_priority` adapter** in RFC-0968 §10 (amendment 27): replaces the legacy `stake / (1 + count)` formula with a deterministic Dfp-derived priority anchored in RFC-0968's persisted aggregate. **[LANDED THIS SESSION — Round 2 review C1]** at `crates/octo-reputation/src/election.rs::election_priority_v2` with the canonical `(stake_saturated × eff_q) / (MAX_ELECTION_STAKE × SCALE_Q)` formula in u128 fixed-point. The prior impl was missing the `.div(MAX_ELECTION_STAKE)` normalization (amendment 27); now byte-identical to slash/dc compat impls.
 4. The **CLI surface** `quota-router reputation show --did <did>` (RFC-0968 §28.5 amendment 24 (CLI ownership) + CLI-retirement scope deferred to RFC-0968-A2): retire the legacy `quota-router reputation show` / `provider --name` / `seller --wallet` / `leaderboard` / `multiplier` CLI surface from `missions/archived/superseded/reputation-system.md`. **NOT LANDED** — `quota-router-cli` has the `reputation_score_0_100` consumer but not the legacy-retirement surface described in AC.
 5. The **dual-read retirement gate**: retire the legacy stores once 24-hour dual-read dual-read parity ≥ 0.999 holds across all `(did, kind, layer)` triples with `total ≥ 100`. **NOT LANDED** — `crates/octo-reputation/src/parity.rs::parity_gate_deadline_unix()` exists but the Prometheus metrics `reputation_parity_match_count` / `reputation_parity_total_count` are not exported; `ReputationStore::declare_retirement_eligible` governance proof verification at the daemon layer (`ReputationStoreCompat`) is not wired.
@@ -37,32 +37,32 @@ Replace the legacy `quota-router-core::marketplace::ProviderReputationRegistry::
 ### Phase A: Compatibility adapter (RFC-0968-A1 amendment 25 / C-P5)
 
 - [x] `crates/quota-router-core/src/marketplace/reputation_compat.rs` introduces `ProviderReputationRegistryCompat`
-      — _ground_: `crates/quota-router-core/src/marketplace/reputation_compat.rs:95` `pub struct ProviderReputationRegistryCompat<S: ReputationStore>`. Note AC's path was `scoring.rs`; actual file is `reputation_compat.rs` (path correction noted in original audit).
+      — _ground_: `crates/quota-router-core/src/marketplace/reputation_compat.rs` `pub struct ProviderReputationRegistryCompat<S: ReputationStore>`. Note AC's path was `scoring.rs`; actual file is `reputation_compat.rs` (path correction noted in original audit).
 - [x] Legacy `ProviderReputationRegistry` public API is preserved via the compat adapter
-      — _ground_: `crates/quota-router-core/src/marketplace/reputation_compat.rs:14-37` documents the surface map; `compat.rs:128` `pub async fn score(&self, did: &str) -> Result<ProviderScore, ReputationError>` reads the persisted aggregate and returns the legacy shape.
+      — _ground_: `crates/quota-router-core/src/marketplace/reputation_compat.rs` documents the surface map; `compat.rs` `pub async fn score(&self, did: &str) -> Result<ProviderScore, ReputationError>` reads the persisted aggregate and returns the legacy shape.
 - [x] Legacy methods carry `[deprecated]` annotations pointing at the compat replacement
-      — _ground_: `crates/quota-router-core/src/marketplace/scoring.rs:84` `set_min_reputation` deprecated; `:96` `record` deprecated; `:116` `set_score` deprecated. (2026-07-30 audit additions.)
+      — _ground_: `crates/quota-router-core/src/marketplace/scoring.rs` `set_min_reputation` deprecated; `record` deprecated; `set_score` deprecated. (2026-07-30 audit additions.)
 - [x] Legacy constructor `ProviderReputationRegistry::new()` continues to work
-      — _ground_: `crates/quota-router-core/src/marketplace/scoring.rs:77` `pub fn new() -> Self` and `:145` `impl Default for ProviderReputationRegistry`.
+      — _ground_: `crates/quota-router-core/src/marketplace/scoring.rs` `pub fn new -> Self` and `impl Default for ProviderReputationRegistry`.
 
 ### Phase B: Election priority adapter (RFC-0968 §10 / amendment 27)
 
 - [x] `election_priority_v2(candidate: &ElectionCandidate) -> Result<ElectionPriority, ReputationError>` is the canonical priority adapter
-      — _ground_: `crates/octo-reputation/src/election.rs:110`. Per Round 9 RFC-0968-A1 amendment 47 (deferred to RFC-0968-A2), sample-confidence multiplier with `MIN_CONFIDENCE_SAMPLES = 100`; `MIN_ELECTION_SCORE = 0.05` floor applied to `effective_score` per Round 7 D4. Per-controller cap via `apply_per_controller_cap` at `:159` with `MAX_CANDIDATES_PER_CONTROLLER_PER_ELECTION = 1` per amendment 58.
+      — _ground_: `crates/octo-reputation/src/election.rs`. Per Round 9 RFC-0968-A1 amendment 47 (deferred to RFC-0968-A2), sample-confidence multiplier with `MIN_CONFIDENCE_SAMPLES = 100`; `MIN_ELECTION_SCORE = 0.05` floor applied to `effective_score` per Round 7 D4. Per-controller cap via `apply_per_controller_cap` at with `MAX_CANDIDATES_PER_CONTROLLER_PER_ELECTION = 1` per amendment 58.
 - [x] Tests: NaN, ±Inf → `ScoreEncodingInvalid`; floor excludes low-score candidates; u128 fits; per-controller cap; byte-identical determinism
-      — _ground_: `election.rs:206` `nan_score_returns_encoding_error`; `:220` `pos_inf_score_returns_encoding_error`; corresponding tests for the rest of the boundary set; `:214,228,242` 1000-candidate differential byte-identical.
+      — _ground_: `election.rs` `nan_score_returns_encoding_error`; `pos_inf_score_returns_encoding_error`; corresponding tests for the rest of the boundary set; `:214,228,242` 1000-candidate differential byte-identical.
 
 ### Phase C: 0-100 presentation layer (RFC-0968 §22 + §28.5 amendment 23 (0-100 presentation layer derivation))
 
 - [x] `pub fn reputation_score_0_100(score_ewma: Dfp) -> Result<u8, ReputationError>` (Round 7 persistence-5: signature changed from `u8` to `Result<u8, ReputationError>`). The function rejects a non-finite `score_ewma` (NaN, +Inf, -Inf) with `ReputationError::ScoreEncodingInvalid` BEFORE any arithmetic; all remaining arithmetic is in `Dfp` with constants `Dfp::from_f64(1.0)` and `Dfp::from_f64(50.0)`, and clamp targets correspond to `0.0` and `100.0`; the f64 cast and `round()` happen ONLY on the final step. Derived at read time as `round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))`. Callers (CLI, marketplace listing display) propagate the `Result` — CLI displays "invalid encoding" on error rather than a misleading `0` or `100`.
-      — _ground_: `crates/octo-reputation/src/presentation.rs:51` `pub fn reputation_score_0_100(score_ewma: Dfp) -> Result<u8, ReputationError>` exact signature. Non-finite rejected BEFORE arithmetic at `presentation.rs:54-57` (`Err(ReputationError::ScoreEncodingInvalid)`). Clamp + round formula at `presentation.rs:62-66`.
+      — _ground_: `crates/octo-reputation/src/presentation.rs` `pub fn reputation_score_0_100(score_ewma: Dfp) -> Result<u8, ReputationError>` exact signature. Non-finite rejected BEFORE arithmetic at `presentation.rs` (`Err(ReputationError::ScoreEncodingInvalid)`). Clamp + round formula at `presentation.rs`.
 - [x] Boundary tests: NaN, ±Inf, -0.001, 0.0, 1.0
-      — _ground_: `crates/octo-reputation/src/presentation.rs:88-91` `nan_returns_err`; `:96-99` `pos_inf_returns_err`; `:104-107` `neg_inf_returns_err`; `:111-113` `neg_001_maps_to_50`; `:117-119` `zero_maps_to_50`; `:122-124` `one_maps_to_100`. Clamp boundary tests (`clamp_lower_bound`, `clamp_upper_bound`) at `:128-135`.
+      — _ground_: `crates/octo-reputation/src/presentation.rs` `nan_returns_err`; `:96-99` `pos_inf_returns_err`; `:104-107` `neg_inf_returns_err`; `:111-113` `neg_001_maps_to_50`; `:117-119` `zero_maps_to_50`; `:122-124` `one_maps_to_100`. Clamp boundary tests (`clamp_lower_bound`, `clamp_upper_bound`) at `:128-135`.
 - [x] `reputation_score_0_101_unique_finite_values` test
-      — _ground_: `crates/octo-reputation/src/presentation.rs:147-167` iterates i ∈ 0..=100 and asserts the 101 u8 values form exactly the set `{0, 1, ..., 100}`.
+      — _ground_: `crates/octo-reputation/src/presentation.rs` iterates i ∈ 0..=100 and asserts the 101 u8 values form exactly the set `{0, 1, ..., 100}`.
 - [x] `docs/00-meta/GLOSSARY.md` Reputation Score row updated
       — _ground_: GLOSSARY.md Reputation Score entry references RFC-0968 §22 with the 0-100 formula. (Verified via git log; entries added during 0968-b review round.)
-- [x] `docs/01-foundation/whitepaper/v0.1-draft.md:500-514` updated for GRS/RRS presentation
+- [x] `docs/01-foundation/whitepaper/v0.1-draft.md` updated for GRS/RRS presentation
       — _ground_: whitepaper §6 (GRS/RRS) presentation derives from `score_ewma`, not a stored integer.
 - [x] `docs/01-foundation/whitepaper/v1.0-whitepaper.md` 0-100 + 0.5x-2.0x multiplier reconciliation
       — _ground_: whitepaper v1.0 references updated.
@@ -70,13 +70,13 @@ Replace the legacy `quota-router-core::marketplace::ProviderReputationRegistry::
 ### Phase D: Dual-read cutover (RFC-0968-A1 amendment 25)
 
 - [x] `reputation_parity_match_count` and `reputation_parity_total_count` Prometheus metrics exported.
-      — _ground_: `crates/octo-reputation/src/prometheus.rs:23,25,75,89` exports the match + total + invalid-triple + frozen gauges. Tests at `:125,135` verify output.
+      — _ground_: `crates/octo-reputation/src/prometheus.rs` exports the match + total + invalid-triple + frozen gauges. Tests at `:125,135` verify output.
 - [x] Compute `parity_score = match / total` only when `total >= 100` triples observed in window
-      — _ground_: `crates/octo-reputation/src/parity_daemon.rs:64` `pub fn parity_score(&self) -> Option<f64>` returns `None` when total < threshold. Tests at `:316` verify the gating.
+      — _ground_: `crates/octo-reputation/src/parity_daemon.rs` `pub fn parity_score(&self) -> Option<f64>` returns `None` when total < threshold. Tests at verify the gating.
 - [x] **Dual-read retirement gate** — legacy stores can be retired ONLY when sustained parity + governance proof both succeed
-      — _ground_: `crates/octo-reputation/src/parity_daemon.rs` daemon-level check; `compat/mod.rs:173` `async fn declare_retirement_eligible(adapter, evidence, proof, now_unix) -> Result<RetirementEligibility, ReputationError>` with governance proof verification (`BLAKE3_REPUTATION_RETIREMENT_DOMAIN` + 3 distinct `governance_pubkey` sigs).
+      — _ground_: `crates/octo-reputation/src/parity_daemon.rs` daemon-level check; `compat/mod.rs` `async fn declare_retirement_eligible(adapter, evidence, proof, now_unix) -> Result<RetirementEligibility, ReputationError>` with governance proof verification (`BLAKE3_REPUTATION_RETIREMENT_DOMAIN` + 3 distinct `governance_pubkey` sigs).
 - [x] **Parity-gate stall defense** — VALID/INVALID triple classification + per-DID quarantine + operator freeze + 90-day hard deadline
-      — _ground_: `parity_daemon.rs:184` documents `INVALID_TRIPLES / total_triples < 1e-6` constraint; `parity.rs:229` `pub fn parity_gate_deadline_unix() -> u64`; `parity.rs:16-18` VALID/INVALID classification; `prometheus.rs:13` `reputation_invalid_triple_count`; `prometheus.rs:87-89` `reputation_cutover_frozen` gauge; `error.rs:187` `CutoverFrozen = 0x2C` variant.
+      — _ground_: `parity_daemon.rs` documents `INVALID_TRIPLES / total_triples < 1e-6` constraint; `parity.rs` `pub fn parity_gate_deadline_unix() -> u64`; `parity.rs` VALID/INVALID classification; `prometheus.rs` `reputation_invalid_triple_count`; `prometheus.rs` `reputation_cutover_frozen` gauge; `error.rs` `CutoverFrozen = 0x2C` variant.
 - [x] **Per-adapter independence** — marketplace retirement PR deletes only the marketplace compat adapter + marketplace legacy store; slash and DC adapters retire independently under their own per-adapter gates
       — _ground_: `parity_daemon.rs` per-adapter tracking; retirement flows routed per adapter kind.
 - [x] Retirement PR deletes the legacy in-memory stores and removes `crates/octo-network/src/{mon,dc}/reputation.rs`
@@ -85,11 +85,11 @@ Replace the legacy `quota-router-core::marketplace::ProviderReputationRegistry::
 ### Phase E: CLI surface (RFC-0968 §28.5 amendment 24 (CLI ownership) + CLI-retirement scope deferred to RFC-0968-A2)
 
 - [x] `quota-router reputation-show --did <did>` (canonical DID) replaces the legacy CLI subcommands
-      — _ground_: `crates/quota-router-cli/src/commands.rs:357` `pub async fn reputation_show(did, backend, db_path, strict_deprecation)`; `cli.rs:203` `fn parse_reputation_show_canonical_did` parses the canonical DID form.
+      — _ground_: `crates/quota-router-cli/src/commands.rs` `pub async fn reputation_show(did, backend, db_path, strict_deprecation)`; `cli.rs` `fn parse_reputation_show_canonical_did` parses the canonical DID form.
 - [x] Output displays: `did:octo:b<52>` + `score_ewma` (Dfp) + `0-100` presentation score + `samples` + `last_signal_at_unix`
-      — _ground_: `commands.rs:422,435` calls `reputation_score_0_100` for the 0-100 presentation; CLI formatting emits the DID + score + samples.
+      — _ground_: `commands.rs` calls `reputation_score_0_100` for the 0-100 presentation; CLI formatting emits the DID + score + samples.
 - [x] Backwards-compat CLI subcommands emit a deprecation warning + refuse under flag `--strict-deprecation`
-      — _ground_: `cli.rs:85-88` documents `--strict-deprecation`; `commands.rs:363-365` honours the flag and refuses with "strict-deprecation active: reputation-show CLI retired per retirement gate".
+      — _ground_: `cli.rs` documents `--strict-deprecation`; `commands.rs` honours the flag and refuses with "strict-deprecation active: reputation-show CLI retired per retirement gate".
 
 ### Phase F: Cross-mission dependencies
 
@@ -103,9 +103,9 @@ Replace the legacy `quota-router-core::marketplace::ProviderReputationRegistry::
 - [x] `cargo test -p quota-router-core --lib` passes (1447 tests, no `marketplace` feature exists in Cargo.toml — AC's `--features marketplace` is stale)
 - [x] `cargo clippy --all-targets --no-deps -- -D warnings` clean
 - [x] Integration test: legacy `ProviderReputationRegistry` and compat adapter return byte-identical outputs over a 1000-event fixed sequence
-      — _ground_: parity tests in `crates/octo-reputation/tests/` cover this; `parity_daemon.rs:299` 1000-event test.
+      — _ground_: parity tests in `crates/octo-reputation/tests/` cover this; `parity_daemon.rs` 1000-event test.
 - [x] Integration test: election priority ordering is identical for honest + slash-farmed candidate sets
-      — _ground_: `election.rs:214,228,242` 1000-candidate differential tests (honest + slash-farmed).
+      — _ground_: `election.rs` 1000-candidate differential tests (honest + slash-farmed).
 
 ## Dependencies
 

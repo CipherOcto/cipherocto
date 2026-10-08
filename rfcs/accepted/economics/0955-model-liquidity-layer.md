@@ -4,7 +4,7 @@
 
 Accepted 2026-07-27 (promoted from Draft after RFC-0955 + RFC-0955-R1 multi-round adversarial review converged at round 5). The on-chain reputation anchoring binding is defined in the sibling Draft
 RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1,
-Draft), promoted from a previously in-file block at lines 912-1023
+Draft), promoted from a previously in-file block
 (pre-2026-07-27 revision) into its own Draft RFC per BLUEPRINT RFC-lifecycle
 stage `Draft`. The promotion of RFC-0955-R1 to Accepted requires RFC-0968
 acceptance; the promotion of RFC-0955 to Accepted is independent. The full
@@ -12,7 +12,7 @@ anchoring binding requires both Accepted.
 
 The on-chain reputation anchoring binding is defined in the sibling Draft
 RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1,
-Draft), promoted from a previously in-file block at lines 912-1023
+Draft), promoted from a previously in-file block
 (pre-2026-07-27 revision) into its own Draft RFC per BLUEPRINT RFC-lifecycle
 stage `Draft`. The promotion of RFC-0955-R1 to Accepted requires RFC-0968
 acceptance; the promotion of RFC-0955 to Accepted is independent. The full
@@ -1136,10 +1136,10 @@ Split:
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-03-07 | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 1.1     | 2026-07-27 | Promoted on-chain reputation anchoring binding to sibling Draft RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1); new `ReputationDigest` type + `ReputationAnchorBatch` struct (with `governance_proof`, `governance_set_hash`, `chain_block_height` fields added); pre-promotion in-file amendment block at lines 912-1023 removed; new Phase 5 (anchoring) added to §Implementation Phases; new Performance Targets rows for anchoring workload; §Related RFCs list uses bare RFC numbers per CLAUDE.md reference-hygiene rule. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-03-07 | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.1     | 2026-07-27 | Promoted on-chain reputation anchoring binding to sibling Draft RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1); new `ReputationDigest` type + `ReputationAnchorBatch` struct (with `governance_proof`, `governance_set_hash`, `chain_block_height` fields added); pre-promotion in-file amendment block removed; new Phase 5 (anchoring) added to §Implementation Phases; new Performance Targets rows for anchoring workload; §Related RFCs list uses bare RFC numbers per CLAUDE.md reference-hygiene rule. |
 
 **Version:** 1.1
 **Submission Date:** 2026-03-07

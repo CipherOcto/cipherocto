@@ -16,9 +16,9 @@ Accepted 2026-07-27 (sibling amendment promoted to Accepted in concert with RFC-
 
 ## Version History
 
-| Version   | Date       | Changes                                                                                                                 |
-| --------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1.0-draft | 2026-07-27 | Initial draft. Promoted from in-file amendment at RFC-0955 lines 912-1023 to a sibling Draft RFC per BLUEPRINT process. |
+| Version   | Date       | Changes                                                                                                  |
+| --------- | ---------- | -------------------------------------------------------------------------------------------------------- |
+| 1.0-draft | 2026-07-27 | Initial draft. Promoted from in-file amendment at RFC-0955 to a sibling Draft RFC per BLUEPRINT process. |
 
 ## Summary
 
@@ -53,7 +53,7 @@ parent RFC-0955 cross-references this RFC from its §"Compute Assets" and
 contract. The promotion of this sibling to Accepted is independent of
 RFC-0955's promotion; the full anchoring binding requires both Accepted.
 
-The amendment R1 was previously an in-file block at RFC-0955 lines 912-1023.
+The amendment R1 was previously an in-file block at RFC-0955.
 It is promoted to a sibling RFC so the binding contract is reviewable in
 isolation, with a separate diff history, separate reviewers, and a clean
 promotion path (Draft → Accepted) independent of RFC-0955 acceptance

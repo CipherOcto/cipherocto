@@ -39,14 +39,14 @@ NameID), §5.4.3 (SubjectConfirmation)
       across every `<AudienceRestriction>` in the assertion's
       `<Conditions>`.
 - [x] Add `SamlConfig.strict_audience: bool` (default true): - `true`: reject unless `audiences.len() == 1 &&
-      audiences[0] == sp_entity_id` - `false`: reject unless `audiences.contains(&sp_entity_id)`
+  audiences[0] == sp_entity_id` - `false`: reject unless `audiences.contains(&sp_entity_id)`
 - [x] Read `SubjectConfirmation/@Method`; require
       `urn:oasis:names:tc:SAML:2.0:cm:bearer`. Reject other methods
       with new error variant `SamlSubjectConfirmationInvalid { method }`.
 - [x] Promote `SamlAudienceMismatch` to
       `SamlAudienceMismatch { expected: String, actual: Vec<String> }`.
-      Update every pattern-match site (saml.rs:356, tests at 1035,
-      1311; mod.rs handler sites).
+      Update every pattern-match site (saml.rs + its test
+      module; mod.rs handler sites).
 - [x] Replace `!=` comparisons on `audiences`/`recipients` with
       `subtle::ConstantTimeEq` (overlaps with M4).
 - [x] Tests: - `test_saml_multi_audience_match_strict` - `test_saml_multi_audience_no_match_strict` - `test_saml_multi_audience_allow_list_match` - `test_saml_subject_confirmation_method_bearer_ok` - `test_saml_subject_confirmation_method_sender_vouches_rejected` - `test_saml_subject_confirmation_method_holder_of_key_rejected` - `test_saml_audience_mismatch_error_carries_payload`

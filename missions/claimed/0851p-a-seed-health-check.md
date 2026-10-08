@@ -34,10 +34,10 @@ At `start_node`, verify that each seed in the seed list has been signed within t
 
 ## Acceptance Criteria
 
-- [x] `MAX_SEED_AGE_EPOCHS = 10` constant — **LANDED** at `crates/octo-network/src/mon/bootstrap.rs:29`
-- [x] Stale seed detection in `load_and_validate` — **LANDED** (mission said `crates/octo-bootstrap/src/seed_list.rs`; design converged into `octo-network/src/mon/bootstrap.rs:344` async fn, backed by `SeedHealth::check()` at `:94` + `StaleSeed::is_stale()` at `:53`)
+- [x] `MAX_SEED_AGE_EPOCHS = 10` constant — **LANDED** at `crates/octo-network/src/mon/bootstrap.rs`
+- [x] Stale seed detection in `load_and_validate` — **LANDED** (mission said `crates/octo-bootstrap/src/seed_list.rs`; design converged into the `octo-network/src/mon/bootstrap.rs` async fn, backed by `SeedHealth::check()` + `StaleSeed::is_stale()`)
 - [ ] `seed_stale_ratio` metric (Prometheus) — **PARTIAL** (ratio is computed and stored in `SeedHealth::PartialStale.ratio_percent`; `partially_stale_seeds_log_warning` test exercises WARN path. Prometheus registry binding DEFERRED to `0851p-a1-prometheus-metric-export`)
-- [x] `SEED_LIST_FULLY_STALE` error variant — **LANDED** (`SeedHealth::FullyStale` variant at `:86` + `refuses_start()` at `:139` triggers `FullyStale` for both 100% stale and empty envelope)
+- [x] `SEED_LIST_FULLY_STALE` error variant — **LANDED** (`SeedHealth::FullyStale` variant at + `refuses_start` at triggers `FullyStale` for both 100% stale and empty envelope)
 - [x] Unit tests — **LANDED** (18 unit tests cover fresh / partially-stale (with WARN log) / fully-stale (refuses start) / 0-envelope / slashed-peer rejection / authority pre-fork / authority post-fork / peer-id-to-recorder-did determinism / `load_and_validate` reject-ignored-events)
 - [ ] Documentation: operator guide — **DEFERRED** (operational doc; no code change — follow-on `0851p-a2-operator-guide`)
 

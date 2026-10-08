@@ -230,6 +230,7 @@ octo-sync     = { git = "https://github.com/CipherOcto/cipherocto", branch = "ne
 ```
 
 The trait is not a Cargo dep — it is a trait bound. The workspace graph becomes:
+
 - `octo-sync` (leaf workspace, excluded from both projects)
 - `cipherocto` (workspace) → `octo-network` (member) → `octo-sync` (git dep) → (no further cipherocto deps)
 - `stoolap` fork (single-package) → `octo-sync` (git dep) → (no further cipherocto deps)
@@ -238,7 +239,8 @@ The trait is not a Cargo dep — it is a trait bound. The workspace graph become
 
 ### Critical: build profile
 
-All Sync code MUST inherit Stoolap's release profile per `stoolap/Cargo.toml:215-228`:
+All Sync code MUST inherit Stoolap's release profile per `stoolap/Cargo.toml`:
+
 ```toml
 [profile.release]
 codegen-units = 1
@@ -281,18 +283,19 @@ panic = "abort"
 
 > **Error code completeness (resolves N5, R8-9):** The above 9 codes are the WIRE-LEVEL stable codes (RFC-0862 §Error Handling). The full internal `SyncError` enum in `error.rs` includes additional variants for implementation-internal error mapping. The explicit mapping from internal variants to wire codes is:
 
-| Internal variant | Wire code | Used in |
-|------------------|-----------|---------|
-| `LsnRegression { expected, actual }` | `E_SYNC_LSN_REGRESSION` | 0862a |
-| `InvalidLsnRange { from, to }` | `E_SYNC_LSN_REGRESSION` (with extended detail) | 0862a |
-| `UnknownPeer(SyncPeerId)` | `E_SYNC_AUTH_FAIL` (no such peer → auth fail) | 0862a |
-| `AllCarriersFailed` | `E_SYNC_RATE_LIMIT` (all carriers failed = rate-limited) | 0862g |
-| `UnknownEnvelopeSubtype(u8)` | `E_SYNC_AUTH_FAIL` (unknown subtype = corrupt/forged envelope) | 0862f |
-| `DecryptionFailed` | `E_SYNC_AUTH_FAIL` (AEAD failure = auth fail) | 0862d |
-| `SegmentNotFound { table_id, segment_index, regenerated }` | `E_SYNC_SEGMENT_NOT_FOUND` | 0862c |
-| `UnknownCarrier(String)` | `E_SYNC_AUTH_FAIL` (no such carrier = bad config) | 0862g |
+| Internal variant                                           | Wire code                                                      | Used in |
+| ---------------------------------------------------------- | -------------------------------------------------------------- | ------- |
+| `LsnRegression { expected, actual }`                       | `E_SYNC_LSN_REGRESSION`                                        | 0862a   |
+| `InvalidLsnRange { from, to }`                             | `E_SYNC_LSN_REGRESSION` (with extended detail)                 | 0862a   |
+| `UnknownPeer(SyncPeerId)`                                  | `E_SYNC_AUTH_FAIL` (no such peer → auth fail)                  | 0862a   |
+| `AllCarriersFailed`                                        | `E_SYNC_RATE_LIMIT` (all carriers failed = rate-limited)       | 0862g   |
+| `UnknownEnvelopeSubtype(u8)`                               | `E_SYNC_AUTH_FAIL` (unknown subtype = corrupt/forged envelope) | 0862f   |
+| `DecryptionFailed`                                         | `E_SYNC_AUTH_FAIL` (AEAD failure = auth fail)                  | 0862d   |
+| `SegmentNotFound { table_id, segment_index, regenerated }` | `E_SYNC_SEGMENT_NOT_FOUND`                                     | 0862c   |
+| `UnknownCarrier(String)`                                   | `E_SYNC_AUTH_FAIL` (no such carrier = bad config)              | 0862g   |
 
 The `impl From<SyncError> for WireError` (defined in `error.rs`) implements this mapping. The mission tests must cover BOTH the 9 wire codes AND the internal variant mapping.
+
 - [ ] Two-node integration test passes: 1h of writes on writer, reader state matches (`BLAKE3-256(SELECT * FROM table)` per table)
 - [ ] `cargo test -p octo-sync` passes (unit + integration)
 - [ ] `cargo test -p stoolap --features sync` passes (fork integration)
@@ -394,7 +397,7 @@ Build the v1 single-leader core of the Stoolap Data Sync Protocol. The base miss
 - **Don't break the WAL V2 binary format.** The Sync protocol ships raw `WALEntry::encode()` output; changing the WAL format would break downstream ZK proofs.
 - **Don't use `std::time::SystemTime` for LSN ordering.** The WAL counter is the source of truth; the system clock is for diagnostics only.
 - **Don't use `tokio::spawn` from a sync `Database::open_with_sync` call.** The constructor must return a `Database` synchronously; the background tasks must be spawned via `tokio::runtime::Handle::current()` or similar.
-- **Don't forget to bump WAL header version if Sync is enabled.** The reader needs to know that WAL V2 entries are part of a sync-enabled DB; this is handled by the WAL_FORMAT_VERSION constant in `wal_manager.rs:69`.
+- **Don't forget to bump WAL header version if Sync is enabled.** The reader needs to know that WAL V2 entries are part of a sync-enabled DB; this is handled by the WAL_FORMAT_VERSION constant in `wal_manager.rs`.
 - **Don't store `Arc<MVCCEngine>` in the cipherocto sync engine.** Per RFC-0862 v1.1.0, the sync engine stores `Arc<dyn DatabaseSyncAdapter>`. The trait boundary is the integration point; the cipherocto workspace does not depend on the Stoolap fork (Cargo-wise).
 - **Don't use `path = "../octo-sync"` for the `octo-sync` dep.** The dep MUST be `git = "https://github.com/CipherOcto/cipherocto", branch = "next"`. A `path` dep would re-create the Cargo workspace cycle that v1.1.0 explicitly broke.
 - **Don't call `self.engine.wal_manager().replay_two_phase(...)` from the cipherocto sync engine.** All WAL reads go through `adapter.read_wal_range(from, to)` (per RFC-0862 v1.1.0 §Migration path step v1.1.0.d). Direct calls are forbidden — they bypass the trait and the abstraction layer.
@@ -406,6 +409,7 @@ Build the v1 single-leader core of the Stoolap Data Sync Protocol. The base miss
 ## Completion Criteria
 
 When complete:
+
 1. `cargo build -p octo-sync` succeeds with no warnings
 2. `cargo test -p octo-sync` passes 100% (unit + integration)
 3. `cargo test -p stoolap --features sync` passes 100%
@@ -424,27 +428,27 @@ When complete:
 
 Per BLUEPRINT mission template, this section maps each RFC type to the mission that implements it.
 
-| RFC-0862 Type | Defined In | Implemented By | Status |
-|---|---|---|---|
-| `SyncSummary` | §4.3 | mission 0862b | Draft |
-| `SyncSegment` | §4.3 | mission 0862c | Draft |
-| `WalTailChunk` | §4.3 | mission 0862a | Draft |
-| `NodeStatus` | §4.3 | mission 0862-base | Draft |
-| `SyncNodeId` | §4.3 | mission 0862-base | Draft |
-| `SyncPeerId` | §4.3 | mission 0862-base | Draft |
-| `SyncLifecycle` (7-state enum) | §Lifecycle Requirements | mission 0862-base | Draft |
-| `SyncConfig` | §Error Handling (implicit) | mission 0862-base | Draft |
-| `SyncError` (9 error codes) | §Error Handling | mission 0862-base | Draft |
-| `KeyRing` (trait) | §4.3.1 | mission 0862-base (stub); 0862d (impl) | Draft |
-| `MissionKeyRing` (concrete impl) | §4.3.1 + Appendix B | mission 0862d | Draft |
-| `ReplayCache` (in-memory) | §Performance Targets (inherited from RFC-0850) | mission 0862-base | Draft |
-| `ReplayCache` (persistent) | §Performance Targets | mission 0862e | Draft |
-| `WalTailStreamer` | §4.3.3 | mission 0862a | Draft |
-| `MerkleSegmentTree` | §4.3.4 | mission 0862b | Draft |
-| `SegmentIndexer` | §4.3.4 | mission 0862c | Draft |
-| `DgpSyncBridge` | §Implementation Phases Phase 3 | mission 0862f | Draft |
-| `MultiCarrierSync` | §Implementation Phases Phase 4 | mission 0862g | Draft |
-| `RateLimiter` (per-peer token bucket) | §4.3.1 | mission 0862-base | Draft |
-| `apply_wal_entry` | §Algorithms §4.3.3 | mission 0862a (writer) and 0862-base (reader) | Draft |
-| `MissionBinding` precondition | §4.1 G8 | mission 0862-base | Draft |
-| `RaftOverlay` (deferred) | §Future Work F1, F8 | mission 0862i (deferred) | Draft |
+| RFC-0862 Type                         | Defined In                                     | Implemented By                                | Status |
+| ------------------------------------- | ---------------------------------------------- | --------------------------------------------- | ------ |
+| `SyncSummary`                         | §4.3                                           | mission 0862b                                 | Draft  |
+| `SyncSegment`                         | §4.3                                           | mission 0862c                                 | Draft  |
+| `WalTailChunk`                        | §4.3                                           | mission 0862a                                 | Draft  |
+| `NodeStatus`                          | §4.3                                           | mission 0862-base                             | Draft  |
+| `SyncNodeId`                          | §4.3                                           | mission 0862-base                             | Draft  |
+| `SyncPeerId`                          | §4.3                                           | mission 0862-base                             | Draft  |
+| `SyncLifecycle` (7-state enum)        | §Lifecycle Requirements                        | mission 0862-base                             | Draft  |
+| `SyncConfig`                          | §Error Handling (implicit)                     | mission 0862-base                             | Draft  |
+| `SyncError` (9 error codes)           | §Error Handling                                | mission 0862-base                             | Draft  |
+| `KeyRing` (trait)                     | §4.3.1                                         | mission 0862-base (stub); 0862d (impl)        | Draft  |
+| `MissionKeyRing` (concrete impl)      | §4.3.1 + Appendix B                            | mission 0862d                                 | Draft  |
+| `ReplayCache` (in-memory)             | §Performance Targets (inherited from RFC-0850) | mission 0862-base                             | Draft  |
+| `ReplayCache` (persistent)            | §Performance Targets                           | mission 0862e                                 | Draft  |
+| `WalTailStreamer`                     | §4.3.3                                         | mission 0862a                                 | Draft  |
+| `MerkleSegmentTree`                   | §4.3.4                                         | mission 0862b                                 | Draft  |
+| `SegmentIndexer`                      | §4.3.4                                         | mission 0862c                                 | Draft  |
+| `DgpSyncBridge`                       | §Implementation Phases Phase 3                 | mission 0862f                                 | Draft  |
+| `MultiCarrierSync`                    | §Implementation Phases Phase 4                 | mission 0862g                                 | Draft  |
+| `RateLimiter` (per-peer token bucket) | §4.3.1                                         | mission 0862-base                             | Draft  |
+| `apply_wal_entry`                     | §Algorithms §4.3.3                             | mission 0862a (writer) and 0862-base (reader) | Draft  |
+| `MissionBinding` precondition         | §4.1 G8                                        | mission 0862-base                             | Draft  |
+| `RaftOverlay` (deferred)              | §Future Work F1, F8                            | mission 0862i (deferred)                      | Draft  |

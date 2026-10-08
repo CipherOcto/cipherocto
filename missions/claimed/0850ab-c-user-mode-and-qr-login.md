@@ -71,18 +71,18 @@ interactive prompts without translation.
   `SignedOut`, `QrLoginPending`, `QrLoginConfirmed`.
 - User-mode state machine in `auth.rs`: transition function
   `next_user_auth_state(action, current) -> Result<UserAuthLifecycle,
-  MtprotoAuthError>` with explicit transition table mirroring
+MtprotoAuthError>` with explicit transition table mirroring
   RFC-0850ab-a §"User Auth State Machine".
 - Real grammers wiring in `real_client.rs::RealTelegramMtprotoClient`:
   - `request_login_code`: call `Client::request_login_code(phone,
-    api_hash)`, store the returned `LoginToken` in the adapter's user-mode
+api_hash)`, store the returned `LoginToken` in the adapter's user-mode
     state, transition to `SmsCodeSent`.
   - `submit_code`: call `Client::sign_in(&token, code)`. On
     `SignInError::PasswordRequired(_)`, store the `PasswordToken` and
     transition to `PasswordRequired`. On `Ok(User)`, transition to
     `SignedIn` and cache `SelfUserInfo`.
   - `submit_password`: call `Client::check_password(password_token,
-    password)`, transition to `SignedIn` on `Ok(User)`.
+password)`, transition to `SignedIn` on `Ok(User)`.
   - `qr_login`: call `Client::invoke(&auth::ExportLoginToken{...})`,
     return `QrLoginHandle { token: Vec<u8>, url: String }`.
     `poll_qr_login(handle)` re-invokes `ExportLoginToken`; on `Ok(User)`
@@ -95,7 +95,7 @@ interactive prompts without translation.
   `{"mode": "user", ...}`) keep working.
 - Mock implementations of the user-mode flow (already in `client.rs`):
   wire up `MockTelegramMtprotoClient::request_login_code /
-  submit_code / submit_password` to drive the user-mode state machine in
+submit_code / submit_password` to drive the user-mode state machine in
   tests. Existing mock behaviour (return `Ok(())` / `Ok(SelfUserInfo)`)
   is sufficient; we add a `MockUserModeState` injectable knob for
   2FA-required simulation.
@@ -127,14 +127,10 @@ interactive prompts without translation.
       `UserCredentials { phone: String }`, `QrLogin`. Re-exported from
       the crate root.
 - [ ] `MtprotoTelegramConfig::auth_mode() -> Result<AuthMode, String>`
-      returns:
-        - `AuthMode::BotToken(token)` when `mode == "bot"` and
-          `bot_token` is set;
-        - `AuthMode::UserCredentials { phone }` when `mode == "user"`
-          and `phone` is set;
-        - `AuthMode::QrLogin` when `mode == "qr"` (or `"qr_login"`).
-        - `Err(_)` if the mode string is unknown or required fields are
-          missing.
+      returns: - `AuthMode::BotToken(token)` when `mode == "bot"` and
+      `bot_token` is set; - `AuthMode::UserCredentials { phone }` when `mode == "user"`
+      and `phone` is set; - `AuthMode::QrLogin` when `mode == "qr"` (or `"qr_login"`). - `Err(_)` if the mode string is unknown or required fields are
+      missing.
 - [ ] Existing JSON configs (without the `auth_mode` field) continue to
       work — `auth_mode()` derives from `mode` + flat fields. No
       on-disk format change.
@@ -142,7 +138,7 @@ interactive prompts without translation.
 ### BotAuthLifecycle enum
 
 - [ ] `BotAuthLifecycle` is a `#[repr(u8)]` enum with 5 variants
-      matching RFC line 329 (`NoToken = 0x00`, `Validating = 0x01`,
+      matching RFC (`NoToken = 0x00`, `Validating = 0x01`,
       `SignedIn = 0x02`, `SigningOut = 0x03`, `SignedOut = 0x04`).
 - [ ] Display + Debug impls, no `#[non_exhaustive]` (fixed shape).
 - [ ] At least 1 unit test that every variant round-trips through
@@ -151,7 +147,7 @@ interactive prompts without translation.
 ### UserAuthLifecycle enum
 
 - [ ] `UserAuthLifecycle` is a `#[repr(u8)]` enum with 10 variants
-      matching RFC line 344-356 (`NoCredentials = 0x00`,
+      matching RFC (`NoCredentials = 0x00`,
       `PhoneProvided = 0x01`, `SmsCodeSent = 0x02`,
       `SmsCodeProvided = 0x03`, `PasswordRequired = 0x04`,
       `PasswordProvided = 0x05`, `SignedIn = 0x06`,
@@ -164,29 +160,17 @@ interactive prompts without translation.
 ### User-mode state machine
 
 - [ ] `next_user_auth_state(action: UserAuthAction, current:
-      UserAuthLifecycle) -> Result<UserAuthLifecycle, MtprotoAuthError>`
+  UserAuthLifecycle) -> Result<UserAuthLifecycle, MtprotoAuthError>`
       is the single source of truth for user-mode transitions. Same
       shape as the existing `MtprotoAuthAction` / `AuthStateKey`
       transition function for bot mode.
 - [ ] `UserAuthAction` enum with variants `RequestCode { phone }`,
       `SubmitCode { code }`, `SubmitPassword { password }`,
       `QrLoginStart`, `QrLoginConfirm`, `SignOut`.
-- [ ] Transition table covers at minimum:
-        - `NoCredentials` → `PhoneProvided` on `RequestCode`
-        - `PhoneProvided` → `SmsCodeSent` on request to server success
-        - `SmsCodeSent` → `SmsCodeProvided` on `SubmitCode`
-        - `SmsCodeProvided` → `PasswordRequired` on server 2FA signal
-        - `SmsCodeProvided` → `SignedIn` on server success
-        - `PasswordRequired` → `PasswordProvided` on `SubmitPassword`
-        - `PasswordProvided` → `SignedIn` on server success
-        - `NoCredentials` → `QrLoginPending` on `QrLoginStart`
-        - `QrLoginPending` → `QrLoginConfirmed` on server scan
-        - `QrLoginConfirmed` → `SignedIn` (or `PasswordRequired`) on
-          server auth success
-        - any `SignedIn` → `SigningOut` on `SignOut`
-        - `SigningOut` → `SignedOut` on session wipe
+- [ ] Transition table covers at minimum: - `NoCredentials` → `PhoneProvided` on `RequestCode` - `PhoneProvided` → `SmsCodeSent` on request to server success - `SmsCodeSent` → `SmsCodeProvided` on `SubmitCode` - `SmsCodeProvided` → `PasswordRequired` on server 2FA signal - `SmsCodeProvided` → `SignedIn` on server success - `PasswordRequired` → `PasswordProvided` on `SubmitPassword` - `PasswordProvided` → `SignedIn` on server success - `NoCredentials` → `QrLoginPending` on `QrLoginStart` - `QrLoginPending` → `QrLoginConfirmed` on server scan - `QrLoginConfirmed` → `SignedIn` (or `PasswordRequired`) on
+      server auth success - any `SignedIn` → `SigningOut` on `SignOut` - `SigningOut` → `SignedOut` on session wipe
 - [ ] Invalid transitions return `MtprotoAuthError::InvalidTransition
-      { from, action }`.
+  { from, action }`.
 - [ ] Unit tests cover: every valid transition succeeds; every
       representative invalid transition returns `InvalidTransition`.
 
@@ -209,9 +193,9 @@ interactive prompts without translation.
       On `Ok(User)`, populates `SelfUserInfo` and returns it.
 - [ ] `RealTelegramMtprotoClient::qr_login` calls
       `Client::invoke(&tl::functions::auth::ExportLoginToken { api_id,
-      api_hash, except_ids: vec![] })`. Returns
+  api_hash, except_ids: vec![] })`. Returns
       `MtprotoTelegramError::QrLoginHandle { token: Vec<u8>, url:
-      String }` (new variant) on success. The URL is built from the
+  String }` (new variant) on success. The URL is built from the
       token's base64 as `tg://login?token=<base64>`.
 - [ ] `RealTelegramMtprotoClient::poll_qr_login` re-invokes
       `ExportLoginToken` periodically; returns
@@ -228,34 +212,30 @@ interactive prompts without translation.
 ### Mock + tests
 
 - [ ] Mock already implements `request_login_code / submit_code /
-      submit_password` as `Ok(())` / `Ok(SelfUserInfo {..})`. Add a
+  submit_password` as `Ok(())` / `Ok(SelfUserInfo {..})`. Add a
       `MockUserModeSpec { two_fa_required: bool, expected_code: Option<String>,
-      expected_password: Option<String> }` knob to drive more
+  expected_password: Option<String> }` knob to drive more
       realistic adapter tests (invalid code, 2FA flow).
 - [ ] At least 5 new unit tests covering: state-machine happy path,
       state-machine 2FA path, state-machine invalid transition,
       config-mode → AuthMode mapping (bot / user / qr), AuthMode
       serde round-trip.
-- [ ] Integration tests gated on `INTEGRATION_TESTS=1`:
-        - `tv3_user_mode_sign_in_happy_path` — uses mock client with
-          `two_fa_required: false`; verifies the adapter transitions
-          `NoCredentials → PhoneProvided → SmsCodeSent →
-          SmsCodeProvided → SignedIn`.
-        - `tv4_invalid_sms_code_returns_error` — uses mock with
-          `expected_code: Some("wrong")`; verifies the adapter surfaces
-          an error and stays in `SmsCodeSent`.
-        - `tv5_2fa_flow` — uses mock with `two_fa_required: true`;
-          verifies the adapter transitions `SmsCodeProvided →
-          PasswordRequired → PasswordProvided → SignedIn`.
-        - `tv9_qr_login_happy_path` — uses mock with a deterministic
-          QR token; verifies the adapter transitions `NoCredentials →
-          QrLoginPending → QrLoginConfirmed → SignedIn`.
+- [ ] Integration tests gated on `INTEGRATION_TESTS=1`: - `tv3_user_mode_sign_in_happy_path` — uses mock client with
+      `two_fa_required: false`; verifies the adapter transitions
+      `NoCredentials → PhoneProvided → SmsCodeSent →
+      SmsCodeProvided → SignedIn`. - `tv4_invalid_sms_code_returns_error` — uses mock with
+      `expected_code: Some("wrong")`; verifies the adapter surfaces
+      an error and stays in `SmsCodeSent`. - `tv5_2fa_flow` — uses mock with `two_fa_required: true`;
+      verifies the adapter transitions `SmsCodeProvided →
+      PasswordRequired → PasswordProvided → SignedIn`. - `tv9_qr_login_happy_path` — uses mock with a deterministic
+      QR token; verifies the adapter transitions `NoCredentials →
+      QrLoginPending → QrLoginConfirmed → SignedIn`.
 - [ ] `cargo build -p octo-adapter-telegram-mtproto --features
-      real-network,integration-test --tests` compiles cleanly.
+  real-network,integration-test --tests` compiles cleanly.
 - [ ] `cargo test -p octo-adapter-telegram-mtproto` passes (52 existing
       tests + ≥5 new = ≥57 tests pass).
 - [ ] `cargo clippy -p octo-adapter-telegram-mtproto --all-targets
-      --features real-network,integration-test -- -D warnings` is clean.
+  --features real-network,integration-test -- -D warnings` is clean.
 
 ### Documentation
 
@@ -284,41 +264,41 @@ mission implements it. Phase 2 closes the gap on `AuthMode`,
 `BotAuthLifecycle`, `UserAuthLifecycle`, and the user-mode/QR-login
 algorithms:
 
-| RFC-0850ab-c Type | Implemented By | Status |
-|-------------------|----------------|--------|
-| `MtprotoTelegramConfig` | Phase 1 | Closed (`config.rs`) |
-| `AuthMode` | **This mission (Phase 2)** | Open → Closed |
-| `AdapterLifecycle` | Phase 1 | Closed (`lifecycle.rs`) |
-| `BotAuthLifecycle` | **This mission (Phase 2)** | Open → Closed |
-| `UserAuthLifecycle` | **This mission (Phase 2)** | Open → Closed |
-| `TelegramCapabilities` | Phase 1 | Closed (`adapter.rs`) |
-| `MtprotoTelegramError` | Phase 1 | Closed (`error.rs`); Phase 2 adds `QrLoginHandle` variant |
-| `ProxyConfig` / `ProxyKind` | Phase 1 (type skeleton) → Phase 4 | Partial (types only; impls deferred to `0850ab-c-wrappers`) |
-| `StoolapSession` | Phase 1 | Closed (`session.rs`) |
-| `MtprotoTelegramAdapter` | Phase 1 | Closed (`adapter.rs`) |
-| `SelfHandleFilter` | Phase 1 | Closed (`self_handle.rs`) |
-| Algorithm 1 (bot sign-in) | Phase 1 | Closed (`real_client.rs::sign_in_bot`) |
-| Algorithm 2 (user sign-in) | **This mission (Phase 2)** | Open → Closed |
-| Algorithm 3 (QR login) | **This mission (Phase 2)** | Open → Closed |
-| Algorithm 4 (receive batch) | Phase 1 | Closed (`adapter.rs`) |
-| Algorithm 5 (send envelope) | Phase 1 | Closed (`adapter.rs`) |
-| Bot-API HTTP fallback (`HttpFallbackConfig`) | `0850ab-c-http` | Deferred |
+| RFC-0850ab-c Type                            | Implemented By                    | Status                                                      |
+| -------------------------------------------- | --------------------------------- | ----------------------------------------------------------- |
+| `MtprotoTelegramConfig`                      | Phase 1                           | Closed (`config.rs`)                                        |
+| `AuthMode`                                   | **This mission (Phase 2)**        | Open → Closed                                               |
+| `AdapterLifecycle`                           | Phase 1                           | Closed (`lifecycle.rs`)                                     |
+| `BotAuthLifecycle`                           | **This mission (Phase 2)**        | Open → Closed                                               |
+| `UserAuthLifecycle`                          | **This mission (Phase 2)**        | Open → Closed                                               |
+| `TelegramCapabilities`                       | Phase 1                           | Closed (`adapter.rs`)                                       |
+| `MtprotoTelegramError`                       | Phase 1                           | Closed (`error.rs`); Phase 2 adds `QrLoginHandle` variant   |
+| `ProxyConfig` / `ProxyKind`                  | Phase 1 (type skeleton) → Phase 4 | Partial (types only; impls deferred to `0850ab-c-wrappers`) |
+| `StoolapSession`                             | Phase 1                           | Closed (`session.rs`)                                       |
+| `MtprotoTelegramAdapter`                     | Phase 1                           | Closed (`adapter.rs`)                                       |
+| `SelfHandleFilter`                           | Phase 1                           | Closed (`self_handle.rs`)                                   |
+| Algorithm 1 (bot sign-in)                    | Phase 1                           | Closed (`real_client.rs::sign_in_bot`)                      |
+| Algorithm 2 (user sign-in)                   | **This mission (Phase 2)**        | Open → Closed                                               |
+| Algorithm 3 (QR login)                       | **This mission (Phase 2)**        | Open → Closed                                               |
+| Algorithm 4 (receive batch)                  | Phase 1                           | Closed (`adapter.rs`)                                       |
+| Algorithm 5 (send envelope)                  | Phase 1                           | Closed (`adapter.rs`)                                       |
+| Bot-API HTTP fallback (`HttpFallbackConfig`) | `0850ab-c-http`                   | Deferred                                                    |
 
 ## Location
 
-| Path | Change |
-|------|--------|
-| `crates/octo-adapter-telegram-mtproto/src/auth.rs` | Add `AuthMode` enum (or new `auth_mode.rs` module); add `UserAuthAction` enum; add `next_user_auth_state` transition function; expand unit tests |
-| `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs` | Add `BotAuthLifecycle` (5 states) and `UserAuthLifecycle` (10 states) enums with `Display` + `Debug` impls |
-| `crates/octo-adapter-telegram-mtproto/src/real_client.rs` | Replace `NotReady` stubs in `request_login_code / submit_code / submit_password` with actual grammers wiring; add `qr_login` and `poll_qr_login` using `tl::functions::auth::ExportLoginToken` |
-| `crates/octo-adapter-telegram-mtproto/src/error.rs` | Add `MtprotoTelegramError::QrLoginHandle { token, url }` variant |
-| `crates/octo-adapter-telegram-mtproto/src/client.rs` | Extend `MockTelegramMtprotoClient` with `MockUserModeSpec` to drive user-mode tests |
-| `crates/octo-adapter-telegram-mtproto/src/config.rs` | Add `auth_mode(&self) -> Result<AuthMode, String>` helper; existing fields unchanged |
-| `crates/octo-adapter-telegram-mtproto/src/lib.rs` | Re-export `AuthMode`, `BotAuthLifecycle`, `UserAuthLifecycle`, `UserAuthAction` |
-| `crates/octo-adapter-telegram-mtproto/tests/integration_telegram_mtproto.rs` | Add TV-3, TV-4, TV-5, TV-9 (all `#[ignore]`-gated on `INTEGRATION_TESTS=1`) |
-| `crates/octo-adapter-telegram-mtproto/README.md` | Note Phase 2 status (user mode + QR login shipped) |
-| `crates/octo-adapter-telegram-mtproto/CHANGELOG.md` | 0.2.0 entry |
-| `rfcs/accepted/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md` | Bump to v1.11; record Phase 2 type additions |
+| Path                                                                         | Change                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-adapter-telegram-mtproto/src/auth.rs`                           | Add `AuthMode` enum (or new `auth_mode.rs` module); add `UserAuthAction` enum; add `next_user_auth_state` transition function; expand unit tests                                               |
+| `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs`                      | Add `BotAuthLifecycle` (5 states) and `UserAuthLifecycle` (10 states) enums with `Display` + `Debug` impls                                                                                     |
+| `crates/octo-adapter-telegram-mtproto/src/real_client.rs`                    | Replace `NotReady` stubs in `request_login_code / submit_code / submit_password` with actual grammers wiring; add `qr_login` and `poll_qr_login` using `tl::functions::auth::ExportLoginToken` |
+| `crates/octo-adapter-telegram-mtproto/src/error.rs`                          | Add `MtprotoTelegramError::QrLoginHandle { token, url }` variant                                                                                                                               |
+| `crates/octo-adapter-telegram-mtproto/src/client.rs`                         | Extend `MockTelegramMtprotoClient` with `MockUserModeSpec` to drive user-mode tests                                                                                                            |
+| `crates/octo-adapter-telegram-mtproto/src/config.rs`                         | Add `auth_mode(&self) -> Result<AuthMode, String>` helper; existing fields unchanged                                                                                                           |
+| `crates/octo-adapter-telegram-mtproto/src/lib.rs`                            | Re-export `AuthMode`, `BotAuthLifecycle`, `UserAuthLifecycle`, `UserAuthAction`                                                                                                                |
+| `crates/octo-adapter-telegram-mtproto/tests/integration_telegram_mtproto.rs` | Add TV-3, TV-4, TV-5, TV-9 (all `#[ignore]`-gated on `INTEGRATION_TESTS=1`)                                                                                                                    |
+| `crates/octo-adapter-telegram-mtproto/README.md`                             | Note Phase 2 status (user mode + QR login shipped)                                                                                                                                             |
+| `crates/octo-adapter-telegram-mtproto/CHANGELOG.md`                          | 0.2.0 entry                                                                                                                                                                                    |
+| `rfcs/accepted/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md`    | Bump to v1.11; record Phase 2 type additions                                                                                                                                                   |
 
 ## Complexity
 
@@ -364,6 +344,7 @@ present in `grammers-tl-types-0.9.0/tl/api.tl`; we call them via
 `Client::invoke()`. We do NOT add any new dependency.
 
 > **Dependency Validation Rules:**
+>
 > 1. Phase 2 depends on Phase 1 (sequential).
 > 2. No upstream dependency cycles: Phase 2 does not block Phase 3
 >    (`0850ab-c-http`) or Phase 4 (`0850ab-c-wrappers`); they depend
@@ -390,7 +371,7 @@ Grammers 0.9 exposes:
   where `SignInError::PasswordRequired(PasswordToken)` is the 2FA
   signal.
 - `Client::check_password(PasswordToken, password) -> Result<User,
-  SignInError>`.
+SignInError>`.
 
 `RealTelegramMtprotoClient` wraps the `LoginToken` + `PasswordToken`
 internally so the trait method signatures (which take `&str` for the
@@ -537,16 +518,16 @@ that builds Phase 1 also builds Phase 2.
 
 ## Sub-Missions (Future)
 
-| Sub-Mission | Phase | Status | Depends On |
-|-------------|-------|--------|------------|
-| 0850ab-c-http | Phase 3 | Planned | This mission (Phase 2) |
+| Sub-Mission       | Phase                 | Status   | Depends On             |
+| ----------------- | --------------------- | -------- | ---------------------- |
+| 0850ab-c-http     | Phase 3               | Planned  | This mission (Phase 2) |
 | 0850ab-c-wrappers | Phase 4 (conditional) | Optional | This mission (Phase 2) |
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-21 | Initial sub-mission; Phase 2 user-mode + QR-login implementation. Derived from RFC-0850ab-c §"Algorithms / Algorithm 2 & 3" and the parent mission's Phase-2 deferral list. |
+| Version | Date       | Changes                                                                                                                                                                     |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-21 | Initial sub-mission; Phase 2 user-mode + QR-login implementation. Derived from RFC-0850ab-c §"Algorithms / Algorithm 2 & 3" and the parent mission's Phase-2 deferral list. |
 
 ---
 

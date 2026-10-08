@@ -307,7 +307,7 @@ impl WalTailStreamer {
 }
 ```
 
-Note: `record_commit` is a trait method, not an inherent method on `MVCCEngine`. The pseudocode above shows the trait impl, not an `impl MVCCEngine` block. The actual method signatures of `WALManager::current_lsn` and `WALManager::previous_lsn` take no `txn_id` argument (see `wal_manager.rs:1282` and `wal_manager.rs:1353` respectively).
+Note: `record_commit` is a trait method, not an inherent method on `MVCCEngine`. The pseudocode above shows the trait impl, not an `impl MVCCEngine` block. The actual method signatures of `WALManager::current_lsn` and `WALManager::previous_lsn` take no `txn_id` argument (see `wal_manager.rs` and `wal_manager.rs` respectively).
 
 ## Acceptance Criteria
 
@@ -364,10 +364,10 @@ Note: `record_commit` is a trait method, not an inherent method on `MVCCEngine`.
   - `0862h` (property tests for LSN monotonicity)
 
 - **No longer requires direct access to:**
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1282` (`current_lsn()` no-arg) — accessed via `adapter.current_lsn()`
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1353` (`previous_lsn()` no-arg) — not directly used; the sync engine tracks its own LSN watermark
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1595` (`WALManager::replay_two_phase` for reader apply) — accessed via `adapter.apply_wal_entry(entry)` on the reader side, which internally delegates to `replay_two_phase` inside the StoolapAdapter impl
-  - `stoolap/src/storage/mvcc/persistence.rs:549` (`PersistenceManager::replay_two_phase` — thin wrapper around `WALManager::replay_two_phase`) — not directly used; the adapter owns the choice of which apply method to call
+  - `stoolap/src/storage/mvcc/wal_manager.rs` (`current_lsn()` no-arg) — accessed via `adapter.current_lsn()`
+  - `stoolap/src/storage/mvcc/wal_manager.rs` (`previous_lsn()` no-arg) — not directly used; the sync engine tracks its own LSN watermark
+  - `stoolap/src/storage/mvcc/wal_manager.rs` (`WALManager::replay_two_phase` for reader apply) — accessed via `adapter.apply_wal_entry(entry)` on the reader side, which internally delegates to `replay_two_phase` inside the StoolapAdapter impl
+  - `stoolap/src/storage/mvcc/persistence.rs` (`PersistenceManager::replay_two_phase` — thin wrapper around `WALManager::replay_two_phase`) — not directly used; the adapter owns the choice of which apply method to call
 
 ## Blockers / Dependencies
 
@@ -389,7 +389,7 @@ The WAL-tail streamer is the heart of v1 single-leader sync. The writer captures
 ### Cargo dependencies
 
 - `tokio` 1.x (async runtime; **optional** behind `sync` feature)
-- `blake3` (already in `stoolap/Cargo.toml:111`)
+- `blake3` (already in `stoolap/Cargo.toml`)
 - `tracing` (for the `tracing::error!` call in `record_commit`; for structured error logging)
 - `parking_lot` (for the `Mutex<HashMap>` wrappers; the code uses `parking_lot::Mutex` not `std::sync::Mutex`)
 - `octo-sync` (git dep, `branch = "next"`; the `DatabaseSyncAdapter` trait and `MockAdapter` are consumed from this leaf workspace)
@@ -414,10 +414,10 @@ The WAL-tail streamer is the heart of v1 single-leader sync. The writer captures
 
 This mission implements the following RFC-0862 types:
 
-| Type | Role in this mission |
-|------|---------------------|
-| `WalTailChunk` | The envelope payload produced by the writer's `WalTailStreamer::on_commit`; consumed by the reader's `apply_wal_entry` |
-| `WalTailStreamer` | The writer-side struct that captures LSN ranges and fans out `WalTailChunk` envelopes to subscribers |
-| `apply_wal_entry` | The reader-side function that applies a single WAL entry via `WALManager::replay_two_phase` |
+| Type              | Role in this mission                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `WalTailChunk`    | The envelope payload produced by the writer's `WalTailStreamer::on_commit`; consumed by the reader's `apply_wal_entry` |
+| `WalTailStreamer` | The writer-side struct that captures LSN ranges and fans out `WalTailChunk` envelopes to subscribers                   |
+| `apply_wal_entry` | The reader-side function that applies a single WAL entry via `WALManager::replay_two_phase`                            |
 
 The mission does NOT implement `SyncSummary`, `SyncSegment`, `SyncNodeId`, or `KeyRing` — those are handled by missions 0862b, 0862c, 0862-base, and 0862d respectively. See the Type Coverage table in 0862-base for the full mapping.

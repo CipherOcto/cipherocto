@@ -885,7 +885,7 @@ Audit subcommands are READ-ONLY by construction (per §Security Considerations r
 | 1.0     | 2026-08-31 | Draft    | Initial draft (audit subcommand amendment to parent RFC-0011 per Status header amendment chain). Full BLUEPRINT template.                                                   |
 | 1.1     | 2026-08-31 | Draft    | v1.1 — Wave 3.5 cross-mode reject-hiding gate + audit_home helper                                                                                                           |
 | 1.2     | 2026-08-31 | Draft    | v1.2 — Wave 3.5 C1/H/M-series surgical fixes (13 total)<br>13 surgical fixes: 1 CRITICAL (ReceiptStatus re-export), 6 HIGH (H1/H3/H4/H5/H6/H7), 6 MEDIUM (M-series grouped) |
-| 1.3     | 2026-08-31 | Draft    | Wave 4.5: 2 MED + 3 LOW — VH row drift, TV expected-value re-paste, L243 fragment, L273 truncation, L603 severity                                                           |
+| 1.3     | 2026-08-31 | Draft    | Wave 4.5: 2 MED + 3 LOW — VH row drift, TV expected-value re-paste, fragment, truncation, severity                                                                          |
 | 1.4     | 2026-08-31 | Accepted | Promoted Draft → Accepted after W1-W6.5 multi-round adversarial review loop + DRY closure (W5+W6 zero-finding) + 28 cite hygiene fixes                                      |
 | 1.5     | 2026-09-10 | Accepted | Layer-model amendment: RFC-0012 + RFC-0014 substrate split.                                                                                                                 |
 

@@ -9,7 +9,7 @@ DEFERRED 2026-08-13 (close-as-DEFERRED, 0871b pattern). Mission cannot be implem
 1. **`DETERMINISTIC VIEW` SQL syntax not parsed.** AC-2 (CREATE DETERMINISTIC VIEW enforcement) requires SQL parser support that doesn't exist in `/home/mmacedoeu/_w/databases/stoolap/src/parser/`. No DFP or DQA view-flag storage in the planner.
 2. **DQA replay-validation framework absent.** AC-3 (replay-validation result hash compare) requires a transaction-replay pipeline + result-hash commit pattern. Stoolap's `/home/mmacedoeu/_w/databases/stoolap/src/consensus/operation.rs` does not store DQA op result hashes.
 3. **DQA divergence detection mechanism missing.** AC-4 (1-epoch divergence detection) requires DFP first to establish the soft-fork + probe pattern; DQA borrows the same infra.
-4. **`DQA_SPEC_VERSION` constant undefined.** AC-5 — current code has only the unified `NUMERIC_SPEC_VERSION = 2` per RFC-0202-A §4a (`/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs:54`). No DQA-specific version constant exists.
+4. **`DQA_SPEC_VERSION` constant undefined.** AC-5 — current code has only the unified `NUMERIC_SPEC_VERSION = 2` per RFC-0202-A §4a (`/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs`). No DQA-specific version constant exists.
 
 **Follow-on missions filed:**
 

@@ -72,7 +72,7 @@ Duration)` (capacity + TTL); `get_or_compute(...)` checks live
    `projected_balance DQA(12)`, `projected_at_unix_seconds BIGINT`,
    `source_kind INT NOT NULL`, `registry_snapshot_epoch BIGINT NOT NULL`.
 
-   **Note on RFC vs substrate:** RFC-0960 v3.7 §3.1 L748-752 claims
+   **Note on RFC vs substrate:** RFC-0960 v3.7 §3.1 claims
    "centralized migration runner in `octo-storage-core` uses GLOBAL
    numbering across crates" and recommends `v017`. On-disk substrate
    state at landing time is per-crate (verified via `ls
@@ -178,7 +178,7 @@ cargo test --workspace  # migration-ordering test must pass
 - RFC-0960 §6 Mission A — canonical scope
 - RFC-0960 v3.7 (text)
 - `cipherocto-design-principles` — Layer B additive-only rule
-- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+- RFC-0105 v3.5 §3.13 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check; Mission A's substrate
   shape (per-event `validate_pre_insert`) does NOT preclude the
   downstream batch-replay fresh-check requirement; Mission A does NOT

@@ -39,11 +39,11 @@ Each DomainCoordinator periodically publishes a `PLATFORM_ADMIN_ATTEST` envelope
 
 ## Acceptance Criteria
 
-- [x] `PlatformAdminAttest` envelope type — **LANDED** at `crates/octo-network/src/dc/admin_attest.rs:34`
+- [x] `PlatformAdminAttest` envelope type — **LANDED** at `crates/octo-network/src/dc/admin_attest.rs`
 - [x] `crates/octo-network/src/dc/admin_attest.rs` — attestation publisher + verifier (single file; mission spec said 2 files, design converged to 1) — **LANDED** (282 lines)
 - [x] `MAX_ATTEST_AGE_EPOCHS = 100`, `ATTEST_PERIOD_EPOCHS = 50`, `CHALLENGE_RESPONSE_EPOCHS = 10` — **LANDED** (constants at `:18-22`)
-- [x] Gossip topic `/dot/admin/{domain_id}/{platform}` — **LANDED** (`attest_topic()` at `:156`)
-- [x] `ATTEST_CHALLENGE` envelope type — **LANDED** (`AttestChallenge` struct at `:81`)
+- [x] Gossip topic `/dot/admin/{domain_id}/{platform}` — **LANDED** (`attest_topic` at)
+- [x] `ATTEST_CHALLENGE` envelope type — **LANDED** (`AttestChallenge` struct at)
 - [x] Unit tests: fresh attest accepted, stale rejected, challenge flow, cross-platform consistency — **LANDED** (11 unit tests cover fresh/stale/renewal/wrong-DC/boundary-100/challenge-deadline/topic-format/empty-domain/platform-as-str)
 - [ ] Integration test: full attest + challenge cycle with simulated platform API — **DEFERRED** (requires mock libp2p mesh harness; out-of-scope for unit-test infra. Freshness + DC-pubkey logic is fully unit-tested; integration test would need sim-network crate wiring that doesn't exist yet)
 - [ ] Documentation: platform-API integration per platform (WhatsApp, Telegram, Matrix) — **DEFERRED** (no platform API credentials in dev env; this is per-platform operational doc, not code work)
@@ -103,7 +103,7 @@ WhatsApp, Telegram, and Matrix all have different admin verification APIs. A uni
 
 ### Verifier implementation note
 
-Per code comment at `admin_attest.rs:147-152`: "Real proof verification is per-platform (WhatsApp, Telegram, Matrix each have different admin verification APIs). This module provides the freshness + DC-pubkey check; the platform-specific proof check is delegated to the platform adapter (out of scope for this mission)." This is intentional — the platform API integration is the DEFERRED AC-8/AC-9 operational scope.
+Per code comment at `admin_attest.rs`: "Real proof verification is per-platform (WhatsApp, Telegram, Matrix each have different admin verification APIs). This module provides the freshness + DC-pubkey check; the platform-specific proof check is delegated to the platform adapter (out of scope for this mission)." This is intentional — the platform API integration is the DEFERRED AC-8/AC-9 operational scope.
 
 ## Version History
 

@@ -7,9 +7,10 @@
 
 ## Motivation
 
-R3 review surfaced a cite-hygiene finding: doc-comments across the workspace carry RFC version pins (`RFC-0960 v3.7`, `RFC-0960 (Accepted v3.7)`, `RFC-0960-v37`) and line refs (`L474-516`, `L130`, `L748-752`) that violate the §RFC Reference Conventions rule (RFC number only in prose) and the §No line refs anywhere rule (§section_name / symbol names, no file:line).
+R3 review surfaced a cite-hygiene finding: doc-comments across the workspace carry RFC version pins (`RFC-0960 v3.7`, `RFC-0960 (Accepted v3.7)`, `RFC-0960-v37`) and line refs (`L<num>-<num>`, `L<num>`) that violate the §RFC Reference Conventions rule (RFC number only in prose) and the §No line refs anywhere rule (§section_name / symbol names, no file:line).
 
 The canonical rules:
+
 - **CLAUDE.md §RFC Reference Conventions:** "When referencing RFCs in prose, cross-references, changelogs, and approval criteria — use only the number. Never include status, version pins, or metadata."
 - **memory/no-line-refs-anywhere:** "§section_name / symbol names. Code exempt."
 
@@ -42,6 +43,7 @@ Strip RFC version pins + line refs from all doc-comments (`///` and `//!`) and i
    - Exception: legitimate code references like `Vec::with_capacity(N)` are NOT line refs and MUST be preserved.
 
 3. **Mechanical sed sweep** — script:
+
    ```bash
    # Pre-flight: count occurrences
    grep -rhE 'RFC-[0-9]{4}\s+v[0-9]+\.[0-9]+|RFC-[0-9]{4}\s*\([Aa]ccepted v[0-9]+\.[0-9]+|RFC-[0-9]{4}\s*\([Dd]raft v[0-9]+\.[0-9]+|RFC-[0-9]{4}-v[0-9]+\.[0-9]+' crates/ | wc -l
@@ -54,7 +56,7 @@ Strip RFC version pins + line refs from all doc-comments (`///` and `//!`) and i
    # Note: requires comment-line-aware sed (or per-file manual review)
    ```
 
-4. **Manual review pass** — after sed sweep, `git diff` MUST show ONLY comment-text changes. Any change to code / strings / attributes is a sed-regex overreach and MUST be reverted. Split such occurrences into a follow-up. **Self-exemption clause:** the illustrative examples carried by THIS mission body (line 10 + lines 16-19 + lines 36-37 + lines 41-42 — `RFC-0960 v3.7`, `L474-516`, `Vec::with_capacity(N)` exception, `L<num>-<num>` pattern templates, etc.) are exempt from sub-step 1/2 patterns. The sweep targets `crates/` only (per Out-of-Scope). The exemption is documented here so the sweep operator does not waste a review pass on the mission's own examples.
+4. **Manual review pass** — after sed sweep, `git diff` MUST show ONLY comment-text changes. Any change to code / strings / attributes is a sed-regex overreach and MUST be reverted. Split such occurrences into a follow-up. **Self-exemption clause:** the illustrative examples carried by THIS mission body (`RFC-0960 v3.7`, `Vec::with_capacity(N)` exception, `L<num>-<num>` pattern templates, etc.) are exempt from sub-step 1/2 patterns. The sweep targets `crates/` only (per Out-of-Scope). The exemption is documented here so the sweep operator does not waste a review pass on the mission's own examples.
 
 5. **Validate cite script** — `bash scripts/validate_cites.sh` (if exists) returns 0 INVALID + 0 STALE + 0 PHANTOM after sweep. If the script does not exist, create it (per `rfc-referencing-convention` memory card pattern).
 

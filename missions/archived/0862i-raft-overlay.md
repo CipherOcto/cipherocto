@@ -13,8 +13,9 @@ RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §Future Work F1 (M
 **This mission is DEFERRED to a future phase** (post-Phase 4). v1 of RFC-0862 is single-leader with no auto-failover; this mission implements the Raft/Paxos overlay that would make Sync multi-leader with automatic failover.
 
 Per RFC-0862 §Future Work F1, the candidates are:
+
 - (a) per-row HLC + LWW (Hybrid Logical Clock + Last-Write-Wins)
-- (b) move to a Raft/Paxos overlay (per `RFC-0200` body section, line 1821-1999)
+- (b) move to a Raft/Paxos overlay (per `RFC-0200` body section)
 - (c) restricted to specific table groups
 
 This mission implements option (b): the Raft overlay. It is **NOT in v1 or Phase 4**; it is a future mission tied to F1 and F8.
@@ -24,6 +25,7 @@ This mission implements option (b): the Raft overlay. It is **NOT in v1 or Phase
 ### High-level
 
 The Raft overlay is a separate sub-protocol that:
+
 1. Elects a writer via Raft consensus (one writer per mission)
 2. Heartbeats writer liveness (3 missed heartbeats → election)
 3. Auto-failover: when the writer fails, a new writer is elected from the readers
@@ -82,6 +84,7 @@ For an application-level state sync (not consensus), HLC+LWW might be sufficient
 ### Why deferred?
 
 v1 is single-leader; multi-leader is a substantial design effort that requires:
+
 - Schema-level conflict resolution (e.g., what happens if two writers commit to the same row?)
 - HLC or vector clock implementation
 - Per-row conflict resolution policy
@@ -107,9 +110,9 @@ This is F1 (Multi-leader / active-active) in the Future Work section. It is a si
 
 This mission (when un-deferred) will implement the following RFC-0862 types:
 
-| Type | Role in this mission |
-|------|---------------------|
-| `RaftOverlay` | The Raft consensus state machine that elects a writer and replicates WAL entries |
-| `DomainCoordinatorRecord` integration (per RFC-0855p-c) | Tracks the current writer's identity for auto-failover |
+| Type                                                    | Role in this mission                                                             |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `RaftOverlay`                                           | The Raft consensus state machine that elects a writer and replicates WAL entries |
+| `DomainCoordinatorRecord` integration (per RFC-0855p-c) | Tracks the current writer's identity for auto-failover                           |
 
 **STATUS: DEFERRED.** This mission is not in scope for v1 or any of the current implementation phases (Phase 1–4). It is documented here for completeness. See RFC-0862 §Future Work F1 and F8.

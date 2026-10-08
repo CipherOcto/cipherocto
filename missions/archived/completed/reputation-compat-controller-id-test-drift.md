@@ -18,7 +18,7 @@ RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discri
 
 - [x] Update
       `crates/quota-router-core/src/marketplace/reputation_compat.rs::tests::record_with_now_rejects_zero_controller_id`
-      (line 425) to assert
+      to assert
       `ReputationError::ControllerIdMissing` instead of
       `ReputationError::RecorderDidMalformed`.
 - [x] Remove the now-stale "Surfaces via RecorderDidMalformed
@@ -68,7 +68,7 @@ single-line mission row preserves history clarity.
 
 ## Version History
 
-| Version | Date       | Status | Change                                                                                                                                                                                                                |
-| ------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-13 | open   | Mission filed. Pre-existing 1-line drift surfaced by #102 verify sweep. Commit `eb6aaf34` renamed variant; legacy test never updated.                                                                                |
-| v0.2    | 2026-08-13 | closed | LANDED. `record_with_now_rejects_zero_controller_id` now asserts `ReputationError::ControllerIdMissing` (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation), 0x34). 1634/1634 lib tests pass; clippy clean.                                     |
+| Version | Date       | Status | Change                                                                                                                                                                                                                                                               |
+| ------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | open   | Mission filed. Pre-existing 1-line drift surfaced by #102 verify sweep. Commit `eb6aaf34` renamed variant; legacy test never updated.                                                                                                                                |
+| v0.2    | 2026-08-13 | closed | LANDED. `record_with_now_rejects_zero_controller_id` now asserts `ReputationError::ControllerIdMissing` (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation), 0x34). 1634/1634 lib tests pass; clippy clean. |

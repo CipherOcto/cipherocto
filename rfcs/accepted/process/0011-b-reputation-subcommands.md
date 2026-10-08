@@ -613,7 +613,7 @@ Per §Security Considerations 2, caching is deferred. The substrate aggregate st
 | ------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0.1.0   | 2026-08-31 | Draft    | Initial draft. `reputation show` + projection surface.                                                                                                                                                        |
 | 1.2     | 2026-08-31 | Draft    | Wave 4.5: 3 MED + 5 LOW — Phase 5 numbering, four variants, cursor reserved, substrate-vs-CLI exit mapping, recorder cost, unused_imports allow, exit 2 cause, windowing not pagination                       |
-| 1.3     | 2026-08-31 | Draft    | Wave 6.5: 1 MINOR — L1 + L113 cite-case `RFC-0011-B` → `RFC-0011-b` (internal consistency with body lowercase + sibling RFCs)                                                                                 |
+| 1.3     | 2026-08-31 | Draft    | Wave 6.5: 1 MINOR — L1 + cite-case `RFC-0011-B` → `RFC-0011-b` (internal consistency with body lowercase + sibling RFCs)                                                                                      |
 | 1.4     | 2026-08-31 | Accepted | Promoted Draft → Accepted after W1-W6.5 multi-round adversarial review loop + DRY closure (W5+W6 zero-finding) + 21 cite hygiene fixes including W6.5 cite-case `RFC-0011-B` → `RFC-0011-b` final consistency |
 
 ## Related RFCs

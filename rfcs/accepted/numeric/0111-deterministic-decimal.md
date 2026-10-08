@@ -31,7 +31,7 @@
 
 > **Adversarial Review v1.18 Changes (3 Issues Fixed):**
 >
-> - CRITICAL-1: Unified Merkle root values (lines 1457 and 1469)
+> - CRITICAL-1: Unified Merkle root values
 > - HIGH-2: FROM_DQA now applies canonicalization (probe entry 48)
 > - MEDIUM-2: Added 625-byte length assertion to config hash script
 > - Version updated to 1.18
@@ -393,7 +393,7 @@ preserve their declared scale.
 
 ### POW10 Table
 
-Deterministic POW10 table for scale alignment and division (copied from `determin/src/dqa.rs:24-62`):
+Deterministic POW10 table for scale alignment and division (copied from `determin/src/dqa.rs`):
 
 ```rust
 /// POW10[i] = 10^i as i128

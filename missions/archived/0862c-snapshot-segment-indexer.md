@@ -185,7 +185,6 @@ fn table_id_to_dir(table_id: u32) -> std::path::PathBuf {
 }
 ```
 
-
 ### Fork API additions (resolves L-R3-2)
 
 Mission 0862c adds one new method to the Stoolap fork:
@@ -210,7 +209,7 @@ This is documented in the RFC's §Key Files to Modify; the RFC should be amended
 
 ### Compression
 
-LZ4 (`lz4_flex` crate, already in `stoolap/Cargo.toml:74`) is byte-deterministic. The writer compresses segments > 1 KB; the reader decompresses after verifying the CRC32 and segment_root.
+LZ4 (`lz4_flex` crate, already in `stoolap/Cargo.toml`) is byte-deterministic. The writer compresses segments > 1 KB; the reader decompresses after verifying the CRC32 and segment_root.
 
 ## Acceptance Criteria
 
@@ -265,8 +264,8 @@ LZ4 (`lz4_flex` crate, already in `stoolap/Cargo.toml:74`) is byte-deterministic
 
 - **No longer requires direct access to:**
   - `stoolap/src/storage/mvcc/snapshot.rs` — segment enumeration is via `adapter.read_snapshot_segment` (the adapter impl wraps the file scan)
-  - `stoolap/src/storage/mvcc/engine.rs:2642` (existing `create_snapshot`) — replaced by `adapter.write_snapshot_segment` (the adapter impl wraps `create_snapshot_for_table`)
-  - `stoolap/src/storage/mvcc/engine.rs:2828` (atomic-rename) — this is the adapter impl's responsibility; the cipherocto sync engine does not invoke it directly
+  - `stoolap/src/storage/mvcc/engine.rs` (existing `create_snapshot`) — replaced by `adapter.write_snapshot_segment` (the adapter impl wraps `create_snapshot_for_table`)
+  - `stoolap/src/storage/mvcc/engine.rs` (atomic-rename) — this is the adapter impl's responsibility; the cipherocto sync engine does not invoke it directly
 
 ## Blockers / Dependencies
 
@@ -290,8 +289,8 @@ The snapshot segment indexer is the second half of the catch-up flow. After the 
 
 The 0862c pseudocode references three external crates:
 
-- `blake3` (already in `stoolap/Cargo.toml:111`)
-- `lz4_flex` (already in `stoolap/Cargo.toml:74`)
+- `blake3` (already in `stoolap/Cargo.toml`)
+- `lz4_flex` (already in `stoolap/Cargo.toml`)
 - `crc32fast` — must be added to `octo-sync/Cargo.toml` (in the `octo-sync/` leaf workspace) as a new direct dependency.
 
 Acceptance criterion: "`crc32fast` ≥ 1.3 added to `octo-sync/Cargo.toml` dependencies."
@@ -299,21 +298,23 @@ Acceptance criterion: "`crc32fast` ≥ 1.3 added to `octo-sync/Cargo.toml` depen
 ### Atomic-rename guarantee
 
 Per RFC-0862 §Implicit Assumptions Audit row 17, the writer MUST never serve a half-written segment. `MVCCEngine::create_snapshot_for_table` MUST use the atomic-rename pattern:
+
 1. Write to `snapshot-<ts>.tmp`
 2. `fsync()` the file
 3. `std::fs::rename` to `snapshot-<ts>.bin`
 
-This is verified by the `snapshot.rs:37, 98` "STSVSHD" magic and the `engine.rs:2642`/`engine.rs:2828` atomic-rename pattern.
+This is verified by the `snapshot.rs` "STSVSHD" magic and the `engine.rs`/`engine.rs` atomic-rename pattern.
 
 ### Filename convention (resolves H3)
 
-The Sync protocol uses the existing Stoolap snapshot file format (`<dsn-path>/snapshots/<table>/snapshot-<ts>.bin` — see RFC-0862 §4.3 `SyncSegment.payload` doc-comment and `stoolap/src/storage/mvcc/snapshot.rs:1533` for the `create_snapshot` return type). No new `segment-NNNNNNNN.bin` format is introduced. `segment_index` is the ordinal position of the snapshot file in its table directory (sorted by timestamp), not a filename.
+The Sync protocol uses the existing Stoolap snapshot file format (`<dsn-path>/snapshots/<table>/snapshot-<ts>.bin` — see RFC-0862 §4.3 `SyncSegment.payload` doc-comment and `stoolap/src/storage/mvcc/snapshot.rs` for the `create_snapshot` return type). No new `segment-NNNNNNNN.bin` format is introduced. `segment_index` is the ordinal position of the snapshot file in its table directory (sorted by timestamp), not a filename.
 
 ### LZ4 vs STSVSHD magic (resolves L4)
 
 LZ4 compression wraps the **entire** file including the 8-byte `STSVSHD` magic header at the start. The reader's apply path is:
+
 1. LZ4-decompress the entire payload (if `compression == 1`).
-2. Verify the first 8 bytes match `"STSVSHD"` (the magic from `snapshot.rs:38, 98`).
+2. Verify the first 8 bytes match `"STSVSHD"` (the magic from `snapshot.rs`).
 3. Verify `BLAKE3-256(raw_payload) == segment.segment_root`.
 4. Verify `crc32fast::hash(raw_payload) == segment.crc32`.
 5. Apply the segment via `MVCCEngine::replay_snapshot`.
@@ -341,10 +342,10 @@ The LZ4 wrapping includes the magic for byte-determinism: the LZ4 stream is byte
 
 This mission implements the following RFC-0862 types:
 
-| Type | Role in this mission |
-|------|---------------------|
-| `SyncSegment` | The per-table snapshot segment envelope (codes 0xA3/0xA4); the payload is a single `<dsn-path>/snapshots/<table>/snapshot-<ts>.bin` file |
-| `SegmentIndexer` | The writer-side struct that handles `SegmentRequest` and produces `SyncSegment` (or `SegmentNotFound` for stale roots) |
-| `MVCCEngine::create_snapshot_for_table` (new Stoolap fork method) | Generates a fresh snapshot for a single table when the requested segment is missing |
+| Type                                                              | Role in this mission                                                                                                                     |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `SyncSegment`                                                     | The per-table snapshot segment envelope (codes 0xA3/0xA4); the payload is a single `<dsn-path>/snapshots/<table>/snapshot-<ts>.bin` file |
+| `SegmentIndexer`                                                  | The writer-side struct that handles `SegmentRequest` and produces `SyncSegment` (or `SegmentNotFound` for stale roots)                   |
+| `MVCCEngine::create_snapshot_for_table` (new Stoolap fork method) | Generates a fresh snapshot for a single table when the requested segment is missing                                                      |
 
 The mission does NOT implement the per-table Merkle summary (`SyncSummary`) — that is handled by mission 0862b. See the Type Coverage table in 0862-base for the full mapping.

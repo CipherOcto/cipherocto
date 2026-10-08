@@ -44,20 +44,20 @@ trait PlatformAdapter: Send + Sync {
 
 **Update**: Add missing platforms:
 
-| Carrier | Max Payload | Fragment Strategy |
-|---------|-------------|-------------------|
-| Telegram | 4096 bytes | Document attachment for large fragments |
-| Discord | 2000 bytes | Multi-message with sequence markers |
-| Matrix | 65536 bytes | Rarely fragmented; media upload for large payloads |
-| IRC | 512 bytes | Multi-line with sequence markers |
-| Slack | 40000 bytes | Multi-message with sequence markers |
-| Signal | 65536 bytes | Text only, no fragmentation |
-| Nostr | 65536 bytes | Text only, no fragmentation |
-| WhatsApp | 65536 bytes | Text only, no fragmentation |
-| LoRa | 256 bytes | Mandatory fragmentation, duty-cycle aware |
-| BLE | 244 bytes | Multi-advertisement reassembly |
-| Webhook | Unlimited | No fragmentation needed |
-| WebRTC | 65536 bytes | DataChannel fragmentation |
+| Carrier  | Max Payload | Fragment Strategy                                  |
+| -------- | ----------- | -------------------------------------------------- |
+| Telegram | 4096 bytes  | Document attachment for large fragments            |
+| Discord  | 2000 bytes  | Multi-message with sequence markers                |
+| Matrix   | 65536 bytes | Rarely fragmented; media upload for large payloads |
+| IRC      | 512 bytes   | Multi-line with sequence markers                   |
+| Slack    | 40000 bytes | Multi-message with sequence markers                |
+| Signal   | 65536 bytes | Text only, no fragmentation                        |
+| Nostr    | 65536 bytes | Text only, no fragmentation                        |
+| WhatsApp | 65536 bytes | Text only, no fragmentation                        |
+| LoRa     | 256 bytes   | Mandatory fragmentation, duty-cycle aware          |
+| BLE      | 244 bytes   | Multi-advertisement reassembly                     |
+| Webhook  | Unlimited   | No fragmentation needed                            |
+| WebRTC   | 65536 bytes | DataChannel fragmentation                          |
 
 ### 3. Section 8.6: Payload Encoding
 
@@ -72,6 +72,7 @@ DOT/F/{base64_frag}  → Fragment mode (base64-encoded fragment with header)
 ```
 
 Transport mode selection:
+
 - If payload fits in single message → `DOT/1/{base64}`
 - If payload exceeds limit AND platform supports upload → `DOT/2/{msg_id}`
 - If payload exceeds limit AND no upload → `DOT/F/{fragment}`
@@ -92,7 +93,7 @@ For platforms supporting native file upload (Telegram, Discord, Matrix), envelop
 
 **Fallback**: If native upload fails, adapters MUST fall back to base64 text mode.
 
-### 5. Line 202: Platform Table
+### 5. Platform Table
 
 **Current**: `WhatsApp Business API messages`
 
@@ -104,7 +105,7 @@ For platforms supporting native file upload (Telegram, Discord, Matrix), envelop
 - [x] Section 8.5: All 12 platforms listed with max payload and fragment strategy
 - [x] Section 8.6: `DOT/1/`, `DOT/2/`, `DOT/F/` wire formats documented
 - [x] Section 9.4: Dual-mode transport section added
-- [x] Line 202: WhatsApp description updated
+- [x] Platform table: WhatsApp description updated
 - [x] All changes are backward-compatible (no breaking changes)
 
 ## Location

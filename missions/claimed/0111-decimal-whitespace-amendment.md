@@ -33,7 +33,7 @@ Low
 
 ## Reference
 
-- docs/reviews/round-10-rfc-0202-adversarial.md (C3 finding — `stoolap_parse_decimal trims whitespace`; cipherocto-side analog at `determin::Decimal::from_str` line 924)
+- docs/reviews/round-10-rfc-0202-adversarial.md (C3 finding — `stoolap_parse_decimal trims whitespace`; cipherocto-side analog at `determin::Decimal::from_str`)
 - RFC-0111 §Locale Specification (v1.21 normative clarification)
 
 ## Closure

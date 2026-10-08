@@ -197,7 +197,7 @@ Additive: 2 new role_id args + 2 new substrate entrypoints + 3 new CLI flags (`-
 - Sub-step 1 = gate check; Sub-step 2 = M11 substrate-first check
 - Extends existing `octo role select` (NOT new top-level `coordinator` group per RFC §Mission Decomp M10 row)
 - v1.3 drift-fix supersedes v1.2 substrate-home reconciliation: `octo_network::mon::domain_coordinator::bind_domain_coordinator` (file never existed) → `octo_network::dc::admin_attest::bind_domain_coordinator` (REAL drift-fixed substrate home; provides `PlatformAdminProof` typed envelope)
-- v1.3 drift-fix supersedes v1.2 error type rename: `DomainCoordinatorError` (fictional) → canonical `BindingError` (existing at `crates/octo-network/src/dot/binding.rs:648`) for M11; M10 surface uses existing `RoleError` + new variant reuse `RoleNotSelectable`
+- v1.3 drift-fix supersedes v1.2 error type rename: `DomainCoordinatorError` (fictional) → canonical `BindingError` (existing at `crates/octo-network/src/dot/binding.rs`) for M11; M10 surface uses existing `RoleError` + new variant reuse `RoleNotSelectable`
 
 ## Cross-references
 

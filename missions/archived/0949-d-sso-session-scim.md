@@ -4,7 +4,7 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/admin.rs:908-1108` SCIM v2 routes + `auth/sso/scim_server.rs:7-8` `ScimUser`/`ScimPatchOp`/`ScimGroup`/`ScimServiceProviderConfig`. All 25 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/admin.rs` SCIM v2 routes + `auth/sso/scim_server.rs` `ScimUser`/`ScimPatchOp`/`ScimGroup`/`ScimServiceProviderConfig`. All 25 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 
@@ -18,23 +18,27 @@ RFC-0949 (Economics): Enterprise SSO
 ## Acceptance Criteria
 
 ### Session Management
+
 - [x] Define `Session` struct (id, user_id, provider, created_at, last_access, expires_at)
 - [x] Define `SessionStorage` trait (create, get, refresh, revoke, cleanup_expired)
 - [x] Sliding window session lifecycle (extend on activity)
 
 ### SCIM 2.0 Types
+
 - [x] Implement `ScimUser` (schemas, id, externalId, userName, name.givenName, name.familyName, emails, active, groups)
 - [x] Implement `ScimEmail` (value, type, primary)
 - [x] Implement `ScimGroup` (schemas, id, displayName, members)
 - [x] Implement `ScimPatchOp` (schemas, Operations)
 
 ### SCIM Operations
+
 - [x] Implement list, get, create, update, patch, deactivate operations
 - [x] Deactivation vs deletion semantics (deactivate preferred — set active=false)
 - [x] SCIM filter syntax documentation (eq, ne, co, sw, ew)
 - [x] Implement `sync_users()` with per-user error isolation (`SyncResult`/`SyncError`)
 
 ### SCIM Server-Side Endpoints
+
 - [x] Implement `GET /scim/v2/Users` — List users (SCIM filter + pagination)
 - [x] Implement `GET /scim/v2/Users/:id` — Get user
 - [x] Implement `POST /scim/v2/Users` — Create user
@@ -46,13 +50,16 @@ RFC-0949 (Economics): Enterprise SSO
 - [x] Implement `GET /scim/v2/ResourceTypes` — SCIM resource types
 
 ### SCIM Error Handling
+
 - [x] Use SCIM-specific error format (RFC 7644 Section 3.12)
 - [x] SCIM rate limiting: 20/min per IP (coordinate with RFC-0933)
 
 ### Error Handling
+
 - [x] Distributed across all 0949 missions (19 error codes total)
 
 ### Verification
+
 - [x] Clippy passes with zero warnings
 - [x] All existing tests pass
 
@@ -67,6 +74,7 @@ RFC-0949 (Economics): Enterprise SSO
 ## Notes
 
 Key files:
+
 - `crates/quota-router-core/src/auth/sso/session.rs` — New
 - `crates/quota-router-core/src/auth/sso/scim.rs` — New
 - `crates/quota-router-core/src/auth/sso/scim_server.rs` — New

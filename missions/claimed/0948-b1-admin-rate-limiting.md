@@ -64,7 +64,7 @@ RFC-0949 (Economics): Enterprise SSO
       (currently runtime-only via `set_enabled`). → Follow-on
       mission `0948-b1-server-config`.
 - [ ] Pre-existing test drift on
-      `crates/quota-router-core/src/marketplace/reputation_compat.rs:425`
+      `crates/quota-router-core/src/marketplace/reputation_compat.rs`
       (asserts old `RecorderDidMalformed` after commit `eb6aaf34`
       renamed the variant to `ControllerIdMissing`). NOT caused
       by this mission's diff; flagged as mission #104
@@ -111,12 +111,14 @@ to allow unauthenticated bursts must put those routes on a no-limit
 policy (e.g. by adding them to the unrate-limited-route set).
 
 **Files touched:**
+
 - `crates/quota-router-core/src/admin_rate_limit.rs` (NEW — 528
   lines incl. tests)
 - `crates/quota-router-core/src/lib.rs` — register
   `pub mod admin_rate_limit;` alphabetically
 
 **Tests added:**
+
 - `admin_rate_limit::tests::per_ip_limit_blocks_after_threshold`
 - `admin_rate_limit::tests::per_user_limit_independent_buckets`
 - `admin_rate_limit::tests::per_api_key_limit_with_first_8_chars`
@@ -142,7 +144,7 @@ policy (e.g. by adding them to the unrate-limited-route set).
 
 ## Version History
 
-| Version | Date       | Status  | Change                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-13 | open    | Mission filed. 0948-b drift closure follow-on. 13 ACs.                                                                                                                                                                                                                                                                                                  |
-| v0.2    | 2026-08-13 | closed  | Substrate LANDED. `AdminRateLimitPolicySet` (11 routes) + `AdminLimitDimension` + `AdminIdentity` + `AdminRateLimiter` + `check_admin_rate_limit` middleware. HTTP-agnostic (callers in admin.rs wire headers → `AdminIdentity`). 10 unit tests pass, clippy clean. 3 follow-ons filed: dispatch hook into admin.rs, 429 + Retry-After response, ServerConfig plumbing. |
+| Version | Date       | Status | Change                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | open   | Mission filed. 0948-b drift closure follow-on. 13 ACs.                                                                                                                                                                                                                                                                                                                  |
+| v0.2    | 2026-08-13 | closed | Substrate LANDED. `AdminRateLimitPolicySet` (11 routes) + `AdminLimitDimension` + `AdminIdentity` + `AdminRateLimiter` + `check_admin_rate_limit` middleware. HTTP-agnostic (callers in admin.rs wire headers → `AdminIdentity`). 10 unit tests pass, clippy clean. 3 follow-ons filed: dispatch hook into admin.rs, 429 + Retry-After response, ServerConfig plumbing. |

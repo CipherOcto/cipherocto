@@ -38,14 +38,14 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
 #### Workspace setup
 
 - [ ] `crates/octo-whatsapp-onboard/Cargo.toml` (binary) — depends on `octo-whatsapp-onboard-core`, `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }`, `clap = { version = "4.5", features = ["derive"] }`, `tokio = { version = "1", features = ["full"] }`, `tracing`, `tracing-subscriber`, `serde`, `serde_json`, `anyhow`, `dialoguer = "0.11"` (R2-H2: for the `session remove` interactive prompt), `tempfile = "3"`
-- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`, and the transitive `chrono` dep already declared in the adapter's `Cargo.toml:29`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `parking_lot`. R2-H3 + R10-L1: `chrono` is a transitive dep via the adapter (used by `chrono::DateTime<Utc>` in the adapter's public types, but not directly in the core lib). The core lib uses `format_rfc3339_secs` (hand-rolled from `SystemTime + Duration`) for the sidecar's `linked_at` and `SessionInfo::last_linked_at`. No direct `chrono` dep required in the core lib's `Cargo.toml`.
+- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`, and the transitive `chrono` dep already declared in the adapter's `Cargo.toml`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `parking_lot`. R2-H3 + R10-L1: `chrono` is a transitive dep via the adapter (used by `chrono::DateTime<Utc>` in the adapter's public types, but not directly in the core lib). The core lib uses `format_rfc3339_secs` (hand-rolled from `SystemTime + Duration`) for the sidecar's `linked_at` and `SessionInfo::last_linked_at`. No direct `chrono` dep required in the core lib's `Cargo.toml`.
 - [ ] Verify workspace `Cargo.toml` uses `members = ["crates/*"]` (auto-includes the new crates) — no manual edit required
 - [ ] `cargo build --release` passes for both new crates
 
 #### Adapter change (additive)
 
-- [ ] `crates/octo-adapter-whatsapp/src/adapter.rs`: add `impl WhatsAppConfig { pub fn validate(&self) -> std::result::Result<(), String> { ... } }` (analogous to `TelegramConfig::validate()` at `octo-adapter-telegram/src/config.rs:94-110`)
-- [ ] `validate()` checks: `pair_phone` is E.164 if set, `ws_url` starts with `ws://` or `wss://` if set, `groups` entries are non-empty strings (R1-H1: filesystem writability of `session_path` is a **CLI pre-flight check** in `pair_link::run` / `qr_link::run`, NOT part of `validate()` — `validate()` is a pure in-memory field-shape check analogous to `TelegramConfig::validate()` at `octo-adapter-telegram/src/config.rs:94-110`)
+- [ ] `crates/octo-adapter-whatsapp/src/adapter.rs`: add `impl WhatsAppConfig { pub fn validate(&self) -> std::result::Result<(), String> { ... } }` (analogous to `TelegramConfig::validate()` in `octo-adapter-telegram/src/config.rs`)
+- [ ] `validate()` checks: `pair_phone` is E.164 if set, `ws_url` starts with `ws://` or `wss://` if set, `groups` entries are non-empty strings (R1-H1: filesystem writability of `session_path` is a **CLI pre-flight check** in `pair_link::run` / `qr_link::run`, NOT part of `validate()` — `validate()` is a pure in-memory field-shape check analogous to `TelegramConfig::validate()` in `octo-adapter-telegram/src/config.rs`)
 - [ ] All existing `octo-adapter-whatsapp` unit tests pass unchanged (additive change)
 - [ ] New unit tests for `validate()` (3-5 cases: malformed phone, malformed ws_url, valid config, empty groups is OK [R1-L1: empty groups is OK because the operator may have no chats to monitor yet; groups can be added later by editing the config], non-empty groups are not validated for JID format — that's a runtime concern for the adapter)
 
@@ -56,7 +56,7 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
   - `Cli` (root): `verbose: bool`, `command: Command`
   - `Command` enum: `QrLink(QrLinkArgs)`, `PairLink(PairLinkArgs)`, `Whoami(WhoamiArgs)`, `Session { action: SessionAction }`, `Version`
   - `QrLinkArgs`: `session_path: PathBuf`, `groups: Vec<String>`, `ws_url: Option<String>`, `out: Option<PathBuf>`, `stdout: bool`, `force: bool`, `timeout: u64` (default 300)
-  - `PairLinkArgs`: as `QrLinkArgs` + `phone: String` (required; or `$OCTO_WHATSAPP_PHONE`) + `custom_code: Option<String>` (R1-M3: renamed from `custom_pair_code` to match the SDK's `PairCodeOptions::custom_code` at `octo-adapter-whatsapp/src/adapter.rs:261`; the flag is `--pair-code` and the env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity, but the field name is `custom_code` to match the SDK)
+  - `PairLinkArgs`: as `QrLinkArgs` + `phone: String` (required; or `$OCTO_WHATSAPP_PHONE`) + `custom_code: Option<String>` (R1-M3: renamed from `custom_pair_code` to match the SDK's `PairCodeOptions::custom_code` in `octo-adapter-whatsapp/src/adapter.rs`; the flag is `--pair-code` and the env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity, but the field name is `custom_code` to match the SDK)
   - `WhoamiArgs`: `config: PathBuf`
   - `SessionAction` enum: `List(SessionListArgs)`, `Verify(SessionVerifyArgs)`, `Remove(SessionRemoveArgs)`
   - `OutputArgs` (flattened into QrLinkArgs / PairLinkArgs; R2-H1: real type defined in the data structure block below): `out`, `stdout` (conflicts_with `out`), `force` (requires `out`)
@@ -82,8 +82,8 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
   - `pub fn as_exit_code(&self) -> std::process::ExitCode`
   - 7 distinct exit codes (one more than matrix/telegram's 6)
 - [ ] `crates/octo-whatsapp-onboard/src/output.rs` — config writer (atomic, 0600, --stdout, --force)
-  - `pub fn write(args: &OutputArgs, session: &WhatsAppSession) -> Result<()>` (R3-M3: calls `session.to_disk_json()` from the core lib, then `write_atomic()` binary-private helper; the layering is: binary→core for JSON shape, binary→filesystem for atomic write; matches `octo-matrix-onboard/src/output.rs:40-63` pattern)
-  - `write_atomic()` uses `tempfile::NamedTempFile` + `persist` (same as `octo-matrix-onboard/src/output.rs:65-118`)
+  - `pub fn write(args: &OutputArgs, session: &WhatsAppSession) -> Result<()>` (R3-M3: calls `session.to_disk_json()` from the core lib, then `write_atomic()` binary-private helper; the layering is: binary→core for JSON shape, binary→filesystem for atomic write; matches the `octo-matrix-onboard/src/output.rs` pattern)
+  - `write_atomic()` uses `tempfile::NamedTempFile` + `persist` (same as `octo-matrix-onboard/src/output.rs`)
   - `default_path()` returns `~/.config/octo/whatsapp.json` (uses `dirs::config_dir()`)
 
 #### Core library structure
@@ -101,7 +101,7 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
   pub struct SessionInfo { pub session_path: PathBuf, pub self_phone: Option<String>, pub is_valid: bool, pub last_linked_at: Option<String> /* R10-L1: was Option<chrono::DateTime<chrono::Utc>>; the sidecar JSON is a String, mirroring the on-disk shape. Avoids the chrono dep and the parse-from-RFC-3339-string complexity */ }
   // R2-H1: OutputArgs is the clap-flatten target for the (--out, --stdout, --force)
   // triple shared by qr-link and pair-link. Mirrors octo-matrix-onboard::OutputArgs
-  // (crates/octo-matrix-onboard/src/cli.rs:103-120).
+  // (see crates/octo-matrix-onboard/src/cli.rs).
   #[derive(Args, Debug, Clone)]
   pub struct OutputArgs { pub out: Option<PathBuf>, #[arg(long, conflicts_with = "out")] pub stdout: bool, #[arg(long, requires = "out")] pub force: bool }
   // R4-M3: the From impl is in the binary, not the core. The full impl
@@ -147,17 +147,17 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
   - Polling loop with 250ms granularity, `tokio::time::sleep` between polls
   - On `Event::LoggedOut` (observable via `self_handle() == None AND bot_handle == None` after deadline): return `Err(CoreError::SessionExpired)`
 - [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_health(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<(), CoreError>` (R6-H2: dedicated helper for `session list` fallback. Same `POLL_INTERVAL_MS` polling + `POST_CONNECT_GRACE_MS` re-verify as `wait_for_connected`, but returns `Result<(), CoreError>` (no phone-number resolution) — `session list` only needs `is_valid: bool`, not the phone number. Without this helper, the fallback re-implements polling inline and skips the 100ms grace period.)
-- [ ] `crates/octo-whatsapp-onboard-core/src/output.rs` — `pub fn to_disk_json(&self) -> serde_json::Value` (R2-C1: method on `WhatsAppSession`, matches the `octo-matrix-onboard-core::Session::to_disk_json` pattern at `crates/octo-matrix-onboard-core/src/lib.rs:161`)
-  - Field-by-field `serde_json::Map` (mirrors `octo-matrix-onboard-core/src/lib.rs:161-187`)
+- [ ] `crates/octo-whatsapp-onboard-core/src/output.rs` — `pub fn to_disk_json(&self) -> serde_json::Value` (R2-C1: method on `WhatsAppSession`, matches the `octo-matrix-onboard-core::Session::to_disk_json` pattern at `crates/octo-matrix-onboard-core/src/lib.rs`)
+  - Field-by-field `serde_json::Map` (mirrors `octo-matrix-onboard-core/src/lib.rs`)
   - Omits `pair_phone` when `None`, `ws_url` when `None` (matches adapter's `#[serde(default)]` behavior)
   - NEVER serializes `pair_code` (operator-typed, ephemeral; field is not on `WhatsAppSession` per R1-C2)
 - [ ] `crates/octo-whatsapp-onboard-core/src/sidecar.rs` — `pub fn write_sidecar(session_path: &Path, session: &WhatsAppSession) -> Result<()>` (R5-M2: sidecar is **required**, not an optimization. Written immediately after `wait_for_connected` returns Ok, **before** the config JSON write. If the sidecar write fails, the link fails with `CoreError::Adapter { source }` — the operator should not get a "linked" exit 0 if the metadata is missing, because `session list` would then have to fall back to 5s bot startup per session. The "optimization" framing from earlier rounds was wrong: the matrix-onboard's `LAST_USED` is required for the same reason.)
   - Writes `session_meta.json` next to the stoolap DB with `{ self_phone, linked_at, mode: "qr-link" | "pair-link", groups }`
   - Atomic write via `tempfile::NamedTempFile` + `persist`
   - Mode 0600 on Unix
-  - `linked_at` is formatted via `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H1 / R4-L2: the call site uses `crate::time::...`, not `core::time::...` — the crate does not have a `core` module name; `core` would shadow the standard library's `core` crate in some contexts. The helper takes an explicit `epoch_secs: u64` arg, returns the 20-char no-subsec format `YYYY-MM-DDTHH:MM:SSZ`; mirrors `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs`. R5-L2: call site is `let linked_at = crate::time::format_rfc3339_secs(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));` — the `unwrap_or(0)` propagates the pre-1970 fallback to the helper (which returns `<unknown>`).)
-- [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_secs(epoch_secs: u64) -> String` (R4-L2: renamed from `format_rfc3339_now`; takes explicit epoch-seconds arg, returns 20-char no-subsec `YYYY-MM-DDTHH:MM:SSZ` format. Mirrors `octo-matrix-onboard/src/logging.rs:82`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. Returns `<unknown>` for `epoch_secs == 0` so a missing/wrong field doesn't carry a misleading 1969-12-31 timestamp. Unit tests: (1) `format_rfc3339_secs(0)` returns `<unknown>`; (2) `format_rfc3339_secs(1700000000)` returns `2023-11-14T22:13:20Z`; (3) negative durations from `SystemTime` are pre-1970 and return `<unknown>`.)
-- [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs:22-59`)
+  - `linked_at` is formatted via `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H1 / R4-L2: the call site uses `crate::time::...`, not `core::time::...` — the crate does not have a `core` module name; `core` would shadow the standard library's `core` crate in some contexts. The helper takes an explicit `epoch_secs: u64` arg, returns the 20-char no-subsec format `YYYY-MM-DDTHH:MM:SSZ`; mirrors `octo-matrix-onboard/src/logging.rs`'s `format_rfc3339_secs`. R5-L2: call site is `let linked_at = crate::time::format_rfc3339_secs(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));` — the `unwrap_or(0)` propagates the pre-1970 fallback to the helper (which returns `<unknown>`).)
+- [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_secs(epoch_secs: u64) -> String` (R4-L2: renamed from `format_rfc3339_now`; takes explicit epoch-seconds arg, returns 20-char no-subsec `YYYY-MM-DDTHH:MM:SSZ` format. Mirrors `octo-matrix-onboard/src/logging.rs`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. Returns `<unknown>` for `epoch_secs == 0` so a missing/wrong field doesn't carry a misleading 1969-12-31 timestamp. Unit tests: (1) `format_rfc3339_secs(0)` returns `<unknown>`; (2) `format_rfc3339_secs(1700000000)` returns `2023-11-14T22:13:20Z`; (3) negative durations from `SystemTime` are pre-1970 and return `<unknown>`.)
+- [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs`)
   - Variants: alphabetical order (R2-M2: matches `cargo doc` and IDE jump-to-definition; documented as a project convention; deviation requires an RFC amendment). `Adapter { source }`, `ClientBuild`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `Parse { path, source }`, `Read { path, source }`, `SessionExpired`, `Timeout { secs }`
 
 #### Per-subcommand behavior
@@ -200,7 +200,7 @@ See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`)
 
 #### Tracing redaction
 
-- [ ] Custom `Layer<S>` impl `RedactLayer` — marker, exists for spec compliance (mirrors `octo-matrix-onboard/src/logging.rs:21-25`)
+- [ ] Custom `Layer<S>` impl `RedactLayer` — marker, exists for spec compliance (mirrors `octo-matrix-onboard/src/logging.rs`)
 - [ ] Custom `FormatEvent` impl `RedactingFormat` — walks event fields, applies redaction
   - Field name match (case-insensitive) against `REDACT_KEYS`
   - Substring match against event messages
@@ -282,8 +282,8 @@ Companion guide for code-level patterns:
 - `crates/octo-telegram-onboard/` (state-machine auth model — TDLib analog, useful for the polling-vs-Notify tradeoff)
 - `crates/octo-adapter-whatsapp/src/adapter.rs` (`WhatsAppWebAdapter::start_bot`, `Event::Connected` handler in the connected path, `self_handle` in the message dispatch path)
 - `crates/octo-adapter-whatsapp/src/adapter.rs` — `qr_login_token` accessor method + backing field (per RFC-0851p-a §Bootstrap Client Lifecycle)
-- `crates/octo-adapter-whatsapp/src/adapter.rs:25-36` (`WhatsAppConfig` schema — the on-disk JSON must deserialize into this)
-- `crates/octo-adapter-telegram/src/config.rs:94-110` (`TelegramConfig::validate()` — template for the adapter change)
+- `crates/octo-adapter-whatsapp/src/adapter.rs` (`WhatsAppConfig` schema — the on-disk JSON must deserialize into this)
+- `crates/octo-adapter-telegram/src/config.rs` (`TelegramConfig::validate()` — template for the adapter change)
 
 ## Location
 
@@ -311,7 +311,7 @@ Mirrors `octo-matrix-onboard` / `octo-matrix-onboard-core` and `octo-telegram-on
 
 ### Why reuse the adapter's `WhatsAppWebAdapter`?
 
-The adapter's `Event::Connected` handler (adapter.rs:226-237) already resolves `device.pn` into `self_phone` and persists the noise-key handshake. The onboard tool reuses this exact flow via `start_bot()` to guarantee:
+The adapter's `Event::Connected` handler (in adapter.rs) already resolves `device.pn` into `self_phone` and persists the noise-key handshake. The onboard tool reuses this exact flow via `start_bot()` to guarantee:
 
 1. The session DB is created with the same storage backend (`StoolapStore`), transport factory, http client, and device-props override the adapter will use on next start
 2. The `device.pn` resolution logic is shared (no drift between onboard-resolved and adapter-resolved phone numbers)
@@ -321,7 +321,7 @@ Reimplementing the bot in the onboard core would mean duplicating all of the abo
 
 ### Why polling for `Event::Connected`?
 
-The adapter exposes `self_handle()` as `pub fn self_handle(&self) -> Option<String>` (adapter.rs:434-436) backed by `parking_lot::Mutex<Option<String>>` (adapter.rs:92). There is no signal exposed. A 250ms polling loop is acceptable for an operator-driven wait (typically 2-30s). Adding a `tokio::sync::watch` to the adapter is a cross-crate refactor that belongs in a follow-up mission, not in the auth-onboarding PR.
+The adapter exposes `self_handle()` as `pub fn self_handle(&self) -> Option<String>` (in adapter.rs) backed by `parking_lot::Mutex<Option<String>>` (in adapter.rs). There is no signal exposed. A 250ms polling loop is acceptable for an operator-driven wait (typically 2-30s). Adding a `tokio::sync::watch` to the adapter is a cross-crate refactor that belongs in a follow-up mission, not in the auth-onboarding PR.
 
 ### Why one extra exit code (`SessionExpired = 7`)?
 
@@ -346,7 +346,7 @@ The on-disk config is a JSON file (NOT stoolap). The session storage is the stoo
 
 ### SDK Risk
 
-`whatsapp-rust` and `wacore` are pinned to the same rev as the adapter (`9734fb2ec544e22b7055147aa3e73b6889e3ff0d` per `octo-adapter-whatsapp/Cargo.toml:11-15`). The onboard core and adapter share the same stoolap session DB format, so a SDK version mismatch would cause the adapter to fail to load a session the onboard tool created. Pin both to the same rev in `Cargo.toml`.
+`whatsapp-rust` and `wacore` are pinned to the same rev as the adapter (`9734fb2ec544e22b7055147aa3e73b6889e3ff0d` per `octo-adapter-whatsapp/Cargo.toml`). The onboard core and adapter share the same stoolap session DB format, so a SDK version mismatch would cause the adapter to fail to load a session the onboard tool created. Pin both to the same rev in `Cargo.toml`.
 
 ### RFC Status
 

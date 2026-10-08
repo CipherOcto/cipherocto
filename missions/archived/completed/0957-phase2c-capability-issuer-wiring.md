@@ -2,7 +2,7 @@
 
 **Status:** LANDED 2026-08-13 (commit b19fe57f). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0871 §Roles and Authorities + RFC-0957-A1 §Algorithms / §HolderRecord State Machine
-**Closes:** 0871d Phase 3 MVP gaps (IdentityKey + HolderRegistry slots; macaroon substrate; `CAPABILITY_LOOKUP` payload kind) + `crates/octo-capability-issuer-node/src/handlers/mod.rs:82` dead-code
+**Closes:** 0871d Phase 3 MVP gaps (IdentityKey + HolderRegistry slots; macaroon substrate; `CAPABILITY_LOOKUP` payload kind) + `crates/octo-capability-issuer-node/src/handlers/mod.rs` dead-code
 
 ## Scope
 

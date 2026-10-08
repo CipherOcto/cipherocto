@@ -6,8 +6,8 @@ DEFERRED 2026-08-13 (close-as-DEFERRED, 0871b pattern). Mission partially-landed
 
 **Landed scope (Phase 5 partial + Phase 1 partial):**
 
-- `Value::bigint()` constructor (`/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs:222`) using `BigIntEncoding` wire format `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limb0:8]...[limbN:8]`
-- `encode_bigint_lexicographic()` (`/home/mmacedoeu/_w/databases/stoolap/src/storage/index/btree.rs:1771`) for B-tree index ordering (Phase 1 partial)
+- `Value::bigint()` constructor (`/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs`) using `BigIntEncoding` wire format `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limb0:8]...[limbN:8]`
+- `encode_bigint_lexicographic()` (`/home/mmacedoeu/_w/databases/stoolap/src/storage/index/btree.rs`) for B-tree index ordering (Phase 1 partial)
 - 23 BIGINT integration tests in `/home/mmacedoeu/_w/databases/stoolap/tests/bigint_decimal_integration_test.rs`
 
 **Blockers identified (per phase):**
@@ -15,7 +15,7 @@ DEFERRED 2026-08-13 (close-as-DEFERRED, 0871b pattern). Mission partially-landed
 1. **Phase 1 — Merkle state trie BigInt encoding:** BLOCKED. No Merkle state trie infrastructure exists in cipherocto `octo-protocol` crate; needs DFP first per `0104-dfp-consensus-integration.md`. Storage-side BigInt value type + wire format landed; Merkle hashing infra missing.
 2. **Phase 2 — Replay validation (DQA op result-hash storage in `stoolap/src/consensus/operation.rs`):** BLOCKED. Same infra gap as DQA replay (no result-hash commit pattern in `consensus/operation.rs`).
 3. **Phase 3 — Fork handling (1-epoch divergence detection):** BLOCKED. No divergence detection infra; needs DFP first.
-4. **Phase 4 — Spec version pinning:** PARTIALLY LANDED. `NUMERIC_SPEC_VERSION = 2` exists (`/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs:54`) per RFC-0202-A §4a — supersedes mission's proposed `= 1`. Block header `numeric_spec_version: u32` integration BLOCKED (no `BlockHeader` struct in cipherocto `octo-protocol` yet).
+4. **Phase 4 — Spec version pinning:** PARTIALLY LANDED. `NUMERIC_SPEC_VERSION = 2` exists (`/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs`) per RFC-0202-A §4a — supersedes mission's proposed `= 1`. Block header `numeric_spec_version: u32` integration BLOCKED (no `BlockHeader` struct in cipherocto `octo-protocol` yet).
 5. **Phase 5 — VM opcodes + SQL operators:** PARTIALLY LANDED. SQL `BIGINT '...'` literal + CAST + arithmetic + cross-type comparison work (covered by 23 integration tests). VM BigInt opcodes (`BigIntLiteral`, `BigIntOp(Add/Sub/Mul/Div/Mod/Cmp/Shl/Shr/BitLen)`) per mission pseudocode — NOT YET IMPLEMENTED in `/home/mmacedoeu/_w/databases/stoolap/src/vm/`.
 
 **Follow-on missions filed:**
@@ -50,7 +50,7 @@ BigInt integration with consensus requires:
 ### Acceptance Criteria
 
 - [ ] BigIntEncoding in Merkle state trie — **DEFERRED** (Merkle state trie infrastructure missing in cipherocto `octo-protocol`; needs DFP first)
-- [x] Canonical serialization for state hashing — **LANDED** (`Value::bigint()` uses `BigIntEncoding` wire format at `/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs:222`; `encode_bigint_lexicographic()` at `/home/mmacedoeu/_w/databases/stoolap/src/storage/index/btree.rs:1771`)
+- [x] Canonical serialization for state hashing — **LANDED** (`Value::bigint()` uses `BigIntEncoding` wire format in `/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs`; `encode_bigint_lexicographic()` in `/home/mmacedoeu/_w/databases/stoolap/src/storage/index/btree.rs`)
 - [ ] Integration with state trie infrastructure — **DEFERRED** (same blocker as Merkle encoding)
 
 ### Implementation Pattern
@@ -157,7 +157,7 @@ impl BigIntConsensusChecker {
 
 ### Acceptance Criteria
 
-- [x] NUMERIC_SPEC_VERSION constant defined — **LANDED** (as `= 2` per RFC-0202-A §4a, at `/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs:54`; supersedes mission's proposed `= 1`)
+- [x] NUMERIC_SPEC_VERSION constant defined — **LANDED** (as `= 2` per RFC-0202-A §4a, in `/home/mmacedoeu/_w/databases/stoolap/src/storage/mvcc/persistence.rs`; supersedes mission's proposed `= 1`)
 - [ ] Block header numeric_spec_version integration — **DEFERRED** (no `BlockHeader` struct in cipherocto `octo-protocol` yet)
 - [ ] Version check during replay — **DEFERRED** (same blocker)
 
@@ -190,7 +190,7 @@ pub struct BlockHeader {
 
 ### Acceptance Criteria
 
-- [x] BigInt as Value type in stoolap — **LANDED** (`Value::bigint()` constructor at `/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs:222`)
+- [x] BigInt as Value type in stoolap — **LANDED** (`Value::bigint()` constructor in `/home/mmacedoeu/_w/databases/stoolap/src/core/value.rs`)
 - [x] SQL operators using BigInt — **LANDED** (BIGINT typed literals + CAST + arithmetic + cross-type comparison covered by 23 integration tests in `bigint_decimal_integration_test.rs`)
 - [ ] Expression VM opcodes for BigInt — **DEFERRED** (`BigIntLiteral` + `BigIntOp(Add/Sub/Mul/Div/Mod/Cmp/Shl/Shr/BitLen)` not yet implemented in `/home/mmacedoeu/_w/databases/stoolap/src/vm/mod.rs`; SQL-level BigInt arithmetic works via existing operator dispatch)
 

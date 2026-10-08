@@ -8,12 +8,12 @@ Accepted v3.1 (v2.0 Accepted 2026-07-23; v3.1 §9 amendment 2026-08-21)
 
 ## Version History
 
-| Version | Date | Author | Note |
-|---------|------|--------|------|
-| v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
-| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
-| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
-| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers: `num_shards = ceil(sqrt(N))` bounded `[4, 256]`; 1y Retired archive GC; MultiCapability + MultiEnvelope for cross-shard; ~10ms p99 cross-shard read budget; per-shard ZK proof + cross-shard MMR inclusion (256B at 256 shards); shard_id immutable per session. §4.1 drain timeout already specified (7d abort → live migration). Additive (non-breaking) bump. |
+| Version       | Date       | Author                   | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------- | ---------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0          | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| v2.0          | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0.                                                                                                                                                                                                                        |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23.                                                                                                                                                                                                                                                                |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers: `num_shards = ceil(sqrt(N))` bounded `[4, 256]`; 1y Retired archive GC; MultiCapability + MultiEnvelope for cross-shard; ~10ms p99 cross-shard read budget; per-shard ZK proof + cross-shard MMR inclusion (256B at 256 shards); shard_id immutable per session. §4.1 drain timeout already specified (7d abort → live migration). Additive (non-breaking) bump.                                                              |
 | v3.1-Resolved | 2026-08-21 | @cipherocto + @mmacedoeu | **§9 Worked-example reconciliation.** Step 1 sub_envelopes replaced `UPDATE vaults SET balance = balance ± 100` with `INSERT INTO transfer_events` per RFC-0960 §2.5 (event-sourced ledger, no direct UPDATE on cached balance). Both sub_envelopes append `TransferApplied` rows sharing one `tx_id`; cached `vaults.balance` is a projection over the log. The `Timeout case` already aligned (appends `TransferCorrected`). See §9.5 for prior-text rationale. RFC-only amendment; no substrate change. |
 
 ## Authors
@@ -46,45 +46,45 @@ Event-type routing would also cause divergent balance projections during partial
 
 ### Required RFCs
 
-| RFC | Status | Reason |
-|-----|--------|--------|
-| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §10 resource sharding architecture |
-| RFC-0962 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | MultiEnvelope cross-shard coordination |
-| RFC-0862 | Accepted (v1.2.0) | Sync as propagation; per-shard event batch shipping |
-| RFC-0959 | Accepted (v1.0) | SettlementReceipt envelope for cross-shard value transfer |
-| RFC-0126 | Accepted (v2.5.1) | Canonical serialization for shard commitment |
-| RFC-0853 | Draft | BLAKE3 primitive source for shard ID derivation + Merkle commitments |
+| RFC      | Status                                                             | Reason                                                               |
+| -------- | ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §10 resource sharding architecture                           |
+| RFC-0962 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | MultiEnvelope cross-shard coordination                               |
+| RFC-0862 | Accepted (v1.2.0)                                                  | Sync as propagation; per-shard event batch shipping                  |
+| RFC-0959 | Accepted (v1.0)                                                    | SettlementReceipt envelope for cross-shard value transfer            |
+| RFC-0126 | Accepted (v2.5.1)                                                  | Canonical serialization for shard commitment                         |
+| RFC-0853 | Draft                                                              | BLAKE3 primitive source for shard ID derivation + Merkle commitments |
 
 ### Companion RFCs
 
-| RFC | Relationship | Reason |
-|-----|--------------|--------|
-| RFC-0964 | Builds on | Constraint encoding for cross-shard constraint verification — Accepted v1.1 (2026-07-23; promoted in lockstep) |
-| RFC-0965 | Builds on | Capability extension format for shard-scoped capabilities — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC      | Relationship | Reason                                                                                                         |
+| -------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
+| RFC-0964 | Builds on    | Constraint encoding for cross-shard constraint verification — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0965 | Builds on    | Capability extension format for shard-scoped capabilities — Accepted v1.1 (2026-07-23; promoted in lockstep)   |
 
 ### Dependency Validation
 
-| Dependency | Type | Current Status (2026-07-23) | Hard-block? |
-|------------|------|------------------------------|-------------|
-| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
-| RFC-0962 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
-| RFC-0862 | Requires | Accepted | No |
-| RFC-0959 | Requires | Accepted | No |
-| RFC-0126 | Requires | Accepted | No |
-| RFC-0853 | Requires | Draft | YES |
+| Dependency | Type     | Current Status (2026-07-23)              | Hard-block?        |
+| ---------- | -------- | ---------------------------------------- | ------------------ |
+| RFC-0960   | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0962   | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0862   | Requires | Accepted                                 | No                 |
+| RFC-0959   | Requires | Accepted                                 | No                 |
+| RFC-0126   | Requires | Accepted                                 | No                 |
+| RFC-0853   | Requires | Draft                                    | YES                |
 
 **DAG check:** `0963 ← {0960, 0962, 0862, 0959, 0126, 0853}` — acyclic. Companion RFCs (RFC-0960, RFC-0962) promoted to Accepted on 2026-07-23; their hard-blocks resolved.
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Balance reads are single-shard | Every vault's event log lives on exactly one shard; reads need no fan-out |
-| G2 | Shard ID derivation deterministic | Two nodes computing `shard_id(vault_id)` produce identical u32 |
-| G3 | Shard count dynamic | Adding/removing shards triggers re-shard with bounded data migration |
-| G4 | Cross-shard atomicity | MultiEnvelope with AllRequired completes or aborts within `timeout_unix_ms` |
-| G5 | Sync-friendly | Per-shard event log is independent; nodes can sync shards out of order |
-| G6 | ZK-friendly | Per-shard Merkle root commits to entire shard state without revealing events |
+| Goal | Target                            | Metric                                                                       |
+| ---- | --------------------------------- | ---------------------------------------------------------------------------- |
+| G1   | Balance reads are single-shard    | Every vault's event log lives on exactly one shard; reads need no fan-out    |
+| G2   | Shard ID derivation deterministic | Two nodes computing `shard_id(vault_id)` produce identical u32               |
+| G3   | Shard count dynamic               | Adding/removing shards triggers re-shard with bounded data migration         |
+| G4   | Cross-shard atomicity             | MultiEnvelope with AllRequired completes or aborts within `timeout_unix_ms`  |
+| G5   | Sync-friendly                     | Per-shard event log is independent; nodes can sync shards out of order       |
+| G6   | ZK-friendly                       | Per-shard Merkle root commits to entire shard state without revealing events |
 
 ## Motivation
 
@@ -106,6 +106,7 @@ Phase 4 research (`docs/research/2026-07-22-event-sourced-ledger-precedents.md`)
 The mechanism: a vault's balance projection is `+ins - outs` over events touching that vault. If those events are scattered across N shards by type, every balance read requires N-shard fan-out. Worse, during partial sync a node that has synced shard A but not shard B computes a different balance than a node that has synced both. The result: balance non-determinism, broken consensus.
 
 Vault-id routing co-locates all events for one vault on one shard, making:
+
 - Balance reads single-shard (one log read, one projection).
 - Balance proofs ZK-friendly (one Merkle proof, one shard root).
 - Sync deterministic (one shard's log is sufficient for one vault's projection).
@@ -137,6 +138,7 @@ shard_for_segment(wal_segment_id: Hash, num_shards: u32) -> ShardID:
 A `MultiEnvelope` (RFC-0962 §7; renamed from `MultiSession`) may commit to multiple shards when it touches vaults on different shards; each sub-envelope routes to the appropriate shard via `shard_for_segment`. Cross-shard atomicity is enforced via `MultiEnvelope` `AllRequired` / `Quorum(n)` completion rules.
 
 Properties:
+
 - **Deterministic** — same inputs produce same output on every node.
 - **Uniform distribution** — BLAKE3 output is uniformly random; modulo gives roughly equal distribution per shard.
 - **No central registry** — every node computes shard IDs independently.
@@ -196,6 +198,7 @@ global_head -> MMRNode {
 ```
 
 K-deep shards mean a ZK proof of "vault V has balance B at event_id E" requires:
+
 - Merkle proof of the shard root at the relevant k-bucket.
 - Merkle proof of the event within the shard's K-event batch.
 - MMR proof binding the shard root to the global head.
@@ -323,6 +326,7 @@ sync_batch := {
 ```
 
 A node syncing shard N needs:
+
 1. The current `shard_id` (computed deterministically from any vault_id).
 2. The event log from genesis to head for shard N (or from last seen event_id).
 3. The shard root at the batch boundary (for MMR consistency).
@@ -374,7 +378,7 @@ The §9 Step 1 sub_envelopes prior to v3.1 carried direct-SQL `UPDATE vaults SET
 
 The v3.1 amendment replaces the direct UPDATE with `INSERT INTO transfer_events` per RFC-0960 §2.5 — both sub_envelopes append a `TransferApplied` row sharing one `tx_id` (groups the atomic event set across shards). The cached `vaults.balance` is recomputed by projection over the log; replayers on each shard deterministically derive the same balance. No substrate migration owed; spec-text reconciliation only.
 
-The §9 `Timeout case` already aligned with RFC-0960 §2.5 (appends `TransferCorrected`) — only the happy-path Step 1 sub_envelopes were stale text carried from the v2.0 draft (pre-RFC-0960 v3.0 acceptance). The v3.0 chain-aware cross-reference (§cross-reference, line 400) noted the substrate amendment but did not catch the §9 example drift. v3.1 closes the contradiction.
+The §9 `Timeout case` already aligned with RFC-0960 §2.5 (appends `TransferCorrected`) — only the happy-path Step 1 sub_envelopes were stale text carried from the v2.0 draft (pre-RFC-0960 v3.0 acceptance). The v3.0 chain-aware cross-reference (§cross-reference) noted the substrate amendment but did not catch the §9 example drift. v3.1 closes the contradiction.
 
 Routing algorithm (§1, §2, §3, §4) + Resolved Decisions §4.3 re-sharding safety + Open Questions §10 are unchanged. The §cross-reference RFC-0960 v3.0 amendment paragraph remains accurate post-v3.1.
 
@@ -382,27 +386,27 @@ Routing algorithm (§1, §2, §3, §4) + Resolved Decisions §4.3 re-sharding sa
 
 ## Open Questions
 
-| # | Question | Resolution Target |
-|---|----------|-------------------|
-| 1 | Optimal `num_shards` for a network of N nodes? | Empirical; default = `ceil(sqrt(N))` |
-| 2 | Should historical shards (Retired) be queryable? | Yes — read-only archive; GC after 1 year |
-| 3 | Can a single capability span multiple shards? | No — use MultiCapability + MultiEnvelope instead |
-| 4 | What's the cross-shard read cost? | Two shard reads + MMR proof; ~10ms p99 for 100 shards |
-| 5 | How does ZK proof of "vault V has balance B" compose across shards? | Single shard proof + MMR inclusion proof |
-| 6 | Can shard routing change mid-session? | No — `shard_id(vault_id, num_shards)` is fixed at session creation |
+| #   | Question                                                            | Resolution Target                                                  |
+| --- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | Optimal `num_shards` for a network of N nodes?                      | Empirical; default = `ceil(sqrt(N))`                               |
+| 2   | Should historical shards (Retired) be queryable?                    | Yes — read-only archive; GC after 1 year                           |
+| 3   | Can a single capability span multiple shards?                       | No — use MultiCapability + MultiEnvelope instead                   |
+| 4   | What's the cross-shard read cost?                                   | Two shard reads + MMR proof; ~10ms p99 for 100 shards              |
+| 5   | How does ZK proof of "vault V has balance B" compose across shards? | Single shard proof + MMR inclusion proof                           |
+| 6   | Can shard routing change mid-session?                               | No — `shard_id(vault_id, num_shards)` is fixed at session creation |
 
 ## Resolved Decisions (v2.1-Resolved)
 
 All Open Questions resolved with concrete answers (R28+ risk-closure round):
 
-| # | Question | Resolution | Status |
-|---|----------|------------|--------|
-| 1 | Optimal `num_shards` for N nodes | **`num_shards = clamp(ceil(sqrt(N)), 4, 256)`.** Default = `ceil(sqrt(N))`. Override via network config. Re-shard trigger: N changes by >2×, OR sustained load >70% on any shard for 24h, OR operator-initiated. | Resolved |
-| 2 | Historical (Retired) shards queryable? | **Read-only archive for 1 year, then GC.** Archive = per-shard MMR + events flushed to cold storage via RFC-0862 §archive. Queries against Retired shards return archived data; new writes forbidden. After 1y GC reclaims storage. | Resolved |
-| 3 | Capability across multiple shards | **No.** Single capability binds to one shard via `Sharded` caveat (RFC-0965). Cross-shard composition uses `MultiCapability` (RFC-0957 §Attenuation Invariant) + `MultiEnvelope` (RFC-0962 §7). MultiCapability carries `parent_capability` references to N single-shard capabilities. | Resolved |
-| 4 | Cross-shard read cost | **~10ms p99 for 100 shards** on commodity HW (1Gbps network, NVMe storage). Cost = 2 shard reads + MMR inclusion proof verification ≈ 2× BLAKE3 hashes (~100µs each) + 1 network RTT (~5ms). 256 shards: ~25ms p99. Linear in `num_shards`. | Resolved |
-| 5 | ZK balance proof composition across shards | **Per-shard MMR proof + cross-shard MMR inclusion proof.** Proof size = `log2(num_shards) × 32 bytes` = 256B at 256 shards. Proof generation: O(shard_size + log(num_shards)) field ops. Compatible with R1CS / PLONK / STWO circuits. | Resolved |
-| 6 | Shard routing change mid-session | **No.** `shard_id(vault_id, num_shards)` computed at session creation (per RFC-0962 §6). Routing table immutable for session lifetime. Re-sharding does NOT migrate in-flight sessions; they complete on source shard before retirement. New sessions after re-sharding route by new `num_shards`. | Resolved |
+| #   | Question                                   | Resolution                                                                                                                                                                                                                                                                                         | Status   |
+| --- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | Optimal `num_shards` for N nodes           | **`num_shards = clamp(ceil(sqrt(N)), 4, 256)`.** Default = `ceil(sqrt(N))`. Override via network config. Re-shard trigger: N changes by >2×, OR sustained load >70% on any shard for 24h, OR operator-initiated.                                                                                   | Resolved |
+| 2   | Historical (Retired) shards queryable?     | **Read-only archive for 1 year, then GC.** Archive = per-shard MMR + events flushed to cold storage via RFC-0862 §archive. Queries against Retired shards return archived data; new writes forbidden. After 1y GC reclaims storage.                                                                | Resolved |
+| 3   | Capability across multiple shards          | **No.** Single capability binds to one shard via `Sharded` caveat (RFC-0965). Cross-shard composition uses `MultiCapability` (RFC-0957 §Attenuation Invariant) + `MultiEnvelope` (RFC-0962 §7). MultiCapability carries `parent_capability` references to N single-shard capabilities.             | Resolved |
+| 4   | Cross-shard read cost                      | **~10ms p99 for 100 shards** on commodity HW (1Gbps network, NVMe storage). Cost = 2 shard reads + MMR inclusion proof verification ≈ 2× BLAKE3 hashes (~100µs each) + 1 network RTT (~5ms). 256 shards: ~25ms p99. Linear in `num_shards`.                                                        | Resolved |
+| 5   | ZK balance proof composition across shards | **Per-shard MMR proof + cross-shard MMR inclusion proof.** Proof size = `log2(num_shards) × 32 bytes` = 256B at 256 shards. Proof generation: O(shard_size + log(num_shards)) field ops. Compatible with R1CS / PLONK / STWO circuits.                                                             | Resolved |
+| 6   | Shard routing change mid-session           | **No.** `shard_id(vault_id, num_shards)` computed at session creation (per RFC-0962 §6). Routing table immutable for session lifetime. Re-sharding does NOT migrate in-flight sessions; they complete on source shard before retirement. New sessions after re-sharding route by new `num_shards`. | Resolved |
 
 ### §4.3 Re-sharding migration safety
 
@@ -432,6 +436,7 @@ This RFC = Resource shard routing. Status: **Accepted v3.1** (promoted from Draf
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 
 The `cipherocto-shard-router` crate implements:
+
 - `shard_for_vault(vault_id, num_shards) -> ShardID`
 - `shard_for_segment(wal_segment_id, num_shards) -> ShardID` (v2.0; WAL-as-primary)
 - Per-shard WAL segment writer (RFC-0960 §1.1)

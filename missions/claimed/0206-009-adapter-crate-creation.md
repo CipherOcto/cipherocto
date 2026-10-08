@@ -1,6 +1,6 @@
 ---
 name: 0206-009-adapter-crate-creation
-description: Open 2026-08-20 v1.0; — 5 NEW adapter crates (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + build_allowlist() + register() helper per adapter. Trait declarations (VaultStore, ReputationStore, VaultLookup, SessionStore, PolicyStore) remain in the respective owner crates per RFC §Adapter Crate List lines 181+183. Replaces retired 0206-004-adapter-crates (split into 0206-009 + 0206-010 per R3 structural analysis).
+description: Open 2026-08-20 v1.0; — 5 NEW adapter crates (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + build_allowlist() + register() helper per adapter. Trait declarations (VaultStore, ReputationStore, VaultLookup, SessionStore, PolicyStore) remain in the respective owner crates per RFC §Adapter Crate List. Replaces retired 0206-004-adapter-crates (split into 0206-009 + 0206-010 per R3 structural analysis).
 metadata:
   node_type: mission
   type: project
@@ -14,7 +14,7 @@ metadata:
     - 0206-006-cipherocto-policy-rename-alignment
     - RFC-0205
     - RFC-0206
-    # R13 fix: DAG ordering per plan v1.1 §DAG order L51-67. Note that 0206-008 is NOT listed as a direct dep
+    # R13 fix: DAG ordering per plan v1.1 §DAG order. Note that 0206-008 is NOT listed as a direct dep
     # because it is upstream of 0206-003 (0206-008 → 0206-003 → 0206-009 transitive closure); listing 0206-008
     # here would create a redundant dep. 0206-003's `depends_on:` retains 0206-008 as the transitive handoff.
     # 0206-005 + 0206-006 are parallel branches feeding 0206-009 (per plan v1.1 §DAG), retained as direct deps.
@@ -78,7 +78,7 @@ Each adapter crate:
 
 -
 - (generic register helper form)
-- -Cuts lines 333-338 (REQUIRED `octo-storage-core` dep in adapter Cargo.toml)
+- Cuts a section (REQUIRED `octo-storage-core` dep in adapter Cargo.toml)
 - (adversarial fixtures — owned by 0206-010)
 - Mission `0206-001-substrate-newtype` (substrate `Database` type + TypedStatement enum + AdapterAllowlist + facade `crates/octo-storage/`)
 - Mission `0206-003-trait-moves` (HolderRegistry + StoolapDidRegistry moves must land before adapter trait declarations)

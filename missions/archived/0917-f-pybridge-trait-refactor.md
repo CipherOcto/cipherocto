@@ -4,7 +4,7 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-pyo3/src/completion.rs:513` `PyBridgeProviderFactory` + `:718` `provider.with_api_base(base)`. All 7 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-pyo3/src/completion.rs` `PyBridgeProviderFactory` + `provider.with_api_base(base)`. All 7 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 
@@ -21,6 +21,7 @@ RFC-0917 (Economics): Dual-Mode Query Router
 Verified count: 41 provider match arms in py_bridge/factory.rs (2026-05-16).
 
 Refactoring to trait dispatch would:
+
 - Reduce factory.rs from ~400 lines to ~50 lines
 - Make adding new providers a 1-line change (register in map)
 - Enable runtime provider registration

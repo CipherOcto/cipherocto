@@ -7,49 +7,50 @@
 ## Problem
 
 `octo-transport` (Layer D) today exposes only fire-and-forget:
-- `NetworkSender::send(&[u8])` (sender.rs:49) — no return data
+
+- `NetworkSender::send(&[u8])` (sender.rs) — no return data
 - `NodeTransport::broadcast` + `send_best` — one-way
 
-Mission `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`) explicitly deferred cross-node forwarding because "request/response substrate that does not exist in `octo-transport` today" (per `chain.rs:33-41` module docstring). Mission `0871b-cross-node-forwarding` inherits this dependency as its hardest external blocker.
+Mission `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`) explicitly deferred cross-node forwarding because "request/response substrate that does not exist in `octo-transport` today" (per the `chain.rs` module docstring). Mission `0871b-cross-node-forwarding` inherits this dependency as its hardest external blocker.
 
-**Key insight (audit 2026-08-12)**: this substrate already exists in quota-router-specific form per RFC-0870 §PendingRequests + §ForwardingConfig + §ForwardResponse (lines 586-633, 1112-1119, 1368, 1431-1434, 1887-1899, 2312+). It just lives in `quota-router-core` and uses RFC-0870-mesh-specific discriminator bytes (`0xC3-0xC5` in `0x0009:0003` sub-namespace per `payload_kind.rs:254`). This mission **generalizes** the RFC-0870 design to Layer D substrate using RFC-0871's `envelope_id: [u8; 32]` as the correlation key — not greenfield design.
+**Key insight (audit 2026-08-12)**: this substrate already exists in quota-router-specific form per RFC-0870 §PendingRequests + §ForwardingConfig + §ForwardResponse. It just lives in `quota-router-core` and uses RFC-0870-mesh-specific discriminator bytes (`0xC3-0xC5` in `0x0009:0003` sub-namespace per `payload_kind.rs`). This mission **generalizes** the RFC-0870 design to Layer D substrate using RFC-0871's `envelope_id: [u8; 32]` as the correlation key — not greenfield design.
 
 ## RFC anchor
 
-- **Authoritative pattern source**: RFC-0870 §ForwardRequest / §ForwardResponse / §ForwardReject (lines 586-633) + §PendingRequests (`insert/complete/reject/origin`, lines 1110-1119, 1368, 2312+) + §ForwardingConfig (`max_ttl/max_concurrent_forwards/forward_timeout/max_payload_bytes`, lines 1887-1899) + §ForwardRejectReason (line 1634). Already implemented in `quota-router-core` mesh-specific; 0870k generalizes to Layer D.
-- **Correlation key**: RFC-0871 §Algorithms step 2 (`envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))`, line 200-201) — semantically equivalent to RFC-0870's `request_id` (also BLAKE3-derived 32 bytes) but already wired through the entire envelope pipeline (Layer A + replay defense). No new wire form needed.
-- **Consumer pattern**: RFC-0871 §Algorithms TV7-ish — `WALLET_RESOLVE_DID` envelope sent to wallet node carries asker's DID; wallet reply envelope carries same `envelope_id` field (line 518); sender matches reply by envelope_id. This is the existing cross-node envelope_id correlation pattern that 0870k generalizes to substrate.
+- **Authoritative pattern source**: RFC-0870 §ForwardRequest / §ForwardResponse / §ForwardReject + §PendingRequests (`insert/complete/reject/origin`) + §ForwardingConfig (`max_ttl/max_concurrent_forwards/forward_timeout/max_payload_bytes`) + §ForwardRejectReason. Already implemented in `quota-router-core` mesh-specific; 0870k generalizes to Layer D.
+- **Correlation key**: RFC-0871 §Algorithms step 2 (`envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))`) — semantically equivalent to RFC-0870's `request_id` (also BLAKE3-derived 32 bytes) but already wired through the entire envelope pipeline (Layer A + replay defense). No new wire form needed.
+- **Consumer pattern**: RFC-0871 §Algorithms TV7-ish — `WALLET_RESOLVE_DID` envelope sent to wallet node carries asker's DID; wallet reply envelope carries same `envelope_id` field; sender matches reply by envelope_id. This is the existing cross-node envelope_id correlation pattern that 0870k generalizes to substrate.
 - **General transport substrate**: RFC-0850 (Deterministic Overlay Transport) — the foundation RFC; 0870k adds a request/response primitive on top.
 
 ## Substrate (already shipped)
 
-- `octo-transport/src/sender.rs:18-39` — `TransportError` enum (5 variants: `AdapterFailure`, `AllTransportsFailed`, `EnvelopeConstruction`, `Unhealthy`, `GovernanceViolation`)
-- `octo-transport/src/sender.rs:47-56` — `NetworkSender` trait (`send` + `name` + `is_healthy`)
-- `octo-transport/src/sender.rs:5-14` — `SendContext { mission_id: [u8; 32], priority: u8, source_peer: [u8; 32], origin_gateway: [u8; 32] }`
-- `octo-transport/src/receiver.rs:7-14` — `ReceiveContext { source_transport: String, mission_id: [u8; 32], sender_id: Option<[u8; 32]> }`
-- `octo-transport/src/receiver.rs:22-32` — `NetworkReceiver` trait (`on_receive` + `name`)
-- `octo-transport/src/node_transport.rs:14` — `NodeTransport { senders: Vec<Arc<dyn NetworkSender>>, receivers: ... }`
-- `octo-transport/src/node_transport.rs:20` — `NodeTransport::new(senders)`
-- `octo-transport/src/node_transport.rs:30` — `NodeTransport::register_receiver(receiver)`
-- `octo-transport/Cargo.toml:14,18` — `futures = "0.3"`, `tokio = { version = "1", features = ["time", "sync", "net", "io-util", "rt"] }` (tokio::sync::oneshot available)
-- `octo-transport/src/lib.rs:1-14` — module structure
-- `octo-protocol/src/envelope.rs:154` — `NodeEnvelope.envelope_id: [u8; 32]` (RFC-0871 correlation key)
-- `octo-protocol/src/envelope.rs:200-201` — `envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))` (RFC-0871 §Algorithms step 2)
-- `crates/quota-router-core/src/node/quota_router_node.rs:1368` — existing `pending: PendingRequests` field (RFC-0870 mesh-specific; 0870k generalizes)
-- `crates/quota-router-core/src/node/quota_router_node.rs:2312+` — existing `PendingRequests::insert/complete/reject/origin` impl (RFC-0870)
+- `octo-transport/src/sender.rs` — `TransportError` enum (5 variants: `AdapterFailure`, `AllTransportsFailed`, `EnvelopeConstruction`, `Unhealthy`, `GovernanceViolation`)
+- `octo-transport/src/sender.rs` — `NetworkSender` trait (`send` + `name` + `is_healthy`)
+- `octo-transport/src/sender.rs` — `SendContext { mission_id: [u8; 32], priority: u8, source_peer: [u8; 32], origin_gateway: [u8; 32] }`
+- `octo-transport/src/receiver.rs` — `ReceiveContext { source_transport: String, mission_id: [u8; 32], sender_id: Option<[u8; 32]> }`
+- `octo-transport/src/receiver.rs` — `NetworkReceiver` trait (`on_receive` + `name`)
+- `octo-transport/src/node_transport.rs` — `NodeTransport { senders: Vec<Arc<dyn NetworkSender>>, receivers: ... }`
+- `octo-transport/src/node_transport.rs` — `NodeTransport::new(senders)`
+- `octo-transport/src/node_transport.rs` — `NodeTransport::register_receiver(receiver)`
+- `octo-transport/Cargo.toml` — `futures = "0.3"`, `tokio = { version = "1", features = ["time", "sync", "net", "io-util", "rt"] }` (tokio::sync::oneshot available)
+- `octo-transport/src/lib.rs` — module structure
+- `octo-protocol/src/envelope.rs` — `NodeEnvelope.envelope_id: [u8; 32]` (RFC-0871 correlation key)
+- `octo-protocol/src/envelope.rs` — `envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))` (RFC-0871 §Algorithms step 2)
+- `crates/quota-router-core/src/node/quota_router_node.rs` — existing `pending: PendingRequests` field (RFC-0870 mesh-specific; 0870k generalizes)
+- `crates/quota-router-core/src/node/quota_router_node.rs` — existing `PendingRequests::insert/complete/reject/origin` impl (RFC-0870)
 
 No consumer of `send_request` exists yet at Layer D. Mission `0871b-cross-node-forwarding` (OPEN, same date) is the first general-purpose consumer. Quota-router mesh already uses RFC-0870's mesh-specific request/response (per `quota-router-core`).
 
 ## Traits / surface in scope (NEW)
 
-### T1. `TransportError::Unsupported(String)` variant — additive on `sender.rs:18`
+### T1. `TransportError::Unsupported(String)` variant — additive on `sender.rs`
 
 ```rust
 #[error("operation not supported: {0}")]
 Unsupported(String),
 ```
 
-Additive — no existing match arm breaks. Add a test case to `transport_error_display` test at `sender.rs:86`.
+Additive — no existing match arm breaks. Add a test case to `transport_error_display` test in `sender.rs`.
 
 ### T2. `NetworkSender::send_request` — additive trait method with default body
 
@@ -115,6 +116,7 @@ impl NodeTransport {
 ```
 
 Internal implementation:
+
 1. Iterate `self.senders`; first one whose `send_request` does NOT return `Unsupported` wins.
 2. Wrap in `tokio::time::timeout(timeout, send_request_future).await`.
 3. On timeout → `Err(AllTransportsFailed)`.
@@ -217,21 +219,21 @@ The reply envelope IS a `NodeEnvelope` whose `envelope_id` field equals the requ
 
 ## Scope (acceptance criteria)
 
-| AC | Description | Type |
-|----|-------------|------|
-| AC-1 | `TransportError::Unsupported(String)` variant added to `octo-transport/src/sender.rs:18-39`; new test case in `transport_error_display` at `sender.rs:86` | MODIFY enum + test |
-| AC-2 | `NetworkSender::send_request` method per T2 with default body returning `Err(Unsupported(...))`; trait stays source-compatible (every existing `impl NetworkSender` in workspace compiles unchanged) | MODIFY trait |
-| AC-3 | `NodeTransport::request_response` high-level API per T3; iterate senders, skip `Unsupported`, wrap in `tokio::time::timeout`; accepts fully-formed `NodeEnvelope` per RFC-0871 | NEW method |
-| AC-4 | `NodeTransport::register_response_handler` + `dispatch_response` per T4 keyed by RFC-0871 `envelope_id`; `Arc<Mutex<HashMap<[u8;32], oneshot::Sender<Vec<u8>>>>>` internal state | NEW methods + state |
-| AC-5 | `RequestResponseConfig` per T5 in `octo-transport/src/request_response.rs` (NEW file); serde round-trip test | NEW struct |
-| AC-6 | `PendingRequests` per T6 in same file; `insert/complete/reject/evict_expired` impls + unit tests | NEW struct |
-| AC-7 | Unit test: `request_response_unsupported_sender_returns_error` — `NodeTransport` with only UDP sender (no `send_request` impl) returns `Err(AllTransportsFailed)` after timeout | NEW test |
-| AC-8 | Unit test: `request_response_round_trip_via_mock_sender` — in-process `MockRequestSender` (test-only `NetworkSender` impl with shared correlation map) + `NodeTransport` round-trips a request + reply where reply envelope's `envelope_id` echoes the request's `envelope_id` | NEW test |
-| AC-9 | Unit test: `dispatch_response_unknown_envelope_id_falls_through` — unknown `envelope_id` returns `Err` (logged via `tracing::warn!`), does NOT panic | NEW test |
-| AC-10 | Unit test: `register_response_handler_drop_on_caller_cancel` — caller drops the `oneshot::Receiver`; subsequent `dispatch_response` returns `Err` without leaking the entry; `PendingRequests::evict_expired` reaps stale entries | NEW test |
-| AC-11 | Integration TV: 3-node mock transport (A → B → C) in `tests/request_response_chain.rs`; A's request propagates B → C via RFC-0871 `envelope_id` correlation; C's reply propagates back; intermediate nodes use `register_response_handler` to bind the forward + return paths | NEW TV |
-| AC-12 | `cargo clippy -p octo-transport --all-targets -- -D warnings` clean (verifies back-compat: every `impl NetworkSender` in workspace still compiles) | GATE |
-| AC-13 | `cargo fmt --all -- --check` clean | GATE |
+| AC    | Description                                                                                                                                                                                                                                                                    | Type                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| AC-1  | `TransportError::Unsupported(String)` variant added to `octo-transport/src/sender.rs`; new test case in `transport_error_display` in `sender.rs`                                                                                                                               | MODIFY enum + test  |
+| AC-2  | `NetworkSender::send_request` method per T2 with default body returning `Err(Unsupported(...))`; trait stays source-compatible (every existing `impl NetworkSender` in workspace compiles unchanged)                                                                           | MODIFY trait        |
+| AC-3  | `NodeTransport::request_response` high-level API per T3; iterate senders, skip `Unsupported`, wrap in `tokio::time::timeout`; accepts fully-formed `NodeEnvelope` per RFC-0871                                                                                                 | NEW method          |
+| AC-4  | `NodeTransport::register_response_handler` + `dispatch_response` per T4 keyed by RFC-0871 `envelope_id`; `Arc<Mutex<HashMap<[u8;32], oneshot::Sender<Vec<u8>>>>>` internal state                                                                                               | NEW methods + state |
+| AC-5  | `RequestResponseConfig` per T5 in `octo-transport/src/request_response.rs` (NEW file); serde round-trip test                                                                                                                                                                   | NEW struct          |
+| AC-6  | `PendingRequests` per T6 in same file; `insert/complete/reject/evict_expired` impls + unit tests                                                                                                                                                                               | NEW struct          |
+| AC-7  | Unit test: `request_response_unsupported_sender_returns_error` — `NodeTransport` with only UDP sender (no `send_request` impl) returns `Err(AllTransportsFailed)` after timeout                                                                                                | NEW test            |
+| AC-8  | Unit test: `request_response_round_trip_via_mock_sender` — in-process `MockRequestSender` (test-only `NetworkSender` impl with shared correlation map) + `NodeTransport` round-trips a request + reply where reply envelope's `envelope_id` echoes the request's `envelope_id` | NEW test            |
+| AC-9  | Unit test: `dispatch_response_unknown_envelope_id_falls_through` — unknown `envelope_id` returns `Err` (logged via `tracing::warn!`), does NOT panic                                                                                                                           | NEW test            |
+| AC-10 | Unit test: `register_response_handler_drop_on_caller_cancel` — caller drops the `oneshot::Receiver`; subsequent `dispatch_response` returns `Err` without leaking the entry; `PendingRequests::evict_expired` reaps stale entries                                              | NEW test            |
+| AC-11 | Integration TV: 3-node mock transport (A → B → C) in `tests/request_response_chain.rs`; A's request propagates B → C via RFC-0871 `envelope_id` correlation; C's reply propagates back; intermediate nodes use `register_response_handler` to bind the forward + return paths  | NEW TV              |
+| AC-12 | `cargo clippy -p octo-transport --all-targets -- -D warnings` clean (verifies back-compat: every `impl NetworkSender` in workspace still compiles)                                                                                                                             | GATE                |
+| AC-13 | `cargo fmt --all -- --check` clean                                                                                                                                                                                                                                             | GATE                |
 
 ## Out of Scope
 
@@ -244,21 +246,21 @@ The reply envelope IS a `NodeEnvelope` whose `envelope_id` field equals the requ
 
 ## Cross-references
 
-- **RFC-0870** §ForwardRequest / §ForwardResponse / §ForwardReject (lines 586-633) + §PendingRequests (lines 1110-1119, 1368, 2312+) + §ForwardingConfig (lines 1887-1899) + §ForwardRejectReason (line 1634) — authoritative pattern source
-- **RFC-0871** §Algorithms step 2 (`envelope_id` derivation, lines 200-201) — correlation key
+- **RFC-0870** §ForwardRequest / §ForwardResponse / §ForwardReject + §PendingRequests + §ForwardingConfig + §ForwardRejectReason — authoritative pattern source
+- **RFC-0871** §Algorithms step 2 (`envelope_id` derivation) — correlation key
 - **RFC-0871** §Algorithms step 3 (signing preimage `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", envelope_id || from_did_wire || payload)`) — for downstream auth at consumer layer
-- **RFC-0871** §Roles and Authorities — `WalletNode` example uses cross-node `envelope_id` correlation (`WALLET_RESOLVE_DID`, line 518)
+- **RFC-0871** §Roles and Authorities — `WalletNode` example uses cross-node `envelope_id` correlation (`WALLET_RESOLVE_DID`)
 - RFC-0850 (Deterministic Overlay Transport) §Deterministic Overlay substrate — general transport foundation
 - RFC-0970 §Algorithms (chain_hash + forwarding-hop pattern) — `chain_hash` is hop-binding integrity (independent from `envelope_id` correlation)
-- `octo-transport/src/sender.rs:18-39` — `TransportError` enum (variant added here)
-- `octo-transport/src/sender.rs:47-56` — `NetworkSender` trait (method added here)
-- `octo-transport/src/sender.rs:5-14` — `SendContext`
-- `octo-transport/src/receiver.rs:7-14` — `ReceiveContext`
-- `octo-transport/src/node_transport.rs:14,20,30` — `NodeTransport` (high-level API added here)
-- `octo-transport/Cargo.toml:14,18` — `futures = "0.3"`, `tokio = "1"` (oneshot + time available)
-- `octo-protocol/src/envelope.rs:154,200-201` — `NodeEnvelope.envelope_id` (RFC-0871 correlation key)
-- `crates/quota-router-core/src/node/quota_router_node.rs:1368,2312+` — existing `PendingRequests` (mesh-specific; 0870k generalizes the design)
-- `crates/octo-identity-resolver-node/src/handlers/chain.rs:33-41` — explicit OUT OF SCOPE note for cross-node forwarding; this mission unblocks it
+- `octo-transport/src/sender.rs` — `TransportError` enum (variant added here)
+- `octo-transport/src/sender.rs` — `NetworkSender` trait (method added here)
+- `octo-transport/src/sender.rs` — `SendContext`
+- `octo-transport/src/receiver.rs` — `ReceiveContext`
+- `octo-transport/src/node_transport.rs` — `NodeTransport` (high-level API added here)
+- `octo-transport/Cargo.toml` — `futures = "0.3"`, `tokio = "1"` (oneshot + time available)
+- `octo-protocol/src/envelope.rs` — `NodeEnvelope.envelope_id` (RFC-0871 correlation key)
+- `crates/quota-router-core/src/node/quota_router_node.rs` — existing `PendingRequests` (mesh-specific; 0870k generalizes the design)
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs` — explicit OUT OF SCOPE note for cross-node forwarding; this mission unblocks it
 - Mission `0871b-cross-node-forwarding` (OPEN, 2026-08-12) — first consumer of this substrate; `RemoteResolverBackend::resolve_via` switches from `Err(Unsupported)` stub to a real `NodeTransport::request_response` call once this mission lands
 - Mission `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`) — declared this dependency
 - Mission `0870j-udp-adapter-for-gossip-broadcast` (CLOSED 2026-08-07) — UDP adapter inherits default `send_request = Err(Unsupported)` (UDP is fire-and-forget by design)
@@ -275,15 +277,17 @@ The reply envelope IS a `NodeEnvelope` whose `envelope_id` field equals the requ
 ## Dependency
 
 **This mission unblocks**:
+
 - `0871b-cross-node-forwarding` — `RemoteResolverBackend::resolve_via` becomes a real `NodeTransport::request_response` call instead of `Err(Unsupported)` stub
 - Any future consumer needing cross-node reply (DID write coordinator response, RFC-0970 forwarding-hop envelope return, …)
 
 **Blocked by**:
+
 - None — pure substrate extension; all dependencies (`octo-transport` workspace deps + `octo-protocol::NodeEnvelope`) already present
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-|---------|------------|--------|---------|
-| v0.1    | 2026-08-12 | open   | Mission filed. RFC-0850 cited as authoritative anchor; RFC-0970 cited as pattern source; `NetworkSender::send_request` with `correlation_id`; sidecar `CorrelationEnvelope` + magic-byte sidecar. **13 ACs.** |
+| Version | Date       | Status | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-12 | open   | Mission filed. RFC-0850 cited as authoritative anchor; RFC-0970 cited as pattern source; `NetworkSender::send_request` with `correlation_id`; sidecar `CorrelationEnvelope` + magic-byte sidecar. **13 ACs.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | v0.2    | 2026-08-12 | open   | RFC re-check audit: RFC-0850 has zero req/resp design (only general transport); RFC-0970 has zero hits. RFC-0870 has FULL req/resp substrate design (`ForwardRequest`/`ForwardResponse`/`ForwardReject` + `PendingRequests` + `ForwardingConfig` + `ForwardRejectReason`) in `quota-router-core` mesh-specific. RFC-0871 provides correlation key via `NodeEnvelope.envelope_id` (semantic layer). Rewritten: RFC-0870 promoted to authoritative pattern source; RFC-0871 `envelope_id` is the correlation key (not `correlation_id`); RFC-0870 `PendingRequests` generalized to `octo-transport::PendingRequests` (dropped mesh-specific `origin: RouterNodeId` field, added `registered_at`); `ForwardingConfig` generalized to `RequestResponseConfig` (dropped `max_ttl`, mesh-specific); sidecar `CorrelationEnvelope` + magic-byte dropped (RFC-0871 `NodeEnvelope.envelope_id` IS the wire form, no new envelope kind). 13 ACs (consolidated, no AC count change). |

@@ -5,9 +5,10 @@
 claimed 2026-08-11 (@claude).
 
 **Substrate:** Mission `0957-f-v2-bundle` LANDED (commit `b6bc190b`)
-+ cutover LANDED (commit `7a967095`). `CapabilityBundleV2` +
-`CapabilityBundleV2Envelope` are the production wire form.
-RFC-0009 §Phase 2 TV slot empty prior to this mission.
+
+- cutover LANDED (commit `7a967095`). `CapabilityBundleV2` +
+  `CapabilityBundleV2Envelope` are the production wire form.
+  RFC-0009 §Phase 2 TV slot empty prior to this mission.
 
 ## Summary
 
@@ -20,11 +21,13 @@ closing the gap left by 17 inline structural tests in
 ## Scope (and NOT in scope)
 
 **In scope:**
+
 - `crates/octo-cap-macaroon/tests/bundle_v2_tv.rs` (NEW) — 10 TV functions.
 - Precomputed borsh bytes for root + child bundles, prefix, bundle_id BLAKE3 digests.
 - Boundary chain_depth accept/reject assertions.
 
 **NOT in scope:**
+
 - V1 wire form — V1 substrate removed in `0957-f-v2-bundle-consumer-migration`.
 - `tvs/bundle_v2.json` file — V1's `tvs/bundle_v1.json` is dead (no runtime consumer); match precedent, skip.
 - Cross-impl conformance suite (other Rust crates) — single-impl tests in this crate only.
@@ -58,7 +61,7 @@ closing the gap left by 17 inline structural tests in
 4. Each TV is a single `assert_eq!` (mirrors `chain_namespace_tv::tv10` template).
 5. On future borsh schema drift, regenerate + commit new bytes via the helper.
 
-RFC-0008 Class A determinism + pinned `borsh = "=1.5.0"` (per `Cargo.toml:50`) guarantees identical bytes across platforms.
+RFC-0008 Class A determinism + pinned `borsh = "=1.5.0"` (per `Cargo.toml`) guarantees identical bytes across platforms.
 
 ## Cross-references
 
@@ -70,7 +73,7 @@ RFC-0008 Class A determinism + pinned `borsh = "=1.5.0"` (per `Cargo.toml:50`) g
 
 ## Version History
 
-| Version | Date       | Status   | Changes |
-| ------- | ---------- | -------- | ------- |
-| v0.1    | 2026-08-11 | claimed  | Initial mission file (NOT FILED prior — card `next-session-candidates-2026-08-11.md` flagged as unresolved) |
-| v0.2    | 2026-08-11 | closed   | LANDED 2026-08-11. 10/10 TV pass; 185 lib tests unchanged; clippy + fmt clean |
+| Version | Date       | Status  | Changes                                                                                                     |
+| ------- | ---------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-11 | claimed | Initial mission file (NOT FILED prior — card `next-session-candidates-2026-08-11.md` flagged as unresolved) |
+| v0.2    | 2026-08-11 | closed  | LANDED 2026-08-11. 10/10 TV pass; 185 lib tests unchanged; clippy + fmt clean                               |

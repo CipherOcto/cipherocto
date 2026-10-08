@@ -31,9 +31,9 @@ This mission captures the audit findings + documents the external dependency. **
 **Evidence:**
 
 1. `git log --oneline | grep 0968a2` → 5 commits: `6104a57f` (R7 mission-text refresh) + `48cf9978` (R2 fixes) + `b0660c39` (R1 fixes) + `72bf19d7` (IMPL landed) + `f8ac3a82` (0968a status refresh) — confirms IMPL landed R0-R2 + R7 mission refresh.
-2. `crates/octo-reputation/src/anchor.rs:174-208` + `:143-161` + `auth.rs:399-603` — substrate for 8 GREEN ACs present.
+2. `crates/octo-reputation/src/anchor.rs` + `crates/octo-reputation/src/auth.rs` — substrate for 8 GREEN ACs present.
 3. `crates/octo-reputation/migrations/v012__reputation_anchors_governance.sql` — v012 migration LANDED (governance_snapshot + governance_proof + governance_set_hash columns).
-4. `crates/octo-reputation/src/anchor_job.rs:139` — stub only; deterministic placeholder, does NOT exercise `reputation_anchors(event_id)` UNIQUE path. Live submitter fixture required for DEFERRED ACs (idempotency + failure isolation).
+4. `crates/octo-reputation/src/anchor_job.rs` — stub only; deterministic placeholder, does NOT exercise `reputation_anchors(event_id)` UNIQUE path. Live submitter fixture required for DEFERRED ACs (idempotency + failure isolation).
 
 **Fix:** Inline retro-supersession note added to Status block quote (combined partial LANDED + external blocker into single quote for readability). Mission §Acceptance Criteria `[x]` vs `[ ]` checkboxes preserved per historical-mission-preservation + R19 scope discipline. DEFERRED ACs unchanged (the blocker is external; closure path documented in this coordination mission).
 
@@ -43,7 +43,7 @@ This mission captures the audit findings + documents the external dependency. **
 
 RFC-0968-A2 spec declares Live `ChainAnchorSubmitter` impl required for production (gated on chain-substrate selection RFC per `## Dependencies` of `0968a2` mission). 19 of 27 ACs `[ ]` DEFERRED to this external blocker.
 
-**Coverage gap:** `rg 'ChainAnchorSubmitter' crates/` returns 0 hits for live impl. Stub at `crates/octo-reputation/src/anchor_job.rs:139` returns deterministic placeholder; does NOT exercise `reputation_anchors(event_id)` UNIQUE path required for idempotency test (AC #14) + failure isolation test (AC #15).
+**Coverage gap:** `rg 'ChainAnchorSubmitter' crates/` returns 0 hits for live impl. Stub in `crates/octo-reputation/src/anchor_job.rs` returns deterministic placeholder; does NOT exercise `reputation_anchors(event_id)` UNIQUE path required for idempotency test (AC #14) + failure isolation test (AC #15).
 
 **Owned by:** External — chain-substrate selection RFC (RFC-0927-adjacent; not yet filed; mission external to RFC-0968-A2 scope per R19). DEFERRED ACs documented in `0968a2` §Acceptance Criteria as DEFERRED — closure path = chain-substrate selection RFC filing + landed + 19 ACs re-evaluated.
 

@@ -39,10 +39,10 @@ Most substrate already landed (mission file path drift corrected):
 
 | Mission AC  | Original path (stale)                                                                                                      | Actual current state                                                                                                                                                                                                                     |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AC-5        | `settlement_event_repo.rs: cost_micro_octo_w: u128 → cost: Dqa`                                                            | ALREADY LANDED — field at line 277 typed `octo_determin::Dqa`; field name remains `cost_micro_octo_w` (cosmetic — wire form is already DqaEncoding via v004 column type)                                                                 |
-| AC-5        | `SettlementEnvelope.cost: DqaEncoding`                                                                                     | ALREADY LANDED — at `crates/quota-router-storage/src/ask.rs:1003` with `#[serde(with = "crate::dqa_serde::field")] pub cost: Dqa`                                                                                                        |
+| AC-5        | `settlement_event_repo.rs: cost_micro_octo_w: u128 → cost: Dqa`                                                            | ALREADY LANDED — field typed `octo_determin::Dqa`; field name remains `cost_micro_octo_w` (cosmetic — wire form is already DqaEncoding via v004 column type)                                                                             |
+| AC-5        | `SettlementEnvelope.cost: DqaEncoding`                                                                                     | ALREADY LANDED — in `crates/quota-router-storage/src/ask.rs` with `#[serde(with = "crate::dqa_serde::field")] pub cost: Dqa`                                                                                                             |
 | AC-6        | `crates/quota-router-storage/src/octo_vault_lookup.rs` (NEW per S5.1 follow-on)                                            | ALREADY LANDED — actually at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` (S5.1 follow-on landed; uses `octo_cap_macaroon::{VaultLookup, VaultRowSnapshot}` + `octo_vault::{ChainId, VaultId, VaultState, VaultSubstrate}`) |
-| AC-2 step 2 | `crates/octo-protocol/src/settlement_envelope.rs`                                                                          | NOT EXISTENT — `SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs:984`                                                                                                                                                |
+| AC-2 step 2 | `crates/octo-protocol/src/settlement_envelope.rs`                                                                          | NOT EXISTENT — `SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs`                                                                                                                                                    |
 | AC-2 step 2 | `crates/quota-router-storage/src/octo_vault_lookup.rs`                                                                     | NOT EXISTENT — `OctoVaultLookup` lives in `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs`                                                                                                                                      |
 | AC-4        | `migrations/v015__settlement_chain_vault.sql`                                                                              | NOT EXISTENT — v015 slot taken by `v015__chain_aware_slash_ledger.sql`. New migration must be v016.                                                                                                                                      |
 | AC-3        | `crates/octo-protocol/tests/tv_0959_settlement_wire.rs`                                                                    | NOT EXISTENT — new TV file must live in `crates/quota-router-storage/tests/` (where `SettlementEnvelope` lives)                                                                                                                          |
@@ -53,7 +53,7 @@ Most substrate already landed (mission file path drift corrected):
 
 1. Add `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>`
    fields to `SettlementEnvelope` (extend existing struct at
-   `crates/quota-router-storage/src/ask.rs:984`).
+   `crates/quota-router-storage/src/ask.rs`).
 2. Update `SettlementEnvelope::compute_settlement_hash()` to include
    the new fields in canonical preimage.
 3. Add `SettlementError::ChainMismatch { vault_id, vault_chain_id,
@@ -249,7 +249,7 @@ settlement_events(cost_vault_id)` per §20.7 audit query
   - `SettlementEventInsert` DAO input struct gains the same fields
   - INSERT SQL bindings updated for the 2 new columns
   - `cost_micro_octo_w: octo_determin::Dqa` field ALREADY present
-    (line 277) — no change to cost field
+    — no change to cost field
 - AC-6: **`OctoVaultLookup` adapter** ALREADY LANDED at
   `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` (S5.1
   follow-on). This mission REUSES the adapter via the `VaultLookup`
@@ -302,7 +302,7 @@ vault_lookup: &dyn VaultLookup,
   - S6d RFC-0900 amendment (pending, 10 TV)
   - S6f RFC-0960 amendment (pending, 108 TV)
   - S6g RFC-0105 amendment (pending, 109 TV)
-- **Pattern:** `crates/octo-cap-macaroon/src/vault_lookup.rs:62` —
+- **Pattern:** `crates/octo-cap-macaroon/src/vault_lookup.rs` —
   existing `VaultLookup` trait (S5 LANDED) — settlement-time
   verifier reuses this trait directly per AC-7 (no shadow impl)
 - **Pattern:** `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs` —
@@ -410,10 +410,10 @@ asset_id)` — canonical vault_id helper for TV cross-ref
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #4, parallel-model Risks #5 HIGH + #6 MED). S6e sub-session. Co-filed with `0862-c9-micro-octow-type-unification.md` + `0105-x-s4-deferred-codemod-sites.md`.                                                                                                                                                                                                                                                                       |
-| 2026-08-19 | @mmacedoeu | Re-scoped per 2026-08-19 recon: corrected file paths (`SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs:984`, NOT `crates/octo-protocol/src/settlement_envelope.rs`); corrected migration slot (v016, NOT v015 — taken by `chain_aware_slash_ledger`); corrected OctoVaultLookup location (already LANDED at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs`, NOT new file); expanded AC list from 7 → 10 to reflect recon-delimited surface; cross-ref RFC-0010 v1.6 (LANDED 2026-08-19). |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #4, parallel-model Risks #5 HIGH + #6 MED). S6e sub-session. Co-filed with `0862-c9-micro-octow-type-unification.md` + `0105-x-s4-deferred-codemod-sites.md`.                                                                                                                                                                                                                                                                   |
+| 2026-08-19 | @mmacedoeu | Re-scoped per 2026-08-19 recon: corrected file paths (`SettlementEnvelope` lives in `crates/quota-router-storage/src/ask.rs`, NOT `crates/octo-protocol/src/settlement_envelope.rs`); corrected migration slot (v016, NOT v015 — taken by `chain_aware_slash_ledger`); corrected OctoVaultLookup location (already LANDED at `crates/octo-cap-macaroon-vault/src/octo_vault_lookup.rs`, NOT new file); expanded AC list from 7 → 10 to reflect recon-delimited surface; cross-ref RFC-0010 v1.6 (LANDED 2026-08-19). |
 
 ## Out of scope
 

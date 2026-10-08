@@ -118,7 +118,7 @@ Phase 5 lands 2 output envelopes, one per subcommand:
 | `discovery advertisement show` | `NetworkDiscoveryAdvertisementShowOutput` |
 | `discovery invitation show`    | `NetworkDiscoveryInvitationShowOutput`    |
 
-`NetworkDiscoveryAdvertisementShowOutput` surfaces: `advertisement_hash` (hex), per RFC-0011-h §Output Envelope L503-L506. `NetworkDiscoveryInvitationShowOutput` surfaces: `mission_id_hex`, `invitee_gateway_id_hex`, `coordinator_gateway_id_hex`, `logical_timestamp`, `signing_bytes_hex` per RFC-0011-h §Output Envelope L511-L518.
+`NetworkDiscoveryAdvertisementShowOutput` surfaces: `advertisement_hash` (hex), per RFC-0011-h §Output Envelope. `NetworkDiscoveryInvitationShowOutput` surfaces: `mission_id_hex`, `invitee_gateway_id_hex`, `coordinator_gateway_id_hex`, `logical_timestamp`, `signing_bytes_hex` per RFC-0011-h §Output Envelope.
 
 ### Error Handling
 

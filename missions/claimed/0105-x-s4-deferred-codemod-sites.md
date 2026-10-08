@@ -91,17 +91,17 @@ EscrowSnapshot::amount_micro_octo_w` → `Dqa` (scale=0)
   - [x] `crates/quota-router-core/src/task_market/escrow.rs::TaskEscrow::amount_micro_octo_w`
         → `Dqa` (constructor `new` + `with_arbitrator` signatures)
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `marketplace/slashing.rs`
-    - `amount_micro_octo_w: octo_determin::Dqa` (line 375)
+    - `amount_micro_octo_w: octo_determin::Dqa`
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `task_market/slashing.rs`
-    - `initial_stake_micro_octo_w: octo_determin::Dqa` (line 36)
+    - `initial_stake_micro_octo_w: octo_determin::Dqa`
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `quota-router-storage/src/slash_store.rs`
-    - `_amount_micro_octo_w: octo_determin::Dqa` (line 70)
+    - `_amount_micro_octo_w: octo_determin::Dqa`
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `quota-router-storage/src/settlement_event_repo.rs`
-    - `cost_micro_octo_w: octo_determin::Dqa` (line 277) + boundary
-      decode via `dqa_serde::dqa_from_bytes` (line 335)
+    - `cost_micro_octo_w: octo_determin::Dqa` + boundary
+      decode via `dqa_serde::dqa_from_bytes`
   - [x] ALREADY MIGRATED (S4 codemod Round 2): `quota-router-cli/src/cli.rs`
     - `commands.rs` — no `u128` amount-bearing fields; only `Dqa`
-      field-reads (commands.rs:6 `use octo_determin::Dfp` is for
+      field-reads (commands.rs `use octo_determin::Dfp` is for
       unrelated price-rounding surface)
 - AC-2: Test call sites migrated:
   - [x] `crates/quota-router-core/tests/marketplace_e2e.rs` (5 fields:
@@ -115,11 +115,11 @@ EscrowSnapshot::amount_micro_octo_w` → `Dqa` (scale=0)
         u128 literal sites (already Dqa)
 - AC-3: Cargo.toml deps verified:
   - [x] `crates/quota-router-core/Cargo.toml` — `octo-determin` git dep
-        present (line 84)
+        present
   - [x] `crates/quota-router-storage/Cargo.toml` — `octo-determin` git
-        dep present (line 74)
+        dep present
   - [x] `crates/quota-router-cli/Cargo.toml` — `octo-determin` git dep
-        present (line 21)
+        present
 - AC-4: Display impl: `Dqa::Display` already exists per RFC-0105
   §Display. CLI surface uses `ev.cost_micro_octo_w` directly (Dqa →
   Display via `{:?}` formatter + `Dqa::Display` impl). No CLI format
@@ -213,7 +213,7 @@ EscrowSnapshot::amount_micro_octo_w` → `Dqa` (scale=0)
 
 ## Existing patterns reused
 
-- `crates/quota-router-storage/src/stoolap_spend_ledger.rs:74`
+- `crates/quota-router-storage/src/stoolap_spend_ledger.rs`
   — canonical reference for `MicroOctoW = Dqa` + scale=0 invariant
   - `dqa_to_i64` boundary helper
 - `crates/octo-determin::Dqa::Display` — already exists; CLI

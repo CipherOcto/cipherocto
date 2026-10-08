@@ -35,8 +35,8 @@ completed_at: 2026-09-01
 >   lock). Two transfers in the same event-tick would derive the same
 >   timestamp-based nonce and collide; counter allocation is invariant.
 >   Regression vectors TV-14 + TV-15 guard the timestamp-derived-nonce
->   defect. **4 sites corrected** (AC L96, Risk L135, sub-step 6 L155,
->   Layer direction L180).
+>   defect. **4 sites corrected** (AC, Risk, sub-step 6,
+>   Layer direction).
 > - **`OutputEnvelope<T>::schema_version`**: stays at v2 for Wave B
 >   substrate additions; v3 schema (renames `data`→`payload`,
 >   `generated_at`→`executed_at_unix`, drop `exit_code`/`preview_only`,
@@ -162,7 +162,7 @@ Land the three `[ADD]` substrate API declarations per RFC-0011-e §Substrate Add
 
 4. **`list_owned` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Reads `vault_registry` (PK `(chain_id, owner_did, asset_id)` + UNIQUE INDEX on `vault_id`). Resolves each entry to a `VaultSummary`. Returns `Result<Vec<VaultSummary>, VaultError>`.
 
-5. **`project_vault_balance` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions + RFC-0960-v37 §2.2). Canonical 7-param substrate signature: `(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>`. Canonical SUM projection: `SUM(in) - SUM(out)` filtered by `ZERO_VAULT_ID` sentinel exclusion. Routes through `VaultBalanceCache` (LRU + TTL); falls back to `transfer_events` (RFC-0960 v014 schema) on cache miss. `asset_id` derived from `vault_id` via `VaultAssetResolver::resolve_asset_for`. Enforces `max_occurred_at_unix` monotonicity per `(chain_id, vault_id)` (substrate returns `Option<i64>` per RFC-0960-v37 L121).
+5. **`project_vault_balance` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions + RFC-0960-v37 §2.2). Canonical 7-param substrate signature: `(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>`. Canonical SUM projection: `SUM(in) - SUM(out)` filtered by `ZERO_VAULT_ID` sentinel exclusion. Routes through `VaultBalanceCache` (LRU + TTL); falls back to `transfer_events` (RFC-0960 v014 schema) on cache miss. `asset_id` derived from `vault_id` via `VaultAssetResolver::resolve_asset_for`. Enforces `max_occurred_at_unix` monotonicity per `(chain_id, vault_id)` (substrate returns `Option<i64>` per RFC-0960-v37).
 
 6. **`initiate_transfer` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Builds the transfer envelope; allocates nonce as `last_nonce(vault_id) + 1` under the SAME write lock that appends the transfer event (strictly-incrementing per-vault counter, replay protection per RFC-0011-e §Security: Transfer Replay — NOT `max_occurred_at_unix`-derived); calls `octo-wallet::sign_envelope` (HSM-bound; no parallel signing abstraction per `cipherocto-design-principles`); broadcasts to chain adapter. Returns `Result<TransferHandle, VaultError>`.
 

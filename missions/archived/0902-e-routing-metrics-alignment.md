@@ -40,6 +40,7 @@ None (can proceed independently)
 ## Implementation Notes
 
 ### File Path
+
 **Corrected:** `crates/quota-router-core/src/router.rs` (NOT `quota-router-cli`)
 
 ### Latency Storage Design (CRITICAL FIX)
@@ -92,10 +93,12 @@ impl ProviderWithState {
 ### Weighted vs SimpleShuffle
 
 `Weighted` is semantically distinct from `SimpleShuffle`:
+
 - `SimpleShuffle`: Weights derived from provider's rpm/tpm configuration (`get_routing_weight()`)
 - `Weighted`: Weights explicitly configured via global `RouterConfig.weights` map (provider.name → u32)
 
 **RouterConfig needs this new field:**
+
 ```rust
 pub struct RouterConfig {
     pub routing_strategy: RoutingStrategy,
@@ -111,6 +114,7 @@ pub struct RouterConfig {
 ```
 
 `Weighted` strategy implementation:
+
 1. For each provider, look up `config.weights.get(provider.name)` — keyed by **provider name**, not model_name
 2. If found, use that weight
 3. If not found, fall back to `get_routing_weight()` (rpm/tpm-derived)
@@ -134,6 +138,7 @@ fn weighted_impl(providers: &[ProviderWithState], weights: &HashMap<String, u32>
 - `success_count`: incremented only when `record_success()` is called (HTTP 2xx response)
 
 **Call flow (SUCCESS case):**
+
 ```rust
 // Router client (external to Router) receives successful provider response
 router.get_provider(model_group, idx).unwrap().record_success(); // ← success_count++
@@ -141,6 +146,7 @@ router.record_request_end(model_group, idx, latency_us, tokens); // ← total_co
 ```
 
 **Call flow (FAILURE case):**
+
 ```rust
 // Router client handles error — record_success() NOT called
 // BUT record_request_end() IS still called to track failure latency
@@ -157,7 +163,7 @@ router.record_request_end(model_group, idx, latency_us, tokens); // ← total_co
 
 ### latency_based_impl Update Required
 
-`latency_based_impl` calls `avg_latency()` on line 284 of router.rs. When `avg_latency()` is removed and replaced by `avg_latency_us()`, update this call site:
+`latency_based_impl` calls `avg_latency()` in router.rs. When `avg_latency()` is removed and replaced by `avg_latency_us()`, update this call site:
 
 ```rust
 // BEFORE (f64):
@@ -176,6 +182,7 @@ router.record_request_end(model_group, idx, latency_us, tokens); // ← total_co
 `simple_shuffle_impl` takes only `&[ProviderWithState]` — it has **no access to `RouterConfig.weights`**. `Weighted` cannot reuse `simple_shuffle_impl` directly.
 
 **Add new method to Router:**
+
 ```rust
 /// Weighted strategy: uses global weights map (provider.name → weight), falls back to get_routing_weight()
 fn weighted_impl(providers: &[ProviderWithState], weights: &HashMap<String, u32>) -> usize {
@@ -200,6 +207,7 @@ fn weighted_random(providers: &[ProviderWithState], weights: Vec<u32>) -> usize 
 ```
 
 **Add to `route()` match:**
+
 ```rust
 RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
 ```
@@ -207,6 +215,7 @@ RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights
 ### ProviderBudgetLimiting Disposition
 
 Add comment to code:
+
 ```rust
 // ProviderBudgetLimiting is OUT OF SCOPE for this module.
 // Per-provider budget limiting is handled by the budget enforcement layer (RFC-0904).

@@ -21,7 +21,7 @@ status: Completed
 
 **Status:** Completed (2026-09-01). LANDED commit `003a7b0f` (feat: M1 crate scaffold per RFC-0011-d §7.4) + review-loop substrate fixes `f08d0ca9`.
 
-> **Retro-supersession (2026-09-01):** Mission landed in the same substrate cycle as M2-M5 (per RFC-0011-d Phase 1 atomic chain); M6-M8 landed in subsequent cycles. `crates/octo-role/Cargo.toml` registered via workspace `crates/*` glob (per `Cargo.toml:5` `members = ["crates/*"]`) so the mission AC's "explicit `[members]` entry" is satisfied implicitly. Substrate-truth deviations from original AC text documented inline below per the M2 close-out pattern.
+> **Retro-supersession (2026-09-01):** Mission landed in the same substrate cycle as M2-M5 (per RFC-0011-d Phase 1 atomic chain); M6-M8 landed in subsequent cycles. `crates/octo-role/Cargo.toml` registered via workspace `crates/*` glob (per `Cargo.toml` `members = ["crates/*"]`) so the mission AC's "explicit `[members]` entry" is satisfied implicitly. Substrate-truth deviations from original AC text documented inline below per the M2 close-out pattern.
 
 **Substrate:** RFC-0011-d §7.4 Substrate `[ADD]` signatures
 **Parent:** RFC-0011-d (mission `0011-d-role-subcommands-phase1` aggregate; this M1 is the first atomic of 9)
@@ -54,7 +54,7 @@ Hard sequence: M1 (this mission) → M2 → M3 → M4 → M5 → M6 → M7 → M
 - [x] `cargo build -p octo-role` succeeds with zero warnings
 - [x] `cargo clippy -p octo-role --all-targets -- -D warnings` clean (workspace clippy zero per Phase 1 DRY closure)
 - [x] `cargo fmt -p octo-role -- --check` clean
-- [x] `octo-role` registered in workspace — satisfied via `members = ["crates/*"]` glob in workspace `Cargo.toml` (line 5) per `feedback_stoolap_persistence` Stoolap-fork workspace pattern
+- [x] `octo-role` registered in workspace — satisfied via `members = ["crates/*"]` glob in workspace `Cargo.toml` per `feedback_stoolap_persistence` Stoolap-fork workspace pattern
 - [x] No `octo-cli` changes in M1 atomic — **substrate-truth deviation**: M6 atomic `63ffdf94` (feat: M6 + M7 role subcommand surface) added `crates/octo-cli/src/commands/role.rs` in a separate cycle; M1's intent (no CLI binding in this atomic) was satisfied; the `octo-cli` integration landed in M6 as the plan anticipated.
 
 ## Scope

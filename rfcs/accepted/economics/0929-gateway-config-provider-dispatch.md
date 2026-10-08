@@ -17,6 +17,7 @@ Accepted
 Specify how `GatewayConfig.deployments` (RFC-0928) maps to provider calls, replacing the `NotYetSpecified` stub in `to_provider_map()`. This completes the integration chain: `GatewayConfig` → dispatch map → provider calls.
 
 **Two dispatch paths:**
+
 - **litellm-mode**: `GatewayConfig` → `DispatchInfo` → `HttpProviderFactory::create()` → `HttpProvider.completion()` (reqwest-based, native HTTP)
 - **any-llm-mode**: `GatewayConfig` → `DispatchInfo` → `py_bridge::factory::completion()` (PyO3, calls Python SDKs)
 
@@ -25,6 +26,7 @@ Per-deployment `api_base` is stored in `DispatchInfo` and resolved at call time.
 ## Why Needed
 
 **Current state:**
+
 - RFC-0928 defines `DeploymentConfig` with `litellm_params` (provider, model, api_key, etc.)
 - `to_provider_map()` fails with `Err(ConfigError::NotYetSpecified(...))` — no actual mapping exists
 - `py_bridge::factory::completion(provider, model, messages, api_key)` exists but is not wired from config
@@ -34,6 +36,7 @@ Per-deployment `api_base` is stored in `DispatchInfo` and resolved at call time.
 ## Dependencies
 
 **Requires:**
+
 - RFC-0917: Dual-Mode Query Router (py_bridge::factory::completion)
 - RFC-0927: RouterConfig Extension for LiteLLM Compatibility (LiteLLMParams)
 - RFC-0928: Deployment Configuration Schema (GatewayConfig, DeploymentConfig)
@@ -41,17 +44,18 @@ Per-deployment `api_base` is stored in `DispatchInfo` and resolved at call time.
 - RFC-0931: any-llm-mode Environment Variable Parity (supersedes §API Change with resolve_api_key and resolve_api_base)
 
 **Required by:**
+
 - RFC-0930: Provider Inference from Model String (modifies to_provider_map() defined in this RFC)
 - RFC-0931: any-llm-mode Environment Variable Parity (called by to_provider_map() via resolve_api_key/resolve_api_base)
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Complete integration chain | GatewayConfig → dispatch → provider call |
-| G2 | Auto-generate deployment_id | When not provided, use `{provider}_{model}` |
-| G3 | Support model_group routing | Multiple deployments with same group routed together |
-| G4 | Preserve deployment metadata | rpm, tpm, api_key, model_group, and custom metadata tags |
+| Goal | Target                       | Metric                                                   |
+| ---- | ---------------------------- | -------------------------------------------------------- |
+| G1   | Complete integration chain   | GatewayConfig → dispatch → provider call                 |
+| G2   | Auto-generate deployment_id  | When not provided, use `{provider}_{model}`              |
+| G3   | Support model_group routing  | Multiple deployments with same group routed together     |
+| G4   | Preserve deployment metadata | rpm, tpm, api_key, model_group, and custom metadata tags |
 
 ## Scope
 
@@ -129,7 +133,7 @@ impl DispatchInfo {
 
 ### 2. to_provider_map() Function
 
-```rust
+````rust
 /// Convert GatewayConfig to dispatch map
 ///
 /// # Algorithm
@@ -201,7 +205,7 @@ py_bridge::factory::completion(
     resolved_api_key.as_deref(),
     // deployment.api_base.as_deref(),  // TODO: REQUIRES factory signature change
 )
-```
+````
 
 ### litellm-mode (reqwest)
 
@@ -236,15 +240,16 @@ http_provider.completion(&request, &resolved_api_key).await
 
 **Mode-specific api_base handling:**
 
-| Mode | Provider Call | api_base Resolution | Implementation Status |
-|------|---------------|---------------------|----------------------|
-| **litellm-mode** (reqwest) | `HttpProviderFactory::create(name)` → `provider.completion(request, api_key)` | api_base stored in Provider but NOT passed to factory; hardcoded in provider via `OpenAIProvider::new()`. URL constructed at call time via `format!("{}/chat/completions", self.api_base)` | **Gap: requires impl change** |
-| **any-llm-mode** (PyO3) | `py_bridge::factory::completion(provider, model, messages, api_key, api_base)` | api_base passed to factory, forwarded to `Provider.with_api_base()` | **Requires factory signature change** (TARGET API — see §Implementation Requirements) |
+| Mode                       | Provider Call                                                                  | api_base Resolution                                                                                                                                                                        | Implementation Status                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| **litellm-mode** (reqwest) | `HttpProviderFactory::create(name)` → `provider.completion(request, api_key)`  | api_base stored in Provider but NOT passed to factory; hardcoded in provider via `OpenAIProvider::new()`. URL constructed at call time via `format!("{}/chat/completions", self.api_base)` | **Gap: requires impl change**                                                         |
+| **any-llm-mode** (PyO3)    | `py_bridge::factory::completion(provider, model, messages, api_key, api_base)` | api_base passed to factory, forwarded to `Provider.with_api_base()`                                                                                                                        | **Requires factory signature change** (TARGET API — see §Implementation Requirements) |
 
 **LiteLLM comparison (reference):**
 LiteLLM passes api_base from `litellm_params` through router → `litellm.acompletion(**kwargs)` → `get_llm_provider()` → `OpenAIChatCompletion._get_openai_client(base_url=api_base)`. The api_base becomes the `base_url` on the SDK client's construction.
 
 **Factory signature update (any-llm-mode only):**
+
 ```rust
 // TARGET API — requires py_bridge::factory::completion signature change (see §Implementation Requirements)
 pub fn completion(
@@ -257,6 +262,7 @@ pub fn completion(
 ```
 
 Each provider's `with_api_base()` method applies the api_base (implementation per provider — see py_bridge/providers/):
+
 ```rust
 pub fn with_api_base(mut self, api_base: String) -> Self {
     self.api_base = Some(api_base);
@@ -281,6 +287,7 @@ The implementation of strategy selection (e.g., `shuffle_select`, `round_robin_s
 **Selection point:** When multiple deployments share a model_group, the router selects one based on `router_settings.routing_strategy`. The strategy functions are implementation-defined per RFC-0927.
 
 **model_group matching algorithm:**
+
 1. Filter all deployments in dispatch_map to those where `model_group` case-insensitively matches `requested_group`
 2. If no deployments match, return `Err(ConfigError::NoDeploymentFound { model_group: requested_group })`
 3. Apply routing_strategy to the filtered candidate set (not all deployments) to select one deployment
@@ -291,6 +298,7 @@ The implementation of strategy selection (e.g., `shuffle_select`, `round_robin_s
 **Note:** DispatchInfo is mode-agnostic. It carries the data needed for routing decisions regardless of which mode (litellm-mode, any-llm-mode, full) the router operates in. Mode-specific behavior (how to invoke the provider, which SDK to use) is handled at the call site by the router, not by DispatchInfo.
 
 **Mode-specific dispatch:**
+
 - **litellm-mode**: Router applies model_group filtering and routing_strategy to select a deployment
 - **any-llm-mode**: No router. Provider is explicit from model string (e.g., "openai:gpt-4o"). routing_strategy is ignored. Dispatch uses direct deployment lookup.
 - **full**: Both modes supported via mode discriminator
@@ -417,10 +425,10 @@ pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, Dispatc
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| to_provider_map() | <1ms | For 100 deployments |
-| Deployment lookup | O(1) | HashMap by deployment_id |
+| Metric            | Target | Notes                    |
+| ----------------- | ------ | ------------------------ |
+| to_provider_map() | <1ms   | For 100 deployments      |
+| Deployment lookup | O(1)   | HashMap by deployment_id |
 
 ## Security Considerations
 
@@ -698,21 +706,21 @@ deployments:
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| Post-Accept R1 | 2026-05-15 | Adversarial review R1 fixes (cross-RFC consistency): C3 — key resolution §5 clarified that deployment.api_key is RFC-0931-resolved value, not raw LiteLLMParams; M3 — metadata field annotated with RFC-0928 type dependency; M5 — api_base resolution cross-referenced to RFC-0931; m1 — from_litellm_str() deprecated in favor of existing FromStr impl; m4 — auto_id() returns Result<String, ConfigError> instead of panicking; m6 — "Open Questions" renamed to "Known Gaps" with 3 documented gaps; test vectors updated for auto_id Result return |
-| Accept | 2026-05-14 | Accepted after 12-round adversarial review — zero critical/major/minor issues; all round fixes verified; comprehensive test coverage (14 tests) |
-| 17 | 2026-05-13 | Round 5 review fixes: C1 — version header corrected from v15 to v16; version history row properly closed |
-| 16 | 2026-05-13 | Round 4 review fixes: C1 — DispatchInfo api_base doc comment updated (litellm-mode NOT supported, any-llm-mode supported — matches gap analysis); C2 — any-llm-mode integration example corrected to show current 4-arg factory signature (api_base requires factory signature change); m1 — version history corrected to reflect both Security Considerations AND DispatchInfo comment fixes; m2 — any_llm_key_storage replaced with provider_key_storage, comment updated to reference RFC-0903 |
-| 15 | 2026-05-13 | Round 3 review fixes: C1 — fixed Security Considerations api_base claim (now matches gap analysis: litellm-mode NOT supported, any-llm-mode supported); C2 — separated integration examples by mode (any-llm-mode and litellm-mode shown separately); C3 — RateLimitMode now uses `#[derive(Default)]` on enum with `#[default]` attribute, field changed from `Option<RateLimitMode>` to non-optional `RateLimitMode`; M1 — added §Implementation Requirements section for litellm-mode gap; M2 — api_base added to "never log" list in Security Considerations; m1 — "Open Questions" expanded to "Implementation Requirements (litellm-mode Gap)" with 3 required changes; m2 — added parse_config() pseudocode note to test vectors |
-| 14 | 2026-05-13 | api_base per-deployment spec — added to DispatchInfo, to_provider_map(), factory signature; mode-specific handling (litellm-mode reqwest, any-llm-mode PyO3); removed v1 Limitation + Future versions hint (per deferred-vs-unspecified memory rule); **detailed gap analysis**: litellm-mode has implementation gap (HttpProviderFactory.create doesn't pass api_base, Provider.endpoint not forwarded) |
-| 12 | 2026-05-13 | External adversarial review fixes: C1 — rpm/tpm now "router may enforce"; C2 — added any-llm mode-specific dispatch (explicit provider, no routing_strategy); C3 — clarified api_base must be set via env/provider init; M4 — added RoutingStrategy::from_litellm_str(); M5 — added env var fallback to key resolution (3-level hierarchy); M6 — model_group checks both model_info.model_group and litellm_params.model_group_alias; M7 — added max_retries to DispatchInfo; L8 — documented auto_id format vs LiteLLM; L9 — documented ConfigError::NoDeploymentFound for empty candidates; L10 — documented feature gate behavior in mode-specific dispatch |
-| 9 | 2026-05-13 | Eighth review fixes: M1 — defined requested_group source in model_group matching algorithm; L1 — added test_to_provider_map_model_group_case_insensitive for case-insensitivity coverage |
-| 8 | 2026-05-13 | Seventh review fixes: M1 — clarified G4 metric to "rpm, tpm, api_key, model_group, and custom metadata tags"; L1 — removed misleading "second call" comment from panic test |
-| 7 | 2026-05-13 | Sixth review fixes: C1 — added HashMap import note to metadata field; H1 — corrected to_provider_map return to Err(ConfigError::NotYetSpecified(...)); M1 — model_group matching is case-insensitive; M2 — replaced panic catch_unwind with #[should_panic]; L1 — removed resolved api_base open question; L2 — clarified v6 changes |
-| 6 | 2026-05-13 | Fifth review fixes: C1/H1/H2 — removed stale api_base references from algorithm steps in §2 and §API Change; version history corrected |
-| 5 | 2026-05-13 | Fourth review fixes: C1 — removed api_base from DispatchInfo (cannot reach completion()); H1 — added rpm/tpm "informational only" note; H2 — added key storage supersession mechanism with code; M1 — removed api_base field and test; M2 — clarified routing_strategy applies to filtered candidate set; M3 — consistent key storage supersession in completion call; L1 — auto_id panics on empty provider/model; L2 — removed deprecated api_base references |
-| 4 | 2026-05-13 | Third review fixes: C1 — corrected py_bridge signature to 4 args (provider, model, messages, api_key); C2 — added std::collections::HashMap import note to DispatchInfo; H1 — clarified key storage lookup happens at call time; H2 — added mode-agnostic note; M1 — added model_group matching algorithm; M2 — resolved api_base open question (provider config, not completion param); M3 — added api_key test vector |
-| 3 | 2026-05-13 | Fix C2: clarify api_base propagation path to completion(); Fix M1: document metadata usage; Fix M3: add full to_provider_map() code block; Fix L1: replace unwrap() with ok_or error handling; Fix L2: clarify py_bridge owns api_key logging enforcement; Fix L3: remove RFC-0920 from Required by (thin binding delegates to RFC-0917) |
-| 2 | 2026-05-13 | Fix C1: clarify return type (DispatchInfo not LiteLLMProviderConfig); Fix M1: ProviderType vs String; Fix M2: add api_base to DispatchInfo; Fix M4: clarify model source; Fix M5: auto_id underscore format; Add test vectors; Fix Open Questions; Fix version history prepend |
-| 1 | 2026-05-13 | Initial draft |
+| Version        | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Post-Accept R1 | 2026-05-15 | Adversarial review R1 fixes (cross-RFC consistency): C3 — key resolution §5 clarified that deployment.api_key is RFC-0931-resolved value, not raw LiteLLMParams; M3 — metadata field annotated with RFC-0928 type dependency; M5 — api_base resolution cross-referenced to RFC-0931; m1 — from_litellm_str() deprecated in favor of existing FromStr impl; m4 — auto_id() returns Result<String, ConfigError> instead of panicking; m6 — "Open Questions" renamed to "Known Gaps" with 3 documented gaps; test vectors updated for auto_id Result return                                                                                                                                                                                |
+| Accept         | 2026-05-14 | Accepted after 12-round adversarial review — zero critical/major/minor issues; all round fixes verified; comprehensive test coverage (14 tests)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 17             | 2026-05-13 | Round 5 review fixes: C1 — version header corrected from v15 to v16; version history row properly closed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 16             | 2026-05-13 | Round 4 review fixes: C1 — DispatchInfo api_base doc comment updated (litellm-mode NOT supported, any-llm-mode supported — matches gap analysis); C2 — any-llm-mode integration example corrected to show current 4-arg factory signature (api_base requires factory signature change); m1 — version history corrected to reflect both Security Considerations AND DispatchInfo comment fixes; m2 — any_llm_key_storage replaced with provider_key_storage, comment updated to reference RFC-0903                                                                                                                                                                                                                                       |
+| 15             | 2026-05-13 | Round 3 review fixes: C1 — fixed Security Considerations api_base claim (now matches gap analysis: litellm-mode NOT supported, any-llm-mode supported); C2 — separated integration examples by mode (any-llm-mode and litellm-mode shown separately); C3 — RateLimitMode now uses `#[derive(Default)]` on enum with `#[default]` attribute, field changed from `Option<RateLimitMode>` to non-optional `RateLimitMode`; M1 — added §Implementation Requirements section for litellm-mode gap; M2 — api_base added to "never log" list in Security Considerations; m1 — "Open Questions" expanded to "Implementation Requirements (litellm-mode Gap)" with 3 required changes; m2 — added parse_config() pseudocode note to test vectors |
+| 14             | 2026-05-13 | api_base per-deployment spec — added to DispatchInfo, to_provider_map(), factory signature; mode-specific handling (litellm-mode reqwest, any-llm-mode PyO3); removed v1 Limitation + Future versions hint (per deferred-vs-unspecified memory rule); **detailed gap analysis**: litellm-mode has implementation gap (HttpProviderFactory.create doesn't pass api_base, Provider.endpoint not forwarded)                                                                                                                                                                                                                                                                                                                                |
+| 12             | 2026-05-13 | External adversarial review fixes: C1 — rpm/tpm now "router may enforce"; C2 — added any-llm mode-specific dispatch (explicit provider, no routing_strategy); C3 — clarified api_base must be set via env/provider init; M4 — added RoutingStrategy::from_litellm_str(); M5 — added env var fallback to key resolution (3-level hierarchy); M6 — model_group checks both model_info.model_group and litellm_params.model_group_alias; M7 — added max_retries to DispatchInfo; L8 — documented auto_id format vs LiteLLM; L9 — documented ConfigError::NoDeploymentFound for empty candidates; — documented feature gate behavior in mode-specific dispatch                                                                              |
+| 9              | 2026-05-13 | Eighth review fixes: M1 — defined requested_group source in model_group matching algorithm; L1 — added test_to_provider_map_model_group_case_insensitive for case-insensitivity coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 8              | 2026-05-13 | Seventh review fixes: M1 — clarified G4 metric to "rpm, tpm, api_key, model_group, and custom metadata tags"; L1 — removed misleading "second call" comment from panic test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 7              | 2026-05-13 | Sixth review fixes: C1 — added HashMap import note to metadata field; H1 — corrected to_provider_map return to Err(ConfigError::NotYetSpecified(...)); M1 — model_group matching is case-insensitive; M2 — replaced panic catch_unwind with #[should_panic]; L1 — removed resolved api_base open question; L2 — clarified v6 changes                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 6              | 2026-05-13 | Fifth review fixes: C1/H1/H2 — removed stale api_base references from algorithm steps in §2 and §API Change; version history corrected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 5              | 2026-05-13 | Fourth review fixes: C1 — removed api_base from DispatchInfo (cannot reach completion()); H1 — added rpm/tpm "informational only" note; H2 — added key storage supersession mechanism with code; M1 — removed api_base field and test; M2 — clarified routing_strategy applies to filtered candidate set; M3 — consistent key storage supersession in completion call; L1 — auto_id panics on empty provider/model; L2 — removed deprecated api_base references                                                                                                                                                                                                                                                                         |
+| 4              | 2026-05-13 | Third review fixes: C1 — corrected py_bridge signature to 4 args (provider, model, messages, api_key); C2 — added std::collections::HashMap import note to DispatchInfo; H1 — clarified key storage lookup happens at call time; H2 — added mode-agnostic note; M1 — added model_group matching algorithm; M2 — resolved api_base open question (provider config, not completion param); M3 — added api_key test vector                                                                                                                                                                                                                                                                                                                 |
+| 3              | 2026-05-13 | Fix C2: clarify api_base propagation path to completion(); Fix M1: document metadata usage; Fix M3: add full to_provider_map() code block; Fix L1: replace unwrap() with ok_or error handling; Fix L2: clarify py_bridge owns api_key logging enforcement; Fix L3: remove RFC-0920 from Required by (thin binding delegates to RFC-0917)                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2              | 2026-05-13 | Fix C1: clarify return type (DispatchInfo not LiteLLMProviderConfig); Fix M1: ProviderType vs String; Fix M2: add api_base to DispatchInfo; Fix M4: clarify model source; Fix M5: auto_id underscore format; Add test vectors; Fix Open Questions; Fix version history prepend                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1              | 2026-05-13 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |

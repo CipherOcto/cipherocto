@@ -66,7 +66,7 @@ Pure-doc follow-on. NO code. NO mission YAML edits outside this one.
 
 ## Sub-steps
 
-1. ✅ Verify §10 boundary in `docs/04-tokenomics/token-design.md` — present (line 228)
+1. ✅ Verify §10 boundary in `docs/04-tokenomics/token-design.md` — present
 2. ✅ Add §10 footnote noting OCTO-only roles intentionally absent
 3. ✅ Wire cross-references (bare RFC numbers, no version pins)
 4. ✅ Run prettier (`npx prettier --write docs/04-tokenomics/token-design.md` — unchanged)

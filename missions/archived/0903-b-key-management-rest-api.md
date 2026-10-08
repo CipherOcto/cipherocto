@@ -24,22 +24,22 @@ Implemented the HTTP REST API routes for key and team CRUD operations as specifi
 
 ### Key Endpoints
 
-| Method | Path | Handler |
-|--------|------|---------|
-| POST | /key/generate | handle_create_key |
-| GET | /key/list | handle_list_keys |
-| PUT | /key/:id | handle_update_key |
-| DELETE | /key/:id | handle_revoke_key |
-| POST | /key/:id/regenerate | handle_rotate_key |
-| GET | /key/info | handle_get_key_info |
+| Method | Path                | Handler             |
+| ------ | ------------------- | ------------------- |
+| POST   | /key/generate       | handle_create_key   |
+| GET    | /key/list           | handle_list_keys    |
+| PUT    | /key/:id            | handle_update_key   |
+| DELETE | /key/:id            | handle_revoke_key   |
+| POST   | /key/:id/regenerate | handle_rotate_key   |
+| GET    | /key/info           | handle_get_key_info |
 
 ### Team Endpoints
 
-| Method | Path | Handler |
-|--------|------|---------|
-| POST | /team | handle_create_team |
-| GET | /team/:team_id | handle_get_team |
-| PUT | /team/:team_id | handle_update_team |
+| Method | Path           | Handler            |
+| ------ | -------------- | ------------------ |
+| POST   | /team          | handle_create_team |
+| GET    | /team/:team_id | handle_get_team    |
+| PUT    | /team/:team_id | handle_update_team |
 
 ### Key Features
 
@@ -65,15 +65,15 @@ Implemented the HTTP REST API routes for key and team CRUD operations as specifi
 
 ## Key Files Modified
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/admin.rs` | Admin API HTTP handlers (key/team CRUD) |
-| `crates/quota-router-core/src/proxy.rs` | LLM proxy only (separated from admin) |
-| `crates/quota-router-core/src/keys/mod.rs` | check_team_key_limit |
-| `crates/quota-router-core/src/storage.rs` | update_team, count_keys_for_team |
-| `crates/quota-router-core/src/config.rs` | Added db_path for database location |
-| `crates/quota-router-cli/src/commands.rs` | Wire up AdminServer with database |
-| `crates/quota-router-cli/src/cli.rs` | Added --admin-port option |
+| File                                       | Change                                  |
+| ------------------------------------------ | --------------------------------------- |
+| `crates/quota-router-core/src/admin.rs`    | Admin API HTTP handlers (key/team CRUD) |
+| `crates/quota-router-core/src/proxy.rs`    | LLM proxy only (separated from admin)   |
+| `crates/quota-router-core/src/keys/mod.rs` | check_team_key_limit                    |
+| `crates/quota-router-core/src/storage.rs`  | update_team, count_keys_for_team        |
+| `crates/quota-router-core/src/config.rs`   | Added db_path for database location     |
+| `crates/quota-router-cli/src/commands.rs`  | Wire up AdminServer with database       |
+| `crates/quota-router-cli/src/cli.rs`       | Added --admin-port option               |
 
 ## Complexity
 
@@ -81,16 +81,17 @@ Medium — REST API implementation with database integration
 
 ## Reference
 
-- RFC-0903 §API Endpoints (lines 293-311)
-- RFC-0903 §Key Generation (lines 928-1001)
-- RFC-0903 §Key Validation (lines 1004-1022)
-- RFC-0903 §Key Rotation Protocol (lines 668-739)
-- RFC-0903 §Cache Invalidation (lines 1118-1154)
-- RFC-0903 §Key Management Routes (lines 2204-2237)
+- RFC-0903 §API Endpoints
+- RFC-0903 §Key Generation
+- RFC-0903 §Key Validation
+- RFC-0903 §Key Rotation Protocol
+- RFC-0903 §Cache Invalidation
+- RFC-0903 §Key Management Routes
 
 ## Notes
 
 **Implemented:**
+
 - Admin API extracted to `admin.rs` — proper separation from proxy.rs
 - AdminServer wired up in commands.rs — runs on --admin-port (default 8081)
 - ProxyServer runs on --proxy-port (default 8080)

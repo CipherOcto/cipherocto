@@ -5,8 +5,8 @@
 **Parent:** RFC-0965 v2.1 + RFC-0105 v3.5 §3.13 (tri-invariant consumer)
 **Depends on:**
 
-- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `AssetMetadata`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0965 v2.1 §2.1 L53-57)
-- RFC-0965 v2.0 baseline (already landed: `PaymentCaveat`, `PAID_QUERY_CAVEAT_NAME` at `crates/octo-cap-macaroon/src/caveat/payment.rs:41`, `AttenuationError` at `:235`)
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `AssetMetadata`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0965 v2.1 §2.1)
+- RFC-0965 v2.0 baseline (already landed: `PaymentCaveat`, `PAID_QUERY_CAVEAT_NAME` at `crates/octo-cap-macaroon/src/caveat/payment.rs`, `AttenuationError` at)
 
 ## Scope
 
@@ -18,35 +18,35 @@ field, `nonce: Nonce` field; widen `attenuate` to 4-arg accepting
 `ScaleMismatch` / `AssetUnknown` variants; add `PaymentRejectionReason::
 ScaleMismatch` / `AssetUnknown` / `StaleSnapshot` / `Replay` /
 `LegacyFormOnNonOctoWContext` variants (and re-home
-`PaidQueryRejectionReason` as deprecated alias per RFC-0105 v3.5 §5 L688-
-694 + RFC-0965 v2.1 §2.3 L218); implement `verify()` and `validate()`
+`PaidQueryRejectionReason` as deprecated alias per RFC-0105 v3.5 §5 +
+RFC-0965 v2.1 §2.3); implement `verify()` and `validate()`
 gates with scale-binding + NonceRegistry observation; implement custom
 `Deserialize` rejecting legacy `amount_micro_octo_w` form on non-OCTO-W
-context (§2.4 L397-415); add `Caveat::AssetBinding(asset_id)` co-bound rule (§5).
+context (§2.4); add `Caveat::AssetBinding(asset_id)` co-bound rule (§5).
 
 ### Mission E sub-steps
 
 1. **`PaymentCaveat` field additions** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
-   (amend, line 55). Per RFC-0965 v2.1 §2.1 L70-90. Add 3 fields:
+   (amend). Per RFC-0965 v2.1 §2.1. Add 3 fields:
 
    ```rust
    pub struct PaymentCaveat {
        pub caveat_name: String,                  // existing; unchanged
-       pub asset_id: AssetId,                    // NEW (L75)
+       pub asset_id: AssetId,                    // NEW
        #[serde(with = "dqa_serde::field")]
        pub budget: Dqa,                          // existing
        pub model: String,                        // existing
        pub expires_at_unix_ms: u64,              // existing
-       pub registry_snapshot_epoch: Epoch,       // NEW (L87)
-       pub nonce: Nonce,                         // NEW (L89)
+       pub registry_snapshot_epoch: Epoch,       // NEW
+       pub nonce: Nonce,                         // NEW
    }
    ```
 
    Discriminator unchanged (`PAID_QUERY_CAVEAT_NAME = "paid-query/v1"` per
-   §2.1 L68 — substrate-canonical name; the discriminator rename in prior
-   draft broke 47 call-sites + JSON-RPC + CLI per §2.1 L64-67).
+   §2.1 — substrate-canonical name; the discriminator rename in prior
+   draft broke 47 call-sites + JSON-RPC + CLI per §2.1).
 
-2. **4-arg `attenuate`** — same file. Per §2.2 L113-150. Signature:
+2. **4-arg `attenuate`** — same file. Per §2.2. Signature:
 
    ```rust
    pub fn attenuate(
@@ -66,12 +66,12 @@ context (§2.4 L397-415); add `Caveat::AssetBinding(asset_id)` co-bound rule (§
    use `attenuate_legacy_2arg` shim with `#[allow(deprecated)]`.
 
 3. **`attenuate_legacy_2arg` `#[deprecated]` shim** — same file. Per §1
-   L37 + §4.1 "one cycle" = 6 weeks. 2-arg signature carries forward with
+   §2.2 + §4.1 "one cycle" = 6 weeks. 2-arg signature carries forward with
    `#[deprecated(note = "use 4-arg attenuate with &dyn AssetRegistry per
-RFC-0965 v2.1 §2.2")]`. Migration window per §4.1 L440-442: 6 weeks
+RFC-0965 v2.1 §2.2")]`. Migration window per §4.1: 6 weeks
    OR 1 major version bump, whichever longer. HARD cutoff, no extensions.
 
-3a. **`attenuate_legacy_3arg` helper** — same file. Per §2.2 L183-205.
+3a. **`attenuate_legacy_3arg` helper** — same file. Per §2.2.
 3-arg signature `(new_budget, new_expires_at_unix_ms, registry: &dyn
 AssetRegistry)` for migration callers that already have a registry handle
 but don't yet pass `new_asset_id`. Performs registry-resolved scale
@@ -80,17 +80,17 @@ check + budget/expiry gates; asset-equality still falls back to
    with new_asset_id per RFC-0965 v2.1 §2.2")]`; same 6-week window.
 Bridges 2-arg callers → 4-arg callers during migration.
 
-4. **`AttenuationError` variants** — same file. Per §2.2 L98-111. Add 3
-   variants to existing enum at L235:
+4. **`AttenuationError` variants** — same file. Per §2.2. Add 3
+   variants to the existing enum:
 
    ```rust
    #[non_exhaustive]   // MANDATORY: Layer B substrate enum (additive evolution)
    pub enum AttenuationError {
        BudgetWidened { current: Dqa, proposed: Dqa },  // existing
        ExpiryWidened { current: u64, proposed: u64 },   // existing
-       AssetMismatch { current: AssetId, proposed: AssetId },  // NEW (L104)
-       ScaleMismatch { current: u8, proposed: u8 },    // NEW (L107)
-       AssetUnknown,                                   // NEW (L110)
+       AssetMismatch { current: AssetId, proposed: AssetId },  // NEW
+       ScaleMismatch { current: u8, proposed: u8 },    // NEW
+       AssetUnknown,                                   // NEW
    }
    ```
 
@@ -100,12 +100,12 @@ Bridges 2-arg callers → 4-arg callers during migration.
    variants (RFC-driven additive evolution) does NOT force every
    downstream consumer to a central edit.
 
-5. **`PaymentRejectionReason` enum additions** — `crates/octo-paid-query/src/lib.rs:164`
-   (definition) AND `crates/octo-cap-macaroon/src/caveat/mod.rs:17`
-   (re-export). Per §2.3 L222-244. **Note on line 164 substrate anchor:**
+5. **`PaymentRejectionReason` enum additions** — `crates/octo-paid-query/src/lib.rs`
+   (definition) AND `crates/octo-cap-macaroon/src/caveat/mod.rs`
+   (re-export). Per §2.3. **Note on the substrate anchor:**
    on-disk state currently holds `pub enum PaidQueryRejectionReason`;
    Mission E renames to `PaymentRejectionReason` (canonical per RFC
-   §2.3 L222) and adds 5 new variants. The substrate anchor line itself
+   §2.3) and adds 5 new variants. The substrate anchor itself
    shifts by N lines. Add 5 variants:
 
    ```rust
@@ -115,22 +115,22 @@ Bridges 2-arg callers → 4-arg callers during migration.
        Expired,                                               // existing
        ModelMismatch,                                         // existing
        CostExceedsBudget,                                     // existing
-       ScaleMismatch { caveat_scale: u8, query_cost_scale: u8 },  // NEW (L231)
-       AssetUnknown,                                          // NEW (L234)
-       StaleSnapshot { snapshot: u64, live: u64 },            // NEW (L237)
-       Replay,                                                // NEW (L239)
-       LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },  // NEW (L243)
+       ScaleMismatch { caveat_scale: u8, query_cost_scale: u8 },  // NEW
+       AssetUnknown,                                          // NEW
+       StaleSnapshot { snapshot: u64, live: u64 },            // NEW
+       Replay,                                                // NEW
+       LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },  // NEW
    }
    ```
 
-   `PaidQueryRejectionReason` alias retained per §2.3 L249:
+   `PaidQueryRejectionReason` alias retained per §2.3:
    `#[deprecated(note = "use PaymentRejectionReason")] pub type
 PaidQueryRejectionReason = PaymentRejectionReason;` **Removal
    timeline tied to RFC-0965 v2.x + N cycles** (not indefinitely
    maintained). Document removal in substrate crate deprecation log.
 
 6. **`verify()` gates** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
-   (amend). Per §2.3 L278-338. **8 gates**:
+   (amend). Per §2.3. **8 gates**:
    - Gate 0: `AssetRegistry::metadata(&self.asset_id)` resolves +
      not tombstoned (else `AssetUnknown`)
    - Gate 1: scale-binding — `query_cost.wire_scale == self.budget.wire_scale
@@ -140,7 +140,7 @@ self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
    - Gate 3: anti-replay — `nonce_registry.observe(NonceEventKind::Payment,
 &pk, &self.nonce.0)` with `pk = meta.governance_pubkey.unwrap_or_else(||
 sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
-     CRITICAL #1 keying by `governance_pubkey` per §2.4 L381.
+     CRITICAL #1 keying by `governance_pubkey` per §2.4.
      `event_kind = NonceEventKind::Payment` discriminator (per
      Mission D v3.5-r8 PROPOSAL surface change) namespaces PaymentCaveat
      nonces distinctly from BurnEventRef (NonceEventKind::Burn)
@@ -155,20 +155,20 @@ sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
      `crates/octo-paid-query/src/lib.rs:~280`)
 
 7. **`validate()` post-deserialization invariant check** — same file.
-   Per §2.3 L341-372. Same gates 0-3 as `verify()` EXCEPT gate 3 uses
+   Per §2.3. Same gates 0-3 as `verify()` EXCEPT gate 3 uses
    `observe_readonly` (no nonce marking; `observe-and-mark` reserved for
-   `verify()` which commits the spend per L360).
+   `verify()` which commits the spend per §2.3).
 
 8. **Custom `Deserialize` for legacy-form rejection** — same file. Per
-   §2.4 L397-415. Inspects raw envelope via `serde_json::Value` BEFORE
+   §2.4. Inspects raw envelope via `serde_json::Value` BEFORE
    derived `Deserialize`. Detects legacy `{ amount_micro_octo_w: i64 }`
    key; if present AND `claimed_asset_id != OCTO_W_ASSET_ID`, returns
    `LegacyFormOnNonOctoWContext { claimed_asset_id }` error. Happy path:
    re-serialize through JSON + delegate to derived impl.
 
 9. **`Caveat::AssetBinding(asset_id)` co-bound rule** — `crates/octo-cap-macaroon/src/caveat/mod.rs`
-   (amend). Per RFC-0965 v2.1 §5 L444-520 (canonical variant name
-   per §5 L446 + §8 L544; prior `Caveat::Vault` name deprecated —
+   (amend). Per RFC-0965 v2.1 §5 (canonical variant name
+   per §5 + §8; prior `Caveat::Vault` name deprecated —
    the variant binds to a specific asset, not a vault, hence the
    rename). When a `PaymentCaveat` co-occurs with a
    `Caveat::AssetBinding(asset_id)` in the same caveat chain,
@@ -179,7 +179,7 @@ sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
    co-bound check before the per-caveat verify loop.
 
 10. **Wire form migration** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
-    (amend `BorshSerialize`/`BorshDeserialize` derives). Per §3 L420-434.
+    (amend `BorshSerialize`/`BorshDeserialize` derives). Per §3.
     Borsh field order: `caveat_name | asset_id | budget | model |
 expires_at_unix_ms | registry_snapshot_epoch | nonce`. JSON
     equivalent. `asset_id` is a 32-byte hex field. Round 4 IMPORTANT #4
@@ -231,7 +231,7 @@ Replay }`
 - TV-PC16: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all fields including `asset_id` / `registry_snapshot_epoch`
   / `nonce`
-- TV-PC17: audit-batch replay path (RFC-0105 v3.5 §3.13 L669) bypasses
+- TV-PC17: audit-batch replay path (RFC-0105 v3.5 §3.13) bypasses
   per-event validate() cache and runs fresh `verify()` pairwise check
   on every `(caveat, burn, settlement)` tuple; cache HIT must NOT
   short-circuit the batch-replay path
@@ -282,16 +282,16 @@ cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
 ## Cross-references
 
 - RFC-0965 v2.1 §1 — motivation (asset-binding bypass close)
-- RFC-0965 v2.1 §2.1 — PaymentCaveat substrate definition (L45-90)
-- RFC-0965 v2.1 §2.2 — AttenuationError + attenuate signature (L93-150)
-- RFC-0965 v2.1 §2.3 — verify() + validate() + PaymentRejectionReason (L215-373)
-- RFC-0965 v2.1 §2.4 — NonceRegistry keying + legacy-form rejection (L379-415)
-- RFC-0965 v2.1 §3 — wire form (L418-434)
+- RFC-0965 v2.1 §2.1 — PaymentCaveat substrate definition
+- RFC-0965 v2.1 §2.2 — AttenuationError + attenuate signature
+- RFC-0965 v2.1 §2.3 — verify() + validate() + PaymentRejectionReason
+- RFC-0965 v2.1 §2.4 — NonceRegistry keying + legacy-form rejection
+- RFC-0965 v2.1 §3 — wire form
 - RFC-0965 v2.1 §4 — discriminator unchanged (`"paid-query/v1"`)
 - RFC-0965 v2.1 §4.1 — "one cycle" = 6 weeks (HARD cutoff)
-- RFC-0965 v2.1 §5 L444-520 — PermissionKind Co-Bound Caveat (Caveat::AssetBinding)
+- RFC-0965 v2.1 §5 — PermissionKind Co-Bound Caveat (Caveat::AssetBinding)
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
-- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+- RFC-0105 v3.5 §3.13 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check on every
   `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
   replay path; per-event validate() cache MUST NOT be used. Mission E's

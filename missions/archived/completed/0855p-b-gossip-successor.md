@@ -147,7 +147,7 @@ No new crate deps. Module lives within `octo-reputation` and uses only the carri
 - **RFC-0955-R1 §"Finality" (`MIN_FINALITY_BLOCKS = 12`)** — chain-submission reorg invalidation depth (semantically distinct from gossip ingress bound, but the same Finality clause anchors both constants in this mission)
 - **RFC-0955-R1 §"ReputationAnchorBatch"** — `chain_block_height: Option<u64>` carrier; the batch-attached ingestion path that composes with `evaluate_with_recorded_block_height`
 - Mission `0855p-b-cross-mission-reputation` (Archived Completed 2026-07-27; predecessor)
-- Mission `0968a2-reputation-anchoring-binding` (PARTIAL LANDED 2026-08-24 retro-supersession; the canonical-blob re-pinning it owns was already accomplished via `canonical_blobs.rs:36-46` 2026-07-30 annotation)
+- Mission `0968a2-reputation-anchoring-binding` (PARTIAL LANDED 2026-08-24 retro-supersession; the canonical-blob re-pinning it owns was already accomplished via `canonical_blobs.rs` 2026-07-30 annotation)
 
 ## v1.1 retro-supersession: why it was wrong
 

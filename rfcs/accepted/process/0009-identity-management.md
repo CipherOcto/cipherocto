@@ -106,7 +106,7 @@ pub fn canonical_ser(identity: &Identity) -> Vec<u8> {
 - **Algorithm:** Ed25519 (RFC 8032)
 - **Curve:** Edwards25519
 - **Encoding:** multibase(z) of raw 32-byte public key (W3C DID-aligned)
-- **DID format:** `did:octo:` + multibase(z) of raw 32 bytes (e.g., `did:octo:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK`)
+- **DID format:** `did:octo:` + multibase(z) of raw 32 bytes (e.g., `did:octo:z6MkhaXgBZDvotDkfaiztiGiC2QtKLGpbnnEGta2doK`)
 
 #### Open question resolutions (amended 2026-07-19):
 
@@ -277,7 +277,7 @@ pub fn holder_sign(identity_key: &IdentityKey, root_hash: BLAKE3) -> Ed25519Sign
 
 ### HsmAdapter Integration (v1.1 amendment, 2026-08-08)
 
-All signing operations in `octo-wallet` MUST route through the `HsmAdapter` trait defined at `crates/octo-wallet/src/hsm.rs:33` rather than direct `ed25519_dalek::SigningKey` access. The `HsmAdapter` contract is:
+All signing operations in `octo-wallet` MUST route through the `HsmAdapter` trait defined at `crates/octo-wallet/src/hsm.rs` rather than direct `ed25519_dalek::SigningKey` access. The `HsmAdapter` contract is:
 
 ```rust
 pub trait HsmAdapter: Send + Sync {
@@ -292,11 +292,11 @@ Concrete impls:
 - **`LedgerSigner`** — production stub for Ledger device via APDU over USB HID; delegates signing to hardware secure element
 - **Future:** `YubiHsmSigner`, `TpmSigner`, `TeeSigner` (per RFC-0853 §F2)
 
-`IdentityKey::sign(msg)` MUST delegate to `self.signer.sign(msg)` where `self.signer: Arc<dyn HsmAdapter>`. Today (pre-v1.1) the wallet bypasses this abstraction and signs directly via `ed25519-dalek::SigningKey::from_bytes(...).sign(msg)` at `crates/octo-wallet/src/identity.rs:71`. This is a known gap (audit 2026-08-08); closure tracked by `missions/claimed/0009-a-hsm-routing.md`.
+`IdentityKey::sign(msg)` MUST delegate to `self.signer.sign(msg)` where `self.signer: Arc<dyn HsmAdapter>`. Today (pre-v1.1) the wallet bypasses this abstraction and signs directly via `ed25519-dalek::SigningKey::from_bytes(...).sign(msg)` at `crates/octo-wallet/src/identity.rs`. This is a known gap (audit 2026-08-08); closure tracked by `missions/claimed/0009-a-hsm-routing.md`.
 
 **Why:** hardware wallets (Ledger, YubiHSM, TEE) hold the private key in a secure element. Direct `ed25519-dalek` access exposes the seed to host memory and breaks the hardware-bound signing contract. With `HsmAdapter` routing, a wallet user can deploy a Ledger device and the wallet transparently delegates signing to the device — no host-side seed exposure.
 
-**Adapter invariant:** the `HsmAdapter::sign` contract guarantees (a) private key never leaves the device; (b) signing is constant-time at the transport layer; (c) public key discoverable via `get_public_key()`. Production adapters MUST enforce all three. `InMemorySigner` does NOT enforce (a) — it is MVP-only and MUST be replaced before production deployment per `crates/octo-wallet/src/hsm.rs:48-51`.
+**Adapter invariant:** the `HsmAdapter::sign` contract guarantees (a) private key never leaves the device; (b) signing is constant-time at the transport layer; (c) public key discoverable via `get_public_key()`. Production adapters MUST enforce all three. `InMemorySigner` does NOT enforce (a) — it is MVP-only and MUST be replaced before production deployment per `crates/octo-wallet/src/hsm.rs`.
 
 **Performance overhead:**
 

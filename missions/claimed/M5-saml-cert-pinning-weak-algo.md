@@ -18,7 +18,7 @@ SAML 3-pass review. HIGH priority.
       `Event::Start` and `Event::Empty` (self-closing element
       is the common serialization).
 - [x] `XmlSignatureComponents.signature_method_algorithm:
-      Option<String>` field added; threaded through parser
+  Option<String>` field added; threaded through parser
       state machine and constructor site.
 - [x] `validate_signature` calls
       `check_signature_algorithm(...)` BEFORE
@@ -48,7 +48,7 @@ SAML 3-pass review. HIGH priority.
       `_non_saml_provider_no_warn`.
 - [x] Clippy zero warnings
       (`cargo clippy -p quota-router-core --all-targets
-      --features full -- -D warnings` clean).
+  --features full -- -D warnings` clean).
 - [x] All existing tests pass — 165/165 in `auth::sso::*`.
 
 ### Acceptance criteria — partial / deferred
@@ -115,7 +115,7 @@ SAML 2.0 §5.4.1 (Signature)
       require `idp_certificate` to be `Some`. Return
       `ConfigError::MissingIdpCertificate` otherwise.
 - [ ] Add a startup health check on the SAML handler
-      (`crates/quota-router-core/src/admin.rs:568-580`) that
+      (`crates/quota-router-core/src/admin.rs`) that
       logs a `tracing::warn!` when an IdP provider has
       `idp_metadata_url` set without a pinned cert. (Warn-only;
       operator UX, not a hard error.)

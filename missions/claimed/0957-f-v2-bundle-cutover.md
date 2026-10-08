@@ -17,12 +17,13 @@ authoritative wire form going forward.
 
 Two producer handlers still emit V1 wire form on `response_payload`:
 
-| Handler | Current `response_payload` (= V1) | New `response_payload` (= V2 envelope) |
-|---------|-----------------------------------|--------------------------------------|
-| `MintHandler` (octo-wallet-node) | `minted_wire.into_bytes()` (canonical macaroon wire — 3 base64url segments) | `v2_envelope.canonical_ser()` (16-byte prefix + borsh V2 bundle) |
-| `IssueHandler` (octo-capability-issuer-node) | `borsh::to_vec(&IssueResponse { holder_did, token_id, v2_envelope_bytes: sidecar })` | `v2_envelope.canonical_ser()` |
+| Handler                                      | Current `response_payload` (= V1)                                                    | New `response_payload` (= V2 envelope)                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `MintHandler` (octo-wallet-node)             | `minted_wire.into_bytes()` (canonical macaroon wire — 3 base64url segments)          | `v2_envelope.canonical_ser()` (16-byte prefix + borsh V2 bundle) |
+| `IssueHandler` (octo-capability-issuer-node) | `borsh::to_vec(&IssueResponse { holder_did, token_id, v2_envelope_bytes: sidecar })` | `v2_envelope.canonical_ser()`                                    |
 
 After cutover:
+
 - `HandlerOutput.v2_envelope_bytes` field DELETED (no sidecar; primary = V2 envelope).
 - `HandlerOutput::with_v2_envelope()` method DELETED.
 - `IssueResponse` struct DELETED (was a V1 wire wrapper; token_id + holder_did recoverable from `CapabilityTokenV2` via `channel_id` + `audience_did`).
@@ -33,6 +34,7 @@ After cutover:
 ### Site 1: `octo-wallet-node/src/handlers/mint.rs`
 
 **Before:**
+
 ```rust
 Ok(HandlerOutput::response(
     minted_wire.into_bytes(),
@@ -43,6 +45,7 @@ Ok(HandlerOutput::response(
 ```
 
 **After:**
+
 ```rust
 Ok(HandlerOutput::response(
     v2_envelope_bytes.clone(),
@@ -51,7 +54,7 @@ Ok(HandlerOutput::response(
 .with_note(note))
 ```
 
-`minted_wire` continues to be produced inline (line 127) — it remains
+`minted_wire` continues to be produced inline — it remains
 the input to `holder_record_bytes` (capability_id derivation) and
 spend ledger seeding. The V1 wire form is no longer the response
 payload; it stays as internal substrate.
@@ -59,6 +62,7 @@ payload; it stays as internal substrate.
 ### Site 2: `octo-capability-issuer-node/src/handlers/issue.rs`
 
 **Before:**
+
 ```rust
 let response = IssueResponse {
     holder_did: req.holder_did.clone(),
@@ -72,6 +76,7 @@ Ok(HandlerOutput::response(payload, CAPABILITY_ISSUE)
 ```
 
 **After:**
+
 ```rust
 Ok(HandlerOutput::response(
     v2_envelope_bytes.clone(),
@@ -111,29 +116,29 @@ cutover.)
 
 ### `octo-wallet-node/src/handlers/mint.rs`
 
-| Test | Update |
-|------|--------|
-| `handle_emits_three_segment_wire_form` (TV1) | Rewrite: assert `response_payload` starts with `CIPHEROCTO_V2_BUNDLE_PREFIX` + decodes to `CapabilityBundleV2Envelope` |
-| `wire_roundtrip_preserves_caveats_and_root_id_shape` (TV2) | Rewrite: extract macaroon from V2 envelope via `holder_record_bytes` → assert caveats/root_id |
-| `holder_sig_verifies_after_wire_roundtrip` (TV3) | Rewrite: same path as TV2 + verify_holder_sig |
-| `wire_only_cap_root_hash_matches_mint_time_derivation` (TV4) | Rewrite: extract macaroon from V2 envelope → derive both hashes → assert match |
-| `handle_rejects_non_canonical_did_before_mint` (TV5) | UNCHANGED (negative path) |
-| `handle_mints_with_payment_caveat_as_initial_caveat` (TV6) | Rewrite: extract macaroon from V2 envelope → assert Caveat::Payment |
-| `handle_mints_without_payment_caveat_has_empty_chain` (TV7) | Rewrite: extract macaroon from V2 envelope → assert empty caveats |
-| `handle_with_ledger_seeds_payment_caveat_budget` (TV8) | Rewrite: extract macaroon from V2 envelope → assert ledger balance |
-| `handle_surfaces_v2_envelope_alongside_wire_form` (TV9) | Rename to `handle_emits_v2_envelope_as_primary_payload`; drop `response_payload.is_some()` check; drop `v2_envelope_bytes` (deleted field) |
+| Test                                                         | Update                                                                                                                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handle_emits_three_segment_wire_form` (TV1)                 | Rewrite: assert `response_payload` starts with `CIPHEROCTO_V2_BUNDLE_PREFIX` + decodes to `CapabilityBundleV2Envelope`                     |
+| `wire_roundtrip_preserves_caveats_and_root_id_shape` (TV2)   | Rewrite: extract macaroon from V2 envelope via `holder_record_bytes` → assert caveats/root_id                                              |
+| `holder_sig_verifies_after_wire_roundtrip` (TV3)             | Rewrite: same path as TV2 + verify_holder_sig                                                                                              |
+| `wire_only_cap_root_hash_matches_mint_time_derivation` (TV4) | Rewrite: extract macaroon from V2 envelope → derive both hashes → assert match                                                             |
+| `handle_rejects_non_canonical_did_before_mint` (TV5)         | UNCHANGED (negative path)                                                                                                                  |
+| `handle_mints_with_payment_caveat_as_initial_caveat` (TV6)   | Rewrite: extract macaroon from V2 envelope → assert Caveat::Payment                                                                        |
+| `handle_mints_without_payment_caveat_has_empty_chain` (TV7)  | Rewrite: extract macaroon from V2 envelope → assert empty caveats                                                                          |
+| `handle_with_ledger_seeds_payment_caveat_budget` (TV8)       | Rewrite: extract macaroon from V2 envelope → assert ledger balance                                                                         |
+| `handle_surfaces_v2_envelope_alongside_wire_form` (TV9)      | Rename to `handle_emits_v2_envelope_as_primary_payload`; drop `response_payload.is_some()` check; drop `v2_envelope_bytes` (deleted field) |
 
 ### `octo-capability-issuer-node/src/handlers/issue.rs`
 
-| Test | Update |
-|------|--------|
-| `issue_request_borsh_round_trip` | UNCHANGED |
-| `handle_rejects_invalid_did` | UNCHANGED |
-| `handle_rejects_legacy_bare_did` | UNCHANGED |
-| `handle_returns_derived_token_id` | Rewrite: decode V2 envelope → assert `token_v2.channel_id == expected` |
-| `handle_token_id_varies_with_capability` | Rewrite: same decode + assert token_v2.channel_id varies |
-| `issue_response_borsh_round_trip` | DELETE (no more `IssueResponse`) |
-| `issue_emits_v2_root_bundle_envelope` | Rename to `handle_emits_v2_envelope_as_primary_payload`; assert `response_payload` IS the envelope (has prefix + decodes) |
+| Test                                     | Update                                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `issue_request_borsh_round_trip`         | UNCHANGED                                                                                                                 |
+| `handle_rejects_invalid_did`             | UNCHANGED                                                                                                                 |
+| `handle_rejects_legacy_bare_did`         | UNCHANGED                                                                                                                 |
+| `handle_returns_derived_token_id`        | Rewrite: decode V2 envelope → assert `token_v2.channel_id == expected`                                                    |
+| `handle_token_id_varies_with_capability` | Rewrite: same decode + assert token_v2.channel_id varies                                                                  |
+| `issue_response_borsh_round_trip`        | DELETE (no more `IssueResponse`)                                                                                          |
+| `issue_emits_v2_root_bundle_envelope`    | Rename to `handle_emits_v2_envelope_as_primary_payload`; assert `response_payload` IS the envelope (has prefix + decodes) |
 
 ## Acceptance Criteria
 
@@ -168,6 +173,6 @@ No cyclic dep risk.
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-| ------- | ---------- | ------ | ------- |
+| Version | Date       | Status | Changes                                                                                                                                                                                                                    |
+| ------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v0.1    | 2026-08-11 | open   | Filed after consumer-migration landed; recon confirmed downstream consumers (cross_node_delivery.rs, redemption_subgraph.rs) operate on MarketDeliveryEnvelope not on wallet mint/issue payload — cutover is producer-only |

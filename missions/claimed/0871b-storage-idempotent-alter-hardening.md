@@ -27,7 +27,7 @@ operator intervention required.
 Recon confirms: stoolap fork does NOT support `ALTER TABLE ADD
 COLUMN IF NOT EXISTS` (AlterTableStatement AST has no
 `if_not_exists` flag per
-`/home/mmacedoeu/.cargo/git/checkouts/stoolap-0de5b2281a88eb98/a5c19d1/src/parser/ast.rs:1867`,
+`/home/mmacedoeu/.cargo/git/checkouts/stoolap-0de5b2281a88eb98/a5c19d1/src/parser/ast.rs`,
 and `pragma_table_info` is not implemented as a built-in pragma —
 only SNAPSHOT/CHECKPOINT/SNAPSHOT_INTERVAL/KEEP_SNAPSHOTS/SYNC_MODE/WAL_FLUSH_TRIGGER/VACUUM
 are recognized; unknown pragma returns empty result).
@@ -36,7 +36,7 @@ are recognized; unknown pragma returns empty result).
 
 Catch `Error::DuplicateColumn` per-statement inside `run_one`.
 The error display string is exactly `"duplicate column"`
-(`stoolap/.../core/error.rs:69`); match on substring.
+(`stoolap/.../core/error.rs`); match on substring.
 
 ```rust
 fn run_one(db: &stoolap::Database, migration: &Migration) -> Result<(), MigrationError> {
@@ -72,10 +72,11 @@ fn is_idempotent_already_applied(err: &str, stmt: &str) -> bool {
 ```
 
 Why substring on "duplicate column" + ADD COLUMN guard:
+
 - The fork's only path that emits `"duplicate column"` is
   `create_column_with_default` (ADD COLUMN path) per
-  `stoolap/.../storage/mvcc/engine.rs:1475` →
-  `core/schema.rs:741,772` → `Error::DuplicateColumn`. CREATE
+  `stoolap/.../storage/mvcc/engine.rs` →
+  `core/schema.rs` → `Error::DuplicateColumn`. CREATE
   TABLE / CREATE INDEX have separate error variants.
 - The ADD COLUMN guard prevents accidental swallow of future
   errors that happen to contain the substring (paranoid check; the
@@ -99,13 +100,10 @@ are not yet used.
       partial crash) is silent no-op; version row still recorded
       after all statements run.
 - [ ] NEW TV `apply_pending_is_idempotent_on_re_run_after_partial_migration`
-      in `tests/stoolap_idempotent_alter.rs`:
-      - apply v001..v010 fresh DB → success, version=10.
-      - simulate partial crash: manually DELETE the v010 row from
-        `cipherocto_schema_version` (version row stays removed).
-      - re-run `apply_pending` → success, version=10 again,
-        no panic / no `MigrationFailed`. Asserts the re-run
-        succeeded (operator's retry works).
+      in `tests/stoolap_idempotent_alter.rs`: - apply v001..v010 fresh DB → success, version=10. - simulate partial crash: manually DELETE the v010 row from
+      `cipherocto_schema_version` (version row stays removed). - re-run `apply_pending` → success, version=10 again,
+      no panic / no `MigrationFailed`. Asserts the re-run
+      succeeded (operator's retry works).
 - [ ] NEW TV `apply_pending_propagates_non_duplicate_error`: stub
       migration with malformed ADD COLUMN (`ADD COLUMN badtype`)
       → assert `MigrationFailed` propagates (not swallowed).
@@ -114,7 +112,7 @@ are not yet used.
 ## Files
 
 - `crates/quota-router-storage/src/migrations.rs` — add helper
-  + modify `run_one`.
+  - modify `run_one`.
 - `crates/quota-router-storage/tests/stoolap_idempotent_alter.rs`
   (NEW) — 2 TV.
 

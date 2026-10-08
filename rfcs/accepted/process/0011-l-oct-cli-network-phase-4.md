@@ -113,12 +113,12 @@ The `bind-envelope` umbrella action has 4 sub-actions:
 
 Per RFC-0011-h §Subcommand Taxonomy Phase 4 rows:
 
-| Subcommand                     | Existing substrate                                                                                       | Companion mission required           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `bind-envelope show`           | (none — lookup missing)                                                                                  | G22: `BindEnvelope::load(domain_id)` |
-| `bind-envelope rebind-prepare` | `RebindCoordinator::prepare_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs:121` (LANDED) | G21: clap arm registration           |
-| `bind-envelope rebind-commit`  | `RebindCoordinator::commit_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs:170` (LANDED)  | G21: clap arm registration           |
-| `bind-envelope rebind-abort`   | `RebindCoordinator::abort_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs:215` (LANDED)   | G21: clap arm registration           |
+| Subcommand                     | Existing substrate                                                                                   | Companion mission required           |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `bind-envelope show`           | (none — lookup missing)                                                                              | G22: `BindEnvelope::load(domain_id)` |
+| `bind-envelope rebind-prepare` | `RebindCoordinator::prepare_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs` (LANDED) | G21: clap arm registration           |
+| `bind-envelope rebind-commit`  | `RebindCoordinator::commit_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs` (LANDED)  | G21: clap arm registration           |
+| `bind-envelope rebind-abort`   | `RebindCoordinator::abort_envelope(signature)` at `crates/octo-network/src/mon/rebind.rs` (LANDED)   | G21: clap arm registration           |
 
 ### Output Envelope
 
@@ -131,15 +131,15 @@ Phase 4 lands 4 output envelopes, one per subcommand:
 | `bind-envelope rebind-commit`  | `NetworkBindEnvelopeRebindCommitOutput` (preview + apply)  |
 | `bind-envelope rebind-abort`   | `NetworkBindEnvelopeRebindAbortOutput` (preview + apply)   |
 
-`NetworkBindEnvelopeShowOutput` surfaces: `domain_id`, `platform`, `group_id`, `participant_filter` (Option), `member_count_at_bind`. Per RFC-0011-h §Output Envelope L465-L470.
+`NetworkBindEnvelopeShowOutput` surfaces: `domain_id`, `platform`, `group_id`, `participant_filter` (Option), `member_count_at_bind`. Per RFC-0011-h §Output Envelope.
 
 ### Error Handling
 
 Phase 4 lands exactly 1 of the 10 RFC-0011-h-defined OctoCliError variants:
 
-| Slot | Variant               | Trigger                                                                                                                            |
-| ---- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 88   | `NetworkDryRunDenied` | Operator declines at preview prompt (interactive terminal only) per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix L150 |
+| Slot | Variant               | Trigger                                                                                                                       |
+| ---- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 88   | `NetworkDryRunDenied` | Operator declines at preview prompt (interactive terminal only) per RFC-0011-h §Confirmation Flag + Per-Axis Exit Code Matrix |
 
 **Reachability matrix:**
 
@@ -266,9 +266,9 @@ Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstr
 
 ## Version History
 
-| Version | Date       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 88 `NetworkDryRunDenied` arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling (variant does NOT exist in `error.rs` today; lands during implementation)                                                                                                                                                                                                                                                   |
-| v0.2    | 2026-09-20 | R2 + R3 zero-finding 5-len DRY CLOSURE rounds: L1 substrate-faithfulness PASS (G22 missing `BindEnvelope::load` lookup + G21 clap arm registration on rebind-* trio + G25 CI detection verified against `crates/octo-network/src/mon/rebind.rs` L121/L170/L215 payload builder presence); L2 cite hygiene PASS; L3 substrate-fault-class PASS (FORWARD-LOOKING slot 88 confirmed); L4 operator-clarity PASS; L5 simplification PASS. Gate GREEN on attempt 1 of new pair. DRY CLOSED per RFC-0011-h precedent |
-| v0.3    | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-l year-stable per Layer B substrate convention. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-v directory convention.                                                                                                                                                                                                                                                                                                                |
+| Version | Date       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-09-20 | Initial draft; pending R1 of 5-len DRY CLOSURE cycle                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v0.1.1  | 2026-09-20 | R1.5 fix sweep: L3 substrate-fault-class clarification — slot 88 `NetworkDryRunDenied` arithmetic in §Design Goals #3 clarified as FORWARD-LOOKING per RFC-0011-h §Error Handling (variant does NOT exist in `error.rs` today; lands during implementation)                                                                                                                                                                                                                                    |
+| v0.2    | 2026-09-20 | R2 + R3 zero-finding 5-len DRY CLOSURE rounds: L1 substrate-faithfulness PASS (G22 missing `BindEnvelope::load` lookup + G21 clap arm registration on rebind-* trio + G25 CI detection verified against `crates/octo-network/src/mon/rebind.rs` payload builder presence); L2 cite hygiene PASS; L3 substrate-fault-class PASS (FORWARD-LOOKING slot 88 confirmed); L4 operator-clarity PASS; L5 simplification PASS. Gate GREEN on attempt 1 of new pair. DRY CLOSED per RFC-0011-h precedent |
+| v0.3    | 2026-09-21 | Promoted Draft to Accepted. RFC-0011-l year-stable per Layer B substrate convention. File moved from rfcs draft process to rfcs accepted process per accepted RFC-0011-v directory convention.                                                                                                                                                                                                                                                                                                 |

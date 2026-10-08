@@ -50,9 +50,9 @@ This mission captures the audit findings + references the 2 new sibling missions
 
 ### Retrofix 3: `0959-c3-octo-transport-wiring` substrate path correction
 
-**Defect:** Mission Summary text + Cargo dep references `octo_transport::NodeTransport`; actual substrate home = `crates/octo-cap-macaroon-transport/src/lib.rs:73` (`pub struct TransportDeliveryCatalog`) in `octo_cap_macaroon_transport` crate (Layer B extension glue crate per RFC-0957-A1 §Layer Discipline).
+**Defect:** Mission Summary text + Cargo dep references `octo_transport::NodeTransport`; actual substrate home = `crates/octo-cap-macaroon-transport/src/lib.rs` (`pub struct TransportDeliveryCatalog`) in `octo_cap_macaroon_transport` crate (Layer B extension glue crate per RFC-0957-A1 §Layer Discipline).
 
-**Evidence:** `rg 'pub struct TransportDeliveryCatalog' crates/` → 1 hit at `crates/octo-cap-macaroon-transport/src/lib.rs:73`. Cargo dep actually added is `octo-cap-macaroon-transport` not `octo-transport`.
+**Evidence:** `rg 'pub struct TransportDeliveryCatalog' crates/` → 1 hit in `crates/octo-cap-macaroon-transport/src/lib.rs`. Cargo dep actually added is `octo-cap-macaroon-transport` not `octo-transport`.
 
 **Fix:** Inline substrate correction note added to Summary step 1; RFC list extended with RFC-0959 v2.0 reference (cross-link to `0959-c1-wire-format-amendment`). Mission slug + Summary text retained for historical preservation per R19.
 
@@ -60,7 +60,7 @@ This mission captures the audit findings + references the 2 new sibling missions
 
 ### Gap 1: `SettlementEnvelope` v2.0 struct field extension missing
 
-RFC-0959 v2.0 Status header documents `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` on `SettlementEnvelope` per §8.4.1 + §20.7. The substrate `SettlementEnvelope` struct at `crates/quota-router-storage/src/ask.rs:984` carries `cost: Dqa` (v1.0) but NOT the v2.0 fields. The DAO `settlement_event_repo.rs:56` carries `cost_vault_id` + `chain_id` (column-level) but the struct itself needs field extension.
+RFC-0959 v2.0 Status header documents `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` on `SettlementEnvelope` per §8.4.1 + §20.7. The substrate `SettlementEnvelope` struct in `crates/quota-router-storage/src/ask.rs` carries `cost: Dqa` (v1.0) but NOT the v2.0 fields. The DAO `settlement_event_repo.rs` carries `cost_vault_id` + `chain_id` (column-level) but the struct itself needs field extension.
 
 **Coverage gap:** consumers deserializing v2.0 envelopes cannot match canonical substrate form without struct field extension.
 

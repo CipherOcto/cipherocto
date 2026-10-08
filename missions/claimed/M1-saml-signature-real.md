@@ -26,23 +26,16 @@ priority — production-unsafe until landed. **Now landed.**
       byte-exact SignedInfo path is sufficient for the
       common-case IdPs — ADFS / Okta / Auth0 / Google
       Workspace — all of which emit canonical XML).
-- [x] `from_utf8_lossy` replaced with hard `std::str::from_utf8`
-      + `?` on the SignedInfo algorithm-attr capture path
-      (lines 769-770, 859-860).
+- [x] `from_utf8_lossy` replaced with hard `std::str::from_utf8` + `?` on the SignedInfo algorithm-attr capture path
 - [x] Doc comment on `verify_xml_signature` rewritten to
       describe the real implementation (modulus + exponent
       extraction via x509-parser + PKCS#1 v1.5).
-- [x] 5 new verifier tests added (replace pre-existing 2):
-      - `test_verify_xml_signature_empty_cert` — empty cert
-        returns `SamlSignatureInvalid`
-      - `test_verify_xml_signature_empty_sig_value` — empty
-        sig returns `SamlSignatureInvalid`
-      - `test_verify_xml_signature_garbage_cert_rejected` —
-        non-X.509 bytes rejected
-      - `test_verify_xml_signature_missing_algorithm_rejected`
-        — no algorithm returns `SamlSignatureInvalid`
-      - `test_verify_xml_signature_ecdsa_deferred` —
-        ECDSA algorithm URI returns deferral error
+- [x] 5 new verifier tests added (replace pre-existing 2): - `test_verify_xml_signature_empty_cert` — empty cert
+      returns `SamlSignatureInvalid` - `test_verify_xml_signature_empty_sig_value` — empty
+      sig returns `SamlSignatureInvalid` - `test_verify_xml_signature_garbage_cert_rejected` —
+      non-X.509 bytes rejected - `test_verify_xml_signature_missing_algorithm_rejected`
+      — no algorithm returns `SamlSignatureInvalid` - `test_verify_xml_signature_ecdsa_deferred` —
+      ECDSA algorithm URI returns deferral error
 - [x] Shared `shared_idp_cert_der()` test fixture using a
       static 2048-bit RSA PKCS#8 PEM (rcgen 0.13 cannot
       generate RSA keypairs — `KeyGenerationUnavailable` —
@@ -53,7 +46,7 @@ priority — production-unsafe until landed. **Now landed.**
       positive-path tests.
 - [x] Clippy zero warnings
       (`cargo clippy -p quota-router-core --all-targets
-      --features full -- -D warnings` clean).
+  --features full -- -D warnings` clean).
 - [x] 1671/1671 lib tests pass; 60/60 SAML tests pass.
 
 ### Design decisions

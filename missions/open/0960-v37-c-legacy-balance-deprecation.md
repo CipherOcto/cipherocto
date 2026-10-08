@@ -15,17 +15,17 @@ substrate; Mission B wires the producers; Mission C deletes the legacy.
 
 **Cycle 1 — Deprecation stub (default ON):**
 
-1. **`Balance { amount: u64 }` struct** (`crates/quota-router-core/src/balance.rs:9`).
+1. **`Balance { amount: u64 }` struct** (`crates/quota-router-core/src/balance.rs`).
    Add `#[deprecated(note = "use VaultBalanceProjection per RFC-0960 v3.7 §2.1")]` to
    the struct + all methods (`new`, `add`, `subtract`, `as_u64`, etc.). Verify
    5 callers of `Balance::new` migrate to `VaultBalanceProjection::get_or_compute`
    in same PR OR carry `#[allow(deprecated)]` with TODO comment + ticket.
 
-2. **`Vault.balance_dqa_micros: i64` field** (`crates/octo-vault/src/lib.rs:278`).
+2. **`Vault.balance_dqa_micros: i64` field** (`crates/octo-vault/src/lib.rs`).
    Add `#[deprecated]` attribute. Column kept on `vaults` table. grep-verified
    0 production write sites remain (stranded field per §5.2).
 
-3. **`octo_w_balances` table** (`crates/quota-router-core/src/schema.rs:182-186`).
+3. **`octo_w_balances` table** (`crates/quota-router-core/src/schema.rs`).
    Init retained; reads serve legacy callers. No flag gating yet (Cycle 2
    introduces gating).
 

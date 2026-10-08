@@ -8,28 +8,28 @@ Accepted v3.0
 
 ## Version History
 
-| Version | Date | Author | Note |
-|---------|------|--------|------|
-| v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft; synthesizes Phases 1-5 research. Round 1 self-review applied: 8 fixes (see §R1 Self-Review). |
-| v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review). |
-| v1.2 | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review). |
-| v1.3 | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review). |
-| v1.4 | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review). |
-| v1.5 | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review). |
-| v1.6 | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review). |
-| v1.7 | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review). |
-| v1.8 | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review). |
-| v1.9 | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review). |
-| v1.10 | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review). |
-| v1.11 | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review). |
-| v1.12 | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review). |
-| v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
-| v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
-| v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
-| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
-| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs. |
-| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round (R28+).** Last Open Question resolved: hierarchical vault policy lattice → already covered by RFC-0957 attenuation chain (`parent_capability` references) + RFC-0965 `WrappedOnly` caveat. RFC-0957 §Attenuation specifies monotonic narrowing via parent chain; no new primitive required. Companion RFCs (0961/0962/0963/0964/0965/0967) bumped in lockstep with concrete resolutions (session-size caps, WAL two-phase hash, MultiEnvelope audit/offline semantics, `RequireProof`, 256-constraint cap, MaxUses failsafe, PolicyObject subgraph relation). Additive (non-breaking) bump. |
-| v3.0 | 2026-08-17 | @mmacedoeu | **Chain-aware bump.** §2.1 root-vault example REMOVED per review §20.8 lock (no organizational intermediates). §Vault Substrate subsection added: PK = `(chain_id, owner_did, asset_id)` per §20.3 Model B lattice; `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)` per §8.10 TV-V1 canonical anchor. §2.5 `transfer_events` chain-aware shape: PK = `(chain_id, event_id)`. LANDED substrate: `crates/octo-vault/migrations/v013__create_vaults.sql` + `v014__create_transfer_events.sql`. 108 byte-exact TV (9 role-token × 3 chain × 4 owner matrix per §8.10 + §24) added at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix`. Companion RFCs (0961/0962/0963/0964/0965/0967) §References cross-refs updated. Non-additive for §2.1 text removal; additive for substrate (PK shape + UNIQUE INDEX + DQA column type already landed in v013/v014). |
+| Version       | Date       | Author                   | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------- | ---------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0          | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft; synthesizes Phases 1-5 research. Round 1 self-review applied: 8 fixes (see §R1 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| v1.1          | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| v1.2          | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| v1.3          | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v1.4          | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v1.5          | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| v1.6          | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| v1.7          | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| v1.8          | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| v1.9          | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v1.10         | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v1.11         | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| v1.12         | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| v1.13         | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| v1.14         | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v1.15         | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| v2.0          | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it."                                                                                                                                                                                                                                                                       |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round (R28+).** Last Open Question resolved: hierarchical vault policy lattice → already covered by RFC-0957 attenuation chain (`parent_capability` references) + RFC-0965 `WrappedOnly` caveat. RFC-0957 §Attenuation specifies monotonic narrowing via parent chain; no new primitive required. Companion RFCs (0961/0962/0963/0964/0965/0967) bumped in lockstep with concrete resolutions (session-size caps, WAL two-phase hash, MultiEnvelope audit/offline semantics, `RequireProof`, 256-constraint cap, MaxUses failsafe, PolicyObject subgraph relation). Additive (non-breaking) bump.                                                                                                                                                                                                                                                                                    |
+| v3.0          | 2026-08-17 | @mmacedoeu               | **Chain-aware bump.** §2.1 root-vault example REMOVED per review §20.8 lock (no organizational intermediates). §Vault Substrate subsection added: PK = `(chain_id, owner_did, asset_id)` per §20.3 Model B lattice; `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)` per §8.10 TV-V1 canonical anchor. §2.5 `transfer_events` chain-aware shape: PK = `(chain_id, event_id)`. LANDED substrate: `crates/octo-vault/migrations/v013__create_vaults.sql` + `v014__create_transfer_events.sql`. 108 byte-exact TV (9 role-token × 3 chain × 4 owner matrix per §8.10 + §24) added at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix`. Companion RFCs (0961/0962/0963/0964/0965/0967) §References cross-refs updated. Non-additive for §2.1 text removal; additive for substrate (PK shape + UNIQUE INDEX + DQA column type already landed in v013/v014). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -69,7 +69,7 @@ Self-applied R1 fixes prior to circulation. Each fix maps to a defect surfaced d
 
 **Defect:** `PermissionKind` enum was a sketch.
 
-**Fix:** §2.2 lists the canonical five kinds plus the rule that `PermissionKind` is a *companion-RFC enumeration* (RFC-0965). Adding new kinds is a backwards-compatible variant add.
+**Fix:** §2.2 lists the canonical five kinds plus the rule that `PermissionKind` is a _companion-RFC enumeration_ (RFC-0965). Adding new kinds is a backwards-compatible variant add.
 
 ### R1-F7 — `factory` / `factoryData` analog requires a vet, not a byte string
 
@@ -131,7 +131,7 @@ R3 cross-checks the 5-RFC stack (0960 + 0961 + 0962 + 0963 + 0964 + 0965) for in
 
 **Defect:** RFC-0962 §32 named a new object `SessionReceipt`. The name collides with RFC-0959's `SettlementReceipt` (Accepted 2026-07-20). Cross-RFC ambiguity: a reader sees "Receipt" and assumes RFC-0959.
 
-**Fix:** RFC-0962 §32 renames the object to `SessionCommitment`. Prose explicitly states it is **not** a `SettlementReceipt`; the two objects are disjoint. The envelope *shape* (canonical_ser + BLAKE3 + Ed25519) is borrowed; the binding (session_id vs ask_id) is distinct.
+**Fix:** RFC-0962 §32 renames the object to `SessionCommitment`. Prose explicitly states it is **not** a `SettlementReceipt`; the two objects are disjoint. The envelope _shape_ (canonical_ser + BLAKE3 + Ed25519) is borrowed; the binding (session_id vs ask_id) is distinct.
 
 ### R3-F4 — Two replay-defense indexes with overlapping names
 
@@ -227,7 +227,7 @@ R5 pass: implementation/spec gap and missing test vectors. 7 fixes applied.
 
 ### R5-F5 — `audit_window` field name has three aliases
 
-**Defect:** After R3-F2 we normalized the *type* (`u64` seconds) but three names remain in the doc stack: `audit_window` (RFC-0960 §2.2 caveat semantic view + §2.3 Reservation struct prose), `audit_window_secs` (live code), `duration_secs` (RFC-0965 §3.5 caveat payload). All three refer to the same `u64` seconds field but readers might think they're distinct.
+**Defect:** After R3-F2 we normalized the _type_ (`u64` seconds) but three names remain in the doc stack: `audit_window` (RFC-0960 §2.2 caveat semantic view + §2.3 Reservation struct prose), `audit_window_secs` (live code), `duration_secs` (RFC-0965 §3.5 caveat payload). All three refer to the same `u64` seconds field but readers might think they're distinct.
 
 **Fix:** §2.2 caveat view now says: "`audit_window: Option<u64>` (Caveat::AuditWindow(d_secs); same field, same unit as Reservation.audit_window_secs (live code))". §2.3 prose cross-references all three names. Reader sees they're identical.
 
@@ -249,7 +249,7 @@ R6 pass: ZK-circuit soundness, attenuation edge cases, MultiSession quorum, EIP-
 
 ### R6-F1 — Domain separator `0x01` collides with outer-namespace tag
 
-**Defect:** RFC-0964 §5 used `BLAKE3(0x01 || canonical_ser(constraint_set))` as `constraint_hash`. After R3-F6/R4-F2 made `0x01` the outer-namespace tag for Constraint envelopes, the same byte served two roles. A receiver computing `constraint_hash` over a wire-encoded constraint would hash a payload that *starts with* `0x01` (the namespace tag) — but a separate computation starting from in-memory state would not include the tag. The two paths produce different hashes for the same logical constraint.
+**Defect:** RFC-0964 §5 used `BLAKE3(0x01 || canonical_ser(constraint_set))` as `constraint_hash`. After R3-F6/R4-F2 made `0x01` the outer-namespace tag for Constraint envelopes, the same byte served two roles. A receiver computing `constraint_hash` over a wire-encoded constraint would hash a payload that _starts with_ `0x01` (the namespace tag) — but a separate computation starting from in-memory state would not include the tag. The two paths produce different hashes for the same logical constraint.
 
 **Fix:** §4 + §5 now use the high-bit range for version + hash separators. `version_tag = 0xA0`; `constraint_hash = BLAKE3(0xA1 || canonical_ser(constraint_set))`. Both bytes are unambiguous: no other spec uses 0xA0-0xA1 for namespace or discriminator purposes.
 
@@ -399,7 +399,7 @@ R12 pass: stale formulas in summaries, network parameter definitions. 1 fix appl
 
 ### R12-F1 — RFC-0964 Summary still has old `BLAKE3(0x01 || ...)` formula
 
-**Defect:** RFC-0964 line 44 (Summary section, item 3) still had `BLAKE3(0x01 || canonical_ser(constraint_set))` for `constraint_hash`. After R6-F1 we moved the separator to `0xA1` (high-bit, distinct from the outer-namespace tag 0x01). The §5 normative spec was updated but the Summary at the top of the doc was not, leaving two inconsistent formulas in the same document.
+**Defect:** RFC-0964 (Summary section, item 3) still had `BLAKE3(0x01 || canonical_ser(constraint_set))` for `constraint_hash`. After R6-F1 we moved the separator to `0xA1` (high-bit, distinct from the outer-namespace tag 0x01). The §5 normative spec was updated but the Summary at the top of the doc was not, leaving two inconsistent formulas in the same document.
 
 **Fix:** Summary updated: `BLAKE3(0xA1 || canonical_ser(constraint_set))` with parenthetical noting that 0xA1 is the constraint-hash domain separator distinct from 0x01 outer-namespace tag. Reviewer reading the Summary now sees the same formula as §5.
 
@@ -407,11 +407,11 @@ R12 pass: stale formulas in summaries, network parameter definitions. 1 fix appl
 
 R13 pass: post-R12 sweep. 1 fix applied.
 
-### R13-F1 — RFC-0964 line 37 still had the OLD `0x01` formula
+### R13-F1 — RFC-0964 still had the OLD `0x01` formula
 
-**Defect:** R12-F1 fixed line 44 (Summary item 3) but missed line 37 — a code-block example in the same Summary block: `blake3(0x01 || constraint_encoding) // 0x01 = "constraint" domain separator`. Same defect class, second occurrence in the same section.
+**Defect:** R12-F1 fixed (Summary item 3) but missed — a code-block example in the same Summary block: `blake3(0x01 || constraint_encoding) // 0x01 = "constraint" domain separator`. Same defect class, second occurrence in the same section.
 
-**Fix:** Line 37 now reads `blake3(0xA1 || constraint_encoding) // 0xA1 = "constraint" domain separator (high-bit; see §0 and §5)`. The Summary block is now internally consistent and matches §5.
+**Fix:** now reads `blake3(0xA1 || constraint_encoding) // 0xA1 = "constraint" domain separator (high-bit; see §0 and §5)`. The Summary block is now internally consistent and matches §5.
 
 ## R14 Self-Review (stale-formula sweep)
 
@@ -419,10 +419,11 @@ R14 pass: exhaustive grep for remaining 0x01-stale-formula instances in 0964. 1 
 
 ### R14-F1 — RFC-0964 has 3 more stale `0x01` formula occurrences
 
-**Defect:** R12 and R13 fixed the Summary block (lines 37, 44) but three more sites in the same RFC still had the OLD `0x01` formula:
-- Line 506: "hashed with the `0x01` domain separator" (in the worked example for `ConstraintSet`)
-- Line 512: `BLAKE3(0x01 || canonical_ser(constraint_set))` (catalog column comment)
-- Line 537: `constraint_hash == BLAKE3(0x01 || canonical_ser(constraint_set))` (wire-format verification)
+**Defect:** R12 and R13 fixed the Summary block (44) but three more sites in the same RFC still had the OLD `0x01` formula:
+
+- "hashed with the `0x01` domain separator" (in the worked example for `ConstraintSet`)
+- `BLAKE3(0x01 || canonical_ser(constraint_set))` (catalog column comment)
+- `constraint_hash == BLAKE3(0x01 || canonical_ser(constraint_set))` (wire-format verification)
 
 Same defect class as R12-F1 and R13-F1; each fix only caught one occurrence. R14 exhaustively greps the rest of the file.
 
@@ -432,11 +433,11 @@ Same defect class as R12-F1 and R13-F1; each fix only caught one occurrence. R14
 
 R15 pass: exhaustive grep for remaining 0x02/0x03/0x04 stale EIP-712 formulas. 1 fix applied.
 
-### R15-F1 — RFC-0964 line 538 still had 0x04 + 0x03 EIP-712 formulas
+### R15-F1 — RFC-0964 still had 0x04 + 0x03 EIP-712 formulas
 
-**Defect:** Line 538 in the wire-format verification still had `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))`. After R6-F2 we moved these to `0xB2` and `0xB1` (high-bit EIP-712 family separators). Same defect class as R12-R14; missed in earlier sweeps because the line was in a different section.
+**Defect:** in the wire-format verification still had `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))`. After R6-F2 we moved these to `0xB2` and `0xB1` (high-bit EIP-712 family separators). Same defect class as R12-R14; missed in earlier sweeps because the line was in a different section.
 
-**Fix:** Line 538 updated: `typed_data_hash == BLAKE3(0xB2 || domain_separator || BLAKE3(0xB1 || constraint_encoding))` with parenthetical noting 0xB1/0xB2 are EIP-712 family high-bit separators. R15 grep returns 0 stale 0x02/0x03/0x04 in EIP-712 contexts (the only remaining occurrences are in the namespace-tag table at line 125-127 and the Constraint discriminator table at line 179-181, both intentional).
+**Fix:** updated: `typed_data_hash == BLAKE3(0xB2 || domain_separator || BLAKE3(0xB1 || constraint_encoding))` with parenthetical noting 0xB1/0xB2 are EIP-712 family high-bit separators. R15 grep returns 0 stale 0x02/0x03/0x04 in EIP-712 contexts (the only remaining occurrences are in the namespace-tag table and the Constraint discriminator table, both intentional).
 
 ## R16 Self-Review (0xA_ sweep) — NO DEFECTS
 
@@ -474,15 +475,15 @@ Together these primitives constitute CipherOcto's value-layer primitive set. Con
 
 Per `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` Phase 1, CipherOcto's existing economic primitives are insufficient:
 
-| Need | Today | Gap |
-|---|---|---|
-| Per-DID OCTO-W account | `octo_w_balances(key_id, ...)` keyed by API key | **No DID-keyed accounts** |
-| Value transfer between DIDs | none | **No `transfers` table** |
-| Escrow hold/release | `quota_router_sm_engine::Reservation::mint()` (RFC-0960 §2.3; landed 2026-07-23) | **Closed (R1-F1 closeout)** |
-| Multi-token (role tokens) | none | **OCTO-A/B/D/etc. not in any schema** |
-| Capability-gated spend | RFC-0957 channel layer exists, no oracle | **No per-capability spending policy** |
-| Negative-balance defense | `Balance::deduct` uses `saturating_sub` (balance.rs:27) | **Silent over-spend bug** |
-| Audit trail | none | **No per-transfer event log** |
+| Need                        | Today                                                                            | Gap                                   |
+| --------------------------- | -------------------------------------------------------------------------------- | ------------------------------------- |
+| Per-DID OCTO-W account      | `octo_w_balances(key_id, ...)` keyed by API key                                  | **No DID-keyed accounts**             |
+| Value transfer between DIDs | none                                                                             | **No `transfers` table**              |
+| Escrow hold/release         | `quota_router_sm_engine::Reservation::mint()` (RFC-0960 §2.3; landed 2026-07-23) | **Closed (R1-F1 closeout)**           |
+| Multi-token (role tokens)   | none                                                                             | **OCTO-A/B/D/etc. not in any schema** |
+| Capability-gated spend      | RFC-0957 channel layer exists, no oracle                                         | **No per-capability spending policy** |
+| Negative-balance defense    | `Balance::deduct` uses `saturating_sub` (balance.rs)                             | **Silent over-spend bug**             |
+| Audit trail                 | none                                                                             | **No per-transfer event log**         |
 
 Per RFC-0959, the settlement receipt primitive ships; the value flow that settlement triggers does not. RFC-0957 §discharge assumes "Channel provider evaluates its own predicate (escrow balance, ...)" but the escrow table is missing — circular dependency.
 
@@ -491,14 +492,14 @@ Per RFC-0959, the settlement receipt primitive ships; the value flow that settle
 Asset-centric chains start from money: `Alice → transfer → Bob`. CipherOcto's primary purpose is not currency — it is **delegating expensive computation**. The first-class object should not be a balance. The first-class object should be **authorization to consume scarce resources**.
 
 | Asset-centric | Constraint-centric (CipherOcto) |
-|---|---|
-| Asset | Resource |
-| Account | Vault |
-| Transfer | Policy |
-| Balance | Capability |
-| Tx | Reservation |
-| Block | Settlement |
-| State | Ledger |
+| ------------- | ------------------------------- |
+| Asset         | Resource                        |
+| Account       | Vault                           |
+| Transfer      | Policy                          |
+| Balance       | Capability                      |
+| Tx            | Reservation                     |
+| Block         | Settlement                      |
+| State         | Ledger                          |
 
 ### The breakthrough hypothesis
 
@@ -537,38 +538,38 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 
 ## Dependency Validation
 
-| Dependency | Type | Current Status | Assumed Before Accept? | Hard-block? |
-|------------|------|----------------|------------------------|-------------|
-| RFC-0957 | Requires | Accepted | Already | No |
-| RFC-0958 | Requires | Accepted | Already | No |
-| RFC-0959 | Requires | Accepted (v1.0 2026-07-20) | Already | No |
-| RFC-0126 | Requires | Accepted | Already | No |
-| RFC-0102 | Requires | Accepted | Already | No |
-| RFC-0961 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-1) | YES → resolved |
-| RFC-0962 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-2) | YES → resolved |
-| RFC-0963 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-3) | YES → resolved |
-| RFC-0964 | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)** | Yes (IA-4) | YES → resolved |
-| RFC-0965 | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)** | Yes (IA-5) | YES → resolved |
-| RFC-0967 | Companion | **Accepted v1.0 (2026-07-23, NEW; promoted in lockstep)** | Yes (IA-6) | YES → resolved |
+| Dependency | Type      | Current Status                                            | Assumed Before Accept? | Hard-block?    |
+| ---------- | --------- | --------------------------------------------------------- | ---------------------- | -------------- |
+| RFC-0957   | Requires  | Accepted                                                  | Already                | No             |
+| RFC-0958   | Requires  | Accepted                                                  | Already                | No             |
+| RFC-0959   | Requires  | Accepted (v1.0 2026-07-20)                                | Already                | No             |
+| RFC-0126   | Requires  | Accepted                                                  | Already                | No             |
+| RFC-0102   | Requires  | Accepted                                                  | Already                | No             |
+| RFC-0961   | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)**      | Yes (IA-1)             | YES → resolved |
+| RFC-0962   | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)**      | Yes (IA-2)             | YES → resolved |
+| RFC-0963   | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)**      | Yes (IA-3)             | YES → resolved |
+| RFC-0964   | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)**      | Yes (IA-4)             | YES → resolved |
+| RFC-0965   | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)**      | Yes (IA-5)             | YES → resolved |
+| RFC-0967   | Companion | **Accepted v1.0 (2026-07-23, NEW; promoted in lockstep)** | Yes (IA-6)             | YES → resolved |
 
 **DAG check:** `0960 ← {0957, 0958, 0959, 0126, 0102, 0961*, 0962*, 0963*, 0964*, 0965*, 0967*}` — acyclic. All companion RFCs (`*`) promoted to Accepted on 2026-07-23 in lockstep with this RFC; hard-blocks resolved.
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1** | Make capability the spend authority | Every value-moving operation signed by a `Capability` |
-| **G2** | Make transfer a consequence, not a primitive | No `Transfer` type in canonical schema; only `EventLog` entries |
-| **G3** | Audit-window dispute in state machine | Settled → Auditable → Released transition with `Frozen` branch |
-| **G4** | Event-sourced ledger | All state is `SUM(events)` projection; no mutable balance rows as source of truth |
-| **G5** | Cross-primitive reuse via Constraint | Single 23-variant `Constraint` set covers all features from time locks to cross-chain atomic swaps |
-| **G6** | Enterprise compatibility | ORMs, JDBC, stored procedures work unchanged via `ExecutionEnvelope` (RFC-0962; renamed from `ConsensusSession`) |
+| Goal   | Target                                       | Metric                                                                                                           |
+| ------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **G1** | Make capability the spend authority          | Every value-moving operation signed by a `Capability`                                                            |
+| **G2** | Make transfer a consequence, not a primitive | No `Transfer` type in canonical schema; only `EventLog` entries                                                  |
+| **G3** | Audit-window dispute in state machine        | Settled → Auditable → Released transition with `Frozen` branch                                                   |
+| **G4** | Event-sourced ledger                         | All state is `SUM(events)` projection; no mutable balance rows as source of truth                                |
+| **G5** | Cross-primitive reuse via Constraint         | Single 23-variant `Constraint` set covers all features from time locks to cross-chain atomic swaps               |
+| **G6** | Enterprise compatibility                     | ORMs, JDBC, stored procedures work unchanged via `ExecutionEnvelope` (RFC-0962; renamed from `ConsensusSession`) |
 
 ## Specification
 
 ### §1 Architecture (v2.0 — WAL as primary protocol primitive)
 
-**v2.0 reframe (R17+):** The architecture inverts. The **Deterministic WAL** is now the primary protocol primitive. Everything else — Replication, Consensus, ZK Proofs, Time Travel, Materialized Views, Event Streams, Snapshots, Resource Accounting, and the `ExecutionEnvelope` SQL-facing surface — is a *projection* of the WAL. Capabilities authorize the creation of WAL entries, not the execution of SQL statements.
+**v2.0 reframe (R17+):** The architecture inverts. The **Deterministic WAL** is now the primary protocol primitive. Everything else — Replication, Consensus, ZK Proofs, Time Travel, Materialized Views, Event Streams, Snapshots, Resource Accounting, and the `ExecutionEnvelope` SQL-facing surface — is a _projection_ of the WAL. Capabilities authorize the creation of WAL entries, not the execution of SQL statements.
 
 ```text
 Application
@@ -670,18 +671,18 @@ The architecture targets enterprise database migration, not blockchain disruptio
 
 > **Run your existing enterprise application unchanged while replacing the trust model underneath it.**
 
-| Stays the same | Replaced |
-|---|---|
-| JDBC | Password → Capability |
-| SQL | Replication → Consensus |
-| Stored Procedures | WAL → Cryptographic WAL |
-| ORM (Hibernate, SQLAlchemy, Diesel) | Audit → Immutable Audit |
-| Reports | Schema migration → Activation-Height-controlled DDL |
-| Views (incl. Materialized Views) | Snapshots → Cryptographic Snapshots |
-| Triggers | Branch isolation → Multi-branch coordination |
-| Schemas | Replication → Consensus-certified |
-| Migrations | Time Travel → AS OF block_height queries |
-| Transactions | Cross-DB joins → Deterministic SQL Federation |
+| Stays the same                      | Replaced                                            |
+| ----------------------------------- | --------------------------------------------------- |
+| JDBC                                | Password → Capability                               |
+| SQL                                 | Replication → Consensus                             |
+| Stored Procedures                   | WAL → Cryptographic WAL                             |
+| ORM (Hibernate, SQLAlchemy, Diesel) | Audit → Immutable Audit                             |
+| Reports                             | Schema migration → Activation-Height-controlled DDL |
+| Views (incl. Materialized Views)    | Snapshots → Cryptographic Snapshots                 |
+| Triggers                            | Branch isolation → Multi-branch coordination        |
+| Schemas                             | Replication → Consensus-certified                   |
+| Migrations                          | Time Travel → AS OF block_height queries            |
+| Transactions                        | Cross-DB joins → Deterministic SQL Federation       |
 
 The application developer sees a JDBC database. The database administrator sees a familiar schema, query, and migration story. The trust model underneath is cryptographic, deterministic, and consensus-certified. The application is unaware of the change.
 
@@ -689,15 +690,15 @@ This is the difference between "SQL on blockchain" and "**deterministic database
 
 ### §1 (legacy) Seven Layers
 
-| Layer | Purpose | CipherOcto primitive |
-|---|---|---|
-| 1. Resources | Scarce physical or logical capacity | `ResourceSpec` |
-| 2. Assets | Accounting representation | `OCTO`, `OCTO-A`, `OCTO-B`, `OCTO-S`, `OCTO-W` (whitepaper §3) |
-| 3. Vaults | Programmable containers, scoped by Owner DID | `Vault` (§2.1) |
-| 4. Capabilities | Delegated spend rights | `Capability` (§2.2) |
-| 5. Reservations | Temporary commitments (escrow/pre-auth) | `Reservation` (§2.3) |
-| 6. Settlements | Cryptographically verified completion | `Settlement` (§2.4) |
-| 7. Ledger | Append-only event log | `transfer_events` (§2.5) |
+| Layer           | Purpose                                      | CipherOcto primitive                                           |
+| --------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| 1. Resources    | Scarce physical or logical capacity          | `ResourceSpec`                                                 |
+| 2. Assets       | Accounting representation                    | `OCTO`, `OCTO-A`, `OCTO-B`, `OCTO-S`, `OCTO-W` (whitepaper §3) |
+| 3. Vaults       | Programmable containers, scoped by Owner DID | `Vault` (§2.1)                                                 |
+| 4. Capabilities | Delegated spend rights                       | `Capability` (§2.2)                                            |
+| 5. Reservations | Temporary commitments (escrow/pre-auth)      | `Reservation` (§2.3)                                           |
+| 6. Settlements  | Cryptographically verified completion        | `Settlement` (§2.4)                                            |
+| 7. Ledger       | Append-only event log                        | `transfer_events` (§2.5)                                       |
 
 ### §2 Primitives
 
@@ -717,18 +718,18 @@ Vault {
 
 Semantic vault types (each is a `Vault` with a typed `policy`):
 
-| Type | Purpose |
-|---|---|
-| Provider Vault | Holds provider earnings (e.g., OpenAI shadow) |
-| Marketplace Vault | Holds marketplace fees |
-| Escrow Vault | Holds in-flight reservations (§2.3) |
-| Treasury Vault | Holds governance funds |
-| Mission Vault | Per-mission scoped vault |
-| Node Vault | Per-node operational vault |
-| DAO Vault | DAO-controlled funds |
-| Liquidity Vault | AMM-style liquidity |
-| Compliance Vault | Compliance-gated funds |
-| Regional Vault | Geographic partitioning |
+| Type              | Purpose                                       |
+| ----------------- | --------------------------------------------- |
+| Provider Vault    | Holds provider earnings (e.g., OpenAI shadow) |
+| Marketplace Vault | Holds marketplace fees                        |
+| Escrow Vault      | Holds in-flight reservations (§2.3)           |
+| Treasury Vault    | Holds governance funds                        |
+| Mission Vault     | Per-mission scoped vault                      |
+| Node Vault        | Per-node operational vault                    |
+| DAO Vault         | DAO-controlled funds                          |
+| Liquidity Vault   | AMM-style liquidity                           |
+| Compliance Vault  | Compliance-gated funds                        |
+| Regional Vault    | Geographic partitioning                       |
 
 > **Note (per §20.3 lattice, no organizational intermediates):** The earlier hierarchical example (Global → Regional → Marketplace → Provider → Mission → Task → Capability → Reservation) is REMOVED from this RFC. Vault layer is a flat lattice of `(chain_id, owner_did, asset_id)` leaf rows per §20.3 Model B; cross-asset policies attach via RFC-0965 capability decoration (`WrappedOnly` + parent-capability chain per RFC-0957 §Attenuation), NOT via vault hierarchy. See §Vault Substrate below.
 
@@ -1030,16 +1031,16 @@ Canonical encoding in RFC-0964 (companion). Each `Constraint` is a tagged-union 
 
 Reuse table:
 
-| Need | Constraint | Production precedent |
-|---|---|---|
-| Time lock | `NotBefore` / `UnlockAfter` | Bitcoin CLTV, Ethereum timelock |
-| Vesting | `LinearRelease` | Sablier, OpenZeppelin VestingWallet |
-| Cliff | `CliffVesting` | OpenZeppelin VestingWallet |
-| Liquidity lock | `LiquidityLock` | Unicrypt, Team.Finance |
-| Governance lock | `GovernanceLock` | Compound Governor, OpenZeppelin Timelock |
-| Multi-sig | `MultiSig` | Gnosis Safe |
-| Rate limit | `RateLimit` | EIP-7702, ERC-7715 |
-| AI spend cap | `RateLimit` per-window token counts | not native anywhere |
+| Need            | Constraint                          | Production precedent                     |
+| --------------- | ----------------------------------- | ---------------------------------------- |
+| Time lock       | `NotBefore` / `UnlockAfter`         | Bitcoin CLTV, Ethereum timelock          |
+| Vesting         | `LinearRelease`                     | Sablier, OpenZeppelin VestingWallet      |
+| Cliff           | `CliffVesting`                      | OpenZeppelin VestingWallet               |
+| Liquidity lock  | `LiquidityLock`                     | Unicrypt, Team.Finance                   |
+| Governance lock | `GovernanceLock`                    | Compound Governor, OpenZeppelin Timelock |
+| Multi-sig       | `MultiSig`                          | Gnosis Safe                              |
+| Rate limit      | `RateLimit`                         | EIP-7702, ERC-7715                       |
+| AI spend cap    | `RateLimit` per-window token counts | not native anywhere                      |
 
 ### §4 Audit Window — Reservation state machine (separate from RFC-0959 receipt state)
 
@@ -1095,12 +1096,12 @@ transfer_events: 0 TransferApplied; instead, 1 TransferCorrected row
 
 `audit_window: Option<u64>` (seconds) on `Reservation` (carried as `Caveat::AuditWindow(duration_secs: u64)` on the originating `Capability`) controls dispute period. The `u64` is **seconds**, identical in name + type + unit to RFC-0965 §3.5's `duration_secs` field and the live code's `audit_window_secs` field on `quota_router_sm_engine::Reservation`.
 
-| Window | Default use case |
-|---|---|
+| Window   | Default use case                                                                      |
+| -------- | ------------------------------------------------------------------------------------- |
 | 0 (none) | High-trust: `Settled` immediately transitions to `Released` with no `Auditable` phase |
-| 24h | AI marketplace settlements (default) |
-| 7d | Treasury vaults |
-| 30d | Multi-jurisdictional compliance |
+| 24h      | AI marketplace settlements (default)                                                  |
+| 7d       | Treasury vaults                                                                       |
+| 30d      | Multi-jurisdictional compliance                                                       |
 
 If fraud discovered inside window: `Settled → Frozen → Dispute → Rollback`. Rollback writes a `TransferCorrected` event (Datomic-style `:correction/for`) referencing the original event; the original event stays in the log; the projection layer recomputes balances from the corrected chain.
 
@@ -1141,7 +1142,7 @@ Event {
 }
 ```
 
-Balances are projections computed from events. The `octo_w_balances` table that exists today is a **cache (projection)** of the event log, not the source of truth. The Phase 1 finding ("saturating_sub on `Balance::deduct`" at balance.rs:27) is the bug you get when the cache pretends to be the source.
+Balances are projections computed from events. The `octo_w_balances` table that exists today is a **cache (projection)** of the event log, not the source of truth. The Phase 1 finding ("saturating_sub on `Balance::deduct`" at balance.rs) is the bug you get when the cache pretends to be the source.
 
 Advantages:
 
@@ -1375,12 +1376,12 @@ Level 4  Deterministic Blockchain (CIPHERO_SQL + capability-checked UPDATEs)
 
 Migrate incrementally. Each level is a superset of the previous. Tooling per level (Phase 5 §6):
 
-| Level | Toolchain |
-|---|---|
-| 1 | `cipherocto-jdbc` |
-| 2 | + `cipherocto-logical-repl` |
-| 3 | + `cipherocto-oracle-adapter`, `cipherocto-sap-rfc` |
-| 4 | + `cipherocto-hibernate-dialect`, capability framework |
+| Level | Toolchain                                              |
+| ----- | ------------------------------------------------------ |
+| 1     | `cipherocto-jdbc`                                      |
+| 2     | + `cipherocto-logical-repl`                            |
+| 3     | + `cipherocto-oracle-adapter`, `cipherocto-sap-rfc`    |
+| 4     | + `cipherocto-hibernate-dialect`, capability framework |
 
 #### §10.9 ExecutionEnvelope object (renamed from ConsensusSession)
 
@@ -1587,12 +1588,12 @@ GasAccount {
 
 This RFC introduces new primitives (`Vault`, `Capability`, `Reservation`, `Settlement`) and a new event log (`transfer_events`). Existing structures are unaffected:
 
-| Existing | Coexistence |
-|---|---|
-| `octo_w_balances` table | Remains as a **projection cache**; not the source of truth. New code uses `transfer_events` log |
-| `Balance::deduct` (`balance.rs:27`) | Bug fixed in the same revision: `saturating_sub` → checked subtraction that returns `Err(InsufficientBalance)` |
-| RFC-0959 settlement chain | Continues as settlement receipt layer |
-| RFC-0957 macaroon format | Extended via RFC-0965 (companion); old macaroons remain valid |
+| Existing                             | Coexistence                                                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `octo_w_balances` table              | Remains as a **projection cache**; not the source of truth. New code uses `transfer_events` log                                |
+| `Balance::deduct` (`balance.rs`)     | Bug fixed in the same revision: `saturating_sub` → checked subtraction that returns `Err(InsufficientBalance)`                 |
+| RFC-0959 settlement chain            | Continues as settlement receipt layer                                                                                          |
+| RFC-0957 macaroon format             | Extended via RFC-0965 (companion); old macaroons remain valid                                                                  |
 | `quota-router-core` 11-step exercise | Step 6 escrow = real `Reservation::mint()` (landed 2026-07-23; R1-F1 closeout). The 13/13 exercise tests pass after the change |
 
 ## Central Error Code Registry (RFC-0960/0961/0962/0963/0964/0965)
@@ -1604,42 +1605,42 @@ is also referenced by RFC-0961's `CIPHERO_SQL` parser on nonce collisions).
 The "Defined in" column links each code to the R-round that introduced it,
 so reviewers can trace provenance.
 
-| Code | Primary RFC | Defined in | Meaning |
-|---|---|---|---|
-| `E_DETERMINISTIC_VIOLATION` | RFC-0961 §7 | R3 | Procedure marked `DETERMINISTIC` but AST contains non-deterministic function |
-| `E_FORBIDDEN_CONSTRUCTOR` | RFC-0961 §7 | R3 | AST contains a §4 forbidden constructor |
-| `E_MISSING_ORDER_BY` | RFC-0961 §7 | R3 | SELECT returns >1 row but no `ORDER BY` |
-| `E_VOLATILE_FUNCTION` | RFC-0961 §7 | R3 | Function call marked `VOLATILE` and not in registry |
-| `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | R3 | DDL statement inside procedure body |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `DETERMINISTIC` mode (RFC-0962 rename) |
-| `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | R3 | Three-node replay produced non-identical output |
-| `E_PARSE_FAILED` | RFC-0962 §11 | R3 | JSON envelope not canonical |
-| `E_SIGNATURE_INVALID` | RFC-0962 §11 | R3 | Ed25519 verification failed |
-| `E_CAPABILITY_REVOKED` | RFC-0962 §11 | R3 | Capability not in active set |
-| `E_CAPABILITY_EXPIRED` | RFC-0962 §11 | R3 | Capability past `expires_at` |
-| `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | R3 | Capability constraint violated (e.g., spend cap) |
-| `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 | R8-F1 | Revocation emitted at block_height > envelope's; pre-signed session rejected |
-| `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 | R7-F1 | `WrappedOnly` chain depth > 16 or circular reference |
-| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiEnvelope nesting depth > 4 (renamed from MultiSession in RFC-0962) |
-| `E_SUB_ENVELOPE_NOT_REVERSIBLE` | RFC-0962 §7 | R8-F3 | Sub-envelope does not support reversibility (renamed from sub-session) |
-| `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 | R7-F5 | Local chain > 1000 blocks behind envelope's `block_height` |
-| `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | R3 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
-| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedEnvelopeIndex` (renamed from ConsumedSessionIndex in RFC-0962) |
-| `E_REPLAY_MISMATCH` | RFC-0962 §11 | R4-F9 | Write statement's post-state hash doesn't match block producer's |
-| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962) |
-| `E_MULTI_ENVELOPE_TIMEOUT` | RFC-0962 §11 | R3 | Sub-envelope did not reach Replayed within timeout (renamed from MultiSession in RFC-0962) |
-| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963) not reachable |
-| `E_GAS_LIMIT_EXCEEDED` | RFC-0960 §18 | R25 | Envelope projected gas exceeds `gas_limit` at sign time |
-| `E_BRANCH_NOT_FOUND` | RFC-0960 §17 | R25 | `branch_id` not found in catalog |
-| `E_MERGE_CONFLICT_UNRESOLVED` | RFC-0960 §17 | R25 | Merge has non-empty `conflict_set` and no `ConflictResolution` envelope |
-| `E_MERGE_SIGNATURE_MISSING` | RFC-0960 §17 | R25 | Merge lacks branch_a_sig and/or branch_b_sig |
-| `E_MV_STATE_HASH_MISMATCH` | RFC-0960 §15 | R25 | MV refresh produced different `mv_state_hash` than expected |
-| `E_AS_OF_QUERY_FAILED` | RFC-0960 §14 | R25 | AsOfQuery replay against pinned `block_height` failed |
-| `E_DETERMINISTIC_PROFILE_NO_ORDER_BY` | RFC-0961 §7 | R25 | SELECT with LIMIT/OFFSET but no ORDER BY (Deterministic SQL Profile) |
-| `E_DETERMINISTIC_PROFILE_INVALID_COLLATE` | RFC-0961 §7 | R25 | String column uses non-"C" collation |
-| `E_POLICY_NOT_FOUND` | RFC-0967 §8 | R25 | `PolicyReference.policy_id` not found in catalog |
-| `E_POLICY_ATTENUATION_INVALID` | RFC-0967 §8 | R25 | AttenuationProof's subgraph relation doesn't hold (child not ⊆ parent) |
-| `E_DDL_NOT_ACTIVATED` | RFC-0964 §3.11 | R25 | DDL operation attempted before `DDLActivationHeight` constraint satisfied |
+| Code                                      | Primary RFC    | Defined in | Meaning                                                                                    |
+| ----------------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| `E_DETERMINISTIC_VIOLATION`               | RFC-0961 §7    | R3         | Procedure marked `DETERMINISTIC` but AST contains non-deterministic function               |
+| `E_FORBIDDEN_CONSTRUCTOR`                 | RFC-0961 §7    | R3         | AST contains a §4 forbidden constructor                                                    |
+| `E_MISSING_ORDER_BY`                      | RFC-0961 §7    | R3         | SELECT returns >1 row but no `ORDER BY`                                                    |
+| `E_VOLATILE_FUNCTION`                     | RFC-0961 §7    | R3         | Function call marked `VOLATILE` and not in registry                                        |
+| `E_DDL_INSIDE_PROCEDURE`                  | RFC-0961 §7    | R3         | DDL statement inside procedure body                                                        |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE`        | RFC-0961 §7    | R3         | Procedure marked `NON_DETERMINISTIC` invoked in `DETERMINISTIC` mode (RFC-0962 rename)     |
+| `E_RUNTIME_VERIFICATION_FAILED`           | RFC-0961 §7    | R3         | Three-node replay produced non-identical output                                            |
+| `E_PARSE_FAILED`                          | RFC-0962 §11   | R3         | JSON envelope not canonical                                                                |
+| `E_SIGNATURE_INVALID`                     | RFC-0962 §11   | R3         | Ed25519 verification failed                                                                |
+| `E_CAPABILITY_REVOKED`                    | RFC-0962 §11   | R3         | Capability not in active set                                                               |
+| `E_CAPABILITY_EXPIRED`                    | RFC-0962 §11   | R3         | Capability past `expires_at`                                                               |
+| `E_CAPABILITY_EXHAUSTED`                  | RFC-0962 §11   | R3         | Capability constraint violated (e.g., spend cap)                                           |
+| `E_CAPABILITY_REVOKED_POST_HOC`           | RFC-0962 §11   | R8-F1      | Revocation emitted at block_height > envelope's; pre-signed session rejected               |
+| `E_CHAIN_DEPTH_EXCEEDED`                  | RFC-0965 §3.7  | R7-F1      | `WrappedOnly` chain depth > 16 or circular reference                                       |
+| `E_NESTING_DEPTH_EXCEEDED`                | RFC-0962 §7    | R8-F5      | MultiEnvelope nesting depth > 4 (renamed from MultiSession in RFC-0962)                    |
+| `E_SUB_ENVELOPE_NOT_REVERSIBLE`           | RFC-0962 §7    | R8-F3      | Sub-envelope does not support reversibility (renamed from sub-session)                     |
+| `E_LOCAL_CHAIN_FORKED`                    | RFC-0962 §11   | R7-F5      | Local chain > 1000 blocks behind envelope's `block_height`                                 |
+| `E_WAL_SEGMENT_MISMATCH`                  | RFC-0962 §11   | R3         | Local WAL segment hash differs from envelope's `wal_segment_hash`                          |
+| `E_REPLAY_DETECTED`                       | RFC-0962 §11   | R3         | Nonce seen in `ConsumedEnvelopeIndex` (renamed from ConsumedSessionIndex in RFC-0962)      |
+| `E_REPLAY_MISMATCH`                       | RFC-0962 §11   | R4-F9      | Write statement's post-state hash doesn't match block producer's                           |
+| `E_ZK_PROOF_INVALID`                      | RFC-0962 §11   | R3         | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962)                  |
+| `E_MULTI_ENVELOPE_TIMEOUT`                | RFC-0962 §11   | R3         | Sub-envelope did not reach Replayed within timeout (renamed from MultiSession in RFC-0962) |
+| `E_SHARD_UNREACHABLE`                     | RFC-0962 §11   | R3         | Required shard (per RFC-0963) not reachable                                                |
+| `E_GAS_LIMIT_EXCEEDED`                    | RFC-0960 §18   | R25        | Envelope projected gas exceeds `gas_limit` at sign time                                    |
+| `E_BRANCH_NOT_FOUND`                      | RFC-0960 §17   | R25        | `branch_id` not found in catalog                                                           |
+| `E_MERGE_CONFLICT_UNRESOLVED`             | RFC-0960 §17   | R25        | Merge has non-empty `conflict_set` and no `ConflictResolution` envelope                    |
+| `E_MERGE_SIGNATURE_MISSING`               | RFC-0960 §17   | R25        | Merge lacks branch_a_sig and/or branch_b_sig                                               |
+| `E_MV_STATE_HASH_MISMATCH`                | RFC-0960 §15   | R25        | MV refresh produced different `mv_state_hash` than expected                                |
+| `E_AS_OF_QUERY_FAILED`                    | RFC-0960 §14   | R25        | AsOfQuery replay against pinned `block_height` failed                                      |
+| `E_DETERMINISTIC_PROFILE_NO_ORDER_BY`     | RFC-0961 §7    | R25        | SELECT with LIMIT/OFFSET but no ORDER BY (Deterministic SQL Profile)                       |
+| `E_DETERMINISTIC_PROFILE_INVALID_COLLATE` | RFC-0961 §7    | R25        | String column uses non-"C" collation                                                       |
+| `E_POLICY_NOT_FOUND`                      | RFC-0967 §8    | R25        | `PolicyReference.policy_id` not found in catalog                                           |
+| `E_POLICY_ATTENUATION_INVALID`            | RFC-0967 §8    | R25        | AttenuationProof's subgraph relation doesn't hold (child not ⊆ parent)                     |
+| `E_DDL_NOT_ACTIVATED`                     | RFC-0964 §3.11 | R25        | DDL operation attempted before `DDLActivationHeight` constraint satisfied                  |
 
 Reviewers should consult this registry when implementing error handling
 across RFC boundaries.
@@ -1674,23 +1675,23 @@ An attacker forges an `ExecutionEnvelope` signature (renamed from `ConsensusSess
 
 ### Unit tests (per primitive)
 
-| Primitive | Test |
-|---|---|
-| `Vault` | Creation, hierarchy, freeze/retire |
-| `Capability` | Grant, attenuate, revoke, max_uses enforcement |
-| `Reservation` | State machine transitions, audit window, frozen branch |
-| `Settlement` | MultiSettlement completion, rollback |
-| `Constraint` (23 variants) | Each constraint tested with positive + negative cases |
-| Event log | Append-only invariant, correction semantics, projection rebuild |
+| Primitive                  | Test                                                            |
+| -------------------------- | --------------------------------------------------------------- |
+| `Vault`                    | Creation, hierarchy, freeze/retire                              |
+| `Capability`               | Grant, attenuate, revoke, max_uses enforcement                  |
+| `Reservation`              | State machine transitions, audit window, frozen branch          |
+| `Settlement`               | MultiSettlement completion, rollback                            |
+| `Constraint` (23 variants) | Each constraint tested with positive + negative cases           |
+| Event log                  | Append-only invariant, correction semantics, projection rebuild |
 
 ### Integration tests
 
-| Scenario | Test |
-|---|---|
-| 11-step exercise | Step 6 escrow becomes a real `Reservation` row; full pipeline still green |
-| Enterprise migration | PostgreSQL logical replication → CipherOcto via `CIPHERO_SUBSCRIPTION` |
-| Cross-shard settlement | `MultiSettlement` atomicity test |
-| Audit window | Settled → Frozen → Dispute → Rollback test |
+| Scenario               | Test                                                                      |
+| ---------------------- | ------------------------------------------------------------------------- |
+| 11-step exercise       | Step 6 escrow becomes a real `Reservation` row; full pipeline still green |
+| Enterprise migration   | PostgreSQL logical replication → CipherOcto via `CIPHERO_SUBSCRIPTION`    |
+| Cross-shard settlement | `MultiSettlement` atomicity test                                          |
+| Audit window           | Settled → Frozen → Dispute → Rollback test                                |
 
 ### Reference Implementation
 
@@ -1698,22 +1699,22 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 
 ## Open Questions
 
-| Question | Status |
-|---|---|
-| Canonical `Constraint` encoding | RFC-0964 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
-| `Capability` macaroon format extensions | RFC-0965 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
-| `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
-| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
-| Resource shard routing algorithm | RFC-0963 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
-| Policy Object Graph (PolicyReference caveat) | RFC-0967 (companion, **Accepted v1.0 (2026-07-23; promoted in lockstep)**) |
-| Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
+| Question                                                          | Status                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Canonical `Constraint` encoding                                   | RFC-0964 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**)     |
+| `Capability` macaroon format extensions                           | RFC-0965 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**)     |
+| `CIPHERO_SQL` full language spec                                  | RFC-0961 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**)     |
+| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**)     |
+| Resource shard routing algorithm                                  | RFC-0963 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**)     |
+| Policy Object Graph (PolicyReference caveat)                      | RFC-0967 (companion, **Accepted v1.0 (2026-07-23; promoted in lockstep)**)     |
+| Hierarchical vault policy lattice                                 | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
 
 ### Resolved Decisions (v2.1-Resolved)
 
 Last Open Question resolved with concrete answer (R28+ risk-closure round):
 
-| Question | Resolution | Status |
-|----------|------------|--------|
+| Question                          | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status   |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | Hierarchical vault policy lattice | **Already covered — no new primitive required.** RFC-0957 §Attenuation specifies monotonic narrowing via `parent_capability` chain: child capability's caveats/constraints ⊆ parent's. RFC-0965 §3.5 adds `WrappedOnly` caveat for hierarchical composition. RFC-0967 §5 specifies `PolicyGraph` subgraph relation for policy-level attenuation. Together these form the hierarchical lattice. The "defer to v1.1" annotation was a review-note expressing "this is well-studied, no urgency" — not a missing primitive. **Marking resolved.** | Resolved |
 
 All companion RFCs' Open Questions resolved in lockstep with concrete answers; see RFC-0961 §11.1, RFC-0962 §Open Questions → Resolved Decisions, RFC-0963 §Resolved Decisions, RFC-0964 §Resolved Decisions, RFC-0965 §Resolved Decisions, RFC-0967 §15.1.

@@ -10,11 +10,11 @@ RFC-0011-n §Substrate-Additions Companion Missions drift-closure row (Phase 6 c
 
 ## Summary
 
-Drift identified during RFC-0011-h 6-phase rollout between `SeedHealth::check` at `crates/octo-network/src/mon/bootstrap.rs:94` (RFC-0851p-a substrate) and the `octo network status` aggregate envelope (RFC-0011-h §Output Envelope). Drift manifests as: seed-health check reports `refuses_start()` correctly per RFC-0851p-a, but the `octo network status` envelope does NOT surface the `refuses_start` boolean. Operators relying on the CLI status output for seed-list health monitoring cannot see the refusal signal.
+Drift identified during RFC-0011-h 6-phase rollout between `SeedHealth::check` at `crates/octo-network/src/mon/bootstrap.rs` (RFC-0851p-a substrate) and the `octo network status` aggregate envelope (RFC-0011-h §Output Envelope). Drift manifests as: seed-health check reports `refuses_start()` correctly per RFC-0851p-a, but the `octo network status` envelope does NOT surface the `refuses_start` boolean. Operators relying on the CLI status output for seed-list health monitoring cannot see the refusal signal.
 
 ### Drift scope
 
-- `crates/octo-network/src/mon/bootstrap.rs` L89-L150 — `SeedHealth` enum + `check` method + `refuses_start` method (RFC-0851p-a substrate, PRESENT)
+- `crates/octo-network/src/mon/bootstrap.rs` — `SeedHealth` enum + `check` method + `refuses_start` method (RFC-0851p-a substrate, PRESENT)
 - `crates/octo-cli/src/commands/network.rs` (CLI dispatch, NOT YET LANDED for `octo network status` per RFC-0011-n Phase 6 closure)
 - `rfcs/accepted/networking/0851p-a-network-bootstrap.md` — RFC anchor for seed-health substrate
 
@@ -59,7 +59,7 @@ pub struct NetworkStatusOutput {
 
 - Hard sequencing: RFC-0011-n must be Accepted (Draft v0.2, DRY CLOSED)
 - Soft sequencing: G26 (`0011-h-s-a-bootstrap-orchestrator-v2`) lands before drift-closure can wire the envelope field
-- Soft sequencing: `SeedHealth::refuses_start()` substrate at `octo-network/src/mon/bootstrap.rs:139` (LANDED per RFC-0851p-a)
+- Soft sequencing: `SeedHealth::refuses_start()` substrate at `octo-network/src/mon/bootstrap.rs` (LANDED per RFC-0851p-a)
 
 ## Out of Scope
 

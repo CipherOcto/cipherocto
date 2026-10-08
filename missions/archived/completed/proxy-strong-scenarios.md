@@ -24,37 +24,37 @@ RFC-0933 (Infrastructure): Rate Limiting
 ### Strong-scenario E2E tests
 
 - [x] **`test_auth_missing_returns_401`** — POST /v1/chat/completions
-  with no Authorization header → 401. Pins RFC-0932 anonymous-rejection
-  contract.
+      with no Authorization header → 401. Pins RFC-0932 anonymous-rejection
+      contract.
 
 - [x] **`test_auth_invalid_returns_401`** — POST with non-registered
-  key (valid format, wrong bytes) → 401. Pins constant-time HMAC
-  compare (no key-enumeration timing leak).
+      key (valid format, wrong bytes) → 401. Pins constant-time HMAC
+      compare (no key-enumeration timing leak).
 
 - [x] **`test_auth_master_key_bypasses_storage`** — POST with master
-  key (not in storage) → auth passed (status ≠ 401/403). Pins
-  operator escape-hatch for incident response + key rotation.
+      key (not in storage) → auth passed (status ≠ 401/403). Pins
+      operator escape-hatch for incident response + key rotation.
 
 - [x] **`test_rpm_rate_limit_returns_429`** — pre-create key with
-  rpm_limit=2; 1st + 2nd pass auth, 3rd gets 429 with Retry-After
-  header. Pins RFC-0933 rate limit per-key.
+      rpm_limit=2; 1st + 2nd pass auth, 3rd gets 429 with Retry-After
+      header. Pins RFC-0933 rate limit per-key.
 
 - [x] **`test_concurrent_auth_requests_deduped_per_key`** — 10
-  concurrent requests with same valid key (rpm_limit=100); zero
-  401/403, zero 429. Pins auth dedup regression (no accidental
-  memoization dropping requests).
+      concurrent requests with same valid key (rpm_limit=100); zero
+      401/403, zero 429. Pins auth dedup regression (no accidental
+      memoization dropping requests).
 
 ### Helper infrastructure
 
 - [x] `start_proxy_with_auth(rpm_limit, budget_limit)` — spins up
-  proxy with `StoolapKeyStorage` (in-memory) + `RateLimiterStore` +
-  master key. Pre-creates one API key with the requested rpm_limit,
-  returns `(base_url, raw_key)`.
+      proxy with `StoolapKeyStorage` (in-memory) + `RateLimiterStore` +
+      master key. Pre-creates one API key with the requested rpm_limit,
+      returns `(base_url, raw_key)`.
 
 ### Verification
 
 - [x] 13/13 tests pass under
-  `LD_LIBRARY_PATH=/home/mmacedoeu/.pyenv/versions/3.12.9/lib cargo test --features full --test e2e_proxy`
+      `LD_LIBRARY_PATH=/home/mmacedoeu/.pyenv/versions/3.12.9/lib cargo test --features full --test e2e_proxy`
 - [x] Clippy passes with zero warnings
 - [x] All 8 existing e2e_proxy tests still pass
 
@@ -107,12 +107,12 @@ fault-injection hooks. Filed as follow-on.
 
 - RFC-0932 (Infrastructure): Gateway Authentication
 - RFC-0933 (Infrastructure): Rate Limiting
-- `crates/quota-router-core/src/proxy.rs:680-810` — auth + rate-limit dispatch
+- `crates/quota-router-core/src/proxy.rs` — auth + rate-limit dispatch
 - `crates/quota-router-core/src/keys/` — key substrate
 
 ## Version History
 
-| Version | Date       | Status   | Changes |
-| ------- | ---------- | -------- | ------- |
-| v0.1    | 2026-08-13 | claimed  | Mission filed. 5 strong-scenario E2E tests scoped. |
-| v0.2    | 2026-08-13 | closed   | 5/5 implemented in e2e_proxy.rs; 13/13 tests pass. Follow-on `proxy-strong-scenarios-phase2` filed for upstream-fault injection. |
+| Version | Date       | Status  | Changes                                                                                                                          |
+| ------- | ---------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | claimed | Mission filed. 5 strong-scenario E2E tests scoped.                                                                               |
+| v0.2    | 2026-08-13 | closed  | 5/5 implemented in e2e_proxy.rs; 13/13 tests pass. Follow-on `proxy-strong-scenarios-phase2` filed for upstream-fault injection. |

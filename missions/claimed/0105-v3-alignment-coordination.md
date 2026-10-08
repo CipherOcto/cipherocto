@@ -31,7 +31,7 @@ RFC-0105 (economics amendment §2.2) specifies the private-namespace derivation 
 PRIVATE-{chain_id_32B-hex}-{asset_name} → BLAKE3-256(b"cipherocto/asset/v1/" ‖ "PRIVATE-{chain_id_32B-hex}-{asset_name}")[:32]
 ```
 
-This uses the same substrate `asset_id_for` path as sovereign `OCTO-*` tokens — no new substrate code needed. **TV-D9 at `crates/octo-vault/tests/test_vectors.rs:316` covers exactly the 9 sovereign `OCTO-*` tokens** (`tv_d9_vectors_cover_role_tokens_exactly_once`). NO byte-exact fixtures exist for `PRIVATE-{hex}-{name}` variants.
+This uses the same substrate `asset_id_for` path as sovereign `OCTO-*` tokens — no new substrate code needed. **TV-D9 in `crates/octo-vault/tests/test_vectors.rs` covers exactly the 9 sovereign `OCTO-*` tokens** (`tv_d9_vectors_cover_role_tokens_exactly_once`). NO byte-exact fixtures exist for `PRIVATE-{hex}-{name}` variants.
 
 **Coverage gap**: consumers implementing `AssetId::derive("PRIVATE-{hex}-{name}")` cannot verify byte-exact equivalence with `octo_determin::asset_id_for` without explicit test vectors.
 
@@ -112,7 +112,7 @@ Per historical-mission-preservation discipline, none of these are modified by th
 - RFC-0105 (private-namespace derivation rule per economics amendment)
 - RFC-0105 (chain-vs-asset namespace clarification per economics amendment)
 - RFC-0105 (Authority-to-Issue table per economics amendment)
-- RFC-0105 §Asset ID Derivation (canonical substrate anchor — `AssetId::derive` at `crates/octo-vault/src/lib.rs:140` + external `octo-determin` git-deps crate)
+- RFC-0105 §Asset ID Derivation (canonical substrate anchor — `AssetId::derive` in `crates/octo-vault/src/lib.rs` + external `octo-determin` git-deps crate)
 - RFC-0967-A1 v1.9.2 §2.5 (`policy_kind_authority` table schema)
 - RFC-0010 v1.9.2 §2 (chain_id 32-byte form + namespace-byte semantics) + §4 (Authority Registration Flow)
 - RFC-0206 §4 (Layer B additive-only migration ownership rule)

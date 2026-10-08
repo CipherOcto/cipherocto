@@ -22,15 +22,15 @@ RFC-0948 (Economics): Prompt Management
 
 ## Acceptance Criteria
 
-- [x] Implement `POST /prompts` — create prompt (admin.rs:722)
-- [x] Implement `GET /prompts` — list prompts (with PromptFilter, pagination) (admin.rs:745)
-- [x] Implement `GET /prompts/:id` — get prompt with active version (admin.rs:852)
-- [x] Implement `PUT /prompts/:id` — update prompt (admin.rs:860)
-- [x] Implement `DELETE /prompts/:id` — delete prompt (admin.rs:898)
-- [x] Implement `GET /prompts/:id/versions` — list versions (sorted by creation order) (admin.rs:759)
-- [x] Implement `POST /prompts/:id/versions` — create version (admin.rs:798)
-- [x] Implement `POST /prompts/:id/rollback` — rollback to version (admin.rs:769)
-- [x] Implement `POST /prompts/:id/versions/:v/activate` — activate version (admin.rs:839)
+- [x] Implement `POST /prompts` — create prompt (admin.rs)
+- [x] Implement `GET /prompts` — list prompts (with PromptFilter, pagination) (admin.rs)
+- [x] Implement `GET /prompts/:id` — get prompt with active version (admin.rs)
+- [x] Implement `PUT /prompts/:id` — update prompt (admin.rs)
+- [x] Implement `DELETE /prompts/:id` — delete prompt (admin.rs)
+- [x] Implement `GET /prompts/:id/versions` — list versions (sorted by creation order) (admin.rs)
+- [x] Implement `POST /prompts/:id/versions` — create version (admin.rs)
+- [x] Implement `POST /prompts/:id/rollback` — rollback to version (admin.rs)
+- [x] Implement `POST /prompts/:id/versions/:v/activate` — activate version (admin.rs)
 - [ ] **DEFERRED** Rate limiting on CRUD endpoints (per RFC-0933) — see follow-on
 - [x] Clippy passes with zero warnings (verified by 0948-c PR)
 - [x] All existing tests pass (verified by 0948-c PR: 1571/1571 lib)
@@ -51,7 +51,7 @@ registry + `0947-a` callback), but mission file remained `open/`. The
 endpoints were already exercised by 0948-c integration tests at
 commit `2b45a949` ("atomic A/B metrics + priority chain + SDK parity").
 
-**Rate limiting deferred** — admin.rs has no rate limiting on *any*
+**Rate limiting deferred** — admin.rs has no rate limiting on _any_
 endpoint (auth/sso, prompts, providers CRUD). The rate-limiting
 substrate exists at `crates/quota-router-core/src/rate_limit/` +
 `key_rate_limiter.rs` but is wired only at the proxy layer (chat
@@ -76,7 +76,7 @@ mission `0948-b1-admin-rate-limiting` to scope the work.
 
 ## Version History
 
-| Version | Date       | Status   | Changes |
-| ------- | ---------- | -------- | ------- |
-| v0.1    | 2026-07-23 | claimed  | Original mission |
-| v0.2    | 2026-08-13 | closed   | 11/12 ACs PASS; 1 DEFERRED (rate limiting). Follow-on `0948-b1` filed. |
+| Version | Date       | Status  | Changes                                                                |
+| ------- | ---------- | ------- | ---------------------------------------------------------------------- |
+| v0.1    | 2026-07-23 | claimed | Original mission                                                       |
+| v0.2    | 2026-08-13 | closed  | 11/12 ACs PASS; 1 DEFERRED (rate limiting). Follow-on `0948-b1` filed. |

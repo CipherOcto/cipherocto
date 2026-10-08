@@ -96,10 +96,10 @@ to the trait) — but the bit MUST be clear.
 
 **Per-adapter fixes:**
 
-| Adapter | Bit | Old | New | Reason |
-|---|---|---|---|---|
-| WhatsApp | `can_join_by_invite` | `true` (impl returns `Unimplemented`) | implement via `client.groups().join_with_invite_code(...)` | H1: SDK call exists per the existing comment; bit is honest only when impl is real (see §3 H1 for the variant mapping) |
-| IRC | `can_join_by_id` | `false` | `true` (and add `join_by_id` method that wraps `join_by_invite`) | M10: `JOIN #chan` IS join-by-id; the bit is conservative-but-wrong |
+| Adapter  | Bit                  | Old                                   | New                                                              | Reason                                                                                                                 |
+| -------- | -------------------- | ------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| WhatsApp | `can_join_by_invite` | `true` (impl returns `Unimplemented`) | implement via `client.groups().join_with_invite_code(...)`       | H1: SDK call exists per the existing comment; bit is honest only when impl is real (see §3 H1 for the variant mapping) |
+| IRC      | `can_join_by_id`     | `false`                               | `true` (and add `join_by_id` method that wraps `join_by_invite`) | M10: `JOIN #chan` IS join-by-id; the bit is conservative-but-wrong                                                     |
 
 **Decision policy:** for H1, implement `join_by_invite` (variant
 mapping in §3 H1 below). For M10, choose the bit-flip — IRC's
@@ -133,7 +133,7 @@ test builds.
 method via `client.groups().join_with_invite_code(invite.0.as_str())`.
 The SDK returns `Result<JoinGroupResult, anyhow::Error>` where
 `JoinGroupResult` is an enum defined in the `wacore` SDK at
-`wacore/src/iq/groups.rs:2319`:
+`wacore/src/iq/groups.rs`:
 
 ```rust
 pub enum JoinGroupResult {
@@ -158,10 +158,10 @@ message. Keep `can_join_by_invite: true` in the capability report
 **H2 — WhatsApp `create_group` trait/inherent disambiguation.**
 Rename the inherent `create_group` on `WhatsAppWebAdapter` to
 `create_group_str` (mirroring the `leave_group_str` precedent: inherent
-method at `crates/octo-adapter-whatsapp/src/adapter.rs:1769`, comment
-block at lines 1763-1767 (rationale: re-bind the public
+method at `crates/octo-adapter-whatsapp/src/adapter.rs`, comment
+block (rationale: re-bind the public
 `String`-returning method to a distinct local name so the trait
-impl can call it), trait impl at lines 1467-1479). The trait
+impl can call it), trait impl). The trait
 impl calls the unambiguous inherent. This removes the
 infinite-recursion footgun that would silently activate if anyone
 loosens the inherent's signature.
@@ -226,9 +226,9 @@ trait's doc-comment for `add_member` MUST be updated to add
 than `Ok(())`. The IRC impl must wire `ERR_CHANOPRIVSNEEDED` to this
 return path. This requires a NEW `pending_replies` correlation
 buffer — neither `out_tx` (mpsc::Sender<String> for outbound lines
-to the server, `crates/octo-adapter-irc/src/lib.rs:222`) nor
+to the server, `crates/octo-adapter-irc/src/lib.rs`) nor
 `shutdown_tx` (watch::Sender<bool> for shutdown signaling,
-`crates/octo-adapter-irc/src/lib.rs:232`) can carry reply codes.
+`crates/octo-adapter-irc/src/lib.rs`) can carry reply codes.
 The implementer MUST add a `pending_replies: Mutex<HashMap<CommandId,
 oneshot::Sender<NumericResult>>>` on `IrcAdapter` (and the matching
 state inside the `irc_session` listener task), keyed by a per-command
@@ -239,14 +239,14 @@ resolves when the matching numeric reply arrives.
 session.** The IRC impl MUST add an `is_authenticated: AtomicBool`
 field on `IrcAdapter`, set it on the first RPL_ENDOFMOTD (376) or
 ERR_NOMOTD (422) received, and clear it in BOTH `mark_disconnected`
-(transient drop, at `crates/octo-adapter-irc/src/lib.rs:377`) AND
-`shutdown` (full teardown, at `crates/octo-adapter-irc/src/lib.rs:1086`).
+(transient drop, at `crates/octo-adapter-irc/src/lib.rs`) AND
+`shutdown` (full teardown, at `crates/octo-adapter-irc/src/lib.rs`).
 Without clearing in `mark_disconnected`, a transient connection
 drop leaves `is_authenticated = true` until the next 376/422
 arrives, giving `health_check` a brief window where it lies.
 Using 376/422 (not 001 / RPL_WELCOME) as the SET trigger is
 intentional: the listener's existing 376/422 handler at
-`crates/octo-adapter-irc/src/lib.rs:838-849` triggers the channel
+`crates/octo-adapter-irc/src/lib.rs` triggers the channel
 JOINs, and 376/422 are only sent AFTER the NICK/USER handshake
 completes, so they are the canonical "we are authenticated and the
 session is usable" signal. (The listener has no 001/RPL_WELCOME
@@ -281,15 +281,14 @@ disable".
 actions (e.g. `set_locked`, `promote_to_admin`) on this group at
 this moment. `false` means either the adapter is not an admin, or
 the platform doesn't expose admin status for the bot". The IRC
-impl currently always returns `false` for `join_by_invite` (line
-1565) and `list_own_groups` (line 1469) — this is correct per the
+impl currently always returns `false` for `join_by_invite` and `list_own_groups` — this is correct per the
 new doc, since IRC doesn't track op status at the adapter level.
 
 ### 7. M3 — IRC `health_check` ignores `use_tls`
 
 The current `health_check` does a plain `TcpStream::connect` even
 when `use_tls = true`. Once `connect_tls` is real (it is now, at
-`crates/octo-adapter-irc/src/lib.rs:713-723` — uses `tokio-rustls`
+`crates/octo-adapter-irc/src/lib.rs` — uses `tokio-rustls`
 via `TlsConnector::from(tls_client_config())`), `health_check` MUST
 attempt the same TLS handshake when `use_tls = true`. If the
 handshake fails, return `ApiError { code: 525, message: "TLS
@@ -323,20 +322,20 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 ### Phase 3: IRC-side behavior changes
 
 - Tighten `IrcConfig::validate()` channel-name rules per §2 (M15)
-- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8) — set on 376/422, clear in BOTH `mark_disconnected` (transient drop, `lib.rs:377`) AND `shutdown` (full teardown, `lib.rs:1086`) per §4 M8 (R24g N65)
+- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8) — set on 376/422, clear in BOTH `mark_disconnected` (transient drop, `lib.rs`) AND `shutdown` (full teardown, `lib.rs`) per §4 M8 (R24g N65)
 - Wire `ERR_CHANOPRIVSNEEDED` to `add_member` `ApiError` per §4 (M7)
 - Flip `can_join_by_id: true` and add `join_by_id` wrapper per §1 (M10)
 - Update `health_check` to use TLS per §7 (M3) — was previously "Phase 4" but is unblocked since R23d C1 is already fixed
 
 ## Key Files to Modify
 
-| File | Change |
-|---|---|
-| `crates/octo-network/src/dot/adapters/coordinator_admin.rs` | `try_new` ctors (M2), `AddMemberOutput` (H6), `initial_admins_promoted` (M4), `list_own_groups_with_invites` (M13), doc updates (M12, M14) |
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | `create_group_str` rename (H2; inherent `leave_group_str` precedent at line 1769, trait impl at line 1467-1479), `join_by_invite` impl (H1, line 1728-1742), `set_ephemeral` error (M1), M5 logging, M11 HashSet, M16 JID validation |
-| `crates/octo-adapter-irc/src/lib.rs` | `IrcConfig::validate` channel rules (M15, validate at line 95; struct at line 58, impl at line 82), `is_authenticated: AtomicBool` field on `IrcAdapter` (struct at line 208; new field goes between the existing declarations at ~line 226, near `out_tx`/`shutdown_tx`); SET it true in the existing 376/422 branch in `irc_session` at line 838, CLEAR it in BOTH `mark_disconnected` (transient drop, at `lib.rs:377`, alongside the `connected = false` / `out_tx = None` lines) AND `shutdown` (full teardown, at `lib.rs:1116`, alongside the existing `out_tx = None` and `shutdown_tx.take()` lines) (M8), `add_member` `ERR_CHANOPRIVSNEEDED` (M7, `add_member` trait impl at line 1261-1273; requires NEW `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` on `IrcAdapter` per RFC §4 M7), `can_join_by_id` flip + `join_by_id` (M10, capability report at line 1189) |
-| `crates/octo-adapter-irc/src/lib.rs` (listener / `irc_session`) | M3 (TLS health check at line 1128) |
-| `docs/research/coordinator-admin-actions.md` | Update M10's claim that IRC doesn't support join-by-id |
+| File                                                            | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-network/src/dot/adapters/coordinator_admin.rs`     | `try_new` ctors (M2), `AddMemberOutput` (H6), `initial_admins_promoted` (M4), `list_own_groups_with_invites` (M13), doc updates (M12, M14)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `crates/octo-adapter-whatsapp/src/adapter.rs`                   | `create_group_str` rename (H2; inherent `leave_group_str` precedent, trait impl), `join_by_invite` impl (H1,), `set_ephemeral` error (M1), M5 logging, M11 HashSet, M16 JID validation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `crates/octo-adapter-irc/src/lib.rs`                            | `IrcConfig::validate` channel rules (M15, validate; struct, impl), `is_authenticated: AtomicBool` field on `IrcAdapter` (struct; new field goes between the existing declarations at ~, near `out_tx`/`shutdown_tx`); SET it true in the existing 376/422 branch in `irc_session`, CLEAR it in BOTH `mark_disconnected` (transient drop, at `lib.rs`, alongside the `connected = false` / `out_tx = None` lines) AND `shutdown` (full teardown, at `lib.rs`, alongside the existing `out_tx = None` and `shutdown_tx.take()` lines) (M8), `add_member` `ERR_CHANOPRIVSNEEDED` (M7, `add_member` trait impl; requires NEW `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` on `IrcAdapter` per RFC §4 M7), `can_join_by_id` flip + `join_by_id` (M10, capability report) |
+| `crates/octo-adapter-irc/src/lib.rs` (listener / `irc_session`) | M3 (TLS health check)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `docs/research/coordinator-admin-actions.md`                    | Update M10's claim that IRC doesn't support join-by-id                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Future Work
 
@@ -370,21 +369,21 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 
 ## Version History
 
-| Version | Date       | Changes |
-| ------- | ---------- | ------- |
-| 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 17 R1 findings (H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16). |
-| 1.1     | 2026-06-18 | R24a fixes: H1 detailed with `JoinGroupResult` mapping; M8 trigger changed from 001 (RPL_WELCOME) to 376/422 (RPL_ENDOFMOTD/ERR_NOMOTD) since the listener has no 001 parsing; M3 unblocked (R23d C1 is fixed); stale line numbers corrected; `futures` dep note added for M13; test count corrections. |
-| 1.2     | 2026-06-18 | R24b fixes: Appendix A gains H6 row; M3 phase column corrected to 3 (was 4 "blocked on C1"); M7 spec rewritten — `shutdown_tx` cannot carry reply codes (it's `watch::Sender<bool>`); implementer must add a new `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` buffer; F1 dedupes Matrix and matrix-sdk; Rationale "11 fixes" corrected to "17 fixes". |
-| 1.3     | 2026-06-18 | R24c fixes: 8 LOW accuracy gaps. Key Files row for IrcConfig::validate line ~140 → 95 (actual); M8 row extended to name the IrcAdapter field decl (~line 225) and the SET site (irc_session line 838); capability report line 1190 → 1189 (can_join_by_id is at 1189); wacore JoinGroupResult line 2318 → 2319 (verified at the SDK checkout); Phase 1 title "(low risk, no behavior change)" → "(additive; no breakage for existing callers)" matching the mission; Phase 2 plan M5 line cross-references H2's create_group_str rename and reorders H2 first. |
-| 1.4     | 2026-06-18 | R24d fixes: AddMemberOutput.promoted type changed from `Result<(), PlatformAdapterError>` to `Option<Result<(), PlatformAdapterError>>` (doc said "None if X" which was impossible for bare Result); Version History 1.2 row recovered (was overwritten in R24c); Phase 2 M1 "sibling method" phrasing corrected to "TRAIT impl, not the inherent"; Phase 2 H2 line reworded to clarify only M5 actually depends on the rename (not "all other Phase 2 edits"); Mission Phase 1 / Phase 2 / Mission Status Log updated to match. |
-| 1.5     | 2026-06-18 | R24e fixes: Version History 1.4 row added (was claimed in R24d commit message but never written to file); downstream R5 closure summary table updated — M3 phase changed from "4 (blocked on C1)" to "3 (unblocked since R23d C1)"; R5 footnote expanded to point readers to RFC-0861 Appendix A as the canonical mapping; Mission Phase 1 H6 acceptance criterion extended to require a discriminator test for the three `Option<Result<>>` variants. |
-| 1.6     | 2026-06-18 | R24f fixes: Version History 1.3 row recovered (was lost when R24d's edit replaced the 1.2 row with a 1.4 row); Mission Phase 2 plan reordered to put H2 BEFORE M5 (matches the RFC's instruction that M5 lands on the post-H2-renamed function); Mission Phase 2 H1 bullets merged into one coupled acceptance criterion (the capability bit and the impl are not independent). |
-| 1.7     | 2026-06-18 | R24g fixes: §3 H1 struct literal now includes `initial_admins_promoted: false` (would fail to compile after Phase 1 M4 lands, since GroupHandle doesn't derive Default); §4 M8 "clear on disconnect" clarified to clear in BOTH `mark_disconnected` (lib.rs:377) AND `shutdown` (lib.rs:1086) — transient drop otherwise leaves is_authenticated=true until next 376/422; Mission Phase 3 M7 acceptance extended to require a unit test for the new `pending_replies` HashMap. |
-| 1.8     | 2026-06-18 | R24h fixes: 3 MEDIUM downstream propagations of the R24g N65 fix. RFC Phase 3 plan line (was 'clear on disconnect', now 'clear in BOTH mark_disconnected and shutdown'); RFC Key Files row (was 'CLEAR it in disconnect next to the existing shutdown_tx clear', now specifies both methods with line numbers); Mission Phase 3 M8 acceptance (was 'cleared on disconnect', now specifies both methods). |
-| 1.9     | 2026-06-18 | R24i fixes: 3 LOW line-number drifts. Key Files row cited `IrcAdapter` struct at '~line 225', actual is line 208; RFC §2 H2 cited leave_group_str 'comment block at lines 1763-1764', actual is 1763-1767 (5-line doc comment — rationale at 1765-1767 is the key part); Mission Phase 2 H2 had the same drift. |
-| 1.10    | 2026-06-18 | R24j fixes: 1 MEDIUM + 1 LOW. MEDIUM: Phase 2 plan listed H1 before H2, contradicting H2's 'do this FIRST' annotation and the Mission (post-R24f N62 fix). Reordered so H2 is first (matches the Mission). LOW: Phase 2 plan H1 cite said `per §1 (H1)` but the primary impl spec and `JoinGroupResult` variant mapping are in §3 H1 — changed to `per §1+§3 (H1; primary impl spec in §3 H1)`. |
-| 1.11    | 2026-06-18 | Implementation complete (commits 80528f0, 4afd1eb, 9571694 on `next` against `octo-adapter-irc`). All 17 R1 findings (H1, H2, H6, M1–M5, M7, M8, M10–M16) closed: Phase 1 trait surface (M2, H6, M4, M13, M12, M14); Phase 2 WhatsApp-side (H2 create_group_str rename, H1 join_by_invite impl, M1 set_ephemeral overflow error, M5 tracing::debug! in create_group_str, M11 HashSet<String> in list_own_groups, M16 JID rules); Phase 3 IRC-side (M8 is_authenticated Arc<AtomicBool> + 376/422 SET + clear in BOTH mark_disconnected and shutdown, M7 pending_invites correlation buffer for ERR_CHANOPRIVSNEEDED, M10 can_join_by_id flip + join_by_id wrapper, M3 TLS health check). M15 was already implemented pre-RFC-0861 as part of R23d H7 (`validate_channel_name` at lib.rs:151); verified by inspection. Test counts after implementation: octo-network 1249, octo-adapter-irc 57, octo-adapter-whatsapp 67. |
-| 1.12    | 2026-06-19 | **Accepted.** Implementation (Phase 1/2/3 commits 80528f0, 4afd1eb, 9571694) is on `next` with all CI green; post-implementation adversarial review (R24l, commit a9bf8d2) recorded no further findings. RFC moved from `rfcs/draft/networking/` to `rfcs/accepted/networking/` via `git mv` to preserve rename history. Mission 0861's "draft waiver" note in `missions/claimed/0861-coordinator-admin-trait-refinements.md` is now stale and has been removed. `rfcs/README.md` registry updated from "Draft" to "Accepted". |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 17 R1 findings (H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.1     | 2026-06-18 | R24a fixes: H1 detailed with `JoinGroupResult` mapping; M8 trigger changed from 001 (RPL_WELCOME) to 376/422 (RPL_ENDOFMOTD/ERR_NOMOTD) since the listener has no 001 parsing; M3 unblocked (R23d C1 is fixed); stale line numbers corrected; `futures` dep note added for M13; test count corrections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.2     | 2026-06-18 | R24b fixes: Appendix A gains H6 row; M3 phase column corrected to 3 (was 4 "blocked on C1"); M7 spec rewritten — `shutdown_tx` cannot carry reply codes (it's `watch::Sender<bool>`); implementer must add a new `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` buffer; F1 dedupes Matrix and matrix-sdk; Rationale "11 fixes" corrected to "17 fixes".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.3     | 2026-06-18 | R24c fixes: 8 LOW accuracy gaps. Key Files row for IrcConfig::validate line ~~140 → 95 (actual); M8 row extended to name the IrcAdapter field decl (~~) and the SET site (irc_session); capability report → 1189 (can_join_by_id is at 1189); wacore JoinGroupResult → 2319 (verified at the SDK checkout); Phase 1 title "(low risk, no behavior change)" → "(additive; no breakage for existing callers)" matching the mission; Phase 2 plan M5 line cross-references H2's create_group_str rename and reorders H2 first.                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.4     | 2026-06-18 | R24d fixes: AddMemberOutput.promoted type changed from `Result<(), PlatformAdapterError>` to `Option<Result<(), PlatformAdapterError>>` (doc said "None if X" which was impossible for bare Result); Version History 1.2 row recovered (was overwritten in R24c); Phase 2 M1 "sibling method" phrasing corrected to "TRAIT impl, not the inherent"; Phase 2 H2 line reworded to clarify only M5 actually depends on the rename (not "all other Phase 2 edits"); Mission Phase 1 / Phase 2 / Mission Status Log updated to match.                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.5     | 2026-06-18 | R24e fixes: Version History 1.4 row added (was claimed in R24d commit message but never written to file); downstream R5 closure summary table updated — M3 phase changed from "4 (blocked on C1)" to "3 (unblocked since R23d C1)"; R5 footnote expanded to point readers to RFC-0861 Appendix A as the canonical mapping; Mission Phase 1 H6 acceptance criterion extended to require a discriminator test for the three `Option<Result<>>` variants.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.6     | 2026-06-18 | R24f fixes: Version History 1.3 row recovered (was lost when R24d's edit replaced the 1.2 row with a 1.4 row); Mission Phase 2 plan reordered to put H2 BEFORE M5 (matches the RFC's instruction that M5 lands on the post-H2-renamed function); Mission Phase 2 H1 bullets merged into one coupled acceptance criterion (the capability bit and the impl are not independent).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.7     | 2026-06-18 | R24g fixes: §3 H1 struct literal now includes `initial_admins_promoted: false` (would fail to compile after Phase 1 M4 lands, since GroupHandle doesn't derive Default); §4 M8 "clear on disconnect" clarified to clear in BOTH `mark_disconnected` (lib.rs) AND `shutdown` (lib.rs) — transient drop otherwise leaves is_authenticated=true until next 376/422; Mission Phase 3 M7 acceptance extended to require a unit test for the new `pending_replies` HashMap.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.8     | 2026-06-18 | R24h fixes: 3 MEDIUM downstream propagations of the R24g N65 fix. RFC Phase 3 plan line (was 'clear on disconnect', now 'clear in BOTH mark_disconnected and shutdown'); RFC Key Files row (was 'CLEAR it in disconnect next to the existing shutdown_tx clear', now specifies both methods with line numbers); Mission Phase 3 M8 acceptance (was 'cleared on disconnect', now specifies both methods).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.9     | 2026-06-18 | R24i fixes: 3 LOW line-number drifts. Key Files row cited `IrcAdapter` struct at '~', actual is; RFC §2 H2 cited leave_group_str 'comment block', actual is 1763-1767 (5-line doc comment — rationale at 1765-1767 is the key part); Mission Phase 2 H2 had the same drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.10    | 2026-06-18 | R24j fixes: 1 MEDIUM + 1 LOW. MEDIUM: Phase 2 plan listed H1 before H2, contradicting H2's 'do this FIRST' annotation and the Mission (post-R24f N62 fix). Reordered so H2 is first (matches the Mission). LOW: Phase 2 plan H1 cite said `per §1 (H1)` but the primary impl spec and `JoinGroupResult` variant mapping are in §3 H1 — changed to `per §1+§3 (H1; primary impl spec in §3 H1)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.11    | 2026-06-18 | Implementation complete (commits 80528f0, 4afd1eb, 9571694 on `next` against `octo-adapter-irc`). All 17 R1 findings (H1, H2, H6, M1–M5, M7, M8, M10–M16) closed: Phase 1 trait surface (M2, H6, M4, M13, M12, M14); Phase 2 WhatsApp-side (H2 create_group_str rename, H1 join_by_invite impl, M1 set_ephemeral overflow error, M5 tracing::debug! in create_group_str, M11 HashSet<String> in list_own_groups, M16 JID rules); Phase 3 IRC-side (M8 is_authenticated Arc<AtomicBool> + 376/422 SET + clear in BOTH mark_disconnected and shutdown, M7 pending_invites correlation buffer for ERR_CHANOPRIVSNEEDED, M10 can_join_by_id flip + join_by_id wrapper, M3 TLS health check). M15 was already implemented pre-RFC-0861 as part of R23d H7 (`validate_channel_name` at lib.rs); verified by inspection. Test counts after implementation: octo-network 1249, octo-adapter-irc 57, octo-adapter-whatsapp 67. |
+| 1.12    | 2026-06-19 | **Accepted.** Implementation (Phase 1/2/3 commits 80528f0, 4afd1eb, 9571694) is on `next` with all CI green; post-implementation adversarial review (R24l, commit a9bf8d2) recorded no further findings. RFC moved from `rfcs/draft/networking/` to `rfcs/accepted/networking/` via `git mv` to preserve rename history. Mission 0861's "draft waiver" note in `missions/claimed/0861-coordinator-admin-trait-refinements.md` is now stale and has been removed. `rfcs/README.md` registry updated from "Draft" to "Accepted".                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Related RFCs
 
@@ -408,25 +407,25 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 
 ### A. Finding-to-spec mapping
 
-| R1 finding | RFC § | Severity | Adapter | Phase |
-|---|---|---|---|---|
-| H1 | §1 | HIGH | WhatsApp | 2 |
-| H2 | §3 | HIGH | WhatsApp | 2 |
-| H6 | §3 | HIGH | WhatsApp | 2 |
-| M1 | §3 | MEDIUM | WhatsApp | 2 |
-| M2 | §2 | MEDIUM | trait | 1 |
-| M3 | §7 | MEDIUM | IRC | 3 (unblocked since R23d C1) |
-| M4 | §3 | MEDIUM | WhatsApp | 1 |
-| M5 | §3 | MEDIUM | WhatsApp | 2 |
-| M7 | §4 | MEDIUM | IRC | 3 |
-| M8 | §4 | MEDIUM | IRC | 3 |
-| M10 | §1 | MEDIUM | IRC | 3 |
-| M11 | §5 | MEDIUM | WhatsApp | 2 |
-| M12 | §6 | MEDIUM | trait | 1 |
-| M13 | §3 | MEDIUM | WhatsApp | 1 |
-| M14 | §6 | MEDIUM | trait | 1 |
-| M15 | §2 | MEDIUM | IRC | 3 |
-| M16 | §2 | MEDIUM | WhatsApp | 2 |
+| R1 finding | RFC § | Severity | Adapter  | Phase                       |
+| ---------- | ----- | -------- | -------- | --------------------------- |
+| H1         | §1    | HIGH     | WhatsApp | 2                           |
+| H2         | §3    | HIGH     | WhatsApp | 2                           |
+| H6         | §3    | HIGH     | WhatsApp | 2                           |
+| M1         | §3    | MEDIUM   | WhatsApp | 2                           |
+| M2         | §2    | MEDIUM   | trait    | 1                           |
+| M3         | §7    | MEDIUM   | IRC      | 3 (unblocked since R23d C1) |
+| M4         | §3    | MEDIUM   | WhatsApp | 1                           |
+| M5         | §3    | MEDIUM   | WhatsApp | 2                           |
+| M7         | §4    | MEDIUM   | IRC      | 3                           |
+| M8         | §4    | MEDIUM   | IRC      | 3                           |
+| M10        | §1    | MEDIUM   | IRC      | 3                           |
+| M11        | §5    | MEDIUM   | WhatsApp | 2                           |
+| M12        | §6    | MEDIUM   | trait    | 1                           |
+| M13        | §3    | MEDIUM   | WhatsApp | 1                           |
+| M14        | §6    | MEDIUM   | trait    | 1                           |
+| M15        | §2    | MEDIUM   | IRC      | 3                           |
+| M16        | §2    | MEDIUM   | WhatsApp | 2                           |
 
 17 entries. The R5 review listed 16 of them (H1, H2, H6, M1, M4,
 M5, M10–M16, M3, M7, M8) as "deferred"; M2 (try_new constructors) was

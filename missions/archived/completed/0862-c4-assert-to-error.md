@@ -110,7 +110,7 @@ proper error variants.)
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                    |
-| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #8 (`dqa_to_i64` assert panic surface).                                                                                                            |
-| 2026-08-17 | @mmacedoeu | Round 2 cleanup: drop `stoolap_spend_ledger.rs:274-283` line ref, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |
+| Date       | Author     | Change                                                                                                                                                                                            |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #8 (`dqa_to_i64` assert panic surface).                                                                                                    |
+| 2026-08-17 | @mmacedoeu | Round 2 cleanup: drop `stoolap_spend_ledger.rs` line ref, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |

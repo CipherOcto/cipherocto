@@ -45,7 +45,7 @@ is the **declaration-only** scope; substitution into
       the `takes_audience(a: Audience)` test pattern.
 - [x] Clippy zero warnings
       (`cargo clippy -p quota-router-core --all-targets
-      --features full -- -D warnings` clean).
+  --features full -- -D warnings` clean).
 - [x] 252 auth-module tests pass; 1655/1655 lib tests pass.
 
 ### Design decision: concrete `Secret(Vec<u8>)`
@@ -67,7 +67,7 @@ key), wrap in `Secret` at the conversion site.
   `SamlAssertion`, `ProviderConfig`, `IdpMetadata`,
   `TokenClaims`, `SsoUser`. → M6-c
 - `BlacklistQuery` port-trait. → M6-d
-- admin.rs:573-590 HTTP Content-Length. → M6-e
+- admin.rs HTTP Content-Length. → M6-e
 - `SamlAudienceMismatch` struct variant widening. → M6-f
 
 ## RFC
@@ -125,13 +125,12 @@ redacts Secrets) for each.
       without naming the submodule.
 - [ ] `Secret<T>` derives `Zeroize + ZeroizeOnDrop`.
       `Debug` for `Secret<T>` is REDACTED (prints `<redacted:
-      Secret<…>>`). Other newtypes use plain `Debug`.
+  Secret<…>>`). Other newtypes use plain `Debug`.
 - [ ] `Email::from_str` validates RFC 5321-ish structure
       (one `@`, non-empty local part, non-empty domain part,
       domain contains at least one `.`). Invalid input
       returns `Err(SsoError::InvalidEmail)`.
-- [ ] Tests for each newtype: round-trip through `Display`
-      + `FromStr`, type-mismatch prevention at compile time
+- [ ] Tests for each newtype: round-trip through `Display` + `FromStr`, type-mismatch prevention at compile time
       (separate `fn takes_audience(a: Audience)` cannot
       accept `EntityId`), Secret Debug redacts.
 - [ ] Clippy zero warnings; all existing tests pass.
@@ -144,7 +143,7 @@ redacts Secrets) for each.
   `M6-c-newtype-wiring` (to file at end of this mission).
 - `BlacklistQuery` port-trait. Tracked under
   `M6-d-blacklist-port-trait`.
-- admin.rs:573-590 HTTP Content-Length. Tracked under
+- admin.rs HTTP Content-Length. Tracked under
   `M6-e-admin-content-length`.
 - `SamlAudienceMismatch` struct variant widening. Tracked
   under `M6-f-audience-mismatch-struct`.

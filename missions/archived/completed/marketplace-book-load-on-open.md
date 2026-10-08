@@ -51,7 +51,8 @@ RFC-0900 (Economics): Marketplace
 ## Notes
 
 Key files:
-- `crates/quota-router-core/src/marketplace/mod.rs:120, 144, 156` — open_path + book field
+
+- `crates/quota-router-core/src/marketplace/mod.rs` — open_path + book field
 - `crates/quota-router-storage/src/ask_repo.rs` — must expose list_all() or per-model iteration if hydration path chosen
 
 Round 1 review context (Pass 2 HIGH #H3): two parallel state stores,
@@ -60,6 +61,7 @@ restart because `put` is the only writer to `book`. Severity HIGH
 because it's a hot-path correctness bug masquerading as architecture.
 
 Choose one:
+
 - (a) Hydrate `book` from `repo` on open_path — preserves O(1) cheapest
 - (b) Drop `book` and scan `repo` — simpler but O(N) per query
 
@@ -67,11 +69,11 @@ Recommend (a) unless Gap 5 perf data shows O(N) is fine.
 
 ## Version History
 
-| Version | Date       | Change                                                                                                |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-13 | Mission filed. Round 1 review follow-on. H3 silent-data-loss vector scoped. |
+| Version | Date       | Change                                                                                                               |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | Mission filed. Round 1 review follow-on. H3 silent-data-loss vector scoped.                                          |
 | v0.2    | 2026-08-13 | Closed. H3 fixed: open_path hydrates book via `list_all_active_asks`. 3 new tests; 76/76 marketplace lib tests pass. |
-| v0.1    | 2026-08-13 | Mission filed. Round 1 review follow-on. 8 ACs. |
+| v0.1    | 2026-08-13 | Mission filed. Round 1 review follow-on. 8 ACs.                                                                      |
 
 Last Updated: 2026-08-13
 Version: 0.1

@@ -20,8 +20,8 @@ status: OPEN
 RFC-0105 v3.0 introduced two asset namespaces (sovereign `OCTO-*` vs private `PRIVATE-{chain_id_32B-hex}-{asset_name}`) without breaking the existing substrate derivation path. RFC-0105 v3.4 (canonical Accepted 2026-08-23) inherits v3.0's framing. Existing substrate coverage:
 
 - `octo_determin::asset_id_for(role_token)` (Layer A frozen external git-deps crate) accepts arbitrary `&str` input.
-- `AssetId::derive(role_token)` wrapper at `crates/octo-vault/src/lib.rs:140` delegates to substrate; no code change needed to accept `PRIVATE-*` strings.
-- Test vector registry at `crates/octo-vault/tests/test_vectors.rs:316` covers the 9 sovereign `OCTO-*` tokens via `tv_d9_vectors_cover_role_tokens_exactly_once`. No private-namespace test vectors exist on disk.
+- `AssetId::derive(role_token)` wrapper in `crates/octo-vault/src/lib.rs` delegates to substrate; no code change needed to accept `PRIVATE-*` strings.
+- Test vector registry in `crates/octo-vault/tests/test_vectors.rs` covers the 9 sovereign `OCTO-*` tokens via `tv_d9_vectors_cover_role_tokens_exactly_once`. No private-namespace test vectors exist on disk.
 
 Gap: no byte-exact verification for private-namespace asset_id derivation across multi-`chain_id` + multi-`asset_name` combinations. Consumers implementing `AssetId::derive("PRIVATE-{hex}-{name}")` cannot verify against canonical substrate output without an explicit test vector suite.
 
@@ -29,11 +29,11 @@ Gap: no byte-exact verification for private-namespace asset_id derivation across
 
 ### Step 1: Substrate form docstring update
 
-`crates/octo-vault/src/lib.rs` `AssetId::derive` doctring (around `lib.rs:140`) — extend to mention both sovereign (`OCTO-*`) and private (`PRIVATE-{chain_id_32B-hex}-{asset_name}`) coverage per RFC-0105 economics amendment (sovereign + private namespace framing). Cite RFC-0105 cross-reference to make the substrate form explicit.
+`crates/octo-vault/src/lib.rs` `AssetId::derive` doctring — extend to mention both sovereign (`OCTO-*`) and private (`PRIVATE-{chain_id_32B-hex}-{asset_name}`) coverage per RFC-0105 economics amendment (sovereign + private namespace framing). Cite RFC-0105 cross-reference to make the substrate form explicit.
 
 ### Step 2: TV-P1 byte-exact fixtures
 
-Add `tv_p1_private_namespaces_round_trip` test function to `crates/octo-vault/tests/test_vectors.rs` parallel to existing `tv_d9_vectors_cover_role_tokens_exactly_once` (line 316). Fixture set:
+Add `tv_p1_private_namespaces_round_trip` test function to `crates/octo-vault/tests/test_vectors.rs` parallel to existing `tv_d9_vectors_cover_role_tokens_exactly_once`. Fixture set:
 
 - 4 `chain_id` variants — 32-byte hex (use canonical fixtures from RFC-0010 v1.7 §2 + v1.9.2 §2):
   - 0x01 Rfc: example chain (deterministic 32-byte hex pinned in TV)
@@ -47,7 +47,7 @@ Helper function `assert_asset_id_derivation` (parallel to TV-D9 helper) verifies
 
 ### Step 3: Cross-crate byte-equality check
 
-Add explicit `octo_vault_private_asset_id_derivation_matches_octo_determin` test (parallel to existing `asset_id_for_matches_octo_vault_asset_id_derive` at `crates/octo-vault/tests/test_vectors.rs:333`) to confirm the substrate wrapper path for PRIVATE-* strings produces byte-identical output to `octo_determin::asset_id_for` directly.
+Add explicit `octo_vault_private_asset_id_derivation_matches_octo_determin` test (parallel to existing `asset_id_for_matches_octo_vault_asset_id_derive` in `crates/octo-vault/tests/test_vectors.rs`) to confirm the substrate wrapper path for PRIVATE-* strings produces byte-identical output to `octo_determin::asset_id_for` directly.
 
 ### Step 4: RFC-0105 version history
 
@@ -62,7 +62,7 @@ Add explicit `octo_vault_private_asset_id_derivation_matches_octo_determin` test
 - 20 byte-exact TV-P1 fixtures added + pinned in `crates/octo-vault/tests/test_vectors.rs::tv_p1_private_namespaces_round_trip`
 - `tv_p1_private_namespaces_round_trip` covers 4 chain_id variants × 5 asset_name variants = 20 fixtures
 - `octo_vault_private_asset_id_derivation_matches_octo_determin` cross-crate byte-equality test added
-- `crates/octo-vault/src/lib.rs:140` doctring updated to document private-namespace coverage
+- `crates/octo-vault/src/lib.rs` doctring updated to document private-namespace coverage
 - RFC-0105 §6 VH v3.5 row added (test-only — no spec text change)
 - AC gate: `rg 'PRIVATE-' crates/octo-vault/tests/test_vectors.rs` ≥ 20 hits
 - AC gate: `rg 'tv_p1_private_namespaces_round_trip' crates/octo-vault/tests/test_vectors.rs` → 1 hit (function def)
@@ -74,7 +74,7 @@ Add explicit `octo_vault_private_asset_id_derivation_matches_octo_determin` test
 
 ## Files / Artifacts
 
-- Edit: `crates/octo-vault/src/lib.rs` (AssetId::derive doctring — line 140 vicinity)
+- Edit: `crates/octo-vault/src/lib.rs` (AssetId::derive doctring)
 - Edit: `crates/octo-vault/tests/test_vectors.rs` (TV-P1 fixtures + test functions)
 - Edit: `rfcs/accepted/economics/0105-v34-private-asset-namespace.md` §6 VH v3.5 row
 

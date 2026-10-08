@@ -49,7 +49,7 @@ Key files:
 Reference points:
 
 - LiteLLM callback interface: `litellm.inputCallback`, `litellm.successCallback`, `litellm.failureCallback`, `litellm.serviceCallback`
-- `crates/quota-router-core/src/callbacks/mod.rs:199` — `CallbackTarget` trait wrapped
+- `crates/quota-router-core/src/callbacks/mod.rs` — `CallbackTarget` trait wrapped
 
 Architecture:
 

@@ -165,7 +165,7 @@ independent attention.
 
 - `crates/quota-router-core/src/auth/sso/saml.rs` (1722 LoC)
 - `crates/quota-router-core/src/auth/sso/mod.rs` (733 LoC)
-- `crates/quota-router-core/src/admin.rs:568-580` (SAML
+- `crates/quota-router-core/src/admin.rs` (SAML
   endpoint dispatch)
 
 ## Cross-references

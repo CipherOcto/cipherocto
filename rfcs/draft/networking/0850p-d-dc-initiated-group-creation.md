@@ -56,13 +56,13 @@ RFC-0850p-c §1 and RFC-0855p-c §5a define a 4-state `GroupState` machine (`Unb
 
 ## Roles and Authorities
 
-| Role | Authority for CGROUP | Authority for INVITE | Authority for UNBIND_ALL |
-|------|----------------------|----------------------|--------------------------|
-| **DomainCoordinator (DC)** | Yes (primary) | Yes (primary) | Yes (primary) |
-| **Witness** | No | No | No (witnesses only ACK UNBIND_ALL) |
-| **MissionCreator** | No (may delegate sub-DC authority to a sub-coordinator for a specific sub-domain via RFC-0855p-d §Sub-DC delegation, out of scope for this RFC) | No | Yes (supersedes DC) |
-| **MissionController** | No | No | Yes (supersedes DC) |
-| **Governance** | No | No | Yes (governance vote per RFC-0855p-b §"Slashing Adjudicator") |
+| Role                       | Authority for CGROUP                                                                                                                            | Authority for INVITE | Authority for UNBIND_ALL                                      |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------- |
+| **DomainCoordinator (DC)** | Yes (primary)                                                                                                                                   | Yes (primary)        | Yes (primary)                                                 |
+| **Witness**                | No                                                                                                                                              | No                   | No (witnesses only ACK UNBIND_ALL)                            |
+| **MissionCreator**         | No (may delegate sub-DC authority to a sub-coordinator for a specific sub-domain via RFC-0855p-d §Sub-DC delegation, out of scope for this RFC) | No                   | Yes (supersedes DC)                                           |
+| **MissionController**      | No                                                                                                                                              | No                   | Yes (supersedes DC)                                           |
+| **Governance**             | No                                                                                                                                              | No                   | Yes (governance vote per RFC-0855p-b §"Slashing Adjudicator") |
 
 The DC is the only role that can sign a CGROUP. INVITE is restricted to the DC of the bound domain. UNBIND_ALL can be initiated by the DC, MissionCreator, MissionController, or a governance vote.
 
@@ -72,15 +72,15 @@ The DC is the only role that can sign a CGROUP. INVITE is restricted to the DC o
 
 ### Envelope Types Added
 
-| Envelope Type | Subtype tag | Direction | Description |
-|---------------|-------------|-----------|-------------|
-| `DOT/1/CGROUP` | `b"CGRO"` | DC → mesh (broadcast) | Request to create a new physical group and bind to `domain_id` |
-| `DOT/1/CGROUP_ACK` | `b"CGAC"` | Witness → DC | Witness confirms seeing the CGROUP and reserving the `domain_id` |
-| `DOT/1/CGROUP_DONE` | `b"CGDA"` | DC → mesh (broadcast) | DC confirms the platform-side group was created, includes `group_jid` |
-| `DOT/1/CGROUP_FAIL` | `b"CGFA"` | DC → mesh (broadcast) | DC failed to create the group on the platform; includes reason code |
-| `DOT/1/INVITE` | `b"INVT"` | DC → single recipient (out-of-band) | One-shot signed invite to join a specific physical group |
-| `DOT/1/UNBIND_ALL` | `b"UALL"` | Authority → mesh (broadcast) | Decommission a physical group bound to `domain_id` |
-| `DOT/1/UNBIND_ALL_ACK` | `b"UAAC"` | Witness → Authority | Witness confirms UNBIND_ALL and tears down local state |
+| Envelope Type          | Subtype tag | Direction                           | Description                                                           |
+| ---------------------- | ----------- | ----------------------------------- | --------------------------------------------------------------------- |
+| `DOT/1/CGROUP`         | `b"CGRO"`   | DC → mesh (broadcast)               | Request to create a new physical group and bind to `domain_id`        |
+| `DOT/1/CGROUP_ACK`     | `b"CGAC"`   | Witness → DC                        | Witness confirms seeing the CGROUP and reserving the `domain_id`      |
+| `DOT/1/CGROUP_DONE`    | `b"CGDA"`   | DC → mesh (broadcast)               | DC confirms the platform-side group was created, includes `group_jid` |
+| `DOT/1/CGROUP_FAIL`    | `b"CGFA"`   | DC → mesh (broadcast)               | DC failed to create the group on the platform; includes reason code   |
+| `DOT/1/INVITE`         | `b"INVT"`   | DC → single recipient (out-of-band) | One-shot signed invite to join a specific physical group              |
+| `DOT/1/UNBIND_ALL`     | `b"UALL"`   | Authority → mesh (broadcast)        | Decommission a physical group bound to `domain_id`                    |
+| `DOT/1/UNBIND_ALL_ACK` | `b"UAAC"`   | Witness → Authority                 | Witness confirms UNBIND_ALL and tears down local state                |
 
 The canonical 10-byte envelope header from RFC-0850p-c §A "Canonical Envelope Serialization" is reused: `envelope_type (4 bytes, ASCII) || envelope_subtype (4 bytes, ASCII) || version (2 bytes, big-endian)`. All envelopes set `envelope_type = b"DOT1"`, the per-envelope subtype tag from the table above, and `version = 0x0001`. (R16 R1-C1 fix: migrated from the 1-byte subtype + 1-byte version stub in the v0.1 draft; the canonical format is the 4-byte ASCII + `u16` form per RFC-0850p-c.)
 
@@ -225,22 +225,22 @@ pub enum UnbindReason {
 
 RFC-0850p-c §1 `GroupState` is extended with two new transient states:
 
-| State | Value | Description |
-|-------|-------|-------------|
-| `Creating` | 0x04 | DC has signed CGROUP; awaiting `group_jid` from platform adapter |
-| `Inviting` | 0x05 | Group exists on platform; DC is sending INVITE envelopes |
+| State      | Value | Description                                                      |
+| ---------- | ----- | ---------------------------------------------------------------- |
+| `Creating` | 0x04  | DC has signed CGROUP; awaiting `group_jid` from platform adapter |
+| `Inviting` | 0x05  | Group exists on platform; DC is sending INVITE envelopes         |
 
 #### Transitions
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | `Creating` | DC signs CGROUP | Yes | Reserve `domain_id` in `domain_index` | CGROUP envelope |
-| `Creating` | `Bound` | `CGROUP_DONE` + BIND witnesses ≥ 1 | Yes | Insert into `GroupRegistry`, emit BIND envelope | CGROUP_DONE + BIND |
-| `Creating` | `Unbound` | `CGROUP_FAIL` or timeout | Yes | Release `domain_id` reservation | CGROUP_FAIL |
-| `Creating` | `UnboundQuarantined` | DC loses platform membership mid-create | Yes | Slash 0x000E | n/a |
-| `Bound` | `Inviting` | DC signs at least one INVITE | Yes | Add invitee to `pending_invites` | INVITE envelope |
-| `Inviting` | `Bound` | All INVITEs acknowledged or expired | Yes | Clear `pending_invites` | n/a |
-| `Bound` | (terminal) | `UNBIND_ALL` + ≥ 1 ACK | Yes | Remove from `GroupRegistry` | UNBIND_ALL envelope |
+| From       | To                   | Trigger                                 | Deterministic? | Side Effects                                    | Signing             |
+| ---------- | -------------------- | --------------------------------------- | -------------- | ----------------------------------------------- | ------------------- |
+| (none)     | `Creating`           | DC signs CGROUP                         | Yes            | Reserve `domain_id` in `domain_index`           | CGROUP envelope     |
+| `Creating` | `Bound`              | `CGROUP_DONE` + BIND witnesses ≥ 1      | Yes            | Insert into `GroupRegistry`, emit BIND envelope | CGROUP_DONE + BIND  |
+| `Creating` | `Unbound`            | `CGROUP_FAIL` or timeout                | Yes            | Release `domain_id` reservation                 | CGROUP_FAIL         |
+| `Creating` | `UnboundQuarantined` | DC loses platform membership mid-create | Yes            | Slash 0x000E                                    | n/a                 |
+| `Bound`    | `Inviting`           | DC signs at least one INVITE            | Yes            | Add invitee to `pending_invites`                | INVITE envelope     |
+| `Inviting` | `Bound`              | All INVITEs acknowledged or expired     | Yes            | Clear `pending_invites`                         | n/a                 |
+| `Bound`    | (terminal)           | `UNBIND_ALL` + ≥ 1 ACK                  | Yes            | Remove from `GroupRegistry`                     | UNBIND_ALL envelope |
 
 ### Algorithms
 
@@ -340,60 +340,60 @@ All envelope types in this RFC MUST serialize deterministically per RFC-0126 (DC
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| CGROUP sign + broadcast | C | Initiated by DC; no consensus impact |
-| CGROUP_ACK verification | C | Local witness action; no consensus |
-| CGROUP_DONE verification | C | Local witness action; no consensus |
-| CGROUP_FAIL verification | C | Local witness action; no consensus |
-| Platform-side `create_group` | C | External platform call; not consensus |
-| Founder race resolution (lexicographic comparison) | B | Deterministic; must be identical across all nodes |
-| INVITE sign + send | C | Out-of-band; no consensus |
-| UNBIND_ALL sign + broadcast | B | Affects `GroupRegistry` state; must be deterministic |
-| UNBIND_ALL_ACK verification | C | Local witness action |
-| `GroupRegistry` insert / remove (BIND / UNBIND) | B | Shared state; must be deterministic |
+| Operation                                          | Class | Rationale                                            |
+| -------------------------------------------------- | ----- | ---------------------------------------------------- |
+| CGROUP sign + broadcast                            | C     | Initiated by DC; no consensus impact                 |
+| CGROUP_ACK verification                            | C     | Local witness action; no consensus                   |
+| CGROUP_DONE verification                           | C     | Local witness action; no consensus                   |
+| CGROUP_FAIL verification                           | C     | Local witness action; no consensus                   |
+| Platform-side `create_group`                       | C     | External platform call; not consensus                |
+| Founder race resolution (lexicographic comparison) | B     | Deterministic; must be identical across all nodes    |
+| INVITE sign + send                                 | C     | Out-of-band; no consensus                            |
+| UNBIND_ALL sign + broadcast                        | B     | Affects `GroupRegistry` state; must be deterministic |
+| UNBIND_ALL_ACK verification                        | C     | Local witness action                                 |
+| `GroupRegistry` insert / remove (BIND / UNBIND)    | B     | Shared state; must be deterministic                  |
 
 ### Error Handling
 
 #### Error codes — `CGROUP_FAIL.reason_code`
 
-| Code | Name | Description |
-|------|------|-------------|
-| 0x0001 | Timeout | Platform did not return `group_jid` within `CGROUP_TIMEOUT = 50` epochs |
-| 0x0002 | LostRace | Another DC won the founder race for this `domain_id` |
-| 0x0003 | PlatformError | Platform API returned an error (e.g., rate limit, permission denied) |
-| 0x0004 | DomainAlreadyBound | `domain_id` is already `Bound` for this platform |
-| 0x0005 | DcNotAuthorized | `dc_id` does not match the current DC for this `domain_id` |
-| 0x0006 | InvalidMetadata | `display_name` or `topic` failed platform validation |
-| 0x0007 | NetworkError | Platform adapter lost connectivity mid-create |
+| Code   | Name               | Description                                                             |
+| ------ | ------------------ | ----------------------------------------------------------------------- |
+| 0x0001 | Timeout            | Platform did not return `group_jid` within `CGROUP_TIMEOUT = 50` epochs |
+| 0x0002 | LostRace           | Another DC won the founder race for this `domain_id`                    |
+| 0x0003 | PlatformError      | Platform API returned an error (e.g., rate limit, permission denied)    |
+| 0x0004 | DomainAlreadyBound | `domain_id` is already `Bound` for this platform                        |
+| 0x0005 | DcNotAuthorized    | `dc_id` does not match the current DC for this `domain_id`              |
+| 0x0006 | InvalidMetadata    | `display_name` or `topic` failed platform validation                    |
+| 0x0007 | NetworkError       | Platform adapter lost connectivity mid-create                           |
 
 #### Error codes — INVITE
 
-| Code | Name | Description |
-|------|------|-------------|
-| 0x0101 | Expired | `current_epoch > expires_at_epoch` |
-| 0x0102 | InvalidSignature | DC's signature failed verification |
-| 0x0103 | UnknownDomain | `domain_id` is not `Bound` on the invitee's adapter |
-| 0x0104 | AlreadyMember | Invitee is already a member of the group |
-| 0x0105 | PlatformJoinFailed | Platform rejected the join (e.g., banned, blocked) |
+| Code   | Name               | Description                                         |
+| ------ | ------------------ | --------------------------------------------------- |
+| 0x0101 | Expired            | `current_epoch > expires_at_epoch`                  |
+| 0x0102 | InvalidSignature   | DC's signature failed verification                  |
+| 0x0103 | UnknownDomain      | `domain_id` is not `Bound` on the invitee's adapter |
+| 0x0104 | AlreadyMember      | Invitee is already a member of the group            |
+| 0x0105 | PlatformJoinFailed | Platform rejected the join (e.g., banned, blocked)  |
 
 #### Error codes — UNBIND_ALL
 
-| Code | Name | Description |
-|------|------|-------------|
-| 0x0201 | InsufficientAuthority | Signer is not the DC, MissionCreator, MissionController, or governance |
-| 0x0202 | NotBound | `group_jid` is not in any node's `GroupRegistry` |
-| 0x0203 | PlatformLeaveFailed | Platform rejected the leave; state is now inconsistent (the group may still be active on the platform but unbound in the mesh) |
+| Code   | Name                  | Description                                                                                                                    |
+| ------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 0x0201 | InsufficientAuthority | Signer is not the DC, MissionCreator, MissionController, or governance                                                         |
+| 0x0202 | NotBound              | `group_jid` is not in any node's `GroupRegistry`                                                                               |
+| 0x0203 | PlatformLeaveFailed   | Platform rejected the leave; state is now inconsistent (the group may still be active on the platform but unbound in the mesh) |
 
 ### Slash Reason Codes Added
 
 This RFC allocates three new slash reason codes in the canonical slash reason code space (per RFC-0855p-b §B and RFC-0850p-c §6 "Unbind Reasons", codes 0x000C-0x000D are reserved for non-slash mechanisms, 0x000E-0x0011 are allocated by the 0850p-family sister RFCs, 0x0012 is allocated by RFC-0855p-c §9b "Cross-Platform Slash", 0x0013-0x0016 are allocated by RFC-0855p-e Future Work F-7, 0x0017-0x00FF are reserved and rejected by `SlashReasonCode::try_from_reason_id`, 0x0100 is allocated by RFC-0855p-c §9c "Cross-Domain Slash" for `DomainCoordinatorMisbehavior` in the user-extension namespace, 0x0101-0xFFFF remain in the user-extension registry). The allocation is coordinated across the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e) and RFC-0855p-c, and is now RATIFIED in RFC-0855p-b §B v1.2 and RFC-0850p-c §6 v0.1.2 (R16 R1 fix). See `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation" for the canonical mapping.
 
-| Code | Name | Definition | Trigger |
-|------|------|------------|---------|
-| 0x000E | `CreateGroupFailed` | The DC failed to create the group on the platform within `CGROUP_TIMEOUT = 50` epochs | `Creating → UnboundQuarantined` transition |
-| 0x000F | `CgGroupSpam` | The DC issued CGROUP at a rate exceeding the per-domain rate limit (1 CGROUP per `domain_id` per 1000 epochs) | Rate-limit violation on CGROUP issuance |
-| 0x0010 | `FalseWitness` | A witness signed a `WitnessAssertion` that is contradicted by the witness's own platform-side query result (or by a quorum of other witnesses) | Third-party BIND with false `WitnessAssertion` |
+| Code   | Name                | Definition                                                                                                                                     | Trigger                                        |
+| ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 0x000E | `CreateGroupFailed` | The DC failed to create the group on the platform within `CGROUP_TIMEOUT = 50` epochs                                                          | `Creating → UnboundQuarantined` transition     |
+| 0x000F | `CgGroupSpam`       | The DC issued CGROUP at a rate exceeding the per-domain rate limit (1 CGROUP per `domain_id` per 1000 epochs)                                  | Rate-limit violation on CGROUP issuance        |
+| 0x0010 | `FalseWitness`      | A witness signed a `WitnessAssertion` that is contradicted by the witness's own platform-side query result (or by a quorum of other witnesses) | Third-party BIND with false `WitnessAssertion` |
 
 **Code 0x000F resolution note (R16 R1-C2 fix):** RFC-0855p-c §"Adversary Analysis" decision table (text) mentioned "Slash via 0x000F" for "Cross-platform witness collusion", creating a double-allocation. The 0855p-c reference is a stale text reference (the canonical slash reason code tables in 0855p-b §B and 0850p-c §6 do NOT reserve 0x000F for 0855p-c). The 0855p-c text is updated in the R16 R1 fix to refer to a non-conflicting code (0x0012) for cross-platform witness collusion, and 0x000F is canonically allocated to `CgGroupSpam` by this RFC.
 
@@ -401,29 +401,29 @@ This RFC allocates three new slash reason codes in the canonical slash reason co
 
 **Codes 0x000C and 0x000D** are intentionally left unallocated by this RFC. The 0850p-d §"Roles and Authorities" table previously referenced "slash 0x000C" and "slash 0x000D" loosely for delegation and governance-override; these mechanisms are NOT slash reason codes (R16 R1-M1 fix) and the codes remain reserved for future allocation.
 
-**Note on 0x0100 (`DomainCoordinatorMisbehavior`, RFC-0855p-c §9c):** This RFC does NOT allocate 0x0100 — that slot is canonically allocated by RFC-0855p-c §9c "Cross-Domain Slash" for cross-domain DC misbehavior (the first user-extension registry slot, surfaced as `SlashReasonCode::Extension(0x0100)` rather than a typed variant, per CLAUDE.md §Extension over enumeration). The rationale for the extension-registry placement (rather than a new canonical `SlashReasonCode` variant) is the R5-OOS-4 reviewer note in `docs/reviews/r16/r16-r5-adversarial-review.md` L23, which surfaced the original mission's claim to `0x000F`. Since `0x000F` collides with `CgGroupSpam` (this RFC, L395 above) and F-7 slots `0x0013-0x0016` are already allocated to `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery`, the only free slot surviving `SlashReasonCode::try_from_reason_id` is `0x0100` (first user-extension slot). Wired into `octo-network::dc::slash::{DcMisbehavior, DcSlashEnvelope}` with 4 sub-codes (`.01 invalid_bind_envelope`, `.02 failed_attest`, `.03 censored_legit_member`, `.04 signed_malicious_envelope`) stored in `slash_reason_data` low 16 bits.
+**Note on 0x0100 (`DomainCoordinatorMisbehavior`, RFC-0855p-c §9c):** This RFC does NOT allocate 0x0100 — that slot is canonically allocated by RFC-0855p-c §9c "Cross-Domain Slash" for cross-domain DC misbehavior (the first user-extension registry slot, surfaced as `SlashReasonCode::Extension(0x0100)` rather than a typed variant, per CLAUDE.md §Extension over enumeration). The rationale for the extension-registry placement (rather than a new canonical `SlashReasonCode` variant) is the R5-OOS-4 reviewer note in `docs/reviews/r16/r16-r5-adversarial-review.md`, which surfaced the original mission's claim to `0x000F`. Since `0x000F` collides with `CgGroupSpam` (this RFC, above) and F-7 slots `0x0013-0x0016` are already allocated to `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery`, the only free slot surviving `SlashReasonCode::try_from_reason_id` is `0x0100` (first user-extension slot). Wired into `octo-network::dc::slash::{DcMisbehavior, DcSlashEnvelope}` with 4 sub-codes (`.01 invalid_bind_envelope`, `.02 failed_attest`, `.03 censored_legit_member`, `.04 signed_malicious_envelope`) stored in `slash_reason_data` low 16 bits.
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| CGROUP end-to-end (sign → CGROUP_DONE broadcast) | <5s | Includes platform-side `create_group` API call |
-| INVITE end-to-end (sign → invitee receives) | <2s | Out-of-band; depends on transport (SMS, libp2p) |
-| UNBIND_ALL end-to-end (sign → all nodes acked) | <30s | Bounded by overlay propagation (RFC-0850) |
-| Founder race resolution | <100ms | Local computation (lexicographic comparison) |
-| WitnessAssertion verification | <2s | Platform-side query |
+| Metric                                           | Target | Notes                                           |
+| ------------------------------------------------ | ------ | ----------------------------------------------- |
+| CGROUP end-to-end (sign → CGROUP_DONE broadcast) | <5s    | Includes platform-side `create_group` API call  |
+| INVITE end-to-end (sign → invitee receives)      | <2s    | Out-of-band; depends on transport (SMS, libp2p) |
+| UNBIND_ALL end-to-end (sign → all nodes acked)   | <30s   | Bounded by overlay propagation (RFC-0850)       |
+| Founder race resolution                          | <100ms | Local computation (lexicographic comparison)    |
+| WitnessAssertion verification                    | <2s    | Platform-side query                             |
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| The DC has authority to create groups on the platform (e.g., WhatsApp allows any user; Matrix requires room-creation rights) | §A.1, §A.5 | DC cannot create groups; mission stalls | Mitigation: detect at `CGROUP_TIMEOUT` and emit `CGROUP_FAIL` with `PlatformError`. **Future Work F-1: platform-side admin bootstrap** |
-| The platform adapter exposes a `create_group` API that returns a `group_jid` | §A.5 | Cannot get the `group_jid`; BIND cannot complete | Mitigation: per-adapter implementation (WhatsApp: `GroupCreate` event; Matrix: `POST /createRoom`; Telegram: `createGroup` API) |
-| The DC can verify the platform-side creation succeeded (i.e., the `group_jid` is real and the DC is a member) | §A.6, §A.7 | DC may have a phantom `group_jid` | Mitigation: cross-check via `adapter.lookup_group(group_jid)` before CGROUP_DONE; reject on mismatch |
-| INVITE is delivered out-of-band (e.g., SMS) before the invitee joins the platform | §E.2 | Invitee cannot join; the INVITE is useless | Mitigation: the platform join ceremony proceeds without INVITE if the platform allows (e.g., WhatsApp invite-link), but the BIND witnesses will reject the BIND without a valid INVITE token. **Future Work F-2: relax INVITE requirement for platform-invite-link groups** |
-| The DC is a member of the group after `create_group` returns | §A.5 | The BIND cannot proceed (DC must be a member to sign BIND) | Mitigation: verify via `adapter.get_members(group_jid)`; if DC is not a member, emit CGROUP_FAIL with `PlatformError` |
-| The `group_jid` is stable (does not change after creation) | §A.6 | The BIND references a stale `group_jid` | Mitigation: all platforms in scope return stable JIDs / room IDs after creation |
-| The platform's `create_group` rate limit is high enough for the mission's needs | §A.5 | Frequent CGROUP_FAIL with rate-limit reason | Mitigation: rate-limit CGROUP issuance at the DC level (e.g., 1 CGROUP per domain per 1000 epochs) |
+| Assumption                                                                                                                   | Where Relied Upon | Blast Radius if False                                      | Mitigation / Status                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The DC has authority to create groups on the platform (e.g., WhatsApp allows any user; Matrix requires room-creation rights) | §A.1, §A.5        | DC cannot create groups; mission stalls                    | Mitigation: detect at `CGROUP_TIMEOUT` and emit `CGROUP_FAIL` with `PlatformError`. **Future Work F-1: platform-side admin bootstrap**                                                                                                                                      |
+| The platform adapter exposes a `create_group` API that returns a `group_jid`                                                 | §A.5              | Cannot get the `group_jid`; BIND cannot complete           | Mitigation: per-adapter implementation (WhatsApp: `GroupCreate` event; Matrix: `POST /createRoom`; Telegram: `createGroup` API)                                                                                                                                             |
+| The DC can verify the platform-side creation succeeded (i.e., the `group_jid` is real and the DC is a member)                | §A.6, §A.7        | DC may have a phantom `group_jid`                          | Mitigation: cross-check via `adapter.lookup_group(group_jid)` before CGROUP_DONE; reject on mismatch                                                                                                                                                                        |
+| INVITE is delivered out-of-band (e.g., SMS) before the invitee joins the platform                                            | §E.2              | Invitee cannot join; the INVITE is useless                 | Mitigation: the platform join ceremony proceeds without INVITE if the platform allows (e.g., WhatsApp invite-link), but the BIND witnesses will reject the BIND without a valid INVITE token. **Future Work F-2: relax INVITE requirement for platform-invite-link groups** |
+| The DC is a member of the group after `create_group` returns                                                                 | §A.5              | The BIND cannot proceed (DC must be a member to sign BIND) | Mitigation: verify via `adapter.get_members(group_jid)`; if DC is not a member, emit CGROUP_FAIL with `PlatformError`                                                                                                                                                       |
+| The `group_jid` is stable (does not change after creation)                                                                   | §A.6              | The BIND references a stale `group_jid`                    | Mitigation: all platforms in scope return stable JIDs / room IDs after creation                                                                                                                                                                                             |
+| The platform's `create_group` rate limit is high enough for the mission's needs                                              | §A.5              | Frequent CGROUP_FAIL with rate-limit reason                | Mitigation: rate-limit CGROUP issuance at the DC level (e.g., 1 CGROUP per domain per 1000 epochs)                                                                                                                                                                          |
 
 ### Categories to Audit
 
@@ -445,23 +445,23 @@ This RFC allocates three new slash reason codes in the canonical slash reason co
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| Accept CGROUP from any signed DC | Malicious DC | Burn DC identity | Create unlimited groups | Slash 0x000F + rate limit (1 CGROUP per domain per 1000 epochs) | Acceptable: bounded by DC stake |
-| Founder race resolution by `dc_id` lexicographic | Colluding DCs | Coordinate to win both races | Capture a `domain_id` | `dc_id` is BLAKE3 of the DC's public key; coordination requires a key collision | Acceptable: probability of two DCs with same `dc_id` is 2^-256 |
-| Allow third-party group BIND | DC with malicious intent | Stake a DC identity | Bind an attacker-controlled group | Witness assertion + slash 0x0010 on false assertion | Acceptable: witness is slashable |
-| INVITE without platform-side presence | Invitee | Impersonate an invitee | Join a group without platform membership | INVITE requires `invitee_pubkey` signature + platform join | Acceptable: platform join is the gate |
-| UNBIND_ALL by ex-DC | Ejected DC | No cost (key is public) | DoS the group | `coordinator_term_id` check; the ex-DC's term is `Inactive` | Acceptable: term check is cheap and deterministic |
+| Decision                                         | Q1 Beneficiary           | Q2 Cost to Attacker          | Q3 Gain if Successful                    | Q4 Defense (cost to legit op)                                                   | Q5 Residual Risk                                               |
+| ------------------------------------------------ | ------------------------ | ---------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Accept CGROUP from any signed DC                 | Malicious DC             | Burn DC identity             | Create unlimited groups                  | Slash 0x000F + rate limit (1 CGROUP per domain per 1000 epochs)                 | Acceptable: bounded by DC stake                                |
+| Founder race resolution by `dc_id` lexicographic | Colluding DCs            | Coordinate to win both races | Capture a `domain_id`                    | `dc_id` is BLAKE3 of the DC's public key; coordination requires a key collision | Acceptable: probability of two DCs with same `dc_id` is 2^-256 |
+| Allow third-party group BIND                     | DC with malicious intent | Stake a DC identity          | Bind an attacker-controlled group        | Witness assertion + slash 0x0010 on false assertion                             | Acceptable: witness is slashable                               |
+| INVITE without platform-side presence            | Invitee                  | Impersonate an invitee       | Join a group without platform membership | INVITE requires `invitee_pubkey` signature + platform join                      | Acceptable: platform join is the gate                          |
+| UNBIND_ALL by ex-DC                              | Ejected DC               | No cost (key is public)      | DoS the group                            | `coordinator_term_id` check; the ex-DC's term is `Inactive`                     | Acceptable: term check is cheap and deterministic              |
 
 ### Severity Classification
 
-| Severity | Issue | Action |
-|----------|-------|--------|
-| HIGH | CGROUP spam | Slash 0x000F on rate-limit violation |
-| HIGH | Founder race capture | Lexicographic `dc_id` (2^-256 collision) |
-| MEDIUM | INVITE replay | Nonce table (per RFC-0850p-c §8) |
-| MEDIUM | Third-party group BIND false witness | Slash 0x0010 on false assertion |
-| LOW | UNBIND_ALL by ex-DC | Require `coordinator_term_id` match |
+| Severity | Issue                                | Action                                   |
+| -------- | ------------------------------------ | ---------------------------------------- |
+| HIGH     | CGROUP spam                          | Slash 0x000F on rate-limit violation     |
+| HIGH     | Founder race capture                 | Lexicographic `dc_id` (2^-256 collision) |
+| MEDIUM   | INVITE replay                        | Nonce table (per RFC-0850p-c §8)         |
+| MEDIUM   | Third-party group BIND false witness | Slash 0x0010 on false assertion          |
+| LOW      | UNBIND_ALL by ex-DC                  | Require `coordinator_term_id` match      |
 
 ## Economic Analysis
 
@@ -485,12 +485,12 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Option A: CGROUP envelope + INVITE (this RFC)** | Clean separation; deterministic; reuses existing nonce machinery | More envelope types to maintain |
-| Option B: Extend BIND envelope with a `create: bool` flag | Fewer envelope types | Conflates creation with binding; complicates the BIND state machine |
-| Option C: Out-of-band creation (human creates group, DC BINDs) | No new envelopes | Defeats the "DC drives the ceremony" use case |
-| Option D: Use platform-specific invite APIs (e.g., WhatsApp `invite_v4`) | Native to platform | Not all platforms have a native invite API; breaks the platform-neutral goal |
+| Approach                                                                 | Pros                                                             | Cons                                                                         |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Option A: CGROUP envelope + INVITE (this RFC)**                        | Clean separation; deterministic; reuses existing nonce machinery | More envelope types to maintain                                              |
+| Option B: Extend BIND envelope with a `create: bool` flag                | Fewer envelope types                                             | Conflates creation with binding; complicates the BIND state machine          |
+| Option C: Out-of-band creation (human creates group, DC BINDs)           | No new envelopes                                                 | Defeats the "DC drives the ceremony" use case                                |
+| Option D: Use platform-specific invite APIs (e.g., WhatsApp `invite_v4`) | Native to platform                                               | Not all platforms have a native invite API; breaks the platform-neutral goal |
 
 ## Implementation Phases
 
@@ -534,15 +534,15 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-network/src/dot/binding.rs` | Add `CreateGroupEnvelope`, `CreateGroupDoneEnvelope`, `CreateGroupFailEnvelope`, `InviteEnvelope`, `UnbindAllEnvelope`, `UnbindAllAckEnvelope`, `WitnessAssertion` types |
-| `crates/octo-network/src/dot/group_registry.rs` | Add `GroupState::Creating`, `GroupState::Inviting` transitions; add `pending_invites: BTreeMap<[u8; 32], InviteEnvelope>` |
-| `crates/octo-network/src/dot/witness.rs` | Add CGROUP_ACK, CGROUP_DONE, CGROUP_FAIL, UNBIND_ALL_ACK verification |
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | Add `create_group`, `join_group(invite_token)`, `leave_group`, `dissolve_group` |
-| `crates/octo-adapter-matrix/src/lib.rs` | Same as above |
-| `crates/octo-adapter-telegram/src/lib.rs` | Same as above |
-| `crates/octo-network/src/dot/dc.rs` (new) | DomainCoordinator module: orchestrates CGROUP, INVITE, UNBIND_ALL |
+| File                                            | Change                                                                                                                                                                   |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `crates/octo-network/src/dot/binding.rs`        | Add `CreateGroupEnvelope`, `CreateGroupDoneEnvelope`, `CreateGroupFailEnvelope`, `InviteEnvelope`, `UnbindAllEnvelope`, `UnbindAllAckEnvelope`, `WitnessAssertion` types |
+| `crates/octo-network/src/dot/group_registry.rs` | Add `GroupState::Creating`, `GroupState::Inviting` transitions; add `pending_invites: BTreeMap<[u8; 32], InviteEnvelope>`                                                |
+| `crates/octo-network/src/dot/witness.rs`        | Add CGROUP_ACK, CGROUP_DONE, CGROUP_FAIL, UNBIND_ALL_ACK verification                                                                                                    |
+| `crates/octo-adapter-whatsapp/src/adapter.rs`   | Add `create_group`, `join_group(invite_token)`, `leave_group`, `dissolve_group`                                                                                          |
+| `crates/octo-adapter-matrix/src/lib.rs`         | Same as above                                                                                                                                                            |
+| `crates/octo-adapter-telegram/src/lib.rs`       | Same as above                                                                                                                                                            |
+| `crates/octo-network/src/dot/dc.rs` (new)       | DomainCoordinator module: orchestrates CGROUP, INVITE, UNBIND_ALL                                                                                                        |
 
 ## Future Work
 
@@ -562,10 +562,10 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-17 | Initial draft |
-| 1.1 | 2026-06-17 | R16 R1 fix: (C1) migrated all 6 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); added `UnbindAllAckEnvelope` struct (was in the Envelope Types Added table but had no struct definition); (C2/M1) added "Slash Reason Codes Added" subsection allocating 0x000E=`CreateGroupFailed`, 0x000F=`CgGroupSpam`, 0x0010=`FalseWitness` (with note that 0x000F resolution: 0855p-c stale text reference is updated to 0x0012 for cross-platform witness collusion); 0x000C-0x000D remain unallocated (the previous "slash 0x000C" / "slash 0x000D" references in §"Roles and Authorities" were removed because they used the slash-code space loosely for delegation and governance-override, which are not slash reasons); (M2) added `GroupVisibility` enum (was previously inlined as a comment); (L1) renamed "Atomic CREATE+REBIND" Design Goal to "Atomic group provisioning" to avoid conflation with the §C migration algorithm. R16 R2 fix: added `CreateGroupAckEnvelope` struct (subtype `b"CGAC"`) — this struct was listed in the Envelope Types Added table but had no struct definition; the type was referenced multiple times in the State Machine and elsewhere in the RFC. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-17 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.1     | 2026-06-17 | R16 R1 fix: (C1) migrated all 6 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); added `UnbindAllAckEnvelope` struct (was in the Envelope Types Added table but had no struct definition); (C2/M1) added "Slash Reason Codes Added" subsection allocating 0x000E=`CreateGroupFailed`, 0x000F=`CgGroupSpam`, 0x0010=`FalseWitness` (with note that 0x000F resolution: 0855p-c stale text reference is updated to 0x0012 for cross-platform witness collusion); 0x000C-0x000D remain unallocated (the previous "slash 0x000C" / "slash 0x000D" references in §"Roles and Authorities" were removed because they used the slash-code space loosely for delegation and governance-override, which are not slash reasons); (M2) added `GroupVisibility` enum (was previously inlined as a comment); (L1) renamed "Atomic CREATE+REBIND" Design Goal to "Atomic group provisioning" to avoid conflation with the §C migration algorithm. R16 R2 fix: added `CreateGroupAckEnvelope` struct (subtype `b"CGAC"`) — this struct was listed in the Envelope Types Added table but had no struct definition; the type was referenced multiple times in the State Machine and elsewhere in the RFC. |
 
 ## Related RFCs
 

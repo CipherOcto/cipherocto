@@ -58,11 +58,11 @@ gains `octo-determin`).
 Audit (2026-08-17) found `MicroOctoW` defined 3 times across
 workspace with 2 distinct underlying types:
 
-| Site                                                  | Definition                                  |
-| ----------------------------------------------------- | ------------------------------------------- |
-| `octo-cap-macaroon/src/caveat/mod.rs:19`              | `pub type MicroOctoW = u128;`               |
-| `octo-cap-macaroon/src/caveat/payment.rs:29`          | `pub type MicroOctoW = u128;`               |
-| `quota-router-storage/src/stoolap_spend_ledger.rs:74` | `pub type MicroOctoW = octo_determin::Dqa;` |
+| Site                                               | Definition                                  |
+| -------------------------------------------------- | ------------------------------------------- |
+| `octo-cap-macaroon/src/caveat/mod.rs`              | `pub type MicroOctoW = u128;`               |
+| `octo-cap-macaroon/src/caveat/payment.rs`          | `pub type MicroOctoW = u128;`               |
+| `quota-router-storage/src/stoolap_spend_ledger.rs` | `pub type MicroOctoW = octo_determin::Dqa;` |
 
 Two parallel type aliases for the same name:
 
@@ -125,7 +125,7 @@ not unify across caveat crate.
 
 - **Parent:** `missions/archived/completed/0862-c1-dqa-vault-bump-amendment.md`
   (LANDED 2026-08-17, commits `2750caa7` + `b20c37dc`)
-- **Pattern:** `crates/quota-router-storage/src/stoolap_spend_ledger.rs:74`
+- **Pattern:** `crates/quota-router-storage/src/stoolap_spend_ledger.rs`
   — first workspace-local canonical alias attempt (must be promoted
   to `octo-determin` per AC-1)
 - **Sibling:** `missions/archived/completed/0862-c7-adjacent-wrap.md` (LANDED),

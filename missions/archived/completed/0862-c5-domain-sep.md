@@ -12,8 +12,8 @@ finding #6: sweep of `crates/` surfaced untagged legacy hashers —
 
 ## Resolution
 
-- **Production rename:** `crates/quota-router-sm-engine/src/lib.rs:216` `b"reservation/v1"` → `b"cipherocto/reservation/v1/"`. Safe — `reservation_id` is an in-memory content-addressed handle consumed only by `quota-router-core::settle::mint_reservation` (no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Clean rename, no migration.
-- **Test fixtures renamed** (`b"vak/v1"` → `cipherocto/vak/v1/`, `b"cap/v1"` → `cipherocto/cap/v1/`, `b"vault/v1"` → `cipherocto/vault/v1/`); test-only placeholders annotated with doc comments naming production derivation divergence where applicable (e.g. `eleven_step.rs:118-128` annotates the test-only vault_id hash vs production `octo_vault::vault_id_unchecked`).
+- **Production rename:** `crates/quota-router-sm-engine/src/lib.rs` `b"reservation/v1"` → `b"cipherocto/reservation/v1/"`. Safe — `reservation_id` is an in-memory content-addressed handle consumed only by `quota-router-core::settle::mint_reservation` (no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Clean rename, no migration.
+- **Test fixtures renamed** (`b"vak/v1"` → `cipherocto/vak/v1/`, `b"cap/v1"` → `cipherocto/cap/v1/`, `b"vault/v1"` → `cipherocto/vault/v1/`); test-only placeholders annotated with doc comments naming production derivation divergence where applicable (e.g. `eleven_step.rs` annotates the test-only vault_id hash vs production `octo_vault::vault_id_unchecked`).
 - **New TV-0862-19** in `crates/quota-router-core/src/settle.rs` byte-exact pins `reservation_id = 05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e` for canonical inputs.
 - **Goldens fixture regenerated** (`eleven_step_goldens.json`): step2/3/6 hex bumped to new prefix outputs (step1/10 unchanged — neither uses these prefixes).
 - **RFC-0862 v2.0.5 row + §Domain-separator hygiene** paragraph in §StoolapSpendLedger `Vault row cross-ref`.
@@ -108,7 +108,7 @@ they were ever promoted to use the same prefix.
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                                                                                     |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #6 (untagged hash prefixes sweep).                                                                                                                                                                                                  |
-| 2026-08-17 | @mmacedoeu | Round 2 cleanup: drop `crates/octo-vault/src/lib.rs:334` line ref (use `vault_id_unchecked` symbol name instead), pin `§14.x` to concrete `§14.2`, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                 |
+| ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #6 (untagged hash prefixes sweep).                                                                                                                                                                                              |
+| 2026-08-17 | @mmacedoeu | Round 2 cleanup: drop `crates/octo-vault/src/lib.rs` line ref (use `vault_id_unchecked` symbol name instead), pin `§14.x` to concrete `§14.2`, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |

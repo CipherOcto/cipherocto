@@ -44,8 +44,8 @@ R2 review (12 findings: 3 CRIT + 4 HIGH + 3 MED + 2 LOW) applied:
 
 ### CRIT (3/3 applied)
 
-- **CRIT 1**: Scope-conflict handoff claim on `0206-001-substrate-newtype` was asymmetric — only `0205-002` recorded the handoff, `0206-001` still claimed the `rev = "<sha-0>"` line in its Cargo.toml template. FIX: `0206-001-substrate-newtype.md:42` now drops the `rev = "<sha-0>"` from its Cargo.toml Layer A template and records the handoff in its v2.0 Changes log (`### Handoff` section). Symmetric claim landed on both sides.
-- **CRIT 2**: v2.0 MED 4 incorrectly removed `mode = "local-pin"` from Phase 1.7 scope, citing the wrong section. ACTUAL: RFC-0205 v2.0 Phase 1.7 (line 250) explicitly defines `mode = "local-pin"` for `external-root-config.toml`. FIX: Re-introduced `mode = "local-pin"` into Phase 1.7 scope bullet; v2.0 MED 4 entry preserved as historical record but superseded.
+- **CRIT 1**: Scope-conflict handoff claim on `0206-001-substrate-newtype` was asymmetric — only `0205-002` recorded the handoff, `0206-001` still claimed the `rev = "<sha-0>"` line in its Cargo.toml template. FIX: `0206-001-substrate-newtype.md` now drops the `rev = "<sha-0>"` from its Cargo.toml Layer A template and records the handoff in its v2.0 Changes log (`### Handoff` section). Symmetric claim landed on both sides.
+- **CRIT 2**: v2.0 MED 4 incorrectly removed `mode = "local-pin"` from Phase 1.7 scope, citing the wrong section. ACTUAL: RFC-0205 v2.0 Phase 1.7 explicitly defines `mode = "local-pin"` for `external-root-config.toml`. FIX: Re-introduced `mode = "local-pin"` into Phase 1.7 scope bullet; v2.0 MED 4 entry preserved as historical record but superseded.
 - **CRIT 3**: SHA-256 verification primitive was wrong — `git config --get core.repositoryformatversion` returns `1` for BOTH SHA-1 and SHA-256. FIX: Replaced with `git rev-parse --show-object-format` returning `sha256` per RFC-0205 §Determinism Requirements row 1.
 
 ### HIGH (4/4 applied)

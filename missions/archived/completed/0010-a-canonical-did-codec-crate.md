@@ -21,46 +21,46 @@ Implement the codec crate `crates/octo-ident/` with the `DidCodec` trait, `RawDi
 ## Acceptance Criteria
 
 - [x] `crates/octo-ident/` is a new crate registered in workspace `Cargo.toml`. (`crates/octo-ident/` ships; workspace member)
-- [x] `DidCodec` trait + default impl with `raw_to_wire`, `wire_to_raw`, `legacy_to_wire`, `parse`, `mint`. (`pub trait DidCodec` + `impl DidCodec for CanonicalCodec` in `crates/octo-ident/src/lib.rs:190-212,214`)
-- [x] `DidError` enum with `UnrecognizedShape`, `InvalidEncoding`, `InvalidLength`, `HashPartMismatch`, `LegacyFormExpired`. (`crates/octo-ident/src/lib.rs:140-164`)
-- [x] `RawDid { hash: [u8; 32], version_discriminator: [u8; 20] }` structured form. (`crates/octo-ident/src/lib.rs:33-40`)
-- [x] `WireDid(String)` and `LegacyWire(String)` wrappers. (`crates/octo-ident/src/lib.rs:82-83,116-117`)
-- [x] `mint(pubkey: &[u8; 32]) -> RawDid` produces a 52-byte DID with hash + discriminator derived per RFC-0010 §Specification §`mint`. (`crates/octo-ident/src/lib.rs:215-239`)
+- [x] `DidCodec` trait + default impl with `raw_to_wire`, `wire_to_raw`, `legacy_to_wire`, `parse`, `mint`. (`pub trait DidCodec` + `impl DidCodec for CanonicalCodec` in `crates/octo-ident/src/lib.rs`)
+- [x] `DidError` enum with `UnrecognizedShape`, `InvalidEncoding`, `InvalidLength`, `HashPartMismatch`, `LegacyFormExpired`. (`crates/octo-ident/src/lib.rs`)
+- [x] `RawDid { hash: [u8; 32], version_discriminator: [u8; 20] }` structured form. (`crates/octo-ident/src/lib.rs`)
+- [x] `WireDid(String)` and `LegacyWire(String)` wrappers. (`crates/octo-ident/src/lib.rs`)
+- [x] `mint(pubkey: &[u8; 32]) -> RawDid` produces a 52-byte DID with hash + discriminator derived per RFC-0010 §Specification §`mint`. (`crates/octo-ident/src/lib.rs`)
 - [x] `cargo test -p octo-ident --lib`: 100-round-trip property test on random corpus + 10 canonical vectors + edge cases (truncated input, wrong prefix, hash mismatch). **21 tests pass** including `property_100_round_trip_random_corpus`, `canonical_vectors_10_known_answer`, `edge_case_truncated_input_rejects`, `edge_case_wrong_prefix_rejects`, `edge_case_hash_part_mismatch`.
 - [x] `cargo clippy -p octo-ident --all-targets -- -D warnings` clean.
 - [x] `crates/octo-reputation/Cargo.toml` exports `octo-ident = { path = "../octo-ident" }` as a hard dep.
-- [x] `crates/octo-reputation/src/types.rs::RecorderDid::to_wire()` method delegates to codec. (`crates/octo-reputation/src/types.rs:59-73`)
+- [x] `crates/octo-reputation/src/types.rs::RecorderDid::to_wire()` method delegates to codec. (`crates/octo-reputation/src/types.rs`)
 
 ### Test Vector Summary
 
-| Test | AC Coverage |
-|------|-------------|
-| `mint_produces_52_byte_raw` | hash non-zero, discriminator derived |
-| `mint_is_deterministic` | determinism across calls |
-| `raw_to_wire_and_back_round_trips` | single round-trip |
-| `round_trip_10k_random` | 10k corpus |
-| `property_100_round_trip_random_corpus` | AC: 100-round-trip property test |
-| `canonical_vectors_10_known_answer` | AC: 10 canonical vectors |
-| `edge_case_truncated_input_rejects` | AC: edge case truncated |
-| `edge_case_wrong_prefix_rejects` | AC: edge case wrong prefix |
-| `edge_case_hash_part_mismatch` | AC: edge case hash mismatch |
-| `trait_dispatch_via_impl` | DidCodec trait dispatch |
-| `parse_*` | dual-parse window logic |
-| `base32_encode_52_matches_decode_52` | legacy base32 round-trip |
-| `base58_btc_*` | canonical base58btc round-trip |
-| `reputation_types_use_codec` | cross-crate invariant |
+| Test                                    | AC Coverage                          |
+| --------------------------------------- | ------------------------------------ |
+| `mint_produces_52_byte_raw`             | hash non-zero, discriminator derived |
+| `mint_is_deterministic`                 | determinism across calls             |
+| `raw_to_wire_and_back_round_trips`      | single round-trip                    |
+| `round_trip_10k_random`                 | 10k corpus                           |
+| `property_100_round_trip_random_corpus` | AC: 100-round-trip property test     |
+| `canonical_vectors_10_known_answer`     | AC: 10 canonical vectors             |
+| `edge_case_truncated_input_rejects`     | AC: edge case truncated              |
+| `edge_case_wrong_prefix_rejects`        | AC: edge case wrong prefix           |
+| `edge_case_hash_part_mismatch`          | AC: edge case hash mismatch          |
+| `trait_dispatch_via_impl`               | DidCodec trait dispatch              |
+| `parse_*`                               | dual-parse window logic              |
+| `base32_encode_52_matches_decode_52`    | legacy base32 round-trip             |
+| `base58_btc_*`                          | canonical base58btc round-trip       |
+| `reputation_types_use_codec`            | cross-crate invariant                |
 
 ### Type Coverage
 
-| RFC Type | Implemented By |
-|----------|----------------|
-| `RawDid` | This mission |
-| `WireDid` | This mission |
-| `LegacyWire` | This mission |
-| `DidCodec` trait | This mission |
-| `DidError` | This mission |
-| `mint(pubkey)` algorithm | This mission |
-| `parse()` algorithm | This mission |
+| RFC Type                 | Implemented By |
+| ------------------------ | -------------- |
+| `RawDid`                 | This mission   |
+| `WireDid`                | This mission   |
+| `LegacyWire`             | This mission   |
+| `DidCodec` trait         | This mission   |
+| `DidError`               | This mission   |
+| `mint(pubkey)` algorithm | This mission   |
+| `parse()` algorithm      | This mission   |
 
 ### Implementation Guide
 
@@ -101,9 +101,9 @@ Reference: `crates/octo-ident/src/lib.rs` (new); `crates/octo-reputation/src/typ
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. `crates/octo-ident/` codec crate + DidCodec trait + 21 tests landed.                                                                  |
+| Version | Date       | Change                                                                                                                                                             |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-04 | Mission claimed. `crates/octo-ident/` codec crate + DidCodec trait + 21 tests landed.                                                                              |
 | v0.2    | 2026-08-06 | Closed Band A. 10/10 ACs green; 21/21 octo-ident tests verified green post-claim. Status header flipped Claimed→Closed (Band A — 2026-08-06). No new impl commits. |
 
 Last Updated: 2026-08-06

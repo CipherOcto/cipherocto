@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice LANDED at `next c2fee8f3` (RFC-0011-i Phase 1 IMPLEMENTATION 3-commit chain). 1 subcommand wired: `trust-graph render --depth 1-100 --format ascii|dot`. Substrate-faithful per RFC-0011-i §Substrate Mapping Table: `TrustGraph::render(format: GraphFormat)` returns `String`. Layer B substrate already present at `crates/octo-network/src/mon/trust_graph.rs:89` per RFC-0011-h closure verification — no companion substrate needed (per `substrate-faithfulness-verification` R7.5 lesson). 339/339 octo-cli tests (was 323, +13 Phase 1 vectors across peers/identity/trust-graph/governance). Layer discipline preserved (zero Layer A change).
+Completed (2026-09-20) — CLI dispatch slice LANDED at `next c2fee8f3` (RFC-0011-i Phase 1 IMPLEMENTATION 3-commit chain). 1 subcommand wired: `trust-graph render --depth 1-100 --format ascii|dot`. Substrate-faithful per RFC-0011-i §Substrate Mapping Table: `TrustGraph::render(format: GraphFormat)` returns `String`. Layer B substrate already present at `crates/octo-network/src/mon/trust_graph.rs` per RFC-0011-h closure verification — no companion substrate needed (per `substrate-faithfulness-verification` R7.5 lesson). 339/339 octo-cli tests (was 323, +13 Phase 1 vectors across peers/identity/trust-graph/governance). Layer discipline preserved (zero Layer A change).
 
 ## RFC
 
@@ -32,7 +32,7 @@ Substrate-faithful CLI surface for `octo network trust-graph render --depth 1-10
 
 ## Out of Scope
 
-- Substrate additions (covered by paired `0011-h-s-a-*` companion missions; `TrustGraph::render` already present at `crates/octo-network/src/mon/trust_graph.rs:89` — no companion substrate needed per `substrate-faithfulness-verification` R7.5 lesson)
+- Substrate additions (covered by paired `0011-h-s-a-*` companion missions; `TrustGraph::render` already present at `crates/octo-network/src/mon/trust_graph.rs` — no companion substrate needed per `substrate-faithfulness-verification` R7.5 lesson)
 
 ## Notes
 

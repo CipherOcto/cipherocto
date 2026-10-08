@@ -24,7 +24,7 @@ namespace over the wire.
 The `IdentityResolverNodeConfig.chain_id: Option<ChainId>` slot
 (singular, defaults to `cipherocto-mainnet`) is consumed only by
 the `IDENTITY_REGISTER` / `IDENTITY_REVOKE` mediation paths
-(`chain.rs:208` / `chain.rs:281`). The read paths
+(`chain.rs`). The read paths
 (`IDENTITY_RESOLVE` / `IDENTITY_LOOKUP`) call `registry.resolve(...)`
 which always reads the mainnet namespace.
 
@@ -171,5 +171,5 @@ for existing callers. The new payload kind is purely additive.
 - Mission `0871b-cross-domain-resolution-impl` (commit `c14c2707`)
   — chain-traversal LOGIC (separate concern: chain-of-resolvers,
   not chain-of-DIDs)
-- `crates/octo-protocol/src/payload_kind.rs:152` — UUID slot
+- `crates/octo-protocol/src/payload_kind.rs` — UUID slot
   `0005` is the next free slot in `0x0009:0001:...`

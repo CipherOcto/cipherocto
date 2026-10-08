@@ -4,7 +4,7 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `sync-e2e-tests/stoolap-node/src/main.rs:738` `apply_wal_entry` + `:641` `read_wal_range` + `:117` `current_lsn`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `sync-e2e-tests/stoolap-node/src/main.rs` `apply_wal_entry` + `read_wal_range` + `current_lsn`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 
@@ -41,7 +41,7 @@ fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError> {
 fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError> {
     // 1. Apply to in-memory MVCC state (existing behavior)
     self.engine.lock().apply_wal_entry_bytes(entry)?;
-    
+
     // 2. Re-enter into local WAL (NEW — required for chain relay)
     // This makes the entry visible to read_wal_range() and advances LSN
     if let Some(pm) = self.persistence.as_ref().as_ref() {
@@ -53,7 +53,7 @@ fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError> {
             // ↑ advances current_lsn counter via fetch_add(1)
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -71,8 +71,8 @@ fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError> {
 ### Implementation location
 
 - **File**: `/home/mmacedoeu/_w/databases/stoolap/src/sync_adapter.rs`
-- **Method**: `StoolapAdapter::apply_wal_entry` (line 219)
-- **Dependency**: `WALManager::append_entry` (wal_manager.rs:1287)
+- **Method**: `StoolapAdapter::apply_wal_entry`
+- **Dependency**: `WALManager::append_entry` (wal_manager.rs)
 
 ### Testing
 
@@ -107,7 +107,7 @@ Low (~30-50 lines change in `sync_adapter.rs`). The heavy lifting is in the exis
 
 ## Implementation Notes
 
-- The `WALManager::append_entry` method (wal_manager.rs:1287) already handles LSN assignment, WAL file writing, and buffer management. The fix just needs to call it after the in-memory apply.
+- The `WALManager::append_entry` method (wal_manager.rs) already handles LSN assignment, WAL file writing, and buffer management. The fix just needs to call it after the in-memory apply.
 - The `WALEntry::decode` method is needed to convert raw bytes back to a `WALEntry` struct for `append_entry`. This is the inverse of `WALEntry::encode`.
 - The persistence check (`pm.is_enabled()`) is important — in-memory-only mode (no WAL files) should not attempt WAL re-entry.
 - The idempotency check (`entry.lsn <= current_lsn()`) prevents double-advance on replay. This is critical for the `apply_wal_entry` MUST be idempotent requirement.

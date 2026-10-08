@@ -208,7 +208,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ### Revoke-timestamp redaction closure (2026-08-06)
 
-Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord revoked-timestamp redaction_". The 4-AC open list had 2 in-0957-c items (L33 + L64) and 2 explicit cross-mission deferrals (L39 gossip, L47 0969-b atomicity). L33 was the only in-scope Band A item; this round flips it green.
+Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord revoked-timestamp redaction_". The 4-AC open list had 2 in-0957-c items and 2 explicit cross-mission deferrals (gossip, 0969-b atomicity). The first in-0957-c item was the only in-scope Band A item; this round flips it green.
 
 **Changes:**
 
@@ -250,8 +250,8 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 
 **Unblock surface:**
 
-- L33 close → unblocks 0957-d wire-resolver-update (which reads `HolderRecord` Debug output for downstream transport — see §Pull Request).
-- L39 / L47 / L64 remain explicit cross-mission deferrals with named owners; no Band A follow-up proposed here.
+- In-scope item close → unblocks 0957-d wire-resolver-update (which reads `HolderRecord` Debug output for downstream transport — see §Pull Request).
+- The remaining items remain explicit cross-mission deferrals with named owners; no Band A follow-up proposed here.
 
 ### Audit-closure roll-up (2026-08-07)
 

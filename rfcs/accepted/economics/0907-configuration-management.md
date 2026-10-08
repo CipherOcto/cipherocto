@@ -72,12 +72,12 @@ Configuration management enables:
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | <1s config load | Startup time |
-| G2 | Hot-reload support | No downtime |
-| G3 | Config validation | Fail fast |
-| G4 | LiteLLM format | Compatibility |
+| Goal | Target             | Metric        |
+| ---- | ------------------ | ------------- |
+| G1   | <1s config load    | Startup time  |
+| G2   | Hot-reload support | No downtime   |
+| G3   | Config validation  | Fail fast     |
+| G4   | LiteLLM format     | Compatibility |
 
 ## Specification
 
@@ -232,6 +232,7 @@ quota-router config reload
 > **Critical:** Must track LiteLLM's config format exactly.
 
 Reference LiteLLM's configuration:
+
 - `model_list` format matches exactly
 - `router_settings` maps to LiteLLM's router
 - `litellm_settings` matches LiteLLM params
@@ -244,7 +245,7 @@ LiteLLM resolves environment variables using bracket syntax (per RFC-0931):
 1. **Bracket syntax (primary):** `os.environ['VAR_NAME']` or `os.environ["VAR_NAME"]` — parsed via regex
 2. **Dollar syntax:** `${VAR_NAME}` — resolved via `std::env::var("VAR_NAME")`
 
-**Note:** The slash syntax `os.environ/VAR_NAME` is a common misreading of LiteLLM's config format (per RFC-0931 line 21). LiteLLM uses bracket syntax `os.environ['KEY']`.
+**Note:** The slash syntax `os.environ/VAR_NAME` is a common misreading of LiteLLM's config format (per RFC-0931). LiteLLM uses bracket syntax `os.environ['KEY']`.
 
 **Resolution happens in `to_provider_map()` at config load time**, not at provider call time. This catches missing env vars early (fail fast at startup) and matches LiteLLM's behavior.
 
@@ -271,6 +272,7 @@ fn resolve_env_var(value: &str) -> Result<String, ConfigError> {
 ### Provider Inference from Model String
 
 When `litellm_params.provider` is empty or omitted, infer provider from model string prefix:
+
 - `openai/gpt-4o` → provider=`openai`
 - `azure/gpt-4-turbo` → provider=`azure`
 - `anthropic/claude-3-opus` → provider=`anthropic`
@@ -317,20 +319,21 @@ This applies to both litellm-mode (via `HttpCompletionRequest.api_base`) and any
 > **Critical:** Use CipherOcto/stoolap as the persistence layer.
 
 Store in stoolap:
+
 - Config snapshots (for rollback)
 - Config history
 - Effective config (computed)
 
 ## Key Files
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/config.rs` | os.environ resolution in to_provider_map(), provider inference fallback |
-| `crates/quota-router-core/src/py_bridge/factory.rs` | {PROVIDER}_API_BASE env var fallback |
-| `crates/quota-router-cli/src/config.rs` | Enhanced - YAML + validation |
-| `crates/quota-router-cli/src/config_loader.rs` | New - config loading |
-| `crates/quota-router-cli/src/config_watcher.rs` | New - hot reload |
-| `crates/quota-router-cli/src/config_validator.rs` | New - validation |
+| File                                                | Change                                                                  |
+| --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `crates/quota-router-core/src/config.rs`            | os.environ resolution in to_provider_map(), provider inference fallback |
+| `crates/quota-router-core/src/py_bridge/factory.rs` | {PROVIDER}_API_BASE env var fallback                                    |
+| `crates/quota-router-cli/src/config.rs`             | Enhanced - YAML + validation                                            |
+| `crates/quota-router-cli/src/config_loader.rs`      | New - config loading                                                    |
+| `crates/quota-router-cli/src/config_watcher.rs`     | New - hot reload                                                        |
+| `crates/quota-router-cli/src/config_validator.rs`   | New - validation                                                        |
 
 ## Future Work
 
@@ -350,10 +353,10 @@ Configuration management is important for:
 
 ## Version History
 
-| Version | Date       | Changes |
-| ------- | ---------- | --------|
+| Version | Date       | Changes                                                                                                                                                                                                                             |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.1     | 2026-05-14 | Added os.environ resolution spec (slash + bracket syntax), provider inference from model string (complementary to RFC-0930), 4-tier api_base fallback chain, updated dependencies (RFC-0929, RFC-0930, RFC-0931), updated key files |
-| 1.0     | 2026-03-12 | Initial draft |
+| 1.0     | 2026-03-12 | Initial draft                                                                                                                                                                                                                       |
 
 ---
 

@@ -1,11 +1,11 @@
 ---
 name: 0855p-b-mission-coordinator-liveness
-description: Mission Coordinator liveness check + heartbeat envelope per RFC-0855p-b §Implementation Phase 3. Land `CoordinatorHeartbeat` envelope (canonical wire form per RFC §Phase 3 L819-826) + per-coordinator epoch counter + Active→Suspect detection (`current_epoch - last_heartbeat_epoch > 2 × heartbeat_interval`) + Suspect→Active recovery + Suspect→Handover (grace period exceeded). Layer B canonical home `crates/octo-coordinator-types/src/liveness.rs` + re-export shim `crates/octo-network/src/mon/liveness.rs`. RFC-0008 Class A determinism (epoch-driven, monotonic-clock pinned). 3 canonical heartbeat vectors in `tests/canonical_liveness_blobs.rs`. BLOCKED by `0855p-b-state-machine-types` (Phase 1 CoordinatorLifecycle transitions).
+description: Mission Coordinator liveness check + heartbeat envelope per RFC-0855p-b §Implementation Phase 3. Land `CoordinatorHeartbeat` envelope (canonical wire form per RFC §Phase 3) + per-coordinator epoch counter + Active→Suspect detection (`current_epoch - last_heartbeat_epoch > 2 × heartbeat_interval`) + Suspect→Active recovery + Suspect→Handover (grace period exceeded). Layer B canonical home `crates/octo-coordinator-types/src/liveness.rs` + re-export shim `crates/octo-network/src/mon/liveness.rs`. RFC-0008 Class A determinism (epoch-driven, monotonic-clock pinned). 3 canonical heartbeat vectors in `tests/canonical_liveness_blobs.rs`. BLOCKED by `0855p-b-state-machine-types` (Phase 1 CoordinatorLifecycle transitions).
 metadata:
   node_type: substrate-coordinator
   type: substrate-liveness
   rfc_source: RFC-0855p-b
-  rfc_section: Implementation Phases §Phase 3 (L819-826) + Heartbeat semantics (RFC §Appendix A mermaid Active→Suspect) + Round 3 adversarial review (L826)
+  rfc_section: Implementation Phases §Phase 3 + Heartbeat semantics (RFC §Appendix A mermaid Active→Suspect) + Round 3 adversarial review
   substrate_home:
     canonical: crates/octo-coordinator-types/src/liveness.rs
     re_export: crates/octo-network/src/mon/liveness.rs
@@ -33,7 +33,7 @@ Claimed (2026-09-03) by @mmacedoeu — blocked on `0855p-b-state-machine-types`.
 
 ## RFC
 
-RFC-0855p-b §Implementation Phase 3 (L819-826) + §Appendix A State Machine (Active → Suspect / Suspect → Active / Suspect → Handover).
+RFC-0855p-b §Implementation Phase 3 + §Appendix A State Machine (Active → Suspect / Suspect → Active / Suspect → Handover).
 
 ## Summary
 
@@ -78,6 +78,7 @@ GRACE_PERIOD canonical constant = 3 × heartbeat_interval (per RFC §Appendix A 
 ### Step 3 — Canonical vectors
 
 3 pinned vectors in `tests/canonical_liveness_blobs.rs`:
+
 - Active_OK (heartbeat within interval).
 - Active_to_Suspect (2× interval miss).
 - Suspect_to_Handover (grace exceeded).
@@ -94,17 +95,18 @@ GRACE_PERIOD canonical constant = 3 × heartbeat_interval (per RFC §Appendix A 
 ## Dependencies
 
 **Requires:**
+
 - RFC-0855p-b
 - RFC-0008
 - Mission `0855p-b-state-machine-types` (Phase 1 — CoordinatorRecord + CoordinatorLifecycle)
 
 ## Cross-references
 
-- RFC-0855p-b §Implementation Phase 3 (L819-826)
-- RFC-0855p-b §Appendix A (L925-944)
+- RFC-0855p-b §Implementation Phase 3
+- RFC-0855p-b §Appendix A
 
 ## Version History
 
-| Version | Date | Change |
-| ------- | ---- | ------ |
+| Version | Date       | Change                                                                            |
+| ------- | ---------- | --------------------------------------------------------------------------------- |
 | v1.0    | 2026-09-03 | Initial filing per RFC-0855p-b §Implementation Phase 3 + user audit (2026-09-03). |

@@ -1,6 +1,6 @@
 ---
 name: 0959-c1-wire-A-substrate-verify
-description: Land RFC-0959 v2.0 wire-format amendment substrate per recon 2026-08-19: extend `SettlementEnvelope` with `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` fields at `crates/quota-router-storage/src/ask.rs:984`; update `compute_settlement_hash()` canonical preimage; add `SettlementError::ChainMismatch { vault_id, vault_chain_id, envelope_chain_id }` + `SettlementError::CostVaultIdMissing` variants; create `crates/quota-router-storage/src/settlement_verify.rs` with `verify_settlement_chain_match(envelope, vault_lookup)` reusing `octo_cap_macaroon::VaultLookup`; add `octo-cap-macaroon` dep to `crates/quota-router-storage/Cargo.toml`; expose `settlement_verify` module via `lib.rs` `pub use`. Layer B intra-dep allowed per RFC-0957-A1 §Layer Discipline.
+description: Land RFC-0959 v2.0 wire-format amendment substrate per recon 2026-08-19: extend `SettlementEnvelope` with `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` fields in `crates/quota-router-storage/src/ask.rs`; update `compute_settlement_hash()` canonical preimage; add `SettlementError::ChainMismatch { vault_id, vault_chain_id, envelope_chain_id }` + `SettlementError::CostVaultIdMissing` variants; create `crates/quota-router-storage/src/settlement_verify.rs` with `verify_settlement_chain_match(envelope, vault_lookup)` reusing `octo_cap_macaroon::VaultLookup`; add `octo-cap-macaroon` dep to `crates/quota-router-storage/Cargo.toml`; expose `settlement_verify` module via `lib.rs` `pub use`. Layer B intra-dep allowed per RFC-0957-A1 §Layer Discipline.
 metadata:
   node_type: mission
   type: project
@@ -19,13 +19,13 @@ status: OPEN
 
 ## Context
 
-RFC-0959 v2.0 (canonical Accepted 2026-08-19) adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` to `SettlementEnvelope` per review §8.4.1 + §20.7 + §8.5.1. The wire-format amendment enforces `envelope.chain_id == vault_row.chain_id` (cross-chain settlement reject). Substrate work partial: `cost_vault_id` column landed in `settlement_event_repo.rs:56` + migration v016 added columns per recon 2026-08-19; but `SettlementEnvelope` struct field extension + `settlement_verify.rs` module + Cargo dep + lib.rs pub use remain pending. Mission `0959-c1-wire-format-amendment` is OPEN and owns the 11-step recon scope; this mission owns the substrate-coding subset (steps 1, 2, 3, 4, 5, 9, 10, 11).
+RFC-0959 v2.0 (canonical Accepted 2026-08-19) adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` to `SettlementEnvelope` per review §8.4.1 + §20.7 + §8.5.1. The wire-format amendment enforces `envelope.chain_id == vault_row.chain_id` (cross-chain settlement reject). Substrate work partial: `cost_vault_id` column landed in `settlement_event_repo.rs` + migration v016 added columns per recon 2026-08-19; but `SettlementEnvelope` struct field extension + `settlement_verify.rs` module + Cargo dep + lib.rs pub use remain pending. Mission `0959-c1-wire-format-amendment` is OPEN and owns the 11-step recon scope; this mission owns the substrate-coding subset (steps 1, 2, 3, 4, 5, 9, 10, 11).
 
 ## Scope
 
 ### Step 1: `SettlementEnvelope` struct field extension
 
-Edit `crates/quota-router-storage/src/ask.rs` SettlementEnvelope (around line 984):
+Edit `crates/quota-router-storage/src/ask.rs` SettlementEnvelope:
 
 ```rust
 pub struct SettlementEnvelope {
@@ -148,10 +148,10 @@ pub use settlement_verify::{verify_settlement_chain_match, SettlementError};
 
 ### Step 9 + Step 10: Update `PersistedSettlementEvent` + `SettlementEventInsert` DAO
 
-The DAO struct at `crates/quota-router-storage/src/settlement_event_repo.rs` already carries `cost_vault_id: Option<[u8; 32]>` (line 56) + `chain_id` (line 160) per migration v016. Need to:
+The DAO struct at `crates/quota-router-storage/src/settlement_event_repo.rs` already carries `cost_vault_id: Option<[u8; 32]>` + `chain_id` per migration v016. Need to:
 
 - Update `SettlementEventInsert` (the input struct) to carry the new fields
-- Update `INSERT INTO settlement_events` SQL bindings (line 167-170 already partially updated)
+- Update `INSERT INTO settlement_events` SQL bindings (already partially updated)
 - Verify `PersistedSettlementEvent` deserialization matches migration v016 column ordering
 
 ## Acceptance Criterion

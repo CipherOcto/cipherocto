@@ -10,7 +10,7 @@
 
 ## Context
 
-The Phase 1 AC table in `missions/claimed/0968-reputation-persistence.md` (lines 37-117) cites 15+ canonical pre-RFC-0968-A1 type names that are NOT defined as `pub struct` in the current substrate. The audit's §Phase 1 AC Reconciliation section (added 2026-08-07) initially marked them SUBSTRATE-PRESENT based on file-level existence; deeper symbol-level audit (also 2026-08-07) revealed the drift.
+The Phase 1 AC table in `missions/claimed/0968-reputation-persistence.md` (§Phase 1 AC Table) cites 15+ canonical pre-RFC-0968-A1 type names that are NOT defined as `pub struct` in the current substrate. The audit's §Phase 1 AC Reconciliation section (added 2026-08-07) initially marked them SUBSTRATE-PRESENT based on file-level existence; deeper symbol-level audit (also 2026-08-07) revealed the drift.
 
 Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instead of a canonical `RecorderRegistration`; `recorder::StakeCheck` (enum) instead of AC-4's `recorder_state_at` returning 7-state enum. The substrate evolved away from the canonical names during RFC-0968-A1 amendments without rewriting the parent mission's AC body. Per `no-phantom-mission-pointers` we cannot silently flip ACs whose cited symbols don't exist.
 

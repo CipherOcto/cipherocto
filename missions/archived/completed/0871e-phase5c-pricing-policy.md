@@ -7,7 +7,7 @@
 
 ## Scope
 
-`RouterAnnouncePayload` (RFC-0870) carries the public pricing surface that wallets consume to construct `PaymentCaveat` chains. The quota-router-node already constructs a real payload (per `crates/quota-router-core/src/node/mod.rs:427`); the other 4 specialized nodes emit stub bytes. This sub-mission:
+`RouterAnnouncePayload` (RFC-0870) carries the public pricing surface that wallets consume to construct `PaymentCaveat` chains. The quota-router-node already constructs a real payload (per `crates/quota-router-core/src/node/mod.rs`); the other 4 specialized nodes emit stub bytes. This sub-mission:
 
 1. `crates/quota-router-core/src/node/announce.rs` — add `pricing_policy: Option<PricingPolicy>` field to `RouterAnnouncePayload`. `PricingPolicy { drain_per_query: MicroOCTO_W, accepted_payment_capabilities: HashSet<MacaroonId>, settlement_recipient: Option<WireDid> }`. `serde(default)` for backward compat.
 2. `crates/quota-router-core/src/node/announce.rs::SignedPayload` — `compute_hmac` already canonicalizes via `serde_json::to_vec` so adding the field auto-extends HMAC coverage. Defensive TV: pin that two payloads differing only in `pricing_policy` produce different HMACs.

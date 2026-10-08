@@ -20,7 +20,7 @@ RFC-0937 specifies a `/metrics` endpoint exposing Prometheus metrics. This missi
 
 **Note:** Codebase uses raw hyper with `service_fn`, NOT axum. Do NOT use axum patterns (Next, request.extensions()). The `Metrics` struct should be passed as a parameter to `handle_request()`, not injected via extensions.
 
-**Note:** `extract_key_from_request(&self, request)` is a method on `GatewayAuth` (middleware.rs:32), not a standalone function. The metrics middleware must have access to a `GatewayAuth` instance to extract key prefixes.
+**Note:** `extract_key_from_request(&self, request)` is a method on `GatewayAuth` (middleware.rs), not a standalone function. The metrics middleware must have access to a `GatewayAuth` instance to extract key prefixes.
 
 ## Acceptance Criteria
 

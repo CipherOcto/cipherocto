@@ -18,7 +18,7 @@ builds_on:
 
 **Promotion trail:** R1-R9 multi-round adversarial review 2026-08-25 → DRY closure at R9 2026-08-26 → Accepted 2026-08-26 per BLUEPRINT.md RFC process. R1-R9 = 5-lens reviews; loop-until-DRY pattern reached 2 consecutive zero-finding rounds (R8=2 LOW, R9=0) per closure audit docs/audits/asset-generic-payment-caveat-review-DRY-2026-08-26.md.
 
-**Substrate anchor (Round 2 corrected):** **No `BurnEventRef` struct exists in substrate today.** The Round 1 review confirmed this via grep across `crates/octo-policy/` and other crates. This RFC is **GREENFIELD** — it introduces `BurnEventRef` as a new Layer B type. The drift sites at `crates/octo-policy/src/policy_kinds.rs:263` (SelectorContext.amount_dqa_micros), `crates/octo-policy/src/workflow_kind.rs:313,461,477` (test fixtures + ByAmountSelector), and `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65,73,93,101,110,121` (wire-form draft) are upstream entities that motivate this RFC but are NOT the BurnEventRef itself.
+**Substrate anchor (Round 2 corrected):** **No `BurnEventRef` struct exists in substrate today.** The Round 1 review confirmed this via grep across `crates/octo-policy/` and other crates. This RFC is **GREENFIELD** — it introduces `BurnEventRef` as a new Layer B type. The drift sites at `crates/octo-policy/src/policy_kinds.rs` (SelectorContext.amount_dqa_micros), `crates/octo-policy/src/workflow_kind.rs` (test fixtures + ByAmountSelector), and `rfcs/accepted/process/0206-v30-value-transfer-surface.md` (wire-form draft) are upstream entities that motivate this RFC but are NOT the BurnEventRef itself.
 
 `Dqa` lives in `octo_determin` (path: `./determin/`); import path is `octo_determin::Dqa`.
 
@@ -28,9 +28,9 @@ builds_on:
 
 The substrate drift identified in Round 1:
 
-- `amount_dqa_micros: i64` at `crates/octo-policy/src/policy_kinds.rs:263` (on `SelectorContext`) is an i64 carrier with implicit wire scale=0.
-- 3 sites at `crates/octo-policy/src/workflow_kind.rs:313,461,477` carry the same field on test/selector machinery.
-- 6 sites at `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65,73,93,101,110,121` document wire-form occurrences.
+- `amount_dqa_micros: i64` at `crates/octo-policy/src/policy_kinds.rs` (on `SelectorContext`) is an i64 carrier with implicit wire scale=0.
+- 3 sites at `crates/octo-policy/src/workflow_kind.rs` carry the same field on test/selector machinery.
+- 6 sites at `rfcs/accepted/process/0206-v30-value-transfer-surface.md` document wire-form occurrences.
 
 None of these is `BurnEventRef`. The substrate has no canonical "burn event" type today. This amendment introduces `BurnEventRef` (greenfield, Layer B additive, semver-minor) and binds it to the asset-binding chain via `AssetRegistry` (RFC-0105 §3.1).
 
@@ -489,7 +489,7 @@ pub fn verify_burn_against_caveat(
 }
 ```
 
-**Encoding note (Round 2 fix):** the canonical on-wire form is **16-byte BE** per `crates/octo-cap-macaroon/src/dqa_serde.rs:5` (`DqaEncoding`). JSON display form `{ "value": ..., "scale": ... }` is for human inspection only; serde_bytes converts to/from the 16-byte BE form. Reviewers and implementers must NOT confuse the JSON display form with the wire form.
+**Encoding note (Round 2 fix):** the canonical on-wire form is **16-byte BE** per `crates/octo-cap-macaroon/src/dqa_serde.rs` (`DqaEncoding`). JSON display form `{ "value": ..., "scale": ... }` is for human inspection only; serde_bytes converts to/from the 16-byte BE form. Reviewers and implementers must NOT confuse the JSON display form with the wire form.
 
 **Cross-reference (Round 3 LOW #12):** `PaymentCaveat.budget` (RFC-0965 §3) uses the same `<16B-hex-of-DqaEncoding>` encoding as `BurnEventRef.amount`. This is what makes the `verify_burn_against_caveat` scale comparison (§2.3) a byte-level comparison of like-encoded values rather than a cross-format conversion.
 
@@ -499,7 +499,7 @@ Why pinned on the burn side: `BurnEventRef` verifies at-construction (`new()`) A
 
 ### 3.2 Wire-form migration
 
-There is no prior wire form to migrate. The 6 sites at `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65,73,93,101,110,121` are wire-form draft prose that was never finalized. RFC-0206 will incorporate `BurnEventRef` as the canonical burn-event wire form.
+There is no prior wire form to migrate. The 6 sites at `rfcs/accepted/process/0206-v30-value-transfer-surface.md` are wire-form draft prose that was never finalized. RFC-0206 will incorporate `BurnEventRef` as the canonical burn-event wire form.
 
 ### 3.3 Sovereign exemption (Round 3 IMPORTANT #3)
 
@@ -520,20 +520,20 @@ There is no prior wire form to migrate. The 6 sites at `rfcs/accepted/process/02
 
 ## 5. Backward Compatibility
 
-- **Existing sites at `crates/octo-policy/src/policy_kinds.rs:263` + `workflow_kind.rs:313,461,477`**: these are on `SelectorContext` (InteropSelector) and test fixtures, NOT on `BurnEventRef`. They are out of scope for this RFC; they remain on `amount_dqa_micros: i64` until RFC-0967-A1 (InteropSelector) is amended separately.
+- **Existing sites at `crates/octo-policy/src/policy_kinds.rs` + `workflow_kind.rs,461,477`**: these are on `SelectorContext` (InteropSelector) and test fixtures, NOT on `BurnEventRef`. They are out of scope for this RFC; they remain on `amount_dqa_micros: i64` until RFC-0967-A1 (InteropSelector) is amended separately.
 - **Wire-form draft sites at `rfcs/accepted/process/0206-v30-value-transfer-surface.md`**: not yet finalized; RFC-0206 + this RFC together close them.
 
 ## 6. Migration of `amount_dqa_micros` Sites (out-of-scope but documented)
 
-The `amount_dqa_micros` carrier at `crates/octo-policy/src/policy_kinds.rs:263` + `workflow_kind.rs:313,461,477` is on `SelectorContext`, not on `BurnEventRef`. Migration of those sites is the responsibility of RFC-0967-A1 (InteropSelector amendment). This RFC documents them as out-of-scope to avoid the Round 1 CRITICAL #1 confusion where the anchor was claimed to point at BurnEventRef.
+The `amount_dqa_micros` carrier at `crates/octo-policy/src/policy_kinds.rs` + `workflow_kind.rs,461,477` is on `SelectorContext`, not on `BurnEventRef`. Migration of those sites is the responsibility of RFC-0967-A1 (InteropSelector amendment). This RFC documents them as out-of-scope to avoid the Round 1 CRITICAL #1 confusion where the anchor was claimed to point at BurnEventRef.
 
 ## 7. Naming Cleanup
 
-| Old (out-of-scope, owned by RFC-0967-A1)      | New                                     | Site                                                                          |
-| --------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
-| `amount_dqa_micros: i64` (on SelectorContext) | (no change — out of scope for this RFC) | `crates/octo-policy/src/policy_kinds.rs:263` + `workflow_kind.rs:313,461,477` |
+| Old (out-of-scope, owned by RFC-0967-A1)      | New                                     | Site                                                                  |
+| --------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------- |
+| `amount_dqa_micros: i64` (on SelectorContext) | (no change — out of scope for this RFC) | `crates/octo-policy/src/policy_kinds.rs` + `workflow_kind.rs,461,477` |
 
-`BurnEventRef.amount` is `Dqa` from inception; the retired `MicroOctoW` alias (retired 2026-08-17 per `crates/octo-cap-macaroon/src/caveat/payment.rs:23` + `crates/octo-paid-query/src/lib.rs:103`) is never reintroduced. The prior draft's "CHANGED from `cost: MicroOCTO_W`" framing was dropped: BurnEventRef is GREENFIELD (Round 2 §0 corrected), so there is no prior `MicroOCTO_W`-typed field to migrate from. (The substrate alias was spelled `MicroOctoW`, retired 2026-08-17; `MicroOCTO_W` only survives in a slashing error string at `crates/quota-router-core/src/marketplace/slashing.rs:435`.)
+`BurnEventRef.amount` is `Dqa` from inception; the retired `MicroOctoW` alias (retired 2026-08-17 per `crates/octo-cap-macaroon/src/caveat/payment.rs` + `crates/octo-paid-query/src/lib.rs`) is never reintroduced. The prior draft's "CHANGED from `cost: MicroOCTO_W`" framing was dropped: BurnEventRef is GREENFIELD (Round 2 §0 corrected), so there is no prior `MicroOCTO_W`-typed field to migrate from. (The substrate alias was spelled `MicroOctoW`, retired 2026-08-17; `MicroOCTO_W` only survives in a slashing error string at `crates/quota-router-core/src/marketplace/slashing.rs`.)
 
 ## 8. Version History
 

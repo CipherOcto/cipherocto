@@ -114,8 +114,8 @@ pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool;
 - [x] **AC-5:** `cargo fmt --check -p cipherocto-policy` clean — verified 2026-08-07; exit 0.
 - [x] **AC-6:** `PolicyObject::mint` produces stable ID for same surface — `tests::policy_id_stable_for_same_surface` + `tests::policy_id_stable_across_timestamps_for_same_content` + `tests::policy_id_differs_for_different_graph` (40/40 test corpus).
 - [x] **AC-7:** `PolicyObject::update` preserves ID + increments version — `tests::update_increments_version_preserves_id` + `tests::update_sets_parent_policy_id` (40/40 test corpus).
-- [x] **AC-8:** `intersect` rejects disjoint model sets with `EmptyIntersection` — `PolicyError::EmptyIntersection` variant landed at `crates/cipherocto-policy/src/lib.rs:418`; `intersect` function at `:435`; test coverage in `tests::subgraph_child_with_superset_models_rejected` + `tests::subgraph_child_with_higher_spend_rejected` (40/40 test corpus).
-- [x] **AC-9:** `is_subgraph` correctly distinguishes child ⊆ parent vs widening — `is_subgraph` at `crates/cipherocto-policy/src/lib.rs:552` + `is_subgraph_graph` (graph-level containment complement per commit `442733d7`) at `:650`; test coverage in `tests::is_subgraph_graph_*` (10 graph-containment tests) + `tests::is_subgraph_with_additive_*` (additive-child acceptance tests, commit `a7850852`).
+- [x] **AC-8:** `intersect` rejects disjoint model sets with `EmptyIntersection` — `PolicyError::EmptyIntersection` variant landed in `crates/cipherocto-policy/src/lib.rs`; `intersect` function in the same file; test coverage in `tests::subgraph_child_with_superset_models_rejected` + `tests::subgraph_child_with_higher_spend_rejected` (40/40 test corpus).
+- [x] **AC-9:** `is_subgraph` correctly distinguishes child ⊆ parent vs widening — `is_subgraph` in `crates/cipherocto-policy/src/lib.rs` + `is_subgraph_graph` (graph-level containment complement per commit `442733d7`) in the same file; test coverage in `tests::is_subgraph_graph_*` (10 graph-containment tests) + `tests::is_subgraph_with_additive_*` (additive-child acceptance tests, commit `a7850852`).
 
 ## Risks (this mission)
 

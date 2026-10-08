@@ -57,19 +57,19 @@ Per RFC-0903 §Authorization Route Mapping — enforces key_type-based access:
 
 ## Key Files Modified
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/keys/mod.rs` | normalize_path, check_route_permission, 16 security tests |
-| `crates/quota-router-core/src/keys/errors.rs` | Added RouteNotAllowed variant |
-| `crates/quota-router-core/src/middleware.rs` | validate_request_key_for_route() |
-| `crates/quota-router-core/src/lib.rs` | Export new functions |
-| `crates/quota-router-core/Cargo.toml` | Added percent-encoding dependency |
+| File                                          | Change                                                    |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `crates/quota-router-core/src/keys/mod.rs`    | normalize_path, check_route_permission, 16 security tests |
+| `crates/quota-router-core/src/keys/errors.rs` | Added RouteNotAllowed variant                             |
+| `crates/quota-router-core/src/middleware.rs`  | validate_request_key_for_route()                          |
+| `crates/quota-router-core/src/lib.rs`         | Export new functions                                      |
+| `crates/quota-router-core/Cargo.toml`         | Added percent-encoding dependency                         |
 
 ## Reference
 
-- RFC-0903 §Authorization Route Mapping (lines 741-788)
-- RFC-0903 §Route Normalization (lines 1187-1222)
-- RFC-0903 §Prefix Usage (lines 2114-2117)
+- RFC-0903 §Authorization Route Mapping
+- RFC-0903 §Route Normalization
+- RFC-0903 §Prefix Usage
 
 ## Claimant
 

@@ -23,7 +23,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 ### Top-level: Caveat type
 
 - [x] **Bridge only (MVP):** `PaidQueryCaveat` lives in the new `crates/octo-paid-query/src/lib.rs` (Layer E extension crate), NOT inside `octo-cap-macaroon`. Shape: `(caveat_name: "paid-query/v1", budget: MicroOCTO_W, model: String, expires_at_unix_ms: u64)`.
-- [ ] **Deferred (follow-on):** Migration of `PaidQueryCaveat` into `crates/octo-cap-macaroon/src/caveat/payment.rs` with discriminator 0x1A + `Caveat::verify` + `Caveat::attenuate` impls lands in mission 0957 Phase 2 follow-on (per mission file line 122 "Phase 4 extraction recommended"). Phase 5 MVP stands up the bridge crate so the caveat has a home before the per-extension migration completes.
+- [ ] **Deferred (follow-on):** Migration of `PaidQueryCaveat` into `crates/octo-cap-macaroon/src/caveat/payment.rs` with discriminator 0x1A + `Caveat::verify` + `Caveat::attenuate` impls lands in mission 0957 Phase 2 follow-on (per mission file "Phase 4 extraction recommended"). Phase 5 MVP stands up the bridge crate so the caveat has a home before the per-extension migration completes.
 - [ ] **Deferred (follow-on):** Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator. The dispatcher-level decode is not needed in Phase 5 MVP because the wallet handler decodes `PaidQueryRequest` directly via `borsh::from_slice` (no central enum — per `cipherocto-design-principles` §"Extension over enumeration").
 
 ### Top-level: Pricing policy
@@ -41,7 +41,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 - [x] **Bridge only (MVP):** New `WALLET_PAID_QUERY_VERIFY` handler in `crates/octo-wallet-node/src/handlers/paid_query.rs` delegates to `octo_paid_query::verify_paid_query`. Handler is read-only — it does NOT mutate wallet state in Phase 5 MVP.
 - [ ] **Deferred (follow-on):** `WALLET_MINT_CAPABILITY` handler accepting `PaymentCaveat` mint requests lands alongside the macaroon caveat chain migration (mission 0957 Phase 2 follow-on).
-- [ ] **Deferred (follow-on):** `crates/quota-router-core/src/proxy.rs::handle_request` post-authenticate `Authorization::Capability(token)` verification + `drain_payment` invocation + `PaymentReceipt` response envelope. The quota-router proxy currently extracts `CapabilityToken` strings only (line 116 `extract_capability_token`); full integration requires `GatewayAuthenticator::authenticate()` plumbing which is out of scope for this mission.
+- [ ] **Deferred (follow-on):** `crates/quota-router-core/src/proxy.rs::handle_request` post-authenticate `Authorization::Capability(token)` verification + `drain_payment` invocation + `PaymentReceipt` response envelope. The quota-router proxy currently extracts `CapabilityToken` strings only (`extract_capability_token`); full integration requires `GatewayAuthenticator::authenticate()` plumbing which is out of scope for this mission.
 
 ### Test coverage
 

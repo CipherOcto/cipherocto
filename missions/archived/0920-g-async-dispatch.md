@@ -4,7 +4,7 @@
 
 Completed (Archived 2026-07-30 — Path B)
 
-> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-pyo3/src/lib.rs:88-98` 9 `a*` pyo3 functions registered + `completion.rs:545` `pub async fn acompletion`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-pyo3/src/lib.rs` 9 `a*` pyo3 functions registered + `completion.rs` `pub async fn acompletion`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 
@@ -50,21 +50,21 @@ pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
 
 ## Key Files
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-pyo3/src/completion.rs` | Replace sync wrappers with async dispatch |
-| `crates/quota-router-core/src/native_http/mod.rs` | Already has `async fn completion()` |
+| File                                              | Change                                    |
+| ------------------------------------------------- | ----------------------------------------- |
+| `crates/quota-router-pyo3/src/completion.rs`      | Replace sync wrappers with async dispatch |
+| `crates/quota-router-core/src/native_http/mod.rs` | Already has `async fn completion()`       |
 
 ## Scope
 
-| Function | native_http async | py_bridge async |
-|----------|------------------|-----------------|
-| `acompletion()` | This mission | Separate mission (pyo3_asyncio) |
-| `aembedding()` | This mission (after 0920-e) | Separate mission |
-| `amessages()` | This mission (after 0953-c, 0953-f) | Separate mission |
-| `aresponses()` | This mission (after 0953-e) | Separate mission |
-| `abatch_*` | This mission (after 0953-d) | Separate mission |
-| `alist_models()` | This mission (after 0920-f) | Separate mission |
+| Function         | native_http async                   | py_bridge async                 |
+| ---------------- | ----------------------------------- | ------------------------------- |
+| `acompletion()`  | This mission                        | Separate mission (pyo3_asyncio) |
+| `aembedding()`   | This mission (after 0920-e)         | Separate mission                |
+| `amessages()`    | This mission (after 0953-c, 0953-f) | Separate mission                |
+| `aresponses()`   | This mission (after 0953-e)         | Separate mission                |
+| `abatch_*`       | This mission (after 0953-d)         | Separate mission                |
+| `alist_models()` | This mission (after 0920-f)         | Separate mission                |
 
 > Note: a* functions for embedding/messages/responses/batch/list_models can only be wired after their sync implementations exist. acompletion() can proceed immediately.
 

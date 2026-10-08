@@ -1,6 +1,6 @@
 ---
 name: 0206-005-octoident-storage-crate
-description: Open 2026-08-20; 3 — create new adapter crate `crates/octo-ident-storage/` to hold StoolapDidRegistry impl at `src/did_registry.rs:139`. Required target for 0206-003-trait-moves.
+description: Open 2026-08-20; 3 — create new adapter crate `crates/octo-ident-storage/` to hold StoolapDidRegistry impl at `src/did_registry.rs`. Required target for 0206-003-trait-moves.
 metadata:
   node_type: mission
   type: project
@@ -34,7 +34,7 @@ Covers:
 - **Cargo.toml** declares `octo-storage = { path = "../octo-storage" }` (facade, per RFC §Cargo.toml Cross-Cuts — NOT direct substrate) + `octo-ident = { path = "../octo-ident" }` (trait declarer per RFC-0010 storage extension) + workspace deps as needed
 - **NO direct `stoolap` dep** (per — substrate is sole fork consumer; verified by TV-0206-A9(a))
 - **`src/lib.rs`** re-exports `StoolapDidRegistry` from `crate::did_registry` for back-compat with quota-router-storage consumers
-- **`src/did_registry.rs:139`** hosts the impl block `impl StoolapDidRegistry for StoolapDidRegistryImpl` (moved from `crates/quota-router-storage/src/stoolap_did_registry.rs:139` per `0206-003-trait-moves`)
+- **`src/did_registry.rs`** hosts the impl block `impl StoolapDidRegistry for StoolapDidRegistryImpl` (moved from `crates/quota-router-storage/src/stoolap_did_registry.rs` per `0206-003-trait-moves`)
 - **Workspace registration** via `Cargo.toml [workspace] members = ["crates/*"]` glob — directory creation alone is sufficient
 - **Per-adapter fixture** at `tests/register_roundtrip.rs` per RFC §Format Bypass Defense substrate-level guard
 

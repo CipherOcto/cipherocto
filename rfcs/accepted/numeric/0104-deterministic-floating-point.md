@@ -973,16 +973,16 @@ DFP software arithmetic is significantly slower than native integer operations. 
 
 DFP defines total ordering for sorting and comparison operations:
 
-| Order | Class     | Sign | Mantissa   | Exponent   |
+| Order | Class | Sign | Mantissa | Exponent |
 | ----- | --------- | ---- | ---------- | ---------- | ------ |
-| 1     | -Infinity | 1    | -          | -          |
-| 2     | Zero      | 1    | -          | -          | (-0.0) |
-| 3     | Normal    | 1    | descending | descending |
-| ...   | ...       | ...  | ...        | ...        |
-| N-2   | Normal    | 0    | ascending  | ascending  |
-| N-1   | Zero      | 0    | -          | -          | (+0.0) |
-| N     | +Infinity | 0    | -          | -          |
-| N+1   | NaN       | -    | -          | -          |
+| 1 | -Infinity | 1 | - | - |
+| 2 | Zero | 1 | - | - | (-0.0) |
+| 3 | Normal | 1 | descending | descending |
+| ... | ... | ... | ... | ... |
+| N-2 | Normal | 0 | ascending | ascending |
+| N-1 | Zero | 0 | - | - | (+0.0) |
+| N | +Infinity | 0 | - | - |
+| N+1 | NaN | - | - | - |
 
 **Total ordering:** `-Infinity < -0.0 < negative values < +0.0 < positive values < +Infinity < NaN`
 
@@ -1772,7 +1772,7 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 ## Related RFCs
 
 - RFC-0103 (Numeric/Math): Unified Vector-SQL Storage Engine
-- RFC-0100 (Economics): AI Quota Marketplace
+- RFC-0900 (Economics): AI Quota Marketplace
 - RFC-0102 (Numeric/Math): Wallet Cryptography
 
 ## Related Use Cases
@@ -1835,17 +1835,18 @@ The original RFC specified type-specific DFP opcodes (`OP_DFP_ADD/SUB/MUL/DIV`).
 ### A2. Cross-Type Numeric Comparison (Resolves: S7, F1)
 
 **Previous behavior:** Cross-type comparison (DFP vs Integer/Float) used `as_float64().unwrap()`, which:
+
 1. Panicked for Extension types (server crash)
 2. Lost DFP's 113-bit precision via lossy f64 conversion
 
 **New behavior:** Cross-type comparison uses **type promotion** instead of lossy conversion:
 
-| Left Type | Right Type | Comparison Strategy |
-|-----------|------------|---------------------|
-| DFP | Integer | Promote Integer → DFP, compare in DFP space |
-| DFP | Float | Promote Float → DFP, compare in DFP space |
-| DFP | DFP | Same-type `compare_dfp()` |
-| DFP | Quant | `Error::IncomparableTypes` (explicit CAST required) |
+| Left Type | Right Type | Comparison Strategy                                 |
+| --------- | ---------- | --------------------------------------------------- |
+| DFP       | Integer    | Promote Integer → DFP, compare in DFP space         |
+| DFP       | Float      | Promote Float → DFP, compare in DFP space           |
+| DFP       | DFP        | Same-type `compare_dfp()`                           |
+| DFP       | Quant      | `Error::IncomparableTypes` (explicit CAST required) |
 
 **Implementation:** `as_float64()` still supports DFP for backward compatibility but the `compare()` method uses dedicated promotion paths that avoid precision loss.
 
@@ -1881,6 +1882,7 @@ Op::Sqrt => {
 ### A5. Single Casting Truth (Resolves: F3)
 
 Three code paths previously implemented independent type coercion:
+
 1. `Value::cast_to_type(&self, target)` — borrowing
 2. `Value::into_coerce_to_type(self, target)` — consuming
 3. `CastExpr::perform_cast(&self, value)` — storage expression
@@ -1895,13 +1897,13 @@ Deferred to a separate RFC-0110. The VM's `deterministic` flag and `arithmetic_o
 
 DFP integration MUST include:
 
-| Category | Tests Required | Coverage |
-|----------|---------------|----------|
-| Value API | Round-trip, Display, as_string, as_float64, coercion | Per type conversion |
-| VM Arithmetic | add/sub/mul/div/mod/neg/abs/cmp | Per opcode × per type |
-| Cross-type comparison | DFP vs Int, DFP vs Float | Per combination |
-| SQL round-trip | CREATE → INSERT → SELECT → WHERE → UPDATE → DELETE | End-to-end |
-| Persistence | Serialization → deserialization fidelity | Per wire format |
+| Category              | Tests Required                                       | Coverage              |
+| --------------------- | ---------------------------------------------------- | --------------------- |
+| Value API             | Round-trip, Display, as_string, as_float64, coercion | Per type conversion   |
+| VM Arithmetic         | add/sub/mul/div/mod/neg/abs/cmp                      | Per opcode × per type |
+| Cross-type comparison | DFP vs Int, DFP vs Float                             | Per combination       |
+| SQL round-trip        | CREATE → INSERT → SELECT → WHERE → UPDATE → DELETE   | End-to-end            |
+| Persistence           | Serialization → deserialization fidelity             | Per wire format       |
 
 ---
 
@@ -1910,7 +1912,7 @@ DFP integration MUST include:
 **Last Updated:** 2026-07-25
 **Changes:** v1.18 endianness fix (RFC-0968 §3 peer-flagged):
 
-- §6.Endianness line 1254 now reads "big-endian" (was incorrectly "little-endian"). Aligned with §5.1 layout (lines 198-200) and `crates/determin/src/lib.rs` `to_bytes()` / `from_bytes()` implementation. Mantissa (16 bytes), exponent (4 bytes), class_sign (4 bytes) all big-endian.
+- §6.Endianness now reads "big-endian" (was incorrectly "little-endian"). Aligned with §5.1 layout and `crates/determin/src/lib.rs` `to_bytes()` / `from_bytes()` implementation. Mantissa (16 bytes), exponent (4 bytes), class_sign (4 bytes) all big-endian.
 
 - v1.17 prep:
 - R1: Add Infinity unreachable note to ADD, MUL, DIV, SQRT
@@ -1925,6 +1927,6 @@ DFP integration MUST include:
 
 ## Version History
 
-| Version | Date       | Change                                                                                |
-|---------|------------|---------------------------------------------------------------------------------------|
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
 | 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

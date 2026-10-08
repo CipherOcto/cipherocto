@@ -15,6 +15,7 @@ any-llm's gateway exposes Prometheus metrics for monitoring. quota-router has no
 ### 1. Metrics Categories
 
 #### Request Metrics
+
 ```
 quota_router_requests_total{provider="openai",model="gpt-4o",status="success"} 1234
 quota_router_request_duration_seconds{provider="openai",model="gpt-4o"} 0.5
@@ -23,6 +24,7 @@ quota_router_request_tokens{provider="openai",model="gpt-4o",type="output"} 1000
 ```
 
 #### Rate Limiting Metrics
+
 ```
 quota_router_rate_limit_hits_total{key_prefix="sk-qr-ab",type="rpm"} 5
 quota_router_rate_limit_remaining{key_prefix="sk-qr-ab",type="rpm"} 95
@@ -31,6 +33,7 @@ quota_router_rate_limit_remaining{key_prefix="sk-qr-ab",type="rpm"} 95
 **Security note:** Use `key_prefix` (first 8 chars) instead of full key to avoid leaking secrets in metrics. Same for entity_id — use UUID prefix.
 
 #### Budget Metrics
+
 ```
 quota_router_budget_spend_microdollars{entity_type="user",entity_prefix="a1b2c3d4"} 85500000
 quota_router_budget_limit_microdollars{entity_type="user",entity_prefix="a1b2c3d4"} 100000000
@@ -40,6 +43,7 @@ quota_router_budget_alerts_total{entity_type="user"} 2
 **Note:** Budget values are in microdollars (1 USD = 1,000,000). Use integer values, not float USD.
 
 #### Provider Metrics
+
 ```
 quota_router_provider_errors_total{provider="openai",error_type="rate_limit"} 10
 quota_router_provider_latency_seconds{provider="openai",quantile="0.5"} 0.3
@@ -47,6 +51,7 @@ quota_router_provider_latency_seconds{provider="openai",quantile="0.95"} 1.2
 ```
 
 #### Routing Metrics
+
 ```
 quota_router_routing_decisions_total{strategy="simple_shuffle"} 500
 quota_router_cooldown_activations_total{provider="openai"} 3
@@ -54,12 +59,14 @@ quota_router_fallback_activations_total{type="general"} 2
 ```
 
 #### Cache Metrics
+
 ```
 quota_router_cache_hits_total{cache="response"} 100
 quota_router_cache_misses_total{cache="response"} 50
 ```
 
 #### Pre-call Check Metrics
+
 ```
 quota_router_precall_check_failures_total{check="context_window"} 5
 quota_router_precall_check_failures_total{check="tag_filter"} 2
@@ -148,14 +155,16 @@ Returns Prometheus text format.
 **Port and auth:** The `/metrics` endpoint should be served on the same port as the proxy but BYPASSES auth middleware (Prometheus scrapes it without API keys). The auth bypass is implemented by checking the request path before the auth middleware — if path is `/metrics`, skip auth and return metrics directly. This requires adding a `bypass_paths: Vec<String>` config option to GatewayConfig.
 
 **Security recommendation:** Since `/metrics` exposes operational metadata (key prefixes, provider names, budget entity prefixes) without authentication, restrict access at the network level:
+
 - Bind metrics to localhost only (`127.0.0.1`) if Prometheus runs on the same host
 - Use firewall rules to allow only the Prometheus scraper IP
-- Alternatively, serve `/metrics` on a separate management port (e.g., `:9090`) that is not publicly exposed
+- Alternatively, serve `/metrics` on a separate management port (e.g.,) that is not publicly exposed
 - The `key_prefix` and `entity_prefix` labels mitigate secret leakage, but operational metadata is still visible
 
 ### 4. Middleware Integration
 
 Use hyper-compatible integration (codebase uses raw hyper with `service_fn`, NOT axum):
+
 ```rust
 // In proxy.rs — integrate with existing handle_request()
 async fn handle_request_with_metrics(
@@ -218,6 +227,6 @@ metrics:
 
 ## Version History
 
-| Version | Date       | Change                                                                                |
-|---------|------------|---------------------------------------------------------------------------------------|
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
 | 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

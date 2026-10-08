@@ -9,10 +9,11 @@ COMPLETE — all acceptance criteria met (2026-05-12)
 RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 **Note:** Phase 4 was removed from RFC-0920 in v1.66 (2026-05-09) per deferred-vs-unspecified rule. All items previously in Phase 4 are either:
+
 - Moved to Phase 3 (if specced)
 - Removed as unspecced (if no spec existed)
 
-This mission tracks **Phase 4 parameters that remain specced** in RFC-0920 lines 3735-3751.
+This mission tracks **Phase 4 parameters that remain specced** in RFC-0920.
 
 ## Dependencies
 
@@ -35,9 +36,10 @@ These parameters appear in completion/messages signatures per RFC-0920 spec:
 ### Items Already Specced (NOT Phase 4 pending)
 
 These are already in completion signatures per RFC-0920:
-- `web_search_options` — already specced at lines 416, 1331
-- `shared_session` — already specced at lines 415, 1330
-- `enable_json_schema_validation` — already specced at lines 417, 1332
+
+- `web_search_options` — already specced
+- `shared_session` — already specced
+- `enable_json_schema_validation` — already specced
 
 ---
 

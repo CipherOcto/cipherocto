@@ -26,7 +26,7 @@ Stub mission paired with RFC-0862p-a (patch-split disambiguator). Created per RF
 ## Acceptance criteria
 
 - [ ] AC-1: `rfcs/draft/networking/0862p-a-writer-election-bootstrap.md` exists with §Status = Draft + §Relationship to base + §Scope (patch-targeted cites cross-ref table)
-- [ ] AC-2: 6 RFC-0862p-a cites in RFC-0011-h resolve to this file (L51, L125, L151, L199, L695, L837 — per R39.5)
+- [ ] AC-2: 6 RFC-0862p-a cites in RFC-0011-h resolve to this file (per R39.5)
 - [ ] AC-3: bare RFC-0862 cites in RFC-0011-h continue to point to base + v1.4.0 amendment (no extract-back from base)
 
 ## Out of scope

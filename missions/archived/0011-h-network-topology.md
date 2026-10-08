@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice for RFC-0011-s Phase 11 G14 topology-render amendment LANDED at `next 7777610e`. CLI mission YAML CREATED at CLI dispatch slice time per user decision. Pairs with substrate companion YAML `0011-h-s-a-topology-render` (substrate slice at `next 293556e4`, claimed transition at `next 0a963705`, completed transition paired). 1 NEW subcommand + 1 NEW output envelope + 3 NEW test vectors `tv_net11_1` through `tv_net11_3`. Layer C CLI dispatch only; substrate method extension lives at `crates/octo-network/src/mon/topology.rs:81`.
+Completed (2026-09-20) — CLI dispatch slice for RFC-0011-s Phase 11 G14 topology-render amendment LANDED at `next 7777610e`. CLI mission YAML CREATED at CLI dispatch slice time per user decision. Pairs with substrate companion YAML `0011-h-s-a-topology-render` (substrate slice at `next 293556e4`, claimed transition at `next 0a963705`, completed transition paired). 1 NEW subcommand + 1 NEW output envelope + 3 NEW test vectors `tv_net11_1` through `tv_net11_3`. Layer C CLI dispatch only; substrate method extension lives at `crates/octo-network/src/mon/topology.rs`.
 
 ## RFC
 
@@ -20,8 +20,8 @@ octo network topology render [--format ascii|dot] [--depth <N>] [--json]
 
 ### CLI substrate mapping
 
-| Subcommand | Substrate method | Format / arg | Output envelope |
-| --- | --- | --- | --- |
+| Subcommand        | Substrate method                     | Format / arg              | Output envelope               |
+| ----------------- | ------------------------------------ | ------------------------- | ----------------------------- |
 | `topology render` | `TopologyCommitment::render(format)` | `ascii` (default) / `dot` | `NetworkTopologyRenderOutput` |
 
 ### File changes
@@ -40,10 +40,10 @@ octo network topology render [--format ascii|dot] [--depth <N>] [--json]
 
 ### Test vectors
 
-| Vector | Subcommand | Coverage |
-| --- | --- | --- |
-| `tv_net11_1` | `topology render` | default format (ascii) parses cleanly |
-| `tv_net11_2` | `topology render --format dot` | dot format parses cleanly |
+| Vector       | Subcommand                      | Coverage                                 |
+| ------------ | ------------------------------- | ---------------------------------------- |
+| `tv_net11_1` | `topology render`               | default format (ascii) parses cleanly    |
+| `tv_net11_2` | `topology render --format dot`  | dot format parses cleanly                |
 | `tv_net11_3` | `topology render --depth 65536` | clap u16 overflow pre-dispatch rejection |
 
 ### Dependencies
@@ -53,7 +53,7 @@ octo network topology render [--format ascii|dot] [--depth <N>] [--json]
 - Phase 11 G14 substrate slice at `next 293556e4`
 - Phase 11 G14 paired-YAML Claimed transition at `next 0a963705`
 - Phase 11 G14 CLI dispatch slice at `next 7777610e`
-- `octo_network` Layer B substrate (existing; Phase 11 EXTENDS the struct at `crates/octo-network/src/mon/topology.rs:81`)
+- `octo_network` Layer B substrate (existing; Phase 11 EXTENDS the struct at `crates/octo-network/src/mon/topology.rs`)
 - Layer C CLI dispatch envelope/handler pattern (Phase 5 RFC-0011-m at `next 346f10cc`)
 
 ## Acceptance Criteria
@@ -81,4 +81,4 @@ octo network topology render [--format ascii|dot] [--depth <N>] [--json]
 
 ## Notes
 
-RFC-0011-s Phase 11 G14 CLI surface exposed through `octo network topology render` subcommand. Substrate-faithful to `crates/octo-network/src/mon/topology.rs:81` method extension. CLI dispatch slice paired with substrate companion YAML via the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed). Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Per-extension crate pattern preserved (additive method in Layer B; concrete per-topology-source adapter crates in separate Layer D follow-on missions). clap u16 overflow pre-dispatch rejection per Phase 5 RFC-0011-m pastejacking defense pattern. Layer A frozen preserved.
+RFC-0011-s Phase 11 G14 CLI surface exposed through `octo network topology render` subcommand. Substrate-faithful to `crates/octo-network/src/mon/topology.rs` method extension. CLI dispatch slice paired with substrate companion YAML via the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed). Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). Per-extension crate pattern preserved (additive method in Layer B; concrete per-topology-source adapter crates in separate Layer D follow-on missions). clap u16 overflow pre-dispatch rejection per Phase 5 RFC-0011-m pastejacking defense pattern. Layer A frozen preserved.

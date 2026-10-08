@@ -18,13 +18,13 @@ Accepted (2026-09-21) — RFC-0011-i promoted from Draft per the goal directive 
 
 RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Implementation Phases. Five CLI subcommands wire to substrate already present in `crates/octo-network`:
 
-| Subcommand                                | Substrate function                                                                                                           | Source                                                     |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `octo network peers list`                 | `GatewayCache::iter()`                                                                                                       | `crates/octo-network/src/gdp/cache.rs:122`                 |
-| `octo network peers get <gateway_id>`     | `GatewayCache::get(&[u8;32])`                                                                                                | `crates/octo-network/src/gdp/cache.rs:59`                  |
-| `octo network identity show`              | local public-key read + `LocalGatewayIdentity::load` → `GatewayIdentity::new(pk, network_id, gateway_class, creation_epoch)` | `crates/octo-network/src/dot/gateway.rs:53`                |
-| `octo network trust-graph render`         | `TrustGraph::render(format: GraphFormat)`                                                                                    | `crates/octo-network/src/mon/trust_graph.rs:89`            |
-| `octo network governance rotation status` | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}`                                   | `crates/octo-network/src/mon/governance_rotation.rs:61-78` |
+| Subcommand                                | Substrate function                                                                                                           | Source                                               |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `octo network peers list`                 | `GatewayCache::iter()`                                                                                                       | `crates/octo-network/src/gdp/cache.rs`               |
+| `octo network peers get <gateway_id>`     | `GatewayCache::get(&[u8;32])`                                                                                                | `crates/octo-network/src/gdp/cache.rs`               |
+| `octo network identity show`              | local public-key read + `LocalGatewayIdentity::load` → `GatewayIdentity::new(pk, network_id, gateway_class, creation_epoch)` | `crates/octo-network/src/dot/gateway.rs`             |
+| `octo network trust-graph render`         | `TrustGraph::render(format: GraphFormat)`                                                                                    | `crates/octo-network/src/mon/trust_graph.rs`         |
+| `octo network governance rotation status` | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}`                                   | `crates/octo-network/src/mon/governance_rotation.rs` |
 
 **Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in THIS RFC = **none**; Phase 1 IMPLEMENTATION requires 1 companion substrate mission (`0011-h-s-a-local-gateway-identity-state`) to land BEFORE CLI dispatch for `identity show` (per R1.5 fix per F2).
 
@@ -228,7 +228,7 @@ pub struct NetworkGovernanceRotationOutput {
 }
 ```
 
-`GatewayCacheEntry` is re-used from substrate `crates/octo-network/src/gdp/cache.rs:11`. `GatewayClass` is re-used from substrate `crates/octo-network/src/dot/gateway.rs`. **No parallel envelopes; no CLI-side shadow.**
+`GatewayCacheEntry` is re-used from substrate `crates/octo-network/src/gdp/cache.rs`. `GatewayClass` is re-used from substrate `crates/octo-network/src/dot/gateway.rs`. **No parallel envelopes; no CLI-side shadow.**
 
 Per RFC-0011-h §Test Vectors redact-did-1 row, gateway_id field uses 64-char hex encoding; if the operator supplies a malformed hex, the CLI rejects with exit 86 `NetworkInvalidDid` before substrate dispatch.
 
@@ -241,7 +241,7 @@ Phase 1 lands exactly 4 of the 10 RFC-0011-h-defined `OctoCliError` variants:
 | 79   | `NetworkPeerNotFound` (NEW)         | `GatewayMiss` (substrate-anchored) | `GatewayCache::get(gateway_id) → None`                   | infallible substrate; CLI translates `None` to this variant                                               |
 | 83   | `NetworkLocalKeyUnavailable` (NEW)  | `LocalKeyMissing` (CLI-gate)       | wallet context uninitialized                             | no `MonError` envelope; CLI predicate fires before substrate dispatch                                     |
 | 85   | `NetworkGraphDepthBelowRange` (NEW) | `GraphDepthOOB` (CLI-gate)         | programmatic bypass of `--depth 0` (non-clap invocation) | substrate `TrustGraph::render` is infallible + zero depth awareness; CLI predicate is the only depth gate |
-| 86   | `NetworkInvalidDid` (NEW)           | `InvalidDid` (CLI-gate)            | DID codec rejection pre-dispatch                         | `DidError` enum at `crates/octo-ident/src/lib.rs:191`; CLI pre-validates format before substrate dispatch |
+| 86   | `NetworkInvalidDid` (NEW)           | `InvalidDid` (CLI-gate)            | DID codec rejection pre-dispatch                         | `DidError` enum at `crates/octo-ident/src/lib.rs`; CLI pre-validates format before substrate dispatch     |
 
 **Reachability:** all 4 are CLI-gate/substrate-anchored predicates that fire before substrate dispatch. Slots 79, 85, 86 have no companion gating (Phase 1 reads existing substrate). Slot 83 `NetworkLocalKeyUnavailable` has 1 companion gating (fires on `LocalGatewayIdentity::load` returning `NotInitialized` per companion mission `0011-h-s-a-local-gateway-identity-state`).
 
@@ -280,12 +280,12 @@ Per RFC-0011-h §Performance Targets baseline, all 5 Phase 1 subcommands are rea
 | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GatewayCache::iter()` is the canonical substrate entry for `peers list`                                                                       | verified at RFC-0011-h closure; absent of any parallel iterator                                                                                                                                          |
 | `GatewayCache::get(&[u8;32])` returns `Option<&GatewayCacheEntry>` infallibly                                                                  | verified at RFC-0011-h closure; substrate has no fallible variant                                                                                                                                        |
-| `GatewayIdentity::new(public_key, network_id, gateway_class, creation_epoch)` is the canonical constructor                                     | verified at `crates/octo-network/src/dot/gateway.rs:53`                                                                                                                                                  |
+| `GatewayIdentity::new(public_key, network_id, gateway_class, creation_epoch)` is the canonical constructor                                     | verified at `crates/octo-network/src/dot/gateway.rs`                                                                                                                                                     |
 | `LocalGatewayIdentity::load(octo_home)` returns the 3 missing constructor args (network_id, gateway_class, creation_epoch) for `identity show` | companion mission `0011-h-s-a-local-gateway-identity-state` (R1.5 fix per F2); storage at `$OCTO_HOME/network/local-gateway-identity.toml` per octo-home convention; lands BEFORE Phase 1 implementation |
-| `TrustGraph::render(format: GraphFormat)` is infallible + zero depth awareness                                                                 | verified at `crates/octo-network/src/mon/trust_graph.rs:89`                                                                                                                                              |
-| `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}` are infallible field reads + arithmetic             | verified at `crates/octo-network/src/mon/governance_rotation.rs:61-78`                                                                                                                                   |
+| `TrustGraph::render(format: GraphFormat)` is infallible + zero depth awareness                                                                 | verified at `crates/octo-network/src/mon/trust_graph.rs`                                                                                                                                                 |
+| `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}` are infallible field reads + arithmetic             | verified at `crates/octo-network/src/mon/governance_rotation.rs`                                                                                                                                         |
 | Local public-key read path returns `Result<_, WalletError>` per `octo-wallet/src/identity.rs`                                                  | substrate-faithful; CLI predicate fires on uninitialized wallet                                                                                                                                          |
-| DID codec at `crates/octo-ident/src/lib.rs:380` is the canonical pre-dispatch validator                                                        | verified at RFC-0011-h closure                                                                                                                                                                           |
+| DID codec at `crates/octo-ident/src/lib.rs` is the canonical pre-dispatch validator                                                            | verified at RFC-0011-h closure                                                                                                                                                                           |
 
 ## Security Considerations
 
@@ -343,13 +343,13 @@ Per RFC-0011-h §Test Vectors redact-did-1 row, the redact-did-1 vector is a pro
 
 **Phase 1 RFC carries ZERO substrate additions.** Phase 1 IMPLEMENTATION requires 1 companion substrate mission to land BEFORE CLI dispatch can be wired faithfully:
 
-| Substrate                          | Verified location                                       | Companion mission required?                                                              |
-| ---------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `GatewayCache`                     | `crates/octo-network/src/gdp/cache.rs:34`               | no                                                                                       |
-| `GatewayIdentity::new`             | `crates/octo-network/src/dot/gateway.rs:53`             | **YES** — `0011-h-s-a-local-gateway-identity-state` (4-arg ctor needs 3-arg local state) |
-| `TrustGraph::render`               | `crates/octo-network/src/mon/trust_graph.rs:89`         | no                                                                                       |
-| `GovernanceRotation`               | `crates/octo-network/src/mon/governance_rotation.rs:41` | no                                                                                       |
-| `BootstrapMode` (deferred Phase 2) | `crates/octo-network/src/mon/bootstrap.rs:197`          | no                                                                                       |
+| Substrate                          | Verified location                                    | Companion mission required?                                                              |
+| ---------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `GatewayCache`                     | `crates/octo-network/src/gdp/cache.rs`               | no                                                                                       |
+| `GatewayIdentity::new`             | `crates/octo-network/src/dot/gateway.rs`             | **YES** — `0011-h-s-a-local-gateway-identity-state` (4-arg ctor needs 3-arg local state) |
+| `TrustGraph::render`               | `crates/octo-network/src/mon/trust_graph.rs`         | no                                                                                       |
+| `GovernanceRotation`               | `crates/octo-network/src/mon/governance_rotation.rs` | no                                                                                       |
+| `BootstrapMode` (deferred Phase 2) | `crates/octo-network/src/mon/bootstrap.rs`           | no                                                                                       |
 
 **Companion mission row (NEW per R1.5 fix per F2):**
 

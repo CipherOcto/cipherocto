@@ -105,7 +105,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 1. **VERIFY GATE** — RFC-0855p-d3 + d1 + d2 Accepted; missions `0855p-d1-subgroup-creation-state` + `0855p-d2-subgroup-delegation-lifecycle` substrate landed
 2. Create `crates/octo-network/src/dot/subgroup_routing.rs` skeleton
 3. Define core types (`P2SR`, `S2PA`, `MemberAttestation`, `SignersBitmap`, `aggregate_id`)
-4. Implement `hodn_quorum(witness_set_size: usize) -> usize` policy lookup per RFC-0855p-d3 §Layer placement L38 (canonical name per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
+4. Implement `hodn_quorum(witness_set_size: usize) -> usize` policy lookup per RFC-0855p-d3 §Layer placement (canonical name per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
 5. Implement `mesh_aggregated_signature` BLS verification
 6. Implement bitmap-vs-quorum coverage check ordering (Appendix B)
 7. Create `crates/octo-network/src/dot/subgroup_teardown.rs` skeleton
@@ -127,10 +127,10 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - `subgroup_routing.rs` (Layer C) — routing + aggregation logic
 - `subgroup_teardown.rs` (Layer C) — teardown + state transition logic
 - `P2SR/S2PA/SGTP` envelopes (Layer B) — wire format + canonical encoding
-- `MemberAttestation` (Layer C) — per-member attestation record (not embedded in Layer-B wire; consumed by substrate per RFC-0855p-d3 §Layer placement L37)
-- `SignersBitmap` (Layer B) — embedded in `S2PA` envelope wire format (RFC-0855p-d3 line 247 field `signers_bitmap: SignersBitmap`; canonical encoding per RFC-0126)
-- `aggregate_id` (Layer B) — wire field of `S2PA` envelope (RFC-0855p-d3 line 248 field `aggregate_id: [u8; 32]`); the `derive_aggregate_id` function (line 281) is Layer A (pure BLAKE3 derivation)
-- `hodn_quorum` policy (Layer C) — looks up witness-set-size threshold per RFC-0855p-d3 §Layer placement L38
+- `MemberAttestation` (Layer C) — per-member attestation record (not embedded in Layer-B wire; consumed by substrate per RFC-0855p-d3 §Layer placement)
+- `SignersBitmap` (Layer B) — embedded in `S2PA` envelope wire format (RFC-0855p-d3 field `signers_bitmap: SignersBitmap`; canonical encoding per RFC-0126)
+- `aggregate_id` (Layer B) — wire field of `S2PA` envelope (RFC-0855p-d3 field `aggregate_id: [u8; 32]`); the `derive_aggregate_id` function is Layer A (pure BLAKE3 derivation)
+- `hodn_quorum` policy (Layer C) — looks up witness-set-size threshold per RFC-0855p-d3 §Layer placement
 
 No upward dependency. Substrate recipients reading unknown envelope subtypes fail closed.
 

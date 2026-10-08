@@ -55,7 +55,7 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
            bus: &impl VaultProjectionInvalidationEmitter,
            current_unix_seconds: i64,
        ) -> Result<TransferEventRef, ProducerError> {
-           // Default body (RFC-0960 v3.7 §2.5 L493-516):
+           // Default body (RFC-0960 v3.7 §2.5):
            //   1. acquire self.drain_lock()
            //   2. self.validate_pre_insert(&input, registry, asset_resolver)
            //   3. let ev = self.to_transfer_event(input, registry, asset_resolver, nonce_registry)?;
@@ -68,7 +68,7 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
    }
    ```
 
-   Per RFC-0960 v3.7 §2.5 L474-516: trait uses associated type `Input`,
+   Per RFC-0960 v3.7 §2.5: trait uses associated type `Input`,
    `drain_lock()` accessor, 4-param `validate_pre_insert` (including
    `&self`), 5-param `to_transfer_event` (including `&self`; args =
    input + registry + asset_resolver + nonce_registry) returning
@@ -95,7 +95,7 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
    Stoolap transaction (RFC-0913 consumer pattern). **Note:** Mission
    G/RFC-0959 v2.8 substrate has no `consume()` function (nonce
    observation is bundled into `new()` Gate 7 per Mission G §2.2
-   L130); producer wrap site calls `new()` not `consume()`.
+   ); producer wrap site calls `new()` not `consume()`.
    **Layer note:** the existing `SettlementEventRepository::insert`
    substrate crate remains at `crates/quota-router-storage/src/
 settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
@@ -212,7 +212,7 @@ cargo test --workspace --lib
 - RFC-0960 v3.6 §2.1 — `BurnEventRef::consume` wrapped by `BurnEventProducer`
 - RFC-0959 v2.8 §2.1 — `SettlementEvent::new` (no separate `consume()` in
   substrate) wrapped by `SettlementEventProducer`
-- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+- RFC-0105 v3.5 §3.13 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check on every
   `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
   replay path; per-event validate() cache MUST NOT be used. Mission B's

@@ -58,7 +58,7 @@ Three encoding paths currently exist in production code:
 2. `crates/octo-wallet/src/identity.rs::AudienceId::from_str` — accepts any non-empty string.
 3. `crates/quota-router-core/src/marketplace/reputation_compat.rs::parse_canonical_did` — accepts only `did:octo:b<52>` (62 chars).
 
-The 347-literal surface (test fixtures + integration tests + market tests) uses bare names like `did:octo:buyer` which none of the three parsers accepts in production; these literals exist ONLY in tests, but they document the protocol's intended shape variance. Cross-mission reputation laundering via noncanonical encoding is documented in `docs/use-cases/reputation-persistence.md:19` and `docs/research/2026-07-24-reputation-persistence-research.md:38`. Reputation research already locked `did:octo:b<52>` (62 chars) as the storage form; this RFC ratifies the codec split.
+The 347-literal surface (test fixtures + integration tests + market tests) uses bare names like `did:octo:buyer` which none of the three parsers accepts in production; these literals exist ONLY in tests, but they document the protocol's intended shape variance. Cross-mission reputation laundering via noncanonical encoding is documented in `docs/use-cases/reputation-persistence.md` and `docs/research/2026-07-24-reputation-persistence-research.md`. Reputation research already locked `did:octo:b<52>` (62 chars) as the storage form; this RFC ratifies the codec split.
 
 ## Roles and Authorities
 

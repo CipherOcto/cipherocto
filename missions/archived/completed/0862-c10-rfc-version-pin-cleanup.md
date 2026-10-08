@@ -8,10 +8,10 @@ in own file + Version History tables).
 
 ## What landed (2026-08-19)
 
-- **0112-deterministic-vectors.md** — 5 sites: `RFC-0111 v1.20` → `RFC-0111` (lines 80, 275, 278, 286, 450).
-- **0127-dcs-blob-amendment.md** — 6 sites: `RFC-0126 v2.5.1` → `RFC-0126` (lines 47, 125, 150, 240, 535, 536). Version History table v2.6.0 refs at lines 744/749 EXEMPT per AC-6.
-- **0113-deterministic-matrices.md** — 2 sites: `RFC-0112 v1.12` + `RFC-0111 v1.20` (lines 224, 1042).
-- **0010-canonical-did-codec.md** — 5 sites: `RFC-0862 v1.3` (lines 406, 669, 800, 838, 840). Self-refs `RFC-0010 v1.4/v1.5` (lines 419, 476, 589, 679, 697, 730) + Version History rows (1015, 1016) EXEMPT per AC-5/AC-6.
+- **0112-deterministic-vectors.md** — 5 sites: `RFC-0111 v1.20` → `RFC-0111`.
+- **0127-dcs-blob-amendment.md** — 6 sites: `RFC-0126 v2.5.1` → `RFC-0126`. Version History table v2.6.0 refs EXEMPT per AC-6.
+- **0113-deterministic-matrices.md** — 2 sites: `RFC-0112 v1.12` + `RFC-0111 v1.20`.
+- **0010-canonical-did-codec.md** — 5 sites: `RFC-0862 v1.3`. Self-refs `RFC-0010 v1.4/v1.5` + Version History rows EXEMPT per AC-5/AC-6.
 
 ## Verify (2026-08-19)
 
@@ -21,7 +21,7 @@ in own file + Version History tables).
 
 ## Out-of-plan follow-ons (filed for awareness, NOT this mission)
 
-Round-3 review also surfaced `RFC-0959 v1.0` at `rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:52` and likely more across the RFC corpus. File follow-on sweep mission if desired. Filed per Round-3 adversarial review
+Round-3 review also surfaced `RFC-0959 v1.0` at `rfcs/accepted/proof-systems/0958-zk-capability-subclass.md` and likely more across the RFC corpus. File follow-on sweep mission if desired. Filed per Round-3 adversarial review
 finding (defect 6): `RFC-NNNN vN.M` version-pin pattern in cross-RFC
 prose violates `CLAUDE.md §RFC Reference Conventions Reaffirmed` ("use
 only the number, never include status, version pins, or metadata").
@@ -45,12 +45,12 @@ v1.2 suffix IS the file identity).
 
 ## Dependency edges
 
-| From                                                                                    | To                     | Why                                                      |
-| --------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------- |
-| `rfcs/accepted/numeric/0112-deterministic-vectors.md` lines 80,275,278,286,450          | Drop `v1.20`           | Cross-RFC ref to RFC-0111 (5 sites)                      |
-| `rfcs/accepted/numeric/0127-dcs-blob-amendment.md` lines 47,125,150,240,535-539,744,749 | Drop `v2.5.1`/`v2.6.0` | Cross-RFC ref to RFC-0126 (9 sites); self-refs preserved |
-| `rfcs/accepted/numeric/0113-deterministic-matrices.md` lines 224,1042                   | Drop `v1.12`/`v1.20`   | Cross-RFC ref to RFC-0112/RFC-0111 (2 sites)             |
-| `rfcs/accepted/process/0010-canonical-did-codec.md` line 406                            | Drop `v1.3`            | Cross-RFC ref to RFC-0862 (1 site)                       |
+| From                                                   | To                     | Why                                                      |
+| ------------------------------------------------------ | ---------------------- | -------------------------------------------------------- |
+| `rfcs/accepted/numeric/0112-deterministic-vectors.md`  | Drop `v1.20`           | Cross-RFC ref to RFC-0111 (5 sites)                      |
+| `rfcs/accepted/numeric/0127-dcs-blob-amendment.md`     | Drop `v2.5.1`/`v2.6.0` | Cross-RFC ref to RFC-0126 (9 sites); self-refs preserved |
+| `rfcs/accepted/numeric/0113-deterministic-matrices.md` | Drop `v1.12`/`v1.20`   | Cross-RFC ref to RFC-0112/RFC-0111 (2 sites)             |
+| `rfcs/accepted/process/0010-canonical-did-codec.md`    | Drop `v1.3`            | Cross-RFC ref to RFC-0862 (1 site)                       |
 
 No new cyclic edges. Pure format compliance; spec content unchanged.
 
@@ -82,16 +82,16 @@ These violate the convention because:
 ## Acceptance Criteria
 
 - AC-1: `rfcs/accepted/numeric/0112-deterministic-vectors.md` — 5 sites
-  updated: lines 80, 275, 278, 286, 450. `RFC-0111 v1.20` → `RFC-0111`.
+  updated. `RFC-0111 v1.20` → `RFC-0111`.
 - AC-2: `rfcs/accepted/numeric/0127-dcs-blob-amendment.md` — 9 sites
-  updated: lines 47, 125, 150, 240, 535, 536, 539, 744, 749.
+  updated (9 sites).
   `RFC-0126 v2.5.1` → `RFC-0126`; `RFC-0126 v2.6.0` → `RFC-0126`.
   Self-refs in Version History preserved (no change).
 - AC-3: `rfcs/accepted/numeric/0113-deterministic-matrices.md` — 2 sites
-  updated: lines 224, 1042. `RFC-0112 v1.12` → `RFC-0112`;
+  updated. `RFC-0112 v1.12` → `RFC-0112`;
   `RFC-0111 v1.20` → `RFC-0111`.
 - AC-4: `rfcs/accepted/process/0010-canonical-did-codec.md` — 1 site
-  updated: line 406. `RFC-0862 v1.3` → `RFC-0862`.
+  updated. `RFC-0862 v1.3` → `RFC-0862`.
 - AC-5: NO change to `rfcs/accepted/process/0009-identity-evolution-v12.md`
   (self-refs to own v1.2 identity).
 - AC-6: NO change to any RFC Version History table (the only place

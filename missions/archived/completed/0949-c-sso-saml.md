@@ -6,7 +6,8 @@ Closed 2026-08-13 (@claude). LANDED + drift-closed.
 
 **Substrate (from prior sessions):** SAML 2.0 code shipped in commit
 `0561bb43` ("feat(0949-c): implement SAML 2.0 authentication (RFC-0949)")
-+ `aaf602e1` (unwrap→error handling). 1722 LoC substrate + 80 tests.
+
+- `aaf602e1` (unwrap→error handling). 1722 LoC substrate + 80 tests.
 
 ## RFC
 
@@ -19,11 +20,13 @@ RFC-0949 (Economics): Enterprise SSO
 ## Acceptance Criteria
 
 ### SAML Flow
+
 - [x] Implement SP-initiated SAML SSO flow — saml.rs core
-- [x] Implement `GET /auth/sso/:provider` — Generate AuthnRequest, redirect to IdP (admin.rs:545)
-- [x] Implement `GET /auth/sso/:provider/callback` — SAML callback (admin.rs:573)
+- [x] Implement `GET /auth/sso/:provider` — Generate AuthnRequest, redirect to IdP (admin.rs)
+- [x] Implement `GET /auth/sso/:provider/callback` — SAML callback (admin.rs)
 
 ### Assertion Validation
+
 - [x] Implement `SamlAssertionParser` with XML signature validation using idp_certificate
 - [x] Audience validation: verify Audience matches sp_entity_id (error: `sso_saml_audience_mismatch`)
 - [x] Recipient validation
@@ -32,29 +35,36 @@ RFC-0949 (Economics): Enterprise SSO
 - [x] Certificate pinning for IdP impersonation prevention
 
 ### XML Signature Verification
+
 - [x] Parse XML digital signature (enveloped signature)
 - [x] Verify signature using idp_certificate (RSA-SHA256 or RSA-SHA1)
 - [x] Validate certificate chain (not expired, trusted CA or pinned)
 - [x] Return `sso_saml_signature_invalid` error on verification failure
 
 ### Attribute Mapping
+
 - [x] SAML attribute mapping: `HashMap<String, Vec<String>>` (multi-valued)
 - [x] Map SAML attributes to user properties (name, email, groups)
 
 ### Metadata
-- [x] Generate SP metadata XML at `GET /auth/sso/saml/metadata` (admin.rs:568)
+
+- [x] Generate SP metadata XML at `GET /auth/sso/saml/metadata` (admin.rs)
 - [x] Parse IdP metadata XML
 
 ### Logout
-- [x] SAML SLO support (delegated to `POST /auth/logout` in 0949-b — single owner) (admin.rs:668)
+
+- [x] SAML SLO support (delegated to `POST /auth/logout` in 0949-b — single owner) (admin.rs)
 
 ### Error Handling
+
 - [x] SAML-specific error codes: sso_saml_signature_invalid, sso_saml_assertion_expired, sso_saml_audience_mismatch
 
 ### XML Processing
+
 - [x] Use `quick-xml` crate for XML parsing — Cargo.toml
 
 ### Verification
+
 - [x] Clippy passes with zero warnings (verified by recent commits)
 - [x] All existing tests pass (80 SAML tests)
 
@@ -95,7 +105,7 @@ Filed as `0949-c1-saml-parser-security-review`.
 
 ## Version History
 
-| Version | Date       | Status   | Changes |
-| ------- | ---------- | -------- | ------- |
-| v0.1    | 2026-07-30 | claimed  | Original mission |
-| v0.2    | 2026-08-13 | closed   | 24/24 ACs PASS at drift audit. 80 SAML tests. |
+| Version | Date       | Status  | Changes                                       |
+| ------- | ---------- | ------- | --------------------------------------------- |
+| v0.1    | 2026-07-30 | claimed | Original mission                              |
+| v0.2    | 2026-08-13 | closed  | 24/24 ACs PASS at drift audit. 80 SAML tests. |

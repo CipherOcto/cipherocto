@@ -121,7 +121,7 @@ Phase 3 lands 3 output envelopes, one per subcommand:
 | `coordinator admin` | `NetworkCoordinatorAdminOutput` (preview + apply) |
 | `governance tally`  | `NetworkGovernanceTallyOutput`                    |
 
-`NetworkGovernanceTallyOutput.canonical_bytes_hash` is `Option<String>` — JSON `null` for pre-G3b fallback per RFC-0011-h §Subcommand Taxonomy Phase 3 row 321 + §Output Envelope L460. Post-G3b surfaces `Some(blake3_hex)`.
+`NetworkGovernanceTallyOutput.canonical_bytes_hash` is `Option<String>` — JSON `null` for pre-G3b fallback per RFC-0011-h §Subcommand Taxonomy Phase 3 row 321 + §Output Envelope. Post-G3b surfaces `Some(blake3_hex)`.
 
 ### Error Handling
 

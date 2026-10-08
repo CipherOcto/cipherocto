@@ -15,6 +15,7 @@ Implement the L1 key cache (`KeyCache`) with TTL-based invalidation and the back
 ## Motivation
 
 Current implementation gaps:
+
 1. **L1 cache stub:** `CacheInvalidation` in `cache.rs` has no implementation
 2. **Key rotation worker missing:** No background worker for automatic rotation on expiry
 3. **Soft budget pre-check missing:** `check_budget_soft_limit()` for UX not implemented
@@ -78,12 +79,12 @@ Current implementation gaps:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/cache.rs` | Full KeyCache implementation (currently stub) |
-| `crates/quota-router-core/src/keys/mod.rs` | Add validate_key_with_cache, check_budget_soft_limit |
-| `crates/quota-router-core/src/keys/models.rs` | Add CacheEntry struct |
-| `crates/quota-router-cli/src/main.rs` | Wire up rotation_worker background task |
+| File                                          | Change                                               |
+| --------------------------------------------- | ---------------------------------------------------- |
+| `crates/quota-router-core/src/cache.rs`       | Full KeyCache implementation (currently stub)        |
+| `crates/quota-router-core/src/keys/mod.rs`    | Add validate_key_with_cache, check_budget_soft_limit |
+| `crates/quota-router-core/src/keys/models.rs` | Add CacheEntry struct                                |
+| `crates/quota-router-cli/src/main.rs`         | Wire up rotation_worker background task              |
 
 ## Complexity
 
@@ -91,8 +92,8 @@ Medium — cache infrastructure + async worker
 
 ## Reference
 
-- RFC-0903 §L1 Cache for Fast Lookups (lines 790-918)
-- RFC-0903 §Cache Invalidation Rules (lines 2104-2112)
-- RFC-0903 §Key Rotation Worker (lines 1156-1185)
-- RFC-0903 §Soft budget pre-check (lines 361-394)
-- RFC-0903 §Cache Revocation Rule (lines 1682-1698)
+- RFC-0903 §L1 Cache for Fast Lookups
+- RFC-0903 §Cache Invalidation Rules
+- RFC-0903 §Key Rotation Worker
+- RFC-0903 §Soft budget pre-check
+- RFC-0903 §Cache Revocation Rule

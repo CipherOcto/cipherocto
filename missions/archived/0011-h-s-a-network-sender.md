@@ -120,7 +120,7 @@ Layer B substrate additions land in a NEW directory `crates/octo-network/src/sen
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands
 - Hard sequencing: RFC-0011-n must be Accepted (Draft v0.2, DRY CLOSED)
-- Soft sequencing: RFC-0863 General-Purpose Network Integration substrate anchors at L104 (trait) + L116 (SendContext)
+- Soft sequencing: RFC-0863 General-Purpose Network Integration substrate anchors (`NetworkSender` trait + `SendContext` struct)
 
 ## Out of Scope
 
@@ -131,4 +131,4 @@ Layer B substrate additions land in a NEW directory `crates/octo-network/src/sen
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The `NetworkSender` trait deliberately mirrors the RFC-0863 trait anchor (line 104) + `SendContext` struct anchor (line 116) — the trait does NOT add fields beyond what RFC-0863 specifies per `cipherocto-design-principles` §Stable Abstractions Principle. The registry pattern preserves the per-extension crate pattern: each transport ships its own Layer D crate implementing `NetworkSender`; the registry is the only place that knows about every transport.
+Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The `NetworkSender` trait deliberately mirrors the RFC-0863 trait anchor + `SendContext` struct anchor — the trait does NOT add fields beyond what RFC-0863 specifies per `cipherocto-design-principles` §Stable Abstractions Principle. The registry pattern preserves the per-extension crate pattern: each transport ships its own Layer D crate implementing `NetworkSender`; the registry is the only place that knows about every transport.

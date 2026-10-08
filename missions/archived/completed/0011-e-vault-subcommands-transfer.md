@@ -32,15 +32,15 @@ completed_at: 2026-09-01
 
 > **Drift amendment (RFC-0011-e v1.8 audit 2026-09-08, this file):**
 >
-> - **`ConfirmationRequired` exit code**: **2** (not 22 as AC L87,
->   sub-step 5 L149, and TV-XFER3 L175 stated). The parent `error.rs`
+> - **`ConfirmationRequired` exit code**: **2** (not 22 as the AC,
+>   sub-step 5, and TV-XFER3 stated). The parent `error.rs`
 >   already maps it to exit 2 (clap parse code). Reused the existing
 >   variant. **3 sites corrected.**
 > - **Memo redaction in BOTH sinks** (RFC v1.2 change (a) §Redaction):
 >   `--memo <text>` is redacted in stderr/log AND in the JSON envelope
 >   by default; plaintext is exposed ONLY via `--include-memo` via the
 >   `memo_plaintext: Option<String>` field of `VaultTransferOutput`. The
->   v1.0 sub-step 7 ("full memo in JSON payload") and the L94 Risk text
+>   v1.0 sub-step 7 ("full memo in JSON payload") and the Risk text
 >   ("operator's downstream tooling can use it") both reflect the
 >   original draft, superseded by RFC v1.2.
 > - **`TransferStatus` variants**: `DryRun | Pending | Confirmed | Failed`
@@ -54,8 +54,8 @@ completed_at: 2026-09-01
 >   but listed in the same error table the AC references.
 > - **Nonce policy**: substrate allocates `last_nonce(vault_id) + 1` under
 >   the transfer-event write lock (strictly-incrementing per-vault
->   counter, NOT `max_occurred_at_unix`-derived). The Risk L129 text and
->   L180 Layer direction both encoded the v1.0 timestamp-derived defect.
+>   counter, NOT `max_occurred_at_unix`-derived). The Risk text and
+>   Layer direction both encoded the v1.0 timestamp-derived defect.
 > - **New regression + edge-case test vectors** added in RFC v1.8
 >   §Test Vectors: TV-14/15 (nonce collision regression — timestamp
 >   defect guard), TV-16..TV-32 (Edge Cases & Rejection Paths including

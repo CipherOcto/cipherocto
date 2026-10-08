@@ -36,9 +36,9 @@ This mission captures the audit findings + references the 1 new sibling mission 
 
 **Evidence:**
 
-1. `crates/octo-ident/src/chain.rs:137` — `pub fn as_bytes(&self) -> [u8; 32]` (BLAKE3 derivation via domain separator `b"cipherocto/chain/v1/"` per Layer A frozen substrate pattern).
+1. `crates/octo-ident/src/chain.rs` — `pub fn as_bytes(&self) -> [u8; 32]` (BLAKE3 derivation via domain separator `b"cipherocto/chain/v1/"` per Layer A frozen substrate pattern).
 2. `crates/octo-ident/tests/tv_0010_chain_id_32byte.rs` — 3 TV (`as_bytes_is_deterministic_across_n_calls`, `as_bytes_known_vector_matches_blake3_256`, `canonical_bytes_17_and_as_bytes_32_coexist`) PASS verified via `cargo test -p octo-ident --test tv_0010_chain_id_32byte`.
-3. `rfcs/accepted/process/0010-canonical-did-codec.md:1017` — RFC-0010 v1.6 VH row documents `ChainId::as_bytes()` 32-byte addendum + cross-ref to mission `0010-c-32-byte-addendum` + 3 TV byte-exact fixtures.
+3. `rfcs/accepted/process/0010-canonical-did-codec.md` — RFC-0010 v1.6 VH row documents `ChainId::as_bytes()` 32-byte addendum + cross-ref to mission `0010-c-32-byte-addendum` + 3 TV byte-exact fixtures.
 4. `cargo test -p octo-ident --lib` 69/69 PASS (no regression in `canonical_bytes()` 17-byte form).
 5. `cargo clippy -p octo-ident --test tv_0010_chain_id_32byte -- -D warnings` clean.
 6. `cargo fmt --all -- --check` clean.
@@ -52,7 +52,7 @@ This mission captures the audit findings + references the 1 new sibling mission 
 **Evidence:**
 
 1. `git log --oneline -1 f6478bda` → `feat(octo-ident): 0010-f2-multi-chain-did-resolution (RFC-0010 v1.4)` — LANDED 2026-08-11.
-2. `crates/octo-ident/src/chain.rs:81` `pub struct ChainId(pub String)` + `:220` `pub struct ChainNamespace` + `:308` `pub enum NamespaceVariant` + `:55` `CIPHEROCTO_MAINNET_TAG` const + `:257` `ChainNamespace::canonical_bytes()` 17-byte form.
+2. `crates/octo-ident/src/chain.rs` — `pub struct ChainId(pub String)` + `pub struct ChainNamespace` + `pub enum NamespaceVariant` + `CIPHEROCTO_MAINNET_TAG` const + `ChainNamespace::canonical_bytes()` 17-byte form.
 
 **Fix:** Inline retro-supersession note added to Status block (combined status + bare pin correction into single quote). Mission body preserved verbatim per historical-mission-preservation + R19 scope discipline. Bare pins retro-corrected in header `Substrate:` line only.
 
@@ -63,8 +63,8 @@ This mission captures the audit findings + references the 1 new sibling mission 
 **Evidence:**
 
 1. `git log --oneline -1 a7efaabb` → `feat(octo-ident,quota-router-storage): 0010-f2-registry-namespacing — multi-chain registry column` — LANDED 2026-08-11.
-2. `crates/octo-ident/src/registry.rs:71` `pub trait DidRegistry` gains 2 ADDITIVE methods (`register_in_chain` at `:199` + `resolve_in_chain` at `:219`) with default impls.
-3. `crates/octo-ident-storage/src/did_registry.rs` — `MAINNET_CHAIN_ID_BYTES` const + 4 SQL filter updates (re-exported from `crates/octo-ident-storage/src/lib.rs:34`).
+2. `crates/octo-ident/src/registry.rs` `pub trait DidRegistry` gains 2 ADDITIVE methods (`register_in_chain` + `resolve_in_chain`) with default impls.
+3. `crates/octo-ident-storage/src/did_registry.rs` — `MAINNET_CHAIN_ID_BYTES` const + 4 SQL filter updates (re-exported from `crates/octo-ident-storage/src/lib.rs`).
 4. `crates/quota-router-storage/migrations/v011__add_chain_id_namespace.sql` — ADD COLUMN + UNIQUE INDEX migration LANDED.
 5. `crates/octo-ident-storage/tests/chain_namespace.rs` — 1 TV `register_in_chain_isolates_dids_across_chains` LANDED.
 
@@ -90,8 +90,8 @@ This mission captures the audit findings + references the 1 new sibling mission 
 **Evidence:**
 
 1. `crates/quota-router-storage/migrations/v009__add_service_endpoints_and_controllers.sql` + `v010__add_verification_methods_and_capability_delegations.sql` — both LANDED.
-2. `crates/octo-ident-storage/src/did_registry.rs:162-173` — borsh serialization of 4 rich fields (`service_endpoints`, `controllers`, `verification_methods`, `capability_delegations`).
-3. `crates/octo-ident-storage/src/did_registry.rs:202-204,229-231` — SQL bind params for 4 new BLOB columns.
+2. `crates/octo-ident-storage/src/did_registry.rs` — borsh serialization of 4 rich fields (`service_endpoints`, `controllers`, `verification_methods`, `capability_delegations`).
+3. `crates/octo-ident-storage/src/did_registry.rs` — SQL bind params for 4 new BLOB columns.
 4. `cargo test -p octo-ident-storage --lib` 20/20 PASS.
 
 **Fix:** Inline retro-supersession note added to Status block. Mission body preserved verbatim per historical-mission-preservation + R19 scope discipline.

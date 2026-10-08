@@ -83,7 +83,7 @@ Each test gets `#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat)"]`.
 - Mission `0870-b-envelope-adoption` (LANDED 2026-08-09, commit `a059d54d`) — shipped the `NodeEnvelope` outbound wire form; missed the inbound dispatch
 - RFC-0870 (Networking) — §NodeEnvelope Adoption (backward-compat window with legacy discriminators)
 - RFC-0871 (Networking) — `NodeEnvelope` canonical wire form (RFC-0871 §Algorithms + §Adversary Analysis)
-- `crates/quota-router-core/src/node/handler.rs` — `on_receive` (line 90)
+- `crates/quota-router-core/src/node/handler.rs` — `on_receive`
 - `crates/quota-router-core/src/node/envelope_v2.rs::classify_envelope` — heuristic ready
 
 ## Layer Discipline

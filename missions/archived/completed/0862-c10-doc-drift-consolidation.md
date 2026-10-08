@@ -9,11 +9,11 @@ atomicity LANDED 2026-08-18). Filed per S6c Round 3 adversarial review
 doc-drift surface between three sources of truth:
 
 1. `crates/quota-router-storage/src/stoolap_spend_ledger.rs`
-   module-level §Atomicity paragraph (lines 9-18 pre-c10)
+   module-level §Atomicity paragraph (pre-c10)
 2. `crates/quota-router-storage/migrations/v007__create_spend_ledger.sql`
-   header comment (lines 10-14 pre-c10)
+   header comment (pre-c10)
 3. `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md`
-   Version History table row v2.0.3 (line 2113 pre-c10) + paragraph
+   Version History table row v2.0.3 (pre-c10) + paragraph
    ordering in v2.0.6..v2.0.8 history
 
 ## RFC
@@ -29,7 +29,7 @@ doc-drift surface between three sources of truth:
 
 Pre-c10 module-level §Atomicity paragraph claimed the substrate uses
 `SELECT ... FOR UPDATE` row-locking to serialize concurrent drains.
-Inspection of substrate line 454: actual SQL is
+Inspection of substrate: actual SQL is
 `SELECT balance FROM spend_ledger WHERE holder_did = ? AND macaroon_id = ?
 LIMIT 1` with NO `FOR UPDATE` clause. S6c Round 3 verification confirmed
 that the stoolap fork's storage layer returns `NotSupported` for
@@ -44,7 +44,7 @@ breaking. The actual serialization layers are:
 
 Same drift appears in:
 
-- migration v007 header comment (lines 10-14 pre-c10)
+- migration v007 header comment (pre-c10)
 - v2.0.3 RFC row (claims `pub type MicroOctoW = Dqa` ADDED to
   `determin/src/lib.rs` AND cites TV-0862-17/TV-0862-18 — neither
   claim survived the same-day c9 RETIRED kill; c9 RETIRED came

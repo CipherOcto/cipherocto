@@ -214,7 +214,7 @@ BIGINT`, `metadata BLOB`. `vault_id_unchecked` derivation: see
 - **TV anchor:** §8.10 + §24 + §18 central registry
 - **Review source:**
   `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
-  §9.5 + §20.3 + §20.7 + §20.8 + §24 line 2019 (9 role-token × 3
+  §9.5 + §20.3 + §20.7 + §20.8 + §24 (9 role-token × 3
   chain × 4 owner = 108)
 - **Plan source:**
   `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`

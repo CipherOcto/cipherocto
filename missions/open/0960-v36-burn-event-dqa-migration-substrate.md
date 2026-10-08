@@ -5,7 +5,7 @@
 **Parent:** RFC-0960 v3.6 + RFC-0105 v3.5 §3.13 (tri-invariant consumer)
 **Depends on:**
 
-- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0960 v3.6 §2.1 L54-60)
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0960 v3.6 §2.1)
 - Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_burn_against_caveat` audit invariant (RFC-0105 v3.5 §3.13 tri-invariant)
 - RFC-0960 v3.5 (already landed: `VaultId`, `AssetId`, `VaultRegistry`, `transfer_events` v014 schema)
 
@@ -22,7 +22,7 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
 ### Mission F sub-steps
 
 1. **`BurnEventRef` struct** — `crates/octo-policy/src/burn_event.rs`
-   (NEW). Per RFC-0960 v3.6 §2.1 L71-87. 11 fields:
+   (NEW). Per RFC-0960 v3.6 §2.1. 11 fields:
 
    ```rust
    pub struct BurnEventRef {
@@ -40,7 +40,7 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
    }
    ```
 
-2. **`BurnEventError` enum** — same file. Per §2.1 L89-126. 11 variants:
+2. **`BurnEventError` enum** — same file. Per §2.1. 11 variants:
    `AssetUnknown` / `ScaleMismatch { amount_wire_scale, asset_wire_scale }`
    / `ScaleOutOfRange { scale }` / `InvalidSignature` /
    `Replay { prior_height }` / `StaleSnapshot { snapshot, live }` /
@@ -53,26 +53,26 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
    substrate; downstream consumers MUST handle the wildcard arm).
 
 3. **Custom `Deserialize` for legacy-form rejection** — same file. Per
-   §2.1 L141-170. Inspects raw envelope BEFORE derived `Deserialize` for
+   §2.1. Inspects raw envelope BEFORE derived `Deserialize` for
    legacy `{ amount_micro_octo_w: i64 }` key. If present, parses
    `cost_asset_id` field as hex; returns
    `LegacyFormOnNonOctoWContext { claimed_asset_id }` error (sentinel
    `AssetId([0u8; 32])` if `cost_asset_id` missing). Happy path:
    re-serialize through JSON + delegate to derived impl (acceptable
    performance cost; BurnEventRef deserialized at audit boundaries, not
-   hot path per L166).
+   hot path per §2.1).
 
-4. **`SettlementId` typed wrapper** — same file. Per §2.2 L181.
+4. **`SettlementId` typed wrapper** — same file. Per §2.2.
    `pub struct SettlementId(pub [u8; 32]);`. `SettlementRef` deprecated
    alias: `pub type SettlementRef = SettlementId;` (one substrate cycle
-   per L182).
+   per §2.2).
 
-5. **`new()` constructor with 7 gates** — same file. Per §2.2 L196-275.
-   Signature per L197-209: takes **8 args** (chain_id, vault_id, asset_id,
+5. **`new()` constructor with 7 gates** — same file. Per §2.2.
+   Signature: takes **8 args** (chain_id, vault_id, asset_id,
    amount, ledger_height, settlement_event_ref, governance_signature,
    nonce) + `&dyn AssetRegistry` + `&dyn VaultRegistry` +
    `current_epoch: Epoch`. Gates (in order, per RFC-0960 v3.6 §2.2
-   L213-260 canonical order):
+   §2.2 canonical order):
    - Gate 0: `registry.metadata(&asset_id)` resolves + not tombstoned
      (else `AssetUnknown`)
    - Gate 1: `amount.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
@@ -81,36 +81,36 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
      returns `Ok(())` (else map error variants: `UnknownVault` →
      `VaultUnknown`, `VaultAssetMismatch` → `VaultAssetMismatch`) —
      fails fast on cheap lookup before expensive crypto (RFC-0960 v3.6
-     §2.2 L226-230)
+     §2.2)
    - Gate 4: resolve `governance_pubkey` from `meta` — sovereign
      fallback uses `sovereign_nonce_namespace(&asset_id)` for
      body_hash commitment (Round 3 IMPORTANT #3 + Round 4 CRITICAL #2;
-     per RFC-0960 v3.6 §3.3 L504-511)
+     per RFC-0960 v3.6 §3.3)
    - Gate 5: `compute_body_hash(...)` over length-prefixed field set
-     per §2.2 L371-393
+     per §2.2
    - Gate 6: `verify_governance_signature(&governance_signature.sig,
 &body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
      assets EXEMPT per §3.3)
 
    **Note:** nonce observation (Gate 7), stale-snapshot detection
    (Gate 8), and asset_kind assert (Gate 9) are NOT in `new()`. Per
-   RFC-0960 v3.6 §2.2 L300-308 (asset_kind) + L309-313 (stale_snapshot)
-   belong to `validate()`; per L337-368 (nonce_registry.observe) belongs
+   RFC-0960 v3.6 §2.2 (asset_kind + stale_snapshot)
+   belong to `validate()`; per §2.2 (nonce_registry.observe) belongs
    to `consume()`. This split is substrate-mandated (Round 1 CRITICAL #4
    TOCTOU mitigation) — nonce marking MUST be bundled into `consume()`
    alongside audit-sink commit to prevent observation-without-commit.
 
 6. **`validate()` post-deser check (separate function)** — same file. Per
-   §2.2 L279-332. **7 checks** (RFC-0960 v3.6 §2.2 validate() L279-332):
+   §2.2. **7 checks** (RFC-0960 v3.6 §2.2 validate()):
    - (a) re-run Gate 0: `registry.metadata(&asset_id)` resolves +
      not tombstoned (else `AssetUnknown`; DIRECT-DESERIALIZE BYPASS
-     MITIGATION per RFC §2.2 L283-289)
+     MITIGATION per RFC §2.2)
    - (b) re-run Gate 1: `amount.wire_scale == meta.wire_scale` (else
      `ScaleMismatch`)
    - (c) re-run Gate 3: `vault_registry.contains_asset(&vault_id,
 &asset_id)` (else `VaultUnknown` / `VaultAssetMismatch`; mandatory
      re-run for direct Deserialize bypass mitigation per RFC §2.2
-     L295-302)
+     §2.2)
    - (d) asset_kind equality check — `self.asset_kind ==
 meta.kind` (else `AssetKindMismatch { claimed, registered }`)
    - (e) stale_snapshot detection — `current_epoch.0 <
@@ -126,14 +126,14 @@ InvalidSignature}` for offline audit integrity check (Round 1
    - (c) re-runs (Round 3 SECURITY HIGH finding F1).
 
 7. **`consume()` nonce observe + audit sink write** — same file. Per
-   §2.2 L337-368. Steps:
+   §2.2. Steps:
    - Call `validate()` (returns Err on first failed gate)
    - Call `nonce_registry.observe(NonceEventKind::Burn,
 &governance_pubkey, &nonce.0)` — `governance_pubkey` is the
      PINNED `[u8;32]` struct field set at `new()` Gate 4: managed
      assets use `meta.governance_pubkey`; sovereign role tokens use
      `sovereign_nonce_namespace(&asset_id)` (per RFC-0960 v3.6 §3.3
-     L510). Single-role equivalence: body_hash commitment AND
+     §3.3). Single-role equivalence: body_hash commitment AND
      NonceRegistry observation key both derive from this single
      pinned value. Sovereign burns therefore NEVER collide on
      `[0u8; 32]` zero-pubkey namespace. Returns
@@ -194,7 +194,7 @@ nonce_rolled_back: true, audit_compensated: true } }`.
 
    - GREENFIELD `AuditSink` trait + `AuditError` enum are declared
      **inline** within the same `burn_event.rs` file per RFC-0960 v3.6
-     §2.2 L408-411 (NOT a separate `audit_sink.rs` file). `AuditError`
+     §2.2 (NOT a separate `audit_sink.rs` file). `AuditError`
      extended (R7 CRITICAL #3) with `LogInsertFailed { sink,
 nonce_rolled_back, audit_compensated }` variant for the
      3-sink rollback path.
@@ -211,17 +211,17 @@ nonce_rolled_back, audit_compensated }` variant for the
    ) -> Result<(), AuditInvariantViolation>;
    ```
 
-9. **Sovereign-asset exemption** — same file. Per §3.3 L504-511. Sovereign
+9. **Sovereign-asset exemption** — same file. Per §3.3. Sovereign
    role tokens (`AssetKind::SovereignRoleToken`) burned by chain rule,
    NOT by vault governance key. `new()` skips gate 5 (`InvalidSignature`)
    when `meta.governance_pubkey.is_none()`. Body_hash commitment uses
    `sovereign_nonce_namespace(&asset_id)` resolved value
    (= `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)` per
-   RFC-0105 v3.5 §3.12 + §3.11 L633), NOT all-zeros. All-zeros is reserved
-   for the wire-form signature field ONLY (RFC-0960 v3.6 §3.1 L484
+   RFC-0105 v3.5 §3.12 + §3.11), NOT all-zeros. All-zeros is reserved
+   for the wire-form signature field ONLY (RFC-0960 v3.6 §3.1
    wire-form line, with §3.3 sovereign-exemption context).
 
-10. **Wire form** — same file. Per §3 L470-512. Borsh field order per
+10. **Wire form** — same file. Per §3. Borsh field order per
     §3.1: `chain_id | vault_id | asset_id | asset_kind | amount |
 ledger_height | settlement_event_ref | governance_signature |
 governance_pubkey | registry_snapshot_epoch | nonce`. JSON
@@ -247,11 +247,11 @@ Per RFC-0960 v3.6 §9 (Pending, concrete test vectors).
   succeeds WITHOUT governance signature verification
 - TV-BE7a: sovereign single-role equivalence — `governance_pubkey`
   pinned struct field = `sovereign_nonce_namespace(&asset_id)` for
-  sovereign path (RFC-0960 v3.6 §3.3 L510); body_hash commitment AND
+  sovereign path (RFC-0960 v3.6 §3.3); body_hash commitment AND
   NonceRegistry observation key both derive from this single pinned
   value (single-role equivalence, distinct from Mission G TV-SE10a's
   two-role distinction where body_hash uses `[0u8;32]` sentinel and
-  NonceRegistry uses the namespace per RFC-0959 v2.8 §3.3 L506-511)
+  NonceRegistry uses the namespace per RFC-0959 v2.8 §3.3)
 - TV-BE8: gate 7 violation — `nonce_registry.observe(NonceEventKind::Burn,
 &pk, &nonce.0) == Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-BE9: gate 9 violation — `stored asset_kind != registered
@@ -271,7 +271,7 @@ asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
   `burn.asset_id != caveat.asset_id` (RFC-0105 v3.5 §3.13 tri-invariant pair)
 - TV-BE16: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all 11 fields
-- TV-BE17: audit-batch replay path (RFC-0105 v3.5 §3.13 L669) bypasses
+- TV-BE17: audit-batch replay path (RFC-0105 v3.5 §3.13) bypasses
   per-event validate() cache and runs fresh `verify_burn_against_caveat`
   pairwise check on every `(caveat, burn, settlement)` tuple; cache HIT
   must NOT short-circuit the batch-replay path
@@ -331,15 +331,15 @@ cargo test -p octo-policy --lib burn_event
 
 - RFC-0960 v3.6 §0 — GREENFIELD marker (explicit)
 - RFC-0960 v3.6 §1 — motivation (asset-binding + audit-invariant)
-- RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate (L39-172)
-- RFC-0960 v3.6 §2.2 — construction + scale-binding invariant + new() (L173+)
+- RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate
+- RFC-0960 v3.6 §2.2 — construction + scale-binding invariant + new()
 - RFC-0960 v3.6 §2.3 — audit-invariant: verify_burn_against_caveat (RFC-0105 v3.5 §3.13)
 - RFC-0960 v3.6 §2.4 — AssetKind cryptographic commitment (kind_tag + blake3)
 - RFC-0960 v3.6 §2.5 — error scenario matrix
 - RFC-0960 v3.6 §3 — wire form + legacy-form migration
 - RFC-0960 v3.6 §3.3 — sovereign-asset signature exemption
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
-- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+- RFC-0105 v3.5 §3.13 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check
   `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
   replay path; per-event validate() cache MUST NOT be used. Mission F's

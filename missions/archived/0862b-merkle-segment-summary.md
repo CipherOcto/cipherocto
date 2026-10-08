@@ -59,6 +59,7 @@ impl MerkleSegmentTree {
 ### Segment metadata
 
 A "segment" is a single snapshot file (`<dsn-path>/snapshots/<table>/snapshot-<ts>.bin`). The metadata includes:
+
 - `segment_index: u32` (sequential, 0-indexed; matches `SyncSegment.segment_index` per RFC-0862 §4.3)
 - `payload_hash: [u8; 32]` (BLAKE3-256 of the file contents)
 - `file_path: PathBuf` (relative to the DSN)
@@ -156,7 +157,7 @@ The anti-entropy Merkle summary is the canonical mechanism for partition healing
 
 ### Why 16-way (not binary)?
 
-The Stoolap fork's `stoolap/src/trie/proof.rs:71-87` defines `HexaryProof` with 16-way branching (`levels: Vec<Vec<Hash>>`, `path: Vec<u8>`). The 16-way choice matches the existing `HexaryProof` convention, reducing implementation surface area. Tree depth ≤ 4 for ≤ 65,536 segments per table.
+The Stoolap fork's `stoolap/src/trie/proof.rs` defines `HexaryProof` with 16-way branching (`levels: Vec<Vec<Hash>>`, `path: Vec<u8>`). The 16-way choice matches the existing `HexaryProof` convention, reducing implementation surface area. Tree depth ≤ 4 for ≤ 65,536 segments per table.
 
 ### Why BLAKE3-256 (not SHA-256)?
 
@@ -182,10 +183,10 @@ BLAKE3-256 is RFC-0853's standardized hash for overlay state (`GossipStateSummar
 
 This mission implements the following RFC-0862 types:
 
-| Type | Role in this mission |
-|------|---------------------|
-| `SyncSummary` | The per-table Merkle summary envelope (codes 0xA0/0xA1); built from a table's segment Merkle root |
-| `MerkleSegmentTree` | The 16-way Merkle tree builder over per-table snapshot segments |
-| `SegmentMetadata` | Metadata for a single snapshot segment: `segment_index`, `payload_hash`, `file_path`, `lsn_watermark`, `byte_size` |
+| Type                | Role in this mission                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `SyncSummary`       | The per-table Merkle summary envelope (codes 0xA0/0xA1); built from a table's segment Merkle root                  |
+| `MerkleSegmentTree` | The 16-way Merkle tree builder over per-table snapshot segments                                                    |
+| `SegmentMetadata`   | Metadata for a single snapshot segment: `segment_index`, `payload_hash`, `file_path`, `lsn_watermark`, `byte_size` |
 
 The mission does NOT implement the segment transport (`SegmentRequest` / `SegmentResponse` / `SegmentNotFound`) — those are handled by mission 0862c. See the Type Coverage table in 0862-base for the full mapping.

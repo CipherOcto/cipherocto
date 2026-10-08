@@ -266,4 +266,4 @@ Remaining 4 defects (2 doc-comment drift, 3 lookup_agent existence-leak, 6 missi
 
 - `docs/audits/0011-c-agent-destroy-dry-closure-2026-09-15.md` — full audit doc
 - `~/.claude/projects/.../memory/0011c-agent-destroy-closure-2026-09-15.md` — memory card (pre-existing; per `memory-is-never-status-ground-truth` NOT status evidence)
-- `MEMORY.md` index — pointer to memory card (pre-existing line 33)
+- `MEMORY.md` index — pointer to memory card (pre-existing)

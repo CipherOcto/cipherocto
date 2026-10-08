@@ -37,13 +37,14 @@ Without a rigorous specification for this pass:
 
 ### Why DFP → DQA and Not DFP → DFP Runtime?
 
-| Approach | Determinism | Performance | Safety |
-|----------|-------------|-------------|--------|
-| DFP runtime (128-bit integer) | Proven | 10-40x slower | Complex normalization |
-| DQA runtime (i64 scaled) | Proven | 1.5-3.5x slower | Simple, auditable |
-| Lowering pass (DFP→DQA) | Must be specified | Compile-time only | This RFC's focus |
+| Approach                      | Determinism       | Performance       | Safety                |
+| ----------------------------- | ----------------- | ----------------- | --------------------- |
+| DFP runtime (128-bit integer) | Proven            | 10-40x slower     | Complex normalization |
+| DQA runtime (i64 scaled)      | Proven            | 1.5-3.5x slower   | Simple, auditable     |
+| Lowering pass (DFP→DQA)       | Must be specified | Compile-time only | This RFC's focus      |
 
 The lowering pass approach is chosen because:
+
 1. DQA is 10-40x faster than DFP at runtime
 2. DQA's bounded range is sufficient for most consensus workloads
 3. DFP's developer ergonomics (floating-point literals, natural syntax) are preserved
@@ -51,6 +52,7 @@ The lowering pass approach is chosen because:
 ### Why Not Parse Directly to DQA?
 
 Direct DQA parsing would be simpler but loses:
+
 - **Arbitrary exponent support** during intermediate expression evaluation
 - **Higher intermediate precision** (113-bit vs 64-bit) during expression simplification
 - **Standard floating-point semantics** for developer familiarity
@@ -94,13 +96,13 @@ The lowering pass allows the compiler to perform expression simplification, cons
 
 **Phase Definitions:**
 
-| Phase | Input | Output | DFP Present? |
-|-------|-------|--------|--------------|
-| SQL/IR Source | SQL text / IR nodes | Parsed AST | Yes (literals, casts) |
-| Type Checker | Parsed AST | Typed AST | Yes (all numeric nodes typed as DFP in deterministic mode) |
-| Expression Simplifier | Typed AST | Simplified AST | Yes (constant folding, algebraic simplification in DFP) |
-| **Deterministic Lowering Pass** | Simplified AST (DFP) | Lowered AST (DQA) | **No — last DFP phase** |
-| Bytecode Gen | Lowered AST (DQA) | Executable bytecode | No |
+| Phase                           | Input                | Output              | DFP Present?                                               |
+| ------------------------------- | -------------------- | ------------------- | ---------------------------------------------------------- |
+| SQL/IR Source                   | SQL text / IR nodes  | Parsed AST          | Yes (literals, casts)                                      |
+| Type Checker                    | Parsed AST           | Typed AST           | Yes (all numeric nodes typed as DFP in deterministic mode) |
+| Expression Simplifier           | Typed AST            | Simplified AST      | Yes (constant folding, algebraic simplification in DFP)    |
+| **Deterministic Lowering Pass** | Simplified AST (DFP) | Lowered AST (DQA)   | **No — last DFP phase**                                    |
+| Bytecode Gen                    | Lowered AST (DQA)    | Executable bytecode | No                                                         |
 
 **Boundary Rule:** DFP values MUST NOT exist in any data structure after the Deterministic Lowering Pass. The bytecode generator operates exclusively on DQA types. Any DFP value detected after lowering is a compiler bug and MUST produce a compile-time error.
 
@@ -278,6 +280,7 @@ ROUND_HALF_EVEN_I1200(quotient, remainder, divisor, sign):
 Most systems languages (Rust, C, C++) provide truncating integer division where the quotient is truncated toward zero. This produces incorrect rounding results for negative numerators. The Coq formalization uses `Z.div` (Euclidean division) and is the ground truth.
 
 **Euclidean division definition:** For integers `a` and `b > 0`:
+
 - `a = q × b + r` where `0 ≤ r < b`
 - `q = floor(a / b)` (floor, not truncation)
 
@@ -354,26 +357,26 @@ INFER_TARGET_SCALE(dfp):
 
 #### NaN
 
-| DFP Input | DLP Behavior | Rationale |
-|-----------|-------------|-----------|
+| DFP Input         | DLP Behavior                                      | Rationale                                                                    |
+| ----------------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `NaN` (class=NaN) | **Compile-time error** `DlpError::NanEncountered` | DQA has no NaN representation. NaN in deterministic context indicates a bug. |
 
 **Implementation note:** The compiler SHOULD detect NaN-producing expressions (e.g., `0.0 / 0.0`, `Infinity - Infinity`) during the Expression Simplifier phase and emit a diagnostic. The DLP serves as a backstop.
 
 #### Infinity
 
-| DFP Input | DLP Behavior | Rationale |
-|-----------|-------------|-----------|
+| DFP Input   | DLP Behavior                                     | Rationale                                                                                                        |
+| ----------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `+Infinity` | **Compile-time error** `DlpError::RangeOverflow` | DFP's saturating arithmetic should prevent Infinity. If encountered (from `from_f64`), it cannot be represented. |
-| `-Infinity` | **Compile-time error** `DlpError::RangeOverflow` | Same as above. |
+| `-Infinity` | **Compile-time error** `DlpError::RangeOverflow` | Same as above.                                                                                                   |
 
 **Note:** RFC-0104's saturating arithmetic means Infinity is never produced by DFP computation. It can only appear via `from_f64()` conversion of IEEE-754 Infinity literals. The compiler SHOULD warn when a user writes `SELECT CAST('inf' AS DFP)`.
 
 #### Signed Zero
 
-| DFP Input | DLP Behavior | Rationale |
-|-----------|-------------|-----------|
-| `+0.0` (Zero, sign=0) | `Dqa { value: 0, scale: target_scale }` | DQA zero has no sign distinction. |
+| DFP Input             | DLP Behavior                            | Rationale                                          |
+| --------------------- | --------------------------------------- | -------------------------------------------------- |
+| `+0.0` (Zero, sign=0) | `Dqa { value: 0, scale: target_scale }` | DQA zero has no sign distinction.                  |
 | `-0.0` (Zero, sign=1) | `Dqa { value: 0, scale: target_scale }` | DQA zero has no sign distinction. -0.0 loses sign. |
 
 **Warning:** This is a semantic loss. In IEEE-754, `-0.0 == +0.0` but `1.0 / -0.0 = -Infinity` while `1.0 / +0.0 = +Infinity`. Since DQA has no division-by-zero infinity, this distinction is moot. The compiler SHOULD emit a warning when lowering a `-0.0` literal.
@@ -383,6 +386,7 @@ INFER_TARGET_SCALE(dfp):
 Subnormal DFP values are handled by Step 2's exponent threshold check. If `dfp.exponent < -200`, the algorithm returns `DlpError::SubnormalUnderflow`. For exponents >= -200, normal lowering proceeds (including rounding to zero if the result underflows at the target scale).
 
 Note: The threshold of -200 is conservative. A DFP value with exponent -200 and mantissa 1 represents 2^-200 ≈ 6.4 × 10^-61, which is far below DQA's minimum representable value at any scale.
+
 ```
 
 #### Extreme Exponents
@@ -402,19 +406,21 @@ DFP's 113-bit mantissa provides ~34 decimal digits. DQA's i64 provides ~19 decim
 
 **Example:**
 ```
+
 DFP: mantissa = 0x1.6A09E667F3BCC... (113 bits of sqrt(2))
-     exponent = 0
-     value ≈ 1.414213562373095048801688724209698...
+exponent = 0
+value ≈ 1.414213562373095048801688724209698...
 
 Target scale = 6:
-  result_value = round(1.4142135623730950... * 10^6) = 1414214
-  DQA: { value: 1414214, scale: 6 } = 1.414214
-  Error: ~0.0000004376... (acceptable for scale 6)
+result_value = round(1.4142135623730950... * 10^6) = 1414214
+DQA: { value: 1414214, scale: 6 } = 1.414214
+Error: ~0.0000004376... (acceptable for scale 6)
 
 Target scale = 18:
-  result_value = round(1.4142135623730950... * 10^18) = 1414213562373095049
-  DQA: { value: 1414213562373095049, scale: 18 }
-  Error: ~0.0000000000000000004... (near i64 precision limit)
+result_value = round(1.4142135623730950... * 10^18) = 1414213562373095049
+DQA: { value: 1414213562373095049, scale: 18 }
+Error: ~0.0000000000000000004... (near i64 precision limit)
+
 ```
 
 ### Expression-Level Lowering
@@ -428,9 +434,10 @@ The DLP does not lower individual DFP literals in isolation — it lowers **enti
 #### Expression Lowering Algorithm
 
 ```
+
 LOWER_EXPRESSION(expr_node):
-    // Recursively lower an expression tree from DFP to DQA
-    // Reads pre-annotated target_scale from each node (set by PROPAGATE_SCALE pre-pass)
+// Recursively lower an expression tree from DFP to DQA
+// Reads pre-annotated target_scale from each node (set by PROPAGATE_SCALE pre-pass)
 
     MATCH expr_node:
       DfpLiteral(value):
@@ -470,6 +477,7 @@ LOWER_EXPRESSION(expr_node):
       DfpCast(inner, target_dfp_type):
         // Explicit cast — lower the inner expression (reads inner.target_scale)
         RETURN LOWER_EXPRESSION(inner)
+
 ```
 
 **Critical rule:** When a DFP sub-expression contains both literals and column references, the compiler MUST first evaluate constant sub-expressions in DFP (using the DFP arithmetic from RFC-0104), then lower the result to DQA. This ensures that `0.1 + 0.2` produces `0.3` (not `0.30000000000000004` from platform-dependent float parsing).
@@ -481,8 +489,9 @@ LOWER_EXPRESSION(expr_node):
 The DLP must know the target scale for each lowering operation. Scale context propagates through the expression tree:
 
 ```
+
 PROPAGATE_SCALE(expr, inherited_scale):
-    // Top-down pass: determine the target scale for each node
+// Top-down pass: determine the target scale for each node
 
     MATCH expr:
       ColumnRef(col):
@@ -517,7 +526,8 @@ PROPAGATE_SCALE(expr, inherited_scale):
         right_scale = PROPAGATE_SCALE(right, inherited_scale)
         expr.target_scale = max(left_scale, right_scale)
         RETURN expr.target_scale
-```
+
+````
 
 ### SQL Integration
 
@@ -538,7 +548,7 @@ SELECT
     price * 1.05 AS adjusted_price  -- 1.05 is a DFP literal, must be lowered
 FROM trades;
 -- Compiler: parse 1.05 as DFP → lower to DQA(2) → DQA mul
-```
+````
 
 #### Casting Rules in Deterministic Context
 
@@ -583,6 +593,7 @@ PARSE_DECIMAL_TO_DFP(decimal_string):
 ```
 
 **Key properties:**
+
 - `PARSE_DECIMAL_TO_DFP("0.1")` produces the DFP representing exactly 1/10
 - `PARSE_DECIMAL_TO_DFP("0.1")` ≠ `from_f64(0.1)` — the latter is IEEE-754 rounded
 - The difference matters at scale ≥ 17
@@ -602,12 +613,15 @@ SELECT CAST(0.1 AS DFP) FROM dual;  -- Uses from_f64(), NOT exact decimal
 ```
 
 **Test vector V044** demonstrates the `from_f64()` path:
+
 ```
 | V044 | f64 literal 0.1 | DFP from_f64(0.1) | 18 | 100000000000000006, scale=18 |
 ```
+
 This shows that `from_f64(0.1)` at scale 18 produces `100000000000000006` — the IEEE-754 rounding artifact, not a bug.
 
 **When exact decimal is required:**
+
 ```sql
 -- Use DFP arithmetic for exact fractions
 SELECT CAST(1 AS DFP) / 10 * price FROM trades;  -- 1/10 is exact in DFP
@@ -622,16 +636,17 @@ See §DLP Gas Model — Two-Tier with Depth Bound for the complete DLP gas accou
 
 **Runtime DQA costs** (for reference, from RFC-0105):
 
-| Operation | Runtime Type | Relative Gas Cost | Notes |
-|-----------|-------------|-------------------|-------|
-| INT_ADD | INTEGER | 1x (baseline) | Native |
-| DQA_ADD | DQA | 1.5-3.5x | Scale alignment + canonicalization |
-| DQA_MUL | DQA | 2-4x | i128 intermediate + scale clamping |
-| DQA_DIV | DQA | 5-15x | Iterative division with RNE |
-| DQA_NEG | DQA | 1x | Negation |
-| DQA_CMP | DQA | 1-2x | Scale alignment for comparison |
+| Operation | Runtime Type | Relative Gas Cost | Notes                              |
+| --------- | ------------ | ----------------- | ---------------------------------- |
+| INT_ADD   | INTEGER      | 1x (baseline)     | Native                             |
+| DQA_ADD   | DQA          | 1.5-3.5x          | Scale alignment + canonicalization |
+| DQA_MUL   | DQA          | 2-4x              | i128 intermediate + scale clamping |
+| DQA_DIV   | DQA          | 5-15x             | Iterative division with RNE        |
+| DQA_NEG   | DQA          | 1x                | Negation                           |
+| DQA_CMP   | DQA          | 1-2x              | Scale alignment for comparison     |
 
 **Note:** DQA has no SQRT operation (RFC-0105). If DFP source code uses `SQRT`, the Expression Simplifier must either:
+
 1. Constant-fold it (if operand is a constant) using DFP's SQRT algorithm, then lower the result
 2. Emit a compile-time error (if operand is a variable)
 
@@ -654,124 +669,125 @@ This section provides **mandatory test vectors** for cross-implementation verifi
 #### Test Vector Format
 
 Each vector specifies:
+
 - `dfp`: The input DFP value (class, sign, mantissa, exponent)
 - `target_scale`: The target DQA scale
 - `expected`: The expected DQA output or error
 
 #### Basic Lowering Vectors
 
-| ID | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes |
-|----|-----------|------|----------|----------|--------------|----------------|----------------|-------|
-| V001 | Normal | 0 | 1 | 0 | 0 | 1 | 0 | 1.0 → 1 |
-| V002 | Normal | 0 | 1 | 1 | 0 | 2 | 0 | 2.0 → 2 |
-| V003 | Normal | 0 | 1 | -1 | 1 | 5 | 1 | 0.5 → 0.5 |
-| V004 | Normal | 0 | 3 | -2 | 2 | 75 | 2 | 0.75 → 0.75 |
-| V005 | Normal | 0 | 1 | -2 | 2 | 25 | 2 | 0.25 → 0.25 |
-| V006 | Normal | 0 | 1 | -1 | 0 | 0 | 0 | 0.5 → 0 (scale 0, rounds down) |
-| V007 | Normal | 0 | 3 | -1 | 0 | 2 | 0 | 1.5 → 2 (RNE tie) |
-| V008 | Normal | 0 | 5 | -1 | 0 | 2 | 0 | 2.5 → 2 (RNE tie, even) |
-| V009 | Normal | 0 | 7 | -1 | 0 | 4 | 0 | 3.5 → 4 (RNE tie, odd→up) |
-| V010 | Normal | 1 | 1 | 0 | 0 | -1 | 0 | -1.0 → -1 |
+| ID   | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes                          |
+| ---- | --------- | ---- | -------- | -------- | ------------ | -------------- | -------------- | ------------------------------ |
+| V001 | Normal    | 0    | 1        | 0        | 0            | 1              | 0              | 1.0 → 1                        |
+| V002 | Normal    | 0    | 1        | 1        | 0            | 2              | 0              | 2.0 → 2                        |
+| V003 | Normal    | 0    | 1        | -1       | 1            | 5              | 1              | 0.5 → 0.5                      |
+| V004 | Normal    | 0    | 3        | -2       | 2            | 75             | 2              | 0.75 → 0.75                    |
+| V005 | Normal    | 0    | 1        | -2       | 2            | 25             | 2              | 0.25 → 0.25                    |
+| V006 | Normal    | 0    | 1        | -1       | 0            | 0              | 0              | 0.5 → 0 (scale 0, rounds down) |
+| V007 | Normal    | 0    | 3        | -1       | 0            | 2              | 0              | 1.5 → 2 (RNE tie)              |
+| V008 | Normal    | 0    | 5        | -1       | 0            | 2              | 0              | 2.5 → 2 (RNE tie, even)        |
+| V009 | Normal    | 0    | 7        | -1       | 0            | 4              | 0              | 3.5 → 4 (RNE tie, odd→up)      |
+| V010 | Normal    | 1    | 1        | 0        | 0            | -1             | 0              | -1.0 → -1                      |
 
 #### Zero Handling Vectors
 
-| ID | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes |
-|----|-----------|------|----------|----------|--------------|----------------|----------------|-------|
-| V011 | Zero | 0 | 0 | 0 | 0 | 0 | 0 | +0.0 → 0 |
-| V012 | Zero | 1 | 0 | 0 | 0 | 0 | 0 | -0.0 → 0 (sign lost) |
-| V013 | Zero | 0 | 0 | 0 | 6 | 0 | 6 | +0.0 at scale 6 |
-| V014 | Zero | 1 | 0 | 0 | 6 | 0 | 6 | -0.0 at scale 6 (sign lost) |
+| ID   | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes                       |
+| ---- | --------- | ---- | -------- | -------- | ------------ | -------------- | -------------- | --------------------------- |
+| V011 | Zero      | 0    | 0        | 0        | 0            | 0              | 0              | +0.0 → 0                    |
+| V012 | Zero      | 1    | 0        | 0        | 0            | 0              | 0              | -0.0 → 0 (sign lost)        |
+| V013 | Zero      | 0    | 0        | 0        | 6            | 0              | 6              | +0.0 at scale 6             |
+| V014 | Zero      | 1    | 0        | 0        | 6            | 0              | 6              | -0.0 at scale 6 (sign lost) |
 
 #### NaN and Infinity Vectors
 
-| ID | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Result | Notes |
-|----|-----------|------|----------|----------|--------------|-----------------|-------|
-| V015 | NaN | 0 | 0 | 0 | 0 | DlpError::NanEncountered | NaN → error |
-| V016 | Infinity | 0 | 0 | 0 | 0 | DlpError::RangeOverflow | +Inf → error |
-| V017 | Infinity | 1 | 0 | 0 | 0 | DlpError::RangeOverflow | -Inf → error |
+| ID   | DFP Class | Sign | Mantissa | Exponent | Target Scale | Expected Result          | Notes        |
+| ---- | --------- | ---- | -------- | -------- | ------------ | ------------------------ | ------------ |
+| V015 | NaN       | 0    | 0        | 0        | 0            | DlpError::NanEncountered | NaN → error  |
+| V016 | Infinity  | 0    | 0        | 0        | 0            | DlpError::RangeOverflow  | +Inf → error |
+| V017 | Infinity  | 1    | 0        | 0        | 0            | DlpError::RangeOverflow  | -Inf → error |
 
 #### Precision Loss Vectors
 
-| ID | DFP Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Max Error | Notes |
-|----|-------------|----------|--------------|----------------|----------------|-----------|-------|
-| V018 | 1414213562373095048801688724209698 (sqrt(2)*10^33 approx) | -33 | 6 | 1414214 | 6 | 5e-7 | sqrt(2) at 6 decimals |
-| V019 | 3141592653589793238462643383279502 (pi*10^33 approx) | -33 | 6 | 3141593 | 6 | 5e-7 | pi at 6 decimals |
-| V020 | 2718281828459045235360287471352662 (e*10^33 approx) | -33 | 18 | 2718281828459045236 | 18 | 5e-19 | e at 18 decimals |
+| ID   | DFP Mantissa                                              | Exponent | Target Scale | Expected Value      | Expected Scale | Max Error | Notes                 |
+| ---- | --------------------------------------------------------- | -------- | ------------ | ------------------- | -------------- | --------- | --------------------- |
+| V018 | 1414213562373095048801688724209698 (sqrt(2)*10^33 approx) | -33      | 6            | 1414214             | 6              | 5e-7      | sqrt(2) at 6 decimals |
+| V019 | 3141592653589793238462643383279502 (pi*10^33 approx)      | -33      | 6            | 3141593             | 6              | 5e-7      | pi at 6 decimals      |
+| V020 | 2718281828459045235360287471352662 (e*10^33 approx)       | -33      | 18           | 2718281828459045236 | 18             | 5e-19     | e at 18 decimals      |
 
 #### Overflow Vectors
 
-| ID | DFP Mantissa | Exponent | Target Scale | Expected Result | Notes |
-|----|-------------|----------|--------------|-----------------|-------|
-| V021 | 1 | 63 | 0 | DlpError::RangeOverflow | 2^63 > i64::MAX |
-| V022 | 1 | 62 | 0 | 4611686018427387904, scale=0 | 2^62 fits in i64 |
-| V023 | (1<<113)-1 | 1023 | 0 | DlpError::RangeOverflow | DFP_MAX way too large |
-| V024 | 1 | -100 | 18 | 0, scale=18 | 2^-100 rounds to 0 at scale 18 |
-| V025 | 1 | -50 | 18 | 888, scale=18 | 2^-50 * 10^18 ≈ 888.18, RNE rounds to 888 |
+| ID   | DFP Mantissa | Exponent | Target Scale | Expected Result              | Notes                                     |
+| ---- | ------------ | -------- | ------------ | ---------------------------- | ----------------------------------------- |
+| V021 | 1            | 63       | 0            | DlpError::RangeOverflow      | 2^63 > i64::MAX                           |
+| V022 | 1            | 62       | 0            | 4611686018427387904, scale=0 | 2^62 fits in i64                          |
+| V023 | (1<<113)-1   | 1023     | 0            | DlpError::RangeOverflow      | DFP_MAX way too large                     |
+| V024 | 1            | -100     | 18           | 0, scale=18                  | 2^-100 rounds to 0 at scale 18            |
+| V025 | 1            | -50      | 18           | 888, scale=18                | 2^-50 * 10^18 ≈ 888.18, RNE rounds to 888 |
 
 #### Subnormal Vectors
 
-| ID | DFP Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes |
-|----|-------------|----------|--------------|----------------|----------------|-------|
-| V026 | 1 | -60 | 18 | 1 | 18 | 2^-60 * 10^18 ≈ 0.867, RNE rounds to 1 |
-| V027 | 1 | -30 | 6 | 0 | 6 | quotient=0, 2×remainder=2,000,000 < divisor=1,073,741,824 → rounds to 0 |
-| V028 | 1 | -30 | 18 | 931322574 | 18 | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322574 (2*remainder < divisor) |
-| V029 | 1 | -10 | 6 | 977 | 6 | 2^-10 * 10^6 ≈ 976.6, rounds to 977 |
+| ID   | DFP Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes                                                                        |
+| ---- | ------------ | -------- | ------------ | -------------- | -------------- | ---------------------------------------------------------------------------- |
+| V026 | 1            | -60      | 18           | 1              | 18             | 2^-60 * 10^18 ≈ 0.867, RNE rounds to 1                                       |
+| V027 | 1            | -30      | 6            | 0              | 6              | quotient=0, 2×remainder=2,000,000 < divisor=1,073,741,824 → rounds to 0      |
+| V028 | 1            | -30      | 18           | 931322574      | 18             | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322574 (2*remainder < divisor) |
+| V029 | 1            | -10      | 6            | 977            | 6              | 2^-10 * 10^6 ≈ 976.6, rounds to 977                                          |
 
 #### Expression Lowering Vectors
 
 These test the full expression tree lowering, not just single values.
 
-| ID | Expression (DFP) | Column Scales | Target Scale | Expected DQA Result | Notes |
-|----|-----------------|---------------|--------------|---------------------|-------|
-| V030 | `0.1 + 0.2` | N/A | 6 | 300000, scale=6 (0.3) | Constant folding in DFP first |
-| V031 | `price * 1.05` | price=DQA(6) | 6 | mul(price, 105000/scale=6) | 1.05 lowered to DQA(6) |
-| V032 | `price * quantity` | price=DQA(6), qty=DQA(3) | 9 | DQA(9) | Scale = 6+3 |
-| V033 | `price / 2.0` | price=DQA(6) | 6 | DQA(6) | 2.0 → DQA(6) = {2000000,6} |
-| V034 | `1.0 / 3.0` | N/A | 6 | 333333, scale=6 | RNE rounding of 1/3 |
+| ID   | Expression (DFP)   | Column Scales            | Target Scale | Expected DQA Result        | Notes                         |
+| ---- | ------------------ | ------------------------ | ------------ | -------------------------- | ----------------------------- |
+| V030 | `0.1 + 0.2`        | N/A                      | 6            | 300000, scale=6 (0.3)      | Constant folding in DFP first |
+| V031 | `price * 1.05`     | price=DQA(6)             | 6            | mul(price, 105000/scale=6) | 1.05 lowered to DQA(6)        |
+| V032 | `price * quantity` | price=DQA(6), qty=DQA(3) | 9            | DQA(9)                     | Scale = 6+3                   |
+| V033 | `price / 2.0`      | price=DQA(6)             | 6            | DQA(6)                     | 2.0 → DQA(6) = {2000000,6}    |
+| V034 | `1.0 / 3.0`        | N/A                      | 6            | 333333, scale=6            | RNE rounding of 1/3           |
 
 #### RNE Rounding Vectors (During Lowering)
 
-| ID | Exact Value | Target Scale | Expected Value | Notes |
-|----|------------|--------------|----------------|-------|
-| V035 | 1.25 | 1 | 12, scale=1 | 1.2 (0.5 tie, even→keep) |
-| V036 | 1.35 | 1 | 14, scale=1 | 1.4 (0.5 tie, odd→round up) |
-| V037 | 2.5 | 0 | 2, scale=0 | 2 (0.5 tie, even→keep) |
-| V038 | 3.5 | 0 | 4, scale=0 | 4 (0.5 tie, odd→round up) |
-| V039 | -1.25 | 1 | -14, scale=1 | -1.4 (Euclidean RNE: tie→odd, sign=-1→up) |
-| V040 | -2.5 | 0 | -4, scale=0 | -4 (Euclidean RNE: tie→odd, sign=-1→up) |
+| ID   | Exact Value | Target Scale | Expected Value | Notes                                     |
+| ---- | ----------- | ------------ | -------------- | ----------------------------------------- |
+| V035 | 1.25        | 1            | 12, scale=1    | 1.2 (0.5 tie, even→keep)                  |
+| V036 | 1.35        | 1            | 14, scale=1    | 1.4 (0.5 tie, odd→round up)               |
+| V037 | 2.5         | 0            | 2, scale=0     | 2 (0.5 tie, even→keep)                    |
+| V038 | 3.5         | 0            | 4, scale=0     | 4 (0.5 tie, odd→round up)                 |
+| V039 | -1.25       | 1            | -14, scale=1   | -1.4 (Euclidean RNE: tie→odd, sign=-1→up) |
+| V040 | -2.5        | 0            | -4, scale=0    | -4 (Euclidean RNE: tie→odd, sign=-1→up)   |
 
 #### Cross-Platform Consistency Vectors
 
 These vectors use DFP values that could arise from different IEEE-754 hardware. The DLP MUST produce identical DQA regardless of which platform produced the DFP.
 
-| ID | Scenario | DFP Value (canonical) | Target Scale | Expected DQA | Notes |
-|----|----------|----------------------|--------------|--------------|-------|
-| V041 | x86 0.1 + 0.2 result | DFP canonical 0.3 | 6 | 300000, scale=6 | Both platforms produce same DFP |
-| V042 | ARM 0.1 + 0.2 result | DFP canonical 0.3 | 6 | 300000, scale=6 | Same as V041 |
-| V043 | f64 literal 0.30000000000000004 | DFP from_f64(0.30000000000000004) | 6 | 300000, scale=6 | Rounds to 0.3 at scale 6 |
-| V044 | f64 literal 0.1 | DFP from_f64(0.1) | 18 | 100000000000000006, scale=18 | IEEE-754 double 0.1 ≈ 0.1000000000000000056; RNE at scale 18 |
+| ID   | Scenario                        | DFP Value (canonical)             | Target Scale | Expected DQA                 | Notes                                                        |
+| ---- | ------------------------------- | --------------------------------- | ------------ | ---------------------------- | ------------------------------------------------------------ |
+| V041 | x86 0.1 + 0.2 result            | DFP canonical 0.3                 | 6            | 300000, scale=6              | Both platforms produce same DFP                              |
+| V042 | ARM 0.1 + 0.2 result            | DFP canonical 0.3                 | 6            | 300000, scale=6              | Same as V041                                                 |
+| V043 | f64 literal 0.30000000000000004 | DFP from_f64(0.30000000000000004) | 6            | 300000, scale=6              | Rounds to 0.3 at scale 6                                     |
+| V044 | f64 literal 0.1                 | DFP from_f64(0.1)                 | 18           | 100000000000000006, scale=18 | IEEE-754 double 0.1 ≈ 0.1000000000000000056; RNE at scale 18 |
 
 ### Continuous Verification
 
 To ensure the DLP produces identical results across all nodes over time:
 
-| Mechanism | Description | Frequency |
-|-----------|-------------|-----------|
-| Compile-time verification | Hash the lowered DQA bytecode; compare across nodes | Every block |
-| Deterministic replay | Re-lower historical DFP expressions and compare | Weekly |
-| Cross-node spot-checks | Randomly compare DLP outputs for recent transactions | Daily |
-| Divergence alerts | Flag and halt on unexpected differences | Immediate |
+| Mechanism                 | Description                                          | Frequency   |
+| ------------------------- | ---------------------------------------------------- | ----------- |
+| Compile-time verification | Hash the lowered DQA bytecode; compare across nodes  | Every block |
+| Deterministic replay      | Re-lower historical DFP expressions and compare      | Weekly      |
+| Cross-node spot-checks    | Randomly compare DLP outputs for recent transactions | Daily       |
+| Divergence alerts         | Flag and halt on unexpected differences              | Immediate   |
 
 #### Compiler Flag Requirements
 
 To ensure deterministic DLP behavior, all nodes must compile with:
 
-| Platform | Required Flags | Rationale |
-|----------|---------------|-----------|
-| x86 | `-C target-feature=+sse2` | Disable x87 extended precision |
-| ARM | Standard AAPCS | Deterministic by default |
-| All | `release` profile | Overflow checks off; deterministic integer behavior |
-| All | No `-ffast-math` equivalent | DLP uses pure integer arithmetic; FP flags irrelevant |
+| Platform | Required Flags              | Rationale                                             |
+| -------- | --------------------------- | ----------------------------------------------------- |
+| x86      | `-C target-feature=+sse2`   | Disable x87 extended precision                        |
+| ARM      | Standard AAPCS              | Deterministic by default                              |
+| All      | `release` profile           | Overflow checks off; deterministic integer behavior   |
+| All      | No `-ffast-math` equivalent | DLP uses pure integer arithmetic; FP flags irrelevant |
 
 **Note:** The DLP itself uses only i1200 integer arithmetic (no floating-point). The compiler flags above ensure that any residual FP operations in the compiler do not affect the lowering result. The scale inference function uses a pre-computed lookup table, not FP math.
 
@@ -802,17 +818,17 @@ When the DLP encounters an unrecoverable error, it halts compilation:
 
 ```
 ERROR: Cannot lower DFP to DQA
-  Expression: SQRT(price) at line 42
+  Expression: SQRT(price)
   Reason: SQRT not supported for DQA runtime type
   Hint: Use DFP in an analytics (non-consensus) query, or pre-compute the value
 
 ERROR: Cannot lower DFP literal to DQA
-  Expression: 1e300 at line 15
+  Expression: 1e300
   Reason: DlpError::RangeOverflow — value exceeds DQA i64 range
   Hint: Use a smaller value or reduce precision
 
 ERROR: Cannot lower DFP to DQA
-  Expression: result / 0.0 at line 23
+  Expression: result / 0.0
   Reason: DlpError::NanEncountered — division produces NaN
   Hint: Add NULLIF or COALESCE to handle division by zero
 ```
@@ -821,14 +837,14 @@ ERROR: Cannot lower DFP to DQA
 
 ```
 WARNING: Precision loss during DFP→DQA lowering
-  Expression: SQRT(2.0) at line 10
+  Expression: SQRT(2.0)
   DFP precision: ~34 decimal digits
   DQA precision: 6 decimal digits (target_scale=6)
   Lost digits: ~28
   This is expected and deterministic, but verify it meets your accuracy requirements.
 
 WARNING: Signed zero lost during lowering
-  Expression: -0.0 at line 5
+  Expression: -0.0
   DFP: -0.0 (Zero, sign=1)
   DQA: 0 (sign information lost)
   This is deterministic but changes IEEE-754 semantics.
@@ -836,12 +852,12 @@ WARNING: Signed zero lost during lowering
 
 ### Relationship to Other RFCs
 
-| RFC | Relationship | Key Interface |
-|-----|-------------|---------------|
-| RFC-0104 (DFP) | Input type | DFP values, DfpClass, arithmetic results |
-| RFC-0105 (DQA) | Output type | DQA values, DqaEncoding, runtime operations |
-| RFC-0113 (NumericScalar) | Trait conformance | DQA implements NumericScalar; DLP output conforms |
-| RFC-0103 (Vector-SQL) | Storage integration | DQA values stored in vector columns |
+| RFC                      | Relationship        | Key Interface                                     |
+| ------------------------ | ------------------- | ------------------------------------------------- |
+| RFC-0104 (DFP)           | Input type          | DFP values, DfpClass, arithmetic results          |
+| RFC-0105 (DQA)           | Output type         | DQA values, DqaEncoding, runtime operations       |
+| RFC-0113 (NumericScalar) | Trait conformance   | DQA implements NumericScalar; DLP output conforms |
+| RFC-0103 (Vector-SQL)    | Storage integration | DQA values stored in vector columns               |
 
 #### Normative Precedence
 
@@ -854,18 +870,18 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 
 ### Implementation Checklist
 
-| Mission | Description | Status | Complexity |
-|---------|-------------|--------|------------|
-| M1 | `LOWER_DFP_TO_DQA` core algorithm | Pending | Medium |
-| M2 | `ROUND_HALF_EVEN_I1200` rounding | Pending | Low |
-| M3 | `INFER_TARGET_SCALE` function | Pending | Low |
-| M4 | `LOWER_EXPRESSION` tree walker | Pending | High |
-| M5 | `PROPAGATE_SCALE` analysis pass | Pending | Medium |
-| M6 | Error handling and diagnostics | Pending | Low |
-| M7 | Test vector suite (44+ vectors) | Pending | Medium |
-| M8 | SQL parser integration | Pending | Medium |
-| M9 | Bytecode generation (DQA opcodes) | Pending | Medium |
-| M10 | Cross-platform verification harness | Pending | High |
+| Mission | Description                         | Status  | Complexity |
+| ------- | ----------------------------------- | ------- | ---------- |
+| M1      | `LOWER_DFP_TO_DQA` core algorithm   | Pending | Medium     |
+| M2      | `ROUND_HALF_EVEN_I1200` rounding    | Pending | Low        |
+| M3      | `INFER_TARGET_SCALE` function       | Pending | Low        |
+| M4      | `LOWER_EXPRESSION` tree walker      | Pending | High       |
+| M5      | `PROPAGATE_SCALE` analysis pass     | Pending | Medium     |
+| M6      | Error handling and diagnostics      | Pending | Low        |
+| M7      | Test vector suite (44+ vectors)     | Pending | Medium     |
+| M8      | SQL parser integration              | Pending | Medium     |
+| M9      | Bytecode generation (DQA opcodes)   | Pending | Medium     |
+| M10     | Cross-platform verification harness | Pending | High       |
 
 ### Constraints
 
@@ -898,10 +914,10 @@ Error handling policy:
 
 **Critical semantic gap — DFP saturation vs DQA revert:** RFC-0104 guarantees that DFP arithmetic uses **saturation semantics** (overflowing values clamp to MAX/MIN). However, after lowering to DQA, overflow produces a **transaction revert**, not saturation. This is a breaking semantic change from the DFP developer's perspective:
 
-| Scenario | DFP (RFC-0104) | DQA after lowering (this RFC) |
-|----------|-----------------|------------------------------|
-| Expression overflow | Saturates to MAX/MIN | Transaction reverts |
-| Division overflow | Saturates | Transaction reverts |
+| Scenario            | DFP (RFC-0104)       | DQA after lowering (this RFC) |
+| ------------------- | -------------------- | ----------------------------- |
+| Expression overflow | Saturates to MAX/MIN | Transaction reverts           |
+| Division overflow   | Saturates            | Transaction reverts           |
 
 Developers writing DFP expressions expect saturation behavior at runtime. The lowering architecture changes this to revert-on-overflow. This must be documented as a **breaking change** in the DFP-to-DQA lowering model, not merely an error handling detail.
 
@@ -913,21 +929,21 @@ The DLP runs at two different times with different gas accounting needs:
 
 DLP cost is charged once at contract or deterministic view deployment:
 
-| Component | Gas Units | Notes |
-|-----------|-----------|-------|
-| Per-literal lowering | 10 | DFP → DQA for constant |
-| Per-expression node | 5 | Add, Mul, Div, etc. |
-| Per-column-ref | 2 | Schema lookup + validation |
-| Canonicalization | 20 | DqaEncoding::from_dqa |
+| Component            | Gas Units | Notes                      |
+| -------------------- | --------- | -------------------------- |
+| Per-literal lowering | 10        | DFP → DQA for constant     |
+| Per-expression node  | 5         | Add, Mul, Div, etc.        |
+| Per-column-ref       | 2         | Schema lookup + validation |
+| Canonicalization     | 20        | DqaEncoding::from_dqa      |
 
 #### Query Submission Gas (Ad-Hoc Deterministic Queries)
 
 DLP cost for ad-hoc SELECT statements over deterministic views:
 
-| Component | Gas Units | Notes |
-|-----------|-----------|-------|
+| Component                 | Gas Units  | Notes                     |
+| ------------------------- | ---------- | ------------------------- |
 | Expression tree traversal | 1 per node | Constant-folding analysis |
-| Per DQA opcode emitted | 3 | Final bytecode generation |
+| Per DQA opcode emitted    | 3          | Final bytecode generation |
 
 #### Expression Depth Bound (DoS Prevention)
 
@@ -943,6 +959,7 @@ DlpError::ExpressionTooLarge {
 ```
 
 This prevents:
+
 - Adversarial inputs: deeply nested constant expressions forcing expensive i1200 bignum work
 - Accidental complexity: correlated subqueries
 - Gas griefing: low gas price × high computation cost
@@ -962,24 +979,24 @@ This means **Theorem 5 (Sign Symmetry) holds only when the divisor divides the d
 
 16 theorems specified. Core correctness theorems (1, 6, 11, 12, 16) are fully proven in Coq. Theorems 2, 3, 10 have structural proofs with admitted Q arithmetic lemmas. See Appendix B for details.
 
-| # | Theorem | Property | Status |
-|---|---------|----------|--------|
-| 1 | Determinism | Bit-identical results across platforms | Proven |
-| 2 | RNE Correctness | Closest representable value (RNE) | Proof Sketched (admitted) |
-| 3 | Error Bound | ≤ 0.5 ULP at target scale | Proof Sketched (admitted) |
-| 4 | Unbiasedness | Zero systematic rounding bias | Proven (discrete) |
-| 5 | Sign Symmetry | L(-x, σ) = -L(x, σ) for exact divisions only | Proof Sketched (holds when divisor divides dividend) |
-| 6 | Termination | O(1) time, no loops | Proven |
-| 7 | Overflow Completeness | No silent overflow, no false positives | Proof Sketched (admitted) |
-| 8 | Canonical Form | Canonicalization preserves value | Proven |
-| 9 | Scale Inference | Optimal scale within constraints | Proven (validity) |
-| 10 | Compositional | Expression lowering error propagation | Proof Sketched (admitted) |
-| 11 | i1200 Sufficiency | Intermediates fit in i1200 | Proven |
-| 12 | Cross-Platform | Unsigned integer arithmetic equivalence | Proven |
-| 13 | Monotonicity | Order preservation | Proven |
-| 14 | Canonicalization Idempotence | C(C(q)) = C(q) | Proven |
-| 15 | Lowering-Canonicalization Commute | C(L(d,σ)) = L(d,σ') | Proven |
-| 16 | No Information Leak | No side-channel leakage | Proven |
+| #   | Theorem                           | Property                                     | Status                                               |
+| --- | --------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
+| 1   | Determinism                       | Bit-identical results across platforms       | Proven                                               |
+| 2   | RNE Correctness                   | Closest representable value (RNE)            | Proof Sketched (admitted)                            |
+| 3   | Error Bound                       | ≤ 0.5 ULP at target scale                    | Proof Sketched (admitted)                            |
+| 4   | Unbiasedness                      | Zero systematic rounding bias                | Proven (discrete)                                    |
+| 5   | Sign Symmetry                     | L(-x, σ) = -L(x, σ) for exact divisions only | Proof Sketched (holds when divisor divides dividend) |
+| 6   | Termination                       | O(1) time, no loops                          | Proven                                               |
+| 7   | Overflow Completeness             | No silent overflow, no false positives       | Proof Sketched (admitted)                            |
+| 8   | Canonical Form                    | Canonicalization preserves value             | Proven                                               |
+| 9   | Scale Inference                   | Optimal scale within constraints             | Proven (validity)                                    |
+| 10  | Compositional                     | Expression lowering error propagation        | Proof Sketched (admitted)                            |
+| 11  | i1200 Sufficiency                 | Intermediates fit in i1200                   | Proven                                               |
+| 12  | Cross-Platform                    | Unsigned integer arithmetic equivalence      | Proven                                               |
+| 13  | Monotonicity                      | Order preservation                           | Proven                                               |
+| 14  | Canonicalization Idempotence      | C(C(q)) = C(q)                               | Proven                                               |
+| 15  | Lowering-Canonicalization Commute | C(L(d,σ)) = L(d,σ')                          | Proven                                               |
+| 16  | No Information Leak               | No side-channel leakage                      | Proven                                               |
 
 ### Critical Correction: Intermediate Width
 
@@ -993,13 +1010,13 @@ max_intermediate = (2^113 - 1) × 2^1023 × 10^18 ≈ 2^1195.79 bits
 
 This requires at least **i1200** for the intermediate arithmetic:
 
-| Width | Max Value | Sufficient? |
-|-------|-----------|-------------|
-| i256 | 2^256 ≈ 1.16 × 10^77 | **NO** |
-| i512 | 2^512 ≈ 1.34 × 10^154 | **NO** |
-| i1024 | 2^1024 ≈ 1.80 × 10^308 | **NO** |
+| Width | Max Value              | Sufficient?                 |
+| ----- | ---------------------- | --------------------------- |
+| i256  | 2^256 ≈ 1.16 × 10^77   | **NO**                      |
+| i512  | 2^512 ≈ 1.34 × 10^154  | **NO**                      |
+| i1024 | 2^1024 ≈ 1.80 × 10^308 | **NO**                      |
 | i1152 | 2^1152 ≈ 6.70 × 10^346 | **NO** (requires 1196 bits) |
-| i1200 | 2^1200 ≈ 10^361 | **YES** (minimum required) |
+| i1200 | 2^1200 ≈ 10^361        | **YES** (minimum required)  |
 
 **Normative requirement:** All implementations MUST use at least i1200 (or equivalent arbitrary-precision) for intermediate arithmetic. i1152 is insufficient.
 
@@ -1034,6 +1051,7 @@ This requires at least **i1200** for the intermediate arithmetic:
 **Theorem 7 (Overflow Completeness):** If `|val_DFP(d)| > MAX_DQA × 10^(-σ)`, then `L(d, σ) = Error::RangeOverflow`. If `|val_DFP(d)| ≤ MAX_DQA × 10^(-σ)`, then `L(d, σ)` returns a valid DQA value. No silent overflow.
 
 **Theorem 11 (i1200 Sufficiency):** All intermediate values in the lowering algorithm fit within i1200. Proof:
+
 ```
 max_intermediate = (2^113 - 1) × 2^1023 × 10^18 ≈ 2^1195.79
 i1200 = 2^1200 > 2^1195.79 ✓

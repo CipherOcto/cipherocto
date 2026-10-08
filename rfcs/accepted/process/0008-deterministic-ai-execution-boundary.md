@@ -33,6 +33,7 @@ This RFC defines the strict boundary between deterministic protocol execution an
 - RFC-0009 (Process/Meta): Identity Management — DID derivation is Class A; provides canonical signer keys for deterministic verification.
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG (no cycles)
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites
 > 3. Optional dependencies MUST be documented separately from required
@@ -40,14 +41,14 @@ This RFC defines the strict boundary between deterministic protocol execution an
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | 100% RFC coverage of §RFC-0008 Execution Class Mapping | 95/95 accepted RFCs carry the table; 0% gap |
-| G2 | Class A reproducibility | 10K random inputs replay identically across 2 independent nodes, byte-for-byte |
-| G3 | Class B proof coverage | Every Class B operation in consensus-critical path has accompanying ZK proof verification per RFC-0958 + RFC-0965 |
-| G4 | Class C explicit exclusion | Zero Class C operations in any consensus-relevant code path; Linter enforces |
-| G5 | Classification auditability | Every Class A/B/C claim is reviewable against the canonical test vector suite in §Test Vectors |
-| G6 | Migration smoothness | All 68 currently-missing RFCs (§Coverage Gap) gain the table via RFC-0008-A1..A68 in-place amendments without breaking consensus |
+| Goal | Target                                                 | Metric                                                                                                                           |
+| ---- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | 100% RFC coverage of §RFC-0008 Execution Class Mapping | 95/95 accepted RFCs carry the table; 0% gap                                                                                      |
+| G2   | Class A reproducibility                                | 10K random inputs replay identically across 2 independent nodes, byte-for-byte                                                   |
+| G3   | Class B proof coverage                                 | Every Class B operation in consensus-critical path has accompanying ZK proof verification per RFC-0958 + RFC-0965                |
+| G4   | Class C explicit exclusion                             | Zero Class C operations in any consensus-relevant code path; Linter enforces                                                     |
+| G5   | Classification auditability                            | Every Class A/B/C claim is reviewable against the canonical test vector suite in §Test Vectors                                   |
+| G6   | Migration smoothness                                   | All 68 currently-missing RFCs (§Coverage Gap) gain the table via RFC-0008-A1..A68 in-place amendments without breaking consensus |
 
 ## Motivation
 
@@ -85,14 +86,14 @@ If classification is optional, it drifts. If classification is centrally maintai
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| RFC Author | `@cipherocto` (per-RFC) | Draft RFC; declare execution classes for own operations | Per-RFC; stateless after RFC Accepted | BLUEPRINT.md §RFC Process (Author role) |
-| RFC Maintainer | `@cipherocto` | Maintain RFC; update classifications when substrate changes | Per-RFC; persistent | BLUEPRINT.md §RFC Process (Maintainer role) |
-| Class A Auditor | multi-round reviewer per BLUEPRINT.md §Adversarial Review Process | Verify Class A claims via §Test Vectors (10K replay) | Per-RFC-review; stateless | BLUEPRINT.md §RFC Acceptance Process |
-| Class B Prover | ZK prover implementation per RFC-0958 + RFC-0965 | Generate proof for Class B operation in consensus path | Per-consensus-round | RFC-0958, RFC-0965 |
-| Governance Downgrader | Maintainer board (2+ approvals) | Downgrade Class A → Class B (with rationale + ACCEPTED RISK deadline) | Per-amendment | BLUEPRINT.md §RFC Acceptance Process |
-| Classification Enforcer | substrate linter (`crates/octo-policy/src/class_lint.rs`, future RFC; canonical post-mission 0206-006 landing; RFC-0008 v1.0 historical surface `octo-policy-core/...` superseded per RFC-0206 v3.3 substrate layer model) | Reject PR introducing Class C operation into consensus path | Persistent | this RFC §Implicit Assumptions Audit |
+| Role                    | Identifier                                                                                                                                                                                                                 | Authority Scope                                                       | Lifecycle                             | Source/Ref                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------- |
+| RFC Author              | `@cipherocto` (per-RFC)                                                                                                                                                                                                    | Draft RFC; declare execution classes for own operations               | Per-RFC; stateless after RFC Accepted | BLUEPRINT.md §RFC Process (Author role)     |
+| RFC Maintainer          | `@cipherocto`                                                                                                                                                                                                              | Maintain RFC; update classifications when substrate changes           | Per-RFC; persistent                   | BLUEPRINT.md §RFC Process (Maintainer role) |
+| Class A Auditor         | multi-round reviewer per BLUEPRINT.md §Adversarial Review Process                                                                                                                                                          | Verify Class A claims via §Test Vectors (10K replay)                  | Per-RFC-review; stateless             | BLUEPRINT.md §RFC Acceptance Process        |
+| Class B Prover          | ZK prover implementation per RFC-0958 + RFC-0965                                                                                                                                                                           | Generate proof for Class B operation in consensus path                | Per-consensus-round                   | RFC-0958, RFC-0965                          |
+| Governance Downgrader   | Maintainer board (2+ approvals)                                                                                                                                                                                            | Downgrade Class A → Class B (with rationale + ACCEPTED RISK deadline) | Per-amendment                         | BLUEPRINT.md §RFC Acceptance Process        |
+| Classification Enforcer | substrate linter (`crates/octo-policy/src/class_lint.rs`, future RFC; canonical post-mission 0206-006 landing; RFC-0008 v1.0 historical surface `octo-policy-core/...` superseded per RFC-0206 v3.3 substrate layer model) | Reject PR introducing Class C operation into consensus path           | Persistent                            | this RFC §Implicit Assumptions Audit        |
 
 ### ACCEPTED IMPLICIT ROLES
 
@@ -270,14 +271,14 @@ stateDiagram-v2
     OutOfScope --> Deprecated : RFC superseded
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| Proposed | ClassA | `verify_class_a_reproducibility` passes for 10K inputs across 2 nodes | Yes | RFC Version History row added | RFC Maintainer |
-| Proposed | ClassB | `attach_class_b_proof` succeeds + auditor accepts determinism envelope | Yes | RFC Version History row added; `class_b_proof_registry` updated | RFC Maintainer + Auditor |
-| Proposed | ClassC | Reviewer confirms `is_consensus_path() == false` for all call sites | Yes | Linter rule added | RFC Maintainer |
-| ClassA | ClassB | Governance downgrade with ACCEPTED RISK + 90-day deadline | Yes | Class B Prover must produce proof before deadline | 2 Maintainer approvals |
-| ClassB | ClassA | New canonical kernel implemented + `verify_class_a_reproducibility` passes | Yes | Linter rule removed | RFC Maintainer + Auditor |
-| ClassA / ClassB | Deprecated | RFC superseded by `Supersedes:` reference | Yes | RFC moved to `rfcs/archived/superseded/` | RFC Maintainer |
+| From            | To         | Trigger                                                                    | Deterministic? | Side Effects                                                    | Signing                  |
+| --------------- | ---------- | -------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------- | ------------------------ |
+| Proposed        | ClassA     | `verify_class_a_reproducibility` passes for 10K inputs across 2 nodes      | Yes            | RFC Version History row added                                   | RFC Maintainer           |
+| Proposed        | ClassB     | `attach_class_b_proof` succeeds + auditor accepts determinism envelope     | Yes            | RFC Version History row added; `class_b_proof_registry` updated | RFC Maintainer + Auditor |
+| Proposed        | ClassC     | Reviewer confirms `is_consensus_path() == false` for all call sites        | Yes            | Linter rule added                                               | RFC Maintainer           |
+| ClassA          | ClassB     | Governance downgrade with ACCEPTED RISK + 90-day deadline                  | Yes            | Class B Prover must produce proof before deadline               | 2 Maintainer approvals   |
+| ClassB          | ClassA     | New canonical kernel implemented + `verify_class_a_reproducibility` passes | Yes            | Linter rule removed                                             | RFC Maintainer + Auditor |
+| ClassA / ClassB | Deprecated | RFC superseded by `Supersedes:` reference                                  | Yes            | RFC moved to `rfcs/archived/superseded/`                        | RFC Maintainer           |
 
 **Liveness check:** No heartbeat required — classification is event-driven per RFC amendment.
 
@@ -297,23 +298,23 @@ The classification scheme itself MUST be Class A. Specifically:
 
 Per BLUEPRINT.md template §RFC-0008 Execution Class Mapping — every RFC MUST include this table. This RFC itself carries the meta-mapping:
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `ExecutionClass` enum discriminant | A | Fixed byte values; reordering is hard fork |
-| `ClassMappingRow` canonical serialization | A | BLAKE3 over canonical field order; deterministic |
-| `assert_class()` | A | Pure boolean check; deterministic |
-| `verify_class_a_reproducibility()` | A | BLAKE3 + byte comparison; deterministic |
-| `attach_class_b_proof()` | A | ZK proof generation per RFC-0958; deterministic circuit + witness |
-| Classification audit (multi-round review) | A | Documented in RFC Version History; reviewer identity deterministic per RFC-0000 |
-| Classification downgrade governance vote | A | 2+ maintainer approval; deterministic |
-| Class C linter rule | A | Pure grep/AST match; deterministic |
-| Model inference (RFC-0127) — canonical kernel | B | Deterministic when configured correctly; consensus requires ZK proof per RFC-0965 |
-| Gossip message ordering (RFC-0862) | B | Deterministic with writer-election; consensus requires deterministic-ordering proof |
-| MultiEnvelope composition (RFC-0962) | B | Deterministic per RFC-0962 §7; consensus requires completion proof |
-| Training | C | Probabilistic by nature; explicitly excluded from consensus path |
-| Sampling | C | Probabilistic by nature; explicitly excluded from consensus path |
-| Exploration (agent behavior) | C | Probabilistic by nature; explicitly excluded from consensus path |
-| Adaptive computation | C | Probabilistic by nature; explicitly excluded from consensus path |
+| Operation                                     | Class | Rationale                                                                           |
+| --------------------------------------------- | ----- | ----------------------------------------------------------------------------------- |
+| `ExecutionClass` enum discriminant            | A     | Fixed byte values; reordering is hard fork                                          |
+| `ClassMappingRow` canonical serialization     | A     | BLAKE3 over canonical field order; deterministic                                    |
+| `assert_class()`                              | A     | Pure boolean check; deterministic                                                   |
+| `verify_class_a_reproducibility()`            | A     | BLAKE3 + byte comparison; deterministic                                             |
+| `attach_class_b_proof()`                      | A     | ZK proof generation per RFC-0958; deterministic circuit + witness                   |
+| Classification audit (multi-round review)     | A     | Documented in RFC Version History; reviewer identity deterministic per RFC-0000     |
+| Classification downgrade governance vote      | A     | 2+ maintainer approval; deterministic                                               |
+| Class C linter rule                           | A     | Pure grep/AST match; deterministic                                                  |
+| Model inference (RFC-0127) — canonical kernel | B     | Deterministic when configured correctly; consensus requires ZK proof per RFC-0965   |
+| Gossip message ordering (RFC-0862)            | B     | Deterministic with writer-election; consensus requires deterministic-ordering proof |
+| MultiEnvelope composition (RFC-0962)          | B     | Deterministic per RFC-0962 §7; consensus requires completion proof                  |
+| Training                                      | C     | Probabilistic by nature; explicitly excluded from consensus path                    |
+| Sampling                                      | C     | Probabilistic by nature; explicitly excluded from consensus path                    |
+| Exploration (agent behavior)                  | C     | Probabilistic by nature; explicitly excluded from consensus path                    |
+| Adaptive computation                          | C     | Probabilistic by nature; explicitly excluded from consensus path                    |
 
 > **Class C operations MUST be physically separated** — not by configuration, but by crate boundary. Future mission `0008-class-c-sandbox` will enforce this via dedicated crate `octo-ai-exploratory` with no consensus-path dependency direction.
 
@@ -349,28 +350,28 @@ pub enum ClassAError {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Class A assertion overhead | <1µs | Single boolean check; no allocation |
-| Class B proof generation | <100ms | RFC-0958 circuit complexity dependent |
-| Class B proof verification | <10ms | RFC-0965 verifier; aggregated for MultiEnvelope |
-| Classification audit (per RFC) | <2 min | Reviewer review of Class Mapping table |
-| Linter scan | <30s/crate | AST match for Class C in consensus path |
+| Metric                         | Target     | Notes                                           |
+| ------------------------------ | ---------- | ----------------------------------------------- |
+| Class A assertion overhead     | <1µs       | Single boolean check; no allocation             |
+| Class B proof generation       | <100ms     | RFC-0958 circuit complexity dependent           |
+| Class B proof verification     | <10ms      | RFC-0965 verifier; aggregated for MultiEnvelope |
+| Classification audit (per RFC) | <2 min     | Reviewer review of Class Mapping table          |
+| Linter scan                    | <30s/crate | AST match for Class C in consensus path         |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies upon that is not enforced by types, runtime validation, or test coverage MUST be listed here. Each MUST have blast radius and mitigation.
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| Three-class taxonomy is sufficient | §Specification §Data Structures | Some operation may require a 4th class (e.g., Class D = "deterministic with bounded nondeterminism envelope"); reclassification would be global | [CONDITIONAL: requires future RFC-0008 amendment if a 4th class is needed; current v1.0 deemed sufficient for protocol state] |
-| Class A reproducibility can be verified via 10K-input test | §Test Vectors | Some operation may pass 10K but fail at 1M; coverage insufficient | Property-based test with 1M inputs for high-stakes operations (settlement, capability); documented in mission `0008-property-test-suite` (future) |
-| Class B proof generation is feasible for all Class B operations | §Specification §Algorithms | Some Class B operations may not have efficient circuit; force reclassification as Class C and exclude | RFC-0958 + RFC-0965 §3.7 WrappedOnly caveat depth bound (16) provides fallback |
-| Class C operations can be physically separated by crate boundary | §RFC-0008 Execution Class Mapping footer | Class C code may leak into consensus path via shared crate dependency | Linter rule + crate-level `Cargo.toml` deny list per mission `0008-class-c-linter` (future) |
-| Reviewers will not rubber-stamp Class A claims | §Lifecycle Requirements §ClassA transition | All operations become effectively unverified; consensus break risk | Multi-round adversarial review per BLUEPRINT.md §Adversarial Review Process; reviewer rotation |
-| Class B → Class A promotion is rare | §Lifecycle Requirements | Frequent promotion means instability; substrate break risk | 90-day stability requirement before promotion; documented in §Lifecycle Requirements |
-| All consensus-critical RFCs already declare their classes (or will via amendment) | §Coverage Gap below | Silent consensus break; undetected divergence | Mission `0008-execution-class-amendments` (NEW) addresses 68 missing RFCs |
-| Test infrastructure for Class A reproducibility exists | §Test Vectors §1 | Cannot verify claims; only trust author | Mission `0008-reproducibility-fixture` (NEW) — multi-node harness; substrate dependency |
+| Assumption                                                                        | Where Relied Upon                          | Blast Radius if False                                                                                                                           | Mitigation / Status                                                                                                                               |
+| --------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Three-class taxonomy is sufficient                                                | §Specification §Data Structures            | Some operation may require a 4th class (e.g., Class D = "deterministic with bounded nondeterminism envelope"); reclassification would be global | [CONDITIONAL: requires future RFC-0008 amendment if a 4th class is needed; current v1.0 deemed sufficient for protocol state]                     |
+| Class A reproducibility can be verified via 10K-input test                        | §Test Vectors                              | Some operation may pass 10K but fail at 1M; coverage insufficient                                                                               | Property-based test with 1M inputs for high-stakes operations (settlement, capability); documented in mission `0008-property-test-suite` (future) |
+| Class B proof generation is feasible for all Class B operations                   | §Specification §Algorithms                 | Some Class B operations may not have efficient circuit; force reclassification as Class C and exclude                                           | RFC-0958 + RFC-0965 §3.7 WrappedOnly caveat depth bound (16) provides fallback                                                                    |
+| Class C operations can be physically separated by crate boundary                  | §RFC-0008 Execution Class Mapping footer   | Class C code may leak into consensus path via shared crate dependency                                                                           | Linter rule + crate-level `Cargo.toml` deny list per mission `0008-class-c-linter` (future)                                                       |
+| Reviewers will not rubber-stamp Class A claims                                    | §Lifecycle Requirements §ClassA transition | All operations become effectively unverified; consensus break risk                                                                              | Multi-round adversarial review per BLUEPRINT.md §Adversarial Review Process; reviewer rotation                                                    |
+| Class B → Class A promotion is rare                                               | §Lifecycle Requirements                    | Frequent promotion means instability; substrate break risk                                                                                      | 90-day stability requirement before promotion; documented in §Lifecycle Requirements                                                              |
+| All consensus-critical RFCs already declare their classes (or will via amendment) | §Coverage Gap below                        | Silent consensus break; undetected divergence                                                                                                   | Mission `0008-execution-class-amendments` (NEW) addresses 68 missing RFCs                                                                         |
+| Test infrastructure for Class A reproducibility exists                            | §Test Vectors §1                           | Cannot verify claims; only trust author                                                                                                         | Mission `0008-reproducibility-fixture` (NEW) — multi-node harness; substrate dependency                                                           |
 
 ### Categories Audit
 
@@ -395,13 +396,13 @@ pub enum ClassAError {
 
 > **The 5-Question Adversary Test:** For every design decision with security implications, enumerate: (1) who benefits from breaking it, (2) what it costs them, (3) what they gain if successful, (4) what's our defense and its cost to legitimate operation, (5) what's the residual risk and is it acceptable.
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| Class A claim without reproducibility test | Malicious RFC author | Low (write RFC, mislabel operation) | Operation joins consensus with non-determinism; consensus splits at execution | Multi-round review with §Test Vectors; auditor must run 10K-input test | LOW — multi-round review catches |
-| Class B claim without proof | RFC author hiding expensive ZK proof cost | Low (write RFC, skip proof attachment) | Expensive proof avoided; performance gain | Linter requires proof attachment; CI fails PR without | LOW — linter enforced |
-| Class C operation in consensus path | RFC author who wants exploration in consensus | Medium (bypass crate boundary, exploit shared dep) | Probabilistic exploration drives consensus outcome; governance capture | Crate-level `Cargo.toml` deny list + linter; Class C sandbox crate (future) | MEDIUM — physical separation incomplete until mission `0008-class-c-sandbox` lands |
-| Downgrade Class A → Class B without governance vote | Maintainer with governance key | High (requires quorum compromise) | Skip 90-day ACCEPTED RISK deadline; consensus-affecting reclassification | 2+ maintainer approvals required; audit log per RFC Version History | LOW — multi-sig mitigates |
-| Class B → Class A promotion without re-implementation | Maintainer claiming new kernel | High (must implement + verify 10K + 1M tests) | Skip re-implementation cost | `verify_class_a_reproducibility` gates transition; 90-day stability requirement | LOW — verification gates |
+| Decision                                              | Q1 Beneficiary                                | Q2 Cost to Attacker                                | Q3 Gain if Successful                                                         | Q4 Defense (cost to legit op)                                                   | Q5 Residual Risk                                                                   |
+| ----------------------------------------------------- | --------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Class A claim without reproducibility test            | Malicious RFC author                          | Low (write RFC, mislabel operation)                | Operation joins consensus with non-determinism; consensus splits at execution | Multi-round review with §Test Vectors; auditor must run 10K-input test          | LOW — multi-round review catches                                                   |
+| Class B claim without proof                           | RFC author hiding expensive ZK proof cost     | Low (write RFC, skip proof attachment)             | Expensive proof avoided; performance gain                                     | Linter requires proof attachment; CI fails PR without                           | LOW — linter enforced                                                              |
+| Class C operation in consensus path                   | RFC author who wants exploration in consensus | Medium (bypass crate boundary, exploit shared dep) | Probabilistic exploration drives consensus outcome; governance capture        | Crate-level `Cargo.toml` deny list + linter; Class C sandbox crate (future)     | MEDIUM — physical separation incomplete until mission `0008-class-c-sandbox` lands |
+| Downgrade Class A → Class B without governance vote   | Maintainer with governance key                | High (requires quorum compromise)                  | Skip 90-day ACCEPTED RISK deadline; consensus-affecting reclassification      | 2+ maintainer approvals required; audit log per RFC Version History             | LOW — multi-sig mitigates                                                          |
+| Class B → Class A promotion without re-implementation | Maintainer claiming new kernel                | High (must implement + verify 10K + 1M tests)      | Skip re-implementation cost                                                   | `verify_class_a_reproducibility` gates transition; 90-day stability requirement | LOW — verification gates                                                           |
 
 ## Economic Analysis
 
@@ -466,13 +467,13 @@ EXPECTED:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-| -------- | ---- | ---- |
-| **Option A: Three-class taxonomy (this RFC)** | Captures Class B nuance (proof-bridged determinism); matches existing usage in RFC-0957-A1 + RFC-0959 + RFC-0969; multi-round review gates Class A | Some classification disputes inevitable; reviewer training required |
-| Option B: Binary deterministic / probabilistic | Simpler; no Class B nuance | Forces Class B operations to be reclassified as Class C; loses model-inference consensus use case |
-| Option C: Four-class taxonomy (add Class D = "bounded-nondeterminism envelope") | More granular | YAGNI; current protocol has no operation requiring Class D; complexity not justified |
-| Option D: Centralized classification registry | Single source of truth | Upgrade-hostile (central enum per CLAUDE.md §Extension over enumeration); per-RFC mapping is fresher |
-| Option E: No formal classification; rely on review intuition | Lowest overhead | Silent drift; consensus break risk; BLUEPRINT.md template requirement already establishes the discipline |
+| Approach                                                                        | Pros                                                                                                                                               | Cons                                                                                                     |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Option A: Three-class taxonomy (this RFC)**                                   | Captures Class B nuance (proof-bridged determinism); matches existing usage in RFC-0957-A1 + RFC-0959 + RFC-0969; multi-round review gates Class A | Some classification disputes inevitable; reviewer training required                                      |
+| Option B: Binary deterministic / probabilistic                                  | Simpler; no Class B nuance                                                                                                                         | Forces Class B operations to be reclassified as Class C; loses model-inference consensus use case        |
+| Option C: Four-class taxonomy (add Class D = "bounded-nondeterminism envelope") | More granular                                                                                                                                      | YAGNI; current protocol has no operation requiring Class D; complexity not justified                     |
+| Option D: Centralized classification registry                                   | Single source of truth                                                                                                                             | Upgrade-hostile (central enum per CLAUDE.md §Extension over enumeration); per-RFC mapping is fresher     |
+| Option E: No formal classification; rely on review intuition                    | Lowest overhead                                                                                                                                    | Silent drift; consensus break risk; BLUEPRINT.md template requirement already establishes the discipline |
 
 **Rationale for Option A:** Matches existing RFC corpus usage; aligns with BLUEPRINT.md template §RFC-0008 Execution Class Mapping requirement; closes the 68-RFC gap.
 
@@ -512,12 +513,12 @@ EXPECTED:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `rfcs/planned/process/0008-deterministic-ai-execution-boundary.md` → `rfcs/draft/process/0008-deterministic-ai-execution-boundary.md` | Promote to Draft; this RFC IS that promotion |
-| `crates/octo-policy/src/class.rs` (NEW) | `ExecutionClass` enum + `ClassMappingRow` + `ClassMapping` |
-| `crates/octo-policy/src/class_lint.rs` (NEW, Phase 3) | Linter for Class C exclusion |
-| 68 RFC files (Phase 2) | Add §RFC-0008 Execution Class Mapping table |
+| File                                                                                                                                  | Change                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `rfcs/planned/process/0008-deterministic-ai-execution-boundary.md` → `rfcs/draft/process/0008-deterministic-ai-execution-boundary.md` | Promote to Draft; this RFC IS that promotion               |
+| `crates/octo-policy/src/class.rs` (NEW)                                                                                               | `ExecutionClass` enum + `ClassMappingRow` + `ClassMapping` |
+| `crates/octo-policy/src/class_lint.rs` (NEW, Phase 3)                                                                                 | Linter for Class C exclusion                               |
+| 68 RFC files (Phase 2)                                                                                                                | Add §RFC-0008 Execution Class Mapping table                |
 
 ## Future Work
 
@@ -538,12 +539,12 @@ Why this RFC over alternatives:
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.1 | 2026-08-22 | **R15 fix trail (post-R15 cross-RFC consistency lens):** F-R15-PR-01 cascade (HIGH) — crate path correction propagated across §Data Structures (§RFC-0008 Execution Class Mapping column), §Test Vectors (Class A/B/C linter reject), §Implementation Phases (Phase 2 Execution Class Amendment Sweep), §Key Files to Modify (per mission 0206-006 + RFC-0206 v3.3 substrate layer model). Aligns with research doc §17 v3.10 + RFC-0967-A1 v1.6 + RFC-0206 v3.5 + RFC-0010 v1.9 R15 cascade. |
-| 1.0 | 2026-08-21 | Initial Draft. Promoted from 87-line planned placeholder. Filled 18 BLUEPRINT.md mandatory sections: §Status, §Authors, §Maintainers, §Summary, §Dependencies, §Design Goals (G1-G6), §Motivation (Why this RFC + Why three-class + Why per-RFC), §Roles and Authorities (6 named roles + ACCEPTED IMPLICIT ROLES), §Specification (System Architecture Mermaid + Data Structures rust + Algorithms x3 + Lifecycle Requirements Mermaid + Determinism Requirements + §RFC-0008 Execution Class Mapping 15-row table + Error Handling), §Performance Targets, §Implicit Assumptions Audit (8 entries + 8 categories), §Security Considerations, §Adversary Analysis (5-Question Test x5 decisions), §Economic Analysis (N/A), §Compatibility, §Test Vectors (4 canonical), §Alternatives Considered (5 options + rationale), §Implementation Phases (4 phases), §Key Files to Modify, §Future Work (4 items), §Rationale (5 points). Closes the 68-RFC §RFC-0008 Execution Class Mapping gap (mission `0008-execution-class-amendments`).
-| 1.0 | 2026-08-22 | R14 fix R12-LENS-RFC0008-PHANTOM-CARGO-PATH closure: replaced `octo-policy-core/...` phantom paths with canonical `crates/octo-policy/...` per mission 0206-006 (cipherocto-policy → octo-policy rename) + RFC-0206 v3.3 substrate layer model. |
-| 1.0 | 2026-08-22 | R15 fix F-R15-PR-01 cascade: same crate path correction propagated across §Data Structures (L161), §Test Vectors (L451), §Implementation Phases (L497), §Key Files to Modify (L518, L519). |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1     | 2026-08-22 | **R15 fix trail (post-R15 cross-RFC consistency lens):** F-R15-PR-01 cascade (HIGH) — crate path correction propagated across §Data Structures (§RFC-0008 Execution Class Mapping column), §Test Vectors (Class A/B/C linter reject), §Implementation Phases (Phase 2 Execution Class Amendment Sweep), §Key Files to Modify (per mission 0206-006 + RFC-0206 v3.3 substrate layer model). Aligns with research doc §17 v3.10 + RFC-0967-A1 v1.6 + RFC-0206 v3.5 + RFC-0010 v1.9 R15 cascade.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.0     | 2026-08-21 | Initial Draft. Promoted from 87-line planned placeholder. Filled 18 BLUEPRINT.md mandatory sections: §Status, §Authors, §Maintainers, §Summary, §Dependencies, §Design Goals (G1-G6), §Motivation (Why this RFC + Why three-class + Why per-RFC), §Roles and Authorities (6 named roles + ACCEPTED IMPLICIT ROLES), §Specification (System Architecture Mermaid + Data Structures rust + Algorithms x3 + Lifecycle Requirements Mermaid + Determinism Requirements + §RFC-0008 Execution Class Mapping 15-row table + Error Handling), §Performance Targets, §Implicit Assumptions Audit (8 entries + 8 categories), §Security Considerations, §Adversary Analysis (5-Question Test x5 decisions), §Economic Analysis (N/A), §Compatibility, §Test Vectors (4 canonical), §Alternatives Considered (5 options + rationale), §Implementation Phases (4 phases), §Key Files to Modify, §Future Work (4 items), §Rationale (5 points). Closes the 68-RFC §RFC-0008 Execution Class Mapping gap (mission `0008-execution-class-amendments`). |
+| 1.0     | 2026-08-22 | R14 fix R12-LENS-RFC0008-PHANTOM-CARGO-PATH closure: replaced `octo-policy-core/...` phantom paths with canonical `crates/octo-policy/...` per mission 0206-006 (cipherocto-policy → octo-policy rename) + RFC-0206 v3.3 substrate layer model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.0     | 2026-08-22 | R15 fix F-R15-PR-01 cascade: same crate path correction propagated across §Data Structures, §Test Vectors, §Implementation Phases, §Key Files to Modify).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ## Related RFCs
 
@@ -617,12 +618,12 @@ Per audit 2026-08-21 — these accepted RFCs currently lack the table and requir
 
 ### C. Class B operation catalog (current corpus)
 
-| Operation | RFC | Proof System |
-|-----------|-----|--------------|
-| `HolderRegistry::sync_peers()` | RFC-0957-A1 | RFC-0862 §writer-election ordering |
-| `MultiEnvelope.compose()` | RFC-0962 §7 | RFC-0962 §7 completion proof |
-| `verify_capability_circuit()` | RFC-0965 | RFC-0958 + RFC-0965 §3.7 |
-| `route_deterministic()` | RFC-0856 (draft) | RFC-0856 deterministic-route proof |
+| Operation                      | RFC              | Proof System                       |
+| ------------------------------ | ---------------- | ---------------------------------- |
+| `HolderRegistry::sync_peers()` | RFC-0957-A1      | RFC-0862 §writer-election ordering |
+| `MultiEnvelope.compose()`      | RFC-0962 §7      | RFC-0962 §7 completion proof       |
+| `verify_capability_circuit()`  | RFC-0965         | RFC-0958 + RFC-0965 §3.7           |
+| `route_deterministic()`        | RFC-0856 (draft) | RFC-0856 deterministic-route proof |
 
 ---
 
@@ -633,6 +634,6 @@ Per audit 2026-08-21 — these accepted RFCs currently lack the table and requir
 
 - v1.0 (2026-08-21): Initial Draft. Promoted from planned. Filled 18 mandatory sections per BLUEPRINT.md template v1.3. Establishes three-class taxonomy (A/B/C); requires §RFC-0008 Execution Class Mapping table in every RFC; lifecycle state machine with 90-day ACCEPTED RISK deadline for downgrade; closes 68-RFC coverage gap via mission `0008-execution-class-amendments`.
 - v1.0 (2026-08-22): R14 fix R12-LENS-RFC0008-PHANTOM-CARGO-PATH closure: replaced `octo-policy-core/...` phantom paths with canonical `crates/octo-policy/...` per mission 0206-006 (cipherocto-policy → octo-policy rename) + RFC-0206 v3.3 substrate layer model.
-- v1.0 (2026-08-22): R15 fix F-R15-PR-01 cascade: same crate path correction propagated across §Data Structures (L161), §Test Vectors (L451), §Implementation Phases (L497), §Key Files to Modify (L518, L519).
+- v1.0 (2026-08-22): R15 fix F-R15-PR-01 cascade: same crate path correction propagated across §Data Structures, §Test Vectors, §Implementation Phases, §Key Files to Modify).
 - v1.0 (2026-08-22): Date frontmatter split into `Date: 2026-08-21` (Draft day) + `Accepted on: 2026-08-22` (Accept day) per BLUEPRINT.md §RFC Process audit-trail convention; promoted-from placeholder note clarified.
-- v1.0 (2026-08-22): R18 lens 3 fix: Mermaid anchors corrected (RFC-0959 §2 → §Algorithms §Compute cost; RFC-0957 §Attenuation → bare RFC-0957 + RFC-0965 §3.7; RFC-0009 §Roles and Authorities (BLAKE3 primitive); RFC-0862 §writer-election → §WriterElection Protocol); §Implementation Phases L511 phantom anchor `RFC-0206 v3.3 §5` → trait-method-level §2.x; Appendix B Coverage Gap pruned of draft-only entries (Agents, AI Execution, Consensus, Proof Systems). Per `feedback_initiation_user_only`: NO push — local-only until user authorization.
+- v1.0 (2026-08-22): R18 lens 3 fix: Mermaid anchors corrected (RFC-0959 §2 → §Algorithms §Compute cost; RFC-0957 §Attenuation → bare RFC-0957 + RFC-0965 §3.7; RFC-0009 §Roles and Authorities (BLAKE3 primitive); RFC-0862 §writer-election → §WriterElection Protocol); §Implementation Phases phantom anchor `RFC-0206 v3.3 §5` → trait-method-level §2.x; Appendix B Coverage Gap pruned of draft-only entries (Agents, AI Execution, Consensus, Proof Systems). Per `feedback_initiation_user_only`: NO push — local-only until user authorization.

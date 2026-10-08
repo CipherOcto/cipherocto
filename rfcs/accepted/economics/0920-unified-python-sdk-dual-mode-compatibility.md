@@ -145,6 +145,7 @@ Mode gate does NOT control: which interfaces exist
 **HTTP proxy always calls Rust core directly** — it never goes through PyO3 Python SDK bindings.
 
 **Never forget:**
+
 - `litellm-mode` DOES NOT mean "HTTP proxy only" — Python SDK is also available
 - `any-llm-mode` DOES NOT mean "Python SDK only" — HTTP proxy is ALSO AVAILABLE (ALWAYS HAS BEEN)
 - Both interfaces exist in ALL modes — THIS WILL NEVER CHANGE
@@ -213,28 +214,28 @@ Mode gate does NOT control: which interfaces exist
 
 **Python-to-Rust component mapping:**
 
-| Python API | Rust Core Component | Notes |
-|------------|---------------------|-------|
-| `set_api_key(provider, key)` | `KeyMiddleware::validate_key()` + `StoolapKeyStorage` | Validates then persists |
-| `get_budget_status()` | `Balance` + `StoolapKeyStorage` | Returns OCTO-W spend |
-| `completion()` | `RouterHandle.completion()` | Thin PyO3 delegation — all routing in Rust |
-| `Router` class | `RustRouterHandle` | Thin PyO3 wrapper — no Python-side routing state |
-| `cache_bypass` flag | `RouterHandle` | Forwarded to Rust cache/validation layer |
-| `batch_completion()` | `RouterHandle.batch()` | Thin PyO3 delegation — Rust parallel executor |
-| `num_retries` | `FallbackExecutor` | Rust handles retry, not Python |
-| `cache_responses` | `KeyCache` + `StoolapKeyStorage` | Rust manages semantic cache (RFC-0913) |
-| Rate limiting | `RateLimiter` | Rust TokenBucket enforcement |
-| All routing state | `Router` (Rust core) | Python Router class is DEPRECATED stub |
-| All telemetry | Rust Prometheus/OTLP | Python queries Rust via `get_metrics()` |
-| Exception mapping | `RouterError` → Python | PyO3 exception translation |
+| Python API                   | Rust Core Component                                   | Notes                                            |
+| ---------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| `set_api_key(provider, key)` | `KeyMiddleware::validate_key()` + `StoolapKeyStorage` | Validates then persists                          |
+| `get_budget_status()`        | `Balance` + `StoolapKeyStorage`                       | Returns OCTO-W spend                             |
+| `completion()`               | `RouterHandle.completion()`                           | Thin PyO3 delegation — all routing in Rust       |
+| `Router` class               | `RustRouterHandle`                                    | Thin PyO3 wrapper — no Python-side routing state |
+| `cache_bypass` flag          | `RouterHandle`                                        | Forwarded to Rust cache/validation layer         |
+| `batch_completion()`         | `RouterHandle.batch()`                                | Thin PyO3 delegation — Rust parallel executor    |
+| `num_retries`                | `FallbackExecutor`                                    | Rust handles retry, not Python                   |
+| `cache_responses`            | `KeyCache` + `StoolapKeyStorage`                      | Rust manages semantic cache (RFC-0913)           |
+| Rate limiting                | `RateLimiter`                                         | Rust TokenBucket enforcement                     |
+| All routing state            | `Router` (Rust core)                                  | Python Router class is DEPRECATED stub           |
+| All telemetry                | Rust Prometheus/OTLP                                  | Python queries Rust via `get_metrics()`          |
+| Exception mapping            | `RouterError` → Python                                | PyO3 exception translation                       |
 
 **Two modes (feature flags) control provider integration — NOT interface availability:**
 
-| Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
-|------|-----------------|:------------:|:------------:|
-| `litellm-mode` | reqwest HTTP (Rust) | ✅ Yes (reqwest-based) | ✅ Yes |
-| `any-llm-mode` | PyO3 → Python SDK | ✅ Yes (via PyO3 bridge) | ✅ Yes |
-| `full` | Both | ✅ Yes (both reqwest + PyO3 bridge) | ✅ Yes |
+| Mode           | Provider Strategy   |             HTTP Proxy?             | Python SDK? |
+| -------------- | ------------------- | :---------------------------------: | :---------: |
+| `litellm-mode` | reqwest HTTP (Rust) |       ✅ Yes (reqwest-based)        |   ✅ Yes    |
+| `any-llm-mode` | PyO3 → Python SDK   |      ✅ Yes (via PyO3 bridge)       |   ✅ Yes    |
+| `full`         | Both                | ✅ Yes (both reqwest + PyO3 bridge) |   ✅ Yes    |
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
@@ -326,6 +327,7 @@ The SDK operates in two API conventions (not feature flags — both work in all 
 ```
 
 **Convention determines:**
+
 1. How provider is specified (explicit param vs embedded in model string)
 2. Default provider when not specified
 
@@ -611,6 +613,7 @@ def _validate_no_nan_inf(params: Dict) -> None:
 ```
 
 **SDK entry point call sites:**
+
 ```python
 def completion(model: str, messages: List[Dict], **kwargs):
     # M3 fix: validate messages (O(1) isinstance check) + kwargs
@@ -834,15 +837,15 @@ class BatchPartialFailureError(QuotaRouterError):
 
 Python exceptions defined above map to Rust core `RouterError` variants for fallback logic:
 
-| Python Exception          | Rust `RouterError`      | Trigger                           |
-| ------------------------ | ---------------------- | --------------------------------- |
-| `RateLimitError`          | `RouterError::RateLimit` | 429 response, "rate_limit" in msg |
-| `AuthenticationError`     | `RouterError::AuthError` | 401/403, invalid API key          |
-| `ContextLengthExceededError` | `RouterError::ContextWindowExceeded` | Token limit exceeded       |
-| `ContentFilterError`      | `RouterError::ContentPolicyViolation` | Content policy violation  |
-| `GatewayTimeoutError`     | `RouterError::Timeout`   | 504, timeout                      |
-| `ProviderError`           | `RouterError::ProviderUnavailable` | Provider down/unreachable |
-| `ModelNotFoundError`      | `RouterError::ModelNotFound` | Model not found (404)       |
+| Python Exception             | Rust `RouterError`                    | Trigger                           |
+| ---------------------------- | ------------------------------------- | --------------------------------- |
+| `RateLimitError`             | `RouterError::RateLimit`              | 429 response, "rate_limit" in msg |
+| `AuthenticationError`        | `RouterError::AuthError`              | 401/403, invalid API key          |
+| `ContextLengthExceededError` | `RouterError::ContextWindowExceeded`  | Token limit exceeded              |
+| `ContentFilterError`         | `RouterError::ContentPolicyViolation` | Content policy violation          |
+| `GatewayTimeoutError`        | `RouterError::Timeout`                | 504, timeout                      |
+| `ProviderError`              | `RouterError::ProviderUnavailable`    | Provider down/unreachable         |
+| `ModelNotFoundError`         | `RouterError::ModelNotFound`          | Model not found (404)             |
 
 **Note:** `RouterError::ModelNotFound` is a distinct variant from `RouterError::ProviderUnavailable`. A 404 response means the model is permanently unavailable (wrong model name, deprecated model), not that the provider is down. Conflating these causes incorrect retry behavior: `ModelNotFoundError` should NOT trigger retries or fallback — the model does not exist.
 
@@ -858,7 +861,7 @@ Python exceptions defined above map to Rust core `RouterError` variants for fall
 
 **Implementation:**
 
-```rust
+````rust
 // In PyO3 bindings — translating Rust RouterError to Python exception
 match rust_error {
     RouterError::RateLimit => PyErr::new::<RateLimitError, _>(...),
@@ -881,7 +884,7 @@ match error {
     RouterError::Timeout => { /* retry with backoff */ }
     // ... other errors with retry logic
 }
-```
+````
 
 **ModelNotFoundError retry behavior:** Unlike transient errors (rate limit, timeout, provider down), `ModelNotFoundError` indicates a permanent failure (wrong model name, deprecated model, 404). The fallback executor must NOT retry on `ModelNotFoundError` — retries would waste resources on an unconditionally unavailable model.
 
@@ -911,11 +914,11 @@ print(f"Total spend: {metrics['total_spend']}")
 
 **any-llm key handling vs quota-router:**
 
-| Approach | any-llm | quota-router |
-| -------- | -------- | ------------ |
-| Per-call | `completion(model="...", api_key="sk-...")` | `completion(model="...", api_key="sk-...")` ✓ |
-| Constructor | `AnyLLM(api_key="sk-...")` | N/A |
-| Persistent | **No** `set_api_key()` | `set_api_key()` (LiteLLM compat) |
+| Approach    | any-llm                                     | quota-router                                  |
+| ----------- | ------------------------------------------- | --------------------------------------------- |
+| Per-call    | `completion(model="...", api_key="sk-...")` | `completion(model="...", api_key="sk-...")` ✓ |
+| Constructor | `AnyLLM(api_key="sk-...")`                  | N/A                                           |
+| Persistent  | **No** `set_api_key()`                      | `set_api_key()` (LiteLLM compat)              |
 
 #### set_api_key() — Storage Clarification
 
@@ -923,10 +926,10 @@ print(f"Total spend: {metrics['total_spend']}")
 
 Per RFC-0917 §A8, `set_api_key()` derives a budget identity via HMAC-SHA256 and stores it via `StoolapKeyStorage`. **Budget enforcement (RFC-0904) is active in ALL modes** (litellm-mode, any-llm-mode, full) — the "None" in the table below was incorrect and is now fixed.
 
-| Mode    | Storage              | Budget Enforcement |
-| ------- | -------------------- | ------------------ |
-| any-llm | `StoolapKeyStorage`  | RFC-0904 enforced  |
-| full    | `StoolapKeyStorage`  | RFC-0904 enforced  |
+| Mode    | Storage             | Budget Enforcement |
+| ------- | ------------------- | ------------------ |
+| any-llm | `StoolapKeyStorage` | RFC-0904 enforced  |
+| full    | `StoolapKeyStorage` | RFC-0904 enforced  |
 
 **Implementation (per RFC-0917 §A8):**
 
@@ -943,8 +946,8 @@ Per RFC-0917 §A8, `set_api_key()` derives a budget identity via HMAC-SHA256 and
 
 **Important — `get_budget_status()` behavior by mode:**
 
-| Mode    | get_budget_status() returns | Notes |
-| ------- | -------------------------- | ----- |
+| Mode    | get_budget_status() returns         | Notes               |
+| ------- | ----------------------------------- | ------------------- |
 | any-llm | Real Balance from StoolapKeyStorage | Persisted, accurate |
 | full    | Real Balance from StoolapKeyStorage | Persisted, accurate |
 
@@ -1167,20 +1170,20 @@ This section documents gaps between RFC-0920 and the reference implementations (
 
 **Parameters present in litellm but not yet specced in RFC-0920:**
 
-| Parameter                       | Type                            | Description                                | Spec Location           |
-| ------------------------------- | ------------------------------- | ------------------------------------------ | ----------------------- |
+| Parameter                       | Type                            | Description                                                                         | Spec Location           |
+| ------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------- | ----------------------- |
 | `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout (sync completion only); acompletion uses `float \| int` per LiteLLM | §Timeout Parameter      |
-| `thinking`                      | `dict`                          | Anthropic extended thinking budget         | §Thinking Parameter     |
-| `model_list`                    | `list`                          | Alternative model configuration            | §Model List             |
-| `extra_headers`                 | `dict`                          | Additional headers to pass to provider     | §Extra Headers          |
-| `base_url`                      | `str`                           | Alias for `api_base`                       | §Base URL Alias         |
-| `api_version`                   | `str`                           | API version for Azure-style providers      | §API Version            |
-| `web_search_options`            | `dict`                          | Web search for supported providers         | §Web Search Options     |
-| `modalities`                    | `list`                          | Audio output modalities                    | §Modalities             |
-| `audio`                         | `dict`                          | Audio parameters                           | §Audio Parameters       |
-| `prediction`                    | `dict`                          | Prediction content for o1 models           | §Prediction             |
-| `shared_session`                | `ClientSession`                 | Shared httpx session                       | §Shared Session         |
-| `enable_json_schema_validation` | `bool`                          | Validate response vs schema                | §JSON Schema Validation |
+| `thinking`                      | `dict`                          | Anthropic extended thinking budget                                                  | §Thinking Parameter     |
+| `model_list`                    | `list`                          | Alternative model configuration                                                     | §Model List             |
+| `extra_headers`                 | `dict`                          | Additional headers to pass to provider                                              | §Extra Headers          |
+| `base_url`                      | `str`                           | Alias for `api_base`                                                                | §Base URL Alias         |
+| `api_version`                   | `str`                           | API version for Azure-style providers                                               | §API Version            |
+| `web_search_options`            | `dict`                          | Web search for supported providers                                                  | §Web Search Options     |
+| `modalities`                    | `list`                          | Audio output modalities                                                             | §Modalities             |
+| `audio`                         | `dict`                          | Audio parameters                                                                    | §Audio Parameters       |
+| `prediction`                    | `dict`                          | Prediction content for o1 models                                                    | §Prediction             |
+| `shared_session`                | `ClientSession`                 | Shared httpx session                                                                | §Shared Session         |
+| `enable_json_schema_validation` | `bool`                          | Validate response vs schema                                                         | §JSON Schema Validation |
 
 **Parameters present in any-llm but not yet specced in RFC-0920:**
 
@@ -1417,6 +1420,7 @@ router.completion(stream=True)
 ```
 
 **Note:** When `Router.completion(stream=True)` is called, the Router:
+
 1. Selects deployment via `_select_deployment()`
 2. Calls `completion(stream=True)` with selected deployment params
 3. The module-level completion handles provider-specific streaming
@@ -1426,11 +1430,11 @@ The streaming spec below covers the SSE transformation layer inside `completion(
 
 **Streaming behavior by mode:**
 
-| Mode | Provider Call | Stream Return Type | Implementation |
-|------|-------------|-------------------|----------------|
-| `litellm-mode` | reqwest (Rust sync) | `Iterator[ChatCompletionChunk]` | Rust iterator exposed via PyO3 |
-| `any-llm-mode` | Python SDK (async) | `Iterator[ChatCompletionChunk]` | `async_iter_to_sync_iter()` bridge |
-| `full` | Based on runtime mode | `Iterator[ChatCompletionChunk]` | Same as above based on `QUOTA_ROUTER_MODE` |
+| Mode           | Provider Call         | Stream Return Type              | Implementation                             |
+| -------------- | --------------------- | ------------------------------- | ------------------------------------------ |
+| `litellm-mode` | reqwest (Rust sync)   | `Iterator[ChatCompletionChunk]` | Rust iterator exposed via PyO3             |
+| `any-llm-mode` | Python SDK (async)    | `Iterator[ChatCompletionChunk]` | `async_iter_to_sync_iter()` bridge         |
+| `full`         | Based on runtime mode | `Iterator[ChatCompletionChunk]` | Same as above based on `QUOTA_ROUTER_MODE` |
 
 **Async Proxy + PyO3 GIL Integration (any-llm-mode):**
 
@@ -1438,12 +1442,13 @@ The HTTP proxy uses `hyper`/`axum` (async Rust) in all modes. In `any-llm-mode`,
 
 **Dual-path spec:**
 
-| Python SDK Type | Integration Pattern | Rationale |
-|----------------|---------------------|-----------|
-| Sync SDKs (e.g., `requests`-based) | `tokio::task::spawn_blocking` | Blocking GIL-acquiring calls must not hold async executor thread |
+| Python SDK Type                                                     | Integration Pattern                                        | Rationale                                                            |
+| ------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| Sync SDKs (e.g., `requests`-based)                                  | `tokio::task::spawn_blocking`                              | Blocking GIL-acquiring calls must not hold async executor thread     |
 | Async SDKs (e.g., `openai.AsyncOpenAI`, `anthropic.AsyncAnthropic`) | `pyo3-asyncio` or `tokio::task::spawn_local` + GIL-release | Async SDKs release GIL during network I/O; only marshaling needs GIL |
 
 **For sync SDKs:**
+
 ```rust
 async fn handle_completion(req: Request) -> Result<Response, HyperError> {
     let py_result = tokio::task::spawn_blocking(|| {
@@ -1456,6 +1461,7 @@ async fn handle_completion(req: Request) -> Result<Response, HyperError> {
 ```
 
 **For async SDKs (preferred):**
+
 ```rust
 use pyo3_asyncio::tokio::into_future;
 
@@ -1493,11 +1499,13 @@ default: sync
 ```
 
 **Build-time generation (mandatory):**
+
 - Python: `providers_sdk_types.yaml` → `providers.py` (dict at module level)
 - Rust: `providers_sdk_types.yaml` → `providers.rs` (`HashMap<&str, &str>`)
 - Both generated from the single `providers_sdk_types.yaml` in `quota-router-core/`
 
 **CROSS-1/H2 fix: Rust output format mandate.** CI parity validation requires strict Rust syntax. Deviations from this format will break CI:
+
 ```rust
 // REQUIRED FORMAT for CI parity validation — do not deviate
 const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
@@ -1512,11 +1520,13 @@ const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("default", "sync"),
 ];
 ```
+
 Regex used: `r'\(\s*"([\w.-]+)"\s*,\s*"([\w.-]+)"\s*\)'`. The `\s*` pattern safely matches spaces, tabs, and newlines — rustfmt formatting is allowed.
 
 **H2 fix: CI validation command** (replaces git-dependent bash script — broken in shallow clones):
 
 **Environment-agnostic Python schema validator** (replaces git metadata approach):
+
 ```python
 #!/usr/bin/env python3
 # ci/validate_registry_parity.py
@@ -1627,6 +1637,7 @@ if __name__ == "__main__":
 Run in CI: `python3 ci/validate_registry_parity.py`. No git metadata required — works in shallow clones and detached HEAD states.
 
 **Runtime injection (optional):**
+
 - At proxy startup, load `providers_sdk_types.yaml` and inject via PyO3 config
 - Python registry imported by Rust via `pyo3::embedded_constants` or config file
 
@@ -1674,11 +1685,13 @@ async fn handle_completion(req: Request, provider: &str) -> Result<Response, Hyp
 ```
 
 **Dependency:** `pyo3-asyncio` is REQUIRED for `any-llm-mode` proxy builds. Compatible with:
+
 - Python 3.10+ (required for `contextvars` event loop policy)
 - Tokio 1.x (use `tokio::task::spawn_local` for local task dispatch)
 - Fallback: If `pyo3-asyncio` initialization fails, proxy falls back to `spawn_blocking` for all calls (degraded performance but no crash)
 
 **Operational visibility for pyo3-asyncio fallback:**
+
 - **WARN logging**: When falling back to `spawn_blocking` (pyo3-asyncio init failed), log at WARN level: `"pyo3-asyncio init failed, falling back to spawn_blocking for provider={provider}"`
 - **/health endpoint**: Exposes `pyo3_asyncio_available: bool` flag (true = async bridge active, false = fallback mode)
 - **Metrics**: `quota_router_pyo3_async_bridge_fallback_total` counter (labels: `provider`) increments each time a fallback occurs
@@ -1695,6 +1708,7 @@ async fn handle_completion(req: Request, provider: &str) -> Result<Response, Hyp
 **Key invariant:** PyO3 provider calls from the proxy ALWAYS go through the correct bridge based on `PROVIDER_SDK_TYPES`. The proxy never guesses — dispatch is explicit.
 
 **For `acompletion(stream=True)`:**
+
 - In `litellm-mode`: Rust async stream → Python async iterator via PyO3 async support
 - In `any-llm-mode`: Python async SDK stream → returned directly as `AsyncIterator[ChatCompletionChunk]`
 - In `full` mode: Uses whichever mode is active via `QUOTA_ROUTER_MODE`
@@ -1933,14 +1947,14 @@ def _stream_sync_bridge(
 
 **SSE transformation table:**
 
-| Provider  | Native SSE Format           | Normalized To     | Transform Function                |
-| --------- | --------------------------- | ----------------- | --------------------------------- |
-| OpenAI    | OpenAI SSE                  | Pass-through      | `parse_openai_sse()`              |
-| Anthropic | `event: message_delta`       | OpenAI SSE        | `parse_anthropic_sse()`            |
-| Mistral   | OpenAI SSE                  | Pass-through      | `parse_mistral_sse()`              |
-| Ollama    | Custom JSON lines           | OpenAI SSE        | `parse_ollama_sse()`              |
-| Gemini    | Provider-specific           | OpenAI SSE        | Provider-specific                 |
-| Groq      | OpenAI SSE                  | Pass-through      | `parse_openai_sse()`              |
+| Provider  | Native SSE Format      | Normalized To | Transform Function      |
+| --------- | ---------------------- | ------------- | ----------------------- |
+| OpenAI    | OpenAI SSE             | Pass-through  | `parse_openai_sse()`    |
+| Anthropic | `event: message_delta` | OpenAI SSE    | `parse_anthropic_sse()` |
+| Mistral   | OpenAI SSE             | Pass-through  | `parse_mistral_sse()`   |
+| Ollama    | Custom JSON lines      | OpenAI SSE    | `parse_ollama_sse()`    |
+| Gemini    | Provider-specific      | OpenAI SSE    | Provider-specific       |
+| Groq      | OpenAI SSE             | Pass-through  | `parse_openai_sse()`    |
 
 **Note:** LiteLLM mode (HTTP proxy) uses Rust-side SSE transformation. Any-llm mode uses Python-side SSE transformation per above.
 
@@ -2113,11 +2127,13 @@ class ChatCompletionStreamIterator:
 **Note on SSE parsing:** Phase 1 uses `async_iter_to_sync_iter()` bridge for **sync** streaming with sync providers. The bridge is available in Phase 1 — `stream=True` does NOT raise `NotImplementedError`. However, Phase 1 returns **raw provider-native chunks** via the bridge (no SSE normalization).
 
 **⚠️ Phase 1 Streaming Behavior:**
+
 - `stream=True`: Available via `async_iter_to_sync_iter()` bridge. Returns **raw provider-native chunks** (Anthropic event-stream, Mistral SSE, etc.) — NOT OpenAI SSE.
 - `raw_stream=True`: Phase 1 ignored (same as stream=True); Phase 3 marker for forcing raw chunks.
 - SSE normalization (F3): Phase 3 item — transforms provider-native chunks to OpenAI SSE format.
 
 **Phase 3 SSE Normalization Pipeline (raw_stream hook):**
+
 ```python
 # Phase 3 SSE normalization pipeline
 async def _stream_with_normalization(provider: str, raw_stream: bool, provider_chunks):
@@ -2217,6 +2233,7 @@ def _dict_to_chat_completion_chunk(obj: Dict) -> ChatCompletionChunk:
 ```
 
 **Bridge function clarification:** quota-router uses `async_iter_to_sync_iter()` (takes AsyncIterator, drives via background thread). any-llm uses `async_coro_to_sync_iter()` (takes coroutine, runs it, yields results). These are different functions for different use cases:
+
 - `async_coro_to_sync_iter`: coroutine → sync iterator (any-llm pattern)
 - `async_iter_to_sync_iter`: AsyncIterator → sync iterator (RFC pattern)
 
@@ -2539,11 +2556,11 @@ async def abatch_completion_models(
 
 **Key difference from `batch_completion`:**
 
-| Function | Messages | Models | Returns |
-| -------- | -------- | ------ | ------- |
-| `batch_completion()` | Many message sets | One model | ALL results (List[CompletionResponse]) |
-| `batch_completion_models()` | One message set | Many models | FIRST response (CompletionResponse) |
-| `batch_completion_models_all_responses()` | One message set | Many models | ALL responses (List[CompletionResponse]) |
+| Function                                  | Messages          | Models      | Returns                                  |
+| ----------------------------------------- | ----------------- | ----------- | ---------------------------------------- |
+| `batch_completion()`                      | Many message sets | One model   | ALL results (List[CompletionResponse])   |
+| `batch_completion_models()`               | One message set   | Many models | FIRST response (CompletionResponse)      |
+| `batch_completion_models_all_responses()` | One message set   | Many models | ALL responses (List[CompletionResponse]) |
 
 #### Router — Load Balancing Strategies
 
@@ -2595,6 +2612,7 @@ Rust RouterHandle (quota-router-core)
 **Construction:** Created via `RouterHandle::new(router, storage)` — router is typically `Router::global()` or a shared `Arc<Router>`. Storage is a persisted `Arc<dyn KeyStorage>` (e.g., `StoolapKeyStorage`).
 
 **Structure:**
+
 ```rust
 // quota-router-core/src/python_sdk_entry.rs
 
@@ -2705,6 +2723,7 @@ impl RouterHandle {
 ```
 
 **Python binding (quota-router-pyo3):**
+
 ```python
 class Router:
     def __init__(self, model_list, routing_strategy="simple-shuffle", **kwargs):
@@ -2729,6 +2748,7 @@ class Router:
 External Rust programs (CLI tools, other crates) can call quota-router-core directly without HTTP serialization or PyO3 overhead.
 
 **Structure:**
+
 ```rust
 // quota-router-core/src/client.rs
 
@@ -2820,6 +2840,7 @@ impl Client {
 ```
 
 **Usage:**
+
 ```rust
 use quota_router_core::client::Client;
 
@@ -2829,27 +2850,28 @@ let response = client.completion(model, messages, stream, timeout, ...).await?;
 
 **Three entry points to quota-router-core:**
 
-| Entry Point | Path | Use Case |
-|-------------|------|----------|
-| `gateway` | HTTP proxy | External services, network access |
-| `python_sdk_entry` | PyO3 | Python SDK (quota-router-pyo3) |
-| `client` | Direct Rust | CLI tools, embedded Rust programs |
+| Entry Point        | Path        | Use Case                          |
+| ------------------ | ----------- | --------------------------------- |
+| `gateway`          | HTTP proxy  | External services, network access |
+| `python_sdk_entry` | PyO3        | Python SDK (quota-router-pyo3)    |
+| `client`           | Direct Rust | CLI tools, embedded Rust programs |
 
 #### Migration Target: Rust ←→ Python State Mapping (Normative)
 
 **Purpose:** Document the authoritative mapping between Python Router state fields and their RFC-0917/Rust-core equivalents. All Python-side state is **ephemeral** (in-memory, lost on restart); Rust-core state persists via stoolap.
 
-| Python Router field (Phase 1) | Type | RFC-0917 Rust equivalent | Persisted? | Notes |
-|-------------------------------|------|--------------------------|-------------|-------|
-| `_round_robin_index` | `int` | `AtomicUsize` in `RouterState` — `fetch_add` for lock-free round-robin | No | Lock-free via atomic; no `threading.Lock` needed |
-| `_round_robin_lock` | `threading.Lock` | **Not needed** — RFC-0917 uses `AtomicUsize.fetch_add()` (no lock) | — | Lock-free eliminates TOCTOU race |
-| `_total_spend[idx]` | `int` (μunits) | `record_spend()` → `STORAGE.record_spend(&event)` → `octo_w_ledger` per RFC-0909 | **Yes** (stoolap) | Ephemeral in Python; persisted in Rust |
-| `_spend_history[idx]` | `deque(maxlen=500)` | `record_spend_with_idempotency()` → `SpendEvent` ledger per RFC-0909 | **Yes** (stoolap) | Persists full history in Rust; Python had in-memory only |
-| `_active_requests[idx]` | `int` | `RouterState.connection_pools` — tracks active requests per deployment | No | In-memory state for `least-busy` strategy |
-| `_latencies[idx]` | `deque(maxlen=100)` | `LatencyTracker.samples: HashMap<String, Vec<u64>>` — microsecond precision | No | Fixed 100-sample window; `best_provider()` for latency-based routing |
-| `_by_model` | `Dict[str, List[int]]` | `Router.provider_impls: HashMap<String, Vec<ProviderWithState>>` | No | Model → deployment indices mapping |
+| Python Router field (Phase 1) | Type                   | RFC-0917 Rust equivalent                                                         | Persisted?        | Notes                                                                |
+| ----------------------------- | ---------------------- | -------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------- |
+| `_round_robin_index`          | `int`                  | `AtomicUsize` in `RouterState` — `fetch_add` for lock-free round-robin           | No                | Lock-free via atomic; no `threading.Lock` needed                     |
+| `_round_robin_lock`           | `threading.Lock`       | **Not needed** — RFC-0917 uses `AtomicUsize.fetch_add()` (no lock)               | —                 | Lock-free eliminates TOCTOU race                                     |
+| `_total_spend[idx]`           | `int` (μunits)         | `record_spend()` → `STORAGE.record_spend(&event)` → `octo_w_ledger` per RFC-0909 | **Yes** (stoolap) | Ephemeral in Python; persisted in Rust                               |
+| `_spend_history[idx]`         | `deque(maxlen=500)`    | `record_spend_with_idempotency()` → `SpendEvent` ledger per RFC-0909             | **Yes** (stoolap) | Persists full history in Rust; Python had in-memory only             |
+| `_active_requests[idx]`       | `int`                  | `RouterState.connection_pools` — tracks active requests per deployment           | No                | In-memory state for `least-busy` strategy                            |
+| `_latencies[idx]`             | `deque(maxlen=100)`    | `LatencyTracker.samples: HashMap<String, Vec<u64>>` — microsecond precision      | No                | Fixed 100-sample window; `best_provider()` for latency-based routing |
+| `_by_model`                   | `Dict[str, List[int]]` | `Router.provider_impls: HashMap<String, Vec<ProviderWithState>>`                 | No                | Model → deployment indices mapping                                   |
 
 **Critical notes:**
+
 - `_state_lock` (Python `threading.Lock`) has **no equivalent in RFC-0917** because Rust core uses lock-free atomics (`AtomicUsize`) or interior mutability (`RwLock<RouterState>`). Python locks are not needed in the Rust delegation layer.
 - All ephemeral Python state (latencies, active requests) is **in-memory only** in Rust core too — process restart resets it identically.
 - All persisted Python state (`_total_spend`, `_spend_history`) maps to **stoolap persistence** via `record_spend()` — survives process restart.
@@ -2910,15 +2932,16 @@ All routing state and strategy implementations are defined in RFC-0917 (Router s
 
 **Caching Implementation Stages:**
 
-| Phase | Cache Type | Mechanism |
-|-------|-----------|-----------|
-| Phase 1-2 | **Exact-match KV cache** | SHA256(request_hash) → cached response. No embedding model required. |
-| Phase 3 (RFC-0913) | **Semantic cache** | Embedding model vectorizes prompts; similarity threshold determines cache hit. Requires `semantic_cache_model` parameter. |
+| Phase              | Cache Type               | Mechanism                                                                                                                 |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Phase 1-2          | **Exact-match KV cache** | SHA256(request_hash) → cached response. No embedding model required.                                                      |
+| Phase 3 (RFC-0913) | **Semantic cache**       | Embedding model vectorizes prompts; similarity threshold determines cache hit. Requires `semantic_cache_model` parameter. |
 
 **Phase 1-2 Implementation (exact-match KV):**
 
 **Request hash computation (canonical JSON):**
-```python
+
+````python
 import hashlib
 import json
 
@@ -2951,23 +2974,21 @@ def completion(model: str, messages: List[Dict], cache_bypass: bool = False, **k
     deployment = router.select(...)                          # 4. Route AFTER hash computation
     budget.check(deployment, ...)                             # 5. Budget check
     # ... provider call ...
-```
+````
+
 """
-    canonical = {
-        "provider": provider,
-        "model": model,
-        "messages": messages,
-    }
-    # Canonical JSON: sorted keys, consistent separators, NO ASCII escaping
-    # allow_nan=False ensures NaN/Inf raise ValueError (matches Rust serde_json)
-    # ValueError (from nested NaN/Inf) and TypeError (from non-serializable objects)
-    # are both converted to InvalidRequestError to prevent unhandled crashes
-    try:
-        serialized = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    except (ValueError, TypeError, OverflowError) as e:
-        raise InvalidRequestError(f"Invalid or non-serializable data in request payload: {e}")
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-```
+canonical = {
+"provider": provider,
+"model": model,
+"messages": messages,
+} # Canonical JSON: sorted keys, consistent separators, NO ASCII escaping # allow_nan=False ensures NaN/Inf raise ValueError (matches Rust serde_json) # ValueError (from nested NaN/Inf) and TypeError (from non-serializable objects) # are both converted to InvalidRequestError to prevent unhandled crashes
+try:
+serialized = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+except (ValueError, TypeError, OverflowError) as e:
+raise InvalidRequestError(f"Invalid or non-serializable data in request payload: {e}")
+return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+````
 
 **Note:** The canonical JSON serialization (`sort_keys=True, separators=(",", ":")`, `ensure_ascii=False`, `allow_nan=False`) ensures that:
 - `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}` produce the same hash (sorted keys)
@@ -3015,7 +3036,7 @@ def compute_request_hash(provider: str, model: str, messages: List[Dict], cache_
         if isinstance(content, str) and len(content) > 10_000:
             return None  # Bypass cache for large content
     # ... hash computation ...
-```
+````
 
 **Limitation:** Character count ≠ token count. Non-ASCII Unicode, base64 images, and tool-call JSON inflate chars disproportionately to tokens. The heuristic is a fast approximation — some 10k-token payloads may bypass, some 60k-char ASCII may not. For token-accurate bypass, use explicit `cache_bypass=True` parameter or Phase 3 semantic cache.
 
@@ -3044,6 +3065,7 @@ fn cache_insert(
 ```
 
 **Phase 3 Enhancement (semantic cache):**
+
 ```python
 # Additional parameter for Phase 3
 semantic_cache_model: Optional[str] = None,  # e.g., "text-embedding-3-small"
@@ -3051,6 +3073,7 @@ similarity_threshold: float = 0.95,  # Cosine similarity threshold for cache hit
 ```
 
 Phase 3 semantic cache uses a **separate** lookup path:
+
 - Phase 1-2: `kv_lookup` / `kv_insert` — exact SHA256 hash match (no similarity)
 - Phase 3: `semantic_lookup` — embedding vector similarity search
 
@@ -3092,6 +3115,7 @@ The Router's `num_retries` controls the **fallback loop** (trying different depl
 **Implementation:** Pass `max_retries=1` to Rust core when initializing Router with any fallback configuration. This is NOT a recommendation — it is a REQUIRED specification.
 
 **Example coordination:**
+
 ```python
 # If Router has 2 fallback targets and FallbackExecutor retry_count=2:
 # - Best case: first deployment succeeds in 1 call (1 + 0 Rust retries)
@@ -3224,20 +3248,20 @@ def map_upstream_exception(message: str, status_code: Optional[int] = None) -> Q
 
 The Rust core raises structured errors that are translated to Python exceptions via the PyO3 bridge:
 
-| Rust Error Type | Python Exception | Trigger Condition |
-|-----------------|-----------------|-------------------|
-| `BudgetError::InsufficientBalance` | `InsufficientFundsError` | OCTO-W balance < request cost |
-| `BudgetError::KeyBudgetExceeded` | `InsufficientFundsError` | Per-key budget limit exceeded |
-| `BudgetError::TeamBudgetExceeded` | `InsufficientFundsError` | Team budget limit exceeded |
-| `KeyError::NotFound` | `MissingApiKeyError` | API key not found in storage |
-| `KeyError::Revoked` | `AuthenticationError` | API key has been revoked |
-| `KeyError::InvalidFormat` | `InvalidRequestError` | Malformed API key format |
-| `StorageError::OctoWNotEnabled` | `InvalidRequestError` | OCTO-W not enabled for team |
-| `StorageError::Database(_)` | `ProviderError` | Upstream storage/database failure |
-| `RateLimitError` | `RateLimitError` | Provider rate limit hit |
-| `ContextLengthExceededError` | `ContextLengthExceededError` | Prompt exceeds model context |
-| `ContentFilterError` | `ContentFilterError` | Content policy violation |
-| `UpstreamProviderError` | `ProviderError` | Generic provider error |
+| Rust Error Type                    | Python Exception             | Trigger Condition                 |
+| ---------------------------------- | ---------------------------- | --------------------------------- |
+| `BudgetError::InsufficientBalance` | `InsufficientFundsError`     | OCTO-W balance < request cost     |
+| `BudgetError::KeyBudgetExceeded`   | `InsufficientFundsError`     | Per-key budget limit exceeded     |
+| `BudgetError::TeamBudgetExceeded`  | `InsufficientFundsError`     | Team budget limit exceeded        |
+| `KeyError::NotFound`               | `MissingApiKeyError`         | API key not found in storage      |
+| `KeyError::Revoked`                | `AuthenticationError`        | API key has been revoked          |
+| `KeyError::InvalidFormat`          | `InvalidRequestError`        | Malformed API key format          |
+| `StorageError::OctoWNotEnabled`    | `InvalidRequestError`        | OCTO-W not enabled for team       |
+| `StorageError::Database(_)`        | `ProviderError`              | Upstream storage/database failure |
+| `RateLimitError`                   | `RateLimitError`             | Provider rate limit hit           |
+| `ContextLengthExceededError`       | `ContextLengthExceededError` | Prompt exceeds model context      |
+| `ContentFilterError`               | `ContentFilterError`         | Content policy violation          |
+| `UpstreamProviderError`            | `ProviderError`              | Generic provider error            |
 
 ```rust
 // PyO3 bridge exception translation
@@ -3337,6 +3361,7 @@ if api_key.startswith("any-"):
 ```
 
 **For per-call usage:**
+
 ```python
 # Using any- key per-call (any-llm pattern):
 completion(
@@ -4112,6 +4137,7 @@ HTTP proxy process (hyper/axum, Rust):
 ### How Rust core has PyO3 in any-llm-mode
 
 In `any-llm-mode` builds:
+
 1. `quota-router-core` is compiled with `pyo3/extension-module` feature
 2. The Rust core binary includes PyO3 Rust bindings and links against `libpython`
 3. When the proxy calls into Rust core, the Rust code can invoke Python functions (call Python SDKs)
@@ -4129,14 +4155,14 @@ In `any-llm-mode` builds:
 
 ### Comparison to litellm-mode
 
-| Aspect | litellm-mode | any-llm-mode |
-|--------|-------------|-------------|
-| HTTP proxy process | Rust (hyper/axum) | Rust (hyper/axum) — SAME process |
-| What proxy calls | quota-router-core (Rust) | quota-router-core (Rust) — SAME call |
-| Provider strategy | reqwest (Rust HTTP client) | PyO3 → Python SDK |
-| Python involvement | None | Yes — via PyO3 in Rust core |
-| Python installation required | No | Yes |
-| GIL management | N/A | Yes — managed by Rust core |
+| Aspect                       | litellm-mode               | any-llm-mode                         |
+| ---------------------------- | -------------------------- | ------------------------------------ |
+| HTTP proxy process           | Rust (hyper/axum)          | Rust (hyper/axum) — SAME process     |
+| What proxy calls             | quota-router-core (Rust)   | quota-router-core (Rust) — SAME call |
+| Provider strategy            | reqwest (Rust HTTP client) | PyO3 → Python SDK                    |
+| Python involvement           | None                       | Yes — via PyO3 in Rust core          |
+| Python installation required | No                         | Yes                                  |
+| GIL management               | N/A                        | Yes — managed by Rust core           |
 
 ### GIL handling for concurrent requests
 
@@ -4180,17 +4206,20 @@ quota-router-core = { path = "../quota-router-core", features = ["full"] }
 ```
 
 **Mode controls only: what library is used to call providers (provider integration strategy)**
+
 - `litellm-mode` (core): reqwest → direct to provider REST APIs
 - `any-llm-mode` (core): PyO3 → official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
 - `full` (core): Both simultaneously
 
 **Interface availability (all modes identical — NOT controlled by feature flags):**
-| Interface       | litellm-mode | any-llm-mode | full |
-|-----------------|:------------:|:------------:|:----:|
-| HTTP proxy      |      ✅      |      ✅      |  ✅  |
-| Python SDK      |      ✅      |      ✅      |  ✅  |
+
+| Interface  | litellm-mode | any-llm-mode | full |
+| ---------- | :----------: | :----------: | :--: |
+| HTTP proxy |      ✅      |      ✅      |  ✅  |
+| Python SDK |      ✅      |      ✅      |  ✅  |
 
 **Example deployment scenarios:**
+
 - `litellm-mode` build: Run as HTTP proxy (`ProxyServer` on port 8080) AND use Python SDK via `import quota_router`
 - `any-llm-mode` build: Run as HTTP proxy AND use Python SDK
 - `full` build: Both simultaneously
@@ -4201,15 +4230,16 @@ quota-router-core = { path = "../quota-router-core", features = ["full"] }
 
 Mode is selected at **build time** via Cargo feature flags. **Mode selects provider strategy (reqwest vs PyO3), NOT interface availability:**
 
-| Installation                          | Mode           | Provider Strategy | HTTP Proxy? | Python SDK? |
-| ------------------------------------- | -------------- | ----------------- |:-----------:|:-----------:|
-| `pip install quota-router` (PyPI)     | `any-llm-mode` | PyO3 only         | ✅ | ✅ |
-| `quota-router-gateway` (crates.io)    | `litellm-mode` | reqwest only      | ✅ | ✅ |
-| `cargo build --features full`          | `full`         | Both              | ✅ | ✅ |
+| Installation                       | Mode           | Provider Strategy | HTTP Proxy? | Python SDK? |
+| ---------------------------------- | -------------- | ----------------- | :---------: | :---------: |
+| `pip install quota-router` (PyPI)  | `any-llm-mode` | PyO3 only         |     ✅      |     ✅      |
+| `quota-router-gateway` (crates.io) | `litellm-mode` | reqwest only      |     ✅      |     ✅      |
+| `cargo build --features full`      | `full`         | Both              |     ✅      |     ✅      |
 
 **Key insight:** Even `litellm-mode` builds have Python SDK available. Even `any-llm-mode` builds have HTTP proxy available. Mode controls HOW providers are called, not WHETHER an interface exists.
 
 **Build-time mode selection:**
+
 - Mode is selected at **compile time** via Cargo feature flags on `quota-router-core`
 - `quota-router-pyo3` (Python SDK) does NOT have per-mode feature flags — it always wraps `quota-router-core`
 - The mode affects which HTTP client is compiled into `quota-router-core`:
@@ -4301,17 +4331,18 @@ quota_router/
 
 ### Test File Mapping
 
-| Test File | Covers |
-|-----------|--------|
+| Test File                       | Covers                        |
+| ------------------------------- | ----------------------------- |
 | `tests/test_drop_in_litellm.py` | LiteLLM drop-in compatibility |
 | `tests/test_drop_in_any_llm.py` | any-llm drop-in compatibility |
-| `tests/e2e_python.py` | E2E via OpenAI endpoint |
-| `tests/e2e_anthropic.py` | E2E via Anthropic endpoint |
-| `tests/smoke_test.py` | Basic import and structure |
+| `tests/e2e_python.py`           | E2E via OpenAI endpoint       |
+| `tests/e2e_anthropic.py`        | E2E via Anthropic endpoint    |
+| `tests/smoke_test.py`           | Basic import and structure    |
 
 ### embedding() / aembedding() Tests
 
 **Parameter Validation:**
+
 - `test_embedding_positional_args`: `embedding("text-embedding-3-small", ["hello"])` — positional model, input
 - `test_embedding_keyword_model`: `embedding(model="text-embedding-3-small", input=["hello"])` — keyword model
 - `test_embedding_litellm_convention`: `embedding(model="...", input=["hello"])` — litellm uses `input=`
@@ -4323,26 +4354,31 @@ quota_router/
 - `test_embedding_list_input`: `embedding(model="...", input=["hello", "world"])` — list of strings
 
 **Return Type:**
+
 - `test_embedding_returns_object`: response has `.data`, `.model`, `.usage` fields
 - `test_embedding_data_is_list`: `response.data` is a list of embedding objects
 - `test_embedding_data_has_embedding`: each item has `.embedding` (list of floats)
 - `test_embedding_usage_has_tokens`: `response.usage.prompt_tokens > 0`
 
 **Advanced:**
+
 - `test_embedding_client_args`: `embedding(model, input=["hello"], client_args={"timeout": 30})`
 
 **Error Handling:**
+
 - `test_embedding_invalid_model`: raises `ModelNotFoundError`
 - `test_embedding_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
 - `test_embedding_rate_limited`: raises `RateLimitError` with `retry_after`
 
 **Async:**
+
 - `test_aembedding_returns_coroutine`: `aembedding(...)` returns a coroutine
 - `test_aembedding_same_result_as_sync`: `await aembedding(...)` matches `embedding(...)`
 
 ### messages() / amessages() Tests
 
 **Parameter Validation:**
+
 - `test_messages_required_params`: `messages(model, messages, max_tokens)` — all required
 - `test_messages_max_tokens_required`: `messages(model="...", messages=[...])` without max_tokens raises TypeError
 - `test_messages_system_optional`: `messages(model, messages, max_tokens, system="You are helpful")` — system is optional
@@ -4354,16 +4390,19 @@ quota_router/
 - `test_messages_client_args`: `messages(model, messages, max_tokens, client_args={"timeout": 30})`
 
 **Provider Routing:**
+
 - `test_messages_routes_to_anthropic`: messages() routes to Anthropic Messages API
 - `test_messages_with_provider_kwarg`: `messages(model="...", messages=[...], max_tokens=100, provider="anthropic")`
 
 **Error Handling:**
+
 - `test_messages_invalid_model`: raises `ModelNotFoundError`
 - `test_messages_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
 
 ### responses() / aresponses() Tests
 
 **Parameter Validation:**
+
 - `test_responses_litellm_convention`: `responses(model="...", input="Hello")` — litellm uses `input=`
 - `test_responses_anyllm_convention`: `responses(model="...", input_data="Hello")` — any-llm uses `input_data=`
 - `test_responses_both_params_error`: `responses(model="...", input="a", input_data="b")` — must raise error
@@ -4373,12 +4412,14 @@ quota_router/
 - `test_responses_client_args`: `responses(model, input, client_args={"timeout": 30})`
 
 **Error Handling:**
+
 - `test_responses_invalid_model`: raises `ModelNotFoundError`
 - `test_responses_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
 
 ### batch Functions Tests
 
 **batch_create():**
+
 - `test_batch_create_required_params`: `batch_create(provider, input_file, endpoint)` — all required
 - `test_batch_create_no_model`: `batch_create` does NOT accept `model` param
 - `test_batch_create_endpoint_required`: `batch_create(provider, input_file)` without endpoint raises TypeError
@@ -4386,20 +4427,24 @@ quota_router/
 - `test_batch_create_return_type`: returns `BatchCreateResponse` with `.batch_id`, `.status` fields
 
 **batch_retrieve():**
+
 - `test_batch_retrieve_param_order`: `batch_retrieve(provider, batch_id)` — provider first
 - `test_batch_retrieve_provider_required`: `batch_retrieve(batch_id="...")` without provider raises TypeError
 - `test_batch_retrieve_return_type`: returns `BatchRetrieveResponse` with `.status`, `.output_file_id` fields
 
 **batch_cancel():**
+
 - `test_batch_cancel_param_order`: `batch_cancel(provider, batch_id)` — provider first
 - `test_batch_cancel_return_type`: returns `BatchRetrieveResponse`
 
 **batch_list():**
+
 - `test_batch_list_required_params`: `batch_list(provider)` — provider required
 - `test_batch_list_limit_optional`: `batch_list(provider, limit=10)` — limit is optional
 - `test_batch_list_return_type`: returns `Sequence[BatchCreateResponse]`
 
 **batch_results():**
+
 - `test_batch_results_param_order`: `batch_results(provider, batch_id)` — provider first
 - `test_batch_results_return_type`: returns `BatchResult` with `.results` list
 - `test_batch_results_not_complete_error`: raises `BatchNotCompleteError` if batch not done
@@ -4407,31 +4452,37 @@ quota_router/
 ### list_models() Tests
 
 **Parameter Validation:**
+
 - `test_list_models_provider_required`: `list_models(provider="openai")` — provider is required
 - `test_list_models_no_provider_error`: `list_models()` without provider raises TypeError
 - `test_list_models_optional_params`: `list_models(provider, api_key="...", api_base="...")`
 - `test_list_models_client_args`: `list_models(provider, client_args={"timeout": 30})`
 
 **Return Type:**
+
 - `test_list_models_return_type`: returns `Sequence[Model]` with `.id`, `.name`, `.provider`, `.created` fields
 
 **Error Handling:**
+
 - `test_list_models_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
 - `test_list_models_bad_provider`: raises `UnsupportedProviderError`
 
 ### Dual-Convention Tests (Drop-in Compatibility)
 
 **LiteLLM Convention:**
+
 - `test_litellm_embedding_input_kwarg`: `import quota_router as litellm; litellm.embedding(model="...", input=[...])`
 - `test_litellm_responses_input_kwarg`: `import quota_router as litellm; litellm.responses(model="...", input="...")`
 
 **any-llm Convention:**
+
 - `test_anyllm_embedding_inputs_kwarg`: `import quota_router as any_llm; any_llm.embedding(model="...", inputs=[...])`
 - `test_anyllm_responses_input_data_kwarg`: `import quota_router as any_llm; any_llm.responses(model="...", input_data="...")`
 
 ### Exception Compatibility Tests
 
 **LiteLLM Aliases:**
+
 - `test_budget_exceeded_alias`: `BudgetExceededError` catches `InsufficientFundsError`
 - `test_service_unavailable_alias`: `ServiceUnavailableError` catches `UpstreamProviderError`
 - `test_api_connection_alias`: `APIConnectionError` catches `GatewayTimeoutError`
@@ -4442,6 +4493,7 @@ quota_router/
 - `test_content_policy_alias`: `ContentPolicyViolationError` catches `ContentFilterError`
 
 **any-llm Exceptions:**
+
 - `test_anyllm_error_base`: `AnyLLMError` catches `QuotaRouterError`
 - `test_authentication_error`: `AuthenticationError` is catchable
 - `test_rate_limit_error`: `RateLimitError` is catchable
@@ -4464,13 +4516,14 @@ The SDK has **two incompatible API key handling modes** with different security 
 | Aspect                 | `set_api_key()` (recommended)  | `api_key=...` per-call                  |
 | ---------------------- | ------------------------------ | --------------------------------------- |
 | Key storage            | Rust memory (enforceable)      | Goes directly to provider SDK           |
-| Budget enforcement     | Enforceable (HMAC-SHA256 key) | **NOT enforceable** (SDK bypasses Rust) |
+| Budget enforcement     | Enforceable (HMAC-SHA256 key)  | **NOT enforceable** (SDK bypasses Rust) |
 | Virtual key (RFC-0903) | Enforceable                    | **NOT enforceable**                     |
 | Traceability           | Key identity → Rust → Provider | Key identity → Provider directly        |
 
 **Budget Identity Derivation (per RFC-0917 §Budget Identity in SDK Mode):**
 
 When `set_api_key(provider, api_key)` is called:
+
 1. The SDK stores the provider API key in Rust memory via StoolapKeyStorage
 2. `key_id = HMAC-SHA256(server_secret, provider_key)[:16]` — 16-byte budget identity
 3. A budget entry is created/updated in the `api_keys` table with `key_id`, `budget_limit`, `rpm_limit`, `tpm_limit`
@@ -4590,6 +4643,7 @@ def _get_server_secret() -> bytes:
 - [ ] Async iterator bridge for sync streaming (`async_iter_to_sync_iter()`)
 
 **Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3. OpenAI and Anthropic are the priority providers because:
+
 1. OpenAI covers the `provider=model` style (LiteLLM compatibility)
 2. Anthropic covers the `provider:model` style (any-llm compatibility)
 
@@ -4643,11 +4697,13 @@ All `a*` functions must be **true async** — they `.await` the Rust core's asyn
 ### How It Works
 
 **pyo3 0.21 `experimental-async`** (already enabled in `Cargo.toml`):
+
 - `pub async fn` in `#[pyfunction]` creates a native Python coroutine
 - pyo3 manages the tokio runtime internally
 - The coroutine can `.await` Rust futures without blocking
 
 **Rust core already has async traits:**
+
 ```rust
 // quota-router-core/src/native_http/mod.rs
 #[async_trait]
@@ -4692,6 +4748,7 @@ pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
 ```
 
 **3. Apply same pattern to all `a*` functions:**
+
 - `aembedding()` → `provider.embedding(&request, api_key).await`
 - `amessages()` → async provider dispatch (once Messages API is implemented)
 - `aresponses()` → async provider dispatch (once Responses API is implemented)
@@ -4736,14 +4793,14 @@ async fn dispatch_py_bridge_async(
 
 ### Scope
 
-| Function | native_http async | py_bridge async |
-|----------|------------------|-----------------|
-| `acompletion()` | Phase 1 | Phase 2 (pyo3_asyncio) |
-| `aembedding()` | Phase 1 | Phase 2 |
-| `amessages()` | Phase 1 | Phase 2 |
-| `aresponses()` | Phase 1 | Phase 2 |
-| `abatch_*` | Phase 1 | Phase 2 |
-| `alist_models()` | Phase 1 | Phase 2 |
+| Function         | native_http async | py_bridge async        |
+| ---------------- | ----------------- | ---------------------- |
+| `acompletion()`  | Phase 1           | Phase 2 (pyo3_asyncio) |
+| `aembedding()`   | Phase 1           | Phase 2                |
+| `amessages()`    | Phase 1           | Phase 2                |
+| `aresponses()`   | Phase 1           | Phase 2                |
+| `abatch_*`       | Phase 1           | Phase 2                |
+| `alist_models()` | Phase 1           | Phase 2                |
 
 Phase 1: `native_http` providers use Rust async (tokio + reqwest async).
 Phase 2: `py_bridge` providers use `pyo3_asyncio` to call Python async SDKs.
@@ -4764,72 +4821,72 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 ## Version History
 
-| Version | Date       | Changes |
-| ------- | ---------- | ------- |
-| 1.72    | 2026-05-21 | **SPEC** Added sync get_response()/delete_response() with `provider` first param, matching test specs. Added async variants aget_response()/adelete_response(). |
-| 1.71    | 2026-05-21 | **FIX** C3: Removed stale `model` param from batch_create() docstring. **FIX** H3: Updated test specs — removed NotImplementedError stubs for batch/messages/responses, added return type and error handling tests. **FIX** H6: Added thinking/cache_control/client_args tests for messages(). **FIX** M3/M4: Added client_args tests for embedding() and list_models(). |
-| 1.70    | 2026-05-10 | **FIX** O1: Provider count corrected from 41→42 throughout (header table, Phase 2 checklist, KNOWN_PROVIDERS description, platform provider reference, acceptance criteria table). Mission 0920-b correctly lists 42 providers with deepinfra; RFC was inconsistent. |
-| 1.69    | 2026-05-10 | **FIX** N1 (Low): Updated stale deprecation notice to reflect v1.68 structural change. The notice previously referenced "Python Router class" — a class that was ERASED in v1.68. Updated to confirm current RouterHandle is a thin PyO3 delegation stub with NO routing state, and that all heavy lifting resides in RFC-0917. |
-| 1.68    | 2026-05-09 | **ERASE** Deprecated Python Router class (~2907-3387 lines): Removed all Phase 1 Python routing state, 8 routing strategy implementations, `_record_spend` with decay math, `_select_by_weighted_spend`, and all `completion`/`acompletion` methods with fallback logic. RFC-0920 is now purely a thin-binding layer: API surface, type marshaling, exception translation, and Phase 2 state mapping reference. All heavy lifting (ProviderWithState, RoutingStrategy enum, all 8 strategy algorithms, SpendTracker with decay math) is now exclusively in RFC-0917. |
-| 1.67    | 2026-05-09 | **FIX** RFC-0920 thin-binding constraint made explicit: Summary now states sole role is API surface + type marshaling; all heavy lifting is in RFC-0917. Dependencies marks RFC-0917 as "definitive source." Crate Architecture section now has red box: "RFC-0920 MUST NEVER DEFINE ANY HEAVY LIFTING." Phase 4 unspecced items removed per deferred-vs-unspecified rule. |
-| 1.66    | 2026-05-09 | **CROSS** F1: RouterHandle.batch_completion_models_all() in RFC-0917 v2.43 now passes all 22 params (was dropping 20 params). **REMOVE** Phase 4 unspecced items (modalities, audio, prediction, 8 routing strategies, additional providers) per deferred-vs-unspecified rule — no spec means remove. F1/LangChain and F2/LlamaIndex removed (no spec). F3/SSE normalization deferred to RFC-0906 Phase 3. F4/Response caching already references RFC-0906. Cross-reference to F4 (SdkMessage.name clarification) and F6 (duplicate TODO removal). |
-| 1.65    | 2026-05-09 | **CROSS** E1/E2/E3: Client.batch_completion_models() and batch_completion_models_all() now have same 22-param signatures as RouterHandle (per RFC-0917 v2.42). |
-| 1.64    | 2026-05-09 | **CROSS** D4/D7/D8: RFC-0917 v2.41 SdkMessage.role now specifies valid values (user|assistant|system|function|tool). RFC-0920 Python SDK should validate role against these values at entry point. |
-| 1.63    | 2026-05-09 | **FIX** D1/D2: RouterHandle.batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens — inconsistent with Client section which had full params). **FIX** D9: batch_completion_models_all() documented as returning only successful responses (failures silently dropped). |
-| 1.62    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (per RFC-0917 v2.39). **FIX** C2: Client.get_metrics() returns Result (matches RouterHandle). **FIX** C6: batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens). |
-| 1.61    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was incomplete in v1.60). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** B5: Added RouterHandle::new() constructor. **FIX** B4: Client section now shows full method list matching RouterHandle. Cross-RFC: RFC-0917 v2.38 provides concrete implementation. |
-| 1.60    | 2026-05-09 | **FIX** A1: Added `client` module entry point for direct Rust-to-core calls (no HTTP, no PyO3). **FIX** A3: RouterHandle.completion() now enumerates all 22 params per Completion API section. **FIX** A4: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** A8: Version history now notes RFC-0917 v2.37 cross-reference (RouterHandle defined there). Cross-RFC dependency: RFC-0917 v2.37 provides concrete `RouterHandle` struct which RFC-0920 references throughout. |
-| 1.58    | 2026-05-06 | **FIX** N1: _record_spend pricing and write restored (was missing — only comment remained). **FIX** N3: UnsupportedProviderError `field()` removed (non-dataclass). **FIX** N4: BatchNotCompleteError, AllModelsFailedError, BatchPartialFailureError now have `__init__`. **FIX** N5: into_async → into_future in RFC-0920 proxy code (2 locations). **FIX** N6: _stream_provider_response filters None from SSE parsers. **FIX** N7: parse_anthropic_sse now stateful via _AnthropicSSEParser class (multi-line SSE). **FIX** N8: Router.completion() indentation fixed (comment and result dedented to try block). **FIX** N13/N21: _spend_history initialized in __init__; guard reordered before access. **FIX** N14: batch_completion_models docstring corrected (losers run to completion, not cancelled). **FIX** N15: _get_server_secret fallback gate now enforced. **FIX** N16: QUOTA_ROUTER_MODE clarified as label-only (not provider strategy switch). **FIX** N17: __deployment_mode__ via cfg_if! (mutually exclusive). **FIX** N18: bedrock added to PROVIDER_SDK_TYPES registry (Rust + Python + YAML). **FIX** N19: normalize_timeout precedence corrected (.total > .read > .connect). **FIX** N20: batch_completion_models_all_responses return type List[Optional[CompletionResponse]]. **FIX** N22: Router.completion() imports time inside try block. |
-| 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard. |
-| 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box and Mode Gate ≠ Interface invariant already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
-| 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture: Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement: Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
-| 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |
-| 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |
-| 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |
-| 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |
-| 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents. |
-| 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking`, `modalities`, `audio`, `prediction` to both sync and async completion signatures. |
-| 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation. |
-| 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
-| 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |
-| 1.42    | 2026-04-29 | Fix external adversarial review round 22: C1 (explicit cache_bypass delegation in Router.completion), C2 (whitespace-agnostic CI regex allows rustfmt), H1 (pure-dict-literal codegen contract + error message), H2 (cache_bypass docstring clarifies kwargs-only validation), M1 (pathlib script-relative path resolution), M2 (math.exp2 decay optimization pushes threshold to >12k RPS), L1 (idiomatic regex character class), L2 (router_lock_hold_time_us histogram definition). |
-| 1.41    | 2026-04-29 | Fix external adversarial review round 21: C1 (docstring aligned with implementation), C2 (try/except around ast.literal_eval + tree.body iteration), H1 (decay math documented with trade-off note), H2 (strict Rust const array format mandated), M1 (comment added clarifying len==1 overlap), M2 (docstring clarifies caller responsibility), L1 (tree.body replaces ast.walk), L2 (now = time.monotonic() captured once). |
-| 1.40    | 2026-04-29 | Fix external adversarial review round 20: C1 (ast.literal_eval replaces exec()), C2 (setdefault replaced with lock-protected if-not-in), H1 (cache_bypass skips _validate_no_nan_inf when True), H2 (YAML-driven codegen parity + file existence guards), M1 (cache_bypass docstring includes cost warning), M2 (already addressed in C2), L1 (deque handles single-message dedup), L2 (file existence checks added). |
-| 1.39    | 2026-04-29 | Fix external adversarial review round 21: C1 (use setdefault for atomic deque init — no check-then-act race), C2 (add empty-message guard + isinstance(content, str) check for multimodal safety), H1 (get_pricing moved to module level as _get_pricing — eliminates hot-path import), H2 (replaced git-dependent bash script with environment-agnostic Python schema validator), M1 (cache_bypass wired into compute_request_hash — skips validation/serialization when True), M2 (capture model_name inside _state_lock before external pricing lookup), L1 (deque import already at module level), L2 (compute_request_hash signature added cache_bypass parameter). |
-| 1.38    | 2026-04-29 | Fix external adversarial review round 20: C1 (use deque(maxlen=500) instead of list slicing under lock), C2 (sample messages[0] and messages[-1] instead of [:3]), H1 (pricing lookup moved outside _state_lock — must be O(1) in-memory access), H2 (replaced impossible "identical at line/entry level" CI rule with YAML source-hash and schema parity validation), M1 (corrected normalize_to_openai_sse docstring: Mistral/Ollama yield SDK-parsed dicts, not raw SSE strings), M2 (added cache_bypass: bool = False to both unified signatures), L1 (added OverflowError to json.dumps exception handler), L2 (added explicit call-site snippet enforcing execution order). |
-| 1.37    | 2026-04-29 | Fix external adversarial review round 19: C1 (reverted split-lock to single lock acquisition in _record_spend, eliminates TOCTOU race), C2 (catch (ValueError, TypeError) in compute_request_hash), H1 (O(k=3) heuristic replaces O(N) sum for cache bypass guard), H2 (documented char-vs-token mismatch limitation and configurable bypass options), M1 (added providers_sdk_types.yaml single source of truth for Python/Rust registry sync), M2 (bounded _spend_history with maxlen=500 on truncate), L1 (mandated compute_request_hash invocation before routing/budget checks), L2 (added normalize_to_openai_sse explicit signature and error contract). |
-| 1.36    | 2026-04-29 | Fix external adversarial review round 18: C1 (json.dumps wrapped in try/except → InvalidRequestError on nested NaN/Inf), C2 (Rust dispatch .unwrap_or(&"sync") aligned with Python default="sync"), H1 (_record_spend: compute elapsed/decay outside lock, lock hold target <50μs), H2 (compute_request_hash returns None for >50k char payloads, bypassing cache), M1 (Prometheus /metrics and OpenTelemetry OTLP specified for fallback metrics), M2 (documented time.monotonic() ephemeral semantics and restart behavior), L1 (added _validate_no_nan_inf call site in completion/acompletion entry), L2 (added Phase 3 raw_stream bypass hook in SSE normalization pipeline). |
-| 1.35    | 2026-04-29 | Fix external adversarial review round 17: C2 (SDK entry validates NaN/Inf → InvalidRequestError; compute_request_hash removed recursive sanitize, uses allow_nan=False), H1 (PROVIDER_SDK_TYPES default changed from "async" to "sync" for safety), M1 (removed recursive sanitize from compute_request_hash; top-level only validation preserves G1 <10ms), M2 (copy-on-read snapshot pattern for _total_spend reduces lock contention), L1 (raw_stream lifecycle clarified: Phase 1 ignored, Phase 3 marker), L2 (WARN logging, /health flag, metrics for pyo3-asyncio fallback). C1/H2 already fixed in v1.34 (time.monotonic + elapsed clamping). |
-| 1.34    | 2026-04-28 | Fix external adversarial review round 16: C1 (time-based exponential decay: decay_factor = 0.5 ** (elapsed_seconds / half_life), prevents routing inversion), C2 (pre-sanitize floats: NaN→"NaN", Inf→"Infinity", removed allow_nan=False crash vector), H1 (added PROVIDER_SDK_TYPES registry + dispatch logic for dual-path proxy), H2 (locked _total_spend reads in cost-based-routing and usage-based-routing), M1 (simple-shuffle is uniform random, explicit weight/RPM/TPM handling noted), M2 (added pyo3-asyncio dependency + Tokio/Python compatibility + spawn_blocking fallback), L1 (raw_stream deprecated with comment, no runtime warning), L2 (terminology already correct: ModelSelector, not transient Router). |
-| 1.30    | 2026-04-28 | Fix external adversarial review round 12: E1 (defined QUOTA_ROUTER_HMAC_SECRET provisioning for SDK budget derivation), E2 (changed Rust Balance struct to u64 μunits per RFC-0904 G3), E3 (fixed resolve_provider to use RFC-0917 C8 provider-list matching — not reject-if-both), E4 (removed QUOTA_ROUTER_MODE runtime switching claim for PyPI wheels — compile-time only), E5 (fixed async_iter_to_sync_iter: use run_in_executor to avoid blocking event loop), E6 (clarified cache_responses is exact-match KV until Phase 3 semantic cache), E7 (extended exception mapping for TeamBudgetExceeded and StorageError), E8 (added .connect fallback to httpx.Timeout normalization), E9 (replaced greedy regex with longest-match provider-list for any- keys), E10 (gated stream=True in Phase 1 behind NotImplementedError, opt-in via raw_stream=True). |
-| 1.28    | 2026-04-28 | Fix external adversarial review round 10: C2 (batch_completion_models_all_responses() now has full implementation), H1 (_record_request_start/end now lock _active_requests with _state_lock), H2 (_create_stream_iter return type changed to ChatCompletionStreamIterator), H3 (weighted strategy fallback clarified as safety net), M1 (streaming spec clarified that **kwargs passes all params to provider), M2 (_EMBEDDED_MODE moved before _get_compiled_modes for clarity), M3 (_select_by_weighted_spend now locked with _state_lock), M5 (abatch_completion no longer raises on partial failure — matches LiteLLM behavior, returns successful results with None for failed). C1 was false positive — response_format already in sync completion since v1.16. |
-| 1.26    | 2026-04-28 | Fix external adversarial review round 8: H1 (batch_completion_models now waits for remaining models after first failure with loop), H2 (round-robin now thread-safe via threading.Lock), H3 (_record_spend added to record token cost for usage-based routing), H4 (usage-based-routing-v2 implementation with _spend_history and recency-weighted scoring), H7 (resolve_provider normalizes provider_param to lowercase), H8 (_stream_sync_bridge fixed — not async def, returns async_iter_to_sync_iter result), H9 (get_deployment_mode now has single implementation with _get_compiled_modes and _EMBEDDED_MODE defined), M1 (BatchPartialFailureError defined in exception hierarchy), M5 (model_list validation: if empty list passed, raises error), M10 (_EMBEDDED_MODE now defined at module level for get_deployment_mode). |
-| 1.25    | 2026-04-28 | Fix external adversarial review round 7: Observation 1 (cleaned get_budget_status docstring), Observation 2 (safety_identifier removed from any-llm-not-specced table, documented as Phase 3), Observation 3 (added note on single-target fallback behavior and resilience recommendation). |
-| 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), L11 (ignored — rebuttal: emphatic language is appropriate for critical constraints). |
-| 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), L10 (is_known_provider cross-reference added). |
-| 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims. |
-| 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode. The proxy ALWAYS calls quota-router-core directly — never through PyO3 bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |
-| 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). NOTE: C4-1 (HTTP proxy descoped to full) was INCORRECT and is reverted in v1.21. |
-| 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
-| 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |
-| 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |
-| 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature). |
-| 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |
-| 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE). |
-| 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls). |
-| 1.9     | 2026-04-28 | Fix adversarial review v1.8 issues: C1 (mode-aware default provider — litellm-mode/full default to "openai", any-llm-mode raises), I1 (functions/function_call passed through to provider SDK), I2 (modalities, audio, prediction moved Phase 4→Phase 3 as they're in LiteLLM sig), I3/I4/I5/I6 (sync completion() now has explicit timeout, api_version, extra_headers, model_list), I7 (Router raises ModelNotFoundError if model not in model_list), I9 (Phase 1 "replace mock" scope clarified — implementation vs interface), I10 (thinking accepted as alias for reasoning_effort), I11 (Embedded API renamed from "any-llm style" to "LiteLLM-compatibility style"). |
-| 1.8     | 2026-04-28 | Fix adversarial review v1.7 issues: C1 (get_deployment_mode() now uses cfg-based feature flag injection, not hardcoded string), C2 (acompletion() timeout now float\|int per LiteLLM, not str\|httpx.Timeout), C3 (MissingProviderError→ValueError; step 3 default provider removed since any-llm has none), I1 (class-based API clarified out of scope for Phase 1), I2 (async_coro_to_sync_iter vs async_iter_to_sync_iter clarified), I3 (AllModelsFailedError added to exception hierarchy), I4 (any-llm has no in-memory batch noted), I6 (set_api_key() is LiteLLM compat, any-llm has no equivalent), I8 (deployment_id added to unified signature), I9 (safety_identifier moved Phase 4→Phase 3 as it's in LiteLLM sig), I10 (functions/function_call legacy params added), L2 (Phase 1 tests completion() directly, not Router). |
-| 1.7     | 2026-04-28 | Fix adversarial review v1.6 issues: I1 (mode selection for Python SDK build explained — feature flags on quota-router-core, not pyo3), I2 (batch_completion_models() specced with reference to LiteLLM impl), I4 (Phase 1 streaming vs F3 SSE parsing clarified — Phase 1 is raw chunks, F3 is proper SSE transformation), I6 (get_deployment_mode() cfg-based compile-time injection), I7 (Phase 4 "6 strategies" corrected to "8"), I8 (acompletion() fallback comment added), I9 (acompletion() streaming AsyncIterator return type spec'd with reference to LiteLLM CustomStreamWrapper). |
-| 1.6     | 2026-04-27 | Fix adversarial review v1.5 issues: C1 (Router.completion() uses explicit import to avoid self-call infinite loop), I1 (get_budget_status behavior in any-llm vs full clarified), I2 (streaming execution path documented), I3 (platform provider RFC-0917 cross-reference verified), I4 (get_deployment_mode() implementation explained), I5 (_select_deployment model param is model_name not model_group), I6 (Phase 1 specifies OpenAI + Anthropic as first providers), L1 (sys.modules mutation removed, explicit import alias), L2 (Phase 3 "6 strategies" corrected to "8"), L3 (F3 streaming vs Phase 1 streaming clarified), L4 (async path now catches Exception like sync), L5 (model vs model_name variable semantics clarified), I7 (version history table aligned). |
-| 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917. |
-| 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917). |
-| 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items. |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params, streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
-| 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
-| 1.0     | 2026-04-27 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.72    | 2026-05-21 | **SPEC** Added sync get_response()/delete_response() with `provider` first param, matching test specs. Added async variants aget_response()/adelete_response().                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.71    | 2026-05-21 | **FIX** C3: Removed stale `model` param from batch_create() docstring. **FIX** H3: Updated test specs — removed NotImplementedError stubs for batch/messages/responses, added return type and error handling tests. **FIX** H6: Added thinking/cache_control/client_args tests for messages(). **FIX** M3/M4: Added client_args tests for embedding() and list_models().                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.70    | 2026-05-10 | **FIX** O1: Provider count corrected from 41→42 throughout (header table, Phase 2 checklist, KNOWN_PROVIDERS description, platform provider reference, acceptance criteria table). Mission 0920-b correctly lists 42 providers with deepinfra; RFC was inconsistent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.69    | 2026-05-10 | **FIX** N1 (Low): Updated stale deprecation notice to reflect v1.68 structural change. The notice previously referenced "Python Router class" — a class that was ERASED in v1.68. Updated to confirm current RouterHandle is a thin PyO3 delegation stub with NO routing state, and that all heavy lifting resides in RFC-0917.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.68    | 2026-05-09 | **ERASE** Deprecated Python Router class (~2907-3387 lines): Removed all Phase 1 Python routing state, 8 routing strategy implementations, `_record_spend` with decay math, `_select_by_weighted_spend`, and all `completion`/`acompletion` methods with fallback logic. RFC-0920 is now purely a thin-binding layer: API surface, type marshaling, exception translation, and Phase 2 state mapping reference. All heavy lifting (ProviderWithState, RoutingStrategy enum, all 8 strategy algorithms, SpendTracker with decay math) is now exclusively in RFC-0917.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.67    | 2026-05-09 | **FIX** RFC-0920 thin-binding constraint made explicit: Summary now states sole role is API surface + type marshaling; all heavy lifting is in RFC-0917. Dependencies marks RFC-0917 as "definitive source." Crate Architecture section now has red box: "RFC-0920 MUST NEVER DEFINE ANY HEAVY LIFTING." Phase 4 unspecced items removed per deferred-vs-unspecified rule.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.66    | 2026-05-09 | **CROSS** F1: RouterHandle.batch_completion_models_all() in RFC-0917 v2.43 now passes all 22 params (was dropping 20 params). **REMOVE** Phase 4 unspecced items (modalities, audio, prediction, 8 routing strategies, additional providers) per deferred-vs-unspecified rule — no spec means remove. F1/LangChain and F2/LlamaIndex removed (no spec). F3/SSE normalization deferred to RFC-0906 Phase 3. F4/Response caching already references RFC-0906. Cross-reference to F4 (SdkMessage.name clarification) and F6 (duplicate TODO removal).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.65    | 2026-05-09 | **CROSS** E1/E2/E3: Client.batch_completion_models() and batch_completion_models_all() now have same 22-param signatures as RouterHandle (per RFC-0917 v2.42).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.64    | 2026-05-09 | **CROSS** D4/D7/D8: RFC-0917 v2.41 SdkMessage.role now specifies valid values (user                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | assistant | system | function | tool). RFC-0920 Python SDK should validate role against these values at entry point. |
+| 1.63    | 2026-05-09 | **FIX** D1/D2: RouterHandle.batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens — inconsistent with Client section which had full params). **FIX** D9: batch_completion_models_all() documented as returning only successful responses (failures silently dropped).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.62    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (per RFC-0917 v2.39). **FIX** C2: Client.get_metrics() returns Result (matches RouterHandle). **FIX** C6: batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.61    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was incomplete in v1.60). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** B5: Added RouterHandle::new() constructor. **FIX** B4: Client section now shows full method list matching RouterHandle. Cross-RFC: RFC-0917 v2.38 provides concrete implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.60    | 2026-05-09 | **FIX** A1: Added `client` module entry point for direct Rust-to-core calls (no HTTP, no PyO3). **FIX** A3: RouterHandle.completion() now enumerates all 22 params per Completion API section. **FIX** A4: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** A8: Version history now notes RFC-0917 v2.37 cross-reference (RouterHandle defined there). Cross-RFC dependency: RFC-0917 v2.37 provides concrete `RouterHandle` struct which RFC-0920 references throughout.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.58    | 2026-05-06 | **FIX** N1: _record_spend pricing and write restored (was missing — only comment remained). **FIX** N3: UnsupportedProviderError `field()` removed (non-dataclass). **FIX** N4: BatchNotCompleteError, AllModelsFailedError, BatchPartialFailureError now have `__init__`. **FIX** N5: into_async → into_future in RFC-0920 proxy code (2 locations). **FIX** N6: _stream_provider_response filters None from SSE parsers. **FIX** N7: parse_anthropic_sse now stateful via _AnthropicSSEParser class (multi-line SSE). **FIX** N8: Router.completion() indentation fixed (comment and result dedented to try block). **FIX** N13/N21: _spend_history initialized in **init**; guard reordered before access. **FIX** N14: batch_completion_models docstring corrected (losers run to completion, not cancelled). **FIX** N15: _get_server_secret fallback gate now enforced. **FIX** N16: QUOTA_ROUTER_MODE clarified as label-only (not provider strategy switch). **FIX** N17: **deployment_mode** via cfg_if! (mutually exclusive). **FIX** N18: bedrock added to PROVIDER_SDK_TYPES registry (Rust + Python + YAML). **FIX** N19: normalize_timeout precedence corrected (.total > .read > .connect). **FIX** N20: batch_completion_models_all_responses return type List[Optional[CompletionResponse]]. **FIX** N22: Router.completion() imports time inside try block. |
+| 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box and Mode Gate ≠ Interface invariant already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture: Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement: Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box).                                                                                                                                                                                                                                                                                                                                                   |
+| 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking`, `modalities`, `audio`, `prediction` to both sync and async completion signatures.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.42    | 2026-04-29 | Fix external adversarial review round 22: C1 (explicit cache_bypass delegation in Router.completion), C2 (whitespace-agnostic CI regex allows rustfmt), H1 (pure-dict-literal codegen contract + error message), H2 (cache_bypass docstring clarifies kwargs-only validation), M1 (pathlib script-relative path resolution), M2 (math.exp2 decay optimization pushes threshold to >12k RPS), L1 (idiomatic regex character class), L2 (router_lock_hold_time_us histogram definition).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.41    | 2026-04-29 | Fix external adversarial review round 21: C1 (docstring aligned with implementation), C2 (try/except around ast.literal_eval + tree.body iteration), H1 (decay math documented with trade-off note), H2 (strict Rust const array format mandated), M1 (comment added clarifying len==1 overlap), M2 (docstring clarifies caller responsibility), L1 (tree.body replaces ast.walk), L2 (now = time.monotonic() captured once).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.40    | 2026-04-29 | Fix external adversarial review round 20: C1 (ast.literal_eval replaces exec()), C2 (setdefault replaced with lock-protected if-not-in), H1 (cache_bypass skips _validate_no_nan_inf when True), H2 (YAML-driven codegen parity + file existence guards), M1 (cache_bypass docstring includes cost warning), M2 (already addressed in C2), L1 (deque handles single-message dedup), L2 (file existence checks added).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.39    | 2026-04-29 | Fix external adversarial review round 21: C1 (use setdefault for atomic deque init — no check-then-act race), C2 (add empty-message guard + isinstance(content, str) check for multimodal safety), H1 (get_pricing moved to module level as _get_pricing — eliminates hot-path import), H2 (replaced git-dependent bash script with environment-agnostic Python schema validator), M1 (cache_bypass wired into compute_request_hash — skips validation/serialization when True), M2 (capture model_name inside _state_lock before external pricing lookup), L1 (deque import already at module level), L2 (compute_request_hash signature added cache_bypass parameter).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.38    | 2026-04-29 | Fix external adversarial review round 20: C1 (use deque(maxlen=500) instead of list slicing under lock), C2 (sample messages[0] and messages[-1] instead of [:3]), H1 (pricing lookup moved outside _state_lock — must be O(1) in-memory access), H2 (replaced impossible "identical at line/entry level" CI rule with YAML source-hash and schema parity validation), M1 (corrected normalize_to_openai_sse docstring: Mistral/Ollama yield SDK-parsed dicts, not raw SSE strings), M2 (added cache_bypass: bool = False to both unified signatures), L1 (added OverflowError to json.dumps exception handler), L2 (added explicit call-site snippet enforcing execution order).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.37    | 2026-04-29 | Fix external adversarial review round 19: C1 (reverted split-lock to single lock acquisition in _record_spend, eliminates TOCTOU race), C2 (catch (ValueError, TypeError) in compute_request_hash), H1 (O(k=3) heuristic replaces O(N) sum for cache bypass guard), H2 (documented char-vs-token mismatch limitation and configurable bypass options), M1 (added providers_sdk_types.yaml single source of truth for Python/Rust registry sync), M2 (bounded _spend_history with maxlen=500 on truncate), L1 (mandated compute_request_hash invocation before routing/budget checks), L2 (added normalize_to_openai_sse explicit signature and error contract).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.36    | 2026-04-29 | Fix external adversarial review round 18: C1 (json.dumps wrapped in try/except → InvalidRequestError on nested NaN/Inf), C2 (Rust dispatch .unwrap_or(&"sync") aligned with Python default="sync"), H1 (_record_spend: compute elapsed/decay outside lock, lock hold target <50μs), H2 (compute_request_hash returns None for >50k char payloads, bypassing cache), M1 (Prometheus /metrics and OpenTelemetry OTLP specified for fallback metrics), M2 (documented time.monotonic() ephemeral semantics and restart behavior), L1 (added _validate_no_nan_inf call site in completion/acompletion entry), L2 (added Phase 3 raw_stream bypass hook in SSE normalization pipeline).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.35    | 2026-04-29 | Fix external adversarial review round 17: C2 (SDK entry validates NaN/Inf → InvalidRequestError; compute_request_hash removed recursive sanitize, uses allow_nan=False), H1 (PROVIDER_SDK_TYPES default changed from "async" to "sync" for safety), M1 (removed recursive sanitize from compute_request_hash; top-level only validation preserves G1 <10ms), M2 (copy-on-read snapshot pattern for _total_spend reduces lock contention), L1 (raw_stream lifecycle clarified: Phase 1 ignored, Phase 3 marker), L2 (WARN logging, /health flag, metrics for pyo3-asyncio fallback). C1/H2 already fixed in v1.34 (time.monotonic + elapsed clamping).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.34    | 2026-04-28 | Fix external adversarial review round 16: C1 (time-based exponential decay: decay_factor = 0.5 ** (elapsed_seconds / half_life), prevents routing inversion), C2 (pre-sanitize floats: NaN→"NaN", Inf→"Infinity", removed allow_nan=False crash vector), H1 (added PROVIDER_SDK_TYPES registry + dispatch logic for dual-path proxy), H2 (locked _total_spend reads in cost-based-routing and usage-based-routing), M1 (simple-shuffle is uniform random, explicit weight/RPM/TPM handling noted), M2 (added pyo3-asyncio dependency + Tokio/Python compatibility + spawn_blocking fallback), L1 (raw_stream deprecated with comment, no runtime warning), L2 (terminology already correct: ModelSelector, not transient Router).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.30    | 2026-04-28 | Fix external adversarial review round 12: E1 (defined QUOTA_ROUTER_HMAC_SECRET provisioning for SDK budget derivation), E2 (changed Rust Balance struct to u64 μunits per RFC-0904 G3), E3 (fixed resolve_provider to use RFC-0917 C8 provider-list matching — not reject-if-both), E4 (removed QUOTA_ROUTER_MODE runtime switching claim for PyPI wheels — compile-time only), E5 (fixed async_iter_to_sync_iter: use run_in_executor to avoid blocking event loop), E6 (clarified cache_responses is exact-match KV until Phase 3 semantic cache), E7 (extended exception mapping for TeamBudgetExceeded and StorageError), E8 (added .connect fallback to httpx.Timeout normalization), E9 (replaced greedy regex with longest-match provider-list for any- keys), E10 (gated stream=True in Phase 1 behind NotImplementedError, opt-in via raw_stream=True).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.28    | 2026-04-28 | Fix external adversarial review round 10: C2 (batch_completion_models_all_responses() now has full implementation), H1 (_record_request_start/end now lock _active_requests with _state_lock), H2 (_create_stream_iter return type changed to ChatCompletionStreamIterator), H3 (weighted strategy fallback clarified as safety net), M1 (streaming spec clarified that **kwargs passes all params to provider), M2 (_EMBEDDED_MODE moved before _get_compiled_modes for clarity), M3 (_select_by_weighted_spend now locked with _state_lock), M5 (abatch_completion no longer raises on partial failure — matches LiteLLM behavior, returns successful results with None for failed). C1 was false positive — response_format already in sync completion since v1.16.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.26    | 2026-04-28 | Fix external adversarial review round 8: H1 (batch_completion_models now waits for remaining models after first failure with loop), H2 (round-robin now thread-safe via threading.Lock), H3 (_record_spend added to record token cost for usage-based routing), H4 (usage-based-routing-v2 implementation with _spend_history and recency-weighted scoring), H7 (resolve_provider normalizes provider_param to lowercase), H8 (_stream_sync_bridge fixed — not async def, returns async_iter_to_sync_iter result), H9 (get_deployment_mode now has single implementation with _get_compiled_modes and _EMBEDDED_MODE defined), M1 (BatchPartialFailureError defined in exception hierarchy), M5 (model_list validation: if empty list passed, raises error), M10 (_EMBEDDED_MODE now defined at module level for get_deployment_mode).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.25    | 2026-04-28 | Fix external adversarial review round 7: Observation 1 (cleaned get_budget_status docstring), Observation 2 (safety_identifier removed from any-llm-not-specced table, documented as Phase 3), Observation 3 (added note on single-target fallback behavior and resilience recommendation).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), (ignored — rebuttal: emphatic language is appropriate for critical constraints).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), (is_known_provider cross-reference added).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode. The proxy ALWAYS calls quota-router-core directly — never through PyO3 bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). NOTE: C4-1 (HTTP proxy descoped to full) was INCORRECT and is reverted in v1.21.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.9     | 2026-04-28 | Fix adversarial review v1.8 issues: C1 (mode-aware default provider — litellm-mode/full default to "openai", any-llm-mode raises), I1 (functions/function_call passed through to provider SDK), I2 (modalities, audio, prediction moved Phase 4→Phase 3 as they're in LiteLLM sig), I3/I4/I5/I6 (sync completion() now has explicit timeout, api_version, extra_headers, model_list), I7 (Router raises ModelNotFoundError if model not in model_list), I9 (Phase 1 "replace mock" scope clarified — implementation vs interface), I10 (thinking accepted as alias for reasoning_effort), I11 (Embedded API renamed from "any-llm style" to "LiteLLM-compatibility style").                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.8     | 2026-04-28 | Fix adversarial review v1.7 issues: C1 (get_deployment_mode() now uses cfg-based feature flag injection, not hardcoded string), C2 (acompletion() timeout now float\|int per LiteLLM, not str\|httpx.Timeout), C3 (MissingProviderError→ValueError; step 3 default provider removed since any-llm has none), I1 (class-based API clarified out of scope for Phase 1), I2 (async_coro_to_sync_iter vs async_iter_to_sync_iter clarified), I3 (AllModelsFailedError added to exception hierarchy), I4 (any-llm has no in-memory batch noted), I6 (set_api_key() is LiteLLM compat, any-llm has no equivalent), I8 (deployment_id added to unified signature), I9 (safety_identifier moved Phase 4→Phase 3 as it's in LiteLLM sig), I10 (functions/function_call legacy params added), L2 (Phase 1 tests completion() directly, not Router).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.7     | 2026-04-28 | Fix adversarial review v1.6 issues: I1 (mode selection for Python SDK build explained — feature flags on quota-router-core, not pyo3), I2 (batch_completion_models() specced with reference to LiteLLM impl), I4 (Phase 1 streaming vs F3 SSE parsing clarified — Phase 1 is raw chunks, F3 is proper SSE transformation), I6 (get_deployment_mode() cfg-based compile-time injection), I7 (Phase 4 "6 strategies" corrected to "8"), I8 (acompletion() fallback comment added), I9 (acompletion() streaming AsyncIterator return type spec'd with reference to LiteLLM CustomStreamWrapper).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.6     | 2026-04-27 | Fix adversarial review v1.5 issues: C1 (Router.completion() uses explicit import to avoid self-call infinite loop), I1 (get_budget_status behavior in any-llm vs full clarified), I2 (streaming execution path documented), I3 (platform provider RFC-0917 cross-reference verified), I4 (get_deployment_mode() implementation explained), I5 (_select_deployment model param is model_name not model_group), I6 (Phase 1 specifies OpenAI + Anthropic as first providers), L1 (sys.modules mutation removed, explicit import alias), L2 (Phase 3 "6 strategies" corrected to "8"), L3 (F3 streaming vs Phase 1 streaming clarified), L4 (async path now catches Exception like sync), L5 (model vs model_name variable semantics clarified), I7 (version history table aligned).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params, streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.0     | 2026-04-27 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ## Related RFCs
 

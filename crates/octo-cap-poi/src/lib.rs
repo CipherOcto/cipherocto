@@ -49,7 +49,7 @@
 use octo_cap_macaroon::attestation::{
     AdmissionProfile, AttestationAdmission, AttestationError, AttestationOutcome,
     AttestationStrategy, AttestationTypeId, AttestationVerifyCtx, CostFigure, Expectation,
-    PolicySource, SecurityFigure,
+    PolicySource, SecurityFigure, SecurityParams,
 };
 
 /// The RFC-0973-allocated id for the in-boundary-execution relation.
@@ -241,7 +241,20 @@ impl AttestationAdmission for InBoundaryExecution {
     fn admission_profile(&self) -> Option<AdmissionProfile> {
         Some(AdmissionProfile {
             casm_cost_hint_words: CostFigure::Unmeasured,
-            security_bits: SecurityFigure::from_prover_parameters(128),
+            // A **requirement**, not a claim about what this crate produces.
+            // RFC-0958 §Design Goals G4 asks for 128-bit soundness, so 128 is
+            // what the relation declares it needs. Whether the deployment
+            // actually delivers it is a separate fact the operator supplies as
+            // a `ProverProfile`, and boot refuses when the two disagree.
+            //
+            // This crate used to declare 128 as though it were an achieved
+            // level. It cannot know that: it does not own the prover, and the
+            // configured parameters yield 96. The declaration that survives
+            // audit is the requirement, so that is what it carries.
+            security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                min_bits: 128,
+                num_queries: 102,
+            }),
         })
     }
 }

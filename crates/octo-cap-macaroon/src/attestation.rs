@@ -549,43 +549,115 @@ pub enum CostFigure {
     Unmeasured,
 }
 
-/// Security parameters a strategy claims its relation needs.
+/// Named inputs to [`SecurityFigure::from_prover_parameters`].
+///
+/// Taking a struct rather than a bare integer is the whole point of this type:
+/// a call site reading `from_prover_parameters(96)` tells a reviewer nothing about
+/// whether 96 is a query count, a bit figure, or a typo, while
+/// `SecurityParams { min_bits: 96, num_queries: 70 }` states both. The guarantee
+/// the type documents is only real if the constructor actually enforces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SecurityParams {
+    /// Minimum soundness, in bits, the relation needs to be meaningful.
+    ///
+    /// This is a **requirement**, not an achievement. The strategy states what
+    /// its relation needs; what the deployment's prover actually delivers is a
+    /// separate fact supplied by the operator as a [`ProverProfile`]. A strategy
+    /// cannot know the latter — it does not own the prover — so a strategy that
+    /// claims to "achieve" a level is asserting something it cannot observe.
+    pub min_bits: u64,
+    /// Number of prover queries the budget assumes.
+    pub num_queries: u64,
+}
+
+impl Default for SecurityParams {
+    /// Requires nothing and assumes nothing — the value a strategy with no
+    /// security requirement declares.
+    fn default() -> Self {
+        Self {
+            min_bits: 0,
+            num_queries: 0,
+        }
+    }
+}
+
+/// What a relation **requires** from the prover.
 ///
 /// The field is private and there is no bare-integer constructor: the only way
-/// in is [`Self::from_prover_parameters`], and the only way out is [`Self::bits`].
-/// That is what keeps this the single route to a value, so a caller cannot read
-/// it as a struct field and supply it another way.
+/// in is [`Self::from_prover_parameters`], which takes a [`SecurityParams`] and
+/// not a bit count. That is what keeps this the single route to a value, so a
+/// caller cannot read it as a struct field and supply it another way.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SecurityFigure(u64);
+pub struct SecurityFigure(SecurityParams);
 
 impl SecurityFigure {
     /// Sole constructor. Takes named prover parameters, never a bare integer,
     /// so the security claim stays traceable to what produced it.
     #[must_use]
-    pub const fn from_prover_parameters(bits: u64) -> Self {
-        Self(bits)
+    pub const fn from_prover_parameters(params: SecurityParams) -> Self {
+        Self(params)
     }
 
-    /// Sole accessor.
+    /// Sole accessor for the required bit figure.
     #[must_use]
     pub const fn bits(&self) -> u64 {
+        self.0.min_bits
+    }
+
+    /// The full parameter set, so a gate can report what was assumed.
+    #[must_use]
+    pub const fn params(&self) -> SecurityParams {
         self.0
     }
 }
 
 impl fmt::Debug for SecurityFigure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurityFigure({} bits)", self.0)
+        write!(
+            f,
+            "SecurityFigure(min_bits={}, num_queries={})",
+            self.0.min_bits, self.0.num_queries
+        )
     }
 }
 
-/// Named inputs to [`SecurityFigure::from_prover_parameters`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SecurityParams {
-    /// Claimed security level in bits.
-    pub security_bits: u64,
-    /// Number of queries the prover budget assumes.
+/// What the **deployment's** prover actually delivers.
+///
+/// This is the half a strategy cannot supply. The strategy crate states a
+/// requirement; the operator states the achievement, because the prover
+/// configuration belongs to the deployment. Boot compares them, so a node that
+/// cannot reach a strategy's required soundness refuses rather than admitting it
+/// against a figure nobody checked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ProverProfile {
+    /// Soundness, in bits, the configured prover parameters actually yield.
+    pub achieved_bits: u64,
+    /// Queries the configured prover runs.
     pub num_queries: u64,
+}
+
+impl ProverProfile {
+    /// A deployment whose prover delivers nothing.
+    ///
+    /// This is the fail-closed value: it satisfies no positive requirement, so
+    /// a caller that forgets to supply a real profile refuses proof-bearing
+    /// strategies rather than silently treating them as free.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            achieved_bits: 0,
+            num_queries: 0,
+        }
+    }
+
+    /// Whether this deployment meets a strategy's declared requirement.
+    ///
+    /// A requirement of zero is always met — that is a strategy stating it
+    /// needs no particular soundness, not a deployment at zero.
+    #[must_use]
+    pub const fn satisfies(&self, requirement: &SecurityFigure) -> bool {
+        requirement.bits() == 0 || self.achieved_bits >= requirement.bits()
+    }
 }
 
 /// What admitting one strategy costs a node.
@@ -598,7 +670,7 @@ pub struct SecurityParams {
 pub struct AdmissionProfile {
     /// Circuit cost of verifying this relation.
     pub casm_cost_hint_words: CostFigure,
-    /// Security level the relation achieves.
+    /// Security level the relation **requires**.
     pub security_bits: SecurityFigure,
 }
 
@@ -612,7 +684,7 @@ impl Default for AdmissionProfile {
     fn default() -> Self {
         Self {
             casm_cost_hint_words: CostFigure::Measured(0),
-            security_bits: SecurityFigure::from_prover_parameters(0),
+            security_bits: SecurityFigure::from_prover_parameters(SecurityParams::default()),
         }
     }
 }
@@ -646,7 +718,7 @@ impl Admission {
             verifier_needs_producing_kinds: false,
             profile: AdmissionProfile {
                 casm_cost_hint_words: CostFigure::Measured(0),
-                security_bits: SecurityFigure::from_prover_parameters(0),
+                security_bits: SecurityFigure::from_prover_parameters(SecurityParams::default()),
             },
         }
     }
@@ -1068,7 +1140,10 @@ mod registry_tests {
             // "no circuit cost" and skip both budget gates.
             Some(AdmissionProfile {
                 casm_cost_hint_words: CostFigure::Unmeasured,
-                security_bits: SecurityFigure::from_prover_parameters(128),
+                security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                    min_bits: 128,
+                    num_queries: 102,
+                }),
             })
         }
     }
@@ -1251,10 +1326,19 @@ mod registry_tests {
 
     #[test]
     fn security_figure_has_no_bare_integer_route() {
-        let fig = SecurityFigure::from_prover_parameters(128);
+        let fig = SecurityFigure::from_prover_parameters(SecurityParams {
+            min_bits: 128,
+            num_queries: 102,
+        });
         assert_eq!(fig.bits(), 128);
-        // Debug must not expose the field as a struct field that could be read.
-        assert!(format!("{fig:?}").contains("128 bits"));
+        // Both named parameters survive to the Debug output, which is what
+        // makes the claim reviewable. A bare 128 at a call site could not say
+        // whether it was bits or queries.
+        let dbg = format!("{fig:?}");
+        assert!(dbg.contains("128"), "{dbg}");
+        assert!(dbg.contains("102"), "{dbg}");
+        // The field is private: there is no struct-literal route to a value.
+        assert_eq!(fig.params().num_queries, 102);
     }
 
     #[test]
@@ -2209,6 +2293,21 @@ pub trait NodeCapability {
 pub enum BootRefusal {
     /// An acceptance entry names a strategy that does not resolve.
     UnresolvableStrategy(AttestationTypeId),
+    /// The deployment's prover delivers less soundness than the strategy
+    /// requires, so admitting the strategy would serve proofs weaker than the
+    /// relation claims to need.
+    ///
+    /// Both figures are carried. "Refused" alone would leave an operator
+    /// unable to tell whether to raise the prover parameters or lower the
+    /// requirement — two different decisions with different costs.
+    InsufficientSecurity {
+        /// The strategy whose requirement is unmet.
+        strategy: AttestationTypeId,
+        /// Minimum soundness the relation requires, in bits.
+        required: u64,
+        /// Soundness the configured prover parameters deliver, in bits.
+        achieved: u64,
+    },
     /// The node does not serve a payload kind the strategy requires in order to
     /// produce.
     MissingPayloadKind {
@@ -2240,6 +2339,14 @@ impl fmt::Display for BootRefusal {
                     "{strategy}: does not serve required payload kind {missing:?}"
                 )
             }
+            Self::InsufficientSecurity {
+                strategy,
+                required,
+                achieved,
+            } => write!(
+                f,
+                "{strategy}: requires {required}-bit soundness, deployment delivers {achieved}"
+            ),
             Self::UnmeasuredCost(id) => write!(f, "{id}: circuit cost is unmeasured"),
             Self::BudgetExceeded { strategy, required } => {
                 write!(f, "{strategy}: needs {required} CASM words, over budget")
@@ -2323,12 +2430,13 @@ pub fn advertised_acceptance_set(
 
 /// Validate the operator's policy against what the node can actually serve.
 ///
-/// Runs before the node serves anything. Four refusals, each decisive:
+/// Runs before the node serves anything. Five refusals, each decisive:
 ///
 /// 1. an acceptance entry naming an unresolvable strategy,
 /// 2. a required payload kind the node does not serve — the **producing** side,
-/// 3. an unmeasured circuit cost,
-/// 4. a measured cost over budget.
+/// 3. a deployment whose prover cannot reach a strategy's required soundness,
+/// 4. an unmeasured circuit cost,
+/// 5. a measured cost over budget.
 ///
 /// The verification-side requirement is a *different* gate and is deliberately
 /// **not** checked here, so dispatch step 4 stays reachable for a node that boots
@@ -2345,6 +2453,7 @@ pub fn validate_policy(
     accept_set: &AcceptanceSet,
     registry: &AttestationRegistry,
     node: &dyn NodeCapability,
+    prover: &ProverProfile,
 ) -> Result<(), BootRefusal> {
     for type_id in accept_set.ids() {
         // 1. Resolvability.
@@ -2368,10 +2477,23 @@ pub fn validate_policy(
             }
         }
 
-        // 3 and 4. The budget gates.
         let Some(profile) = admission.admission_profile() else {
             continue;
         };
+
+        // 3. Soundness. The strategy states what its relation needs; the
+        // deployment states what its prover delivers. Comparing them here is
+        // the only point where the two meet, and skipping it is how a node ends
+        // up serving proof-bearing strategies against a figure nobody checked.
+        if !prover.satisfies(&profile.security_bits) {
+            return Err(BootRefusal::InsufficientSecurity {
+                strategy: *type_id,
+                required: profile.security_bits.bits(),
+                achieved: prover.achieved_bits,
+            });
+        }
+
+        // 4 and 5. The budget gates.
         match profile.casm_cost_hint_words {
             CostFigure::Unmeasured => {
                 return Err(BootRefusal::UnmeasuredCost(*type_id));
@@ -2402,6 +2524,16 @@ mod boot_tests {
 
     fn kind(n: u8) -> PayloadKindId {
         PayloadKindId::from_bytes([n; 16])
+    }
+
+    /// A deployment whose prover comfortably meets the 128-bit requirement the
+    /// fixtures below declare. Kept explicit so the soundness gate is satisfied
+    /// on purpose rather than by accident of a default.
+    fn prover() -> ProverProfile {
+        ProverProfile {
+            achieved_bits: 128,
+            num_queries: 102,
+        }
     }
 
     struct Nodecap {
@@ -2440,7 +2572,10 @@ mod boot_tests {
         fn admission_profile(&self) -> Option<AdmissionProfile> {
             Some(AdmissionProfile {
                 casm_cost_hint_words: self.cost,
-                security_bits: SecurityFigure::from_prover_parameters(128),
+                security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                    min_bits: 128,
+                    num_queries: 102,
+                }),
             })
         }
     }
@@ -2477,7 +2612,7 @@ mod boot_tests {
             budget: u64::MAX,
         };
         assert_eq!(
-            validate_policy(&set, &reg, &node).unwrap_err(),
+            validate_policy(&set, &reg, &node, &prover()).unwrap_err(),
             BootRefusal::UnresolvableStrategy(tid(3))
         );
     }
@@ -2491,7 +2626,7 @@ mod boot_tests {
             budget: u64::MAX,
         };
         assert_eq!(
-            validate_policy(&set, &reg, &node).unwrap_err(),
+            validate_policy(&set, &reg, &node, &prover()).unwrap_err(),
             BootRefusal::MissingPayloadKind {
                 strategy: tid(1),
                 missing: kind(4)
@@ -2508,7 +2643,7 @@ mod boot_tests {
             budget: u64::MAX,
         };
         assert_eq!(
-            validate_policy(&set, &reg, &node).unwrap_err(),
+            validate_policy(&set, &reg, &node, &prover()).unwrap_err(),
             BootRefusal::UnmeasuredCost(tid(1))
         );
     }
@@ -2522,7 +2657,7 @@ mod boot_tests {
             budget: 1000,
         };
         assert_eq!(
-            validate_policy(&set, &reg, &node).unwrap_err(),
+            validate_policy(&set, &reg, &node, &prover()).unwrap_err(),
             BootRefusal::BudgetExceeded {
                 strategy: tid(1),
                 required: 5000
@@ -2538,7 +2673,7 @@ mod boot_tests {
             serves: true,
             budget: 1000,
         };
-        assert!(validate_policy(&set, &reg, &node).is_ok());
+        assert!(validate_policy(&set, &reg, &node, &prover()).is_ok());
     }
 
     /// The producing-side gate must not consume the verification-side gate, or
@@ -2585,7 +2720,7 @@ mod boot_tests {
             budget: u64::MAX,
         };
         assert!(
-            validate_policy(&set, &reg, &node).is_ok(),
+            validate_policy(&set, &reg, &node, &prover()).is_ok(),
             "boot must leave the verification-side gate to step 4"
         );
     }
@@ -2599,8 +2734,152 @@ mod boot_tests {
             serves: false,
             budget: 0,
         };
-        assert!(validate_policy(&set, &reg, &node).is_ok());
+        assert!(validate_policy(&set, &reg, &node, &prover()).is_ok());
         assert!(set.is_empty());
+    }
+
+    // --- the soundness gate -------------------------------------------------
+    //
+    // The defect this closes: a strategy declared a security figure the
+    // deployment could not meet, and nothing compared the two. The claim went
+    // straight into `node.has_headroom`, so a node budgeted against a level
+    // its own prover never produced.
+
+    #[test]
+    fn boot_refuses_when_the_deployment_cannot_reach_the_required_soundness() {
+        let reg = registry_for(tid(1), vec![], CostFigure::Measured(500));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        // Budget is unlimited, kinds are satisfied, cost is measured and under
+        // budget. The ONLY thing wrong is the prover.
+        let err = validate_policy(
+            &set,
+            &reg,
+            &node,
+            &ProverProfile {
+                achieved_bits: 96,
+                num_queries: 70,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BootRefusal::InsufficientSecurity {
+                strategy: tid(1),
+                required: 128,
+                achieved: 96,
+            }
+        );
+    }
+
+    #[test]
+    fn the_soundness_refusal_names_both_figures() {
+        // "Refused" alone leaves an operator unable to tell whether to raise
+        // the prover or lower the requirement. Both must be present.
+        let reg = registry_for(tid(1), vec![], CostFigure::Measured(500));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        let err = validate_policy(
+            &set,
+            &reg,
+            &node,
+            &ProverProfile {
+                achieved_bits: 96,
+                num_queries: 70,
+            },
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("128"), "required figure missing: {msg}");
+        assert!(msg.contains("96"), "achieved figure missing: {msg}");
+    }
+
+    #[test]
+    fn a_deployment_meeting_the_requirement_boots() {
+        // Anti-vacuity for the two refusals above: the gate must not refuse
+        // everything. A prover at exactly the required level passes.
+        let reg = registry_for(tid(1), vec![], CostFigure::Measured(500));
+        let set = AcceptanceSet::from_ids([tid(1)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        assert!(validate_policy(
+            &set,
+            &reg,
+            &node,
+            &ProverProfile {
+                achieved_bits: 128,
+                num_queries: 102,
+            }
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_zero_requirement_is_met_by_any_deployment() {
+        // A strategy stating it needs no particular soundness is not a strategy
+        // with a zero-bit prover. `ProverProfile::none()` must still satisfy it,
+        // otherwise "requires nothing" would be indistinguishable from "refused".
+        struct NeedsNothing;
+        impl AttestationStrategy for NeedsNothing {
+            fn type_id(&self) -> AttestationTypeId {
+                tid(7)
+            }
+            fn verify(
+                &self,
+                _c: &AttestationVerifyCtx<'_>,
+            ) -> Result<AttestationOutcome, AttestationError> {
+                Ok(AttestationOutcome::Satisfied)
+            }
+        }
+        impl AttestationAdmission for NeedsNothing {
+            fn admission_profile(&self) -> Option<AdmissionProfile> {
+                Some(AdmissionProfile {
+                    casm_cost_hint_words: CostFigure::Measured(5),
+                    security_bits: SecurityFigure::from_prover_parameters(SecurityParams::default()),
+                })
+            }
+        }
+        let mut allocs = AllocationRecord::empty();
+        allocs.allocate(tid(7), "test");
+        let mut reg = AttestationRegistry::empty();
+        reg.register_strategy(
+            Arc::new(NeedsNothing),
+            Some(Arc::new(NeedsNothing)),
+            "test",
+            &allocs,
+        )
+        .unwrap();
+
+        let set = AcceptanceSet::from_ids([tid(7)]);
+        let node = Nodecap {
+            serves: true,
+            budget: u64::MAX,
+        };
+        assert!(validate_policy(&set, &reg, &node, &ProverProfile::none()).is_ok());
+    }
+
+    #[test]
+    fn prover_profile_none_fails_a_positive_requirement() {
+        // The fail-closed default: a caller who forgets to supply a real
+        // profile must not be treated as having a free prover.
+        let need = SecurityFigure::from_prover_parameters(SecurityParams {
+            min_bits: 96,
+            num_queries: 70,
+        });
+        assert!(!ProverProfile::none().satisfies(&need));
+        assert!(
+            ProverProfile::none().satisfies(&SecurityFigure::from_prover_parameters(
+                SecurityParams::default()
+            ))
+        );
     }
 }
 
@@ -2656,7 +2935,10 @@ mod advertisement_tests {
         fn admission_profile(&self) -> Option<AdmissionProfile> {
             Some(AdmissionProfile {
                 casm_cost_hint_words: CostFigure::Measured(5),
-                security_bits: SecurityFigure::from_prover_parameters(128),
+                security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                    min_bits: 128,
+                    num_queries: 102,
+                }),
             })
         }
     }

@@ -34,7 +34,7 @@
 
 use octo_cap_macaroon::attestation::{
     validate_policy, AcceptanceSet, AllocationRecord, AttestationRegistry, AttestationTypeId,
-    BootRefusal, NodeCapability, RegisterError, Registration,
+    BootRefusal, NodeCapability, ProverProfile, RegisterError, Registration,
 };
 
 /// The claimant this host observes at link time for `octo-cap-poi`.
@@ -145,8 +145,9 @@ fn claimant_for(type_id: &AttestationTypeId) -> &'static str {
 /// Thin wrapper so a node composes one call rather than importing the substrate
 /// entry point directly. Semantics are entirely the substrate's: an acceptance
 /// entry naming an unresolvable strategy, a missing producing-side payload kind,
-/// an unmeasured cost, or an exceeded budget each refuse, and an acceptance set
-/// naming nothing boots.
+/// a deployment that cannot reach a strategy's required soundness, an unmeasured
+/// cost, or an exceeded budget each refuse, and an acceptance set naming nothing
+/// boots.
 ///
 /// # Errors
 /// Propagates the substrate's [`BootRefusal`] unchanged.
@@ -154,8 +155,35 @@ pub fn boot_validate(
     accept_set: &AcceptanceSet,
     registry: &AttestationRegistry,
     node: &dyn NodeCapability,
+    prover: &ProverProfile,
 ) -> Result<(), BootRefusal> {
-    validate_policy(accept_set, registry, node)
+    validate_policy(accept_set, registry, node, prover)
+}
+
+/// The prover configuration this host runs with.
+///
+/// **This host serves no attestation types today** (see [`hosted_registrations`]),
+/// so the figure below is not yet exercised by a real strategy. It is stated
+/// rather than defaulted to "nothing", because the moment a strategy does
+/// register, this becomes the number that decides whether the node can admit it.
+///
+/// The value mirrors the prover parameters in `zk-circuit`: 26 proof-of-work bits
+/// plus 1 log2 blowup factor times 70 queries. It is written out here rather
+/// than imported because the host is the deployment boundary — it is where a
+/// deployment's prover configuration is legitimately known, and importing it
+/// would add a `zk-circuit` edge to a crate that does not otherwise need one.
+#[must_use]
+pub fn prover_profile() -> ProverProfile {
+    // Stwo's documented formula: `pow_bits + log2_blowup_factor * n_queries`,
+    // with production defaults 26 / 1 / 70.
+    const STWO_POW_BITS: u64 = 26;
+    const STWO_LOG_BLOWUP_FACTOR: u64 = 1;
+    const STWO_N_QUERIES: u64 = 70;
+
+    ProverProfile {
+        achieved_bits: STWO_POW_BITS + STWO_LOG_BLOWUP_FACTOR * STWO_N_QUERIES,
+        num_queries: STWO_N_QUERIES,
+    }
 }
 
 /// The acceptance set this host advertises.
@@ -231,8 +259,23 @@ mod tests {
             Some(octo_cap_macaroon::attestation::AdmissionProfile {
                 casm_cost_hint_words: CostFigure::Measured(10),
                 security_bits:
-                    octo_cap_macaroon::attestation::SecurityFigure::from_prover_parameters(128),
+                    octo_cap_macaroon::attestation::SecurityFigure::from_prover_parameters(
+                        octo_cap_macaroon::attestation::SecurityParams {
+                            min_bits: 128,
+                            num_queries: 102,
+                        },
+                    ),
             })
+        }
+    }
+
+    /// A prover comfortably meeting the fixtures' 128-bit requirement, so the
+    /// tests below exercise what they were written to exercise rather than
+    /// tripping the soundness gate on the way in.
+    fn prover() -> ProverProfile {
+        ProverProfile {
+            achieved_bits: 128,
+            num_queries: 102,
         }
     }
 
@@ -270,18 +313,66 @@ mod tests {
         assert!(accept_set.is_empty());
 
         let node = Node { headroom: 0 };
-        boot_validate(&accept_set, &registry, &node)
+        boot_validate(&accept_set, &registry, &node, &prover())
             .expect("a node accepting no attestations must start, not refuse");
     }
 
     /// Naming an unregistered strategy refuses boot. This is the fail-closed
     /// path the RFC relies on for a strategy whose preconditions are unmet.
     #[test]
+    fn the_hosts_real_prover_cannot_meet_the_strategies_128_bit_requirement() {
+        // The point of the whole split. `prover_profile()` reports 96, because
+        // that is what the configured prover parameters deliver. The strategies
+        // declare 128, because that is what RFC-0958 §G4 asks for. Those two
+        // facts are now compared, so the gap is visible instead of living in a
+        // budget table nobody reads.
+        //
+        // Before, the strategy asserted 128 as an achieved level and nothing
+        // checked it, so a node could admit a strategy on a figure its own
+        // prover never produced.
+        let achieved = prover_profile().achieved_bits;
+        assert_eq!(achieved, 96, "the host's prover delivers 96 bits today");
+
+        let need = octo_cap_poi::InBoundaryExecution
+            .admission_profile()
+            .expect("a proof-bearing strategy must answer Some")
+            .security_bits
+            .bits();
+        assert_eq!(need, 128, "the strategy requires the RFC-0958 G4 figure");
+        assert!(
+            !prover_profile().satisfies(
+                &octo_cap_poi::InBoundaryExecution
+                    .admission_profile()
+                    .expect("profile")
+                    .security_bits
+            ),
+            "a 96-bit deployment cannot satisfy a 128-bit requirement"
+        );
+    }
+
+    #[test]
+    fn a_128_bit_deployment_would_satisfy_the_strategies_requirement() {
+        // Anti-vacuity for the refusal above: raising the prover parameters is
+        // the action the refusal message points an operator at, so it has to
+        // actually work. It is a deliberate change with a measured proof-size
+        // cost, not a constant edit, which is why it lives here as a test.
+        let need = octo_cap_poi::InBoundaryExecution
+            .admission_profile()
+            .expect("profile")
+            .security_bits;
+        let raised = ProverProfile {
+            achieved_bits: 128,
+            num_queries: 102,
+        };
+        assert!(raised.satisfies(&need));
+    }
+
+    #[test]
     fn naming_an_unregistered_strategy_refuses_boot() {
         let registry = build_registry().unwrap();
         let accept_set = AcceptanceSet::from_ids([octo_cap_poi::IN_BOUNDARY_EXECUTION]);
         let node = Node { headroom: u64::MAX };
-        let err = boot_validate(&accept_set, &registry, &node).unwrap_err();
+        let err = boot_validate(&accept_set, &registry, &node, &prover()).unwrap_err();
         assert_eq!(
             err,
             BootRefusal::UnresolvableStrategy(octo_cap_poi::IN_BOUNDARY_EXECUTION)
@@ -310,7 +401,7 @@ mod tests {
 
         let accept_set = AcceptanceSet::from_ids([type_id]);
         let node = Node { headroom: u64::MAX };
-        boot_validate(&accept_set, &registry, &node)
+        boot_validate(&accept_set, &registry, &node, &prover())
             .expect("a resolvable, measured, affordable strategy must boot");
     }
 

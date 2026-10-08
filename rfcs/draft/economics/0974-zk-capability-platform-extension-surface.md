@@ -375,6 +375,62 @@ The circuit registry is keyed by the same key as the host registry. An
 evaluator that claims a key but has no circuit implementation MUST be refused at
 registration, not discovered at proving.
 
+### Amendment 4 — split a strategy's security _requirement_ from the deployment's _achievement_
+
+Found while fixing the third-party deadline path, and the same defect class as
+Amendment 1: **a claim nothing verifies.**
+
+`SecurityFigure` was documented as "the security level the relation **achieves**",
+and its sole constructor was documented as taking "named prover parameters, never
+a bare integer, so the security claim stays traceable to what produced it". Neither
+was true. The constructor took a bare `u64`; `SecurityParams` was declared as its
+input type and constructed nowhere; and the two live strategies declared **128**
+when the configured prover parameters deliver **96**.
+
+The claim was not merely decorative. It fed `node.has_headroom(words, bits)`, so a
+node budgeted itself against a soundness level its own prover never produced.
+
+The fix is to separate the two halves, because only one of them is knowable by the
+party that currently states it:
+
+| Half                                        | Who knows it | Type             |
+| ------------------------------------------- | ------------ | ---------------- |
+| What the relation **requires** (`min_bits`) | The strategy | `SecurityFigure` |
+| What the deployment **delivers**            | The operator | `ProverProfile`  |
+
+A strategy crate does not own the prover and cannot observe its configuration, so a
+strategy asserting an _achieved_ level is asserting something it has no way to know.
+What it can honestly state is what its relation needs. Boot compares the two and
+refuses on mismatch with `BootRefusal::InsufficientSecurity`, carrying **both**
+figures — "refused" alone would leave an operator unable to tell whether to raise
+the prover or lower the requirement, which are two different decisions with
+different costs.
+
+`SecurityParams` is no longer dead: the constructor takes it, so `from_prover_parameters(96)`
+is no longer expressible and the documented traceability guarantee is real rather
+than aspirational.
+
+`ProverProfile::none()` is the fail-closed default — a caller who forgets to supply
+a real profile gets a deployment that satisfies nothing, rather than one treated as
+having a free prover. A **zero** requirement is met by any deployment, because
+"requires nothing" is not "has a zero-bit prover".
+
+**The gap is now visible.** The host reports 96; `in_boundary_execution` and
+`root_secret_knowledge` declare 128 per RFC-0958 G4; boot refuses and says so.
+Previously the mismatch was invisible. Raising the prover to actually reach 128 is
+a deliberate change with a measured proof-size cost — not a constant edit — and a
+test pins that it would work if taken.
+
+Deliberately **not** done: importing `stwo_security_bits()` into the strategy crates.
+The host is the deployment boundary and states the figure from its own configuration
+with a comment explaining why; a strategy crate gaining a `zk-circuit` edge to learn
+a number it should not own is the same layer inversion Amendment 1 avoids.
+
+Validation: 5 new soundness-gate tests plus 2 host-level tests; `octo-cap-macaroon`
+lib 365 → 370, `octo-wallet-node` 39 → 41, `octo-cap-poi` 12 and `octo-cap-zk` 22
+unchanged. Clippy clean with warnings denied on all targets and all features across
+all five touched crates.
+
 ### Implementation Status
 
 Amendment 1 is **built**. It lives in `crates/octo-cap-macaroon/src/caveat/evaluator.rs`,
@@ -627,6 +683,14 @@ The correct next step is to measure a MAC.
       not a MAC cost, so no future RFC quotes it as one.
 - [x] No existing byte-exact test vector changes.
 - [x] `BeforeEvaluator` reference implementation, not wired into any verify path.
+- [x] `evaluate_registered` specified with its paired-core-gates contract, and both
+      halves tested on the same input.
+- [x] `SecurityFigure` constructor takes `SecurityParams`, so the documented
+      "never a bare integer" guarantee is real.
+- [x] `ProverProfile` supplied by the deployment and compared at boot, with
+      `BootRefusal::InsufficientSecurity` carrying both figures.
+- [x] Strategies declare a requirement; neither claims to "achieve" a level it
+      cannot observe.
 - [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
       migration path that is never exercised is a second extension idiom.
 

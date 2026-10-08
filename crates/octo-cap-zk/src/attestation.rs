@@ -25,6 +25,7 @@
 use octo_cap_macaroon::attestation::{
     AdmissionProfile, AttestationAdmission, AttestationError, AttestationOutcome,
     AttestationStrategy, AttestationTypeId, AttestationVerifyCtx, CostFigure, SecurityFigure,
+    SecurityParams,
 };
 
 /// The RFC-0973-allocated id for the root-secret relation.
@@ -109,7 +110,15 @@ impl AttestationAdmission for RootSecretKnowledge {
     fn admission_profile(&self) -> Option<AdmissionProfile> {
         Some(AdmissionProfile {
             casm_cost_hint_words: CostFigure::Unmeasured,
-            security_bits: SecurityFigure::from_prover_parameters(128),
+            // A requirement, not an achieved level. RFC-0958 §G4 asks for
+            // 128-bit soundness. What the deployment's prover actually delivers
+            // is supplied by the operator as a `ProverProfile` and compared at
+            // boot, so this crate states the need rather than a figure it has
+            // no way to observe.
+            security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                min_bits: 128,
+                num_queries: 102,
+            }),
         })
     }
 }

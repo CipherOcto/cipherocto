@@ -45,7 +45,7 @@ use octo_cap_macaroon::attestation::AttestationEnvelope;
 use octo_cap_macaroon::attestation::{
     AdmissionProfile, AttestationAdmission, AttestationError, AttestationOutcome,
     AttestationStrategy, AttestationTypeId, AttestationVerifyCtx, CostFigure, Expectation,
-    PolicySource, SecurityFigure,
+    PolicySource, SecurityFigure, SecurityParams,
 };
 use octo_cap_macaroon::macaroon::Macaroon;
 use octo_cap_zk::attestation::{RootSecretKnowledge, ROOT_SECRET_KNOWLEDGE};
@@ -116,7 +116,10 @@ impl AttestationAdmission for FixtureRootSecret {
     fn admission_profile(&self) -> Option<AdmissionProfile> {
         Some(AdmissionProfile {
             casm_cost_hint_words: CostFigure::Unmeasured,
-            security_bits: SecurityFigure::from_prover_parameters(128),
+            security_bits: SecurityFigure::from_prover_parameters(SecurityParams {
+                min_bits: 128,
+                num_queries: 102,
+            }),
         })
     }
 }

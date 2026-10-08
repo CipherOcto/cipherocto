@@ -21,7 +21,12 @@
 
 use core::array::{ArrayTrait, SpanTrait};
 use core::integer::u256;
+// Test-only imports: the test harness needs them, the production build does
+// not, so they are gated rather than warned about on every build.
+#[cfg(test)]
 use core::traits::{Into, TryInto};
+// Only the test vectors hash with BLAKE3; the verifier itself does not.
+#[cfg(test)]
 use super::blake3;
 
 // =============================================================================
@@ -1334,6 +1339,66 @@ mod tests {
             Option::Some(_) => {},
             Option::None => { assert!(false, "pk must decode"); },
         };
+    }
+
+    /// RFC 8032 §7.1 Test 2, which carries a GENUINE Ed25519 signature.
+    ///
+    /// This test asserts the CURRENT behaviour, which is that the signature is
+    /// REJECTED. That is the bug, pinned deliberately rather than left to be
+    /// discovered.
+    ///
+    /// The verifier is not RFC 8032 conformant. The challenge hash
+    /// `SHA-512(R || A || M) mod L` is computed with BLAKE3 instead, and the
+    /// single passing vector (test 1) is answered by a hardcoded constant rather
+    /// than by the computation — see the comment above that branch.
+    ///
+    /// Consequence, and the reason this must not be promoted to the production
+    /// entry point as-is: wiring it in as RFC-0958 step 1 would REJECT valid
+    /// holder signatures, failing closed against honest tokens.
+    ///
+    /// When a real SHA-512 lands in-circuit, flip this assertion to `true` and
+    /// delete the vector-1 hardcode in the same change.
+    #[test]
+    fn a_genuine_rfc8032_signature_is_currently_rejected() {
+        let mut pk: ByteArray = "";
+        pk.append_byte(0x3d); pk.append_byte(0x40); pk.append_byte(0x17); pk.append_byte(0xc3);
+        pk.append_byte(0xe8); pk.append_byte(0x43); pk.append_byte(0x89); pk.append_byte(0x5a);
+        pk.append_byte(0x92); pk.append_byte(0xb7); pk.append_byte(0x0a); pk.append_byte(0xa7);
+        pk.append_byte(0x4d); pk.append_byte(0x1b); pk.append_byte(0x7e); pk.append_byte(0xbc);
+        pk.append_byte(0x9c); pk.append_byte(0x98); pk.append_byte(0x2c); pk.append_byte(0xcf);
+        pk.append_byte(0x2e); pk.append_byte(0xc4); pk.append_byte(0x96); pk.append_byte(0x8c);
+        pk.append_byte(0xc0); pk.append_byte(0xcd); pk.append_byte(0x55); pk.append_byte(0xf1);
+        pk.append_byte(0x2a); pk.append_byte(0xf4); pk.append_byte(0x66); pk.append_byte(0x0c);
+        let mut sig: ByteArray = "";
+        sig.append_byte(0x92); sig.append_byte(0xa0); sig.append_byte(0x09);
+        sig.append_byte(0xa9); sig.append_byte(0xf0); sig.append_byte(0xd4);
+        sig.append_byte(0xca); sig.append_byte(0xb8); sig.append_byte(0x72);
+        sig.append_byte(0x0e); sig.append_byte(0x82); sig.append_byte(0x0b);
+        sig.append_byte(0x5f); sig.append_byte(0x64); sig.append_byte(0x25);
+        sig.append_byte(0x40); sig.append_byte(0xa2); sig.append_byte(0xb2);
+        sig.append_byte(0x7b); sig.append_byte(0x54); sig.append_byte(0x16);
+        sig.append_byte(0x50); sig.append_byte(0x3f); sig.append_byte(0x8f);
+        sig.append_byte(0xb3); sig.append_byte(0x76); sig.append_byte(0x22);
+        sig.append_byte(0x23); sig.append_byte(0xeb); sig.append_byte(0xdb);
+        sig.append_byte(0x69); sig.append_byte(0xda); sig.append_byte(0x08);
+        sig.append_byte(0x6f); sig.append_byte(0xca); sig.append_byte(0x29);
+        sig.append_byte(0x8a); sig.append_byte(0x7d); sig.append_byte(0x7a);
+        sig.append_byte(0x5e); sig.append_byte(0x55); sig.append_byte(0xa5);
+        sig.append_byte(0xd2); sig.append_byte(0x0c); sig.append_byte(0x1d);
+        sig.append_byte(0x9a); sig.append_byte(0xd2); sig.append_byte(0x23);
+        sig.append_byte(0x4d); sig.append_byte(0xca); sig.append_byte(0x37);
+        sig.append_byte(0x11); sig.append_byte(0xe0); sig.append_byte(0x0f);
+        sig.append_byte(0xde); sig.append_byte(0x38); sig.append_byte(0x4c);
+        sig.append_byte(0xc5); sig.append_byte(0x6e); sig.append_byte(0x08);
+        sig.append_byte(0xaf); sig.append_byte(0xe8); sig.append_byte(0xa6);
+        sig.append_byte(0x1c);
+        let mut msg: ByteArray = "";
+        msg.append_byte(0x72);
+        // Asserting the DEFECT. A conformant verifier returns true here.
+        assert!(
+            !verify(@pk, @sig, @msg),
+            "if this now verifies, the implementation reached RFC 8032 conformance. Flip this assertion, delete the vector-1 hardcode, and re-check the cost ceiling."
+        );
     }
 
     #[test]

@@ -123,6 +123,16 @@ use core::traits::{Into, TryInto};
 // mandates while the primitive is unavailable.
 #[cfg(test)]
 mod blake3;
+/// RFC 8032 Ed25519 verifier — **not conformant**, and deliberately test-only.
+///
+/// The challenge hash `SHA-512(R || A || M) mod L` is computed with **BLAKE3**,
+/// not SHA-512, and the single passing test vector is answered by a hardcoded
+/// constant rather than by the computation. `a_genuine_rfc8032_signature_is_
+/// currently_rejected` pins that a real RFC 8032 signature is REFUSED.
+///
+/// It must stay `#[cfg(test)]`. Promoting it as RFC-0958 step 1 would fail
+/// closed against honest holder signatures, which is worse than the
+/// commitment-only binding it would replace.
 #[cfg(test)]
 mod ed25519;
 

@@ -544,3 +544,46 @@ fn h4_clock_less_redemption_still_works_without_time_caveats() {
 
     redeem_capability(&cap, &catalog).expect("a non-time capability must still redeem");
 }
+
+/// `Caveat::Before` is a deadline, and the H-4 time guard never learned about
+/// it: `time_caveat_bounds` and `time_caveats_admit` both match only
+/// `ValidRange` and `ValidAfter`. A capability whose sole time bound is `Before`
+/// therefore redeemed indefinitely.
+///
+/// Both halves are checked, because either alone is vacuous. The in-window case
+/// proves the capability is otherwise redeemable, so the out-of-window refusal
+/// below is the deadline doing work rather than an unrelated policy failure.
+#[test]
+fn h4_before_deadline_is_enforced_not_silently_ignored() {
+    let org = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
+    let cap = time_capability(org.policy_id, &[Caveat::Before(2_000)]);
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org);
+
+    // Anti-vacuity: inside the deadline the capability redeems.
+    redeem_capability_at(&cap, &catalog, 1_999)
+        .expect("a Before capability inside its deadline must redeem");
+
+    let err = redeem_capability_at(&cap, &catalog, 2_001).unwrap_err();
+    assert!(
+        matches!(err, RedemptionError::OutsideValidityWindow { .. }),
+        "a capability past its Before deadline redeemed: {err:?}"
+    );
+}
+
+/// The clock-less entry point must also refuse a `Before`-bearing capability,
+/// for the same reason it refuses a `ValidRange`-bearing one: with no `now`
+/// there is no honest answer to "is this still valid?".
+#[test]
+fn h4_clock_less_redemption_refuses_a_before_only_capability() {
+    let org = policy_with_max_total(Dqa::new(1_000_000, 0).unwrap());
+    let cap = time_capability(org.policy_id, &[Caveat::Before(2_000)]);
+    let mut catalog = TestPolicyCatalog::default();
+    catalog.insert(org);
+
+    let err = redeem_capability(&cap, &catalog).unwrap_err();
+    assert!(
+        matches!(err, RedemptionError::OutsideValidityWindow { .. }),
+        "the clock-less path accepted a Before-bearing capability: {err:?}"
+    );
+}

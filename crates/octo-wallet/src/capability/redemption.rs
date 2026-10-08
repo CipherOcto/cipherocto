@@ -154,20 +154,10 @@ pub fn redeem_capability(
 /// The validity window a caveat imposes, as a human-readable description, or
 /// `None` if the caveat carries no time bound.
 ///
-/// RULE: a TIME-BOUNDING caveat is `ValidRange`, `ValidAfter`, or
-/// `ExpiresAt`. Adding a variant here is required when a new time-bearing
-/// variant lands — a variant missed here silently redeems forever.
+/// The classification lives in `Caveat::time_bounds`, whose match is
+/// exhaustive, so a new time-bearing variant cannot land here unenforced.
 fn time_caveat_bounds(caveat: &Caveat) -> Option<String> {
-    match caveat {
-        Caveat::ValidRange {
-            valid_after_unix,
-            valid_until_unix,
-        } => Some(format!(
-            "ValidRange [{valid_after_unix}, {valid_until_unix}]"
-        )),
-        Caveat::ValidAfter { not_before_unix } => Some(format!("ValidAfter {not_before_unix}")),
-        _ => None,
-    }
+    caveat.time_bounds().map(|bounds| bounds.to_string())
 }
 
 /// Does every time-bearing caveat on the capability admit `now_unix`?
@@ -177,42 +167,12 @@ fn time_caveat_bounds(caveat: &Caveat) -> Option<String> {
 /// check.
 fn time_caveats_admit(cap: &CapabilityToken, now_unix: u64) -> Result<(), RedemptionError> {
     for caveat in &cap.macaroon.caveats {
-        match caveat {
-            Caveat::ValidRange {
-                valid_after_unix,
-                valid_until_unix,
-            } => {
-                // RFC-0960 §R5-F2: `after > until` is unsatisfiable, so every
-                // instant is rejected rather than the range wrapping.
-                if valid_after_unix > valid_until_unix {
-                    return Err(RedemptionError::OutsideValidityWindow {
-                        now_unix,
-                        reason: format!(
-                            "unsatisfiable ValidRange [{valid_after_unix}, {valid_until_unix}]"
-                        ),
-                    });
-                }
-                if now_unix < *valid_after_unix {
-                    return Err(RedemptionError::OutsideValidityWindow {
-                        now_unix,
-                        reason: format!("not yet valid; starts at {valid_after_unix}"),
-                    });
-                }
-                if now_unix > *valid_until_unix {
-                    return Err(RedemptionError::OutsideValidityWindow {
-                        now_unix,
-                        reason: format!("expired at {valid_until_unix}"),
-                    });
-                }
-            }
-            Caveat::ValidAfter { not_before_unix } if now_unix < *not_before_unix => {
-                return Err(RedemptionError::OutsideValidityWindow {
-                    now_unix,
-                    reason: format!("not yet valid; starts at {not_before_unix}"),
-                });
-            }
-            _ => {}
-        }
+        let Some(bounds) = caveat.time_bounds() else {
+            continue;
+        };
+        bounds
+            .admit(now_unix)
+            .map_err(|reason| RedemptionError::OutsideValidityWindow { now_unix, reason })?;
     }
     Ok(())
 }

@@ -1036,24 +1036,48 @@ fn h4_redemption_evaluates_time_caveats_before_anything_else() {
 
 #[test]
 fn h4_every_time_bearing_caveat_variant_is_covered() {
-    // The exhaustive-ness of the match is the property: a NEW time-bearing
-    // variant that is not added to both matches silently redeems forever.
-    // Asserted as a counted list so adding a variant without covering it fails
-    // here rather than in production.
-    // `time_caveat_bounds` lives in redemption.rs — it is the wallet-side
-    // definition of "which caveats are time-bearing", not the crate that
-    // defines the variants.
-    let raw = read("crates/octo-wallet/src/capability/redemption.rs");
-    let src = strip_comments(&raw);
-    let body = fn_body(&src, "fn time_caveat_bounds");
+    // The classification of "which caveats are time-bearing" now lives in
+    // `Caveat::time_bounds`, in the crate that DEFINES the variants, and its
+    // match is exhaustive with no wildcard arm.
+    //
+    // That is strictly stronger than the hand-maintained list this guard used to
+    // inspect. Before, a new time-bearing variant was silently unenforced —
+    // which is not hypothetical: `Caveat::Before` was in the DSL, serialized,
+    // subsumed and displayed, but missing from the guard's list, so a
+    // capability whose only deadline was `Before` redeemed indefinitely.
+    // Exhaustiveness turns that silent skip into a compile error.
+    let defs = read("crates/octo-cap-macaroon/src/caveat/mod.rs");
+    let def_src = strip_comments(&defs);
+    let body = fn_body(&def_src, "fn time_bounds");
     let dense_body = dense(body);
+
     assert!(
-        dense_body.contains("Caveat::ValidRange") && dense_body.contains("Caveat::ValidAfter"),
-        "H-4: the time-bounding match must handle ValidRange and ValidAfter"
+        dense_body.contains("Self::Before")
+            && dense_body.contains("Self::ValidRange")
+            && dense_body.contains("Self::ValidAfter"),
+        "H-4: the time-bearing classification must handle Before, ValidRange and ValidAfter"
+    );
+    assert!(
+        !dense_body.contains("_=>"),
+        "H-4: `time_bounds` must have no wildcard arm — a wildcard is precisely \
+         what lets a new time-bearing variant be silently unenforced"
+    );
+    // Matched on the full signature, not the bare name: unit tests named
+    // `fn time_bounds_*` in the same file would otherwise inflate the count.
+    assert_eq!(
+        defs.matches("fn time_bounds(&self)").count(),
+        1,
+        "H-4: `time_bounds` must be defined exactly once, in the crate that owns the variants"
     );
 
-    // And the clock-less guard must use the SAME definition, so the two cannot
-    // disagree about which caveats are time-bearing.
+    // The wallet must consume that one definition rather than keeping its own
+    // list, so the refusal and the evaluation cannot drift apart.
+    let raw = read("crates/octo-wallet/src/capability/redemption.rs");
+    assert!(
+        raw.contains("caveat.time_bounds()"),
+        "H-4: the wallet must classify time bounds through `Caveat::time_bounds`, \
+         not a hand-maintained list"
+    );
     assert!(
         raw.matches("fn time_caveat_bounds").count() == 1,
         "H-4: `time_caveat_bounds` must be defined exactly once, so the \

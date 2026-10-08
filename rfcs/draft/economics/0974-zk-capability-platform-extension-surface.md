@@ -405,6 +405,52 @@ integration suites unchanged; clippy `-D warnings` clean on `--all-targets
 --all-features`; `octo-wallet` and `octo-wallet-node` build unchanged. No existing
 byte-exact test vector moved.
 
+### What migrating the first core check uncovered
+
+The obvious first migration target is the H-4 time guard in `redeem_capability`.
+Reading it to route it through the registry turned up a live defect rather than a
+refactor.
+
+That guard maintained a hand-written list of time-bearing caveat variants with a
+wildcard arm for the rest, and carried a comment admitting the consequence: _"a
+variant missed here silently redeems forever."_ `Caveat::Before` had been missed.
+It was present in the DSL, serialized, subsumed, and surfaced in holder summaries —
+and enforced nowhere. A capability whose only deadline was `Before` redeemed
+indefinitely. Confirmed by test before fixing: `redeem_capability_at` returned `Ok`
+at an instant past the deadline.
+
+This is the strongest available argument for the registry, and it is worth being
+precise about why. The registry is the right fix for the _extensibility_ half. It is
+**not** the right fix for this defect, because `Before` is a core variant with
+known semantics — nothing about it needed extending. Enforcing it needed the
+classification to be **exhaustive**, and a registry lookup cannot enforce
+exhaustiveness over core variants.
+
+So the fix is `Caveat::time_bounds`, an exhaustive match with **no wildcard arm**,
+in the crate that defines the variants. Adding a caveat variant is now a compile
+error until someone classifies it as time-bearing or not. That converts the silent
+skip into a build failure at the moment the variant lands.
+
+The composition is deliberate, and each mechanism keeps the job it suits:
+
+- **Core time caveats** — `Caveat::time_bounds`. Exhaustive, compile-time safe.
+- **Third-party time caveats** — a `CaveatEvaluator` in the registry. Core returns
+  `None` for `Raw` by design, because it cannot know whether opaque bytes carry a
+  deadline without trusting them.
+
+The CI guard was repointed accordingly. It previously asserted on the source text
+of the wallet's hand-maintained list; it now asserts that the classification lives
+in the crate owning the variants, covers all three time-bearing variants, and has
+no wildcard arm.
+
+Exhaustiveness was verified by mutation rather than asserted: removing one variant
+from the `None` arm produces `error[E0004]: non-exhaustive patterns:
+&Caveat::Sharded { .. } not covered`.
+
+Validation: 8 new classification unit tests plus 2 redemption regression tests;
+`octo-cap-macaroon` lib suite 345 → 353; `redemption_subgraph` 18 → 20; the
+security-regression guard 39 pass.
+
 ## Poseidon Macaroon
 
 ### Where it fits

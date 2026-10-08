@@ -248,6 +248,82 @@ pub enum Caveat {
     AssetBinding(AssetBinding),
 }
 
+/// A time window a caveat imposes on redemption.
+///
+/// Returned by [`Caveat::time_bounds`] and combined across a caveat set by
+/// logical AND: a capability carrying both `Before` and `ValidRange` must
+/// satisfy both, which is the intersection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeBounds {
+    /// Valid while `now <= deadline_unix`.
+    NotAfter {
+        /// Inclusive expiry instant, Unix seconds.
+        deadline_unix: u64,
+    },
+    /// Valid while `valid_after_unix <= now <= valid_until_unix`.
+    Range {
+        /// Inclusive start, Unix seconds.
+        valid_after_unix: u64,
+        /// Inclusive end, Unix seconds.
+        valid_until_unix: u64,
+    },
+    /// Valid while `now >= not_before_unix`.
+    NotBefore {
+        /// Earliest valid instant, Unix seconds.
+        not_before_unix: u64,
+    },
+}
+
+impl TimeBounds {
+    /// Whether `now_unix` falls inside this window, with a refusal reason if not.
+    ///
+    /// Both range endpoints are **inclusive**, matching the caveat semantics:
+    /// `ValidRange [1000, 2000]` admits exactly 1000 and 2000.
+    pub fn admit(&self, now_unix: u64) -> Result<(), String> {
+        match *self {
+            Self::NotAfter { deadline_unix } if now_unix > deadline_unix => {
+                Err(format!("expired at {deadline_unix}"))
+            }
+            Self::NotBefore { not_before_unix } if now_unix < not_before_unix => {
+                Err(format!("not yet valid; starts at {not_before_unix}"))
+            }
+            Self::Range {
+                valid_after_unix,
+                valid_until_unix,
+            } => {
+                // RFC-0960 §R5-F2: `after > until` is unsatisfiable, so every
+                // instant is rejected rather than the range wrapping around.
+                if valid_after_unix > valid_until_unix {
+                    return Err(format!(
+                        "unsatisfiable ValidRange [{valid_after_unix}, {valid_until_unix}]"
+                    ));
+                }
+                if now_unix < valid_after_unix {
+                    return Err(format!("not yet valid; starts at {valid_after_unix}"));
+                }
+                if now_unix > valid_until_unix {
+                    return Err(format!("expired at {valid_until_unix}"));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl std::fmt::Display for TimeBounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAfter { deadline_unix } => write!(f, "Before {deadline_unix}"),
+            Self::Range {
+                valid_after_unix,
+                valid_until_unix,
+            } => write!(f, "ValidRange [{valid_after_unix}, {valid_until_unix}]"),
+            Self::NotBefore { not_before_unix } => write!(f, "ValidAfter {not_before_unix}"),
+        }
+    }
+}
+
 /// Permission kind enum (RFC-0965 §3.2).
 ///
 /// Adding new kinds is a backwards-compatible variant add per RFC-0960 §R1-F6.
@@ -738,6 +814,69 @@ fn cache_policy_subsumes(parent: &CachePolicy, child: &CachePolicy) -> bool {
 }
 
 impl Caveat {
+    /// The time window this caveat imposes, or `None` if it imposes none.
+    ///
+    /// The match below is deliberately **exhaustive with no wildcard arm**, so
+    /// adding a caveat variant is a compile error until someone classifies it
+    /// here. That is the whole point of this function.
+    ///
+    /// It exists because the H-4 redemption guard used to hardcode a list of
+    /// time-bearing variants, with a `_ => {}` arm for everything else. A
+    /// variant missed by that list redeemed **indefinitely** — silently, with
+    /// no test failure. `Caveat::Before` had been missed that way for the life
+    /// of the guard: a capability whose sole deadline was `Before` never
+    /// expired. Making the classification exhaustive turns that silent skip
+    /// into a compile error at the moment the variant lands.
+    ///
+    /// `Raw` returns `None` by design. A raw caveat may carry a deadline, but
+    /// core cannot know that without trusting the bytes; a caller that does
+    /// know supplies its own evaluator through
+    /// [`crate::caveat::evaluator::CaveatEvaluator`] instead.
+    pub fn time_bounds(&self) -> Option<TimeBounds> {
+        match self {
+            Self::Before(deadline_unix) => Some(TimeBounds::NotAfter {
+                deadline_unix: *deadline_unix,
+            }),
+            Self::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => Some(TimeBounds::Range {
+                valid_after_unix: *valid_after_unix,
+                valid_until_unix: *valid_until_unix,
+            }),
+            Self::ValidAfter { not_before_unix } => Some(TimeBounds::NotBefore {
+                not_before_unix: *not_before_unix,
+            }),
+            // Non-time-bearing variants, listed exhaustively and on purpose.
+            // A new variant will not compile until it is placed here, which is
+            // the decision this function exists to force.
+            Self::AmountMax(_)
+            | Self::PerAxisMax(_)
+            | Self::Model(_)
+            | Self::Provider(_)
+            | Self::Audience(_)
+            | Self::RateLimit(_)
+            | Self::InvocationHashBind(_)
+            | Self::Jurisdiction(_)
+            | Self::CacheStrategy(_)
+            | Self::AskBinding(_)
+            | Self::ThirdParty(_)
+            | Self::Raw(_)
+            | Self::Vault(_)
+            | Self::Permission(_)
+            | Self::MaxPerTx(_)
+            | Self::AuditWindow { .. }
+            | Self::MaxUses { .. }
+            | Self::WrappedOnly { .. }
+            | Self::Factory(_)
+            | Self::PolicyReference { .. }
+            | Self::RedemptionContext { .. }
+            | Self::Sharded { .. }
+            | Self::Payment(_)
+            | Self::AssetBinding(_) => None,
+        }
+    }
+
     /// Registry key for caveat predicate evaluation (RFC-0974 §Amendment 1).
     ///
     /// A core variant keys on its RFC-0964 short tag — the same string
@@ -1235,6 +1374,155 @@ mod tests {
 
     // RFC-0957 §Attenuation Invariant + 0957-a mission AC: set_subsumes enforces monotonic
     // attenuation — child capability may only narrow, never widen.
+
+    // --- time classification -------------------------------------------------
+    //
+    // `time_bounds` exists because the H-4 redemption guard used to keep a
+    // hand-maintained list of time-bearing variants with a wildcard arm, and a
+    // variant missing from that list redeemed indefinitely. `Before` was
+    // missing. These tests pin the classification that replaced it.
+
+    #[test]
+    fn time_bounds_covers_before_valid_range_and_valid_after() {
+        assert_eq!(
+            Caveat::Before(200).time_bounds(),
+            Some(TimeBounds::NotAfter { deadline_unix: 200 })
+        );
+        assert_eq!(
+            Caveat::ValidRange {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            }
+            .time_bounds(),
+            Some(TimeBounds::Range {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            })
+        );
+        assert_eq!(
+            Caveat::ValidAfter {
+                not_before_unix: 100
+            }
+            .time_bounds(),
+            Some(TimeBounds::NotBefore {
+                not_before_unix: 100
+            })
+        );
+    }
+
+    #[test]
+    fn time_bounds_is_none_for_non_time_variants() {
+        assert!(Caveat::Model("m".to_owned()).time_bounds().is_none());
+        assert!(Caveat::AmountMax(Dqa::new(1, 0).unwrap())
+            .time_bounds()
+            .is_none());
+        assert!(Caveat::PolicyReference {
+            policy_id: [0u8; 32],
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        }
+        .time_bounds()
+        .is_none());
+        // `Raw` is deliberately not time-classified: core cannot know whether
+        // the opaque bytes carry a deadline without trusting them.
+        assert!(Caveat::Raw(RawCaveat {
+            name: "app.example/deadline".to_owned(),
+            value: b"{}".to_vec(),
+        })
+        .time_bounds()
+        .is_none());
+    }
+
+    #[test]
+    fn not_after_admits_inclusive_and_refuses_after() {
+        let b = TimeBounds::NotAfter { deadline_unix: 200 };
+        assert!(b.admit(0).is_ok());
+        assert!(b.admit(200).is_ok(), "the deadline instant is inclusive");
+        assert!(b.admit(201).is_err());
+    }
+
+    #[test]
+    fn not_before_refuses_before_and_admits_from() {
+        let b = TimeBounds::NotBefore {
+            not_before_unix: 200,
+        };
+        assert!(b.admit(199).is_err());
+        assert!(b.admit(200).is_ok(), "the start instant is inclusive");
+        assert!(b.admit(500).is_ok());
+    }
+
+    #[test]
+    fn range_admits_both_inclusive_endpoints() {
+        let b = TimeBounds::Range {
+            valid_after_unix: 100,
+            valid_until_unix: 200,
+        };
+        assert!(b.admit(99).is_err());
+        assert!(b.admit(100).is_ok(), "start is inclusive");
+        assert!(b.admit(150).is_ok());
+        assert!(b.admit(200).is_ok(), "end is inclusive");
+        assert!(b.admit(201).is_err());
+    }
+
+    #[test]
+    fn inverted_range_is_unsatisfiable_at_every_instant() {
+        // RFC-0960 §R5-F2: the range must not wrap around midnight-style.
+        let b = TimeBounds::Range {
+            valid_after_unix: 300,
+            valid_until_unix: 100,
+        };
+        for now in [0_u64, 100, 200, 300, 1_000] {
+            assert!(b.admit(now).is_err(), "inverted range admitted now={now}");
+        }
+        assert!(b.admit(0).unwrap_err().contains("unsatisfiable"));
+    }
+
+    #[test]
+    fn time_bounds_display_round_trips_the_caveat_names() {
+        assert_eq!(
+            TimeBounds::NotAfter { deadline_unix: 200 }.to_string(),
+            "Before 200"
+        );
+        assert_eq!(
+            TimeBounds::Range {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            }
+            .to_string(),
+            "ValidRange [100, 200]"
+        );
+        assert_eq!(
+            TimeBounds::NotBefore {
+                not_before_unix: 100
+            }
+            .to_string(),
+            "ValidAfter 100"
+        );
+    }
+
+    #[test]
+    fn refusal_reasons_name_the_bound_not_the_instant() {
+        // `admit` reports the violated bound. The `now` that violated it is
+        // carried alongside by the caller, which has it as a separate value —
+        // duplicating it here would make the two disagree.
+        let expired = TimeBounds::NotAfter { deadline_unix: 200 }
+            .admit(500)
+            .unwrap_err();
+        assert!(
+            expired.contains("expired") && expired.contains("200"),
+            "reason must name expiry: {expired}"
+        );
+
+        let early = TimeBounds::NotBefore {
+            not_before_unix: 900,
+        }
+        .admit(500)
+        .unwrap_err();
+        assert!(
+            early.contains("not yet valid") && early.contains("900"),
+            "reason must name the start: {early}"
+        );
+    }
 
     #[test]
     fn subsumes_empty_parent_allows_empty_child() {

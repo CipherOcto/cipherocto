@@ -673,11 +673,22 @@ features.
 
 ### Remaining gaps, stated plainly
 
-- **Host chain swap to Poseidon** — blocks steps 2 and 4 together. The circuit
-  side is unblocked: it now enforces the same `name ‖ caveat ‖ id` construction
-  the host does, so adopting this construction on the host no longer drops
-  tamper-evidence. The remaining work is the three HMAC-BLAKE3 call sites in
-  `macaroon.rs` and the token-format consequence of it.
+- **Host chain swap to Poseidon** — **done.** The three HMAC-BLAKE3 call sites
+  now use `chain_seed` / `chain_step`, and a test replays the exact sequence the
+  circuit runs against a real three-caveat token, landing on its stored
+  signature. This is a breaking change: every previously minted token fails to
+  verify and needs re-minting. `capability_id`, `root_secret_hash` and
+  `macaroon_id` deliberately stayed on BLAKE3.
+
+- **The prover cannot obtain the mint nonce.** This surfaced only once the
+  chain was actually rewired. `mint` generates the nonce and discards it, so
+  `chain[0]` is not recomputable from the token — by the circuit, by
+  `verify_signature`, or by anyone else. The circuit takes the nonce as witness,
+  which works, but nothing currently _supplies_ it. Until the nonce is carried
+  on the token (a further `canonical_ser_unsigned` change, hence a further id
+  change) or is held beside the root secret by the prover, the ZK path cannot be
+  driven end to end. This is now the real blocker for steps 2 and 4, and it is
+  a token-format decision rather than a cryptographic one.
 - **RFC-0958 step 1** — real SHA-512 in-circuit, or a STARK-friendly curve.
 - **`stwo-sys` executable fixture** — stale by one slot after the `chain_tip_lo`
   ABI change; it cannot be regenerated here because that crate does not compile in
@@ -959,11 +970,9 @@ The correct next step is to measure a MAC.
       id-split and chain-entry decode decisions proven by test, and pinned to the
       circuit by a shared chain-tip literal over a realistic witness.
 - [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
-      The circuit side no longer blocks it — see §Why the host chain swap is not
-      a mechanical change. The host primitives and their cross-implementation
-      parity are built; what remains is rewiring the three HMAC-BLAKE3 call sites
-      in `macaroon.rs` onto them, which changes every minted token's signature
-      value and needs a migration story.
+      **Done**, with one gap that only appeared once it was rewired: the mint
+      nonce is discarded at mint time, so no prover can supply it and `chain[0]`
+      is not recomputable by anyone. See §Remaining gaps.
 - [x] Byte-to-felt packing convention for variable-length caveat messages:
       31 bytes per felt, length-prefixed, with round-trip, injectivity and
       range properties proven by test.

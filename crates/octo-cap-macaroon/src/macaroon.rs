@@ -1,15 +1,33 @@
-//! Macaroon v1: BLAKE3-keyed macaroon chained bearer token (RFC-0957 §3.2).
+//! Macaroon v1: chained bearer capability token (RFC-0957 §3.2).
 //!
 //! `macaroon_root_id` = `blake3::keyed_hash(root_secret,
-//!                                       "cipherocto/macaroon/v1/id:" ++ hex(nonce))[:16].
+//!                                       "cipherocto/macaroon/v1/id:" ++ hex(nonce))[:16]`.
 //! `capability_id` = `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))` per RFC-0965 §3.7.
-//! Each caveat: `hmac_i = blake3::keyed_hash(hmac_{i-1},
-//!                                          caveat_name || canonical_ser(caveat) || capability_id_{i-1})`.
 //!
-//! **BLAKE3 native keyed mode per RFC-0957 §Algorithms + RFC-0853 §1.1
-//! convention.** "HMAC-BLAKE3" in CipherOcto means BLAKE3's native
-//! keyed-hash mode (the `blake3::keyed_hash(key, msg)` primitive), NOT
-//! RFC 2104 ipad/opad wrapped around unkeyed BLAKE3. This matches:
+//! **The chain is Poseidon. Everything else is still BLAKE3.**
+//!
+//! ```text
+//! chain[0]   = H(MAC_DOMAIN, secret_lo, secret_hi, ...pack(MACAR_ID_DOMAIN || nonce))
+//! chain[i+1] = MAC(chain[i], [id_lo, id_hi, ...pack(name || canonical_ser(caveat))])
+//! ```
+//!
+//! It moved off `blake3::keyed_hash` so the credential chain and the RFC-0958
+//! ZK circuit can be one chain rather than two. Two chains would mean every
+//! token carrying two values to keep in agreement forever, and the circuit
+//! proving a relation no token uses.
+//!
+//! What deliberately stayed on BLAKE3:
+//!
+//! - `capability_id`, a 32-byte digest the catalog stores as a BLOB and which
+//!   the circuit commits to rather than derives. Deriving it in-circuit needs an
+//!   in-field BLAKE3, measured at 17,628 CASM words against a 3,300-word
+//!   ceiling.
+//! - `root_secret_hash` and `macaroon_id`, which are root-secret custody rather
+//!   than chain state.
+//!
+//! **"HMAC-BLAKE3" in CipherOcto means BLAKE3 native keyed-hash mode** (the
+//! `blake3::keyed_hash(key, msg)` primitive), NOT RFC 2104 ipad/opad wrapped
+//! around unkeyed BLAKE3. This matches:
 //! - RFC-0957 §Algorithms pseudocode: `blake3::keyed_hash(root_secret, ...)`.
 //! - RFC-0853 §1.1: "HMAC-BLAKE3 = HKDF (RFC 5869) using HMAC-BLAKE3 as
 //!   the underlying PRF, where HMAC-BLAKE3 uses BLAKE3's keyed hash mode."
@@ -36,6 +54,9 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 
 use crate::caveat::Caveat;
+use crate::substrate_poseidon::{
+    bytes_to_felts, chain_bytes_to_felt, chain_seed, chain_step, felt_to_chain_bytes, split_felts,
+};
 use crate::VaultVerifyError;
 
 // Re-export crate-root items into the `macaroon` module namespace so
@@ -171,18 +192,22 @@ impl Macaroon {
         let root_id = macaroon_id(root_secret, &nonce);
         let root_secret_hash = *blake3::hash(root_secret).as_bytes();
 
-        // Empty chain: chain[0] = HMAC(root_secret, MACAR_ID_DOMAIN || nonce)
-        let mut hmac_state = *root_secret;
-        let mut chained_msg = Vec::with_capacity(MACAR_ID_DOMAIN.len() + 16);
-        chained_msg.extend_from_slice(MACAR_ID_DOMAIN.as_bytes());
-        chained_msg.extend_from_slice(&nonce);
-        hmac_state = hmac_blake3(&hmac_state, &chained_msg);
+        // chain[0] = H(MAC_DOMAIN, secret_lo, secret_hi, ...mint_felts)
+        //
+        // The mint nonce lives here rather than on the token, which is why
+        // nothing downstream can recompute `chain[0]` from the token alone.
+        // Both the credential verifier and the ZK circuit must be handed it.
+        let mut seed_bytes = Vec::with_capacity(MACAR_ID_DOMAIN.len() + 16);
+        seed_bytes.extend_from_slice(MACAR_ID_DOMAIN.as_bytes());
+        seed_bytes.extend_from_slice(&nonce);
+        let (secret_lo, secret_hi) = split_felts(root_secret);
+        let chain0 = chain_seed(secret_lo, secret_hi, &bytes_to_felts(&seed_bytes));
 
         let mut macaroon = Self {
             root_id,
             root_secret_hash,
             id: [0u8; 32], // placeholder — overwritten below
-            chain: vec![hmac_state],
+            chain: vec![felt_to_chain_bytes(chain0)],
             caveats: Vec::new(),
             // RFC-0973 standing invariant: this mission never attaches an
             // envelope at mint. A capability carrying an attestation MUST NOT be
@@ -299,19 +324,20 @@ impl Macaroon {
     /// crypto per RFC-0957-A1 G3.
     pub fn extend_chain(self, caveat: Caveat) -> Self {
         let mut next = self;
-        let prev_chain = *next.chain.last().expect("chain non-empty");
-        let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + next.id.len());
+        let prev_chain = chain_bytes_to_felt(next.chain.last().expect("chain non-empty"))
+            .expect("chain entry was not produced by this crate's Poseidon chain");
+        let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64);
         msg.extend_from_slice(caveat.name().as_str().as_bytes());
         msg.extend_from_slice(&caveat.canonical_ser());
-        // HMAC binds to capability_id per RFC-0965 §3.7 — without this,
-        // an attacker could swap `id` (and the catalog-resolved parent
-        // chain) without invalidating the signature.
-        msg.extend_from_slice(&next.id);
-        let new_chain = hmac_blake3(&prev_chain, &msg);
+        // The chain binds `next.id` as its first two MAC felts. Without this an
+        // attacker could swap `id` (and the catalog-resolved parent chain)
+        // without invalidating the signature. RFC-0965 §3.7.
+        let new_chain =
+            felt_to_chain_bytes(chain_step(prev_chain, &next.id, &bytes_to_felts(&msg)));
         next.caveats.push(caveat);
         next.chain.push(new_chain);
         // Recompute id AFTER chain push so the derived id covers the new
-        // HMAC entry (content-addressed tamper-evidence).
+        // chain entry (content-addressed tamper-evidence).
         next.id = compute_capability_id(&next);
         next
     }
@@ -356,19 +382,25 @@ impl Macaroon {
         h.update(&self.root_secret_hash);
 
         // Step 0: mint-time state (chain = [chain[0]], caveats = []).
+        //
+        // `chain[0]` is TRUSTED, not re-derived: the mint nonce that produced it
+        // is not stored on the token, so no verifier holding only the token and
+        // the root secret can recompute it. That is a property of the format,
+        // not an oversight — see `Macaroon::mint`.
         h.update(&self.chain[0]);
         h.update(&u32_len(0)); // empty producer for chain[0]
-        let mut prev_chain = self.chain[0];
+        let mut prev_chain =
+            chain_bytes_to_felt(&self.chain[0]).ok_or(MacaroonError::ChainEntryNotCanonical(0))?;
         let mut prev_id: [u8; 32] = *h.finalize().as_bytes();
 
         // Steps 1..n: each caveat extends the chain by one entry.
         for (i, caveat) in self.caveats.iter().enumerate() {
-            // Verify HMAC for chain[i+1] using capability_id from state i.
-            let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + prev_id.len());
+            // Re-derive chain[i+1] using capability_id from state i.
+            let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64);
             msg.extend_from_slice(caveat.name().as_str().as_bytes());
             msg.extend_from_slice(&caveat.canonical_ser());
-            msg.extend_from_slice(&prev_id);
-            let expected = hmac_blake3(&prev_chain, &msg);
+            let expected =
+                felt_to_chain_bytes(chain_step(prev_chain, &prev_id, &bytes_to_felts(&msg)));
             if expected != self.chain[i + 1] {
                 return Err(MacaroonError::ChainMismatch(i));
             }
@@ -380,7 +412,8 @@ impl Macaroon {
             h.update(&u32_len(ser.len()));
             h.update(&ser);
             prev_id = *h.finalize().as_bytes();
-            prev_chain = self.chain[i + 1];
+            prev_chain = chain_bytes_to_felt(&self.chain[i + 1])
+                .ok_or(MacaroonError::ChainEntryNotCanonical(i + 1))?;
         }
 
         // Final id (state_n) must match the stored id.
@@ -868,6 +901,16 @@ pub enum MacaroonError {
     #[error("HMAC chain mismatch at caveat {0}")]
     ChainMismatch(usize),
 
+    /// A chain entry is not a canonical Poseidon felt.
+    ///
+    /// Chain entries are stored as `[u8; 32]` but derived as field elements.
+    /// Reading one back reduces it modulo the field prime, so an attacker who
+    /// wrote `p + k` would otherwise have it decode to `k` and verify against a
+    /// chain the issuer never produced. Refusing here is what keeps the byte
+    /// representation injective.
+    #[error("chain entry {0} is not a canonical field element (malformed token)")]
+    ChainEntryNotCanonical(usize),
+
     #[error("root secret does not match embedded hash")]
     RootSecretMismatch,
 
@@ -963,6 +1006,67 @@ mod tests {
     use super::*;
     use crate::caveat::{Caveat, ProviderId, UnixTimeSecs};
     use serde_json;
+
+    /// The chain a real token carries is the one the circuit re-derives.
+    ///
+    /// `chain[0]` is taken from the token because it cannot be recomputed — the
+    /// mint nonce is discarded at mint time, which is the gap recorded in
+    /// RFC-0974. Everything after it is recomputed from scratch here using the
+    /// same `chain_step` the ZK circuit mirrors, with each step's `prev_id`
+    /// being the capability id actually in force at that point.
+    ///
+    /// If `extend_chain` and the circuit ever diverge, this is where it shows:
+    /// the replay lands on a different value than the stored signature.
+    #[test]
+    fn the_stored_signature_is_the_circuit_chain_replayed() {
+        let secret = [0x5a; 32];
+        let m = Macaroon::mint(&secret).expect("mint");
+        let m = m.extend_chain(Caveat::ValidAfter {
+            not_before_unix: 1_700_000_000,
+        });
+        let m = m.extend_chain(Caveat::ValidRange {
+            valid_after_unix: 1_700_000_000,
+            valid_until_unix: 1_800_000_000,
+        });
+        let m = m.extend_chain(Caveat::MaxPerTx(1_000));
+
+        // Replay from the token's own chain[0], tracking each intermediate id.
+        let mut state = chain_bytes_to_felt(&m.chain[0]).expect("chain[0] is canonical");
+        let mut state_for_id = m.clone();
+        state_for_id.caveats.clear();
+        state_for_id.chain.truncate(1);
+        // The clone still carries the FULL token's id, which covers all three
+        // caveats. State 0's id is a different value, and using the wrong one
+        // would make every replay diverge from step one.
+        state_for_id.id = compute_capability_id(&state_for_id);
+        let mut prev_id = state_for_id.id;
+
+        for (i, caveat) in m.caveats.iter().enumerate() {
+            let mut msg = Vec::new();
+            msg.extend_from_slice(caveat.name().as_str().as_bytes());
+            msg.extend_from_slice(&caveat.canonical_ser());
+            state = chain_step(state, &prev_id, &bytes_to_felts(&msg));
+
+            // Advance the reconstructed macaroon so the next `prev_id` is the
+            // one the issuer actually used.
+            state_for_id = state_for_id.clone().extend_chain(caveat.clone());
+            assert_eq!(
+                state_for_id.chain[i + 1],
+                m.chain[i + 1],
+                "replay diverged at chain[{}]",
+                i + 1
+            );
+            prev_id = state_for_id.id;
+        }
+
+        assert_eq!(
+            felt_to_chain_bytes(state),
+            *m.signature(),
+            "the replayed chain must land on the stored signature"
+        );
+        // And the token still verifies against its own root secret.
+        m.verify_signature(&secret).expect("verify");
+    }
 
     #[test]
     fn hmac_blake3_deterministic() {

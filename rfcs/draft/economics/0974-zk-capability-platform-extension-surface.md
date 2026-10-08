@@ -443,19 +443,30 @@ caveat on the capability and on each `WrappedOnly` ancestor through the registry
 not only the vault ones. A third-party caveat on an inherited chain is therefore
 evaluated rather than skipped.
 
-**One body could not be kept, and the reason is architectural, not stylistic.**
-Registrations are `'static`, so a registry cannot hold the `&dyn VaultLookup` that
-`verify_for_vault_op` takes. An evaluator owns its substrate dependency by
-construction — that is exactly the property a third party needs — so forcing a
-single body would have meant either leaking the borrow or changing the public
-signature. Both cost more than they buy.
+**One body, achieved by owning the handle rather than keeping two copies.**
+Registrations are `'static`, so a registry cannot hold the `&dyn VaultLookup` the
+original signature took. The resolution is not to keep two implementations and
+guard them with a differential test — it is to take `Arc<dyn VaultLookup>` on the
+public entry point so the delegation is possible, and to put the vault rule itself
+in exactly one place: `VaultEvaluator::check_vault`, which both the registry's
+`evaluate` and the vault-op path call.
 
-So the two paths coexist, kept honest by a **differential guard** rather than by
-hope: `vault_op_paths_agree_on_every_outcome` runs both over the same capability
-across accept, missing row, chain mismatch, inactive vault, and the
-chainless-parent refusal, and asserts they decide identically. That is the honest
-form of a migration: not by rewriting a pinned path, but by proving the new path
-equivalent until the old one can be deleted.
+| Surface                       | Error form                                                  |
+| ----------------------------- | ----------------------------------------------------------- |
+| `verify_for_vault_op`         | Delegates; keeps the precise `VaultVerifyError` variants    |
+| `verify_for_vault_op_with`    | The one implementation                                      |
+| `VaultEvaluator::check_vault` | The one rule — called by the path above _and_ by `evaluate` |
+
+`collect_vault_caveats` is deleted rather than kept as a filter; the single chain
+walk remains, so the cycle, depth and missing-parent rules exist once.
+
+Two error surfaces over one rule is the deliberate end state. `Caveat::Vault` is
+checked through `check_vault` so callers keep matching on `VaultRowMissing` /
+`ChainMismatch` / `VaultNotActive`, and a `VaultEvaluator` registered anywhere
+behaves identically because it calls the same function. Everything the registry
+owns is dispatched through it, and a refusal surfaces as the single opaque
+`CaveatRefused` — opaque on purpose, since an extension crate must not be able to
+forge a precise vault error.
 
 Two boundaries were preserved deliberately:
 
@@ -463,23 +474,20 @@ Two boundaries were preserved deliberately:
   chainless-parent rule in terms of `Caveat::Vault` specifically. Widening it to
   "some caveat was evaluated" would change a security invariant rather than
   generalise one, so it runs before dispatch and is unchanged.
-- **`collect_chain_caveats` is the single chain walk.** `collect_vault_caveats` is
-  now a filter over it, so the cycle, depth and missing-parent rules exist in
-  exactly one place rather than two.
+- **Vault caveats are excluded from the registry pass.** Re-checking them there
+  would only downgrade the error variant, not add a check.
 
-Refusals from the registry surface as one opaque `CaveatRefused` variant by design
-— an extension crate must not be able to forge a precise vault error. The legacy
-path still yields `VaultRowMissing` / `ChainMismatch` / `VaultNotActive`, so
-callers pattern-matching on those are unaffected.
+A test pins the payoff: a `vendor.example/approval` caveat the default entry point
+has no vocabulary for is invisible to it and binding when an evaluator is
+registered. That is the difference between an extension surface and a
+documentation promise.
 
-A third test pins the payoff: a `vendor.example/approval` caveat the hardcoded
-path has no vocabulary for is invisible to it and binding on the registry path.
-That is the difference between an extension surface and a documentation promise.
-
-Validation: 3 new migration-guard tests; `octo-cap-macaroon` lib 370 → 373, and the
-pinned `tv_0957_verify_time` / `tv_c1_verify_time` vectors pass unmodified.
-`octo-cap-macaroon-vault` integration tests green. Clippy clean with warnings
-denied on all targets and all features.
+Validation: 4 vault-op tests replacing the differential guard (now unnecessary —
+one body cannot disagree with itself); `octo-cap-macaroon` lib 370 → 374. The
+pinned `tv_0957_verify_time` / `tv_c1_verify_time` vectors pass with only a
+call-site change to lift the fixture into an `Arc`, and `octo-cap-macaroon-vault`
+plus `quota-router-storage` are green. Clippy clean with warnings denied on all
+targets and all features.
 
 ### Implementation Status
 

@@ -629,12 +629,15 @@ pub fn evaluate_one(
 ///
 /// # Errors
 /// The first refusal in caveat order among the caveats this registry owns.
-pub fn evaluate_registered(
+pub fn evaluate_registered<'a, I>(
     registry: &CaveatEvaluatorRegistry,
-    caveats: &[Caveat],
+    caveats: I,
     operation: &ProposedOperation,
     clock: &dyn Clock,
-) -> Result<(), CaveatRefusal> {
+) -> Result<(), CaveatRefusal>
+where
+    I: IntoIterator<Item = &'a Caveat>,
+{
     for caveat in caveats {
         if registry.resolve(&caveat.evaluator_key()).is_none() {
             continue;
@@ -752,6 +755,42 @@ pub mod core {
         pub fn new(lookup: Arc<dyn crate::vault_lookup::VaultLookup>) -> Self {
             Self { lookup }
         }
+
+        /// **The vault rule.** Row exists, on the operation's chain, active.
+        ///
+        /// The single implementation, shared by [`CaveatEvaluator::evaluate`]
+        /// and by `Macaroon::verify_for_vault_op_with`. It is public and
+        /// associated rather than a private helper so the vault-op path can
+        /// apply it directly and keep the precise
+        /// [`crate::VaultVerifyError`] variants, without anyone re-deriving the
+        /// rule and risking a second copy drifting from this one.
+        ///
+        /// # Errors
+        /// [`crate::VaultVerifyError::VaultRowMissing`] when no row exists,
+        /// [`crate::VaultVerifyError::ChainMismatch`] when the row's chain is
+        /// not the operation's, and
+        /// [`crate::VaultVerifyError::VaultNotActive`] when the row is not
+        /// active.
+        pub fn check_vault(
+            lookup: &dyn crate::vault_lookup::VaultLookup,
+            vault_id: &[u8; 32],
+            op_chain_id: &[u8; 32],
+        ) -> Result<(), crate::VaultVerifyError> {
+            use crate::vault_lookup::VaultLookupExt as _;
+            let row = lookup.require_vault(vault_id)?;
+            if row.chain_id != *op_chain_id {
+                return Err(crate::VaultVerifyError::ChainMismatch {
+                    vault_chain: row.chain_id,
+                    op_chain: *op_chain_id,
+                });
+            }
+            if !row.is_active {
+                return Err(crate::VaultVerifyError::VaultNotActive {
+                    vault_id: *vault_id,
+                });
+            }
+            Ok(())
+        }
     }
 
     impl std::fmt::Debug for VaultEvaluator {
@@ -781,29 +820,14 @@ pub mod core {
                     evaluator: "vault".to_owned(),
                 });
             };
-            let Some(row) = self.lookup.lookup_vault(vault_id) else {
-                return Err(CaveatRefusal::Violated {
+            // Delegates to the one implementation of the rule; the precise
+            // error is rendered into the refusal rather than discarded.
+            Self::check_vault(self.lookup.as_ref(), vault_id, op_chain).map_err(|e| {
+                CaveatRefusal::Violated {
                     evaluator: "vault".to_owned(),
-                    detail: Cow::Owned(format!("no vault row for {}", hex::encode(vault_id))),
-                });
-            };
-            if row.chain_id != *op_chain {
-                return Err(CaveatRefusal::Violated {
-                    evaluator: "vault".to_owned(),
-                    detail: Cow::Owned(format!(
-                        "vault is bound to chain {} but the operation targets {}",
-                        hex::encode(row.chain_id),
-                        hex::encode(op_chain)
-                    )),
-                });
-            }
-            if !row.is_active {
-                return Err(CaveatRefusal::Violated {
-                    evaluator: "vault".to_owned(),
-                    detail: Cow::Owned(format!("vault {} is not active", hex::encode(vault_id))),
-                });
-            }
-            Ok(())
+                    detail: Cow::Owned(e.to_string()),
+                }
+            })
         }
     }
 }
@@ -1367,7 +1391,10 @@ mod tests {
             &FixedClock::new(0),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("not active"), "got: {err}");
+        assert!(
+            err.to_string().contains("is not Active"),
+            "the refusal must render the precise vault error: {err}"
+        );
     }
 
     #[test]
@@ -1380,7 +1407,10 @@ mod tests {
             &FixedClock::new(0),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("no vault row"), "got: {err}");
+        assert!(
+            err.to_string().contains("vault row missing"),
+            "the refusal must render the precise vault error: {err}"
+        );
     }
 
     #[test]

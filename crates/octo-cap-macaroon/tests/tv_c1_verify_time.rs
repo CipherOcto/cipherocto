@@ -119,6 +119,21 @@ impl TestVaultLookup {
     }
 }
 
+/// `verify_for_vault_op` takes an owned handle, so the fixture is lifted here.
+/// Callers that use the same rows twice share one allocation via `Clone`.
+fn vault_arc(lookup: &TestVaultLookup) -> std::sync::Arc<dyn VaultLookup> {
+    std::sync::Arc::new(lookup.clone())
+}
+
+// Clone so one fixture can be handed to several `Arc`-taking calls.
+impl Clone for TestVaultLookup {
+    fn clone(&self) -> Self {
+        Self {
+            rows: self.rows.clone(),
+        }
+    }
+}
+
 impl VaultLookup for TestVaultLookup {
     fn lookup_vault(&self, vault_id: &[u8; 32]) -> Option<VaultRowSnapshot> {
         self.rows.get(vault_id).copied()
@@ -167,7 +182,7 @@ fn tv_c1_01_vault_caveat_verifies_when_row_active_and_chain_matches() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(result.is_ok(), "TV-C1-01 must verify: got {result:?}");
 }
@@ -185,7 +200,7 @@ fn tv_c1_02_vault_caveat_rejects_when_row_missing() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     match result {
         Err(VaultVerifyError::VaultRowMissing { vault_id }) => {
@@ -240,7 +255,7 @@ fn tv_c1_03_wrapped_only_chain_with_parent_vault_verifies() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         result.is_ok(),
@@ -290,7 +305,7 @@ fn tv_c1_04_wrapped_only_chain_without_parent_vault_rejects() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     match result {
         Err(VaultVerifyError::WrappedChainHasNoVault) => {
@@ -323,7 +338,7 @@ fn verify_for_vault_op_rejects_frozen_vault() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(matches!(
         result,
@@ -351,7 +366,7 @@ fn verify_for_vault_op_rejects_chain_mismatch() {
         &catalog,
         None,
         &TV_C1_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(matches!(
         result,
@@ -369,7 +384,13 @@ fn verify_for_vault_op_wraps_macaroon_errors() {
     let (mac, catalog) = mint_vault_mac_with_catalog();
     let lookup = TestVaultLookup::new();
     let wrong_root = [0x00; 32];
-    let result = mac.verify_for_vault_op(&wrong_root, &catalog, None, &TV_C1_OP_CHAIN_ID, &lookup);
+    let result = mac.verify_for_vault_op(
+        &wrong_root,
+        &catalog,
+        None,
+        &TV_C1_OP_CHAIN_ID,
+        vault_arc(&lookup),
+    );
     assert!(
         matches!(
             result,

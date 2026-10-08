@@ -156,14 +156,21 @@ fn tv_0957_g1_11_verify_time_happy_path_with_production_glue() {
         .expect("attenuate Vault");
     catalog.insert(mac.clone());
 
-    let result = mac.verify_for_vault_op(&ROOT_SECRET, &catalog, None, &OP_CHAIN_ID, &lookup);
+    let lookup_arc: std::sync::Arc<dyn VaultLookup> = std::sync::Arc::new(lookup);
+    let result = mac.verify_for_vault_op(
+        &ROOT_SECRET,
+        &catalog,
+        None,
+        &OP_CHAIN_ID,
+        lookup_arc.clone(),
+    );
     assert!(
         result.is_ok(),
         "TV-0957-g1-11: happy path with production OctoVaultLookup MUST succeed; got {result:?}"
     );
 
     // Sanity: the lookup itself returns the expected snapshot.
-    let snap: Option<VaultRowSnapshot> = lookup.lookup_vault(&VAULT_ID);
+    let snap: Option<VaultRowSnapshot> = lookup_arc.lookup_vault(&VAULT_ID);
     let snap = snap.expect("hit on inserted row");
     assert_eq!(snap.chain_id, OP_CHAIN_ID);
     assert!(snap.is_active);
@@ -190,7 +197,14 @@ fn tv_0957_g1_12_vault_row_lookup_missing_with_production_glue() {
         .expect("attenuate Vault");
     catalog.insert(mac.clone());
 
-    let result = mac.verify_for_vault_op(&ROOT_SECRET, &catalog, None, &OP_CHAIN_ID, &lookup);
+    let lookup_arc: std::sync::Arc<dyn VaultLookup> = std::sync::Arc::new(lookup);
+    let result = mac.verify_for_vault_op(
+        &ROOT_SECRET,
+        &catalog,
+        None,
+        &OP_CHAIN_ID,
+        lookup_arc.clone(),
+    );
     match result {
         Err(VaultVerifyError::VaultRowMissing { vault_id }) => {
             assert_eq!(

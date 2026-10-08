@@ -129,6 +129,21 @@ impl TestVaultLookup {
     }
 }
 
+/// `verify_for_vault_op` takes an owned handle, so the fixture is lifted here.
+/// Callers that use the same rows twice share one allocation via `Clone`.
+fn vault_arc(lookup: &TestVaultLookup) -> std::sync::Arc<dyn VaultLookup> {
+    std::sync::Arc::new(lookup.clone())
+}
+
+// Clone so one fixture can be handed to several `Arc`-taking calls.
+impl Clone for TestVaultLookup {
+    fn clone(&self) -> Self {
+        Self {
+            rows: self.rows.clone(),
+        }
+    }
+}
+
 impl VaultLookup for TestVaultLookup {
     fn lookup_vault(&self, vault_id: &[u8; 32]) -> Option<VaultRowSnapshot> {
         self.rows.get(vault_id).copied()
@@ -507,7 +522,7 @@ fn tv_0957_11_verify_time_happy_path_ok() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         result.is_ok(),
@@ -527,7 +542,7 @@ fn tv_0957_12_vault_row_lookup_step_missing() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &TestVaultLookup::empty(),
+        vault_arc(&TestVaultLookup::empty()),
     );
     match result {
         Err(VaultVerifyError::VaultRowMissing { vault_id }) => {
@@ -561,7 +576,7 @@ fn tv_0957_13_chain_match_step_mismatch() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     match result {
         Err(VaultVerifyError::ChainMismatch {
@@ -602,7 +617,7 @@ fn tv_0957_14_state_active_step_rejects_frozen() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     match result {
         Err(VaultVerifyError::VaultNotActive { vault_id }) => {
@@ -653,7 +668,7 @@ fn tv_0957_15_wrapped_only_chain_walk_step_ok() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         result.is_ok(),
@@ -705,7 +720,7 @@ fn tv_0957_16_regression_frozen_vault_in_ancestor_rejected() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         matches!(
@@ -753,7 +768,7 @@ fn tv_0957_17_regression_chain_mismatch_in_ancestor_rejected() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         matches!(
@@ -773,8 +788,13 @@ fn tv_0957_18_regression_missing_root_secret_rejected() {
     let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
     let lookup = TestVaultLookup::empty();
     let wrong_root = [0x00; 32];
-    let result =
-        mac.verify_for_vault_op(&wrong_root, &catalog, None, &TV_0957_OP_CHAIN_ID, &lookup);
+    let result = mac.verify_for_vault_op(
+        &wrong_root,
+        &catalog,
+        None,
+        &TV_0957_OP_CHAIN_ID,
+        vault_arc(&lookup),
+    );
     assert!(
         matches!(
             result,
@@ -818,7 +838,7 @@ fn tv_0957_19_regression_wrapped_chain_has_no_vault() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &TestVaultLookup::empty(),
+        vault_arc(&TestVaultLookup::empty()),
     );
     assert!(
         matches!(result, Err(VaultVerifyError::WrappedChainHasNoVault)),
@@ -884,7 +904,7 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
         &catalog,
         Some(parent_caveats.as_slice()),
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         result.is_ok(),
@@ -925,7 +945,7 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
         &catalog,
         Some(parent2_caveats.as_slice()),
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         matches!(
@@ -1001,7 +1021,7 @@ fn tv_0957_21_multilevel_wrapped_only_chain_depth_3() {
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
-        &lookup,
+        vault_arc(&lookup),
     );
     assert!(
         result.is_ok(),

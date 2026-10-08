@@ -10,11 +10,9 @@ RFC-0204 (Storage): Expression Compiler Aggregate Function Resolution
 
 ## Dependencies
 
-- Mission: 0202-e-bigint-decimal-integration-testing (Type system baseline)
-
-## Blockers / Dependencies
-
-None - Phase 3 is independent of other missions
+- Mission `0202-e-bigint-decimal-integration-testing` (Type system baseline)
+- No blocking prerequisites beyond the above. Phase 3 benchmarking is otherwise
+  independent of other missions.
 
 ## Acceptance Criteria
 
@@ -33,30 +31,34 @@ Validate that Phase 2 implementation of aggregate function support inside MVCC t
 
 ### Benchmark Requirements
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Pushdown latency (baseline) | <1ms | 1000 rows, no aggregate |
-| Compilation path latency | <10ms | 1000 rows, SUM aggregate |
-| Non-transaction pushdown | Unchanged | Compare before/after |
+| Metric                      | Target    | Measurement              |
+| --------------------------- | --------- | ------------------------ |
+| Pushdown latency (baseline) | <1ms      | 1000 rows, no aggregate  |
+| Compilation path latency    | <10ms     | 1000 rows, SUM aggregate |
+| Non-transaction pushdown    | Unchanged | Compare before/after     |
 
 ### Test Scenarios
 
 1. **Simple aggregate with WHERE**
+
    ```sql
    SELECT SUM(amount) FROM accounts WHERE user_id = 1;
    ```
 
 2. **Aggregate without WHERE**
+
    ```sql
    SELECT COUNT(*) FROM accounts;
    ```
 
 3. **Multiple aggregates**
+
    ```sql
    SELECT MIN(a), MAX(a), AVG(a) FROM accounts WHERE user_id = 1;
    ```
 
 4. **GROUP BY with aggregate**
+
    ```sql
    SELECT user_id, SUM(amount) FROM accounts GROUP BY user_id;
    ```
@@ -74,7 +76,7 @@ Validate that Phase 2 implementation of aggregate function support inside MVCC t
 
 ## Research References
 
-- RFC-0204: `rfcs/draft/storage/0204-expression-compiler-aggregate-fix.md`
+- RFC-0204: `rfcs/accepted/storage/0204-expression-compiler-aggregate-fix.md`
 - Use Case: `docs/use-cases/stoolap-mvcc-transaction-aggregate-support.md`
 - Research: `docs/research/stoolap-sum-aggregate-transaction-research.md`
 

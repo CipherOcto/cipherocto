@@ -31,7 +31,7 @@ a shared test homeserver.
 - [ ] Each test uses the same pre-scan guard + room-create +
       `octo-test-mx-mx{nn}-{ts}` naming convention as mx09–mx14
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
-      --test live_matrix_test -- --ignored --nocapture` — all 19
+    --test live_matrix_test -- --ignored --nocapture` — all 19
       tests pass (mx00–mx08 + mx09–mx14 + mx15–mx20) when run with
       `--test-threads=1`
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`
@@ -40,19 +40,19 @@ a shared test homeserver.
 
 ## Per-test scope
 
-| Test | Trait methods exercised | Section |
-|------|------------------------|---------|
-| `mx15_add_member` | `add_member` (with `is_admin = true` and `is_admin = false`) | B. Membership |
-| `mx16_approve_join_request` | `approve_join_request` (set room to `JoinRule::Knock`, simulate join request, approve) | B. Membership |
-| `mx17_list_own_groups_with_invites` | `list_own_groups_with_invites` (create room with canonical alias, verify invite_url populated) | D. Discovery |
-| `mx18_resolve_invite` | `resolve_invite` (resolve canonical alias to room_id) | D. Discovery |
-| `mx19_join_by_invite_and_id` | `join_by_invite`, `join_by_id` (join a room by alias, verify membership) | D. Discovery |
-| `mx20_transfer_ownership` | `transfer_ownership` (multi-step dance: promote new owner, demote self, leave) | E. Handoff |
+| Test                                | Trait methods exercised                                                                        | Section       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------- | ------------- |
+| `mx15_add_member`                   | `add_member` (with `is_admin = true` and `is_admin = false`)                                   | B. Membership |
+| `mx16_approve_join_request`         | `approve_join_request` (set room to `JoinRule::Knock`, simulate join request, approve)         | B. Membership |
+| `mx17_list_own_groups_with_invites` | `list_own_groups_with_invites` (create room with canonical alias, verify invite_url populated) | D. Discovery  |
+| `mx18_resolve_invite`               | `resolve_invite` (resolve canonical alias to room_id)                                          | D. Discovery  |
+| `mx19_join_by_invite_and_id`        | `join_by_invite`, `join_by_id` (join a room by alias, verify membership)                       | D. Discovery  |
+| `mx20_transfer_ownership`           | `transfer_ownership` (multi-step dance: promote new owner, demote self, leave)                 | E. Handoff    |
 
 ## Location
 
 - `crates/octo-adapter-matrix-sdk/tests/live_matrix_test.rs` — six
-      new tests (mx15–mx20)
+  new tests (mx15–mx20)
 
 ## Complexity
 
@@ -61,23 +61,23 @@ adds live tests that exercise it against matrix.org.
 
 ## Prerequisites
 
-- Mission `0850h-d-matrix-coordinator-admin.md` (Open) — the trait
-      impl must be landed first
+- Mission `0850h-d-matrix-coordinator-admin.md` (claimed, landed) — the trait
+  impl must be landed first
 - `octo-matrix-onboard login oidc --homeserver https://matrix.org` —
-      live tests require an OIDC-authenticated session at
-      `~/.config/octo/matrix.json`
+  live tests require an OIDC-authenticated session at
+  `~/.config/octo/matrix.json`
 
 ## Implementation Notes
 
 - Follow the same pre-scan guard + room-create + cleanup pattern
-      as mx09–mx14 (mission 0850h-d §Phase 2)
+  as mx09–mx14 (mission 0850h-d §Phase 2)
 - `mx16_approve_join_request` requires a second test user to send
-      a knock request — use the `@ci2:localhost` user from the
-      integration test setup (or skip if running against matrix.org
-      without a second account)
+  a knock request — use the `@ci2:localhost` user from the
+  integration test setup (or skip if running against matrix.org
+  without a second account)
 - `mx20_transfer_ownership` leaves the test bot without admin in
-      the room — create a fresh room for each run (the naming
-      convention handles this)
+  the room — create a fresh room for each run (the naming
+  convention handles this)
 - `mx19_join_by_invite_and_id` creates a room with the bot as
-      sole member, then joins by alias — the bot must invite itself
-      or use `JoinRule::Public` for the join-by-id path
+  sole member, then joins by alias — the bot must invite itself
+  or use `JoinRule::Public` for the join-by-id path

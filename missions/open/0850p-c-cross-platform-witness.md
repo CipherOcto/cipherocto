@@ -34,25 +34,24 @@ Tie-break for equal votes (e.g., N=2, both vote yes but quorum is 1.33): both vo
 - [ ] Integration test: cross-platform slash with simulated WhatsApp + Matrix witnesses
 - [ ] Documentation: operator guide for cross-platform slash audit
 
-
 ### Implementation Guide
 
 Reference: RFC-0855p-b §B (slash reason codes); RFC-0850p-c (similar 2PC pattern).
 
-
 ### Type Coverage
 
-| RFC-0850p-c Type | Implemented By |
-|-----------------|----------------|
-| `SlashVote` envelope type | This mission |
-| Cross-platform aggregation logic | This mission |
-| `/dot/slash/{domain_id}/{slash_id}` gossip topic | This mission |
+| RFC-0850p-c Type                                 | Implemented By |
+| ------------------------------------------------ | -------------- |
+| `SlashVote` envelope type                        | This mission   |
+| Cross-platform aggregation logic                 | This mission   |
+| `/dot/slash/{domain_id}/{slash_id}` gossip topic | This mission   |
 
 ## Dependencies
 
 Depends on:
-- Mission 0855p-b-??? (slash reason codes, base RFC)
-- Mission 0855p-c-cross-platform-consensus (similar 2PC pattern)
+
+- Mission `0855p-b-mission-coordinator-slashing` (slash reason codes, base RFC)
+- Mission `0855p-c-cross-platform-consensus` (similar 2PC pattern, archived)
 
 ## Claimant
 

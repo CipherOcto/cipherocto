@@ -4,10 +4,14 @@
 **Substrate:** RFC-0009 §Capability Keys + §HsmAdapter Integration
 **Parent:** RFC-0009 §Future Work + mission `missions/claimed/0957-f-future-work.md` Band B
 
+> **RFC status.** RFC-0009 v1.2 is Accepted (2026-08-11) and lives at
+> `rfcs/accepted/process/0009-identity-evolution-v12.md`. This mission's earlier
+> reference to the pre-promotion draft path is retired.
+
 ## Scope
 
-Implement RFC-0009 v1.2 (in-place amendment; draft landed
-`rfcs/draft/process/0009-identity-evolution-v12.md`):
+Implement RFC-0009 v1.2 (in-place amendment; Accepted at
+`rfcs/accepted/process/0009-identity-evolution-v12.md`):
 
 1. **`derive_capability_key` extension** — gain `parent_cap_key:
 Option<&CapabilityKey>` parameter; child derivation uses v2 info

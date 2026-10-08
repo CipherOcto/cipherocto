@@ -476,7 +476,7 @@ fn satisfying_run_input() -> Vec<u8> {
         "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
       },
       "caveat_felts": ["15", "16", "22"],
-      "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
+      "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
     }"#
     .to_vec()
 }

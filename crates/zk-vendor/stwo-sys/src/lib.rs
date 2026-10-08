@@ -141,8 +141,19 @@ pub struct PrivateWitnessArg {
 #[serde(rename_all = "snake_case")]
 pub struct TraceStepArg {
     pub op_code: String,
-    pub input_hash: String,
-    pub output_hash: String,
+    /// The 32-byte input hash, split into two 16-byte felt-halves.
+    ///
+    /// **Split, not single.** A felt252 holds ~251 bits and a 32-byte digest is
+    /// 256, so one felt cannot carry a real hash. The previous single-field
+    /// shape sent each hash through `parse_felt`, which rejected every real
+    /// 32-byte value with "representative out of range" — so `build_calldata`
+    /// returned `None` and no genuine PoI trace could reach the circuit. This
+    /// mirrors `PublicInputsArg::cap_root_hash_lo` / `_hi`, which already split
+    /// a 32-byte value the same way.
+    pub input_hash_lo: String,
+    pub input_hash_hi: String,
+    pub output_hash_lo: String,
+    pub output_hash_hi: String,
 }
 
 /// Everything the harness needs to execute the circuit: the public inputs, the
@@ -187,8 +198,13 @@ pub type CairoProgramSpec = cairo_lang_executable::executable::Executable;
 
 /// Width, in felts, of one serialized `TraceStep`.
 ///
-/// Mirrors `cairo/src/lib.cairo::TRACE_STRIDE`.
-const TRACE_STRIDE: usize = 3;
+/// `op_code` + two felts per 32-byte hash (input, output) = 5.
+///
+/// Mirrors `cairo/src/lib.cairo::TRACE_STRIDE`. **Keep in lockstep** — the
+/// conformance test below asserts the whole slot, not a sample, precisely
+/// because a mismatch here produces a proof over attacker-chosen inputs with
+/// every internal hash check self-consistent.
+const TRACE_STRIDE: usize = 5;
 
 /// Serialize the harness's typed input into the flat `Array<felt252>` calldata
 /// the executable wrapper deserializes.
@@ -244,8 +260,10 @@ fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     out.push(Felt::from(flat_len));
     for st in &input.steps {
         out.push(parse_felt(&st.op_code)?);
-        out.push(parse_felt(&st.input_hash)?);
-        out.push(parse_felt(&st.output_hash)?);
+        out.push(parse_felt(&st.input_hash_lo)?);
+        out.push(parse_felt(&st.input_hash_hi)?);
+        out.push(parse_felt(&st.output_hash_lo)?);
+        out.push(parse_felt(&st.output_hash_hi)?);
     }
 
     Some(out)
@@ -783,7 +801,7 @@ mod harness_tests {
             "caveats_count": 3, "discharges_count": 0, "inference_trace_present": 1
           },
           "caveat_felts": ["15", "16", "22"],
-          "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
+          "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
         }"#
         .to_owned()
     }
@@ -906,7 +924,7 @@ mod harness_tests {
             "caveats_count": 2, "discharges_count": 0, "inference_trace_present": 1
           },
           "caveat_felts": ["15", "16"],
-          "steps": [{"op_code": "17", "input_hash": "18", "output_hash": "19"}]
+          "steps": [{"op_code": "17", "input_hash_lo": "18", "input_hash_hi": "0", "output_hash_lo": "19", "output_hash_hi": "0"}]
         }"#;
         assert!(
             run_cairo_to_prover_input(&spec, json.as_bytes()).is_none(),
@@ -946,24 +964,108 @@ mod harness_tests {
 
     /// The calldata layout is the circuit's ABI. Getting it wrong produces a
     /// program that runs without ever calling the circuit, so it is pinned.
+    ///
+    /// **Every slot is asserted, not a sample.** The previous version checked
+    /// the total length plus ten sampled index/value pairs, leaving thirteen
+    /// slots unasserted — so a transposition among those passed. That is
+    /// exactly the failure the RFC-0973 conformance discipline exists to
+    /// catch: the harness supplies the public inputs, so a mis-ordered slot
+    /// produces a proof over attacker-chosen inputs with every internal hash
+    /// check self-consistent.
+    ///
+    /// Layout for `TRACE_STRIDE = 5`:
+    ///
+    /// ```text
+    /// [ PublicInputs(10) , PrivateWitness(5) , [len, caveats…] , [len, steps…] ]
+    ///  = 10 + 5 + (1+3) + (1 + 1*5) = 25
+    /// ```
     #[test]
     fn calldata_matches_cairo_serde_layout() {
         let input: CairoRunInput = serde_json::from_str(&satisfying_input()).unwrap();
         let c = build_calldata(&input).expect("build");
 
-        // 10 PublicInputs + 5 PrivateWitness + [len=3, 3 caveats]
-        //                       + [len=3, 3 step felts]
-        assert_eq!(c.len(), 10 + 5 + 4 + 4, "calldata length");
+        assert_eq!(c.len(), 25, "calldata length: 10 + 5 + 4 + 6");
+
+        // PublicInputs — every field, in declaration order.
         assert_eq!(c[0], Felt::from(1), "ask_id_lo");
+        assert_eq!(c[1], Felt::from(2), "ask_id_hi");
         assert_eq!(c[2], Felt::from(1), "axes_count");
+        assert_eq!(c[3], Felt::from(4), "cap_root_hash_lo");
+        assert_eq!(c[4], Felt::from(5), "cap_root_hash_hi");
+        assert_eq!(c[5], Felt::from(6), "invocation_hash");
+        assert_eq!(c[6], Felt::from(7), "holder_did");
+        assert_eq!(c[7], Felt::from(1_700_000_000u64), "current_unix_time");
+        assert_eq!(c[8], Felt::from(0), "has_output_hash");
         assert_eq!(c[9], Felt::from(0), "output_hash");
+
+        // PrivateWitness — every field.
         assert_eq!(c[10], Felt::from(11), "cap_root_secret_lo");
+        assert_eq!(c[11], Felt::from(12), "cap_root_secret_hi");
         assert_eq!(c[12], Felt::from(3), "caveats_count");
+        assert_eq!(c[13], Felt::from(0), "discharges_count");
+        assert_eq!(c[14], Felt::from(1), "inference_trace_present");
+
+        // caveat_felts: [len, elems…].
         assert_eq!(c[15], Felt::from(3), "caveat_felts length cell");
         assert_eq!(c[16], Felt::from(15), "caveat_felts[0]");
+        assert_eq!(c[17], Felt::from(16), "caveat_felts[1]");
         assert_eq!(c[18], Felt::from(22), "caveat_felts[2]");
-        assert_eq!(c[19], Felt::from(3), "steps_flat length cell");
-        assert_eq!(c[22], Felt::from(19), "steps_flat[2]");
+
+        // steps_flat: [len, elems…], one step of TRACE_STRIDE = 5.
+        assert_eq!(c[19], Felt::from(5), "steps_flat length cell = 1 step * stride 5");
+        assert_eq!(c[20], Felt::from(17), "step[0].op_code");
+        assert_eq!(c[21], Felt::from(18), "step[0].input_hash_lo");
+        assert_eq!(c[22], Felt::from(0), "step[0].input_hash_hi");
+        assert_eq!(c[23], Felt::from(19), "step[0].output_hash_lo");
+        assert_eq!(c[24], Felt::from(0), "step[0].output_hash_hi");
+    }
+
+    /// The field SET, not only the order.
+    ///
+    /// Order alone would not catch an input the circuit never declared: a
+    /// `TraceStep` carrying an extra field, or missing one, still produces a
+    /// correctly-ordered array of the wrong width. So the stride is asserted
+    /// against the constant the Cairo program declares, and a second step must
+    /// widen the array by exactly one stride.
+    #[test]
+    fn the_step_field_set_matches_the_declared_stride() {
+        assert_eq!(TRACE_STRIDE, 5, "op + input_lo + input_hi + output_lo + output_hi");
+
+        let one: CairoRunInput = serde_json::from_str(&satisfying_input()).unwrap();
+        let c1 = build_calldata(&one).expect("build one step");
+
+        let two_json = satisfying_input().replace(
+            r#""output_hash_hi": "0"}]"#,
+            r#""output_hash_hi": "0"}, {"op_code": "20", "input_hash_lo": "21", "input_hash_hi": "22", "output_hash_lo": "23", "output_hash_hi": "24"}]"#,
+        );
+        let two: CairoRunInput = serde_json::from_str(&two_json).expect("parse two steps");
+        let c2 = build_calldata(&two).expect("build two steps");
+
+        assert_eq!(c1.len(), 25, "one step");
+        assert_eq!(c2.len(), 25 + TRACE_STRIDE, "a second step widens by exactly one stride");
+        assert_eq!(c2[19], Felt::from(10), "steps_flat length cell = 2 steps * stride 5");
+        assert_eq!(c2[20], Felt::from(17), "step[0] is unchanged");
+        assert_eq!(c2[25], Felt::from(20), "step[1].op_code");
+        assert_eq!(c2[29], Felt::from(24), "step[1].output_hash_hi");
+    }
+
+    /// A real 32-byte digest must now be expressible.
+    ///
+    /// This is the regression the stride change exists for. Under the old
+    /// one-felt-per-hash encoding a full digest hit `parse_felt` and returned
+    /// `None`, so no genuine PoI trace could reach the circuit at all. Each
+    /// half is 16 bytes, far below the ~251-bit modulus.
+    #[test]
+    fn a_real_thirty_two_byte_digest_now_parses() {
+        let json = satisfying_input().replace(
+            r#""input_hash_lo": "18", "input_hash_hi": "0""#,
+            r#""input_hash_lo": "33333333333333333333333333333333", "input_hash_hi": "ffffffffffffffffffffffffffffffff""#,
+        );
+        let input: CairoRunInput = serde_json::from_str(&json).expect("parse");
+        assert!(
+            build_calldata(&input).is_some(),
+            "a full-width digest must survive the encoding"
+        );
     }
 
     /// A felt that is neither decimal nor hex must be rejected, not coerced.

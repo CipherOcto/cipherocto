@@ -43,7 +43,7 @@
 //!    vendored.
 //!
 //! 2. **Poseidon inference-trace binding.** Each `TraceStep {op_code,
-//!    input_hash, output_hash}` is folded into a single felt via
+//!    input_hash_lo/hi, output_hash_lo/hi}` is folded into a single felt via
 //!    `core::poseidon::poseidon_hash_span`. The folded trace root must
 //!    equal `pub_inputs.output_hash`. This is the cryptographic
 //!    commitment that prevents an attacker from submitting a
@@ -136,12 +136,26 @@ pub const CHAIN_DEPTH: u32 = 3;
 pub const CHAIN_DEPTH_MIN: u32 = 3;
 
 /// Felts per `TraceStep`. The harness passes inference-trace steps as a FLAT
-/// felt array (op_code, input_hash, output_hash per step) because the Cairo-VM
-/// entry-point argument encoding in cairo-vm 3.1.0 carries scalars only and
-/// cannot express a nested `Array<TraceStep>`. `stage2_main` regroups them by
-/// this stride. **Keep in lockstep with `build_run_args` in
+/// felt array because the Cairo-VM entry-point argument encoding in cairo-vm
+/// 3.1.0 carries scalars only and cannot express a nested `Array<TraceStep>`.
+/// `stage2_main` regroups them by this stride.
+///
+/// Layout: `op_code`, then two felts for the 32-byte input hash, then two for
+/// the output hash.
+///
+/// **Was 3** (`op, input, output`), which was not merely wasteful — it was
+/// wrong. A felt252 holds ~251 bits and a 32-byte hash is 256, so one felt per
+/// hash cannot represent a real digest. The harness fed each field through
+/// `parse_felt`, which rejected every 32-byte value with "representative out of
+/// range", so `build_calldata` returned `None` and no genuine PoI trace could
+/// reach the circuit. The pre-generated fixture hid this by passing
+/// `"input_hash": "18"` — a small felt that parses fine.
+///
+/// Two 16-byte halves per hash is the same split `PublicInputs` already uses
+/// for `cap_root_hash` and `PrivateWitness` for `cap_root_secret`.
+/// **Keep in lockstep with `TRACE_STRIDE` in
 /// `crates/zk-vendor/stwo-sys/src/lib.rs`.**
-pub const TRACE_STRIDE: u32 = 3;
+pub const TRACE_STRIDE: u32 = 5;
 
 /// Public inputs (mirrors `octo_wallet::capability::zk_mint::PublicInputs`).
 ///
@@ -195,8 +209,21 @@ pub struct PrivateWitness {
 #[derive(Drop, Copy)]
 pub struct TraceStep {
     pub op_code: felt252,
-    pub input_hash: felt252,
-    pub output_hash: felt252,
+    /// The 32-byte input hash, as two felt-halves.
+    ///
+    /// A felt252's modulus is about 251 bits and a 32-byte value is 256, so a
+    /// whole hash **cannot** be one felt. Each half occupies 128 bits and
+    /// round-trips losslessly. This mirrors how `PublicInputs` already splits
+    /// `cap_root_hash` and `PrivateWitness` splits `cap_root_secret`.
+    ///
+    /// The previous shape carried one felt per hash, which the harness could
+    /// only satisfy with a small literal — a real 32-byte hash failed
+    /// `parse_felt` with "representative out of range", so no genuine trace
+    /// could ever reach the circuit.
+    pub input_hash_lo: felt252,
+    pub input_hash_hi: felt252,
+    pub output_hash_lo: felt252,
+    pub output_hash_hi: felt252,
 }
 
 // =========================================================================
@@ -348,8 +375,10 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
         }
         let s: TraceStep = *steps.at(i);
         flat.append(s.op_code);
-        flat.append(s.input_hash);
-        flat.append(s.output_hash);
+        flat.append(s.input_hash_lo);
+        flat.append(s.input_hash_hi);
+        flat.append(s.output_hash_lo);
+        flat.append(s.output_hash_hi);
         i += 1;
     }
     poseidon_hash_span(flat.span())
@@ -519,7 +548,64 @@ mod tests {
     use super::{
         CHAIN_DEPTH, PrivateWitness, PublicInputs, TraceStep, fold_inference_trace,
         hmac_sha256_chain_step, stage2_main, verify_chain, verify_holder_sig, verify_inference_fold,
+        TRACE_STRIDE,
     };
+
+    /// REGRESSION: a full 32-byte digest must survive the trace encoding.
+    ///
+    /// The old encoding carried one felt per hash, and a felt252 holds ~251
+    /// bits against a 32-byte value's 256. Every real digest therefore failed
+    /// `parse_felt` with "representative out of range", `build_calldata`
+    /// returned `None`, and no genuine PoI trace could reach the circuit. The
+    /// pre-generated fixture hid it by passing a small literal.
+    ///
+    /// Two **distinct** 16-byte halves stand in for the digest, so the test also
+    /// pins that neither half is decorative: swapping them must change the
+    /// fold, or a half could be dropped from the binding unnoticed.
+    #[test]
+    fn a_full_thirty_two_byte_digest_fits_the_trace_encoding() {
+        let lo: felt252 =
+            0x33333333333333333333333333333333.try_into().unwrap();
+        let hi: felt252 =
+            0xffffffffffffffffffffffffffffffff.try_into().unwrap();
+        let mut steps: Array<TraceStep> = array![];
+        steps.append(
+            TraceStep {
+                op_code: 1,
+                input_hash_lo: lo,
+                input_hash_hi: hi,
+                output_hash_lo: lo,
+                output_hash_hi: hi,
+            },
+        );
+        let r = fold_inference_trace(@steps);
+        assert!(r != 0, "a full-width digest must produce a real fold");
+
+        let mut swapped: Array<TraceStep> = array![];
+        swapped.append(
+            TraceStep {
+                op_code: 1,
+                input_hash_lo: hi,
+                input_hash_hi: lo,
+                output_hash_lo: lo,
+                output_hash_hi: hi,
+            },
+        );
+        assert!(
+            fold_inference_trace(@steps) != fold_inference_trace(@swapped),
+            "swapping the two halves must change the fold"
+        );
+    }
+
+    /// The stride is the contract between the harness and the circuit.
+    ///
+    /// A mismatch produces a proof over attacker-chosen inputs with every
+    /// internal hash check self-consistent, so it is pinned rather than
+    /// documented.
+    #[test]
+    fn the_trace_stride_matches_the_packed_step_width() {
+        assert!(TRACE_STRIDE == 5, "op + 2x(input) + 2x(output)");
+    }
 
     #[test]
     fn verify_chain_poseidon_commitment_deterministic() {
@@ -577,8 +663,11 @@ mod tests {
             .append(
                 TraceStep {
                     op_code: 0,
-                    input_hash: 0x33333333333333333333333333333333,
-                    output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
+                    // A full 32-byte digest, split into two 16-byte felt-halves.
+                    input_hash_lo: 0x33333333333333333333333333333333,
+                    input_hash_hi: 0x33333333333333333333333333333333,
+                    output_hash_lo: 0x44444444444444444444444444444444,
+                    output_hash_hi: 0x44444444444444444444444444444444,
                 },
             );
         let r1 = fold_inference_trace(@steps);
@@ -595,8 +684,11 @@ mod tests {
             .append(
                 TraceStep {
                     op_code: 0,
-                    input_hash: 0x33333333333333333333333333333333,
-                    output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
+                    // A full 32-byte digest, split into two 16-byte felt-halves.
+                    input_hash_lo: 0x33333333333333333333333333333333,
+                    input_hash_hi: 0x33333333333333333333333333333333,
+                    output_hash_lo: 0x44444444444444444444444444444444,
+                    output_hash_hi: 0x44444444444444444444444444444444,
                 },
             );
         let r1 = verify_inference_fold(@steps);

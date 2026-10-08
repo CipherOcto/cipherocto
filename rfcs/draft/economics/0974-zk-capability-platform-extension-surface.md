@@ -582,6 +582,40 @@ lesson as §What migrating the first core check uncovered, one layer up.
 Validation: 82 Cairo tests, 378 Rust lib tests, 12 CASM snapshot tests, clippy
 clean with `-D warnings` on all targets and all features.
 
+### Why the host chain swap is not a mechanical change
+
+Before making it, the host chain and the circuit chain were compared. **They are
+not the same relation, and aligning them naively would remove a security
+property.**
+
+The host chain step MACs `name ‖ canonical_ser(caveat) ‖ capability_id`. The
+`capability_id` is bound deliberately: without it, an attacker could swap the
+token's `id` — and with it the catalog-resolved parent chain — without
+invalidating the signature. That is tamper-evidence, not decoration.
+
+The circuit chain step MACs the caveat felt alone. It cannot include the
+`capability_id`, because `compute_capability_id` is
+`BLAKE3(CAPABILITY_ID_DOMAIN ‖ canonical_ser_unsigned(macaroon))` — and an
+in-circuit BLAKE3 measured **17,628 CASM words**, which is the cost wall this
+whole line of work exists to avoid.
+
+So the three options are:
+
+| Option                                     | What it costs                                                                                                                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host adopts the circuit's construction     | **Drops the `id` binding.** Fails closed today, but reopens id-swap. Not acceptable.                                                                                          |
+| Circuit also derives the `id`              | Needs in-circuit BLAKE3. 17,628 words. Unaffordable.                                                                                                                          |
+| Circuit MACs `prev_id` supplied as witness | Viable. The `id` is on the token and verified out of band; the chain binds it so a swapped `id` invalidates the proof. Costs one extra felt per step, and needs re-measuring. |
+
+The third is the intended path, and it is why the swap is sequenced rather than
+attempted. Its cost is unmeasured, and claiming otherwise would be exactly the
+kind of estimate-by-analogy this RFC keeps rejecting.
+
+A fourth option — running _two_ chains, the BLAKE3 credential chain alongside a
+Poseidon ZK chain — is rejected: it is the parallel abstraction the crate
+principles forbid, and it would give every token two chain values to keep in
+agreement forever.
+
 ### Remaining gaps, stated plainly
 
 - **Host chain swap to Poseidon** — blocks steps 2 and 4 together.
@@ -860,8 +894,12 @@ The correct next step is to measure a MAC.
 - [x] RFC-0958 step 1: the in-circuit Ed25519 verifier's non-conformance found
       and pinned, and the module kept out of the production path.
 - [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
-- [ ] Byte-to-felt packing convention for variable-length caveat messages, with
-      parity vectors, before the host swap.
+      **Not mechanical** — see §Why the host chain swap is not a mechanical
+      change. The circuit must MAC `prev_id` as witness before the host can adopt
+      the same construction without dropping tamper-evidence.
+- [x] Byte-to-felt packing convention for variable-length caveat messages:
+      31 bytes per felt, length-prefixed, with round-trip, injectivity and
+      range properties proven by test.
 - [ ] RFC-0958 step 1: real SHA-512 in-circuit, or a STARK-friendly curve.
 - [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
       migration path that is never exercised is a second extension idiom.

@@ -489,7 +489,111 @@ call-site change to lift the fixture into an `Arc`, and `octo-cap-macaroon-vault
 plus `quota-router-storage` are green. Clippy clean with warnings denied on all
 targets and all features.
 
-### Implementation Status
+## Implementation Status — RFC-0958 §Algorithms steps 1, 2 and 4
+
+All three steps were worked. One is substantially complete, one is blocked behind
+a host-side decision, and one turned out to be built on a false premise.
+
+### Step 2 — macaroon chain re-derivation: implemented and measured
+
+The circuit asserted `chain_commitment != 0`, which **cannot fail** and therefore
+verified no relation to the macaroon at all. It now performs a real
+domain-separated Poseidon MAC chain in caveat order, seeded from the root secret,
+asserted against a **verifier-supplied** tip. That is the prover-supplied →
+verifier-supplied distinction in §Class A, closed on the one path where it was
+cheapest.
+
+Measured, and this is the first genuine measurement of a chain _re-derivation_ —
+every earlier figure in this area was for a _commitment_, which is not
+transferable:
+
+| Construction               | CASM words | Serialized |
+| -------------------------- | ---------- | ---------- |
+| HMAC-BLAKE3 chain (native) | 17,628     | 550.88 KB  |
+| Poseidon MAC chain (new)   | **2,182**  | 68.16 KB   |
+
+**8.1× cheaper than the native chain.** The ceiling moved from 1,600 words /
+50 KB to 2,200 words / 75 KB, with the reason recorded: the old ceiling was set
+against a program that verified nothing, so it was measuring an empty program. Two
+guards fail loudly if the reasoning stops holding — the measured figure must fit
+its own ceiling, and the STARK-native chain must stay ≥8× cheaper than BLAKE3. If
+BLAKE3 ever fits, the primitive swap stops being justified and the tests say so.
+
+**Cross-implementation parity is proven, not assumed.** Four vectors are asserted
+_identically_ in `cairo/src/lib.cairo` and in `substrate_poseidon`, and all pass on
+both sides. Two MAC implementations that quietly diverge still both run and still
+emit plausible values, so the symptom is not a wrong answer but a chain tip that
+never matches and every proof failing for no visible reason. A fifth test asserts
+order sensitivity, because a MAC that ignored message order would let a prover
+permute the caveat chain and still satisfy the tip.
+
+**Still blocked, and the block is on the host side.** The credential chain is
+HMAC-BLAKE3 per RFC-0957 §Algorithms. Until the host adopts the same MAC, the tip
+it can supply is a BLAKE3 value and will not equal the Poseidon tip the circuit
+derives, so the circuit **fails closed**. The swap touches mint, attenuate,
+`verify_signature`, `compute_capability_id` and every pinned TV vector.
+
+One correction worth recording, because it is the error a reviewer would most
+reasonably make: the first version of this work asserted the derived tip against
+`cap_root_hash`. That value is `BLAKE3(CAPABILITY_ID_DOMAIN ||
+canonical_ser_unsigned(macaroon))` — a hash over the serialised token, not a
+re-derivable chain tip. The assertion could never succeed for any real token. It
+now binds to a dedicated `chain_tip_lo` public input carrying the last element of
+`macaroon.chain`, which the verifier reads off the token directly.
+
+### Step 4 — discharge chains: blocked behind step 2's host side
+
+Same primitive, so it is mechanical once the host chain is adopted. Nothing to
+build separately; recorded rather than reported as missing work.
+
+### Step 1 — Ed25519: the premise was wrong
+
+RFC-0958 §Algorithms calls for in-circuit holder-signature verification, and the
+repository already contains 1,573 lines presented as a "Pure-Cairo RFC 8032
+Ed25519 signature verifier". Exercised with a second RFC 8032 vector, **it
+rejects it.**
+
+The challenge hash `SHA-512(R || A || M) mod L` is computed with **BLAKE3**, and
+the one passing vector is answered by a **hardcoded constant** that recognises the
+vector by its first four key bytes and returns the precomputed challenge directly.
+The module passes vector 1 because vector 1 is special-cased.
+
+This is not a soundness hole — it fails closed — but it is **strictly worse than
+the commitment-only binding it would replace**, because it rejects every honest
+holder signature. The module therefore stays test-only, and the defect is pinned by
+`a_genuine_rfc8032_signature_is_currently_rejected`, which asserts that a real
+signature is refused, with the note that reaching conformance means flipping that
+assertion and deleting the hardcode in the same change.
+
+This revises the step-1 picture in the §Class B table above. Cost is a real
+question but a secondary one, because measuring the cost of a verifier that cannot
+verify is not progress. Step 1 needs real SHA-512 in-circuit or a STARK-friendly
+curve.
+
+### What this changes about the survey
+
+The §Class B row asserting three steps are "not built" was accurate but
+understated. The accurate statement is stronger: step 1 was _built and wrong_, and
+steps 2 and 4 were _built and vacuous_. Both failure modes are invisible to a test
+suite — one passes because of a hardcoded vector, the other because it asserts a
+condition that cannot fail. Neither would have failed loudly, which is the same
+lesson as §What migrating the first core check uncovered, one layer up.
+
+Validation: 82 Cairo tests, 378 Rust lib tests, 12 CASM snapshot tests, clippy
+clean with `-D warnings` on all targets and all features.
+
+### Remaining gaps, stated plainly
+
+- **Host chain swap to Poseidon** — blocks steps 2 and 4 together.
+- **RFC-0958 step 1** — real SHA-512 in-circuit, or a STARK-friendly curve.
+- **Byte→felt packing convention for arbitrary-length caveat messages.** The
+  16-byte `_lo`/`_hi` convention is established for 32-byte values and proven
+  here; packing a _variable-length_ caveat message needs its own convention (31
+  bytes per felt, not 32, or roughly half of all inputs exceed the field prime)
+  and its own parity vectors. Deliberately not guessed.
+- **`stwo-sys` executable fixture** — stale by one slot after the `chain_tip_lo`
+  ABI change; it cannot be regenerated here because that crate does not compile in
+  this environment (pre-existing nightly/rustc mismatch).
 
 Amendment 1 is **built**. It lives in `crates/octo-cap-macaroon/src/caveat/evaluator.rs`,
 with `Caveat::evaluator_key` as the key derivation. Amendments 2 and 3 are
@@ -749,6 +853,16 @@ The correct next step is to measure a MAC.
       `BootRefusal::InsufficientSecurity` carrying both figures.
 - [x] Strategies declare a requirement; neither claims to "achieve" a level it
       cannot observe.
+- [x] RFC-0958 step 2 circuit path: a real MAC chain bound to a verifier-supplied
+      tip, replacing an assertion that could not fail.
+- [x] Chain re-derivation measured and compared against the native alternative.
+- [x] Host/circuit MAC parity proven on shared vectors, plus order sensitivity.
+- [x] RFC-0958 step 1: the in-circuit Ed25519 verifier's non-conformance found
+      and pinned, and the module kept out of the production path.
+- [ ] Host chain adopts the Poseidon MAC, unblocking steps 2 and 4 end to end.
+- [ ] Byte-to-felt packing convention for variable-length caveat messages, with
+      parity vectors, before the host swap.
+- [ ] RFC-0958 step 1: real SHA-512 in-circuit, or a STARK-friendly curve.
 - [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
       migration path that is never exercised is a second extension idiom.
 

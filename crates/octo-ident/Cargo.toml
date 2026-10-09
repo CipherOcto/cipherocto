@@ -29,6 +29,17 @@ bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 # pin per CL feedback "no parallel async-trait pins").
 async-trait = "=0.1.92"
 
+# Typed algorithm / verification-method / circuit discriminators
+# (RFC-0009 §Dual-format signature algorithms and the ZK-capable key).
+# Layer B years-stable identity substrate. Needed for `to_uuid`/`from_uuid`
+# and `Uuid::new_v5` derivation — NOT for derive: `Uuid` has no borsh impl in
+# this workspace, so the newtypes store `[u8; 16]` directly, which is also
+# what makes RFC-0009 §Domain separation's fixed-16-byte prefix true by
+# construction. `v5` for deterministic derivation: a random id would make a
+# DID document's `algorithm_id` meaningless to any peer that did not learn
+# that same random value.
+uuid = { version = "1", features = ["v5"] }
+
 # NOTE: NO `octo-protocol = { path = "../octo-protocol" }` dep here — would
 # close a Cargo cycle (`octo-protocol → octo-ident`). Layer B per-hop
 # signature type (`RawHopSignature`) mirrors `octo_protocol::HopSignature`

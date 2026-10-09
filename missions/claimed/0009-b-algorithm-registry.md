@@ -10,13 +10,21 @@ metadata:
     - RFC-0009
 ---
 
-# Mission `0009-b-algorithm-registry` — OPEN 2026-10-09
+# Mission `0009-b-algorithm-registry` — CLAIMED 2026-10-09
 
 ## Status
 
-Open (2026-10-09). Claimable — no claimant assigned. **Base mission for the
-RFC-0009 decomposition**; `0009-c`, `0009-d` and `0009-e` all depend on
-this one and MUST NOT start before it lands.
+Claimed (2026-10-09). Claimant: @main. **Root mission for the RFC-0009
+decomposition**; `0009-c`, `0009-d` and `0009-e` all depend on this one and MUST
+NOT start before it lands.
+
+Implementation proceeds in the order this file already fixes, because the
+storage migration is load-bearing: a half-migrated table is the one state where
+DIDs resolve successfully while owning no usable key.
+
+1. Newtypes, trait, registry (this commit)
+2. `VerificationMethod` field changes and enum removal
+3. Storage migration across all three read paths
 
 ## Dependencies
 
@@ -298,7 +306,7 @@ Do not open an RFC-0010 amendment on the strength of this mission.
 
 ## Claimant
 
-@unassigned
+@main (claimed 2026-10-09)
 
 ## Pull Request
 

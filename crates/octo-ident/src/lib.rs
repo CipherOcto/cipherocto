@@ -26,6 +26,7 @@ pub mod in_memory_did_registry;
 pub mod registry;
 pub mod resolver_backend;
 pub mod rich_document;
+pub mod signature_algorithm;
 pub mod test_helpers;
 pub mod write_coordinator;
 
@@ -43,6 +44,10 @@ pub use rich_document::{
     check_controller_cycles, CapabilityDelegation, ControllerCycleError, ControllerReference,
     ServiceEndpoint, ServiceEndpointError, VerificationMethod, VerificationMethodKind,
     MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_SERVICE_ENDPOINTS, MAX_VERIFICATION_METHODS,
+};
+pub use signature_algorithm::{
+    AlgorithmId, AlgorithmRegistry, AlgorithmRegistryError, CircuitId, IdBytes, SignatureAlgorithm,
+    SignatureError, VerificationMethodId, ZkSupport,
 };
 pub use write_coordinator::{canonical_hash, DidWriteCoordinator, DidWriteCoordinatorError};
 

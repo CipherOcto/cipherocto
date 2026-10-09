@@ -222,6 +222,36 @@ citation: a doc comment asserting something no specification supports. Correct
 the wording, and record that the next algorithm lands by raising the bound
 rather than by reusing a slot.
 
+## Known gaps, recorded not hidden
+
+Three things this mission deliberately does **not** close. All three were
+raised by the R43 review of the implementation; none is safe to wave away.
+
+**`list` fails the whole enumeration on one undecodable row.** Fail-closed, and
+that is the right trade here: a revocation cascade that skips an unreadable row
+would treat its revoked key as absent, which is precisely the vacuous cascade
+A14 exists to prevent. The cost is availability — one bad row takes `list` down
+for every identity — and it is theoretical today, because nothing in `crates/`
+calls `DidRegistry::list` outside tests. If a caller needs partial results,
+the fix is a typed per-row outcome on the trait, not a silent skip. **Do not
+"fix" this by skipping rows.**
+
+**The registry is not yet the process-wide singleton.** RFC-0009 requires it,
+owned by the defining crate and populated by an init function before any
+verification runs. `new()` is public and `Default` is derived, so two verifiers
+in one process could disagree about which algorithms exist. The bootstrap lands
+with `0009-c`, which is where the first real caller appears; until then the type
+is inert. Stated in the module doc too, so a reader does not have to discover
+it by grepping for call sites and finding nothing.
+
+**Key-id uniqueness within a document is not enforced.** `VerificationMethod::new`
+documents the obligation and the constructor forces the caller to choose an id,
+so the accidental collision a constant-id constructor caused is gone. But
+nothing rejects two methods sharing an id, and the migration derives distinct
+ids per entry. A writer that reuses an id gets a document where per-key
+revocation is ambiguous. Worth a decode-time check when a writer-side entry
+point exists to hang it on.
+
 ## Acceptance Criteria
 
 Verified by the §Test Vectors list. Each vector is a named, independently

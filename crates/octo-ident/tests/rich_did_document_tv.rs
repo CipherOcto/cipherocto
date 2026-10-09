@@ -57,7 +57,11 @@ fn tv1_rich_document_round_trip() {
             ServiceEndpoint::new("inbox", "cipherocto://inbox.example/v1").unwrap(),
         ],
         controllers: vec![ControllerReference::new("did:octo:zparent")],
-        verification_methods: vec![VerificationMethod::ed25519(pk, CustodyPosture::Hardware)],
+        verification_methods: vec![VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-0"),
+            pk,
+            CustodyPosture::Hardware,
+        )],
         capability_delegations: vec![CapabilityDelegation::new([0xB1; 32])],
     };
 
@@ -190,9 +194,20 @@ fn tv5_verification_method_type_discriminator() {
 
     // Ed25519: the algorithm discriminator round-trips, and the key id is
     // present rather than reconstructed.
-    let vm = VerificationMethod::ed25519(pk, CustodyPosture::Hardware);
+    let vm = VerificationMethod::ed25519(
+        VerificationMethodId::derive("key-0"),
+        pk,
+        CustodyPosture::Hardware,
+    );
     assert_eq!(vm.algorithm_id, AlgorithmId::derive("ed25519"));
-    assert_eq!(vm.id, VerificationMethodId::derive("ed25519"));
+    // The key id is the caller's, NOT a constant. An earlier version of this
+    // vector asserted `vm.id == VerificationMethodId::derive("ed25519")`,
+    // which pinned the defect rather than catching it: every Ed25519 key in
+    // every document shared one key_id, so two keys of one identity produced
+    // an identical signable prefix and per-key revocation could not select a
+    // key.
+    assert_eq!(vm.id, VerificationMethodId::derive("key-0"));
+    assert_ne!(vm.id, VerificationMethodId::derive("ed25519"));
     assert_eq!(vm.public_key, pk.to_vec());
     assert!(!vm.is_revoked());
     assert_eq!(vm.custody, CustodyPosture::Hardware);

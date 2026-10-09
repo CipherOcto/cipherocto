@@ -62,6 +62,23 @@ pub const MAX_CONTROLLERS: usize = 3;
 /// lands by **raising this bound**, never by reusing a slot.
 pub const MAX_VERIFICATION_METHODS: usize = 2;
 
+/// Hard ceiling on an encoded public key, independent of any one algorithm.
+///
+/// The *effective* bound is `SignatureAlgorithm::public_key_len`, which the
+/// registry knows and this type does not — BC#13 says the key is bounded by
+/// the algorithm, and a verifier is what enforces that at use time. This
+/// constant exists so the struct itself cannot be handed a megabyte: a
+/// persisted blob is attacker-influenced input, and an unbounded `Vec<u8>` on
+/// a decode path is an allocation primitive.
+///
+/// 128 bytes is well above every current algorithm (Ed25519 and the STARK
+/// curve are both 32) and below the cost worth worrying about. An earlier
+/// version of the `VerificationMethod` doc comment cited a
+/// `MAX_PUBLIC_KEY_LEN` that did not exist anywhere in the workspace — the
+/// same class of defect as the dangling `§VerificationMethodKind` citation
+/// BC#13 removes: a comment asserting a constraint no code implemented.
+pub const MAX_PUBLIC_KEY_LEN: usize = 128;
+
 /// Maximum number of capability delegations per DID (RFC-0010 §Bounds).
 ///
 /// 10 capability delegations covers resolver + transport + zk-cap use
@@ -236,16 +253,25 @@ pub struct VerificationMethod {
 }
 
 impl VerificationMethod {
-    /// Construct an Ed25519 verification method.
+    /// Construct an Ed25519 verification method under an explicit id.
     ///
-    /// The `id` is derived, not generated, so it is stable across
-    /// processes and resolvers — the signable prefix depends on that. Prefer
-    /// [`VerificationMethod::new`] when the caller owns the identity's key
-    /// naming scheme.
+    /// `id` is a **parameter, not a constant**, and that is load-bearing. An
+    /// earlier version derived it from the literal string `"ed25519"`, which
+    /// gave every Ed25519 key in every document the same `key_id` — so two
+    /// keys of one identity produced an identical signable prefix
+    /// `algorithm_id ‖ key_id ‖ payload`, and `revoked_at` on one of them
+    /// could not be told apart from the other by any consumer resolving by
+    /// `key_id`. Two passing tests asserted the constant, so the defect was
+    /// pinned rather than caught. Forcing the caller to supply the id makes
+    /// the collision a decision instead of an accident.
     #[must_use]
-    pub fn ed25519(public_key: [u8; 32], custody: CustodyPosture) -> Self {
+    pub fn ed25519(
+        id: VerificationMethodId,
+        public_key: [u8; 32],
+        custody: CustodyPosture,
+    ) -> Self {
         Self::new(
-            VerificationMethodId::derive("ed25519"),
+            id,
             AlgorithmId::derive("ed25519"),
             public_key.to_vec(),
             custody,
@@ -253,6 +279,9 @@ impl VerificationMethod {
     }
 
     /// Construct a verification method under an explicit id and algorithm.
+    ///
+    /// `id` MUST be unique within its DID document. Nothing enforces that at
+    /// decode — see §Key id uniqueness — so it is the writer's obligation.
     #[must_use]
     pub fn new(
         id: VerificationMethodId,
@@ -260,6 +289,11 @@ impl VerificationMethod {
         public_key: Vec<u8>,
         custody: CustodyPosture,
     ) -> Self {
+        debug_assert!(
+            public_key.len() <= MAX_PUBLIC_KEY_LEN,
+            "public key of {} bytes exceeds MAX_PUBLIC_KEY_LEN ({MAX_PUBLIC_KEY_LEN})",
+            public_key.len()
+        );
         Self {
             id,
             algorithm_id,
@@ -449,7 +483,11 @@ mod tests {
 
     #[test]
     fn verification_method_ed25519_default() {
-        let vm = VerificationMethod::ed25519([1u8; 32], CustodyPosture::Hardware);
+        let vm = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-a"),
+            [1u8; 32],
+            CustodyPosture::Hardware,
+        );
         assert_eq!(vm.algorithm_id, AlgorithmId::derive("ed25519"));
         assert_eq!(vm.public_key.len(), 32);
         assert!(!vm.is_revoked());
@@ -479,13 +517,86 @@ mod tests {
     fn verification_method_revocation_is_per_key() {
         // Identity revocation exists, but a document holding two keys needs
         // per-key revocation too, or the cascade has nothing to act on.
-        let mut vm = VerificationMethod::ed25519([1u8; 32], CustodyPosture::Software);
+        let mut vm = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-a"),
+            [1u8; 32],
+            CustodyPosture::Software,
+        );
         assert!(!vm.is_revoked());
         vm.revoked_at = Some(1_700_000_000);
         assert!(vm.is_revoked());
         // Revoking one key does not revoke the other.
-        let other = VerificationMethod::ed25519([2u8; 32], CustodyPosture::Hardware);
+        let other = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-b"),
+            [2u8; 32],
+            CustodyPosture::Hardware,
+        );
         assert!(!other.is_revoked());
+    }
+
+    #[test]
+    fn two_keys_in_one_document_have_distinct_ids() {
+        // The defect a constant-id constructor caused: two keys of one identity
+        // sharing a key_id, which collapses the signable prefix and makes
+        // per-key revocation ambiguous. Nothing in the struct enforces
+        // uniqueness, so this is a property of how ids are chosen, and the
+        // constructor now forces the caller to choose one.
+        let a = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-0"),
+            [1u8; 32],
+            CustodyPosture::Hardware,
+        );
+        let b = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-1"),
+            [2u8; 32],
+            CustodyPosture::Software,
+        );
+        assert_ne!(a.id, b.id);
+        // No assertion that an id is not an algorithm id: `VerificationMethodId`
+        // and `AlgorithmId` are distinct newtypes, so the compiler already
+        // refuses to compare them. An assertion here would be one of the
+        // tests that cannot fail.
+        assert_eq!(a.algorithm_id, b.algorithm_id, "both are Ed25519");
+    }
+
+    #[test]
+    fn zk_support_none_is_reported_by_the_algorithm() {
+        // The `None` arm is what RFC-0009 AC#14's fail-closed mint gate
+        // depends on, and it had no test: the sibling vector covered only
+        // `Circuit`. An algorithm that cannot produce a ZK proof must say so
+        // rather than be silent.
+        struct NoCircuit;
+        impl crate::signature_algorithm::SignatureAlgorithm for NoCircuit {
+            fn id(&self) -> AlgorithmId {
+                AlgorithmId::derive("no-circuit")
+            }
+            fn name(&self) -> &'static str {
+                "no-circuit"
+            }
+            fn public_key_len(&self) -> usize {
+                32
+            }
+            fn signature_len(&self) -> usize {
+                64
+            }
+            fn zk_support(&self) -> crate::signature_algorithm::ZkSupport {
+                crate::signature_algorithm::ZkSupport::None
+            }
+            fn verify(
+                &self,
+                _pk: &[u8],
+                _msg: &[u8],
+                _sig: &[u8],
+            ) -> Result<(), crate::signature_algorithm::SignatureError> {
+                Ok(())
+            }
+        }
+        let alg: std::sync::Arc<dyn crate::signature_algorithm::SignatureAlgorithm> =
+            std::sync::Arc::new(NoCircuit);
+        assert_eq!(
+            alg.zk_support(),
+            crate::signature_algorithm::ZkSupport::None
+        );
     }
 
     #[test]
@@ -493,8 +604,16 @@ mod tests {
         // A software-held ZK key must not read as equivalent to a
         // hardware-held Ed25519 key. Both are valid; conflating them is the
         // failure, so the variants must be distinct values.
-        let mut vm = VerificationMethod::ed25519([7u8; 32], CustodyPosture::Software);
-        let hw = VerificationMethod::ed25519([7u8; 32], CustodyPosture::Hardware);
+        let mut vm = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-x"),
+            [7u8; 32],
+            CustodyPosture::Software,
+        );
+        let hw = VerificationMethod::ed25519(
+            VerificationMethodId::derive("key-x"),
+            [7u8; 32],
+            CustodyPosture::Hardware,
+        );
         assert_ne!(vm.custody, hw.custody);
         assert_eq!(vm.public_key, hw.public_key, "same key, different posture");
         vm.custody = CustodyPosture::Threshold;

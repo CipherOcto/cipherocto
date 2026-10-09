@@ -317,12 +317,27 @@ struct RegistryInner {
 
 /// Registry of signature algorithms, keyed by [`AlgorithmId`].
 ///
-/// Construction is `new()` then `register()` per algorithm then `populate()`
-/// once. Lookup before `populate` is [`AlgorithmRegistryError::NotPopulated`]
-/// rather than [`AlgorithmRegistryError::UnknownAlgorithm`]: the first is a
-/// deployment that has not booted, the second is an algorithm nobody
-/// registered, and conflating them makes a boot-order bug look like a
-/// configuration bug.
+/// Construction is `new()` then `populate(algs)` during startup. Lookup before
+/// `populate` is [`AlgorithmRegistryError::NotPopulated`] rather than
+/// [`AlgorithmRegistryError::UnknownAlgorithm`]: the first is a deployment
+/// that has not booted, the second is an algorithm nobody registered, and
+/// conflating them makes a boot-order bug look like a configuration bug.
+///
+/// ## Not yet a singleton — recorded, not hidden
+///
+/// RFC-0009 requires the registry to be a **process-wide singleton owned by
+/// this crate and populated by an init function before any verification
+/// runs.** That is **not** implemented. `new()` is public, `Default` is
+/// derived, and a caller can therefore construct an independent registry per
+/// use — two verifiers in one process could disagree about which algorithms
+/// exist, which is a subtler version of the wrong-algorithm problem the
+/// registry exists to prevent.
+///
+/// The bootstrap lands with the verification-dispatch work (`0009-c`), which
+/// is where the first real caller appears. Until then this type is inert:
+/// nothing outside its own tests constructs one. Stated here rather than left
+/// implicit, because a reader of this module should not have to find the gap
+/// by grepping for call sites and finding nothing.
 #[derive(Default)]
 pub struct AlgorithmRegistry {
     inner: RwLock<RegistryInner>,
@@ -362,12 +377,53 @@ impl AlgorithmRegistry {
         Ok(())
     }
 
-    /// Mark the registry ready.
+    /// Mark the registry ready, inserting the bootstrap set in one operation.
     ///
-    /// Call once per distinct [`AlgorithmId`], after all `register` calls.
-    /// Until this is called every lookup is [`AlgorithmRegistryError::NotPopulated`].
-    pub fn populate(&self) {
+    /// Takes the algorithms rather than being a bare `populate()`, which is
+    /// both the RFC signature and the only way `NotPopulated` stays reachable
+    /// in the deployment state it exists to name: a no-argument version makes
+    /// `new().populate()` produce a registry where every lookup is
+    /// `UnknownAlgorithm` rather than `NotPopulated`, so a boot-order bug
+    /// looks like a configuration bug.
+    ///
+    /// # Errors
+    /// - [`AlgorithmRegistryError::AlreadyRegistered`] if the registry already
+    ///   holds one of these ids, or the set names an id twice
+    /// - [`AlgorithmRegistryError::NotPopulated`] if already populated, since a
+    ///   second call would make the ready-set non-atomic
+    ///
+    /// An empty set is accepted deliberately: a deployment with no algorithms
+    /// is a configuration choice, and one that *intended* to register some and
+    /// registered none is caught at the first lookup, which says
+    /// `UnknownAlgorithm`.
+    pub fn populate(
+        &self,
+        algs: Vec<Arc<dyn SignatureAlgorithm>>,
+    ) -> Result<(), AlgorithmRegistryError> {
+        if *self.populated.read() {
+            return Err(AlgorithmRegistryError::NotPopulated);
+        }
+        let mut ids: Vec<AlgorithmId> = Vec::with_capacity(algs.len());
+        for alg in &algs {
+            let id = alg.id();
+            if ids.contains(&id) {
+                return Err(AlgorithmRegistryError::AlreadyRegistered(id));
+            }
+            ids.push(id);
+        }
+        {
+            let mut inner = self.inner.write();
+            for id in &ids {
+                if inner.algorithms.contains_key(id) {
+                    return Err(AlgorithmRegistryError::AlreadyRegistered(*id));
+                }
+            }
+            for alg in algs {
+                inner.algorithms.insert(alg.id(), alg);
+            }
+        }
         *self.populated.write() = true;
+        Ok(())
     }
 
     /// Look up an algorithm.
@@ -492,7 +548,7 @@ mod tests {
         let reg = AlgorithmRegistry::new();
         let ed = AlgorithmId::derive("ed25519");
         reg.register(dummy("ed25519", ed)).unwrap();
-        reg.populate();
+        reg.populate(Vec::new()).expect("populate");
 
         // The registered one resolves.
         assert_eq!(reg.get(ed).unwrap().name(), "ed25519");
@@ -533,7 +589,7 @@ mod tests {
     fn unregistered_algorithm_id_is_rejected_after_population() {
         let reg = AlgorithmRegistry::new();
         reg.register(dummy("a", AlgorithmId::derive("a"))).unwrap();
-        reg.populate();
+        reg.populate(Vec::new()).expect("populate");
         let missing = AlgorithmId::derive("never-registered");
         assert!(matches!(
             reg.get(missing),
@@ -621,7 +677,7 @@ mod tests {
 
         let reg = AlgorithmRegistry::new();
         reg.register(Arc::new(WithCircuit)).unwrap();
-        reg.populate();
+        reg.populate(Vec::new()).expect("populate");
         let alg = reg.get(AlgorithmId::derive("with-circuit")).unwrap();
         assert_eq!(
             alg.zk_support(),

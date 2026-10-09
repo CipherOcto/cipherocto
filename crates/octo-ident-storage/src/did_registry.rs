@@ -144,17 +144,23 @@ fn decode_verification_methods(
                     name.extend_from_slice(&index.to_le_bytes());
                     let id =
                         VerificationMethodId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, &name));
-                    // `0x01` was Ed25519. Every other byte collapsed onto the
-                    // old `Reserved` catch-all, which named no algorithm — so it
-                    // cannot honestly be mapped to Ed25519 without recreating
-                    // the collapse. It gets its own id, which no algorithm
-                    // registers under, so verification fails closed at the
-                    // registry instead of silently checking the wrong
-                    // equation.
+                    // `0x01` was Ed25519. Every other byte collapsed onto
+                    // the old `Reserved` catch-all, which named no algorithm.
+                    //
+                    // An earlier version mapped all of them to a single
+                    // `legacy-unknown` id. That fails closed, but it
+                    // reinstates the exact collapse BC#13 removes — 0x02 and
+                    // 0xFF would share one `algorithm_id`, and two unknown
+                    // discriminators would stop being distinguishable in the
+                    // error, which is the property AC#12 asks for and the one
+                    // the deleted enum violated. Each byte keeps its own
+                    // identity here.
                     let algorithm_id = if m.kind == 0x01 {
                         AlgorithmId::derive("ed25519")
                     } else {
-                        AlgorithmId::derive("legacy-unknown")
+                        let mut name = b"legacy-kind".to_vec();
+                        name.push(m.kind);
+                        AlgorithmId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, &name))
                     };
                     VerificationMethod::new(
                         id,
@@ -896,22 +902,32 @@ mod tests {
     }
 
     #[test]
-    fn legacy_non_ed25519_byte_fails_closed() {
+    fn legacy_non_ed25519_byte_fails_closed_and_stays_distinct() {
         // Every byte but 0x01 collapsed onto the old `Reserved` catch-all,
         // which named no algorithm. Mapping it to Ed25519 would recreate the
-        // collapse; giving it its own id means no algorithm registers under
-        // it and the registry lookup fails closed.
+        // collapse. Giving them all ONE shared id would recreate it too, in a
+        // different shape: 0x02 and 0xFF would carry the same algorithm_id and
+        // two unknown discriminators would stop being distinguishable in the
+        // error, which is the property AC#12 asks for and the one the deleted
+        // enum violated. Each unknown byte keeps its own identity.
         let hash = [0x44u8; 32];
+        let mut seen: Vec<AlgorithmId> = Vec::new();
         for byte in [0x00u8, 0x02, 0x7F, 0xFF] {
             let migrated = decode_verification_methods(&legacy_blob(&[(byte, [0xAA; 32])]), &hash)
                 .expect("decode");
-            assert_eq!(
-                migrated[0].algorithm_id,
-                AlgorithmId::derive("legacy-unknown"),
+            let got = migrated[0].algorithm_id;
+            assert_ne!(
+                got,
+                AlgorithmId::derive("ed25519"),
                 "legacy kind {byte:#04x} must not be claimed as Ed25519"
             );
-            assert_ne!(migrated[0].algorithm_id, AlgorithmId::derive("ed25519"));
+            assert!(
+                !seen.contains(&got),
+                "legacy kind {byte:#04x} collided with an earlier unknown byte"
+            );
+            seen.push(got);
         }
+        assert_eq!(seen.len(), 4, "four distinct bytes, four distinct ids");
     }
 
     #[test]

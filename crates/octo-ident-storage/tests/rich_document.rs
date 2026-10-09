@@ -11,7 +11,7 @@
 
 use octo_ident::{
     CapabilityDelegation, ControllerReference, CustodyPosture, DidDocument, DidRegistry,
-    ServiceEndpoint, VerificationMethod,
+    ServiceEndpoint, VerificationMethod, VerificationMethodId,
 };
 use octo_ident_storage::StoolapDidRegistry;
 
@@ -48,8 +48,16 @@ fn rich_doc(seed: u8) -> DidDocument {
             ControllerReference::new(format!("did:octo:zController{:02x}", seed.wrapping_add(1))),
         ],
         verification_methods: vec![
-            VerificationMethod::ed25519(sample_pk(seed), CustodyPosture::Hardware),
-            VerificationMethod::ed25519(sample_pk(seed.wrapping_add(1)), CustodyPosture::Software),
+            VerificationMethod::ed25519(
+                VerificationMethodId::derive("key-0"),
+                sample_pk(seed),
+                CustodyPosture::Hardware,
+            ),
+            VerificationMethod::ed25519(
+                VerificationMethodId::derive("key-1"),
+                sample_pk(seed.wrapping_add(1)),
+                CustodyPosture::Software,
+            ),
         ],
         capability_delegations: vec![
             CapabilityDelegation::new(sample_hash(seed)),
@@ -156,7 +164,7 @@ fn register_upsert_overwrites_rich_fields() {
 }
 
 #[test]
-fn resolve_legacy_row_returns_empty_vevs() {
+fn resolve_legacy_row_returns_empty_vecs() {
     // Insert a legacy-shape row directly via SQL on the same in-memory
     // DB (rich columns exist but are NULL → borsh decoder returns
     // empty Vec). The `register()` API path always writes the rich
@@ -233,6 +241,7 @@ fn register_with_max_verification_methods() {
     };
     for i in 0..MAX_VERIFICATION_METHODS {
         doc.verification_methods.push(VerificationMethod::ed25519(
+            VerificationMethodId::derive(&format!("max-key-{i}")),
             sample_pk(u8::try_from(i).expect("loop index fits in u8")),
             CustodyPosture::Hardware,
         ));

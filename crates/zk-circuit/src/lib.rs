@@ -738,23 +738,34 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<CasmLowering, HashError> {
 
     let assembled = casm_program.assemble();
 
-    // cairo-vm 3.1.0's `HintsCollection` holds at most one hint per pc
-    // (`Program::new_for_proof` takes `HashMap<usize, Vec<HintParams>>`
-    // but `HintsCollection` resolves a single reference). Dropping a hint
-    // would remove a constraint, so refuse instead.
-    let mut hints: Vec<CasmHint> = Vec::with_capacity(assembled.hints.len());
+    // Multiple hints per pc are carried through in order, not refused.
+    //
+    // This used to be refused, with the comment "cairo-vm 3.1.0's
+    // `HintsCollection` holds at most one hint per pc ... `HintsCollection`
+    // resolves a single reference". That was true of 3.1.0 and is not true of
+    // the pinned 3.2.0, which is the only cairo-vm in the lockfile. 3.2.0's
+    // `HintsCollection` stores a `HintRange` per pc and reconstructs
+    // `Vec<HintParams>` per pc from it, so a pc with several hints resolves all
+    // of them.
+    //
+    // The gate then started refusing real programs. The EcOp builtin lowering
+    // emits two hints at one pc, so any circuit using `core::ec` — the
+    // RFC-0958 step 1 Schnorr candidate — could not be measured through this
+    // path at all. The gate was protecting against a constraint being dropped,
+    // and it was doing that job correctly; it was just protecting against a
+    // version of cairo-vm the project no longer uses.
+    //
+    // Order is preserved within a pc: `assembled.hints` is already grouped by pc,
+    // and `sort_by_key` below is stable.
+    let mut hints: Vec<CasmHint> =
+        Vec::with_capacity(assembled.hints.iter().map(|(_, hs)| hs.len()).sum());
     for (pc, at_pc) in &assembled.hints {
-        if at_pc.len() != 1 {
-            return Err(HashError::CompilerInternal(format!(
-                "CASM pc {pc} carries {} hints; cairo-vm 3.1.0 resolves exactly one per pc. \
-                 Silently dropping the extras would drop constraints, so this is refused.",
-                at_pc.len()
-            )));
+        for h in at_pc {
+            hints.push(CasmHint {
+                pc: *pc,
+                hint: h.clone(),
+            });
         }
-        hints.push(CasmHint {
-            pc: *pc,
-            hint: at_pc[0].clone(),
-        });
     }
     hints.sort_by_key(|h| h.pc);
 

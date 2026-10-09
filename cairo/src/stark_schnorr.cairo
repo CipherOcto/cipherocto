@@ -33,26 +33,35 @@
 //! with a scheme only this protocol can verify, which costs hardware-wallet and
 //! MPC compatibility. That is a product trade, not a cryptographic one.
 //!
-//! **Measured: +295 CASM words.** With this verifier wired into `main` the
-//! circuit goes 3,004 → 3,299 words, against 44,443 for the conformant Ed25519
-//! verifier. The reason is not that the scalar multiplication got cheap —
-//! `ec_state_add_mul` still lowers to a handful of instructions that read a
-//! result out of the EcOp builtin segment. The multiplication simply is not in
-//! the Cairo trace; it is in the builtin's algebraic constraint. So the word
-//! count understates the cost, and the real price is proving time for the EcOp
-//! component, which is not measured here.
+//! **Measured, and proved end to end.**
 //!
-//! **Two things are not yet settled, and both matter more than the number.**
+//! With this verifier wired into `main` the circuit goes 3,004 → 3,299 CASM
+//! words, and a full STARK prove-and-verify passes with the syscall-free EcOp
+//! path: **465.19 s**, against 440.58 s for the committed circuit. That is about
+//! +5.6%, not the 13.8× the Ed25519 word count would imply.
 //!
-//! 1. The circuit does not yet build in the harness. The EcOp lowering emits two
-//!    hints at one CASM pc, and `bundled_casm_bytes` refuses that because
-//!    `HintsCollection` resolves exactly one hint per pc — it would otherwise
-//!    silently drop a constraint. That refusal is correct and should stay; the
-//!    fix belongs in the harness, not in the gate.
-//! 2. Nothing has been proved end to end. The +295 figure is a compile-time
-//!    measurement of a program that cannot yet be executed by the proving
-//!    pipeline, so it is not yet evidence that a STARK over this circuit
-//!    verifies. Treat it as a strong lead, not a result.
+//! The reason the word count understates it is the same reason it is cheap:
+//! `ec_state_add_mul` lowers to a handful of instructions that read a result
+//! out of the EcOp builtin segment. The multiplication is not in the Cairo
+//! trace; it is in the builtin's algebraic constraint. So +295 words is not the
+//! price, it is the part of the price that lands in CASM.
+//!
+//! **Two operational requirements came out of this.**
+//!
+//! 1. Proving a circuit that uses `core::ec` needs a **larger stack than a
+//!    default test thread has**. At the default the prover aborts with
+//!    `has overflowed its stack`; at `RUST_MIN_STACK=134217728` it completes.
+//!    Any CI job or integration test that exercises this path must set it, or
+//!    run on the main thread.
+//! 2. The EcOp lowering emits **two hints at one CASM pc**. The lowering gate in
+//!    `zk-circuit` refused that, on the stated ground that cairo-vm resolves one
+//!    hint per pc. That was true of cairo-vm 3.1.0 and is not of the pinned
+//!    3.2.0, whose `HintsCollection` keeps a `HintRange` per pc and resolves all
+//!    of them. The gate was protecting against a dropped constraint and was doing
+//!    its job against a version of cairo-vm the project no longer uses; it has
+//!    been corrected. Note the *executable* path never hit this gate, because it
+//!    does not flatten the hint map — so the blocker only ever affected
+//!    measurement, and the circuit compiled, ran and proved regardless.
 
 use core::ec::{
     EcPoint, EcPointTrait, EcState, EcStateTrait, NonZeroEcPoint,

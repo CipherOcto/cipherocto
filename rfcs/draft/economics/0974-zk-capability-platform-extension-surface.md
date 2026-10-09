@@ -739,37 +739,46 @@ independent pure-Python implementation of the same curve, including five
 negative cases, because a verifier that returned true unconditionally would pass
 a positive test.
 
-Measured, wired into `main`:
+Measured, wired into `main`, and **proved end to end**:
 
-| Verifier                  | CASM words | Delta    |
-| ------------------------- | ---------- | -------- |
-| baseline                  | 3,004      | —        |
-| + Schnorr over `core::ec` | 3,299      | **+295** |
-| + conformant Ed25519      | 44,443     | +41,439  |
+| Verifier                  | CASM words | Prove + verify |
+| ------------------------- | ---------- | -------------- |
+| baseline                  | 3,004      | 440.58 s       |
+| + Schnorr over `core::ec` | 3,299      | **465.19 s**   |
+| + conformant Ed25519      | 44,443     | not attempted  |
 
-**The word count is misleading and should not be quoted alone.** `ec_state_add_mul`
-still lowers to a handful of instructions that read a result out of the EcOp
-builtin segment — structurally the same shape as `StarknetHint::SystemCall`. The
-difference is that cairo-air implements `EcOpBuiltin` as a full AIR component,
-with `partial_ec_mul` window decompositions, regression tests, and a
-segment-range check in the verifier. The multiplication is not in the Cairo
-trace; it is in the builtin's algebraic constraint. So +295 words is not the
-price, it is only the part of the price that lands in CASM. The rest is proving
-time for the EcOp component, which is **not measured**.
+That is **+295 words and roughly +5.6% proving time**, against the 13.8× the
+Ed25519 word count implies. The CASM count understates the Schnorr cost, because
+`ec_state_add_mul` lowers to a handful of instructions that read a result out of
+the EcOp builtin segment — structurally the same shape as
+`StarknetHint::SystemCall`. The difference is that cairo-air implements
+`EcOpBuiltin` as a full AIR component, with `partial_ec_mul` window
+decompositions, regression tests, and a segment-range check in the verifier. The
+multiplication is not in the Cairo trace; it is in the builtin's algebraic
+constraint, which is why it costs neither 41,000 words nor 13.8× the proving
+time. The AIR picks the component up automatically from the detected public
+segments, so EC operations are constrained rather than ignored.
 
-Two things are unsettled, and they matter more than the number:
+Getting there surfaced two operational facts:
 
-- **The circuit does not build in the harness.** The EcOp lowering emits two
-  hints at one CASM pc, and `bundled_casm_bytes` refuses it because
-  `HintsCollection` resolves exactly one hint per pc and would otherwise silently
-  drop a constraint. That refusal is correct and stays; the fix is in the
-  harness.
-- **Nothing has been proved end to end.** The +295 figure is a compile-time
-  measurement of a program the proving pipeline cannot yet execute.
+- **Proving a circuit that uses `core::ec` needs a larger stack than a default
+  test thread has.** The prover aborts with a stack overflow at the default and
+  completes at `RUST_MIN_STACK=134217728`. CI has to set it.
+- **The EcOp lowering emits two hints at one CASM pc.** The lowering gate in
+  `zk-circuit` refused that, on the stated ground that cairo-vm resolves one hint
+  per pc. True of cairo-vm 3.1.0, false of the pinned 3.2.0, whose
+  `HintsCollection` keeps a `HintRange` per pc and resolves all of them. The gate
+  was correctly protecting against a dropped constraint, against a version of
+  cairo-vm the project no longer uses. It has been corrected.
 
-So this is a strong lead, not a result. The honest summary is that the CASM cost
-of the holder-signature slot is probably not the binding constraint, and that is
-worth knowing before anyone spends a cycle on the 512-bit reduction.
+Worth noting how narrow that second blocker was. The _executable_ path never hit
+it, because it does not flatten the hint map — the circuit compiled, ran and
+proved regardless, and only the flat measurement API refused. Same failure shape
+as the `stwo-sys` calldata drift: a gate written against an older dependency
+version, hiding in a path that is not even the production one.
+
+So the CASM cost of the holder-signature slot is demonstrably not the binding
+constraint, and the 512-bit reduction is not worth optimising.
 
 #### Recommendation
 

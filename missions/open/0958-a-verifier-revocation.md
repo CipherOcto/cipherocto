@@ -20,8 +20,9 @@ Open (2026-10-09). Claimable — no claimant assigned.
 
 `depends_on: RFC-0958`. No hard dependency on the RFC-0009 missions,
 though per-key revocation is the other half of the composed control and is a
-known open gap. **Its owner is undecided** between this mission and `0009-c`,
-and §Known gap, do not paper over is where that decision gets recorded.
+known open gap. **Its owner is settled in RFC-0009 A14 and is neither this
+mission nor `0009-c`** — it needs a circuit change. See §Known gap, do not
+paper over.
 
 ## Scope
 
@@ -199,13 +200,15 @@ is not on this path, because §Algorithms still resolves the DID inside the
 circuit. A compromised key on a sound identity passes. That needs new public
 inputs and therefore a circuit change, tracked separately.
 
-**`0009-c` currently scopes that same per-key gate as a verifier-side fix**,
-and the two are incompatible. A verifier-side check cannot fire if the DID is
-resolved in-circuit, so an implementer who coordinates with `0009-c` and
-builds the key gate at the verifier will produce a gate that never executes on
-the ZK path — while `0009-c` reports the gate delivered and this hole stays
-open. Resolve which artifact owns the per-key gate before either is claimed,
-and record the answer in both missions.
+**Ownership of that gate is settled in RFC-0009 A14 and it is neither this
+mission's nor `0009-c`'s**, because both are verifier work. The circuit's
+`BatchSigPublicInputs` carries only `signer_roots` and `message_root` — no
+holder DID, no `algorithm_id`, no `key_id` — so a verifier has no bound
+statement of which key signed and cannot gate on one. Closing it is a circuit
+change that publishes those three as public inputs and constrains the signing
+key to the method bearing that `key_id`; it moves the committed CASM digest
+and is its own amendment and mission. Until then A14 is unmitigated on the ZK
+path, recorded here rather than half-claimed by two missions.
 
 `zk-verify-compromised-key.json` is a deliberately **failing** vector that
 documents the hole. Keep it failing rather than deleting it, and do not paper
@@ -326,7 +329,8 @@ will still accept them, and that is precisely the gap A6 describes.
   §Revocation and freshness, §Configuration Validation, §Time Bounds, IA-12,
   IA-13, IA-14, A6, §Test Vectors
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — A13, A14, AC#14; the
-  per-key gate — **owner undecided**, see §Known gap, do not paper over
+  per-key gate — **owner settled in RFC-0009 A14, neither this mission nor
+  `0009-c`**; see §Known gap, do not paper over
 - `crates/quota-router-core/src/zk_verify/capability.rs` — the file under change
 - `missions/open/0009-c-verification-dispatch`
 

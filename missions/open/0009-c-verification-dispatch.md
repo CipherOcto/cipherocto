@@ -89,21 +89,24 @@ resolves the DID, which none of these currently do.
 
 **A verifier-side key gate cannot fire on the ZK path** while RFC-0958
 §Algorithms resolves the DID inside the circuit — the verifier never reaches
-the decision. `0958-a` says the same thing and explicitly disclaims this gate,
-so neither mission currently holds it.
+the decision. And the circuit's `BatchSigPublicInputs` carries only
+`signer_roots` and `message_root`: no holder DID, no `algorithm_id`, no
+`key_id`. A verifier therefore holds no cryptographically bound statement of
+_which_ key signed, and cannot check that key's revocation even in principle.
 
-An implementer who builds it here will produce a gate that never executes
-where it is needed, while this file reports it delivered. **Resolve the owner
-before claiming either mission**, and record the answer in both. The honest
-options: the circuit stops resolving the DID and the verifier owns both gates,
-or the key gate stays a real gap until new public inputs exist. What must not
-happen is two missions each half-claiming it.
+**Ownership is settled in RFC-0009 A14 and it is not this mission's.** The gate
+belongs to neither this mission nor `0958-a`, because both are verifier work.
+Closing it is a **circuit change**: publish `holder_did`, `algorithm_id` and
+`key_id` as public inputs, constrain the circuit so the signing key is the
+document method bearing that `key_id`, and let the verifier gate on
+`(holder_did, key_id)` before the identity gate. That moves the committed CASM
+digest, so it is its own amendment and its own mission. This mission's scope
+is dispatch, which is unaffected: it removes hardcoded algorithms from
+verification sites and does not claim any revocation gate.
 
-RFC-0009 A14's oracle: one STARK-curve key compromised, identity otherwise
-sound, Ed25519 key untouched — the holder must survive that. Ownership of
-`compromised_key_revoked_without_identity_revocation` is **undecided**; see the
-table below. Do not claim the vector until the answer is recorded in both
-`0009-c` and `0958-a`.
+RFC-0009 A14's oracle — one STARK-curve key compromised, identity otherwise
+sound, Ed25519 key untouched — remains a **failing** vector until that circuit
+change lands.
 
 ## Acceptance Criteria
 
@@ -130,8 +133,9 @@ runnable check; a vector passing is the acceptance condition met.
   have registered a second algorithm before it can run over a real pair.
 - `revoked_identity_replay_rejected` — RFC-0958's, i.e. `0958-a`'s. Listed
   here for completeness; it is **not** this mission's to deliver.
-- `compromised_key_revoked_without_identity_revocation` — blocked on the
-  ownership question above, and on `0009-d` for a second key to compromise.
+- `compromised_key_revoked_without_identity_revocation` — **owned by neither this
+  mission nor `0958-a`.** It needs a circuit change; see §Per-key revocation.
+  Currently a failing vector.
 
 ### Vector ownership, stated once
 
@@ -139,12 +143,12 @@ Three vectors have more than one plausible owner. Per BLUEPRINT
 §Multi-Mission Decomposition, ownership is decided **before** implementation,
 not discovered when two branches collide:
 
-| Vector                                                | Owner         | Note                                                                                                                                                    |
-| ----------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `no_verification_site_hardcodes_an_algorithm`         | `0009-c`      | dispatch, uniquely this mission's                                                                                                                       |
-| `cross_algorithm_signature_replay_rejected`           | `0009-e`      | it is a property of the prefix, and `0009-e` already co-owns it. Dispatch-level mismatch rejection is this mission's, but that is a different assertion |
-| `revoked_identity_replay_rejected`                    | `0958-a`      | the identity gate is RFC-0958's                                                                                                                         |
-| `compromised_key_revoked_without_identity_revocation` | **undecided** | see §Per-key revocation                                                                                                                                 |
+| Vector                                                | Owner            | Note                                                                                                                                        |
+| ----------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_verification_site_hardcodes_an_algorithm`         | `0009-c`         | dispatch, uniquely this mission's                                                                                                           |
+| `cross_algorithm_signature_replay_rejected`           | `0009-e`         | it is a property of the prefix, which `0009-e` owns. Dispatch-level mismatch rejection is this mission's, but that is a different assertion |
+| `revoked_identity_replay_rejected`                    | `0958-a`         | the identity gate is RFC-0958's                                                                                                             |
+| `compromised_key_revoked_without_identity_revocation` | **not this set** | needs a circuit change, settled in RFC-0009 A14 — see §Per-key revocation                                                                   |
 
 Gate: the per-crate suites below. **`octo-network` is in the clippy list but
 was missing from the test list** — and `octo-network` holds all 27 shape-2

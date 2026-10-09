@@ -53,21 +53,21 @@ STARK-curve registration is `0009-d`, and the signable prefix is `0009-e`.
 
 ### Two things the registry shape does not settle on its own
 
-**Borsh representation of the newtypes.** `AlgorithmId(Uuid)` and
-`VerificationMethodId(Uuid)` are new fields on a type that is borsh-decoded
-straight out of a persisted column by `octo-ident-storage`, and
-`crates/octo-ident` currently has **no `uuid` dependency** at all — its
-manifest is `blake3`, `thiserror`, `hex`, `bs58`, `async-trait`, `parking_lot`,
-and `borsh` behind the optional `borsh` feature. So this mission adds one. Pin
-it with a rationale comment per the repository convention, and decide
-explicitly how `Uuid` reaches borsh: via the `uuid` crate's own serde/borsh
-support, or via an explicit 16-byte field pair. A borsh derive path already
-exists behind the crate's `borsh` feature, so the choice is about the wire
-form, not about whether derive is available. Say which. Left unstated, this is
-where the migration and the signable prefix quietly disagree about what a
-`key_id` byte is — and §Domain separation requires the raw form to be the 16
-bytes of the Uuid, so the wire form is not free to choose independently per
-site.
+**Borsh representation of the newtypes — settled.** `AlgorithmId`,
+`VerificationMethodId` and `CircuitId` each store a `[u8; 16]` field and
+expose `to_uuid` / `from_uuid`. Not a preference: **`Uuid` has no borsh
+implementation available in this workspace.** No crate enables a `uuid`
+borsh feature — every `uuid` dependency in `crates/` requests `v4`, `v5` and/or
+`serde` only — and no crate derives borsh on a struct containing a `Uuid`
+field, so `#[derive(BorshSerialize)] struct AlgorithmId(Uuid)` does not
+compile here. `crates/octo-ident` still needs the `uuid` dependency this
+mission adds, but for `to_uuid`/`from_uuid` and `Uuid::new_v5`, not for derive.
+
+Storing the bytes also makes the signable prefix's fixed-16-byte
+self-delimiting property true **by construction** rather than by a serialiser's
+behaviour, and it is the only form in which the storage decode and the prefix
+agree on what a `key_id` byte is. Deriving borsh over a `String`-backed or
+`Uuid`-backed newtype would let those two disagree silently.
 
 **The singleton invariant is unenforceable.** §Algorithms says the bootstrap
 registers Ed25519 **once**, globally. No code can check that: the registry

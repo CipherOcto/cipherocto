@@ -130,6 +130,17 @@ fn decode_verification_methods(
                 .enumerate()
                 .map(|(index, m)| {
                     let mut name = canonical_hash.to_vec();
+                    // Fixed width, deliberately. `usize::to_le_bytes()` is
+                    // 8 bytes on a 64-bit target and 4 on a 32-bit one, so a
+                    // `usize` here would make the derived id depend on the
+                    // architecture: the same legacy row would yield different
+                    // key ids on a 32-bit and a 64-bit resolver, and every
+                    // signature over the signable prefix would be verifiable
+                    // on one and not the other. That is precisely the
+                    // cross-resolver stability the derivation exists to give.
+                    // borsh writes a `Vec` length as u32, so u32 is also the
+                    // widest index a legacy blob can carry.
+                    let index = u32::try_from(index).expect("legacy entry index fits in u32");
                     name.extend_from_slice(&index.to_le_bytes());
                     let id =
                         VerificationMethodId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, &name));
@@ -930,6 +941,42 @@ mod tests {
         let mut truncated = legacy_blob(&[(0x01, [0xAA; 32]), (0x01, [0xBB; 32])]);
         truncated.truncate(truncated.len() - 4);
         assert!(decode_verification_methods(&truncated, &hash).is_err());
+    }
+
+    /// The derivation input's index width is fixed, and this pins it.
+    ///
+    /// The first version used `usize::to_le_bytes()`, which is 8 bytes on a
+    /// 64-bit target and 4 on a 32-bit one. That made the derived key id
+    /// architecture-dependent, so the same legacy row produced different ids
+    /// on differently-targeted resolvers and every signature over the
+    /// signable prefix verified on one and not the other. No test on a single
+    /// platform can catch it, so the width is asserted against a hard-coded
+    /// vector instead.
+    #[test]
+    fn migrated_id_does_not_depend_on_platform_word_size() {
+        let hash = [0x99u8; 32];
+        let migrated = decode_verification_methods(
+            &legacy_blob(&[(0x01, [0xAA; 32]), (0x01, [0xBB; 32])]),
+            &hash,
+        )
+        .expect("decode");
+
+        // Derive the expected ids independently, with the width spelled out.
+        let expected = |idx: u32| {
+            let mut name = hash.to_vec();
+            name.extend_from_slice(&idx.to_le_bytes());
+            VerificationMethodId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, &name))
+        };
+
+        assert_eq!(migrated[0].id, expected(0));
+        assert_eq!(migrated[1].id, expected(1));
+
+        // And the derivation input is exactly 32 + 4 bytes. If this ever
+        // changes to a `usize`, the length moves to 36 on a 64-bit build and
+        // the ids stop matching a 32-bit resolver's.
+        let mut expected_input = hash.to_vec();
+        expected_input.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(expected_input.len(), 36);
     }
 
     #[test]

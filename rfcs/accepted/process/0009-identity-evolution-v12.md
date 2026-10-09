@@ -7,8 +7,8 @@
 > §Dual-format signature algorithms and the ZK-capable key: a second signature
 > algorithm on the same identity, a `SignatureAlgorithm` registry replacing the
 > `VerificationMethodKind` central enum, mandatory domain separation across
-> algorithms, revocation cascade, point-in-time validity claims for ZK proofs,
-> and an explicit custody-parity obligation. The v1.2 substrate
+> algorithms, revocation cascade, a verifier-side revocation contract for ZK
+> proofs, and an explicit custody-parity obligation. The v1.2 substrate
 > (hierarchical attenuation, MPC threshold identity) is unchanged.
 
 > **Promotion note (2026-08-11):** Promoted from `rfcs/draft/process/0009-identity-evolution-v12.md` → `rfcs/accepted/process/0009-identity-evolution-v12.md` after multi-round adversarial review. 40 review rounds completed (R1-R40); convergence reached at R40 (zero NEW substantive findings). Round-by-round fix history lives in this file's git log; per-round commit hashes form the audit trail.
@@ -264,11 +264,12 @@ This RFC is ready for promotion to Accepted when:
     the Ed25519 / STARK-Schnorr pair whose signatures are both 64 bytes.
     The test MUST cover a prefix-stripped message, not only a
     wrong-key message.
-14. **ZK capability proofs carry a checkable validity claim** (added
-    in v1.3). A verifier MUST reject a proof whose validity claim is
-    absent, malformed, or outside the revocation state it holds. A
-    holder holding only an Ed25519 key MUST be refused a ZK mint, not
-    served by the Ed25519 key.
+14. **ZK capability proofs are revocation-checked at verify time** (added
+    in v1.3, specified in RFC-0958 §Verification). A verifier MUST perform
+    the identity-scoped revocation check, fail closed on an unavailable or
+    stale snapshot, and MUST NOT treat the check as a discharge channel or
+    skip it on the ZK path. A holder holding only an Ed25519 key MUST be
+    refused a ZK mint, not served by the Ed25519 key.
 
 ## Motivation
 
@@ -910,12 +911,14 @@ A key that survives its identity's revocation is a standing forgery.
 
 A STARK proof is a statement about one instant. A key revoked at 10:00 can mint
 a proof at 09:00 that still verifies at 15:00, and a circuit cannot read live
-revocation state — it has no access to anything mutable. Any ZK capability proof
-therefore MUST carry an explicit validity claim (an epoch number or an
-`evaluated_at` bound over a commitment the verifier supplies), and a verifier
-MUST check that claim against the revocation state it holds. This is inherent to
-proving systems and is not an implementation detail; it is recorded here so the
-key format is not frozen before the answer is settled.
+revocation state — it has no access to anything mutable.
+
+Settled in RFC-0958 §Verification: the circuit carries no revocation state, and
+the verifier performs a mandatory identity-scoped revocation check against a
+versioned snapshot whose staleness is bounded by the proof's freshness window.
+Keying on the identity rather than the key is only expressible because v1.3 puts
+two algorithms on one identity. The freshness window — not the check — is the
+replay exposure, and it is a deployment policy value. Full reasoning in A13.
 
 #### Custody parity is a separate obligation
 
@@ -1134,26 +1137,38 @@ Per RFC-0008 Execution Class mapping:
 - **Test:** `cross_algorithm_signature_replay_rejected`, over the
   Ed25519 / STARK-Schnorr pair, including the stripped-prefix case.
 
-### A13 — Revocation-epoch replay against a ZK proof.
+### A13 — Revocation replay against a ZK proof.
 
-- **Threat:** a holder's key is revoked, and an old capability proof
+- **Threat:** a holder's identity is revoked, and an old capability proof
   outlives the revocation.
 - **Attack:** mint a proof before revocation, present it after. The proof
   is sound — it correctly proves that at some instant the holder signed —
   but the verifier treats a valid proof as a valid capability. A circuit
   cannot fix this: it cannot read live revocation state, because
   nothing mutable is reachable from inside a proof.
-- **Defense:** every ZK capability proof carries an explicit validity
-  claim (epoch number, or an `evaluated_at` bound over a commitment the
-  verifier supplies), and the verifier checks it against the revocation
-  state it holds. An absent claim MUST be rejected. Identity revocation
-  MUST cascade to every key of that identity in every algorithm, so
-  there is no per-algorithm survival path.
-- **Residual:** a proof whose claim is in-window remains valid for the
-  window's duration. The window length is a revocation-policy
-  parameter, not a cryptographic one, and MUST be documented per
-  deployment.
-- **Test:** `revoked_epoch_replay_rejected`.
+- **Defense, as specified in RFC-0958 §Verification:** a mandatory
+  verifier-side revocation check on `holder_did`, fail-closed, on every
+  ZK path. The revocation snapshot carries a monotone `state_version`
+  and an `effective_at` stamp, and the verifier rejects a snapshot older
+  than `max_revocation_staleness_secs` — otherwise a cached "this identity
+  is fine" outlives the proof's freshness window and replay becomes
+  unbounded rather than merely windowed. Identity revocation MUST cascade
+  to every key of that identity in every algorithm, so there is no
+  per-algorithm survival path.
+- **Deliberately rejected:** committing a revocation-set Merkle root as a
+  public input and proving non-membership in-circuit. The set mutates, so
+  every revocation event breaks every outstanding proof — which is what
+  the direct check already delivers — while non-membership in an
+  append-only set is the hard case and costs real CASM plus a
+  coordination requirement on every verifier, for no soundness gain.
+- **Residual:** within one freshness window a stolen proof still
+  verifies. The revocation check is instant; the window is the exposure,
+  and its length is a revocation-policy parameter rather than a
+  cryptographic one. The configuration that actually breaks the property
+  is an _optional_ check, which turns a bounded window into unbounded
+  replay.
+- **Test:** `revoked_identity_replay_rejected`, plus
+  `stale_revocation_snapshot_is_rejected`.
 
 ## Economic Analysis
 

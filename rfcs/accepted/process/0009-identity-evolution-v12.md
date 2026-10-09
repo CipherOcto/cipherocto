@@ -1,6 +1,15 @@
-# RFC-0009 v1.2 — Identity Evolution: Hierarchical Attenuation + MPC Threshold
+# RFC-0009 v1.3 — Identity Evolution: Hierarchical Attenuation + MPC Threshold + Dual-Format Keys
 
 **Status:** Accepted (2026-08-11)
+
+> **v1.3 amendment (2026-10-08):** In-place amendment while Accepted, per
+> user direction that this RFC is neither final nor frozen. Adds
+> §Dual-format signature algorithms and the ZK-capable key: a second signature
+> algorithm on the same identity, a `SignatureAlgorithm` registry replacing the
+> `VerificationMethodKind` central enum, mandatory domain separation across
+> algorithms, revocation cascade, point-in-time validity claims for ZK proofs,
+> and an explicit custody-parity obligation. The v1.2 substrate
+> (hierarchical attenuation, MPC threshold identity) is unchanged.
 
 > **Promotion note (2026-08-11):** Promoted from `rfcs/draft/process/0009-identity-evolution-v12.md` → `rfcs/accepted/process/0009-identity-evolution-v12.md` after multi-round adversarial review. 40 review rounds completed (R1-R40); convergence reached at R40 (zero NEW substantive findings). Round-by-round fix history lives in this file's git log; per-round commit hashes form the audit trail.
 > **Author:** @cipherocto + @mmacedoeu
@@ -23,10 +32,14 @@ Extend RFC-0009 §Capability Keys with:
 
 1. **Hierarchical attenuation chains.**
 2. **MPC threshold identity.**
+3. **Dual-format signature algorithms** (v1.3) — one identity carrying an
+   Ed25519 key plus a ZK-capable STARK-curve Schnorr key, dispatched through a
+   `SignatureAlgorithm` registry instead of a hardcoded verifier. See
+   §Dual-format signature algorithms and the ZK-capable key.
 
 ## Review State
 
-- **R1-R38 completed (2026-08-11); R39 in progress.**
+- **R1-R40 completed (2026-08-11); R41 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -109,6 +122,20 @@ RFC-0871 §Future Work).
     `dkg_proof` per RFC-0871 §Future Work (parallel pattern to
     `Authorization::ThresholdSignature` BC#5). Closes coverage
     gap for FROST-signed envelopes.
+13. **NEW in v1.3: `VerificationMethodKind` removed;**
+    `SignatureAlgorithm` trait + `AlgorithmRegistry` replace it, and
+    `VerificationMethod.public_key` becomes length-generic
+    (`Vec<u8>` bounded by `SignatureAlgorithm::public_key_len`)
+    instead of `[u8; 32]`. Justified in §Dual-format signature
+    algorithms and the ZK-capable key: the enum is the shape this
+    project's §Extension over enumeration rule forbids, and its
+    `from_byte` maps every unrecognised byte to `Reserved` with
+    `Reserved.as_byte() == 0x00`, so unknown algorithms collapse
+    onto one value instead of failing closed. Registration sites and
+    the DID documents that carry a `kind` byte must migrate together;
+    a `kind` byte carried on the wire without a registry entry MUST
+    be rejected rather than defaulted. Shims in §Backward
+    compatibility.
 
 ## Additive Changes (per R28 M3 + R29 M1 + R33 M1)
 
@@ -126,19 +153,35 @@ additive/non-breaking scope explicitly.
 - **9-ADDITIVE. `OperatorId` struct + `pubkey()` method** (per
   R15 L4 + R28 M3) — fresh identifier in v1.2 substrate;
   mirrored from §Breaking Changes BC#9.
+- **13-ADDITIVE. `SignatureAlgorithm` trait + `AlgorithmRegistry` +
+  `AlgorithmId(Uuid)` + `ZkSupport`** (added in v1.3) — all fresh
+  identifiers; they replace BC#13's enum rather than narrowing it.
+  A second verification method on an existing DID document, and the
+  `Ed25519` registration itself, are additive.
+- **13-ADDITIVE. Mandatory `algorithm_id ‖ key_id` signable prefix**
+  (added in v1.3) — additive on the message format, but every
+  existing signer and verifier MUST change together. A verifier that
+  reads an unprefixed message MUST reject it rather than fall back to
+  the legacy shape; see A12.
+- **13-ADDITIVE. ZK-capable key on the same DID document** (added in
+  v1.3) — additive. A holder with no such key is unaffected, and a
+  mint attempt for one MUST fail closed rather than silently use the
+  Ed25519 key.
 
 ## Design Goals
 
-| Goal | Target                    | Metric                                                                                                                   |
-| ---- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| G1   | Chain depth bounded       | ≤ 8 levels (W3C VC-DID best practice)                                                                                    |
-| G2   | Unlinkability             | v1 root ↔ v2 child cryptographically independent                                                                         |
-| G3   | Threshold signing latency | ≤ 2x single-key for 2-of-3                                                                                               |
-| G4   | Key-share loss tolerance  | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1)                        |
-| G5   | Cascading revocation      | Cryptographic walk                                                                                                       |
-| G6a  | Root mint back-compat     | v1.1 callers via `derive_capability_key_v11` shim                                                                        |
-| G6b  | Child mint is new         | 4-param signature                                                                                                        |
-| G7   | Migration                 | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption |
+| Goal | Target                           | Metric                                                                                                                               |
+| ---- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| G1   | Chain depth bounded              | ≤ 8 levels (W3C VC-DID best practice)                                                                                                |
+| G2   | Unlinkability                    | v1 root ↔ v2 child cryptographically independent                                                                                     |
+| G3   | Threshold signing latency        | ≤ 2x single-key for 2-of-3                                                                                                           |
+| G4   | Key-share loss tolerance         | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1)                                    |
+| G5   | Cascading revocation             | Cryptographic walk                                                                                                                   |
+| G6a  | Root mint back-compat            | v1.1 callers via `derive_capability_key_v11` shim                                                                                    |
+| G6b  | Child mint is new                | 4-param signature                                                                                                                    |
+| G7   | Migration                        | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption             |
+| G8   | A ZK-verifiable algorithm exists | Every identity can hold a key whose holder-signature verification is expressible as a constrained circuit, without a second identity |
+| G9   | Custody parity                   | A ZK-capable key MUST declare its custody posture and MUST NOT be treated as equivalent to a hardware-held key beside it             |
 
 ## Acceptance Criteria
 
@@ -203,6 +246,29 @@ This RFC is ready for promotion to Accepted when:
     (per R28 M5) for FROST signatures; gates parallel to AC#9
     for BC#5 `aggregated_pk_check` + `dkg_proof`. FROST
     forward-pointer ASPIRATIONAL until AC#10 satisfied.
+11. **No verification site hardcodes an algorithm** (added in v1.3).
+    `VerifyingKey::from_bytes` and `Signature::from_bytes` MUST NOT
+    appear at any holder- or capability-signature verification site
+    outside the Ed25519 registration itself; every such site MUST
+    dispatch through `AlgorithmRegistry`. A registry lookup for an
+    unregistered `AlgorithmId` MUST return an error, not a default.
+12. **Unknown algorithm identifiers fail closed** (added in v1.3).
+    A `kind` byte, `AlgorithmId` or `AlgorithmRegistry` key that is
+    not registered MUST be rejected. A round-trip test MUST show two
+    distinct unknown identifiers surviving distinct — the current
+    `from_byte` behaviour collapses both onto `Reserved`, and that
+    collapse MUST NOT remain reachable.
+13. **Cross-algorithm signature replay is rejected** (added in v1.3),
+    gated by `cargo test -p octo-ident`. A signature produced under
+    one registered algorithm MUST NOT verify under another, including
+    the Ed25519 / STARK-Schnorr pair whose signatures are both 64 bytes.
+    The test MUST cover a prefix-stripped message, not only a
+    wrong-key message.
+14. **ZK capability proofs carry a checkable validity claim** (added
+    in v1.3). A verifier MUST reject a proof whose validity claim is
+    absent, malformed, or outside the revocation state it holds. A
+    holder holding only an Ed25519 key MUST be refused a ZK mint, not
+    served by the Ed25519 key.
 
 ## Motivation
 
@@ -718,6 +784,148 @@ static_assertions = "=1.1.0"
 BLS subgroup check via `blst` + Schnorr scalar range via
 `frost-ed25519`.
 
+### Dual-format signature algorithms and the ZK-capable key
+
+Added in v1.3. This section extends RFC-0009 §Capability Keys with a
+second signature algorithm on the same identity, and replaces the hardcoded
+Ed25519 verification with a registry.
+
+#### Why two keys and not one
+
+RFC-0958 §Holder Signature Verification needs a signature whose verification
+is cheap _inside a STARK_. That is a property of the algorithm, and Ed25519
+cannot supply it: measured on the capability circuit, a conformant Ed25519
+verifier costs 44,443 CASM words against a 3,004-word baseline, and Schnorr over
+the Cairo STARK curve costs 295 words and about 5.6% additional proving time.
+There is no derivation between an Ed25519 key and a STARK-curve key, so no
+single key serves both purposes.
+
+One identity therefore carries **two keys, one DID document, two verification
+methods**. Not two identities: lifecycle, revocation and hardware custody are
+all per-identity, and splitting identities splits the security boundary for no
+gain.
+
+#### The registry, and why `VerificationMethodKind` goes
+
+`VerificationMethodKind` is a central `enum { Ed25519 = 0x01, Reserved = 0x00 }`
+carried in the DID document. Two problems, both live today.
+
+**It is a central enum.** That is the one shape this project's
+§Extension over enumeration rule forbids: every new algorithm becomes a central
+edit plus cross-crate review. The rule asks for a typed discriminator plus a
+`Raw` escape hatch, and the repository already has the pattern — the transport
+crates key a trait-object registry by `Uuid`.
+
+**Its unknown-byte handling is lossy, not fail-closed.** `from_byte` maps every
+unrecognised byte to `Reserved`, and `Reserved.as_byte()` returns `0x00`. So any
+two unknown algorithms collapse onto the same value and become mutually
+indistinguishable, and `0x42` does not survive a round trip. A second algorithm
+landed in another crate would be silently absorbed rather than refused.
+
+The replacement is a trait plus a registry. `VerificationMethodKind` is
+**removed**, which is BREAKING — see BC#13.
+
+```rust
+/// Typed discriminator. Not a `u8`: a new algorithm must not be able to
+/// collide with an existing one by picking a free byte.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlgorithmId(Uuid);
+
+/// What the circuit can do with this algorithm.
+pub enum ZkSupport {
+    /// No constrained in-circuit verifier exists. A holder whose key is
+    /// registered here cannot produce a ZK capability proof, and a mint
+    /// attempt MUST fail closed rather than fall back to another key.
+    None,
+    /// A constrained in-circuit verifier exists and is named by the circuit
+    /// that carries it.
+    Circuit { circuit: CircuitId },
+}
+
+pub trait SignatureAlgorithm: Send + Sync {
+    fn id(&self) -> AlgorithmId;
+    fn public_key_len(&self) -> usize;
+    fn signature_len(&self) -> usize;
+    /// Host verification. MUST be constant-time for the algorithms that
+    /// claim it, and MUST NOT accept a truncated or over-long signature.
+    fn verify(&self, pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<(), SignatureError>;
+    fn zk_support(&self) -> ZkSupport;
+}
+
+/// Core-owned registry. Lookups miss on an unregistered `AlgorithmId` rather
+/// than returning a default, so an unregistered algorithm fails closed.
+pub struct AlgorithmRegistry {
+    entries: HashMap<AlgorithmId, Arc<dyn SignatureAlgorithm>>,
+}
+```
+
+Dispatch goes through the registry at every verification site. `Ed25519`
+registers as the unchanged baseline with `ZkSupport::None`. A STARK-curve
+Schnorr implementation registers as a separate crate with
+`ZkSupport::Circuit { .. }`, and is the reason RFC-0958 §Holder Signature
+Verification is affordable at all.
+
+#### Domain separation is mandatory, not hygiene
+
+Ed25519 signatures are 64 bytes (`R ‖ S`) and STARK-curve Schnorr signatures
+are also 64 bytes (`r ‖ s`). Same length, different meaning, and neither is a
+type error for the other.
+
+**Every signed message MUST be prefixed with the algorithm id and the key id:**
+
+```
+signable = algorithm_id ‖ key_id ‖ canonical_ser(payload)
+```
+
+A verifier MUST reject a message that does not carry the prefix, and MUST
+verify under the algorithm the prefix names rather than the one it prefers. A
+signature replayed across algorithms then fails as a malformed signature rather
+than silently verifying against the wrong equation — the same silent-wrong-answer
+shape as the point-decoding sign-bit defect recorded in RFC-0974 §Step 1, where
+every vector in the original suite happened to have the sign bit clear.
+
+#### The DID document carries both keys
+
+`VerificationMethod` gains a typed `AlgorithmId` in place of
+`VerificationMethodKind`, and its `public_key` becomes length-generic
+(`Vec<u8>` bounded by `public_key_len`) because algorithms do not agree on key
+size. A STARK-curve public key is an x-coordinate of about 251 bits plus a
+parity bit, so it does **not** fit the 31-bytes-per-felt packing the capability
+circuit uses and must be carried as two halves — the same `_lo` / `_hi` shape
+RFC-0009 already uses for capability keys.
+
+The circuit MUST NOT resolve the DID. RFC-0958's step-1 pseudocode calls
+`did_resolve_pubkey(holder_did)`, which would force a circuit to hash or verify a
+DID document. Instead the verifier supplies `(algorithm_id, public_key)` as
+public inputs and checks the DID binding out of circuit, exactly as it already
+recomputes the Ed25519 challenge hash rather than trusting the prover for it.
+An unverifiable binding is a soundness hole, not a cost saving, so the verifier
+MUST perform the resolution and MUST bind the resolved key into the public
+inputs.
+
+#### Revocation cascades, and ZK proofs are point-in-time
+
+Revoking an identity MUST revoke every key registered to it, in every algorithm.
+A key that survives its identity's revocation is a standing forgery.
+
+A STARK proof is a statement about one instant. A key revoked at 10:00 can mint
+a proof at 09:00 that still verifies at 15:00, and a circuit cannot read live
+revocation state — it has no access to anything mutable. Any ZK capability proof
+therefore MUST carry an explicit validity claim (an epoch number or an
+`evaluated_at` bound over a commitment the verifier supplies), and a verifier
+MUST check that claim against the revocation state it holds. This is inherent to
+proving systems and is not an implementation detail; it is recorded here so the
+key format is not frozen before the answer is settled.
+
+#### Custody parity is a separate obligation
+
+RFC-0009 requires identity keys to be hardware-backed and non-exportable. Most
+hardware backends do not implement the STARK curve. An implementation that
+registers a STARK-curve key MUST state its custody posture explicitly, and a
+deployment that holds such a key in software MUST NOT treat it as equivalent to
+the hardware-held key beside it. Two keys means two custody stories, and the
+weaker one is the one an attacker will target.
+
 ## Determinism Requirements
 
 Per RFC-0008 Execution Class mapping:
@@ -907,6 +1115,46 @@ Per RFC-0008 Execution Class mapping:
 - **Residual:** none (validation chain at type boundary).
 - **Test:** `caller_supplied_malicious_shares_rejected`.
 
+### A12 — Cross-algorithm signature replay.
+
+- **Threat:** holder holds an Ed25519 key and a STARK-curve key on one
+  identity and wants a signature for one to be accepted under the other.
+- **Attack:** Ed25519 emits 64 bytes (`R ‖ S`) and STARK-curve Schnorr
+  emits 64 bytes (`r ‖ s`). Same length, different curve, and neither is
+  a type error for the other. A verifier that dispatches on its own
+  configured algorithm rather than the one named in the message gets a
+  silent wrong answer — no exception, no rejection, just a check run
+  against the wrong equation.
+- **Defense:** the `algorithm_id ‖ key_id` signable prefix is mandatory,
+  and the verifier MUST verify under the algorithm the prefix names. A
+  message without the prefix MUST be rejected, not parsed leniently.
+  Prefix-stripping is therefore not a downgrade path.
+- **Residual:** a verifier that keeps a hardcoded algorithm alongside the
+  registry still accepts the algorithm it prefers. Removed by AC#11.
+- **Test:** `cross_algorithm_signature_replay_rejected`, over the
+  Ed25519 / STARK-Schnorr pair, including the stripped-prefix case.
+
+### A13 — Revocation-epoch replay against a ZK proof.
+
+- **Threat:** a holder's key is revoked, and an old capability proof
+  outlives the revocation.
+- **Attack:** mint a proof before revocation, present it after. The proof
+  is sound — it correctly proves that at some instant the holder signed —
+  but the verifier treats a valid proof as a valid capability. A circuit
+  cannot fix this: it cannot read live revocation state, because
+  nothing mutable is reachable from inside a proof.
+- **Defense:** every ZK capability proof carries an explicit validity
+  claim (epoch number, or an `evaluated_at` bound over a commitment the
+  verifier supplies), and the verifier checks it against the revocation
+  state it holds. An absent claim MUST be rejected. Identity revocation
+  MUST cascade to every key of that identity in every algorithm, so
+  there is no per-algorithm survival path.
+- **Residual:** a proof whose claim is in-window remains valid for the
+  window's duration. The window length is a revocation-policy
+  parameter, not a cryptographic one, and MUST be documented per
+  deployment.
+- **Test:** `revoked_epoch_replay_rejected`.
+
 ## Economic Analysis
 
 N/A. Identity-substrate gating.
@@ -922,6 +1170,13 @@ N/A. Identity-substrate gating.
 - **`sign` NON-BREAKING** for current code (per R11 C1).
 - **`IdentityKey::sign` fail-closed when `threshold_signer`
   configured** (BC#11).
+- **`VerificationMethodKind` removed** (BC#13). A deprecated shim MAY
+  keep constructing an `Ed25519` registration for existing documents for
+  90 days, matching the `derive_capability_key_v11` deprecation window,
+  and MUST be marked `#[deprecated]`. The shim MUST NOT reproduce the
+  old lossy decode: a document carrying a `kind` byte with no matching
+  registry entry MUST be rejected, not mapped to `Reserved`. After the
+  window, the shim is deleted rather than kept as a fallback.
 
 ### Forward compatibility
 
@@ -931,6 +1186,12 @@ N/A. Identity-substrate gating.
   use V1 path (NOT reject; per R25 M3 — v11 shim 90-day
   deprecation semantic; "reject" wording contradicted the
   backwards-compat shim).
+- **New algorithms are additive** (BC#13). A verifier built before an
+  algorithm existed rejects its `AlgorithmId` rather than misreading
+  it, and rejection is a refusal — not a wrong answer — because the
+  identifier is a UUID rather than a byte anyone can improvise. That is
+  the whole reason BC#13 is a break: paying the migration once buys
+  fail-closed behaviour for every algorithm added afterwards.
 
 **`CapabilityBundleV2` struct (per R15 L6 — schema sketch lives in
 §Compatibility > §Forward compatibility so implementers don't need
@@ -1149,11 +1410,12 @@ cargo doc --workspace --no-deps
 
 ## Version History
 
-| Version | Date       | Status               | Changes                                           |
-| ------- | ---------- | -------------------- | ------------------------------------------------- |
-| 1.0     | 2026-07-19 | Accepted             | Initial specification                             |
-| 1.1     | 2026-08-08 | Accepted (amendment) | HSM routing + wallet audience validation          |
-| 1.2     | 2026-08-10 | Draft                | Hierarchical attenuation + MPC threshold identity |
+| Version | Date       | Status               | Changes                                                                                      |
+| ------- | ---------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-07-19 | Accepted             | Initial specification                                                                        |
+| 1.1     | 2026-08-08 | Accepted (amendment) | HSM routing + wallet audience validation                                                     |
+| 1.2     | 2026-08-10 | Accepted             | Hierarchical attenuation + MPC threshold identity                                            |
+| 1.3     | 2026-10-08 | Accepted (amendment) | Dual-format keys + `SignatureAlgorithm` registry replacing the `VerificationMethodKind` enum |
 
 ## Review Process
 

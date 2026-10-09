@@ -794,11 +794,15 @@ stay test-only. But the path forward is not "finish the reduction and promote".
    Schnorr signature over a small STARK-friendly curve verifies against field
    arithmetic corelib already provides, at one to two orders of magnitude less
    CASM. This is the option with the best ratio of capability retained to proof
-   size paid. The cost is a departure from RFC-0009's identity substrate, which
-   is a real architectural change and wants its own RFC — not a silent swap.
-3. **If RFC-0009 compatibility is non-negotiable**, then step 1 becomes its own
-   RFC with its own parameters, and G1/G2/G3 are renegotiated to match 44k words.
-   That is a legitimate answer; it is just not this circuit.
+   size paid. The departure from RFC-0009's identity substrate is now specified
+   rather than pending: RFC-0009 §Dual-format signature algorithms and the
+   ZK-capable key keeps one identity and one DID document, carrying both keys as
+   two verification methods.
+3. **Not recommended: pinning step 1 to Ed25519** to preserve
+   RFC-0009 compatibility. That route keeps G1/G2/G3 renegotiated to match 44k
+   words. It was the right call while RFC-0009 had no second algorithm; it is
+   superseded now that the identity substrate can carry a ZK-capable key without
+   a second identity, and dropping it is what makes step 1 affordable.
 
 What is _not_ recommended: promoting the BLAKE3 stand-in, promoting corelib
 SHA-512, or spending the next cycle on a faster 512-bit reduction. Each either

@@ -1,6 +1,6 @@
 ---
 name: 0009-c-verification-dispatch
-description: RFC-0009 AC#11. Move every holder- and capability-signature verification site off hardcoded ed25519_dalek::VerifyingKey and dispatch through AlgorithmRegistry. Two site shapes, 65 sites across 26 files.
+description: RFC-0009 AC#11. Move every holder- and capability-signature verification site off hardcoded ed25519_dalek::VerifyingKey and dispatch through AlgorithmRegistry. Two site shapes, 65 sites across 32 files.
 metadata:
   node_type: mission
   type: implementation
@@ -55,12 +55,13 @@ files**, every one of them under `crates/octo-network/src/dot/` —
 `dc_envelopes.rs` (7), `handover.rs` (6), `kick_envelopes.rs` (5),
 `binding.rs` (5), `decommission.rs` (2), `sub_group.rs` (1), `witness.rs` (1).
 
-Shape 2 is `pub fn verify(&self, …, vk: &VerifyingKey)` — an Ed25519 verifying
-key baked into a public signature. **Shape 1's grep matches none of them.**
-An implementer who runs the original grep, converts all 38 sites, and declares
-done leaves 27 public `verify` entry points still verifying under hardcoded
-Ed25519. And because shape 2 already has a typed `VerifyingKey`, it compiles
-perfectly after the enum is removed — nothing forces it to change.
+Shape 2 is a typed `&VerifyingKey` parameter in a public signature — 25 of
+them are `pub fn verify`, plus `validate_bind` in `witness.rs` and `append` in
+`handover.rs`. An Ed25519 verifying key is baked into a public API.
+**Shape 1's grep matches none of them.** An implementer who greps for
+`pub fn verify` to size the refactor finds 25 and misses two. And because
+shape 2 already has a typed `VerifyingKey`, it compiles perfectly after the
+enum is removed — nothing forces it to change.
 
 The `octo-wallet` sites were also missing entirely, and that crate holds the
 single most important verifier in the RFC: `IdentityKey::verify`, which is the
@@ -86,20 +87,23 @@ AC#14 requires the verifier to consult key-level revocation
 identity gate is RFC-0958's. The key gate has no home until a verification site
 resolves the DID, which none of these currently do.
 
-**`0958-a` currently claims this same per-key gate as verifier-side work.** A
-verifier-side check cannot fire on the ZK path while RFC-0958 §Algorithms
-resolves the DID inside the circuit — the verifier never gets to make the
-decision. An implementer who builds the key gate here will produce a gate that
-never executes where it is needed, while `0958-a` separately reports the
-identity gate delivered. **Resolve which artifact owns the per-key gate before
-claiming either mission,** and record the answer in both. The honest options
-are: the circuit stops resolving the DID and the verifier owns both gates, or
-the key gate stays a real gap until new public inputs exist. What must not
+**A verifier-side key gate cannot fire on the ZK path** while RFC-0958
+§Algorithms resolves the DID inside the circuit — the verifier never reaches
+the decision. `0958-a` says the same thing and explicitly disclaims this gate,
+so neither mission currently holds it.
+
+An implementer who builds it here will produce a gate that never executes
+where it is needed, while this file reports it delivered. **Resolve the owner
+before claiming either mission**, and record the answer in both. The honest
+options: the circuit stops resolving the DID and the verifier owns both gates,
+or the key gate stays a real gap until new public inputs exist. What must not
 happen is two missions each half-claiming it.
 
 RFC-0009 A14's oracle: one STARK-curve key compromised, identity otherwise
-sound, Ed25519 key untouched — the holder must survive that. Make
-`compromised_key_revoked_without_identity_revocation` pass here.
+sound, Ed25519 key untouched — the holder must survive that. Ownership of
+`compromised_key_revoked_without_identity_revocation` is **undecided**; see the
+table below. Do not claim the vector until the answer is recorded in both
+`0009-c` and `0958-a`.
 
 ## Acceptance Criteria
 
@@ -120,8 +124,10 @@ runnable check; a vector passing is the acceptance condition met.
   A vector that greps only the first reports green with 27 hardcoded Ed25519
   entry points still live.
 
-- `cross_algorithm_signature_replay_rejected` — **co-owned with `0009-e`.**
-  See the ownership note below; do not build it twice.
+- `cross_algorithm_signature_replay_rejected` — **owned by `0009-e`, not this
+  mission's to deliver.** Listed because the dispatch sites here are what the
+  prefix protects; the vector itself runs in `0009-e`, and it needs `0009-d` to
+  have registered a second algorithm before it can run over a real pair.
 - `revoked_identity_replay_rejected` — RFC-0958's, i.e. `0958-a`'s. Listed
   here for completeness; it is **not** this mission's to deliver.
 - `compromised_key_revoked_without_identity_revocation` — blocked on the

@@ -19,8 +19,9 @@ Open (2026-10-09). Claimable — no claimant assigned.
 ## Dependencies
 
 `depends_on: RFC-0958`. No hard dependency on the RFC-0009 missions,
-though per-key revocation (`0009-c`) is the other half of the composed control
-and is a known open gap until both land.
+though per-key revocation is the other half of the composed control and is a
+known open gap. **Its owner is undecided** between this mission and `0009-c`,
+and §Known gap, do not paper over is where that decision gets recorded.
 
 ## Scope
 
@@ -115,9 +116,7 @@ rotation grace. The v1.6 spec block replaced it with a single
 `COMPILED_CASM_BLAKE3_HASH` const, which would have quietly removed rotation
 support. Keep the slice.
 
-## Ordering: why revocation moves after STWO verify — and why a
-
-## parameter cannot do it
+## Ordering: why revocation moves after STWO verify, and why a borrowed parameter cannot do it
 
 The revocation read is the most expensive non-STARK operation in the function.
 Running it ahead of STWO verification makes it reachable by an unauthenticated
@@ -158,11 +157,17 @@ pub fn verify_capability_zk(
 ```
 
 The closure is not called until after `zk_verifier::verify_capability_zk`
-returns `Ok`, so an unauthenticated caller cannot reach the store at all. If
-you would rather not put a closure in the signature, the equivalent obligation
-is that the **caller** performs the lookup after its own STWO check — but then
-the ordering is a caller-side convention, not something this function
-enforces, and that must be recorded as such rather than claimed here.
+returns `Ok`, so an unauthenticated caller cannot reach the store at all.
+
+**There is no caller-side alternative on this path.** An earlier draft offered
+one — have the _caller_ perform the lookup after its own STWO check, recording
+the ordering as a convention rather than a guarantee. Dropped: the only vector
+that can distinguish the two orderings,
+`zk-verify-stwo-fail-with-revoked-did`, asserts that the revocation query was
+**not called** on a STWO failure. With no query inside `verify_capability_zk`
+there is nothing for that vector to observe, so the branch would ship the
+ordering unproven while the file presented both options as acceptable. A lazy
+query boundary is the only shape this mission accepts on the ZK verify path.
 
 Either way the ordering needs a vector. See
 `zk-verify-stwo-fail-with-revoked-did` below.
@@ -217,7 +222,9 @@ RFC-0958 §Test Vectors names one of these. The rest are this mission's own
 additions, and the ones that matter most — the order-independence unit test and
 `zk-verify-stwo-fail-with-revoked-did` — are not in the RFC at all.
 
-- `zk-verify-revoked-identity.json` → `IdentityRevoked`
+- `zk-verify-revoked-identity.json` → `IdentityRevoked`. Named by RFC-0009 A13
+  as `revoked_identity_replay_rejected`, and **owned by this mission** —
+  `0009-c` disclaims it, so nothing else obliges it to exist
 - `zk-verify-stale-revocation.json` → `RevocationStateStale`
 - `zk-verify-future-revocation.json` → `RevocationSnapshotFuture`, **not**
   `RevocationStateStale` and not a rendered `age 0s > 300s`
@@ -280,19 +287,29 @@ cargo clippy -p quota-router-core -p zk-verifier --all-targets --all-features --
 cargo test -p quota-router-core --lib
 ```
 
-**`cargo test -p quota-router-core --lib` does not execute any of the
-acceptance vectors.** The fixture corpus lives in
-`crates/octo-wallet/tests/fixtures/capability-zk/`, which is loaded by
-`octo-wallet`'s integration tests, not by `quota-router-core`'s unit tests.
-Green here is not evidence of acceptance. Add the command that actually loads
-those fixtures once the harness exists:
+**No command in the repository executes any of these acceptance vectors.** The
+fixture corpus lives in `crates/octo-wallet/tests/fixtures/capability-zk/` and
+**no test loads it today** — the only mention of the path anywhere under
+`crates/` is a doc comment in `zk_vectors.rs`, and there is no `include_str!`
+or path reference in any test. The harness does not exist yet. Every vector in
+§Test Vectors is specified as a JSON fixture, so as written the acceptance
+condition "a vector passing is the acceptance condition met" is unmeetable.
 
-```bash
-cargo test -p octo-wallet --test <fixture-harness>
+This mission therefore builds the harness as part of its scope:
+
+```
+crates/octo-wallet/tests/capability_zk_fixtures.rs
 ```
 
-Since §Acceptance Criteria declares a passing vector to be the acceptance
-condition, that command is part of acceptance, not an optional extra.
+which loads `fixtures/capability-zk/*.json` and drives them through
+`verify_capability_zk`. Acceptance then gates on:
+
+```bash
+cargo test -p octo-wallet --test capability_zk_fixtures
+```
+
+and the nine existing fixtures must pass through the same harness unchanged —
+they are the regression baseline, not superseded by this list.
 
 ## Backward compat
 
@@ -309,7 +326,7 @@ will still accept them, and that is precisely the gap A6 describes.
   §Revocation and freshness, §Configuration Validation, §Time Bounds, IA-12,
   IA-13, IA-14, A6, §Test Vectors
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — A13, A14, AC#14; the
-  per-key gate that lands in `0009-c`
+  per-key gate — **owner undecided**, see §Known gap, do not paper over
 - `crates/quota-router-core/src/zk_verify/capability.rs` — the file under change
 - `missions/open/0009-c-verification-dispatch`
 

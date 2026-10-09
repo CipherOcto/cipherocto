@@ -30,6 +30,16 @@ Make the signable prefix real at every signer and verifier.
 signable = algorithm_id ‖ key_id ‖ canonical_ser(payload)
 ```
 
+**This mission ships the raw form**, and states so because RFC-0009 requires an
+implementation to declare which of the two it uses — the vectors below include
+`verifier_rejects_hashed_form_when_declaring_raw` and its reverse, and neither
+means anything until the choice is on the record. RFC-0009 prefers the hashed
+form for new implementations, so shipping raw here is a deliberate departure
+from that preference: it is recorded in RFC-0009 rather than left implicit, and
+every verifier in this mission MUST reject the hashed form. If the raw form's
+fixed-width precondition ever breaks, that is the moment to switch, and the
+switch is an RFC amendment, not an implementation detail.
+
 ## Why this is not hygiene
 
 Ed25519 signatures are 64 bytes (`R ‖ S`). STARK-curve Schnorr signatures are
@@ -131,7 +141,8 @@ looks implemented.
 
 The original gate was `cargo test -p octo-ident --lib`. **`octo-ident` has no
 signing or verification code and no `ed25519-dalek` dependency** — its
-manifest is `blake3`, `thiserror`, `hex`, `bs58`, `async-trait`. The only
+manifest is `blake3`, `thiserror`, `hex`, `bs58`, `async-trait`, `parking_lot`,
+and `borsh` behind the optional `borsh` feature. The only
 Ed25519-adjacent symbols there are the `VerificationMethod` data carrier and a
 64-byte signature field on `ResolverBackend`.
 
@@ -163,7 +174,8 @@ see the note below the list.
 - `verifier_rejects_hashed_form_when_declaring_raw` and the reverse — the two
   encodings are not interoperable and that is a correctness property
 - `canonical_ser_is_the_rfc0126_substrate_canonicalizer` — pins the
-  disambiguation; this exists because there are three functions by that name
+  disambiguation; this exists because there are **five** functions by that
+  name, two of them JSON and therefore forbidden for proofs
 - `cross_algorithm_signature_replay_rejected` — the decisive one. A signature
   made under algorithm A, presented as algorithm B, must be **rejected**.
   **Owned by this mission**, not shared with `0009-c`: it is a property of the
@@ -189,7 +201,10 @@ The vectors that can actually detect the vulnerability are
 `verifier_rejects_missing_prefix`; treat those as the acceptance condition and
 the rest as supporting checks.
 
-Gate: `cargo test -p octo-ident --lib`
+Gate: `cargo test -p octo-ident --lib -p octo-wallet --lib -p octo-cap-macaroon --lib`.
+The last two are the ones that matter, and `octo-ident` alone is not an
+acceptance condition for this mission — see §The gate must compile the crates
+that actually sign and verify.
 
 ## Layer direction (per `cipherocto-design-principles`)
 

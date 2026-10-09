@@ -57,14 +57,17 @@ STARK-curve registration is `0009-d`, and the signable prefix is `0009-e`.
 `VerificationMethodId(Uuid)` are new fields on a type that is borsh-decoded
 straight out of a persisted column by `octo-ident-storage`, and
 `crates/octo-ident` currently has **no `uuid` dependency** at all — its
-manifest is `blake3`, `thiserror`, `hex`, `bs58` and `async-trait`. So this
-mission adds one. Pin it with a rationale comment per the repository
-convention, and decide explicitly how `Uuid` reaches borsh: via the `uuid`
-crate's own serde/borsh support, or via an explicit 16-byte field pair. Say
-which. Left unstated, this is where the migration and the signable prefix
-quietly disagree about what a `key_id` byte is — and §Domain separation
-requires the raw form to be the 16 bytes of the Uuid, so the wire form is not
-free to choose independently per site.
+manifest is `blake3`, `thiserror`, `hex`, `bs58`, `async-trait`, `parking_lot`,
+and `borsh` behind the optional `borsh` feature. So this mission adds one. Pin
+it with a rationale comment per the repository convention, and decide
+explicitly how `Uuid` reaches borsh: via the `uuid` crate's own serde/borsh
+support, or via an explicit 16-byte field pair. A borsh derive path already
+exists behind the crate's `borsh` feature, so the choice is about the wire
+form, not about whether derive is available. Say which. Left unstated, this is
+where the migration and the signable prefix quietly disagree about what a
+`key_id` byte is — and §Domain separation requires the raw form to be the 16
+bytes of the Uuid, so the wire form is not free to choose independently per
+site.
 
 **The singleton invariant is unenforceable.** §Algorithms says the bootstrap
 registers Ed25519 **once**, globally. No code can check that: the registry
@@ -154,12 +157,20 @@ in different directions:
 | empty blob                                                       | empty list                   | a present-but-empty column is absence, not corruption                                                                     |
 | present and undecodable under **both** the new and legacy shapes | `Err`                        | this is the silent-downgrade case BC#13 exists to catch                                                                   |
 
-There is an existing green test that pins the empty-blob case:
-`resolve_legacy_row_returns_empty_vevs` in the storage test suite asserts
-exactly the fail-soft contract described above. (Its name carries a typo —
-`vevs` — which is worth fixing while the file is open, so the next person
-grepping for it finds it.) Spelling the three cases out is what keeps that
-test green instead of turning it into a surprise failure.
+There is one existing green test touching the empty-blob case:
+`resolve_legacy_row_returns_empty_vevs` in the storage test suite (its name
+carries a typo — `vevs` — worth fixing while the file is open, so the next
+person grepping for it finds it). **Read it for what it is: it never touches
+`StoolapDidRegistry`.** Its own comment says the registry has no `db`
+accessor, so the test exercises `borsh::from_slice::<Vec<T>>` on an empty BLOB
+directly. It pins borsh's behaviour, and nothing else.
+
+So it guards neither row of the table that matters: it does not exercise
+`resolve`, so it cannot detect removal of the outer `unwrap_or_default()`, and
+it does not cover the NULL column at all. **Add vectors for both** — a
+NULL-column row resolving to an empty list through `resolve`, and a
+present-but-undecodable blob returning `Err` through `resolve`. Neither exists
+today.
 
 ### `list` is a third path, and it is worse
 

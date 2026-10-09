@@ -7,6 +7,23 @@
 > **RFC status.** RFC-0009 v1.2 is Accepted (2026-08-11) and lives at
 > `rfcs/accepted/process/0009-identity-evolution-v12.md`. This mission's earlier
 > reference to the pre-promotion draft path is retired.
+>
+> **This mission implements v1.2 only.** RFC-0009 was amended in place to v1.3
+> on 2026-10-08 (dual-format keys, `SignatureAlgorithm` registry) and to
+> v1.3-plus-R41 on 2026-10-09. v1.3 is a **separate claimable unit**, decomposed
+> per BLUEPRINT §Multi-Mission Decomposition:
+
+> | Mission                             | Implements                                                              |
+> | ----------------------------------- | ----------------------------------------------------------------------- |
+> | `0009-b-algorithm-registry`         | BC#13 — enum → registry, `VerificationMethod` fields, storage migration |
+> | `0009-c-verification-dispatch`      | AC#11, AC#14 — every verification site off `ed25519_dalek`              |
+> | `0009-d-stark-schnorr-algorithm`    | G8 — STARK-curve Schnorr registration                                   |
+> | `0009-e-signable-domain-separation` | AC#13 — the `algorithm_id ‖ key_id` signable prefix                     |
+
+> This mission is **not** superseded by them and does not absorb them. If you
+> are implementing attenuation and MPC threshold, this is your mission. If you
+> are implementing the algorithm registry, that is `0009-b`, and `0009-b` is a
+> hard dependency of the other three.
 
 ## Scope
 
@@ -121,6 +138,9 @@ cargo test --workspace --lib
 - `mission-0957-f-future-work` — F4 V2 bundling requirement
 - `cipherocto-design-principles` — Layer A additive-only rule
 - `mission-gap-closure-priorities-2026-08-10` — memory context
+- `missions/open/0009-b-algorithm-registry`, `0009-c-verification-dispatch`,
+  `0009-d-stark-schnorr-algorithm`, `0009-e-signable-domain-separation` — the
+  RFC-0009 v1.3 decomposition; separate claimable units, not part of this one
 
 ## Claimant
 

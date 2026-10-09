@@ -56,14 +56,109 @@ use std::sync::Arc;
 
 use octo_ident::DidDocument;
 use octo_ident::{
-    CapabilityDelegation, ChainId, ControllerReference, ServiceEndpoint, VerificationMethod,
+    AlgorithmId, CapabilityDelegation, ChainId, ControllerReference, CustodyPosture,
+    ServiceEndpoint, VerificationMethod, VerificationMethodId,
 };
+use uuid::Uuid;
 
 // Mission 0206-003 R1 review: schema migrations v008..v011 stay in
 // quota-router-storage (sole source of truth for `cipherocto_schema_version`).
 // The StoolapDidRegistry constructors call `apply_pending` from that
 // crate to set up the `did_registry` table.
 use quota_router_storage::migrations;
+
+/// Namespace for verification-method ids derived while migrating a legacy row.
+///
+/// A dedicated namespace so a derived id can never be confused with one a
+/// writer allocated under its own naming scheme.
+const MIGRATION_NAMESPACE: Uuid = Uuid::from_bytes([
+    0x5e, 0x19, 0x3c, 0x8a, 0x47, 0xd2, 0xb6, 0x05, 0x71, 0xef, 0x2d, 0x84, 0x36, 0xca, 0x59, 0x0b,
+]);
+
+/// The pre-`VerificationMethodKind`-removal on-disk shape.
+///
+/// `kind` was a `#[repr(u8)]` enum serialised with `borsh(use_discriminant)`,
+/// so it occupies exactly one byte followed by a fixed 32-byte key.
+#[derive(borsh::BorshDeserialize)]
+struct LegacyVerificationMethod {
+    /// Legacy discriminator byte: `0x01` Ed25519, anything else was the
+    /// catch-all `Reserved` slot.
+    kind: u8,
+    /// 32-byte Ed25519 public key.
+    public_key: [u8; 32],
+}
+
+/// Decode the `verification_methods` column, migrating a legacy row.
+///
+/// Three column states, because they pull in different directions:
+///
+/// - **NULL** — a pre-v009 row. Absence, not corruption. Yields an empty
+///   list, per RFC-0010 §Forward compatibility.
+/// - **present but empty** — absence too, same treatment.
+/// - **present and undecodable under both the current and the legacy shape** —
+///   corruption, and the one case that MUST be an error. This is the silent
+///   downgrade BC#13 exists to catch: the old decode routed this through
+///   `unwrap_or_default()`, so a document whose blob no longer decoded yielded
+///   *zero* verification methods while the independent `public_key` column
+///   still resolved — a DID that resolves successfully, carries a public key,
+///   and owns no algorithm-bearing key at all.
+///
+/// The derived `id` is `new_v5(MIGRATION_NAMESPACE, canonical_hash ‖ index)`.
+/// Not `new_v4`, which would give a different id on every `resolve` and make
+/// every signature over the signable prefix unverifiable. Not derived from the
+/// public key, which RFC-0009 §Domain separation forbids explicitly and which
+/// is the mistake v1.5 rejected when it refused the string-fragment key id.
+fn decode_verification_methods(
+    bytes: &[u8],
+    canonical_hash: &[u8; 32],
+) -> Result<Vec<VerificationMethod>, String> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    match borsh::from_slice::<Vec<VerificationMethod>>(bytes) {
+        Ok(current) => Ok(current),
+        Err(current_err) => {
+            let legacy: Vec<LegacyVerificationMethod> =
+                borsh::from_slice(bytes).map_err(|legacy_err| {
+                    format!(
+                        "verification_methods column is undecodable under both the current shape \
+                     (current: {current_err}) and the legacy shape (legacy: {legacy_err})"
+                    )
+                })?;
+            Ok(legacy
+                .into_iter()
+                .enumerate()
+                .map(|(index, m)| {
+                    let mut name = canonical_hash.to_vec();
+                    name.extend_from_slice(&index.to_le_bytes());
+                    let id =
+                        VerificationMethodId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, &name));
+                    // `0x01` was Ed25519. Every other byte collapsed onto the
+                    // old `Reserved` catch-all, which named no algorithm — so it
+                    // cannot honestly be mapped to Ed25519 without recreating
+                    // the collapse. It gets its own id, which no algorithm
+                    // registers under, so verification fails closed at the
+                    // registry instead of silently checking the wrong
+                    // equation.
+                    let algorithm_id = if m.kind == 0x01 {
+                        AlgorithmId::derive("ed25519")
+                    } else {
+                        AlgorithmId::derive("legacy-unknown")
+                    };
+                    VerificationMethod::new(
+                        id,
+                        algorithm_id,
+                        m.public_key.to_vec(),
+                        // The legacy shape carried no custody field. Software
+                        // is the honest reading: an Ed25519 key that was never
+                        // declared hardware-held was software-resident.
+                        CustodyPosture::Software,
+                    )
+                })
+                .collect())
+        }
+    }
+}
 
 use octo_ident::DidRegistry;
 
@@ -271,11 +366,12 @@ impl DidRegistry for StoolapDidRegistry {
                 }
                 let mut pk = [0u8; 32];
                 pk.copy_from_slice(&pk_bytes);
-                // Borsh-decode the 4 rich-document fields. Legacy NULL
-                // rows (pre-v009) + malformed bytes decode to empty
-                // Vec via `unwrap_or_default()` (fail-soft: rich
-                // fields are optional metadata per RFC-0010
-                // §Forward compatibility).
+                // Borsh-decode the 4 rich-document fields. Legacy NULL rows
+                // (pre-v009) decode to an empty Vec — absence, not corruption.
+                // `verification_methods` is the exception: a blob that decodes
+                // under neither the current nor the legacy shape is an Err,
+                // because the independent `public_key` column would still
+                // resolve and the DID would carry no algorithm-bearing key.
                 let service_endpoints: Vec<ServiceEndpoint> = row
                     .get::<Vec<u8>>(2)
                     .map(|bytes| {
@@ -288,12 +384,15 @@ impl DidRegistry for StoolapDidRegistry {
                         borsh::from_slice::<Vec<ControllerReference>>(&bytes).unwrap_or_default()
                     })
                     .unwrap_or_default();
-                let verification_methods: Vec<VerificationMethod> = row
-                    .get::<Vec<u8>>(4)
-                    .map(|bytes| {
-                        borsh::from_slice::<Vec<VerificationMethod>>(&bytes).unwrap_or_default()
-                    })
-                    .unwrap_or_default();
+                let verification_methods = match row.get::<Vec<u8>>(4) {
+                    Ok(bytes) => {
+                        decode_verification_methods(&bytes, canonical_hash).map_err(|e| {
+                            octo_ident::DidRegistryError::Storage(format!("resolve: {e}"))
+                        })?
+                    }
+                    // NULL column: absence, not corruption.
+                    Err(_) => Vec::new(),
+                };
                 let capability_delegations: Vec<CapabilityDelegation> = row
                     .get::<Vec<u8>>(5)
                     .map(|bytes| {
@@ -355,7 +454,8 @@ impl DidRegistry for StoolapDidRegistry {
         // sorted by canonical_hash ascending for deterministic
         // iteration.
         let rows = self.db.query(
-            "SELECT public_key FROM did_registry \
+            "SELECT canonical_hash, public_key, service_endpoints, controllers, \
+                    verification_methods, capability_delegations FROM did_registry \
              WHERE revoked = 0 AND chain_id = ? \
              ORDER BY canonical_hash ASC",
             (MAINNET_CHAIN_ID_BYTES.to_vec(),),
@@ -366,7 +466,16 @@ impl DidRegistry for StoolapDidRegistry {
         for row_result in iter {
             let row = row_result
                 .map_err(|e| octo_ident::DidRegistryError::Storage(format!("list iter: {e}")))?;
-            let pk_bytes: Vec<u8> = row.get(0).unwrap_or_default();
+            let hash_bytes: Vec<u8> = row.get(0).unwrap_or_default();
+            if hash_bytes.len() != 32 {
+                return Err(octo_ident::DidRegistryError::Storage(format!(
+                    "list: canonical_hash column length {} != 32",
+                    hash_bytes.len()
+                )));
+            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&hash_bytes);
+            let pk_bytes: Vec<u8> = row.get(1).unwrap_or_default();
             if pk_bytes.len() != 32 {
                 return Err(octo_ident::DidRegistryError::Storage(format!(
                     "list: public_key column length {} != 32",
@@ -375,10 +484,41 @@ impl DidRegistry for StoolapDidRegistry {
             }
             let mut pk = [0u8; 32];
             pk.copy_from_slice(&pk_bytes);
+            // The rich columns are selected here rather than left to
+            // `Default::default()`. This path used to build every document
+            // from `public_key` alone, so it returned zero verification methods
+            // for every row — the same silent downgrade as the resolver path,
+            // reached by a shorter route, and a revocation cascade that sees
+            // nothing to revoke once `revoked_at` exists per key.
+            let service_endpoints: Vec<ServiceEndpoint> = row
+                .get::<Vec<u8>>(2)
+                .map(|bytes| borsh::from_slice::<Vec<ServiceEndpoint>>(&bytes).unwrap_or_default())
+                .unwrap_or_default();
+            let controllers: Vec<ControllerReference> = row
+                .get::<Vec<u8>>(3)
+                .map(|bytes| {
+                    borsh::from_slice::<Vec<ControllerReference>>(&bytes).unwrap_or_default()
+                })
+                .unwrap_or_default();
+            let verification_methods = match row.get::<Vec<u8>>(4) {
+                Ok(bytes) => decode_verification_methods(&bytes, &hash)
+                    .map_err(|e| octo_ident::DidRegistryError::Storage(format!("list: {e}")))?,
+                // NULL column: absence, not corruption.
+                Err(_) => Vec::new(),
+            };
+            let capability_delegations: Vec<CapabilityDelegation> = row
+                .get::<Vec<u8>>(5)
+                .map(|bytes| {
+                    borsh::from_slice::<Vec<CapabilityDelegation>>(&bytes).unwrap_or_default()
+                })
+                .unwrap_or_default();
             docs.push(DidDocument {
                 public_key: pk,
                 revoked: false,
-                ..Default::default()
+                service_endpoints,
+                controllers,
+                verification_methods,
+                capability_delegations,
             });
         }
         Ok(docs)
@@ -515,12 +655,15 @@ impl DidRegistry for StoolapDidRegistry {
                         borsh::from_slice::<Vec<ControllerReference>>(&bytes).unwrap_or_default()
                     })
                     .unwrap_or_default();
-                let verification_methods: Vec<VerificationMethod> = row
-                    .get::<Vec<u8>>(4)
-                    .map(|bytes| {
-                        borsh::from_slice::<Vec<VerificationMethod>>(&bytes).unwrap_or_default()
-                    })
-                    .unwrap_or_default();
+                let verification_methods = match row.get::<Vec<u8>>(4) {
+                    Ok(bytes) => {
+                        decode_verification_methods(&bytes, canonical_hash).map_err(|e| {
+                            octo_ident::DidRegistryError::Storage(format!("resolve_in_chain: {e}"))
+                        })?
+                    }
+                    // NULL column: absence, not corruption.
+                    Err(_) => Vec::new(),
+                };
                 let capability_delegations: Vec<CapabilityDelegation> = row
                     .get::<Vec<u8>>(5)
                     .map(|bytes| {
@@ -668,5 +811,140 @@ mod tests {
         }
         // All 20 DIDs must be active.
         assert_eq!(r.list().unwrap().len(), 20);
+    }
+
+    // ---------------------------------------------------------------------
+    // RFC-0009 BC#13 legacy migration.
+    //
+    // These live here rather than in `tests/` because `StoolapDidRegistry`
+    // exposes no database accessor, so a legacy blob cannot be injected
+    // through SQL from an integration test. The existing
+    // `resolve_legacy_row_returns_empty_vevs` test works around that by
+    // exercising borsh on an empty BLOB directly, which pins borsh's
+    // behaviour but never touches `resolve` — so it guards neither the NULL
+    // column nor removal of the decoder's error path.
+    // ---------------------------------------------------------------------
+
+    /// Bytes of a pre-migration `verification_methods` column: a borsh
+    /// `Vec` of `{ kind: u8, public_key: [u8; 32] }`.
+    fn legacy_blob(entries: &[(u8, [u8; 32])]) -> Vec<u8> {
+        let count = u32::try_from(entries.len()).expect("fixture entry count fits in u32");
+        let mut out = count.to_le_bytes().to_vec();
+        for (kind, pk) in entries {
+            out.push(*kind);
+            out.extend_from_slice(pk);
+        }
+        out
+    }
+
+    #[test]
+    fn legacy_document_migrates_to_algorithm_id() {
+        let hash = [0x11u8; 32];
+        let migrated = decode_verification_methods(&legacy_blob(&[(0x01, [0xAA; 32])]), &hash)
+            .expect("decode");
+        assert_eq!(migrated.len(), 1);
+        assert_eq!(
+            migrated[0].algorithm_id,
+            AlgorithmId::derive("ed25519"),
+            "legacy kind 0x01 was Ed25519"
+        );
+        assert_eq!(migrated[0].public_key, vec![0xAAu8; 32]);
+        assert!(!migrated[0].is_revoked());
+        assert_eq!(migrated[0].custody, CustodyPosture::Software);
+    }
+
+    #[test]
+    fn migrated_id_is_stable_across_decodes() {
+        // A `new_v4` per decode would give a different id on every resolve,
+        // which would make every signature over the signable prefix
+        // unverifiable. Derivation must depend only on the document identity
+        // and the entry's position in it.
+        let hash = [0x22u8; 32];
+        let first = decode_verification_methods(
+            &legacy_blob(&[(0x01, [0xAA; 32]), (0x01, [0xBB; 32])]),
+            &hash,
+        )
+        .expect("decode");
+        let second = decode_verification_methods(
+            &legacy_blob(&[(0x01, [0xAA; 32]), (0x01, [0xBB; 32])]),
+            &hash,
+        )
+        .expect("decode");
+        assert_eq!(first[0].id, second[0].id);
+        assert_eq!(first[1].id, second[1].id);
+        // Distinct entries get distinct ids, and neither is derived from the
+        // public key: the two keys differ, and so do the ids, but deriving
+        // the id from the key is forbidden — this only pins distinctness.
+        assert_ne!(first[0].id, first[1].id);
+
+        // A different document gets different ids.
+        let other = [0x33u8; 32];
+        let third =
+            decode_verification_methods(&legacy_blob(&[(0x01, [0xAA; 32])]), &other).expect("d");
+        assert_ne!(first[0].id, third[0].id);
+    }
+
+    #[test]
+    fn legacy_non_ed25519_byte_fails_closed() {
+        // Every byte but 0x01 collapsed onto the old `Reserved` catch-all,
+        // which named no algorithm. Mapping it to Ed25519 would recreate the
+        // collapse; giving it its own id means no algorithm registers under
+        // it and the registry lookup fails closed.
+        let hash = [0x44u8; 32];
+        for byte in [0x00u8, 0x02, 0x7F, 0xFF] {
+            let migrated = decode_verification_methods(&legacy_blob(&[(byte, [0xAA; 32])]), &hash)
+                .expect("decode");
+            assert_eq!(
+                migrated[0].algorithm_id,
+                AlgorithmId::derive("legacy-unknown"),
+                "legacy kind {byte:#04x} must not be claimed as Ed25519"
+            );
+            assert_ne!(migrated[0].algorithm_id, AlgorithmId::derive("ed25519"));
+        }
+    }
+
+    #[test]
+    fn null_and_empty_blob_yield_an_empty_list_not_an_error() {
+        let hash = [0x55u8; 32];
+        assert!(decode_verification_methods(&[], &hash)
+            .expect("empty blob is absence")
+            .is_empty());
+    }
+
+    #[test]
+    fn post_migration_decode_failure_is_an_error() {
+        // The one that matters most. The old code routed this through
+        // `unwrap_or_default()`, so a corrupt blob produced ZERO verification
+        // methods while the independent `public_key` column still resolved —
+        // a DID that resolves successfully and owns no algorithm-bearing key.
+        let hash = [0x66u8; 32];
+        let err = decode_verification_methods(&[0xFF, 0xFF, 0xFF, 0xFF], &hash)
+            .expect_err("corrupt blob must be an error, not an empty list");
+        assert!(
+            err.contains("undecodable under both the current shape"),
+            "error should name both attempts, got: {err}"
+        );
+
+        // Truncated mid-entry: a plausible partial write must not silently
+        // yield the entries that happened to parse.
+        let mut truncated = legacy_blob(&[(0x01, [0xAA; 32]), (0x01, [0xBB; 32])]);
+        truncated.truncate(truncated.len() - 4);
+        assert!(decode_verification_methods(&truncated, &hash).is_err());
+    }
+
+    #[test]
+    fn current_shape_is_not_migrated() {
+        // A row already in the new shape must pass through untouched, not be
+        // re-derived. Re-deriving would discard the writer's own id.
+        let hash = [0x77u8; 32];
+        let doc = octo_ident::VerificationMethod::new(
+            VerificationMethodId::derive("writer-chosen-id"),
+            AlgorithmId::derive("ed25519"),
+            vec![0xAA; 32],
+            CustodyPosture::Hardware,
+        );
+        let blob = borsh::to_vec(&vec![doc.clone()]).expect("encode");
+        let out = decode_verification_methods(&blob, &hash).expect("decode");
+        assert_eq!(out, vec![doc], "current-shape rows pass through unchanged");
     }
 }

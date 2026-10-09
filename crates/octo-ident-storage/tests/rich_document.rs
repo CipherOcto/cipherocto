@@ -73,6 +73,72 @@ fn register_resolve_round_trip_preserves_rich_fields() {
 }
 
 #[test]
+fn migrated_document_still_resolves_with_a_verification_method() {
+    // Resolver level, not just codec level: a document whose methods decode
+    // must come back with those methods intact, including the per-key fields
+    // the migration path is responsible for.
+    let reg = StoolapDidRegistry::open_in_memory().expect("open");
+    let hash = sample_hash(0x30);
+    let mut doc = rich_doc(0x30);
+    let mut first = doc.verification_methods[0].clone();
+    first.revoked_at = Some(1_700_000_000);
+    doc.verification_methods[0] = first;
+
+    reg.register(&hash, doc.clone()).expect("register");
+    let resolved = reg.resolve(&hash).expect("resolve").expect("present");
+    assert_eq!(resolved.verification_methods.len(), 2);
+    assert_eq!(
+        resolved.verification_methods[0],
+        doc.verification_methods[0]
+    );
+    assert!(resolved.verification_methods[0].is_revoked());
+    // Revoking one key leaves the other usable.
+    assert!(!resolved.verification_methods[1].is_revoked());
+}
+
+#[test]
+fn listed_documents_carry_their_verification_methods() {
+    // The `list` path is a separate column selection, not a wrapper over
+    // `resolve`, so no resolver-level vector can observe it. It used to build
+    // every document from `public_key` alone via `..Default::default()`,
+    // returning zero verification methods for every row — the same silent
+    // downgrade as the resolver path, reached by a shorter route.
+    let reg = StoolapDidRegistry::open_in_memory().expect("open");
+    let hash = sample_hash(0x40);
+    let doc = rich_doc(0x40);
+    reg.register(&hash, doc.clone()).expect("register");
+
+    let listed = reg.list().expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].public_key, doc.public_key);
+    assert_eq!(
+        listed[0].verification_methods, doc.verification_methods,
+        "list must return the same verification methods as resolve"
+    );
+    assert_eq!(listed[0].service_endpoints, doc.service_endpoints);
+    assert_eq!(listed[0].controllers, doc.controllers);
+    assert_eq!(listed[0].capability_delegations, doc.capability_delegations);
+}
+
+#[test]
+fn listed_documents_report_per_key_revocation() {
+    // Once `revoked_at` exists per key, an enumeration that returns no keys
+    // also returns nothing to revoke. This pins that `list` surfaces the
+    // per-key state a revocation cascade would act on.
+    let reg = StoolapDidRegistry::open_in_memory().expect("open");
+    let hash = sample_hash(0x50);
+    let mut doc = rich_doc(0x50);
+    let mut revoked_first = doc.verification_methods[0].clone();
+    revoked_first.revoked_at = Some(1_700_000_000);
+    doc.verification_methods[0] = revoked_first;
+
+    reg.register(&hash, doc.clone()).expect("register");
+    let listed = reg.list().expect("list");
+    assert!(listed[0].verification_methods[0].is_revoked());
+    assert!(!listed[0].verification_methods[1].is_revoked());
+}
+
+#[test]
 fn register_upsert_overwrites_rich_fields() {
     let reg = StoolapDidRegistry::open_in_memory().expect("open");
     let hash = sample_hash(0x20);

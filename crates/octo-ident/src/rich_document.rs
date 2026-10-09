@@ -50,8 +50,16 @@ pub const MAX_CONTROLLERS: usize = 3;
 
 /// Maximum number of verification methods per DID (RFC-0010 §Bounds).
 ///
-/// 2 methods covers the canonical Ed25519 + PQC future combination. Each
-/// verification method carries at most 1 public key.
+/// The dual-format design is exactly one identity carrying two keys, under
+/// Ed25519 and the STARK curve, so this bound is **saturated, with no
+/// headroom**. An earlier version of this comment justified the value as
+/// covering "the canonical Ed25519 + PQC future combination", which described
+/// a design that is no longer the one specified — the same class of defect as
+/// the dangling `§VerificationMethodKind` citation that BC#13 removes: a
+/// doc comment asserting something no specification supports.
+///
+/// Each verification method carries at most one public key. A third algorithm
+/// lands by **raising this bound**, never by reusing a slot.
 pub const MAX_VERIFICATION_METHODS: usize = 2;
 
 /// Maximum number of capability delegations per DID (RFC-0010 §Bounds).

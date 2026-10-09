@@ -16,6 +16,14 @@ path = "src/lib.rs"
 # returns `Result<Database, SubstrateError>`.
 octo-storage-core = { path = "../octo-storage-core" }
 
+# Deterministic verification-method ids for the RFC-0009 BC#13 legacy
+# migration. `v5` so a migrated key's id is `new_v5(MIGRATION_NAMESPACE,
+# canonical_hash ‖ index)` — stable across `resolve` calls, processes and
+# resolvers. Not `new_v4`: a random id per decode would make every signature
+# over the signable prefix unverifiable, and RFC-0009 §Domain separation
+# forbids deriving it from the public key.
+uuid = { version = "1", features = ["v5"] }
+
 # DidRegistry trait + DidDocument + ChainId + DidRegistryError types.
 # Layer B (octo-ident owns the trait + shape types per RFC-0010).
 # `borsh` feature required: `StoolapDidRegistry` borsh-encodes the

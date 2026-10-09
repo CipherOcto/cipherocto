@@ -238,8 +238,6 @@ additions. The migration itself is the acceptance condition, not the list.
   decodes through the migration path with a non-empty method list and the
   correct Ed25519 `algorithm_id`
 - `migrated_id_is_stable_across_decodes` — the `new_v5` derivation, not `new_v4`
-- `legacy_non_ed25519_byte_fails_closed` — a non-`0x01` legacy kind does not
-  become Ed25519; it gets an id nothing registers under
 - `current_shape_is_not_migrated` — a row already in the new shape passes
   through untouched, so the writer's own id is not re-derived
 - `migrated_document_still_resolves_with_a_verification_method` — resolver
@@ -251,8 +249,19 @@ additions. The migration itself is the acceptance condition, not the list.
 - `post_migration_decode_failure_is_an_error` — **the one that matters most.**
   Asserts a malformed blob is `Err`, not an empty list. Covers a truncated
   mid-entry write too
-- `null_and_empty_blob_yield_an_empty_list_not_an_error` — the case the
-  pre-existing `resolve_legacy_row_returns_empty_vevs` test cannot reach
+- `resolve_reports_a_corrupt_row_as_an_error_not_an_empty_list` — the same
+  property at the boundary a caller actually sees. Needs `from_database`
+- `list_reports_a_corrupt_row_as_an_error_too` — `list` has its own column
+  selection and its own decode call, so the resolver vector cannot observe it
+- `resolve_migrates_a_legacy_row_end_to_end` — the migration through `resolve`,
+  not the codec
+- `resolve_returns_an_empty_list_for_a_null_column` — the NULL half of the
+  three-case rule, which the codec-level vector cannot reach
+- `null_and_empty_blob_yield_an_empty_list_not_an_error` — the codec half
+- `migrated_id_does_not_depend_on_platform_word_size`
+- `legacy_non_ed25519_byte_fails_closed_and_stays_distinct`
+- `two_keys_in_one_document_have_distinct_ids`
+- `zk_support_none_is_reported_by_the_algorithm`
 - `unregistered_algorithm_id_is_rejected_after_population`
 - `unregistered_algorithm_id_is_not_silently_ed25519` — Ed25519 **is**
   registered and the lookup still misses, which is the A12 property in its

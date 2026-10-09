@@ -254,3 +254,127 @@ fn register_with_max_verification_methods() {
     );
     assert_eq!(resolved.verification_methods, doc.verification_methods);
 }
+
+// ---------------------------------------------------------------------------
+// RFC-0009 BC#13 decode vectors, driven through the real read paths.
+//
+// These need direct SQL because `register` only ever writes the current
+// shape: a legacy blob, a NULL column and a corrupt blob are all unreachable
+// through the public write API. Before `StoolapDidRegistry::from_database`
+// existed, every such vector had to call the codec directly, which meant none
+// of them exercised `resolve` itself — reverting the `?` in the read paths to
+// `unwrap_or_default()` left the whole suite green while reintroducing the
+// silent downgrade BC#13 exists to prevent.
+// ---------------------------------------------------------------------------
+
+const MAINNET_CHAIN_ID: [u8; 17] = [
+    0x01, 0xeb, 0x30, 0x71, 0xb5, 0xe1, 0x13, 0x33, 0x0c, 0x87, 0x63, 0x09, 0x54, 0xe3, 0xcc, 0x08,
+    0x12,
+];
+
+/// A registry over a database that already carries the `did_registry` schema.
+fn raw_registry() -> StoolapDidRegistry {
+    let db = octo_storage_core::Database::open_in_memory().expect("open db");
+    quota_router_storage::migrations::apply_pending(&db).expect("migrations");
+    StoolapDidRegistry::from_database(db)
+}
+
+/// Insert a row with a hand-written `verification_methods` column. `None`
+/// leaves the column NULL.
+fn insert_raw_row(reg: &StoolapDidRegistry, hash: &[u8; 32], vm: Option<&[u8]>) {
+    let sql = "INSERT INTO did_registry (canonical_hash, public_key, revoked, \
+                updated_at_unix_ms, service_endpoints, controllers, \
+                verification_methods, capability_delegations, chain_id) \
+               VALUES (?, ?, 0, 0, NULL, NULL, ?, NULL, ?)";
+    let vm_param: Vec<u8> = vm.map_or_else(Vec::new, <[u8]>::to_vec);
+    reg.database()
+        .execute(
+            sql,
+            (
+                hash.to_vec(),
+                vec![0x5Au8; 32],
+                vm_param,
+                MAINNET_CHAIN_ID.to_vec(),
+            ),
+        )
+        .expect("insert raw row");
+}
+
+/// Bytes of a pre-migration `verification_methods` column.
+fn legacy_blob(entries: &[(u8, [u8; 32])]) -> Vec<u8> {
+    let count = u32::try_from(entries.len()).expect("fixture count fits in u32");
+    let mut out = count.to_le_bytes().to_vec();
+    for (kind, pk) in entries {
+        out.push(*kind);
+        out.extend_from_slice(pk);
+    }
+    out
+}
+
+#[test]
+fn resolve_migrates_a_legacy_row_end_to_end() {
+    // The migration through `resolve` itself, not the codec. A legacy blob is
+    // only reachable via direct SQL, which is why this vector did not exist
+    // before `from_database`.
+    let reg = raw_registry();
+    let hash = sample_hash(0x70);
+    insert_raw_row(&reg, &hash, Some(&legacy_blob(&[(0x01, [0xAA; 32])])));
+
+    let doc = reg.resolve(&hash).expect("resolve").expect("present");
+    assert_eq!(doc.verification_methods.len(), 1);
+    assert_eq!(
+        doc.verification_methods[0].algorithm_id,
+        octo_ident::AlgorithmId::derive("ed25519")
+    );
+    assert_eq!(doc.verification_methods[0].public_key, vec![0xAAu8; 32]);
+    assert!(!doc.verification_methods[0].is_revoked());
+}
+
+#[test]
+fn resolve_reports_a_corrupt_row_as_an_error_not_an_empty_list() {
+    // The property the whole migration exists for, observed at the boundary a
+    // caller actually sees. Reverting the `?` here to `unwrap_or_default()`
+    // makes this fail.
+    let reg = raw_registry();
+    let hash = sample_hash(0x71);
+    insert_raw_row(&reg, &hash, Some(&[0xFF, 0xFF, 0xFF, 0xFF]));
+
+    let err = reg
+        .resolve(&hash)
+        .expect_err("corrupt blob must surface as an error through resolve");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("undecodable under both the current shape"),
+        "error should name both decode attempts, got: {msg}"
+    );
+}
+
+#[test]
+fn list_reports_a_corrupt_row_as_an_error_too() {
+    // `list` has its own column selection and its own decode call, so the
+    // resolver vector cannot observe it.
+    let reg = raw_registry();
+    let hash = sample_hash(0x72);
+    insert_raw_row(&reg, &hash, Some(&[0xDE, 0xAD, 0xBE, 0xEF]));
+    let err = reg
+        .list()
+        .expect_err("corrupt blob must surface as an error through list");
+    assert!(err.to_string().contains("list:"));
+}
+
+#[test]
+fn resolve_returns_an_empty_list_for_a_null_column() {
+    // NULL is absence, not corruption: a pre-v009 row legitimately has no
+    // verification methods and must still resolve. This is the half of the
+    // three-case rule the codec-level vector could not reach.
+    let reg = raw_registry();
+    let hash = sample_hash(0x73);
+    insert_raw_row(&reg, &hash, None);
+
+    let doc = reg.resolve(&hash).expect("resolve").expect("present");
+    assert!(
+        doc.verification_methods.is_empty(),
+        "NULL column is absence, not corruption"
+    );
+    assert_eq!(doc.public_key, [0x5Au8; 32]);
+}

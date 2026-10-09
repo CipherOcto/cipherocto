@@ -247,6 +247,37 @@ impl StoolapDidRegistry {
             .map_err(|e| DidRegistryStorageError::Storage(format!("apply_pending: {e}")))?;
         Ok(Self { db: Arc::new(db) })
     }
+
+    /// Wrap an already-open `Database` that already carries the
+    /// `did_registry` schema.
+    ///
+    /// Exists so a test can write rows directly into the rich columns — a
+    /// legacy blob, a NULL column, or a corrupt one — which the `register`
+    /// path can never produce because it only ever writes the current shape.
+    /// Without this, every decode vector had to call
+    /// `decode_verification_methods` directly, which means none of them
+    /// exercised `resolve` itself: reverting the `?` in the read paths to
+    /// `unwrap_or_default()` left the whole suite green while reintroducing
+    /// the silent downgrade BC#13 exists to prevent.
+    ///
+    /// Does **not** apply migrations — the caller supplies a database
+    /// already carrying the schema, which is what makes "insert a row in the
+    /// legacy shape" expressible at all.
+    #[must_use]
+    pub fn from_database(db: octo_storage_core::Database) -> Self {
+        Self { db: Arc::new(db) }
+    }
+
+    /// Borrow the underlying database.
+    ///
+    /// Test support for [`StoolapDidRegistry::from_database`]: a test that can
+    /// insert a row can also assert on one. Read-only intent — write through
+    /// [`StoolapDidRegistry::register`] so the wire format stays in one
+    /// place.
+    #[must_use]
+    pub fn database(&self) -> &octo_storage_core::Database {
+        &self.db
+    }
 }
 
 /// Helper: current Unix epoch in milliseconds (`i64`; saturates).

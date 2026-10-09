@@ -1,6 +1,6 @@
 ---
 name: 0958-a-verifier-revocation
-description: RFC-0958 v1.7. Implement the revocation contract on the ZK verify path: mandatory identity-scoped check, corrected asymmetric freshness window with validated policy relationships, RevocationSnapshot, and three new error variants.
+description: RFC-0958. Implement the revocation contract on the ZK verify path: mandatory identity-scoped check, corrected asymmetric freshness window with validated policy relationships, RevocationSnapshot, and three new error variants.
 metadata:
   node_type: mission
   type: implementation
@@ -30,15 +30,34 @@ Implement RFC-0958 v1.7. Nothing here exists in the code yet:
 
 1. **`RevocationSnapshot`** — `effective_at` + `revoked_identities`. Note there
    is deliberately **no `version` field**; §Data Structures explains why.
-2. **`VerifierFreshnessPolicy`** with constructor validation per
-   §Configuration Validation.
+2. **`VerifierFreshnessPolicy`** — four fields, and the constructor validates
+   **three** independent relationships per §Configuration Validation:
+   - `max_age_secs`
+   - `max_prover_future_skew_secs` — the **prover's** clock, an untrusted domain
+   - `max_revocation_staleness_secs` — how old a snapshot may be
+   - `max_snapshot_future_skew_secs` — the **first-party store's** clock, and
+     **not** to be reused from the prover skew
+
+   That last field is the one an implementer will skip. It exists because a
+   shared tolerance silently weakens a control in the other trust domain: the
+   first-party store clock is not attacker-controlled the way the prover's is,
+   and sizing it by prover drift tolerance admits a snapshot from the future
+   by an amount chosen to tolerate a hostile prover. §Verification step 5
+   forbids exactly that substitution.
+
 3. **The freshness checks** — `ProofTooOld`, `ClockSkewExceeded` against
-   `max_prover_future_skew_secs`.
+   `max_prover_future_skew_secs`, and `RevocationSnapshotFuture` against
+   `max_snapshot_future_skew_secs`.
 4. **The revocation checks** — `RevocationStateStale`,
    `RevocationSnapshotFuture`, `IdentityRevoked`.
-5. **Reordering** — the revocation lookup moves after `stwo_plugin::verify`.
-6. **Signature change** — add `revocation` and `policy`; **restore**
-   `accepted_casm_blake3_hashes`, which v1.6's spec block had dropped.
+5. **Ordering** — the revocation lookup must happen after STWO verification,
+   which requires a lazy query boundary rather than a borrowed parameter. See
+   §Ordering; a `&RevocationSnapshot` parameter cannot deliver this.
+6. **Signature change** — add `policy` and the lazy `revocation` query;
+   **restore** `accepted_casm_blake3_hashes`, which v1.6's spec block had
+   dropped.
+7. **`zk-verifier`'s hard-coded `MAX_SKEW_SECS` check** must be parameterised
+   or removed, or it silently overrides the policy. See §Ordering.
 
 ## The arithmetic. Get this right; it was wrong twice
 
@@ -77,13 +96,28 @@ reference for every freshness bound. IA-13 requires a verifier-local monotonic
 clock or a verifier-minted token, never request context. Correct the comment
 along with the code, or the next implementer will follow it.
 
+Correcting the comment is not sufficient on its own — it satisfies IA-13 on
+paper while the path still takes its clock from a caller. The entry points
+that must be traced and fixed are:
+
+- `verify_capability_zk_token` and `verify_batch_capability_zk`, both of which
+  take `verifier_local_unix_time` from a `CapabilityVerifier`
+- `verify_one_from_json` in `quota-router-cli`, which takes a caller-supplied
+  `now_unix`
+
+Those are where a request-context clock enters. IA-13 is met when the
+reference clock is verifier-local or verifier-minted at each of them, not when
+the doc comment stops recommending the wrong one.
+
 **`capability.rs` must not regress to a const CASM check.** The real signature
 carries `accepted_casm_blake3_hashes: &[[u8; 32]]` for the R1 H13 N=2
 rotation grace. The v1.6 spec block replaced it with a single
 `COMPILED_CASM_BLAKE3_HASH` const, which would have quietly removed rotation
 support. Keep the slice.
 
-## Ordering: why revocation moves after STWO verify
+## Ordering: why revocation moves after STWO verify — and why a
+
+## parameter cannot do it
 
 The revocation read is the most expensive non-STARK operation in the function.
 Running it ahead of STWO verification makes it reachable by an unauthenticated
@@ -91,12 +125,82 @@ caller submitting a garbage proof with a chosen `holder_did`. The "structural
 checks first, they are cheap" rationale that orders steps 1-3 does not extend
 to a store read.
 
+**An earlier draft of this mission specified the fix as "move the lookup after
+`stwo_plugin::verify`", which cannot work.** Two reasons, both verified against
+the code:
+
+1. **The real call site is not `stwo_plugin::verify`.** That symbol exists only
+   in the RFC and in this mission; it is in no `crates/` file. The live path is
+   `quota_router_core::zk_verify::capability::verify_capability_zk`, which
+   delegates to `zk_verifier::verify_capability_zk`.
+2. **A borrowed snapshot forces the read to happen at the call site.** The
+   current signature is `verify_capability_zk(proof, expected_public_inputs,
+accepted_casm_blake3_hashes, verifier_local_unix_time)`. Adding
+   `revocation: &RevocationSnapshot` means the caller must materialise the
+   snapshot _before_ the function is entered — so the store read executes
+   before step 1, and no amount of reordering statements inside the body moves
+   it behind STWO authentication. The caller can still force the read with a
+   garbage proof.
+
+So the ordering guarantee requires a **lazy query boundary**, not a parameter.
+The shape is a caller-supplied query invoked inside the function, after the
+STWO call succeeds:
+
+```rust
+pub fn verify_capability_zk(
+    proof: &ProofBundle,
+    expected_public_inputs: &PublicInputs,
+    accepted_casm_blake3_hashes: &[[u8; 32]],
+    verifier_local_unix_time: u64,
+    policy: &VerifierFreshnessPolicy,
+    revocation: &dyn Fn(&DID) -> Result<RevocationSnapshot, StoreError>,
+) -> Result<(), ZkVerifyError>
+```
+
+The closure is not called until after `zk_verifier::verify_capability_zk`
+returns `Ok`, so an unauthenticated caller cannot reach the store at all. If
+you would rather not put a closure in the signature, the equivalent obligation
+is that the **caller** performs the lookup after its own STWO check — but then
+the ordering is a caller-side convention, not something this function
+enforces, and that must be recorded as such rather than claimed here.
+
+Either way the ordering needs a vector. See
+`zk-verify-stwo-fail-with-revoked-did` below.
+
+### A second hard-coded bound the mission did not name
+
+`MAX_SKEW_SECS` exists in **two** places, and fixing only one silently
+overrides the policy:
+
+- `capability.rs` declares `pub const MAX_SKEW_SECS: u64 = zk_verifier::MAX_SKEW_SECS;`
+  — a re-export — and checks it against `abs_diff` in
+  `verify_capability_zk_structural`.
+- `zk_verifier::verify_capability_zk` performs **its own** skew check and
+  returns `zk_verifier::VerifyError::ClockSkewExceeded { skew, max }`, which
+  `capability.rs` maps onto `ZkVerifyError::ClockSkewExceeded`.
+
+Replacing the `capability.rs` check with policy-driven asymmetric bounds and
+leaving `zk-verifier`'s hard-coded 300s in place means a deployment configuring
+`max_age_secs` or `max_prover_future_skew_secs` above 300s has its proofs
+rejected at 300s by a bound the policy never set. The error surfaces as
+`ClockSkewExceeded` from a constant, which looks like a clock problem rather
+than a configuration one. Parameterise or remove the `zk-verifier` check as
+part of this mission; it is already in the §Validation crate list.
+
 ## Known gap, do not paper over
 
 This mission delivers the **identity** gate only. RFC-0009 A14's per-key gate
 is not on this path, because §Algorithms still resolves the DID inside the
 circuit. A compromised key on a sound identity passes. That needs new public
 inputs and therefore a circuit change, tracked separately.
+
+**`0009-c` currently scopes that same per-key gate as a verifier-side fix**,
+and the two are incompatible. A verifier-side check cannot fire if the DID is
+resolved in-circuit, so an implementer who coordinates with `0009-c` and
+builds the key gate at the verifier will produce a gate that never executes on
+the ZK path — while `0009-c` reports the gate delivered and this hole stays
+open. Resolve which artifact owns the per-key gate before either is claimed,
+and record the answer in both missions.
 
 `zk-verify-compromised-key.json` is a deliberately **failing** vector that
 documents the hole. Keep it failing rather than deleting it, and do not paper
@@ -119,10 +223,38 @@ runnable check; a vector passing is the acceptance condition met.
 - `zk-verify-backdated.json` → accepted within `max_age_secs`, `ProofTooOld`
   beyond it. Pins that the circuit's `current_unix_time <= before` does **not**
   catch back-dating
-- `zk-verify-policy-rejects.json` → constructor `Err` for a policy violating the
-  §Configuration Validation relationships
+- `zk-verify-policy-rejects.json` → constructor `Err`. **Three distinct
+  policies, three distinct vectors** — one JSON fixture encodes one policy, and
+  §Configuration Validation requires all three rejections:
+  - `zk-verify-policy-rejects-skew-ratio.json` —
+    `max_prover_future_skew_secs * 10 > max_age_secs`
+  - `zk-verify-policy-rejects-staleness-over-age.json` —
+    `max_revocation_staleness_secs > max_age_secs`
+  - `zk-verify-policy-rejects-zero-snapshot-skew.json` —
+    `max_snapshot_future_skew_secs == 0`
+- `zk-verify-stwo-fail-with-revoked-did.json` → `StwoVerifyError`, **not**
+  `IdentityRevoked`, and the revocation query MUST NOT have been called. This
+  is the only vector that can distinguish the two orderings, so it is the one
+  that holds §Ordering honest
+- `verify_is_order_independent` → not a fixture; a unit test. Two calls with
+  identical inputs but differing prior-verification history return identical
+  `Result`. This is what guards the `version` deletion: a monotonicity floor
+  reintroduced alongside `RevocationSnapshot.version` would satisfy every
+  fixture above and restore the exact R41 CRITICAL, because a check whose
+  result depends on what the verifier saw before is not Class A deterministic
+- `zk-verify-front-dated-at-max-age.json` → **accepted**. A proof front-dated
+  by exactly `max_prover_future_skew_secs` and presented at age exactly
+  `max_age_secs`. This is the composed boundary; the two bounds tested in
+  isolation cannot distinguish a correct composition from a shared window
 - `zk-verify-compromised-key.json` → **currently expected to ACCEPT.** Keep it
   as a documented failing vector
+
+This list is **additive** to the existing corpus in
+`crates/octo-wallet/tests/fixtures/capability-zk/`, which already holds
+`zk-verify-public-input-mismatch.json`, `zk-verify-casm-drift.json`,
+`zk-verify-stwo-fail.json`, `zk-verify-expired.json`, `zk-cross-impl-tv1.json`
+and the mint vectors. Those are out of scope here, not superseded by this
+list.
 
 ## Layer direction (per `cipherocto-design-principles`)
 
@@ -143,6 +275,20 @@ cargo fmt --all -- --check
 cargo clippy -p quota-router-core -p zk-verifier --all-targets --all-features -- -D warnings
 cargo test -p quota-router-core --lib
 ```
+
+**`cargo test -p quota-router-core --lib` does not execute any of the
+acceptance vectors.** The fixture corpus lives in
+`crates/octo-wallet/tests/fixtures/capability-zk/`, which is loaded by
+`octo-wallet`'s integration tests, not by `quota-router-core`'s unit tests.
+Green here is not evidence of acceptance. Add the command that actually loads
+those fixtures once the harness exists:
+
+```bash
+cargo test -p octo-wallet --test <fixture-harness>
+```
+
+Since §Acceptance Criteria declares a passing vector to be the acceptance
+condition, that command is part of acceptance, not an optional extra.
 
 ## Backward compat
 

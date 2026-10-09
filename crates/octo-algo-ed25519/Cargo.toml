@@ -1,0 +1,27 @@
+[package]
+name = "octo-algo-ed25519"
+version = "0.1.0"
+edition = "2021"
+description = "Ed25519 implementation of octo_ident::SignatureAlgorithm, registering into the process-wide AlgorithmRegistry. Mission 0009-c."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# The Layer B registry this implements. Layer E depends on Layer B for the
+# trait; the arrow never points back — octo-ident carries no ed25519-dalek
+# dependency, which is the point of the registry. Without the split, every
+# consumer of octo-ident would inherit a specific algorithm.
+octo-ident = { path = "../octo-ident" }
+
+# RFC-8032 Ed25519 verification. Version matches the workspace-wide pin used
+# by every other verification site (octo-wallet, octo-protocol,
+# octo-cap-macaroon, quota-router-*) so a single dalek build serves the
+# whole graph — no parallel dalek versions behind feature unification.
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+
+# Derive for `DispatchError` and reuses octo-ident's own error style, so a
+# caller matching on dispatch failures reads the same way as one matching on
+# registry failures. Same version pin as octo-ident.
+thiserror = "1"

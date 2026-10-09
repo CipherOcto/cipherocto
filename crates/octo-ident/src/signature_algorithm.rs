@@ -23,7 +23,7 @@
 //! are Layer E and register into it at startup; they do not depend on it.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use parking_lot::RwLock;
 use thiserror::Error;
@@ -436,8 +436,13 @@ impl AlgorithmRegistry {
             for alg in algs {
                 inner.algorithms.insert(alg.id(), alg);
             }
+            // Set the ready-flag while still holding the map lock. Setting
+            // it after the block would leave a window in which the
+            // algorithms are present but the registry reports itself
+            // unready, so a concurrent `get` fails closed on a registry
+            // that is in fact fully populated.
+            *self.populated.write() = true;
         }
-        *self.populated.write() = true;
         Ok(())
     }
 
@@ -484,6 +489,117 @@ impl AlgorithmRegistry {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Every currently registered identifier, ascending.
+    ///
+    /// Used by [`bootstrap`] to decide whether a second install request is
+    /// the same algorithm set (idempotent, so a repeated init in a
+    /// multi-crate binary is not an error) or a genuinely different one
+    /// (a conflict, because two callers disagreeing about which
+    /// algorithms exist is the exact hazard the singleton removes).
+    #[must_use]
+    pub fn ids(&self) -> Vec<AlgorithmId> {
+        self.inner.read().algorithms.keys().cloned().collect()
+    }
+}
+
+/// The one registry for this process.
+///
+/// `AlgorithmRegistry::new` is public so a caller can build a private
+/// registry for a test or a deliberately narrowed deployment. What the
+/// public constructor may **not** do is let two verifiers in one process
+/// disagree about which algorithms exist: one would resolve an
+/// `AlgorithmId` the other rejects, and the disagreement is invisible
+/// until a signature verifies in one path and not the other.
+static GLOBAL: OnceLock<AlgorithmRegistry> = OnceLock::new();
+
+/// Serialises [`bootstrap`].
+///
+/// The registry's own locks are not enough. `populate` checks the
+/// ready-flag, fills the map, and sets the flag — and `bootstrap`'s
+/// check-then-act spans all three. Two callers racing here can both
+/// observe "not populated yet" and both proceed, so one wins the insert
+/// and the other gets `AlreadyRegistered`, reporting a conflict where
+/// there was only agreement. Holding one lock across the whole decision
+/// removes the window.
+static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
+
+/// Take the bootstrap lock, ignoring poisoning.
+///
+/// A panic in an unrelated test thread must not make the registry
+/// permanently unusable: nothing here holds an invariant across the
+/// guard, so the poisoned state carries no information the next caller
+/// needs.
+fn bootstrap_guard() -> MutexGuard<'static, ()> {
+    BOOTSTRAP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The process-wide algorithm registry.
+///
+/// Empty until [`bootstrap`] installs algorithms into it. A lookup
+/// against an unbootstrapped registry fails closed with
+/// [`AlgorithmRegistryError::NotPopulated`] — deliberately a
+/// *different* error from [`AlgorithmRegistryError::UnknownAlgorithm`],
+/// because "this deployment supports nothing yet" and "this identifier
+/// names an algorithm I do not implement" are different facts and a
+/// verifier that cannot tell them apart will report the wrong one.
+#[must_use]
+pub fn global() -> &'static AlgorithmRegistry {
+    GLOBAL.get_or_init(AlgorithmRegistry::new)
+}
+
+/// Failure to install algorithms into the process-wide registry.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum BootstrapError {
+    /// The registry was already bootstrapped with a **different** algorithm
+    /// set.
+    ///
+    /// A repeat install of the *same* set is accepted, because a binary
+    /// with several initialising crates should not fail to start over a
+    /// harmless repeat. A *different* set is refused: it means two callers
+    /// disagree about what this deployment supports, and picking one
+    /// silently is exactly the last-writer-wins swap
+    /// [`AlgorithmRegistryError::AlreadyRegistered`] exists to prevent.
+    #[error("the process-wide registry already holds a different algorithm set")]
+    ConflictingBootstrap,
+    /// The registry rejected the install.
+    #[error("bootstrap rejected: {0}")]
+    Registry(#[from] AlgorithmRegistryError),
+}
+
+/// Install `algs` into the process-wide registry, marking it ready.
+///
+/// Idempotent for an identical algorithm set. This is the init step
+/// RFC-0009 requires to run **before any verification**, so that the
+/// first dispatch either finds its algorithm or fails closed — never
+/// silently falls back to a default.
+///
+/// # Errors
+/// [`BootstrapError::ConflictingBootstrap`] if the registry already
+/// holds a different set, or [`BootstrapError::Registry`] if the
+/// registry rejects the install.
+pub fn bootstrap(algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), BootstrapError> {
+    let _guard = bootstrap_guard();
+    let registry = global();
+    let mut requested: Vec<AlgorithmId> = algs.iter().map(|a| a.id()).collect();
+    requested.sort_unstable();
+    requested.dedup();
+
+    if registry.is_populated() {
+        // Same set on a repeat install is a no-op, not a conflict: a
+        // binary whose several initialising crates each call this should
+        // still start.
+        return if registry.ids() == requested {
+            Ok(())
+        } else {
+            Err(BootstrapError::ConflictingBootstrap)
+        };
+    }
+
+    registry.populate(algs)?;
+    Ok(())
 }
 
 #[cfg(test)]

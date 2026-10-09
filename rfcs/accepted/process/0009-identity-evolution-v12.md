@@ -134,7 +134,7 @@ RFC-0871 §Future Work).
     onto one value instead of failing closed. Registration sites and
     the DID documents that carry a `kind` byte must migrate together;
     a `kind` byte carried on the wire without a registry entry MUST
-    be rejected rather than defaulted. Shims in §Backward
+    be rejected rather than defaulted. No shim: see §Backward
     compatibility.
 
 ## Additive Changes (per R28 M3 + R29 M1 + R33 M1)
@@ -177,7 +177,7 @@ additive/non-breaking scope explicitly.
 | G3   | Threshold signing latency        | ≤ 2x single-key for 2-of-3                                                                                                           |
 | G4   | Key-share loss tolerance         | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1)                                    |
 | G5   | Cascading revocation             | Cryptographic walk                                                                                                                   |
-| G6a  | Root mint back-compat            | v1.1 callers via `derive_capability_key_v11` shim                                                                                    |
+| G6a  | Root mint migration              | 1 prod + 7 test sites migrate with Commit 3                                                                                          |
 | G6b  | Child mint is new                | 4-param signature                                                                                                                    |
 | G7   | Migration                        | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption             |
 | G8   | A ZK-verifiable algorithm exists | Every identity can hold a key whose holder-signature verification is expressible as a constrained circuit, without a second identity |
@@ -206,7 +206,7 @@ This RFC is ready for promotion to Accepted when:
      field + `IdentityKey::sign` fail-closed when `threshold_signer`
      configured + `InMemorySigner` + `LedgerSigner` + `YubiHsmSigner`
      updated (per R20 L5 — §Implementation Phases Commit 2).
-   - Commit 3: `derive_capability_key` 4-param + v11 shim +
+   - Commit 3: `derive_capability_key` 4-param + caller migration +
      Phase 1 TV functions.
 2. **Mission `0957-f-v2-bundle` V2 work complete** (per R25 L7 —
    scope: V2 spec authoring, `CapabilityBundleV2` + `CapabilityTokenV2`
@@ -952,7 +952,7 @@ Per RFC-0008 Execution Class mapping:
 | Time              | Chain depth ≤ 8                                                          | Migration if raised              | Depth cap constant                                                                                                                                              |
 | Network           | Threshold coordinator timeout                                            | Coordinator failure stalls       | Timeout (default 30s) + retry                                                                                                                                   |
 | Upgrade           | v1.1 → v1.2 capability keys valid                                        | v1.1 wallets reject `v2/child/`  | Info-string discriminator check                                                                                                                                 |
-| Config            | `parent_cap_key` default `None`                                          | Forgetting = security regression | `derive_capability_key_v11` shim + Clippy lint                                                                                                                  |
+| Config            | `parent_cap_key` default `None`                                          | Forgetting = security regression | Clippy lint naming the 4-param form                                                                                                                             |
 | Identity          | BLS threshold master key independent from Ed25519                        | Cross-scheme confusion           | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
 | Identity          | FROST Ed25519 threshold master key independent                           | Same                             | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
 | Identity          | `chain_parent` bound via `blake3(parent                                  |                                  | child                                                                                                                                                           |     | depth)` | Spoofing | `verify_chain_parent` predicate (per R11 C2 — binds child too) |
@@ -1163,29 +1163,26 @@ N/A. Identity-substrate gating.
 
 ### Backward compatibility
 
-- `derive_capability_key` signature change (BC#8).
-- `derive_capability_key_v11` shim (90-day deprecation).
-- V1.1 callers migrate: 1 prod + 7 test sites.
+- `derive_capability_key` signature change (BC#8). Call sites migrate with
+  Commit 3: 1 prod + 7 test sites, one commit, no compatibility path.
 - **`HsmAdapter::get_public_key` return type change** (BC#7).
 - **`sign` NON-BREAKING** for current code (per R11 C1).
 - **`IdentityKey::sign` fail-closed when `threshold_signer`
   configured** (BC#11).
-- **`VerificationMethodKind` removed** (BC#13). A deprecated shim MAY
-  keep constructing an `Ed25519` registration for existing documents for
-  90 days, matching the `derive_capability_key_v11` deprecation window,
-  and MUST be marked `#[deprecated]`. The shim MUST NOT reproduce the
-  old lossy decode: a document carrying a `kind` byte with no matching
-  registry entry MUST be rejected, not mapped to `Reserved`. After the
-  window, the shim is deleted rather than kept as a fallback.
+- **`VerificationMethodKind` removed** (BC#13). No shim and no
+  deprecation window. Nothing has shipped, so there is no deployed
+  document a shim would have to keep readable, and a
+  `#[deprecated]` constructor for a decoder that silently collapsed
+  unknown bytes into `Reserved` is an obstacle with no one behind it.
+  A document carrying a `kind` byte with no matching registry entry is
+  rejected.
 
 ### Forward compatibility
 
 - V2 wire = separate `CapabilityBundleV2` struct.
 - V1 consumers reject V2 via unknown struct.
-- V2 consumers recognize V1 via `bundle_version == 1` field +
-  use V1 path (NOT reject; per R25 M3 — v11 shim 90-day
-  deprecation semantic; "reject" wording contradicted the
-  backwards-compat shim).
+- V2 consumers recognize V1 via `bundle_version == 1` field and use the V1
+  path.
 - **New algorithms are additive** (BC#13). A verifier built before an
   algorithm existed rejects its `AlgorithmId` rather than misreading
   it, and rejection is a refusal — not a wrong answer — because the
@@ -1258,7 +1255,6 @@ pub struct CapabilityTokenV2 {
 
 - `derive_capability_key` 4-param signature (with `as_bytes()`
   extraction per R11 M1)
-- `derive_capability_key_v11` shim
 - `tests/fixtures/phase1_tv.json` (RFC-0009 TV-1..3)
 - `phase1_tv_json_*` functions
 

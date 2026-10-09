@@ -555,7 +555,6 @@ VectorStorage
 VectorTable
 VerifiablePackage
 VerificationError
-VerificationMethodId
 VerifiedResult
 VirtualKey
 VirtualKeyError

@@ -1,6 +1,6 @@
 ---
 name: 0009-d-stark-schnorr-algorithm
-description: RFC-0009 v1.3. Implement Schnorr over the Cairo STARK curve as a standalone crate registering into AlgorithmRegistry with ZkSupport::Circuit. Prerequisite wiring is out of scope and needs an RFC-0958 amendment.
+description: RFC-0009. Implement Schnorr over the Cairo STARK curve as a standalone crate registering into AlgorithmRegistry with ZkSupport::None. Promotion to ZkSupport::Circuit needs a circuit change and therefore an RFC-0958 amendment, which is out of scope here.
 metadata:
   node_type: mission
   type: implementation
@@ -24,15 +24,45 @@ nothing to register into otherwise.
 
 ## Scope
 
-Promote the measured STARK-curve Schnorr verifier from a test fixture into a
-real crate implementing `SignatureAlgorithm`, registering with
-`ZkSupport::Circuit { circuit: CircuitId }`.
+Implement Schnorr over the Cairo STARK curve as a real crate implementing
+`SignatureAlgorithm`, and register it with **`ZkSupport::None`**.
+
+### The registration MUST say `None`, and that is the whole point
+
+`ZkSupport::None` is not a placeholder for work-in-progress. RFC-0009 defines
+it as: no constrained in-circuit verifier exists, so a holder whose key is
+registered here cannot produce a ZK capability proof, and **a mint attempt
+MUST fail closed rather than fall back to another key.** `ZkSupport::Circuit
+{ circuit }` is the affirmative claim that a constrained verifier exists.
+
+The circuit does not verify signatures today. `verify_holder_sig` in
+`cairo/src/lib.cairo` is a four-felt sum with a non-zero assertion, and its
+own doc comment says so: _"This is a structural binding, not RFC 8032
+verification."_ The real verifier in `cairo/src/ed25519.cairo` is
+`#[cfg(test)]`-gated and unwired; `stark_schnorr.cairo` is likewise
+`#[cfg(test)]`-gated and never reached from the entrypoint. `stage2_main`
+feeds the same commitment into the holder slot four times.
+
+So registering `ZkSupport::Circuit` here would assert a constrained
+in-circuit verifier that does not exist, and RFC-0009 AC#14's fail-closed
+mint gate would become fail-open — broken from the other side, by admitting
+exactly the key whose in-circuit verification is missing. It would also be
+the one algorithm whose signature is length-identical to Ed25519's, so the
+mistake would be invisible in any length-based sanity check.
+
+**Promotion to `ZkSupport::Circuit` is a separate, later change** and needs
+its own approval: it moves the committed CASM digest, so it invalidates
+existing proofs under the migration grace and cannot be smuggled in as part
+of registering an algorithm. Record the promotion as pending when this
+mission lands, and do not open the test vector below as a pass/fail gate on
+`Circuit` — invert it, as stated.
 
 ### What already exists, and what it does not
 
-`cairo/src/stark_schnorr.cairo` is a working verifier with 7 tests green
-against independently computed Python vectors plus 5 negatives. It is
-`#[cfg(test)]`-gated and is not called from the entrypoint.
+`cairo/src/stark_schnorr.cairo` holds 7 test functions containing **2
+positive vectors** (`V1_*`, `V2_*`) against independently computed Python
+values, plus **6** negative cases. It is `#[cfg(test)]`-gated and is not
+called from the entrypoint.
 
 **It measures the thing this mission exists to make real, and it does not yet
 do it.** Two numbers, both from the same measurement session:
@@ -93,8 +123,11 @@ runnable check; a vector passing is the acceptance condition met.
 - `stark_schnorr_pk_lo_hi_round_trip` — the packing above, including a key
   whose high byte is non-zero, which is the case a naive split gets wrong
 - `stark_schnorr_pk_lo_hi_rejects_inconsistent_halves`
-- `zk_support_reports_circuit` — registration reports `Circuit { .. }` and not
-  `None`
+- `zk_support_is_none_while_no_in_circuit_verifier_exists` — registration
+  reports `None`, **not** `Circuit { .. }`. This is the vector that keeps
+  AC#14's fail-closed gate shut, and it is the direct inverse of what the
+  earlier draft of this mission asserted. If it ever has to flip, the flip is
+  a circuit change with its own approval, not a registry edit.
 
 Gate: `scarb test` in `cairo/` plus the new crate's suite.
 

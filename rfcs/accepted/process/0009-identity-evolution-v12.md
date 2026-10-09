@@ -157,6 +157,20 @@ RFC-0871 §Future Work).
     repeal the fail-soft behaviour for genuinely optional columns — it removes
     it for the column that is load-bearing under v1.3. Enforced by AC#16.
 
+    **`list` is a third read path and it is worse than either of those two.**
+    The same file's `list` does not decode the rich columns at all: its query
+    selects `public_key` only, and every document is constructed with
+    `..Default::default()`. Every row therefore comes back with zero
+    verification methods — before the migration, after the migration, and with
+    no error to observe. Naming only `resolve` and `resolve_in_chain` here
+    would leave that reader on the old shape, so the migration MUST cover
+    `list` as well: the same column selection and the same decode path. Once
+    `revoked_at` exists per key, an enumeration that returns no keys also
+    returns nothing to revoke, which is the vacuous cascade A14 exists to
+    stop. Nothing in `crates/` calls `DidRegistry::list` outside tests today,
+    which is the only reason this stayed invisible, and that is not a reason
+    to leave the storage contract with two incompatible readers.
+
 ## Additive Changes (per R28 M3 + R29 M1 + R33 M1)
 
 Per R28 M3 + R29 M1 + R33 M1: BC#9 (`OperatorId` struct +
@@ -322,8 +336,12 @@ This RFC is ready for promotion to Accepted when:
     `Err` rather than an empty list. Tests:
     `legacy_document_migrates_to_algorithm_id`,
     `post_migration_decode_failure_is_an_error`,
-    and a resolver-level
-    `migrated_document_still_resolves_with_a_verification_method`.
+    a resolver-level
+    `migrated_document_still_resolves_with_a_verification_method`, and
+    `listed_documents_carry_their_verification_methods`, which covers the
+    `list` path — a separate column selection that no resolver-level vector
+    can observe, and which returns zero verification methods for every row
+    until it is fixed.
 
 ## Motivation
 
@@ -911,6 +929,21 @@ pub struct AlgorithmId(Uuid);
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CircuitId(Uuid);
 
+/// Stable identity of one key within one DID document. This is the `key_id`
+/// in the mandatory signable prefix, so it MUST have a fixed wire width: the
+/// prefix concatenates it directly, and the fixed-16-byte property that makes
+/// the raw form self-delimiting depends on it. A variable-width identifier —
+/// a string fragment, say — would let `key_id = ""` with payload `"abc"` and
+/// `key_id = "a"` with payload `"bc"` produce one identical signable byte
+/// string, which is the exact collision the prefix exists to prevent.
+///
+/// A `Uuid`, not a string, and NOT the existing string-fragment key id that
+/// `DidDocument::authenticates` matches on today: that value is a display
+/// handle, is not carried on the wire, and is not stable across resolvers.
+/// Distinct from RFC-0909's quota API-key id, which is a different domain.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VerificationMethodId(Uuid);
+
 /// What the circuit can do with this algorithm.
 pub enum ZkSupport {
     /// No constrained in-circuit verifier exists. A holder whose key is
@@ -1013,10 +1046,22 @@ so the following is normative:
   and needs no length framing.** If either is ever variable-width, the
   construction MUST move to the BLAKE3-domain-tag form below in the same
   amendment that makes it variable.
-- **`canonical_ser` means RFC-0126's substrate canonicalizer by name.** This
-  repository has three distinct functions carrying that symbol, including a
-  `Caveat::canonical_ser` method that is per-caveat deterministic JSON. Naming
-  the bare symbol would let two implementations sign different domains.
+- **`canonical_ser` means RFC-0126 §Part 3: Deterministic Canonical
+  Serialization, which this repository implements in the `octo-determin` crate
+  as the `dcs_serialize_*` family.** RFC-0126 defines no symbol of that name,
+  so the earlier instruction to resolve it "by name" resolved to nothing and
+  left an implementer to search the repository, where **five** functions
+  carry the bare symbol: `zk_circuit::canonical_ser`,
+  `CapabilityBundleV2::canonical_ser`,
+  `CapabilityBundleV2Envelope::canonical_ser`, `Caveat::canonical_ser` and
+  `HolderRecord::canonical_ser`. Two of those five are JSON, and RFC-0126
+  §JSON Allowed Contexts lists cryptographic proofs among the contexts where
+  JSON is forbidden, so `Caveat::canonical_ser` and `HolderRecord::canonical_ser`
+  are excluded by rule rather than by preference — a signer that reached either
+  by searching for the bare symbol would be signing a domain the serialization
+  RFC prohibits. An earlier draft of this bullet said three functions; there
+  are five. Naming the bare symbol would let two implementations sign
+  different domains.
 
 ```
 signable = BLAKE3-256("cipherocto/sigdomain/v1" ‖ algorithm_id ‖ key_id)
@@ -1714,19 +1759,26 @@ coverage.
 - **RFC-0958 §Algorithms** (v1.6 — revocation contract this RFC's A13 and
   AC#14 depend on; `RevocationSnapshot` identity gate)
 - **RFC-0126** (canonical serialization — per R41; `canonical_ser` in the
-  signable prefix is ambiguous without naming which of the repository's three
-  functions is meant)
+  signable prefix is ambiguous without naming which of the repository's
+  functions is meant. Per R42 the count was three and is **five**, and the
+  name belongs to RFC-0126 §Part 3: Deterministic Canonical Serialization — the
+  `octo-determin` crate's `dcs_serialize_*` — not to RFC-0126 itself)
 - **RFC-0909 §Quota API Key** (per R41 — the quota API-key id is a distinct
   identifier from `VerificationMethodId`; naming them alike invites collision)
 
 ## Version History
 
-| Version | Date       | Status               | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------- | ---------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-07-19 | Accepted             | Initial specification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 1.1     | 2026-08-08 | Accepted (amendment) | HSM routing + wallet audience validation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.2     | 2026-08-10 | Accepted             | Hierarchical attenuation + MPC threshold identity                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.3     | 2026-10-08 | Accepted (amendment) | Dual-format keys + `SignatureAlgorithm` registry replacing the `VerificationMethodKind` enum. R41 review applied: `VerificationMethod` gains `VerificationMethodId`, `revoked_at` and `custody`; the signable prefix is specified byte-exactly with a hashed form; `CircuitId` and registry population semantics defined; per-key revocation added as A14 so the cascade stops being vacuous; BC#13 gains the load-bearing storage-migration requirement; AC#12 rewritten because its round-trip test was unreachable, AC#15 and AC#16 added with named tests; §Validation extended with the `octo-ident` gate; A15 records the RFC-0010 conflict; TV-1's assertion restated after the shim removal; the G9 custody premise corrected against the actual `HsmAdapter` implementors; the RFC-0974 §Step 1 digest-packing attribution corrected, since a 32-byte STARK-curve key plus parity bit does not fit the 31-bytes-per-felt digest convention. |
+| Version                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Date       | Status               | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 2026-07-19 | Accepted             | Initial specification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.1                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 2026-08-08 | Accepted (amendment) | HSM routing + wallet audience validation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.2                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 2026-08-10 | Accepted             | Hierarchical attenuation + MPC threshold identity                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.3                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 2026-10-08 | Accepted (amendment) | Dual-format keys + `SignatureAlgorithm` registry replacing the `VerificationMethodKind` enum. R41 review applied: `VerificationMethod` gains `VerificationMethodId`, `revoked_at` and `custody`; the signable prefix is specified byte-exactly with a hashed form; `CircuitId` and registry population semantics defined; per-key revocation added as A14 so the cascade stops being vacuous; BC#13 gains the load-bearing storage-migration requirement; AC#12 rewritten because its round-trip test was unreachable, AC#15 and AC#16 added with named tests; §Validation extended with the `octo-ident` gate; A15 records the RFC-0010 conflict; TV-1's assertion restated after the shim removal; the G9 custody premise corrected against the actual `HsmAdapter` implementors; the RFC-0974 §Step 1 digest-packing attribution corrected, since a 32-byte STARK-curve key plus parity bit does not fit the 31-bytes-per-felt digest convention. |
+| 1.4                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 2026-10-09 | Accepted (amendment) | R42 mission review applied. §Domain separation: `VerificationMethodId` **defined** as `struct VerificationMethodId(Uuid)` — it was named as a field type by BC#13 and by the signable prefix but had no representation anywhere in the specification or the codebase, so the prefix's "both components are fixed at 16 bytes" property rested on nothing, and the repository's existing string-fragment key id (`DidDocument::authenticates`) was the obvious wrong answer. The `canonical_ser` disambiguation corrected on two counts: RFC-0126 defines no symbol of that name, so "by name" resolved to nothing; and the count was three where there are **five** (`zk_circuit`, `CapabilityBundleV2`, `CapabilityBundleV2Envelope`, `Caveat`, `HolderRecord`), two of which are JSON — which RFC-0126 §JSON Allowed                                                                                                                               |
+| Contexts lists among the contexts where JSON is forbidden. The bullet now                                                                                                                                                                                                                                                                                                                                                                                                    |
+| names RFC-0126 §Part 3: Deterministic Canonical Serialization as implemented                                                                                                                                                                                                                                                                                                                                                                                                 |
+| by `octo-determin`'s `dcs_serialize_*`, and excludes the two JSON functions                                                                                                                                                                                                                                                                                                                                                                                                  |
+| by rule. BC#13 and AC#16 extended to cover `list`: the third read path in `octo-ident-storage`, which selects `public_key` alone and builds every document with `..Default::default()`, so it returns zero verification methods for every row with no error — the same silent-downgrade shape as the resolver path, reached by a shorter route, and a vacuous revocation cascade once `revoked_at` exists per key. Adds `listed_documents_carry_their_verification_methods`. |
 
 ## Review Process
 

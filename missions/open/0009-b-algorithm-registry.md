@@ -84,6 +84,29 @@ Post-migration a decode failure MUST be an `Err`.
 This does not repeal fail-soft for genuinely optional columns. It removes it
 for the column that is load-bearing under v1.3.
 
+### `list` is a third path, and it is worse
+
+The same file's `list` does not decode the rich columns at all. Its query
+selects `public_key` only, and every document is built with
+`..Default::default()`, so every row comes back with zero verification
+methods — before and after the migration, and with no error to observe.
+
+The migration instruction above covers `resolve` and `resolve_in_chain` and
+would leave `list` untouched. That is the same defect as the one above,
+reached by a shorter route: a DID that resolves, carries a public key, and
+owns no algorithm-bearing key. Once `revoked_at` exists per key, anything
+that enumerates identities through `list` sees no keys and therefore nothing
+to revoke, which is precisely the vacuous cascade A14 was added to stop.
+
+Nothing in `crates/` calls `DidRegistry::list` outside tests today, which is
+the only reason this has stayed invisible. That is not a reason to skip it:
+the fix is the same column selection and the same decode path as `resolve`,
+and leaving one reader of the table on the old shape means the storage
+contract has two incompatible readers. Fix `list` in this mission and state
+the requirement in the RFC, or record explicitly in BC#13 that `list` is out
+of scope and that its callers MUST NOT be used for key-bearing or
+revocation-bearing work until it is fixed.
+
 ### Also in scope
 
 `VerificationMethodKind::from_byte` collapses every unknown byte onto
@@ -91,6 +114,17 @@ for the column that is load-bearing under v1.3.
 mutually indistinguishable. Its doc comment claims the opposite — that the
 mapping makes old code "fail-closed on unknown discriminators". Removing the
 enum removes the contradiction; do not port the comment.
+
+`MAX_VERIFICATION_METHODS` in the same module is `2`, documented as covering
+"the canonical Ed25519 + PQC future combination". Under v1.3 that composition
+is Ed25519 + STARK-curve Schnorr, so the stated rationale is stale and the
+bound is now exactly saturated with zero headroom. The value itself does not
+need to change — two methods is the whole design — but the doc comment is a
+normative-looking claim about a design that is no longer the one specified, and
+it is the same class of defect as the dangling `§VerificationMethodKind`
+citation: a doc comment asserting something no specification supports. Correct
+the wording, and record that the next algorithm lands by raising the bound
+rather than by reusing a slot.
 
 ## Acceptance Criteria
 
@@ -106,6 +140,8 @@ drift apart.
   correct Ed25519 `algorithm_id`
 - `migrated_document_still_resolves_with_a_verification_method` — resolver
   level, not just codec level
+- `listed_documents_carry_their_verification_methods` — the `list` path, which
+  is a separate column selection and not covered by the resolver vector
 - `post_migration_decode_failure_is_an_error` — **the one that matters most.**
   Asserts a malformed blob is `Err`, not an empty list
 - `unregistered_algorithm_id_is_rejected`
@@ -142,10 +178,16 @@ None, by design. RFC-0009 v1.3 removed the `derive_capability_key_v11` shim
 and adds none here: nothing is deployed, and a `#[deprecated]` path that keeps
 a lossy decoder reachable has no audience.
 
-RFC-0010 also claims to define `VerificationMethodKind` and its
-`octo-ident` doc comment cites it as normative. This RFC wins for the
-`octo-ident` substrate; RFC-0010 needs a pointer amendment. Tracked as A15 in
-RFC-0009 — flag it in the PR rather than silently conflicting.
+`VerificationMethodKind` appears in no Accepted RFC. The only trace is a
+doc comment in `crates/octo-ident/src/rich_document.rs` citing
+"RFC-0010 §VerificationMethodKind" as normative, and neither RFC-0010 file
+contains that section or the symbol. There is therefore no cross-RFC conflict
+and nothing to amend in RFC-0010 — an earlier draft of this mission claimed
+one and was wrong. The enum is currently defined in code with a citation that
+resolves nowhere, and removing the enum removes the dangling citation with
+it. Tracked as A15 in RFC-0009.
+
+Do not open an RFC-0010 amendment on the strength of this mission.
 
 ## Cross-references
 

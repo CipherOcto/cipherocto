@@ -1,4 +1,4 @@
-# RFC-0009 v1.3 — Identity Evolution: Hierarchical Attenuation + MPC Threshold + Dual-Format Keys
+# RFC-0009 v1.6 — Identity Evolution: Hierarchical Attenuation + MPC Threshold + Dual-Format Keys
 
 **Status:** Accepted (2026-08-11)
 
@@ -280,14 +280,42 @@ This RFC is ready for promotion to Accepted when:
     (per R28 M5) for FROST signatures; gates parallel to AC#9
     for BC#5 `aggregated_pk_check` + `dkg_proof`. FROST
     forward-pointer ASPIRATIONAL until AC#10 satisfied.
-11. **No verification site hardcodes an algorithm** (added in v1.3).
+11. **No verification site hardcodes an algorithm** (added in v1.3; gate and
+    scope corrected in v1.6).
     `VerifyingKey::from_bytes` and `Signature::from_bytes` MUST NOT
     appear at any holder- or capability-signature verification site
     outside the Ed25519 registration itself; every such site MUST
     dispatch through `AlgorithmRegistry`. A registry lookup for an
     unregistered `AlgorithmId` MUST return an error, not a default.
-    Gated by `cargo test -p octo-ident --lib`. Test:
-    `no_verification_site_hardcodes_an_algorithm`.
+    Test: `no_verification_site_hardcodes_an_algorithm`.
+
+    **The gate is a workspace-wide grep, not `cargo test -p octo-ident
+--lib`.** v1.3 named that command, and it cannot observe this
+    criterion: the sites are spread across 11 crates, and 7 of them do
+    not depend on `octo-ident` at all, so a run scoped to `octo-ident`
+    passes with 25 of the 38 sites still hardcoded. The named test is a
+    workspace-root grep. Any crate-scoped command that does not cover
+    the sites it claims to gate is not evidence for this criterion.
+
+    **Scope is the two constructors, not typed parameters.** This
+    criterion names two _constructors_ — they take bytes and make an
+    algorithm decision. A site that accepts an already-typed
+    `&VerifyingKey` parameter calls neither and never chooses an
+    algorithm, so it is outside this criterion's reach. Ed25519 in a
+    public signature is a real coupling and is worth fixing, but it is
+    a distinct defect and must not be counted as satisfying or
+    violating AC#11. Widening the criterion to cover it turns a
+    falsifiable requirement into an unfalsifiable one.
+
+    Delivered across `0009-c-verification-dispatch` (the crates that
+    already depend on `octo-ident`),
+    `0009-c2-verification-dispatch-new-dependency-sites` (sites needing a
+    new dependency edge), and
+    `0009-c3-network-verification-dispatch` (`octo-network`, which is
+    blocked on the RFC-0010 canonical OctoID codec because
+    `pubkey_from_did` yields a bare `[u8; 32]` that cannot name an
+    algorithm). AC#11 is met only when all three land.
+
 12. **Unknown algorithm identifiers fail closed** (added in v1.3,
     rewritten per R41). A `kind` byte, `AlgorithmId` or `AlgorithmRegistry`
     key that is not registered MUST be rejected, and the failure MUST be
@@ -1743,16 +1771,26 @@ cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test r
 cargo test -p octo-wallet --test frost_nonce_determinism  # per R21 L4 + AC#8b (R26 L4)
 cargo audit  # per R27 M1 — exercises A6 quartet (d) CI-tool audit dep (R31 M2)
 cargo doc --workspace --no-deps
-cargo test -p octo-ident --lib  # per R41 — gates AC#11, AC#12, AC#13, AC#15, AC#16
+cargo test -p octo-ident --lib  # per R41 — gates AC#12, AC#13, AC#15, AC#16; AC#11 is a workspace grep, NOT this run
 ```
 
-**Note on the v1.3 tests.** The `octo-ident` block above is the gate for
-AC#11 through AC#13 and AC#15/AC#16, and it does not exist yet. Every test
-named in those criteria is specified and unwritten; the criteria are forward
-pointers, not claims of passing tests. Two of them (`legacy_document_migrates_to_algorithm_id`,
-`post_migration_decode_failure_is_an_error`) exist specifically to catch the
-silent-downgrade path this break introduces, so they are not optional extra
-coverage.
+**Note on the v1.3 tests.** The `octo-ident` block above gates AC#12, AC#13
+and AC#15/AC#16. It does **not** gate AC#11 — see AC#11 for why a run scoped to
+`octo-ident` cannot observe that criterion's sites.
+
+At v1.3 every test named in those criteria was specified and unwritten; the
+criteria were forward pointers, not claims of passing tests. That is no longer
+true: `0009-b` has landed and most are written. Three are still missing, and
+they are recorded here rather than left as a stale blanket claim —
+`unregistered_algorithm_id_is_rejected` (its
+`..._after_population` variant is written and does cover the property),
+`listed_documents_carry_their_verification_methods`, and
+`listed_documents_report_per_key_revocation`. The two `list` vectors are the
+ones that matter: AC#16 added them because `list` selected `public_key` alone
+and returned zero verification methods for every row with no error, and the
+repair to that read path is currently pinned by **no** test that asserts the
+property. `list_returns_all_active_dids_sorted` checks row count, ordering and
+`public_key`, and passes unchanged against the original defect.
 
 ## Cross-references
 
@@ -1805,6 +1843,8 @@ coverage.
 | 1.3     | 2026-10-08 | Accepted (amendment) | Dual-format keys + `SignatureAlgorithm` registry replacing the `VerificationMethodKind` enum. R41 review applied: `VerificationMethod` gains `VerificationMethodId`, `revoked_at` and `custody`; the signable prefix is specified byte-exactly with a hashed form; `CircuitId` and registry population semantics defined; per-key revocation added as A14 so the cascade stops being vacuous; BC#13 gains the load-bearing storage-migration requirement; AC#12 rewritten because its round-trip test was unreachable, AC#15 and AC#16 added with named tests; §Validation extended with the `octo-ident` gate; A15 records the RFC-0010 conflict; TV-1's assertion restated after the shim removal; the G9 custody premise corrected against the actual `HsmAdapter` implementors; the RFC-0974 §Step 1 digest-packing attribution corrected, since a 32-byte STARK-curve key plus parity bit does not fit the 31-bytes-per-felt digest convention.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | 1.4     | 2026-10-09 | Accepted (amendment) | R42 mission review applied. §Domain separation: `VerificationMethodId` **defined** as `struct VerificationMethodId(Uuid)` — it was named as a field type by BC#13 and by the signable prefix but had no representation anywhere in the specification or the codebase, so the prefix's "both components are fixed at 16 bytes" property rested on nothing, and the repository's existing string-fragment key id (`DidDocument::authenticates`) was the obvious wrong answer. The `canonical_ser` disambiguation corrected on two counts: RFC-0126 defines no symbol of that name, so "by name" resolved to nothing; and the count was three where there are **five** (`zk_circuit`, `CapabilityBundleV2`, `CapabilityBundleV2Envelope`, `Caveat`, `HolderRecord`), two of which are JSON — which RFC-0126 §JSON Allowed Contexts lists among the contexts where JSON is forbidden. The bullet now names RFC-0126 §Part 3: Deterministic Canonical Serialization as implemented by `octo-determin`'s `dcs_serialize_*`, and excludes the two JSON functions by rule. BC#13 and AC#16 extended to cover `list`: the third read path in `octo-ident-storage`, which selects `public_key` alone and builds every document with `..Default::default()`, so it returns zero verification methods for every row with no error — the same silent-downgrade shape as the resolver path, reached by a shorter route, and a vacuous revocation cascade once `revoked_at` exists per key. Adds `listed_documents_carry_their_verification_methods`. |
 | 1.5     | 2026-10-09 | Accepted (amendment) | Settles the two questions the R42 mission review left open. **Per-key revocation ownership:** A14's gate belongs to neither `0958-a` nor `0009-c`. A verifier-side key gate cannot fire while RFC-0958 §Algorithms resolves the DID inside the circuit, and `BatchSigPublicInputs` today carries only `signer_roots` and `message_root` — no holder DID, no `algorithm_id`, no `key_id` — so a verifier has no bound statement of which key signed. Closing A14 needs a circuit change publishing those three as public inputs and constraining the signing key to the method bearing that `key_id`. Recorded on A14 rather than split across two missions that each half-claimed it. **Uuid wire form:** `AlgorithmId`, `VerificationMethodId` and `CircuitId` store a `[u8; 16]` with `to_uuid`/`from_uuid`, because `Uuid` has no borsh implementation available here — no workspace crate enables a `uuid` borsh feature and none derives borsh on a `Uuid` field, so the derive does not compile. Storing the bytes also makes the prefix's fixed-16-byte self-delimiting property true by construction rather than by a serialiser's behaviour.                                                                                                                                                                                                                                                                                                                                                                                  |
+
+| 1.6 | 2026-10-09 | Accepted (amendment) | Corrects AC#11's **gate** and **scope**. **Gate:** v1.3 named `cargo test -p octo-ident --lib` as AC#11's gate, but the sites span 11 crates and 7 of them do not depend on `octo-ident` at all, so a run scoped to that crate passes with 25 of the 38 sites still hardcoded — the named test is a workspace-root grep, and §Validation's command comment is corrected to match. **Scope:** AC#11 names two _constructors_, so a site that takes an already-typed `&VerifyingKey` parameter calls neither and never chooses an algorithm — it is outside AC#11's reach. That is still a real coupling, but it is a distinct defect, and widening AC#11 to sweep it in converts a falsifiable criterion into an unfalsifiable one. AC#11 is delivered across three missions split by prerequisite chain (`0009-c`, `0009-c2`, `0009-c3`); the last is blocked on the RFC-0010 canonical OctoID codec because `pubkey_from_did` returns a bare `[u8; 32]` that cannot name an algorithm. §Validation's blanket "does not exist yet" note corrected: `0009-b` has landed and most named tests are written, so the three still missing are now named individually — including the two `list` vectors that exist to pin the AC#16 read-path repair, which no test currently asserts; `list_returns_all_active_dids_sorted` checks count, ordering and `public_key` only, and passes unchanged against the original zero-verification-methods defect. |
 
 ## Review Process
 

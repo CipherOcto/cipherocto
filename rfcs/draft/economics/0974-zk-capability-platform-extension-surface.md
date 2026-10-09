@@ -725,6 +725,52 @@ and is not enough: `bit_at` builds `2^i` with a loop of up to 128 multiplication
 then divides, so scanning one scalar costs ~32,768 `u128` operations instead of 256. Fixing that removes the bit-scanning overhead but leaves the ~256 point
 additions and doublings that dominate.
 
+#### A third option was measured, and it changes the shape of the decision
+
+The recommendation below originally read "change the primitive in the
+holder-signature slot" without a number attached, which is a hypothesis wearing
+a recommendation's clothes. It now has one.
+
+`cairo/src/stark_schnorr.cairo` implements Schnorr over the **Cairo STARK
+curve**, using `core::ec`. The curve's field is felt252 itself, so a curve
+element is one felt and a scalar is one felt — the opposite of Ed25519's eight
+`u32` limbs and a hand-rolled reduction. Pinned against vectors from an
+independent pure-Python implementation of the same curve, including five
+negative cases, because a verifier that returned true unconditionally would pass
+a positive test.
+
+Measured, wired into `main`:
+
+| Verifier                  | CASM words | Delta    |
+| ------------------------- | ---------- | -------- |
+| baseline                  | 3,004      | —        |
+| + Schnorr over `core::ec` | 3,299      | **+295** |
+| + conformant Ed25519      | 44,443     | +41,439  |
+
+**The word count is misleading and should not be quoted alone.** `ec_state_add_mul`
+still lowers to a handful of instructions that read a result out of the EcOp
+builtin segment — structurally the same shape as `StarknetHint::SystemCall`. The
+difference is that cairo-air implements `EcOpBuiltin` as a full AIR component,
+with `partial_ec_mul` window decompositions, regression tests, and a
+segment-range check in the verifier. The multiplication is not in the Cairo
+trace; it is in the builtin's algebraic constraint. So +295 words is not the
+price, it is only the part of the price that lands in CASM. The rest is proving
+time for the EcOp component, which is **not measured**.
+
+Two things are unsettled, and they matter more than the number:
+
+- **The circuit does not build in the harness.** The EcOp lowering emits two
+  hints at one CASM pc, and `bundled_casm_bytes` refuses it because
+  `HintsCollection` resolves exactly one hint per pc and would otherwise silently
+  drop a constraint. That refusal is correct and stays; the fix is in the
+  harness.
+- **Nothing has been proved end to end.** The +295 figure is a compile-time
+  measurement of a program the proving pipeline cannot yet execute.
+
+So this is a strong lead, not a result. The honest summary is that the CASM cost
+of the holder-signature slot is probably not the binding constraint, and that is
+worth knowing before anyone spends a cycle on the 512-bit reduction.
+
 #### Recommendation
 
 **Do not wire step 1 as written, and do not spend the reduction effort.** The

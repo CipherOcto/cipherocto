@@ -125,6 +125,12 @@ use core::traits::{Into, TryInto};
 mod blake3;
 #[cfg(test)]
 mod sha512_probe;
+/// Schnorr over the STARK curve — candidate for the RFC-0958 step 1
+/// holder-signature slot. Felt-native, and unlike a syscall the EcOp builtin
+/// it relies on is a fully constrained cairo-air component. Not RFC-0009's key
+/// format; see the module header before promoting it.
+#[cfg(test)]
+mod stark_schnorr;
 /// RFC 8032 Ed25519 verifier — **not conformant**, and deliberately test-only.
 ///
 /// The challenge hash `SHA-512(R || A || M) mod L` is computed with **BLAKE3**,

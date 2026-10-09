@@ -364,6 +364,21 @@ impl AlgorithmRegistry {
     /// two crates linking two versions of the same algorithm is a link-time
     /// fact the registry must surface, not absorb.
     ///
+    /// ## This still works after `populate`
+    ///
+    /// A post-`populate` `register` succeeds and its algorithm is immediately
+    /// visible to in-flight verification. That is a real gap, not an
+    /// oversight: the ready-set is therefore **not** immutable once
+    /// `populate` returns, so `populate` is an atomic *insertion*, not an
+    /// atomic *freeze*.
+    ///
+    /// An earlier version of this file claimed the opposite — that a second
+    /// population "would make the ready-set non-atomic" — which was a doc
+    /// comment asserting a guarantee the code did not provide, the same class
+    /// as the dangling `§VerificationMethodKind` citation BC#13 removes.
+    /// Making it a real freeze needs a fourth error variant that RFC-0009
+    /// does not define, so it is recorded here rather than invented.
+    ///
     /// # Errors
     /// [`AlgorithmRegistryError::AlreadyRegistered`] if this `AlgorithmId` is
     /// already claimed.
@@ -684,6 +699,29 @@ mod tests {
             ZkSupport::Circuit {
                 circuit: CircuitId::derive("with-circuit-circuit")
             }
+        );
+    }
+
+    /// Pins the CURRENT behaviour rather than an aspiration: a post-populate
+    /// `register` succeeds and becomes immediately visible. If this ever goes
+    /// red because someone made the ready-set a real freeze, that is a
+    /// behaviour change and the RFC needs a fourth error variant to carry it —
+    /// do not just flip the assertion.
+    #[test]
+    fn register_after_populate_still_succeeds_and_is_visible() {
+        let reg = AlgorithmRegistry::new();
+        reg.populate(Vec::new()).expect("populate");
+        assert_eq!(reg.len(), 0);
+
+        let late = AlgorithmId::derive("late-arrival");
+        reg.register(dummy("late", late))
+            .expect("post-populate register");
+
+        assert_eq!(reg.len(), 1);
+        assert_eq!(
+            reg.get(late).expect("late registration is visible").name(),
+            "late",
+            "the ready-set is not frozen after populate"
         );
     }
 

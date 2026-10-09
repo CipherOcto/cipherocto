@@ -237,18 +237,50 @@ additions. The migration itself is the acceptance condition, not the list.
 - `legacy_document_migrates_to_algorithm_id` — a pre-migration document
   decodes through the migration path with a non-empty method list and the
   correct Ed25519 `algorithm_id`
+- `migrated_id_is_stable_across_decodes` — the `new_v5` derivation, not `new_v4`
+- `legacy_non_ed25519_byte_fails_closed` — a non-`0x01` legacy kind does not
+  become Ed25519; it gets an id nothing registers under
+- `current_shape_is_not_migrated` — a row already in the new shape passes
+  through untouched, so the writer's own id is not re-derived
 - `migrated_document_still_resolves_with_a_verification_method` — resolver
   level, not just codec level
 - `listed_documents_carry_their_verification_methods` — the `list` path, which
   is a separate column selection and not covered by the resolver vector
+- `listed_documents_report_per_key_revocation` — an enumeration that returns no
+  keys also returns nothing to revoke
 - `post_migration_decode_failure_is_an_error` — **the one that matters most.**
-  Asserts a malformed blob is `Err`, not an empty list
-- `unregistered_algorithm_id_is_rejected`
-- `unregistered_algorithm_id_is_not_silently_ed25519`
+  Asserts a malformed blob is `Err`, not an empty list. Covers a truncated
+  mid-entry write too
+- `null_and_empty_blob_yield_an_empty_list_not_an_error` — the case the
+  pre-existing `resolve_legacy_row_returns_empty_vevs` test cannot reach
+- `unregistered_algorithm_id_is_rejected_after_population`
+- `unregistered_algorithm_id_is_not_silently_ed25519` — Ed25519 **is**
+  registered and the lookup still misses, which is the A12 property in its
+  sharpest form
 - `lookup_before_population_is_not_populated`
-- `unknown_algorithm_ids_are_distinguishable_in_errors`
-- `duplicate_registration_is_rejected`
-- `software_custody_is_distinguishable_from_hardware`
+- `unknown_algorithm_ids_stay_distinguishable` — the property the deleted
+  enum violated; a former test asserted the opposite
+- `duplicate_registration_is_rejected_even_when_byte_identical`
+- `identifiers_are_sixteen_bytes_and_round_trip`
+- `derivation_is_stable_across_calls`
+- `distinct_namespaces_produce_distinct_identifiers`
+- `raw_prefix_is_self_delimiting`
+- `borsh_wire_form_is_exactly_sixteen_bytes` — gated on the `borsh` feature
+- `wrong_length_is_rejected_not_accepted`
+- `zk_support_is_reported_by_the_algorithm`
+- `verification_method_ed25519_default`
+- `verification_method_revocation_is_per_key`
+- `custody_posture_is_distinguishable`
+- `tv5_verification_method_type_discriminator` — rewritten; the original
+  could not detect a collapsed discriminator because it only compared one
+  method against `Reserved`
+
+**Names drifted deliberately.** Three vectors below are named for a stronger
+property than the mission originally specified
+(`duplicate_registration_is_rejected_even_when_byte_identical`,
+`unknown_algorithm_ids_stay_distinguishable`, and the byte-exact borsh form).
+The mission list is updated to the real test names rather than the tests being
+weakened to match the list.
 
 Gate: `cargo test -p octo-ident -p octo-ident-storage`
 

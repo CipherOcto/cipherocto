@@ -482,6 +482,54 @@ mod tests {
     }
 
     #[test]
+    fn unregistered_algorithm_id_is_not_silently_ed25519() {
+        // The A12 property in its sharpest form: Ed25519 *is* registered, and
+        // an unknown id must still miss. The obvious wrong implementation is a
+        // fallback arm returning the configured default, which a deployment
+        // holding only Ed25519 would never notice — every lookup would
+        // "work", and every cross-algorithm replay would silently verify
+        // against the wrong equation.
+        let reg = AlgorithmRegistry::new();
+        let ed = AlgorithmId::derive("ed25519");
+        reg.register(dummy("ed25519", ed)).unwrap();
+        reg.populate();
+
+        // The registered one resolves.
+        assert_eq!(reg.get(ed).unwrap().name(), "ed25519");
+
+        // Every other id misses rather than falling back.
+        for other in [
+            AlgorithmId::derive("stark-schnorr"),
+            AlgorithmId::derive("legacy-unknown"),
+            AlgorithmId::derive(""),
+            AlgorithmId::from_bytes([0u8; 16]),
+        ] {
+            assert!(
+                matches!(
+                    reg.get(other),
+                    Err(AlgorithmRegistryError::UnknownAlgorithm(_))
+                ),
+                "{other:?} must miss, not fall back to ed25519"
+            );
+        }
+
+        // And the miss carries the id that was asked for, so two distinct
+        // unknowns produce distinguishable errors rather than one message.
+        let a = AlgorithmId::derive("unknown-a");
+        let b = AlgorithmId::derive("unknown-b");
+        let (
+            Err(AlgorithmRegistryError::UnknownAlgorithm(got_a)),
+            Err(AlgorithmRegistryError::UnknownAlgorithm(got_b)),
+        ) = (reg.get(a), reg.get(b))
+        else {
+            panic!("both lookups must be UnknownAlgorithm");
+        };
+        assert_eq!(got_a, a);
+        assert_eq!(got_b, b);
+        assert_ne!(got_a, got_b);
+    }
+
+    #[test]
     fn unregistered_algorithm_id_is_rejected_after_population() {
         let reg = AlgorithmRegistry::new();
         reg.register(dummy("a", AlgorithmId::derive("a"))).unwrap();

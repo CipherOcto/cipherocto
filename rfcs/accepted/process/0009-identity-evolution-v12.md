@@ -289,13 +289,14 @@ This RFC is ready for promotion to Accepted when:
     unregistered `AlgorithmId` MUST return an error, not a default.
     Test: `no_verification_site_hardcodes_an_algorithm`.
 
-    **The gate is a workspace-wide grep, not `cargo test -p octo-ident
---lib`.** v1.3 named that command, and it cannot observe this
-    criterion: the sites are spread across 11 crates, and 7 of them do
-    not depend on `octo-ident` at all, so a run scoped to `octo-ident`
-    passes with 25 of the 38 sites still hardcoded. The named test is a
-    workspace-root grep. Any crate-scoped command that does not cover
-    the sites it claims to gate is not evidence for this criterion.
+    **The gate is a workspace-wide grep, not a crate-scoped test run.**
+    v1.3 named `cargo test -p octo-ident --lib`, and that command cannot
+    observe this criterion: the sites are spread across 11 crates, and 7
+    of them do not depend on `octo-ident` at all, so a run scoped to
+    `octo-ident` passes with 25 of the 38 sites still hardcoded. The
+    named test is a workspace-root grep. Any crate-scoped command that
+    does not cover the sites it claims to gate is not evidence for this
+    criterion.
 
     **Scope is the two constructors, not typed parameters.** This
     criterion names two _constructors_ — they take bytes and make an

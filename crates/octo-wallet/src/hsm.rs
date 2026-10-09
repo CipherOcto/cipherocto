@@ -49,6 +49,20 @@ pub trait HsmAdapter: Send + Sync {
     /// `&dyn Any`; the caller's `downcast_ref::<T>()` will succeed when the
     /// concrete type matches `T`.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// The algorithm this adapter's key speaks.
+    ///
+    /// Required, not defaulted. A `Default` returning Ed25519 would let a
+    /// future Schnorr or threshold adapter be wired up without ever
+    /// declaring what it is, and the failure would surface as a signature
+    /// that mysteriously fails to verify rather than as a compile error at
+    /// the adapter.
+    ///
+    /// This is what makes `IdentityKey::verify` dispatch instead of
+    /// deciding: the key's algorithm comes from the signer that produced
+    /// it, so adding an algorithm means adding an adapter, not editing
+    /// every verification site (RFC-0009 AC#11).
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId;
 }
 
 /// In-memory HSM adapter (MVP default; wraps `IdentityKey`).
@@ -119,6 +133,10 @@ impl HsmAdapter for InMemorySigner {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
 }
 
 /// Ledger-shaped signer (smoke-test stub; production wires real APDU transport).
@@ -167,6 +185,10 @@ impl HsmAdapter for LedgerSigner {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
 }
 
 /// No-op signer installed after `IdentityKey::revoke()`.
@@ -211,6 +233,10 @@ impl HsmAdapter for NullSigner {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
     }
 }
 

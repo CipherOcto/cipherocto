@@ -172,6 +172,13 @@ async-trait = "0.1"
 # validate canonical DID shape at the wallet boundary (RFC-0010 F4).
 octo-ident = { path = "../octo-ident" }
 
+# Mission 0009-c: the Ed25519 `SignatureAlgorithm` implementation, so
+# `IdentityKey::verify` dispatches through `AlgorithmRegistry` instead of
+# constructing a `VerifyingKey` itself (RFC-0009 AC#11). Layer E per-algorithm
+# extension depending on Layer B — the arrow never points back, which is why
+# `octo-ident` itself has no ed25519-dalek dependency.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
 # Mission 0957-ext-macaroon: Layer 4 extension crate owning the macaroon
 # cryptographic foundation (HMAC-BLAKE3 + macaroon_id derivation). Layer 4
 # registers CapabilitySpec impls per RFC-0965; the Macaroon struct + Caveat

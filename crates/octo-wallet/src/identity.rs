@@ -13,7 +13,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -505,50 +505,47 @@ impl IdentityKey {
     /// RFC-0853 §12 successor proof verifier (pure helper).
     ///
     /// Re-derives the expected proof message (`b"rotate" || new_pub`) and
-    /// verifies it against the old public key + provided proof signature.
-    /// Returns `Ok(())` on valid proof; `Err(InvalidSuccessorProof)` on
-    /// mismatch.
+    /// verifies it against the old public key + provided proof signature,
+    /// dispatching on `algorithm_id` through `AlgorithmRegistry`
+    /// (RFC-0009 AC#11). The caller supplies the algorithm because a
+    /// static helper has no signer to ask.
     ///
     /// # Errors
-    /// Returns `WalletError::InvalidSuccessorProof` if signature does not
-    /// verify.
+    /// Returns `WalletError::InvalidSuccessorProof` if the algorithm is
+    /// not registered, or the signature does not verify.
     pub fn verify_successor_proof(
+        algorithm_id: &octo_ident::AlgorithmId,
         old_pub: &[u8; 32],
         new_pub: &[u8; 32],
         proof: &[u8; 64],
     ) -> Result<(), WalletError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk =
-            VerifyingKey::from_bytes(old_pub).map_err(|_| WalletError::InvalidSuccessorProof)?;
-        let sig = Signature::from_bytes(proof);
         let mut msg = Vec::with_capacity(6 + 32);
         msg.extend_from_slice(b"rotate");
         msg.extend_from_slice(new_pub);
-        vk.verify(&msg, &sig)
+        octo_algo_ed25519::verify_dispatch(algorithm_id, old_pub, &msg, proof)
             .map_err(|_| WalletError::InvalidSuccessorProof)
     }
 
     /// RFC-0009 §Lifecycle row 4 revocation proof verifier (pure helper).
     ///
     /// Re-derives the expected proof message (`b"revoke"`) and verifies
-    /// it against the identity's public key + captured proof signature.
-    /// Returns `Ok(())` on valid proof; `Err(InvalidRevocationProof)` on
-    /// mismatch.
+    /// it against the identity's public key + captured proof signature,
+    /// dispatching on `algorithm_id` through `AlgorithmRegistry`.
     ///
     /// Mirrors `verify_successor_proof` for the revocation path. Used by
     /// cross-node revocation gossip fan-out to confirm that a revocation
     /// event was actually authorized by the holder (not forged).
     ///
     /// # Errors
-    /// Returns `WalletError::InvalidRevocationProof` if the public key
-    /// is not a valid Ed25519 point, the signature is malformed, or the
+    /// Returns `WalletError::InvalidRevocationProof` if the algorithm is
+    /// not registered, the key or signature is malformed, or the
     /// signature does not verify.
-    pub fn verify_revocation_proof(pubkey: &[u8; 32], proof: &[u8; 64]) -> Result<(), WalletError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk =
-            VerifyingKey::from_bytes(pubkey).map_err(|_| WalletError::InvalidRevocationProof)?;
-        let sig = Signature::from_bytes(proof);
-        vk.verify(b"revoke", &sig)
+    pub fn verify_revocation_proof(
+        algorithm_id: &octo_ident::AlgorithmId,
+        pubkey: &[u8; 32],
+        proof: &[u8; 64],
+    ) -> Result<(), WalletError> {
+        octo_algo_ed25519::verify_dispatch(algorithm_id, pubkey, b"revoke", proof)
             .map_err(|_| WalletError::InvalidRevocationProof)
     }
 
@@ -633,15 +630,28 @@ impl IdentityKey {
         &self.signer
     }
 
-    /// Verify a signature (useful for self-tests).
+    /// Verify a signature over `msg` against this identity's key.
+    ///
+    /// The algorithm comes from the signer that produced the key, so this
+    /// dispatches through `AlgorithmRegistry` rather than deciding Ed25519
+    /// here (RFC-0009 AC#11). An unregistered algorithm is an error, never
+    /// a fallback.
     ///
     /// # Errors
-    /// Returns `WalletError::Signature` if the signature is invalid.
-    pub fn verify(&self, msg: &[u8], sig: &Signature) -> Result<(), WalletError> {
-        let vk = VerifyingKey::from_bytes(&self.public_key)
-            .map_err(|e| WalletError::Signature(e.to_string()))?;
-        vk.verify(msg, sig)
+    /// Returns `WalletError::Signature` if the algorithm is not registered
+    /// in this deployment or the signature does not verify.
+    pub fn verify(&self, msg: &[u8], sig: &[u8]) -> Result<(), WalletError> {
+        octo_algo_ed25519::verify_dispatch(&self.signer.algorithm_id(), &self.public_key, msg, sig)
             .map_err(|e| WalletError::Signature(e.to_string()))
+    }
+
+    /// The algorithm this identity's key speaks.
+    ///
+    /// Sourced from the signer, not stored separately, so the two cannot
+    /// drift apart.
+    #[must_use]
+    pub fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        self.signer.algorithm_id()
     }
 }
 
@@ -831,6 +841,7 @@ mod tests {
     use super::*;
     use crate::hsm::InMemorySigner;
     use ed25519_dalek::Signer;
+    use octo_ident::AlgorithmId;
 
     #[test]
     fn generate_sign_verify_roundtrip() {
@@ -838,7 +849,62 @@ mod tests {
         k.activate(1_700_000_000).expect("activate");
         let msg = b"hello world";
         let sig = k.sign(msg).expect("sign");
-        k.verify(msg, &sig).expect("verify");
+        k.verify(msg, &sig.to_bytes()).expect("verify");
+    }
+
+    #[test]
+    fn verify_dispatches_on_the_signers_algorithm_not_on_ed25519() {
+        // The control for AC#11 at the RFC's own primary type. Before the
+        // dispatch, `verify` built a `VerifyingKey` unconditionally, so a
+        // key speaking any other algorithm was checked as though it were
+        // Ed25519 and the answer was a silent wrong result rather than an
+        // error. This asserts the fail-closed half.
+        struct StrangerAdapter {
+            pk: [u8; 32],
+        }
+        impl HsmAdapter for StrangerAdapter {
+            fn get_public_key(&self) -> Result<[u8; 32], crate::hsm::HsmError> {
+                Ok(self.pk)
+            }
+            fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], crate::hsm::HsmError> {
+                Ok([0u8; 64])
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+                AlgorithmId::derive("not-a-registered-algorithm")
+            }
+        }
+
+        let key = IdentityKey::with_signer(Arc::new(StrangerAdapter { pk: [3u8; 32] }))
+            .expect("with_signer");
+        let err = key
+            .verify(b"anything", &[0u8; 64])
+            .expect_err("an unregistered algorithm must not verify");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no registered algorithm"),
+            "expected an unknown-algorithm refusal, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_real_signature_from_another_key_is_rejected() {
+        // The dispatch path must still reject honestly. Routing through the
+        // registry is only correct if the underlying check still happens.
+        let mut signer = IdentityKey::generate().expect("generate");
+        let mut other = IdentityKey::generate().expect("generate");
+        // Signing is gated on the lifecycle state machine, so both keys
+        // must be Active before `sign` will produce anything.
+        signer.activate(1_700_000_000).expect("activate signer");
+        other.activate(1_700_000_000).expect("activate other");
+        let msg = b"cross-key";
+        let sig = other.sign(msg).expect("sign");
+        assert!(
+            signer.verify(msg, &sig.to_bytes()).is_err(),
+            "a signature from a different key must not verify"
+        );
     }
 
     #[test]
@@ -893,6 +959,9 @@ mod tests {
             }
             fn as_any(&self) -> &dyn std::any::Any {
                 self
+            }
+            fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+                octo_algo_ed25519::ed25519_algorithm_id()
             }
         }
         let pk = [1u8; 32];
@@ -1195,7 +1264,13 @@ mod tests {
             .begin_rotation(successor, 2_000)
             .expect("begin_rotation");
         // Verify proof signature immediately (per RFC-0009 row 2 contract).
-        IdentityKey::verify_successor_proof(&old_pub, &new_pub, &proof).expect("proof must verify");
+        IdentityKey::verify_successor_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &old_pub,
+            &new_pub,
+            &proof,
+        )
+        .expect("proof must verify");
         // Now at t=2_000 + 24h + 1s (past grace).
         let result = old.complete_rotation(2_000 + 24 * 3600 + 1);
         assert!(
@@ -1227,7 +1302,12 @@ mod tests {
             .expect("begin_rotation");
         // Tamper with new_pub (use a different pubkey than the actual successor)
         let tampered = [0xff; 32];
-        let result = IdentityKey::verify_successor_proof(&old_pub, &tampered, &proof);
+        let result = IdentityKey::verify_successor_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &old_pub,
+            &tampered,
+            &proof,
+        );
         assert!(
             matches!(result, Err(WalletError::InvalidSuccessorProof)),
             "tampered new_pub must invalidate proof, got {result:?}"
@@ -1320,8 +1400,12 @@ mod tests {
         key.revoke(2_000).expect("revoke");
         let proof = key.revoked_proof().expect("proof captured");
         let pubkey = key.public_key_bytes();
-        IdentityKey::verify_revocation_proof(&pubkey, &proof)
-            .expect("captured proof must verify against pubkey");
+        IdentityKey::verify_revocation_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &pubkey,
+            &proof,
+        )
+        .expect("captured proof must verify against pubkey");
     }
 
     /// F14 (tamper): tampered proof bytes or wrong pubkey must be rejected.
@@ -1332,7 +1416,11 @@ mod tests {
         key.revoke(2_000).expect("revoke");
         let mut tampered = key.revoked_proof().expect("proof captured");
         tampered[0] ^= 0x01;
-        let result = IdentityKey::verify_revocation_proof(&key.public_key_bytes(), &tampered);
+        let result = IdentityKey::verify_revocation_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.public_key_bytes(),
+            &tampered,
+        );
         assert!(
             matches!(result, Err(WalletError::InvalidRevocationProof)),
             "tampered proof must invalidate, got {result:?}"
@@ -1340,7 +1428,11 @@ mod tests {
         // Wrong pubkey (different identity).
         let wrong_pub = [0xee; 32];
         let proof = key.revoked_proof().expect("proof");
-        let result = IdentityKey::verify_revocation_proof(&wrong_pub, &proof);
+        let result = IdentityKey::verify_revocation_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &wrong_pub,
+            &proof,
+        );
         assert!(
             matches!(result, Err(WalletError::InvalidRevocationProof)),
             "proof under wrong pubkey must fail, got {result:?}"

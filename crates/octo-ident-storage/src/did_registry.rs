@@ -108,6 +108,42 @@ struct LegacyVerificationMethod {
 /// every signature over the signable prefix unverifiable. Not derived from the
 /// public key, which RFC-0009 §Domain separation forbids explicitly and which
 /// is the mistake v1.5 rejected when it refused the string-fragment key id.
+/// Structural validation of a decoded method list.
+///
+/// `VerificationMethod::new` only `debug_assert!`s the key-length ceiling, and
+/// a `debug_assert!` compiles out in release. That would leave a megabyte key
+/// flowing straight through this path, which reads a persisted column anyone
+/// with storage write access controls. The ceiling is therefore enforced here,
+/// where the value is untrusted; the constructor's assert stays as the
+/// programmer-error check.
+///
+/// `MAX_VERIFICATION_METHODS` is a design limit the dual-format identity
+/// saturates exactly, so a row carrying more is corrupt or not a document this
+/// substrate knows how to represent. The `register` path never checked it
+/// either, which is pre-existing and out of scope here.
+fn validate_methods(methods: &[VerificationMethod]) -> Result<(), String> {
+    if methods.len() > octo_ident::MAX_VERIFICATION_METHODS {
+        return Err(format!(
+            "verification_methods carries {} entries, over the {} maximum",
+            methods.len(),
+            octo_ident::MAX_VERIFICATION_METHODS
+        ));
+    }
+    for (i, m) in methods.iter().enumerate() {
+        let len = m.public_key.len();
+        if len == 0 {
+            return Err(format!("verification_methods[{i}] public key is empty"));
+        }
+        if len > octo_ident::MAX_PUBLIC_KEY_LEN {
+            return Err(format!(
+                "verification_methods[{i}] public key is {len} bytes, over the {} byte ceiling",
+                octo_ident::MAX_PUBLIC_KEY_LEN
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn decode_verification_methods(
     bytes: &[u8],
     canonical_hash: &[u8; 32],
@@ -116,7 +152,10 @@ fn decode_verification_methods(
         return Ok(Vec::new());
     }
     match borsh::from_slice::<Vec<VerificationMethod>>(bytes) {
-        Ok(current) => Ok(current),
+        Ok(current) => {
+            validate_methods(&current)?;
+            Ok(current)
+        }
         Err(current_err) => {
             let legacy: Vec<LegacyVerificationMethod> =
                 borsh::from_slice(bytes).map_err(|legacy_err| {
@@ -125,7 +164,7 @@ fn decode_verification_methods(
                      (current: {current_err}) and the legacy shape (legacy: {legacy_err})"
                     )
                 })?;
-            Ok(legacy
+            let migrated: Vec<VerificationMethod> = legacy
                 .into_iter()
                 .enumerate()
                 .map(|(index, m)| {
@@ -172,7 +211,9 @@ fn decode_verification_methods(
                         CustodyPosture::Software,
                     )
                 })
-                .collect())
+                .collect();
+            validate_methods(&migrated)?;
+            Ok(migrated)
         }
     }
 }

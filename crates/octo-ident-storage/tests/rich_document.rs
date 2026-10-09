@@ -378,3 +378,56 @@ fn resolve_returns_an_empty_list_for_a_null_column() {
     );
     assert_eq!(doc.public_key, [0x5Au8; 32]);
 }
+
+#[test]
+fn resolve_rejects_an_oversized_public_key() {
+    // `VerificationMethod::new` only `debug_assert!`s the ceiling, and a
+    // debug assert compiles out in release — so the decode path has to enforce
+    // it itself. This drives a row whose key is well past
+    // MAX_PUBLIC_KEY_LEN through `resolve`, not the codec.
+    let reg = raw_registry();
+    let hash = sample_hash(0x74);
+    let mut vm = VerificationMethod::ed25519(
+        VerificationMethodId::derive("key-0"),
+        [0xAAu8; 32],
+        CustodyPosture::Hardware,
+    );
+    vm.public_key = vec![0xAAu8; octo_ident::MAX_PUBLIC_KEY_LEN + 1];
+    let blob = borsh::to_vec(&vec![vm]).expect("encode");
+    insert_raw_row(&reg, &hash, Some(&blob));
+
+    let err = reg
+        .resolve(&hash)
+        .expect_err("oversized key must be rejected, not truncated");
+    assert!(
+        err.to_string().contains("over the"),
+        "error should name the ceiling, got: {err}"
+    );
+}
+
+#[test]
+fn resolve_rejects_more_verification_methods_than_the_bound() {
+    // The dual-format design saturates MAX_VERIFICATION_METHODS exactly, so a
+    // row carrying more is not a document this substrate can represent.
+    let reg = raw_registry();
+    let hash = sample_hash(0x75);
+    let many: Vec<VerificationMethod> = (0..=octo_ident::MAX_VERIFICATION_METHODS)
+        .map(|i| {
+            VerificationMethod::ed25519(
+                VerificationMethodId::derive(&format!("key-{i}")),
+                [u8::try_from(i).expect("small index"); 32],
+                CustodyPosture::Hardware,
+            )
+        })
+        .collect();
+    let blob = borsh::to_vec(&many).expect("encode");
+    insert_raw_row(&reg, &hash, Some(&blob));
+
+    let err = reg
+        .resolve(&hash)
+        .expect_err("over the method bound must be rejected");
+    assert!(
+        err.to_string().contains("over the"),
+        "error should name the bound, got: {err}"
+    );
+}

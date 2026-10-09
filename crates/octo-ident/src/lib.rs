@@ -43,7 +43,8 @@ pub use resolver_backend::{
 pub use rich_document::{
     check_controller_cycles, CapabilityDelegation, ControllerCycleError, ControllerReference,
     CustodyPosture, ServiceEndpoint, ServiceEndpointError, VerificationMethod,
-    MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_SERVICE_ENDPOINTS, MAX_VERIFICATION_METHODS,
+    MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_PUBLIC_KEY_LEN, MAX_SERVICE_ENDPOINTS,
+    MAX_VERIFICATION_METHODS,
 };
 pub use signature_algorithm::{
     AlgorithmId, AlgorithmRegistry, AlgorithmRegistryError, CircuitId, IdBytes, SignatureAlgorithm,

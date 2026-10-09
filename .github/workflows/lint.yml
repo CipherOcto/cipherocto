@@ -74,6 +74,29 @@ jobs:
       - name: Run Prettier
         run: prettier --check . || true
 
+      # RFC specification lints.
+      #
+      # These are gating — no `|| true` — for the same reason actionlint is.
+      # The sweep this job documents above found that every other step in it
+      # swallows its exit code, so a failure in any of them is invisible. A
+      # check that cannot fail is not a check, and adding two more would have
+      # made the file worse while looking busier.
+      #
+      # Both lints are BASELINED. Each reports the pre-existing corpus and
+      # exits non-zero only on NEW findings, because a lint that fails on
+      # arrival gets switched off and leaves the defect class exactly where it
+      # was. `--strict` reports the full backlog.
+      #
+      # They exist because two R41 reviews in one session found the same class
+      # of defect repeatedly, and in every instance it was checkable in seconds:
+      # an RFC asserting a type or a section that resolves nowhere. See the
+      # module docstrings for the scope and the stated limits of each.
+      - name: Lint RFC section anchors
+        run: python3 scripts/lint-rfc-anchors.py
+
+      - name: Lint RFC type references
+        run: python3 scripts/lint-rfc-type-refs.py
+
       - name: Run Python format checks
         run: |
           black --check . || true

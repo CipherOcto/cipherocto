@@ -652,7 +652,7 @@ verifier recomputes it in Rust and passes it in, and `verify_with_challenge` in
 number the verifier already had, at a cost the direct path does not have, to
 produce a value the prover chose.
 
-`cairo/src/sha512_probe.cairo` is kept as a permanent guard so this is settled in
+`cairo/src/syscall_unsound_guard.cairo` is kept as a permanent guard so this is settled in
 both directions: the flag works, and it is still the wrong answer.
 
 #### The split that does matter

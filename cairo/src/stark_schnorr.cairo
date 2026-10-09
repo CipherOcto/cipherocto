@@ -15,7 +15,7 @@
 //! decompositions, regression tests, and a segment-range check in the verifier.
 //! The EcOp segment is constrained. A syscall segment is not constrained by
 //! anything, because hints are not part of the proof statement at all.
-//! See `sha512_probe.cairo` for the syscall contrast.
+//! See `syscall_unsound_guard.cairo` for the syscall contrast.
 //!
 //! **The scheme.** Standard Schnorr over the STARK curve. The signer holds `x`
 //! with `Q = [x]G`. To sign `m` it picks `k`, sets `R = [k]G`, and returns

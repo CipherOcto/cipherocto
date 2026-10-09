@@ -124,7 +124,7 @@ use core::traits::{Into, TryInto};
 #[cfg(test)]
 mod blake3;
 #[cfg(test)]
-mod sha512_probe;
+mod syscall_unsound_guard;
 /// Schnorr over the STARK curve — candidate for the RFC-0958 step 1
 /// holder-signature slot. Felt-native, and unlike a syscall the EcOp builtin
 /// it relies on is a fully constrained cairo-air component. Not RFC-0009's key

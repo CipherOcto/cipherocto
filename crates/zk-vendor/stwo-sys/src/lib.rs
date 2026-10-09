@@ -263,8 +263,7 @@ fn build_calldata(input: &CairoRunInput) -> Option<Vec<Felt>> {
     let w = &input.priv_witness;
 
     let mut out = Vec::with_capacity(
-        16
-            + 1
+        16 + 1
             + input.mint_felts.len()
             + 1
             + input.caveat_felts.len()
@@ -1097,7 +1096,11 @@ mod harness_tests {
         assert_eq!(c[29], Felt::from(52), "prev_ids[1]");
 
         // steps_flat: [len, elems…], one step of TRACE_STRIDE = 5.
-        assert_eq!(c[34], Felt::from(5), "steps_flat length cell = 1 step * stride 5");
+        assert_eq!(
+            c[34],
+            Felt::from(5),
+            "steps_flat length cell = 1 step * stride 5"
+        );
         assert_eq!(c[35], Felt::from(17), "step[0].op_code");
         assert_eq!(c[36], Felt::from(18), "step[0].input_hash_lo");
         assert_eq!(c[37], Felt::from(0), "step[0].input_hash_hi");
@@ -1161,7 +1164,10 @@ mod harness_tests {
             .split_once("pub fn executable_main(")
             .expect("cairo/src/lib.cairo must declare `pub fn executable_main`")
             .1;
-        let exe_params = exe_tail.split_once(')').expect("parameter list must close").0;
+        let exe_params = exe_tail
+            .split_once(')')
+            .expect("parameter list must close")
+            .0;
         let exe_names: Vec<&str> = exe_params
             .split(',')
             .filter_map(|p| p.split(':').next())
@@ -1184,7 +1190,10 @@ mod harness_tests {
     /// widen the array by exactly one stride.
     #[test]
     fn the_step_field_set_matches_the_declared_stride() {
-        assert_eq!(TRACE_STRIDE, 5, "op + input_lo + input_hi + output_lo + output_hi");
+        assert_eq!(
+            TRACE_STRIDE, 5,
+            "op + input_lo + input_hi + output_lo + output_hi"
+        );
 
         let one: CairoRunInput = serde_json::from_str(&satisfying_input()).unwrap();
         let c1 = build_calldata(&one).expect("build one step");
@@ -1199,8 +1208,16 @@ mod harness_tests {
         // 11 PublicInputs + 5 PrivateWitness + 4 chain arrays (2+3+3+6 cells plus
         // one length cell each) + 1 steps length cell + 1 step of stride 5.
         assert_eq!(c1.len(), 40, "one step");
-        assert_eq!(c2.len(), 40 + TRACE_STRIDE, "a second step widens by exactly one stride");
-        assert_eq!(c2[34], Felt::from(10), "steps_flat length cell = 2 steps * stride 5");
+        assert_eq!(
+            c2.len(),
+            40 + TRACE_STRIDE,
+            "a second step widens by exactly one stride"
+        );
+        assert_eq!(
+            c2[34],
+            Felt::from(10),
+            "steps_flat length cell = 2 steps * stride 5"
+        );
         assert_eq!(c2[35], Felt::from(17), "step[0] is unchanged");
         assert_eq!(c2[40], Felt::from(20), "step[1].op_code");
         assert_eq!(c2[44], Felt::from(24), "step[1].output_hash_hi");
@@ -1264,8 +1281,31 @@ mod harness_tests {
     /// accepts a mutated proof is not verifying anything.
     ///
     /// Slow (~1 min): proving 440 program counters through STWO.
+    ///
+    /// The body runs on an explicitly-sized thread rather than the harness
+    /// thread. STWO's EC arithmetic recurses deeply enough to overrun the
+    /// default test-thread stack, and it does so with an abort
+    /// (`has overflowed its stack`), not a panic — so it cannot be caught
+    /// here and takes the whole test binary down. The requirement appeared
+    /// when the Schnorr module put `core::ec` on the proving path; before
+    /// that the circuit stayed in field arithmetic and the default stack was
+    /// fine. `RUST_MIN_STACK` in the environment also works, but only for
+    /// whoever remembered to set it, so the requirement is pinned here.
     #[test]
     fn harness_proof_verifies_and_tampered_proof_does_not() {
+        std::thread::Builder::new()
+            .stack_size(PROVER_STACK_BYTES)
+            .spawn(proof_round_trip)
+            .expect("spawn prover thread")
+            .join()
+            .expect("prover thread must not panic");
+    }
+
+    /// Stack the STWO prover needs, measured on the `core::ec` proving path
+    /// with headroom. Not a tuning knob: below this the process aborts.
+    const PROVER_STACK_BYTES: usize = 134_217_728;
+
+    fn proof_round_trip() {
         // Raw `Executable` JSON — the exact bytes the mint path hands the FFI.
         let program_json = fixture_bytes();
         let run_input_json = satisfying_input();

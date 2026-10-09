@@ -1,6 +1,6 @@
 ---
 name: 0009-c-verification-dispatch
-description: RFC-0009 v1.3 AC#11. Move every holder- and capability-signature verification site off hardcoded ed25519_dalek::VerifyingKey::from_bytes and dispatch through AlgorithmRegistry.
+description: RFC-0009 AC#11. Move every holder- and capability-signature verification site off hardcoded ed25519_dalek::VerifyingKey and dispatch through AlgorithmRegistry. Two site shapes, 65 sites across 26 files.
 metadata:
   node_type: mission
   type: implementation
@@ -40,37 +40,62 @@ itself.
 
 ### The sites, as of 2026-10-09
 
-A survey of `VerifyingKey::from_bytes` across the workspace found the call is
-far more widely distributed than a single-crate migration would suggest. It
-appears in, among others:
+There are **two** shapes, and the mission's original acceptance grep only saw
+one of them. This is the finding that matters most in this file.
 
-- `octo-network` — `reputation.rs`, `ocrypt/attestation.rs` (multiple),
-  `dom/admission.rs`, `dot/dc.rs`, `dot/envelope.rs`, `drs/route.rs`,
-  `porelay/forwarding.rs`, `heartbeat.rs`, `availability.rs`, `bandwidth.rs`
-- `octo-settlement-core`
-- `octo-cap-macaroon` — `holder_sig: ed25519_dalek::Signature` on the token
-- `octo-cap-zk` — imports `ed25519_dalek::Signature`; `holder_sig: Signature`
-- `octo-protocol`, `octo-sync`, `octo-runtime`, `quota-router-storage`,
-  `octo-adapter-nostr`, `octo-reputation`, `octo-wallet-node`,
-  `quota-router-sm-engine`
+**Shape 1 — a key is constructed from bytes.** `VerifyingKey::from_bytes`:
+**38 occurrences across 25 files**, including `octo-settlement-core`,
+`octo-adapter-nostr`, `octo-runtime`, `octo-protocol`, `octo-reputation`,
+`octo-wallet-node`, `quota-router-sm-engine`, `quota-router-storage`,
+`octo-cap-macaroon` and ten files under `octo-network`.
+
+**Shape 2 — the algorithm is a parameter type.** `: &VerifyingKey` (or
+`&ed25519_dalek::VerifyingKey`) in a signature: **27 occurrences across 7
+files**, every one of them under `crates/octo-network/src/dot/` —
+`dc_envelopes.rs` (7), `handover.rs` (6), `kick_envelopes.rs` (5),
+`binding.rs` (5), `decommission.rs` (2), `sub_group.rs` (1), `witness.rs` (1).
+
+Shape 2 is `pub fn verify(&self, …, vk: &VerifyingKey)` — an Ed25519 verifying
+key baked into a public signature. **Shape 1's grep matches none of them.**
+An implementer who runs the original grep, converts all 38 sites, and declares
+done leaves 27 public `verify` entry points still verifying under hardcoded
+Ed25519. And because shape 2 already has a typed `VerifyingKey`, it compiles
+perfectly after the enum is removed — nothing forces it to change.
+
+The `octo-wallet` sites were also missing entirely, and that crate holds the
+single most important verifier in the RFC: `IdentityKey::verify`, which is the
+only verification entry point on RFC-0009's own primary type. Also
+`verify_successor_proof` and `verify_revocation_proof` in the same file.
 
 **Re-survey before starting** rather than trusting this list — it was a
-point-in-time grep. The exhaustive check is
-`no_verification_site_hardcodes_an_algorithm`, which greps the source and
-fails if the symbol appears outside the registration. That vector is the
-acceptance condition, not this list.
+point-in-time grep. The exhaustive check needs **both** shapes, and the
+`octo-network` `dot/` sites need their own review pass because they are a
+different refactor: they take a `VerifyingKey` where the registry wants an
+`AlgorithmId`, so it is a signature change across 27 public entry points, not
+a body-level substitution.
 
 Note the distinction that matters: sites that _sign_, sites that _verify a
 holder signature_, and sites that _carry a typed signature field_ are not the
 same job. Only the latter two need dispatch. Signing through the registry is
 `0009-e`'s problem, not this one.
 
-### Per-key revocation lands here too
+### Per-key revocation lands here too — but check who owns it first
 
 AC#14 requires the verifier to consult key-level revocation
 (`VerificationMethod.revoked_at`) **before** the identity-scoped check. The
 identity gate is RFC-0958's. The key gate has no home until a verification site
 resolves the DID, which none of these currently do.
+
+**`0958-a` currently claims this same per-key gate as verifier-side work.** A
+verifier-side check cannot fire on the ZK path while RFC-0958 §Algorithms
+resolves the DID inside the circuit — the verifier never gets to make the
+decision. An implementer who builds the key gate here will produce a gate that
+never executes where it is needed, while `0958-a` separately reports the
+identity gate delivered. **Resolve which artifact owns the per-key gate before
+claiming either mission,** and record the answer in both. The honest options
+are: the circuit stops resolving the DID and the verifier owns both gates, or
+the key gate stays a real gap until new public inputs exist. What must not
+happen is two missions each half-claiming it.
 
 RFC-0009 A14's oracle: one STARK-curve key compromised, identity otherwise
 sound, Ed25519 key untouched — the holder must survive that. Make
@@ -81,16 +106,43 @@ sound, Ed25519 key untouched — the holder must survive that. Make
 Verified by the §Test Vectors list. Each vector is a named, independently
 runnable check; a vector passing is the acceptance condition met.
 
-## Test Vectors (per RFC-0009 v1.3 §Acceptance Criteria)
+## Test Vectors (per RFC-0009 §Acceptance Criteria)
 
-- `no_verification_site_hardcodes_an_algorithm` — grep-based, workspace-wide
-- `cross_algorithm_signature_replay_rejected` — a signature made under one
-  registered algorithm does not verify under another, **including the
-  prefix-stripped message case**, not only the wrong-key case
-- `revoked_identity_replay_rejected` (RFC-0958 v1.7)
-- `compromised_key_revoked_without_identity_revocation`
+- `no_verification_site_hardcodes_an_algorithm` — grep-based, workspace-wide,
+  and it must match **both** shapes or it proves nothing:
+  - `VerifyingKey::from_bytes` and `Signature::from_bytes` outside the Ed25519
+    registration
+  - `: &VerifyingKey` and `&ed25519_dalek::VerifyingKey` as a **parameter
+    type** anywhere under `crates/`
 
-Gate: `cargo test -p octo-ident --lib` plus the per-crate suites below.
+  The second pattern is the one that catches the 27 `pub fn verify` sites in
+  `octo-network/src/dot/`, and it is the pattern the original mission omitted.
+  A vector that greps only the first reports green with 27 hardcoded Ed25519
+  entry points still live.
+
+- `cross_algorithm_signature_replay_rejected` — **co-owned with `0009-e`.**
+  See the ownership note below; do not build it twice.
+- `revoked_identity_replay_rejected` — RFC-0958's, i.e. `0958-a`'s. Listed
+  here for completeness; it is **not** this mission's to deliver.
+- `compromised_key_revoked_without_identity_revocation` — blocked on the
+  ownership question above, and on `0009-d` for a second key to compromise.
+
+### Vector ownership, stated once
+
+Three vectors have more than one plausible owner. Per BLUEPRINT
+§Multi-Mission Decomposition, ownership is decided **before** implementation,
+not discovered when two branches collide:
+
+| Vector                                                | Owner         | Note                                                                                                                                                    |
+| ----------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_verification_site_hardcodes_an_algorithm`         | `0009-c`      | dispatch, uniquely this mission's                                                                                                                       |
+| `cross_algorithm_signature_replay_rejected`           | `0009-e`      | it is a property of the prefix, and `0009-e` already co-owns it. Dispatch-level mismatch rejection is this mission's, but that is a different assertion |
+| `revoked_identity_replay_rejected`                    | `0958-a`      | the identity gate is RFC-0958's                                                                                                                         |
+| `compromised_key_revoked_without_identity_revocation` | **undecided** | see §Per-key revocation                                                                                                                                 |
+
+Gate: the per-crate suites below. **`octo-network` is in the clippy list but
+was missing from the test list** — and `octo-network` holds all 27 shape-2
+sites, so a green run that skips it validates nothing about the hard part.
 
 ## Layer direction (per `cipherocto-design-principles`)
 
@@ -107,10 +159,16 @@ in its public API after this mission, the abstraction did not do its job.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy -p octo-ident -p octo-cap-macaroon -p octo-cap-zk -p octo-network --all-targets --all-features -- -D warnings
+cargo clippy -p octo-ident -p octo-cap-macaroon -p octo-cap-zk -p octo-network -p octo-wallet --all-targets --all-features -- -D warnings
 cargo test -p octo-ident --lib
 cargo test -p octo-cap-macaroon -p octo-cap-zk --lib
+cargo test -p octo-network --lib
+cargo test -p octo-wallet --lib
 ```
+
+`octo-network` and `octo-wallet` are in the test commands, not just the clippy
+one: `octo-network` holds every shape-2 site and `octo-wallet` holds
+`IdentityKey::verify`. Both were missing from the test gate.
 
 Do not run the full workspace suite for this mission; `octo-network` alone is
 long and the touched crates are the ones under change.

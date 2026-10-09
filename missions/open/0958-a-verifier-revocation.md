@@ -18,13 +18,13 @@ Open (2026-10-09). Claimable — no claimant assigned.
 
 ## Dependencies
 
-`depends_on: RFC-0958`. No hard dependency on the RFC-0009 v1.3 missions,
+`depends_on: RFC-0958`. No hard dependency on the RFC-0009 missions,
 though per-key revocation (`0009-c`) is the other half of the composed control
 and is a known open gap until both land.
 
 ## Scope
 
-Implement RFC-0958 v1.7. Nothing here exists in the code yet:
+Implement RFC-0958. Nothing here exists in the code yet:
 `capability.rs` still holds the symmetric `abs_diff` check against
 `MAX_SKEW_SECS` and has no revocation step at all.
 
@@ -211,7 +211,11 @@ over it by widening the identity check.
 Verified by the §Test Vectors list. Each vector is a named, independently
 runnable check; a vector passing is the acceptance condition met.
 
-## Test Vectors (per RFC-0958 v1.7 §Test Vectors)
+## Test Vectors
+
+RFC-0958 §Test Vectors names one of these. The rest are this mission's own
+additions, and the ones that matter most — the order-independence unit test and
+`zk-verify-stwo-fail-with-revoked-did` — are not in the RFC at all.
 
 - `zk-verify-revoked-identity.json` → `IdentityRevoked`
 - `zk-verify-stale-revocation.json` → `RevocationStateStale`

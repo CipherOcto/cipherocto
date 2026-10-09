@@ -140,7 +140,7 @@ cargo test --workspace --lib
 - `mission-gap-closure-priorities-2026-08-10` — memory context
 - `missions/open/0009-b-algorithm-registry`, `0009-c-verification-dispatch`,
   `0009-d-stark-schnorr-algorithm`, `0009-e-signable-domain-separation` — the
-  RFC-0009 v1.3 decomposition; separate claimable units, not part of this one
+  RFC-0009 decomposition; separate claimable units, not part of this one
 
 ## Claimant
 

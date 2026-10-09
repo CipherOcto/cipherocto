@@ -1,6 +1,6 @@
 ---
 name: 0009-b-algorithm-registry
-description: RFC-0009 v1.3 BC#13. Replace the VerificationMethodKind central enum with a SignatureAlgorithm trait + AlgorithmRegistry keyed by AlgorithmId(Uuid). Add VerificationMethodId, revoked_at and custody fields, and the load-bearing storage migration in octo-ident-storage.
+description: RFC-0009 BC#13. Replace the VerificationMethodKind central enum with a SignatureAlgorithm trait + AlgorithmRegistry keyed by AlgorithmId(Uuid). Add VerificationMethodId, revoked_at and custody fields, and the load-bearing storage migration in octo-ident-storage.
 metadata:
   node_type: mission
   type: implementation
@@ -15,17 +15,17 @@ metadata:
 ## Status
 
 Open (2026-10-09). Claimable — no claimant assigned. **Base mission for the
-RFC-0009 v1.3 decomposition**; `0009-c`, `0009-d` and `0009-e` all depend on
+RFC-0009 decomposition**; `0009-c`, `0009-d` and `0009-e` all depend on
 this one and MUST NOT start before it lands.
 
 ## Dependencies
 
-None. This is the root of the v1.3 mission set. Its gating condition is
-RFC-0009 v1.3 acceptance, which is recorded.
+None. This is the root of the RFC-0009 mission set. Its gating condition is
+RFC-0009 acceptance, which is recorded.
 
 ## Scope
 
-Implement RFC-0009 v1.3 §Dual-format signature algorithms and the ZK-capable key
+Implement RFC-0009 §Dual-format signature algorithms and the ZK-capable key
 — the substrate half only. Verification-site dispatch is `0009-c`, the
 STARK-curve registration is `0009-d`, and the signable prefix is `0009-e`.
 
@@ -129,7 +129,7 @@ be locally allocated at signing time." So:
   every `resolve`. Any signature made over the signable prefix against a
   migrated method becomes unverifiable, which breaks `0009-e`.
 - A deterministic derivation from the public key violates the MUST directly,
-  and is the mistake RFC-0009 v1.4 singles out when it rejected the existing
+  and is the mistake RFC-0009 singles out when it rejected the existing
   string-fragment key id.
 
 **The migration rule for `id` is therefore: derive it once, deterministically,
@@ -210,7 +210,10 @@ runnable check; a vector passing is the acceptance condition met. Do not add a
 separate checkbox list here — it would duplicate the vectors and let the two
 drift apart.
 
-## Test Vectors (per RFC-0009 v1.3 §Acceptance Criteria)
+## Test Vectors
+
+AC#16 names three of these in RFC-0009; the rest are this mission's own
+additions. The migration itself is the acceptance condition, not the list.
 
 - `legacy_document_migrates_to_algorithm_id` — a pre-migration document
   decodes through the migration path with a non-empty method list and the
@@ -251,7 +254,7 @@ cargo test -p octo-ident-storage
 
 ## Backward compat
 
-None, by design. RFC-0009 v1.3 removed the `derive_capability_key_v11` shim
+None, by design. RFC-0009 removed the `derive_capability_key_v11` shim
 and adds none here: nothing is deployed, and a `#[deprecated]` path that keeps
 a lossy decoder reachable has no audience.
 
@@ -274,7 +277,7 @@ Do not open an RFC-0010 amendment on the strength of this mission.
 - `rfcs/accepted/process/0010-canonical-did-codec.md` — the real RFC-0010
   Rich DID Document codec. Cited for the forward-compatibility fail-soft
   contract that survives the `list` and NULL-column cases above. There is **no**
-  cross-RFC discriminator conflict; RFC-0009 v1.4 retracted the claim that
+  cross-RFC discriminator conflict; RFC-0009 retracted the claim that
   there was, and an earlier draft of this mission repeated it
 - `missions/open/0009-c-verification-dispatch` — every call site
 - `missions/open/0009-d-stark-schnorr-algorithm`

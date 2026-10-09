@@ -42,7 +42,7 @@ pub use resolver_backend::{
 };
 pub use rich_document::{
     check_controller_cycles, CapabilityDelegation, ControllerCycleError, ControllerReference,
-    ServiceEndpoint, ServiceEndpointError, VerificationMethod, VerificationMethodKind,
+    CustodyPosture, ServiceEndpoint, ServiceEndpointError, VerificationMethod,
     MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_SERVICE_ENDPOINTS, MAX_VERIFICATION_METHODS,
 };
 pub use signature_algorithm::{

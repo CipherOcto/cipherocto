@@ -10,8 +10,8 @@
 //! in mission 0206-003 v3.0.
 
 use octo_ident::{
-    CapabilityDelegation, ControllerReference, DidDocument, DidRegistry, ServiceEndpoint,
-    VerificationMethod,
+    CapabilityDelegation, ControllerReference, CustodyPosture, DidDocument, DidRegistry,
+    ServiceEndpoint, VerificationMethod,
 };
 use octo_ident_storage::StoolapDidRegistry;
 
@@ -48,8 +48,8 @@ fn rich_doc(seed: u8) -> DidDocument {
             ControllerReference::new(format!("did:octo:zController{:02x}", seed.wrapping_add(1))),
         ],
         verification_methods: vec![
-            VerificationMethod::ed25519(sample_pk(seed)),
-            VerificationMethod::ed25519(sample_pk(seed.wrapping_add(1))),
+            VerificationMethod::ed25519(sample_pk(seed), CustodyPosture::Hardware),
+            VerificationMethod::ed25519(sample_pk(seed.wrapping_add(1)), CustodyPosture::Software),
         ],
         capability_delegations: vec![
             CapabilityDelegation::new(sample_hash(seed)),
@@ -166,10 +166,10 @@ fn register_with_max_verification_methods() {
         ..Default::default()
     };
     for i in 0..MAX_VERIFICATION_METHODS {
-        doc.verification_methods
-            .push(VerificationMethod::ed25519(sample_pk(
-                u8::try_from(i).expect("loop index fits in u8"),
-            )));
+        doc.verification_methods.push(VerificationMethod::ed25519(
+            sample_pk(u8::try_from(i).expect("loop index fits in u8")),
+            CustodyPosture::Hardware,
+        ));
     }
     reg.register(&hash, doc.clone()).expect("register max");
     let resolved = reg.resolve(&hash).expect("resolve").expect("present");

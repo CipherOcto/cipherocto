@@ -23,9 +23,10 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 use octo_ident::{
-    canonical_hash, check_controller_cycles, CapabilityDelegation, ControllerCycleError,
-    ControllerReference, DidCodec, DidDocument, ServiceEndpoint, ServiceEndpointError,
-    VerificationMethod, VerificationMethodKind, MAX_SERVICE_ENDPOINTS,
+    canonical_hash, check_controller_cycles, AlgorithmId, CapabilityDelegation,
+    ControllerCycleError, ControllerReference, CustodyPosture, DidCodec, DidDocument,
+    ServiceEndpoint, ServiceEndpointError, VerificationMethod, VerificationMethodId,
+    MAX_SERVICE_ENDPOINTS,
 };
 
 fn sample_doc(public_key: [u8; 32]) -> DidDocument {
@@ -56,7 +57,7 @@ fn tv1_rich_document_round_trip() {
             ServiceEndpoint::new("inbox", "cipherocto://inbox.example/v1").unwrap(),
         ],
         controllers: vec![ControllerReference::new("did:octo:zparent")],
-        verification_methods: vec![VerificationMethod::ed25519(pk)],
+        verification_methods: vec![VerificationMethod::ed25519(pk, CustodyPosture::Hardware)],
         capability_delegations: vec![CapabilityDelegation::new([0xB1; 32])],
     };
 
@@ -177,54 +178,73 @@ fn tv4_service_endpoint_uri_absolute_only() {
     const _: () = assert!(MAX_SERVICE_ENDPOINTS >= 1);
 }
 
-/// TV-5 verification_method_type_discriminator — `Ed25519` (0x01) +
-/// `Reserved` (0x00 + any non-Ed25519 byte) round-trip via
-/// `as_byte` / `from_byte`. Future PQC kinds land in `Reserved` and
-/// are distinguishable from Ed25519.
+/// TV-5 verification_method_type_discriminator — the algorithm discriminator
+/// round-trips through a full `DidDocument`, and two unregistered algorithms
+/// stay **distinct**. The removed `VerificationMethodKind` mapped every byte
+/// except 0x01 onto a single `Reserved` whose canonical byte was 0x00, so two
+/// different unknown discriminators became indistinguishable after a
+/// round-trip — and its doc comment claimed the mapping failed closed.
 #[test]
 fn tv5_verification_method_type_discriminator() {
     let pk = sample_pubkey(0xE1);
 
-    // Ed25519 round-trip.
-    let vm = VerificationMethod::ed25519(pk);
-    assert_eq!(vm.kind, VerificationMethodKind::Ed25519);
-    assert_eq!(vm.kind.as_byte(), 0x01);
-    assert_eq!(
-        VerificationMethodKind::from_byte(0x01),
-        VerificationMethodKind::Ed25519
+    // Ed25519: the algorithm discriminator round-trips, and the key id is
+    // present rather than reconstructed.
+    let vm = VerificationMethod::ed25519(pk, CustodyPosture::Hardware);
+    assert_eq!(vm.algorithm_id, AlgorithmId::derive("ed25519"));
+    assert_eq!(vm.id, VerificationMethodId::derive("ed25519"));
+    assert_eq!(vm.public_key, pk.to_vec());
+    assert!(!vm.is_revoked());
+    assert_eq!(vm.custody, CustodyPosture::Hardware);
+
+    // An unknown algorithm is NOT collapsed onto a catch-all. The removed
+    // `VerificationMethodKind` mapped every byte except 0x01 onto `Reserved`,
+    // whose `as_byte()` was 0x00, so two different unknown discriminators
+    // became indistinguishable after a round-trip — the doc comment claimed
+    // the opposite. Two unregistered algorithms must now stay distinct.
+    let a = AlgorithmId::derive("algorithm-a");
+    let b = AlgorithmId::derive("algorithm-b");
+    assert_ne!(a, b);
+
+    // DidDocument with two methods under different algorithms round-trips
+    // with every new field intact: id, algorithm_id, key, revoked_at, custody.
+    let mut revoked = VerificationMethod::new(
+        VerificationMethodId::derive("key-1"),
+        b,
+        vec![0u8; 32],
+        CustodyPosture::Software,
     );
-
-    // Reserved bytes round-trip as Reserved (fail-closed: unknown
-    // discriminators get the catch-all kind rather than being
-    // misinterpreted as Ed25519).
-    for byte in [0x00, 0x02, 0x7F, 0xFF] {
-        let kind = VerificationMethodKind::from_byte(byte);
-        assert_eq!(kind, VerificationMethodKind::Reserved);
-    }
-    // `Reserved.as_byte()` is the canonical byte for the kind (0x00);
-    // the source byte is not preserved (per W3C-style discriminator
-    // pattern: unknown → canonical catch-all).
-    assert_eq!(VerificationMethodKind::Reserved.as_byte(), 0x00);
-
-    // DidDocument with mixed verification methods round-trips.
+    revoked.revoked_at = Some(1_700_000_000);
     let doc = DidDocument {
         public_key: pk,
         revoked: false,
-        verification_methods: vec![
-            VerificationMethod::ed25519(pk),
-            VerificationMethod::new(VerificationMethodKind::Reserved, [0u8; 32]),
-        ],
+        verification_methods: vec![vm.clone(), revoked.clone()],
         ..Default::default()
     };
     let bytes = borsh::to_vec(&doc).unwrap();
     let back: DidDocument = borsh::from_slice(&bytes).unwrap();
     assert_eq!(back.verification_methods.len(), 2);
+
+    assert_eq!(back.verification_methods[0].algorithm_id, a_of_ed25519());
+    assert_eq!(back.verification_methods[0].id, vm.id);
+    assert!(!back.verification_methods[0].is_revoked());
     assert_eq!(
-        back.verification_methods[0].kind,
-        VerificationMethodKind::Ed25519
+        back.verification_methods[0].custody,
+        CustodyPosture::Hardware
     );
+
+    assert_eq!(back.verification_methods[1].algorithm_id, b);
+    assert_eq!(back.verification_methods[1].id, revoked.id);
+    assert!(back.verification_methods[1].is_revoked());
     assert_eq!(
-        back.verification_methods[1].kind,
-        VerificationMethodKind::Reserved
+        back.verification_methods[1].custody,
+        CustodyPosture::Software
     );
+    assert_eq!(back.verification_methods[1], revoked);
+}
+
+/// The Ed25519 discriminator, spelled out separately so TV-5 can assert that
+/// a round-trip does not collapse two distinct algorithm ids into one.
+fn a_of_ed25519() -> AlgorithmId {
+    AlgorithmId::derive("ed25519")
 }

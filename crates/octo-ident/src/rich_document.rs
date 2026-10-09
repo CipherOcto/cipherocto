@@ -12,7 +12,7 @@
 //!    (RFC-0957) so the DID Document attests to delegated capabilities
 //!    without duplicating the wire form.
 //! 4. **`VerificationMethod`** — multi-key DID surface. Type discriminator
-//!    via [`VerificationMethodKind`] (Ed25519 today; PQC future).
+//!    via [`AlgorithmId`], resolved through the `AlgorithmRegistry`.
 //!
 //! ## Layer discipline
 //!
@@ -30,6 +30,7 @@
 
 use thiserror::Error;
 
+use crate::signature_algorithm::{AlgorithmId, VerificationMethodId};
 use crate::DidCodec;
 
 /// Maximum number of service endpoints per DID (RFC-0010 §Bounds).
@@ -170,75 +171,100 @@ pub enum ServiceEndpointError {
     UriNotAbsolute,
 }
 
-/// Verification method (RFC-0010 §VerificationMethod).
+/// Where an identity's private key lives.
 ///
-/// The `kind` field is a typed discriminator ([`VerificationMethodKind`]).
-/// The `public_key` field is the 32-byte Ed25519 public key (PQC keys land
-/// in v2.0 via the `VerificationMethodKind` extension hook).
+/// One identity holds two keys under two algorithms, and most hardware
+/// backends do not implement the STARK curve — so the ZK-capable key is the
+/// one most likely to fall back to software. An implementation that registers
+/// a STARK-curve key MUST declare its posture here, and MUST NOT present a
+/// software-held ZK key as equivalent to a hardware-held Ed25519 key beside
+/// it. Two keys means two custody stories, and the weaker one is the one an
+/// attacker will target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "borsh",
+    derive(borsh::BorshSerialize, borsh::BorshDeserialize),
+    borsh(use_discriminant = true)
+)]
+#[repr(u8)]
+pub enum CustodyPosture {
+    /// Non-exportable, hardware-backed.
+    Hardware = 0x01,
+    /// Software-resident. MUST be reflected in any trust display or
+    /// authorization decision that compares the two keys of an identity.
+    Software = 0x02,
+    /// Delegated to a threshold scheme.
+    Threshold = 0x03,
+}
+
+/// Verification method (RFC-0010 §VerificationMethod, RFC-0009 §Dual-format
+/// signature algorithms and the ZK-capable key).
+///
+/// `public_key` is length-generic because algorithms do not agree on key
+/// size; `MAX_PUBLIC_KEY_LEN` bounds it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "borsh",
     derive(borsh::BorshSerialize, borsh::BorshDeserialize)
 )]
 pub struct VerificationMethod {
-    /// Method kind discriminator (Ed25519 today; PQC future).
-    pub kind: VerificationMethodKind,
-    /// 32-byte public key.
-    pub public_key: [u8; 32],
+    /// Stable identity of this key within its DID document. This is the
+    /// `key_id` in the mandatory signable prefix, and it is not optional: a
+    /// verifier holding only a public key cannot reconstruct one, and a
+    /// locally-allocated id would make the signed domain depend on who
+    /// signed.
+    pub id: VerificationMethodId,
+    /// Which algorithm this key verifies under. Resolved through the
+    /// `AlgorithmRegistry`, never by matching on a central enum.
+    pub algorithm_id: AlgorithmId,
+    /// Public key bytes, length determined by the registered algorithm.
+    pub public_key: Vec<u8>,
+    /// Per-key revocation. Without this the identity-level revocation
+    /// cascade has nothing to act on, because the registry revokes
+    /// identities and nothing else.
+    pub revoked_at: Option<u64>,
+    /// Custody posture for this key.
+    pub custody: CustodyPosture,
 }
 
 impl VerificationMethod {
     /// Construct an Ed25519 verification method.
+    ///
+    /// The `id` is derived, not generated, so it is stable across
+    /// processes and resolvers — the signable prefix depends on that. Prefer
+    /// [`VerificationMethod::new`] when the caller owns the identity's key
+    /// naming scheme.
     #[must_use]
-    pub fn ed25519(public_key: [u8; 32]) -> Self {
+    pub fn ed25519(public_key: [u8; 32], custody: CustodyPosture) -> Self {
+        Self::new(
+            VerificationMethodId::derive("ed25519"),
+            AlgorithmId::derive("ed25519"),
+            public_key.to_vec(),
+            custody,
+        )
+    }
+
+    /// Construct a verification method under an explicit id and algorithm.
+    #[must_use]
+    pub fn new(
+        id: VerificationMethodId,
+        algorithm_id: AlgorithmId,
+        public_key: Vec<u8>,
+        custody: CustodyPosture,
+    ) -> Self {
         Self {
-            kind: VerificationMethodKind::Ed25519,
+            id,
+            algorithm_id,
             public_key,
+            revoked_at: None,
+            custody,
         }
     }
 
-    /// Construct a verification method with a custom kind (future PQC).
-    pub fn new(kind: VerificationMethodKind, public_key: [u8; 32]) -> Self {
-        Self { kind, public_key }
-    }
-}
-
-/// Verification method kind (RFC-0010 §VerificationMethodKind).
-///
-/// Compact typed discriminator. v1.5 ships `Ed25519` + a `Reserved` slot
-/// for future PQC keys (per RFC-0853 §F1 hooks). PQC kinds land in v2.0
-/// by adding variants here — extensions NEVER modify existing variants
-/// (per [[cipherocto-design-principles]] §Extension over enumeration).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u8)]
-#[cfg_attr(
-    feature = "borsh",
-    derive(borsh::BorshSerialize, borsh::BorshDeserialize),
-    borsh(use_discriminant = true)
-)]
-pub enum VerificationMethodKind {
-    /// Ed25519 (RFC-0010 baseline).
-    Ed25519 = 0x01,
-    /// Reserved for future amendments (PQC keys per RFC-0853 §F1).
-    Reserved = 0x00,
-}
-
-impl VerificationMethodKind {
-    /// Round-trip a kind to/from its canonical byte.
+    /// Whether this key is revoked, and when.
     #[must_use]
-    pub fn as_byte(self) -> u8 {
-        self as u8
-    }
-
-    /// Decode a kind from its canonical byte. Reserved bytes are
-    /// round-tripped as `Reserved` so old code fails-closed on unknown
-    /// discriminators.
-    #[must_use]
-    pub fn from_byte(byte: u8) -> Self {
-        match byte {
-            0x01 => Self::Ed25519,
-            _ => Self::Reserved,
-        }
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
     }
 }
 
@@ -415,26 +441,56 @@ mod tests {
 
     #[test]
     fn verification_method_ed25519_default() {
-        let vm = VerificationMethod::ed25519([1u8; 32]);
-        assert_eq!(vm.kind, VerificationMethodKind::Ed25519);
-        assert_eq!(vm.kind.as_byte(), 0x01);
+        let vm = VerificationMethod::ed25519([1u8; 32], CustodyPosture::Hardware);
+        assert_eq!(vm.algorithm_id, AlgorithmId::derive("ed25519"));
+        assert_eq!(vm.public_key.len(), 32);
+        assert!(!vm.is_revoked());
+        assert_eq!(vm.custody, CustodyPosture::Hardware);
+    }
+
+    /// Replaces the deleted `verification_method_kind_round_trip` test, which
+    /// asserted the opposite property: that every unknown byte collapsed onto
+    /// one `Reserved` variant whose `as_byte()` was `0x00`. That made two
+    /// different unknown discriminators indistinguishable after a round-trip,
+    /// which is precisely why the enum was removed.
+    #[test]
+    fn unknown_algorithm_ids_stay_distinguishable() {
+        // Two algorithms nobody has registered must not collapse onto one
+        // another on any round-trip. This is the property the old enum
+        // destroyed.
+        let a = AlgorithmId::derive("algorithm-a");
+        let b = AlgorithmId::derive("algorithm-b");
+        assert_ne!(a, b);
+        assert_eq!(AlgorithmId::from_bytes(*a.as_bytes()), a);
+        assert_eq!(AlgorithmId::from_bytes(*b.as_bytes()), b);
+        assert_eq!(AlgorithmId::from_uuid(a.to_uuid()), a);
+        assert_eq!(AlgorithmId::from_uuid(b.to_uuid()), b);
     }
 
     #[test]
-    fn verification_method_kind_round_trip() {
-        // Ed25519 round-trips exactly; Reserved is the catch-all for
-        // every other byte.
-        for byte in 0u8..=u8::MAX {
-            let kind = VerificationMethodKind::from_byte(byte);
-            let back = kind.as_byte();
-            if byte == 0x01 {
-                assert_eq!(back, 0x01);
-                assert_eq!(kind, VerificationMethodKind::Ed25519);
-            } else {
-                assert_eq!(kind, VerificationMethodKind::Reserved);
-                assert_eq!(back, 0x00);
-            }
-        }
+    fn verification_method_revocation_is_per_key() {
+        // Identity revocation exists, but a document holding two keys needs
+        // per-key revocation too, or the cascade has nothing to act on.
+        let mut vm = VerificationMethod::ed25519([1u8; 32], CustodyPosture::Software);
+        assert!(!vm.is_revoked());
+        vm.revoked_at = Some(1_700_000_000);
+        assert!(vm.is_revoked());
+        // Revoking one key does not revoke the other.
+        let other = VerificationMethod::ed25519([2u8; 32], CustodyPosture::Hardware);
+        assert!(!other.is_revoked());
+    }
+
+    #[test]
+    fn custody_posture_is_distinguishable() {
+        // A software-held ZK key must not read as equivalent to a
+        // hardware-held Ed25519 key. Both are valid; conflating them is the
+        // failure, so the variants must be distinct values.
+        let mut vm = VerificationMethod::ed25519([7u8; 32], CustodyPosture::Software);
+        let hw = VerificationMethod::ed25519([7u8; 32], CustodyPosture::Hardware);
+        assert_ne!(vm.custody, hw.custody);
+        assert_eq!(vm.public_key, hw.public_key, "same key, different posture");
+        vm.custody = CustodyPosture::Threshold;
+        assert_ne!(vm.custody, hw.custody);
     }
 
     #[test]

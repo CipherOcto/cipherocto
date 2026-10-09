@@ -32,10 +32,14 @@ BASELINE_PATH = Path(__file__).resolve().parent / "lint-rfc-anchors-baseline.txt
 # BLUEPRINT section and not an RFC section.
 INDEX_SOURCES = [RFC_ROOT, ROOT / "docs", ROOT / "missions"]
 
-# `§Section Name` — the name runs to a backtick, pipe, newline, comma, or the
-# start of the next sentence. The comma terminator matters: `§A, §B` is two
-# anchors, not one called "a, b".
-ANCHOR = re.compile(r"§([A-Z][A-Za-z0-9][^`|,\n]*?)(?=`|\||,|\n|$|\s+[a-z]|\s*\.)")
+# `§Section Name` — the name runs to a backtick, pipe, newline, comma, an em or
+# en dash, or the start of the next sentence. The comma terminator matters:
+# `§A, §B` is two anchors, not one called "a, b". The dash terminators matter
+# because this repo writes `§Data Structures — a note`, and without them the
+# dash is swallowed into the name and every such reference reads as dangling.
+ANCHOR = re.compile(
+    r"§([A-Z][A-Za-z0-9][^`|,\n—–]*?)(?=`|\||,|—|–|\n|$|\s+[a-z]|\s*\.)"
+)
 
 # A heading is `## Something` / `### Something`. Strip markdown emphasis and a
 # trailing parenthetical qualifier, so `## Additive Changes (per R28 M3)` is

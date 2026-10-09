@@ -1422,19 +1422,23 @@ Per RFC-0008 Execution Class mapping:
   bounded the same way.
 - **Test:** `compromised_key_revoked_without_identity_revocation`.
 
-### A15 — Cross-RFC conflict on verification-method kinds.
+### A15 — Verification-method kind has a normative citation that resolves nowhere.
 
-- **Threat:** not an attack — a correctness defect. RFC-0010 §VerificationMethodKind
-  and this RFC both claim to define the wire discriminator.
-- **Attack:** n/a. The consequence is that an implementer reading RFC-0010
-  builds the enum, and an implementer reading this RFC builds the registry,
-  and the two documents are both Accepted.
-- **Defense:** this RFC wins for the `octo-ident` substrate, and RFC-0010 MUST
-  be amended to point at it. Recorded here so the conflict is not lost, and
-  tracked in §Cross-references.
-- **Residual:** until RFC-0010 carries the pointer, two Accepted RFCs
-  disagree.
-- **Test:** n/a — documentation defect, closed by the RFC-0010 amendment.
+- **Threat:** not an attack — a correctness defect. `VerificationMethodKind` is
+  the wire discriminator for `octo-ident`'s rich DID documents, and its doc
+  comment cites "RFC-0010 §VerificationMethodKind" as normative.
+- **Attack:** n/a. The consequence is that an implementer looking for the
+  specification of the discriminator finds nothing. `VerificationMethodKind`
+  appears in no Accepted RFC: neither RFC-0010 file contains the symbol or such
+  a section. An earlier draft of this entry claimed RFC-0010 _competed_ with this
+  RFC to define it, which was wrong — there was never a competing definition,
+  only a dangling citation.
+- **Defense:** BC#13 removes the enum, and this section becomes its
+  specification. The stale doc comment in `rich_document.rs` goes with it.
+  Recorded here so the gap is visible rather than rediscovered.
+- **Residual:** none once BC#13 lands. Before then, the discriminator is
+  specified only by source.
+- **Test:** n/a — documentation defect, closed by BC#13.
 
 ## Economic Analysis
 
@@ -1700,10 +1704,13 @@ coverage.
   scope; per R17 M3 — does NOT cover RFC-0862)
 - Mission `0862-phase1-tv-fixture` (RFC-0862 Phase 1 fixture scope;
   FILED per R17 M3)
-- **RFC-0010 §VerificationMethodKind** (per R41 — CONFLICT). RFC-0010 also
-  claims to define the wire discriminator, and its `octo-ident` doc comment
-  cites it as normative. This RFC wins for the `octo-ident` substrate;
-  RFC-0010 MUST be amended to point here. Tracked as A15.
+- **RFC-0010** (per R41 — dangling normative citation). `VerificationMethodKind`
+  appears in **no** Accepted RFC. The only trace is a doc comment in
+  `crates/octo-ident/src/rich_document.rs` citing "RFC-0010
+  §VerificationMethodKind", and neither RFC-0010 file contains such a section or
+  the symbol. So the enum this section removes is currently defined in code with
+  a citation that resolves nowhere — an earlier draft of this line claimed a
+  cross-RFC conflict with RFC-0010, which was wrong. Tracked as A15.
 - **RFC-0958 §Algorithms** (v1.6 — revocation contract this RFC's A13 and
   AC#14 depend on; `RevocationSnapshot` identity gate)
 - **RFC-0126** (canonical serialization — per R41; `canonical_ser` in the

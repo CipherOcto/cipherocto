@@ -71,7 +71,17 @@ pub fn verify_attach_handle_payload(
     sig: &Signature,
 ) -> Result<(), AttachError> {
     let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
-    verify_bytes(holder_pubkey, &msg, sig)
+    verify_bytes(&attach_algorithm_id(), holder_pubkey, &msg, sig)
+}
+
+/// The algorithm attach-handle signatures are verified under.
+///
+/// Centralised so the three verify paths cannot disagree about it.
+/// The honest home is a field alongside the holder key on the token,
+/// which this slice does not change.
+#[must_use]
+pub fn attach_algorithm_id() -> octo_wallet::AlgorithmId {
+    octo_wallet::ed25519_algorithm_id()
 }
 
 /// Shared verify helper: verify `sig` over precomputed `msg` against
@@ -81,17 +91,17 @@ pub fn verify_attach_handle_payload(
 /// already augmented with the `key_id` suffix). Lives in the
 /// non-feature-gated module path so the v1 baseline stays a single
 /// canonical helper.
-fn verify_bytes(pk: &[u8; 32], msg: &[u8], sig: &Signature) -> Result<(), AttachError> {
-    use octo_wallet::ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
-
-    let vk = VerifyingKey::from_bytes(pk).map_err(|e| AttachError::BadSignature {
-        reason: format!("invalid public key: {e}"),
-    })?;
-    let dalek_sig = DalekSignature::from_bytes(&sig.0);
-    vk.verify(msg, &dalek_sig)
-        .map_err(|e| AttachError::BadSignature {
-            reason: format!("ed25519 verify: {e}"),
-        })
+fn verify_bytes(
+    algorithm_id: &octo_wallet::AlgorithmId,
+    pk: &[u8; 32],
+    msg: &[u8],
+    sig: &Signature,
+) -> Result<(), AttachError> {
+    octo_wallet::verify_dispatch(algorithm_id, pk, msg, &sig.0).map_err(|e| {
+        AttachError::BadSignature {
+            reason: format!("dispatched verify: {e}"),
+        }
+    })
 }
 
 /// Additive v2 canonical payload bytes for an `AttachHandle` token
@@ -190,7 +200,7 @@ pub fn verify_attach_handle_payload_v2(
 
     // 1. Try the active lookup.
     if let Some(pk) = key_set.lookup(key_id) {
-        return verify_bytes(pk, &msg, sig);
+        return verify_bytes(&attach_algorithm_id(), pk, &msg, sig);
     }
 
     // 2. Try the grace entry for the CLAIMED key_id only. Iterating
@@ -201,7 +211,7 @@ pub fn verify_attach_handle_payload_v2(
     //    changes, so the rotated-out pubkey is recovered by looking
     //    up the claimed key_id in the grace map.
     if let Some(pk) = key_set.grace_key(key_id) {
-        return verify_bytes(pk, &msg, sig);
+        return verify_bytes(&attach_algorithm_id(), pk, &msg, sig);
     }
 
     // 3. Exhausted.

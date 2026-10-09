@@ -100,12 +100,13 @@ mod tests {
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
         let sig_bytes: [u8; 64] = borsh::from_slice(&payload).unwrap();
-        // Verify signature against the public key via ed25519_dalek (dev-dep).
-        // Production verification uses the NodeDispatcher's verifier chain.
-        use ed25519_dalek::Verifier;
-        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        // Verify through the registry, not with a locally built
+        // VerifyingKey: this is a holder signature, so it is in AC#11's
+        // scope, and the assertion then exercises the same dispatch path
+        // production verification takes. The algorithm comes from the
+        // signer, not from a decision at this call site.
         let pk = id.public_key_bytes();
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk).unwrap();
-        assert!(vk.verify(&req.0, &sig).is_ok());
+        octo_wallet::verify_dispatch(&id.algorithm_id(), &pk, &req.0, &sig_bytes)
+            .expect("signature must verify through the registry");
     }
 }

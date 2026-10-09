@@ -353,16 +353,27 @@ pub fn verify_wal_hash_binding(
     Ok(())
 }
 
-/// Verify an envelope's signature against the holder's public key.
+/// Verify an envelope's signature against the holder's public key,
+/// dispatching on `algorithm_id` through `AlgorithmRegistry`
+/// (RFC-0009 AC#11).
+///
+/// The algorithm is a parameter because a holder key arrives as 32 raw
+/// bytes with nothing naming an algorithm; the caller knows which
+/// algorithm that key speaks. The check stays strict — the registry's
+/// Ed25519 implementation is the strict one.
 pub fn verify_envelope_signature(
+    algorithm_id: &octo_ident::AlgorithmId,
     envelope: &ExecutionEnvelope,
     holder_pub: &[u8; 32],
 ) -> Result<(), EnvelopeError> {
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(holder_pub)
-        .map_err(|_| EnvelopeError::SignatureInvalid)?;
     let msg = unsigned_canonical_ser(envelope);
-    vk.verify_strict(&msg, &envelope.signature)
-        .map_err(|_| EnvelopeError::SignatureInvalid)
+    octo_algo_ed25519::verify_dispatch(
+        algorithm_id,
+        holder_pub,
+        &msg,
+        &envelope.signature.to_bytes(),
+    )
+    .map_err(|_| EnvelopeError::SignatureInvalid)
 }
 
 /// Check a `MultiEnvelope` for nesting depth (RFC-0962 §7 R8-F5).
@@ -573,6 +584,12 @@ mod ed25519_sig_serde {
 
 #[cfg(test)]
 mod tests {
+    /// The algorithm these fixtures sign under. Centralised so a second
+    /// algorithm is one edit, not a hunt.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
 
@@ -652,7 +669,7 @@ mod tests {
         .unwrap();
         sign_envelope(&mut env, &key);
         let pub_bytes = key.verifying_key().to_bytes();
-        verify_envelope_signature(&env, &pub_bytes).unwrap();
+        verify_envelope_signature(&ed25519_id(), &env, &pub_bytes).unwrap();
     }
 
     #[test]
@@ -677,7 +694,7 @@ mod tests {
         let mut env2 = env.clone();
         env2.block_height = 999; // tamper
         let pub_bytes = key.verifying_key().to_bytes();
-        let err = verify_envelope_signature(&env2, &pub_bytes).unwrap_err();
+        let err = verify_envelope_signature(&ed25519_id(), &env2, &pub_bytes).unwrap_err();
         assert_eq!(err, EnvelopeError::SignatureInvalid);
     }
 

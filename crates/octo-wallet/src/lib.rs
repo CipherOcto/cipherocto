@@ -56,9 +56,19 @@ pub use ed25519_dalek;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
 pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent};
 pub use identity_store::{WalletIndex, WalletStore, WALLET_INDEX_VERSION};
+
+// Algorithm dispatch, re-exported alongside `ed25519_dalek` for the
+// same reason: crates that already treat the wallet as their crypto
+// gateway (`octo-runtime`) can dispatch through the registry without
+// growing a dependency on the Layer B identity substrate and the Layer
+// E algorithm crate directly. Mission 0009-c.
 pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
 pub use lifecycle::LifecycleState;
 pub use node::{NodeType, NodeTypeParseError};
+pub use octo_algo_ed25519::{
+    ed25519_algorithm_id, verify_dispatch, DispatchError, Ed25519Algorithm,
+};
+pub use octo_ident::AlgorithmId;
 pub use role_nonce::next_nonce_counter;
 
 #[cfg(test)]

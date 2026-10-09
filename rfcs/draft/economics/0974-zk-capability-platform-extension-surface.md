@@ -743,13 +743,38 @@ pub enum InputProvenance {
 
 ### Algorithms
 
-**Caveat resolution.** The six rules are stated in Amendment 1. In order: pure
-fail-closed lookup; unregistered key refuses; a declared-required fact the
-operation does not carry refuses with `MissingFact` _before_ the evaluator runs;
-a `Raw` caveat colliding with a core caveat name refuses with `KeyCollision`
-unless the evaluator sets `handles_raw`; composition is logical AND over the
-authenticated caveat order, failing fast in set order so the reported reason is
-deterministic; the evaluator cannot widen.
+**Caveat resolution.** The six rules are normative in Amendment 1 and restated
+here with the same numbering. An earlier draft compressed them into a single
+sentence, which lost two things that matter: rule 2 collapsed into rule 1, and
+rule 6's second half disappeared.
+
+1. **Pure fail-closed lookup.** Resolution is a lookup on the key. No fallback,
+   no default evaluator, no absent-key success. Unregistered → `EvaluatorNotFound`.
+2. **A `Caveat` variant with no evaluator registered MUST refuse.** This is
+   distinct from rule 1 and is stated separately on purpose. Rule 1 is about
+   _lookup_; rule 2 is about _dispatch across a mixed set_ — and the two diverge
+   exactly at `evaluate_registered`, which skips unclaimed caveats. That skip is
+   the specified contract, not an oversight, and Implementation Status records
+   that treating it as an oversight once produced a fail-open hole.
+3. **A declared-required fact the operation does not carry MUST refuse** with
+   `MissingFact`, **before** the evaluator runs. An evaluator reading an absent
+   fact and treating it as "absent" makes that call silently, and the outcome
+   cannot be traced back to a wiring mistake at the redemption site.
+4. **A `Caveat::Raw` whose name collides with a core caveat name MUST refuse**
+   with `KeyCollision` unless the evaluator sets `handles_raw`. Without this,
+   minting `Raw { name: "vault", .. }` reaches an evaluator written for
+   `Caveat::Vault`, which may then approve on bytes it does not understand.
+5. **Composition is logical AND over the authenticated caveat order**, failing
+   fast on the first refusal in set order, so the reported reason is
+   deterministic.
+6. **The evaluator is not trusted to widen.** Two claims, both required: it
+   answers a _predicate_, and it _cannot return authority_. Attenuation
+   monotonicity continues to be enforced by `parent_caveat_implies`, which is a
+   separate concern and core-owned.
+
+Rule 6 is why A2 holds: `evaluate` returns `Result<(), CaveatRefusal>` and so has
+no channel through which to return a caveat, a chain entry, or a parent. An
+evaluator cannot forge a delegation, because the type it returns cannot carry one.
 
 **`evaluate_registered`.** Evaluates a caveat through the registry and pairs it
 with the core gates. Both halves MUST run on the same input, and the registry
@@ -1644,6 +1669,14 @@ the holder chose. Minting `Raw { name: "vault", .. }` must not reach an evaluato
 written for `Caveat::Vault`, which may then approve on the strength of bytes it
 does not understand. `handles_raw` defaults `false` and `KeyCollision` refuses.
 
+One consequence is worth stating because it is a constraint rather than a
+vulnerability: `is_core_caveat_key` is derived from `from_short_tag` rather than
+hand-listed, so it covers a new core variant automatically — and that same
+derivation maps `"raw"` to `CaveatName::Raw`. The escape hatch is therefore in
+its own core-key set, and a `Raw` caveat literally named `raw` collides with it.
+It errs safe: it refuses rather than allows. The cost is that `raw` is not
+available as a third-party caveat name, which nobody had recorded before R41.
+
 **Class A commitment-binding is worth less than it looks, and this RFC says so
 repeatedly.** `H(secret) == public_input` proves the prover knows a preimage. If
 the verifier derived `public_input`, that binds the macaroon. If the prover
@@ -1705,15 +1738,15 @@ than as mitigations.
 
 ## Adversary Analysis
 
-| ID  | Adversary                                           | Defense                                                                                                                                                                                                                                                                                          | Residual                                                                                                                                                                                                                                                                                       |
-| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | Raw caveat spoofing a core name                     | `KeyCollision` refuses unless `handles_raw` is set explicitly                                                                                                                                                                                                                                    | An evaluator that opts in and mishandles raw bytes is its own bug                                                                                                                                                                                                                              |
-| A2  | Evaluator returns `true` to forge a delegation      | No subsumption extension point exists; it stays core-owned                                                                                                                                                                                                                                       | None by construction                                                                                                                                                                                                                                                                           |
-| A3  | Absent fact read as "absent" by an evaluator        | Rule 3 refuses with `MissingFact` before `evaluate` runs                                                                                                                                                                                                                                         | An evaluator requiring no facts yet reading context is undiscoverable                                                                                                                                                                                                                          |
-| A4  | Commitment-binding proof passed off as validity     | `InputProvenance` declaration; a class A relation with prover-supplied inputs is described as vacuous                                                                                                                                                                                            | A reviewer may still call it a validity check; the declaration is the instrument                                                                                                                                                                                                               |
-| A5  | Core key shadowed by a third party                  | **Not a defence yet.** Shadowing is permitted and flagged by `register()`, but no component is obliged to surface the shadowed set, and `core_shadowing_keys()` has no consumer. Required: boot MUST emit the set, and a policy disallowing shadowing MUST refuse to start. Neither implemented. | The entire posture of a built-in security check being taken over currently rests on a flag nobody is required to read                                                                                                                                                                          |
-| A6  | Syscall-backed hash used in-circuit for soundness   | Unbuildable in practice: `ProverInput` has no hint field, so the proof never sees the handler                                                                                                                                                                                                    | None sound; the failure is build-time or review-time                                                                                                                                                                                                                                           |
-| A7  | Evaluator with no circuit implementation registered | **Specified, not built.** Refusal at registration is required and `RegisterError` has no such variant; `register()` performs no circuit check.                                                                                                                                                   | **Unmitigated.** An evaluator the circuit cannot honour can be registered today, and the resulting capability verifies on the host and fails in the proof — the hardest class of bug to diagnose from a failed attestation. This is the RFC's central obligation and it is implemented nowhere |
+| ID  | Adversary                                           | Defense                                                                                                                                                                                                                                                                                          | Residual                                                                                                                                                                                                                                                                                                                                                   |
+| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Raw caveat spoofing a core name                     | `KeyCollision` refuses unless `handles_raw` is set explicitly                                                                                                                                                                                                                                    | An evaluator that opts in and mishandles raw bytes is its own bug. Separately, `is_core_caveat_key` derives from `from_short_tag`, which maps `"raw"` to `CaveatName::Raw` — so `Raw { name: "raw", .. }` collides with the escape hatch's own tag. Errs safe (refuses, never allows), but it means the literal name `raw` is unavailable to a third party |
+| A2  | Evaluator returns `true` to forge a delegation      | No subsumption extension point exists; it stays core-owned                                                                                                                                                                                                                                       | None by construction                                                                                                                                                                                                                                                                                                                                       |
+| A3  | Absent fact read as "absent" by an evaluator        | Rule 3 refuses with `MissingFact` before `evaluate` runs                                                                                                                                                                                                                                         | An evaluator requiring no facts yet reading context is undiscoverable                                                                                                                                                                                                                                                                                      |
+| A4  | Commitment-binding proof passed off as validity     | `InputProvenance` declaration; a class A relation with prover-supplied inputs is described as vacuous                                                                                                                                                                                            | A reviewer may still call it a validity check; the declaration is the instrument                                                                                                                                                                                                                                                                           |
+| A5  | Core key shadowed by a third party                  | **Not a defence yet.** Shadowing is permitted and flagged by `register()`, but no component is obliged to surface the shadowed set, and `core_shadowing_keys()` has no consumer. Required: boot MUST emit the set, and a policy disallowing shadowing MUST refuse to start. Neither implemented. | The entire posture of a built-in security check being taken over currently rests on a flag nobody is required to read                                                                                                                                                                                                                                      |
+| A6  | Syscall-backed hash used in-circuit for soundness   | Unbuildable in practice: `ProverInput` has no hint field, so the proof never sees the handler                                                                                                                                                                                                    | None sound; the failure is build-time or review-time                                                                                                                                                                                                                                                                                                       |
+| A7  | Evaluator with no circuit implementation registered | **Specified, not built.** Refusal at registration is required and `RegisterError` has no such variant; `register()` performs no circuit check.                                                                                                                                                   | **Unmitigated.** An evaluator the circuit cannot honour can be registered today, and the resulting capability verifies on the host and fails in the proof — the hardest class of bug to diagnose from a failed attestation. This is the RFC's central obligation and it is implemented nowhere                                                             |
 
 ## Economic Analysis
 
@@ -1845,6 +1878,11 @@ The correct next step is to measure a MAC.
 - [x] §Poseidon Macaroon records that Poseidon is a hash and the measured figure is
       not a MAC cost, so no future RFC quotes it as one.
 - [x] No existing byte-exact test vector changes.
+- [x] The CRITICAL sign-bit finding carries its regression tests into this
+      acceptance list, not only into the review table: `point_decode_masks_the_sign_bit_of_byte_31`
+      and `point_decode_refuses_a_non_canonical_y`, both in `cairo/src/ed25519.cairo`.
+      A CRITICAL finding whose only guard is a line in a prose review table is a
+      finding that regresses silently.
 - [x] `BeforeEvaluator` reference implementation, not wired into any verify path.
 - [x] `evaluate_registered` specified with its paired-core-gates contract, and both
       halves tested on the same input.
@@ -1984,6 +2022,34 @@ needs, and conflating them would put a forgery primitive behind a convenience
 interface. If a use case needs external subsumption, the answer is a new RFC that
 changes the delegation trust model.
 
+**Why `RelationClass` is a closed enum when RFC-0009 just removed one.** RFC-0009
+v1.3 removed `VerificationMethodKind` because a signature algorithm must be
+addable without a central edit, and a byte anyone can improvise is not a safe
+discriminator. `RelationClass` is not that shape, for two reasons.
+
+**It is a classification, not a dispatch discriminator.** Nothing matches on it to
+select behaviour — `zk_support()` does that. `RelationClass` answers "what does
+this relation need, and was that affordable when it was written", which is a
+property of the relation space rather than of anything a third party registers.
+A new _algorithm_ is a new thing the platform must accept; a new _relation class_
+is a new finding about cost, and until one is measured it does not exist.
+
+**It is bounded by measurement rather than by imagination.** Three variants
+because the survey found three shapes, and the survey is the thing that would
+discover a fourth. A relation whose cost lands outside all three is misclassified
+and the declaration is wrong — which is a review finding, not a semver-major edit
+to a crate third parties depend on. `Future Work` is explicit that class C is
+unexplored rather than inhabited.
+
+The contrast with `AttestationStrategy` is the precedent that settles it: same
+shape, same registry discipline, and the id discipline is not the part that
+matters here. What matters is that nothing dispatches on the enum.
+
+One caveat recorded because it will go stale: `RelationClass::NativePrimitive`
+carries "17,628 words against the live ceiling" in its doc comment. A
+measurement inside a type's contract is a liability — the number belongs in
+Performance Targets, which is where the live ceiling now lives.
+
 **Why the survey came first.** The trait is one API. The survey is what says
 which relations are worth an API, what they cost, and — as it turned out — that
 the premise behind the most expensive one was wrong. Amendment 1 alone would
@@ -1997,6 +2063,7 @@ have been a smaller document and a less useful one.
 | 0.2     | 2026-10-08 | Draft (amendment) | Added the RFC-0973 measurement record and the step-1 implementation status: the Ed25519 premise was wrong twice, corelib SHA-512 is a syscall rather than a hash, the sign-bit defect in the field decoder, and the STARK-curve Schnorr option that changes the shape of the decision.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | 0.3     | 2026-10-09 | Draft (amendment) | Mandatory-section completion for the Draft → Accepted review. **21 of 29 BLUEPRINT mandatory sections were missing.** Added Motivation, Roles and Authorities, System Architecture, Data Structures, Algorithms, Lifecycle Requirements, Determinism Requirements, the RFC-0008 execution class mapping, Error Handling, Performance Targets, Implicit Assumptions Audit, Security Considerations, Adversarial Review, Adversary Analysis, Economic Analysis, Compatibility, Test Vectors, Implementation Phases, Key Files to Modify, Future Work, Rationale, Version History and Related RFCs. No runtime behaviour changed — documentation and review-instrument work, not an implementation change. **R41 found that most of the newly written detail was wrong; see v0.4.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 0.4     | 2026-10-09 | Draft (amendment) | R41 findings applied to the v0.3 delta (2 CRITICAL, 6 HIGH, 5 MEDIUM, 3 LOW). The core defect was that the new sections were written against an **imagined substrate** rather than `crates/octo-cap-macaroon/src/caveat/evaluator.rs`: §Data Structures invented a `populate()` gate the registry does not have — one that would have turned `verify_for_vault_op`'s empty-registry no-op into a hard refusal on every vault verification — and an `OperationFact` missing `Hash32`, which `VaultEvaluator` matches on, so the spec would not have compiled against its own code. §Error Handling introduced two error enums that exist nowhere and reduced `BootRefusal` from five variants to two, dropping the `strategy` field an operator needs. Both sections now cite landed symbols rather than re-declare them. §Performance Targets corrected to the live 3,300-word / 110 KB ceiling at a 5.3x ratio, replacing a 1,600-word figure the repository had already retired; 3,004 relabelled from "baseline" to the chain re-derivation program it is. §Determinism Requirements splits `evaluate` by whether evaluator state is fleet-identical — `VaultEvaluator`, the shape this RFC tells third parties to copy, is not — which also corrects §Compatibility's determinism claim. §System Architecture gains the circuit subgraph, the `evaluate_first_party` obligation, and a `ProofRejected` path with no edge to authorization. §Lifecycle gains boot-refusal states. A5 and A7 restated as the unmitigated gaps they are. §Test Vectors no longer claims a fixture directory that does not exist. §Key Files corrected to real paths. Caveat short tags re-attributed from RFC-0964 to RFC-0957. "Six circuit steps" corrected to seven. **Still not promotable to Accepted.** |
+| 0.5     | 2026-10-09 | Draft (amendment) | Remaining MEDIUM and LOW findings from R41 round 2, all 16 dispositions now recorded. §Algorithms restates all six resolution rules with their original numbering instead of compressing them into one sentence. That compression was not cosmetic: rule 2 had collapsed into rule 1, and rule 2 is precisely the one `evaluate_registered` deliberately does not apply — so losing its separate identity made the specified skip read as an oversight rather than the contract, on the exact point Implementation Status records as having already caused a fail-open hole once. §Rationale gains the defence of `RelationClass` as a closed enum, reconciling it against RFC-0009 v1.3's removal of `VerificationMethodKind`, and the measurement moves out of the type's doc comment where it would have gone stale. A1 and Security Considerations record that `is_core_caveat_key` derives from `from_short_tag`, which maps `"raw"` to `CaveatName::Raw` — so `Raw { name: "raw" }` collides with the escape hatch's own tag. It errs safe, but it reserves a name nobody had recorded as reserved. Acceptance Criteria now carry the CRITICAL sign-bit finding's two regression tests, so the guard is not only a line in a prose review table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## Related RFCs
 

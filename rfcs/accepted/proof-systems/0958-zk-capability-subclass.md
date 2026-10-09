@@ -4,16 +4,28 @@
 
 Accepted
 
-> **v1.6 amendment (2026-10-08):** In-place amendment while Accepted. Adds the
-> revocation contract to the verification path: a mandatory identity-scoped
-> revocation check, a monotone `state_version` on the revocation snapshot whose
-> staleness is bounded by the proof's freshness window, and an **asymmetric**
-> freshness window replacing the symmetric `abs_diff` bound. The revocation set
-> stays out of the circuit — a STARK cannot read mutable state, and putting a
-> Merkle root plus non-membership proof in the public inputs would break every
-> outstanding proof on every revocation for no soundness gain over the direct
-> check. Full rationale in §Revocation and freshness; threat in §Adversary
-> Analysis A6.
+> **v1.7 amendment (2026-10-09):** In-place amendment while Accepted, following
+> R41. **Corrects v1.6, which was wrong.** The v1.6 delta stated that proof
+> replay exposure was `max_age_secs` and that the symmetric `abs_diff` bound was
+> flawed because a prover could _back_-date. Both are wrong, and they were wrong
+> in the same direction: the prover chooses `current_unix_time`, the circuit
+> only asserts it is below the capability expiry, and **front**-dating is what
+> extends a proof's life while back-dating kills it at mint. True exposure is
+> `max_age_secs + max_prover_future_skew_secs`, and the "asymmetric" pair
+> delivered no reduction at all when its two values were equal. Likewise,
+> revocation response is `max_age_secs + max_revocation_staleness_secs`, not one
+> window. Also: `RevocationSnapshot.version` is deleted (no check read it, and
+> the monotonicity floor its rationale implied would break §Determinism); the
+> single forward-skew field is split across two trust domains; §Configuration
+> Validation is added so policy relationships are enforced rather than
+> documented; the revocation lookup moves after STWO verification; and the
+> verifier signature regains `accepted_casm_blake3_hashes`, which v1.6's
+> const-based CASM check had silently undone against the real implementation.
+> A6's verdict drops from MITIGATED to PARTIALLY MITIGATED.
+>
+> **v1.6 amendment (2026-10-08):** In-place amendment while Accepted. Superseded
+> in large part by v1.7; retained in the history because its errors are
+> instructive.
 >
 > **Promotion note (2026-07-21):** Promoted Draft → Accepted. §Adversarial Review (12-finding table) + §Economic Analysis (computational cost + dual-stake + incentive analysis) added per BLUEPRINT v1.3 mandatory sections (gap closure parallel to 6-RFC promotion batch 2026-07-20). 7-day review + 2 maintainer approvals completed per BLUEPRINT.md §RFC Acceptance Process (RFC authored 2026-07-20, review window 2026-07-20 → 2026-07-27 minimum; approval recorded 2026-07-21 by @mmacedoeu + @cipherocto). All 6 Requires RFCs (RFC-0957, RFC-0009, RFC-0102, RFC-0853, RFC-0630, RFC-0126) now Accepted (RFC-0126 + RFC-0630 promoted 2026-07-20; RFC-0957 + RFC-0009 + RFC-0102 + RFC-0853 promoted 2026-07-20).
 
@@ -243,42 +255,101 @@ pub struct PublicInputs {
     pub provider_slot_id: String,
 }
 
-/// **v1.6:** the verifier's view of revocation state. Read at verify time
+/// **v1.7:** the verifier's view of revocation state. Read at verify time
 /// through a typed query boundary (RFC-0009 §Principle 12 — storage is not a
-/// protocol), never cached past `max_staleness`.
+/// protocol), never cached past `max_revocation_staleness_secs`.
 ///
-/// `version` is monotone: every revocation, suspension or key-removal event
-/// bumps it. The verifier needs a version rather than a timestamp because a
-/// version cannot be walked backwards by a clock that is wrong in the
-/// favourable direction, and `effective_at` exists only to measure how stale
-/// the snapshot is.
-#[derive(Debug, Clone)]
+/// Read **once**, at the top of verification, and never re-read. A second read
+/// after the revocation check would re-open the window the staleness bound was
+/// chosen to close.
+///
+/// `revoked_identities` MUST be the *complete* revocation set as of
+/// `effective_at`. A store that is merely "fresh by timestamp" — a lagging
+/// replica, a partial compaction, an incremental-write bug — presents a
+/// snapshot that is fresh by every measure this struct exposes and still omits
+/// a revoked identity. The verifier cannot detect that, so the obligation has to
+/// sit on the store.
+///
+/// **There is no `version` field.** v1.6 shipped one, justified as defence
+/// "against a clock that is wrong in the favourable direction", and no check
+/// ever read it. Implementing it as a monotonicity floor would mean a check
+/// whose result depends on what this verifier saw before, which §Determinism
+/// forbids outright: a Class A function must return identical results for
+/// identical inputs. Rather than keep a field whose stated purpose no code
+/// performed, the type is now just a timestamp plus a set, and the clock's
+/// trustworthiness is carried as an IA instead of as a doc comment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevocationSnapshot {
-    pub version: u64,
-    /// Wall clock at which this version became the current one.
+    /// Wall clock at which this revocation set became current.
     pub effective_at: u64,
     /// Identity-scoped. An identity revocation covers every key registered to
     /// it in every algorithm (RFC-0009 §Dual-format signature algorithms and
     /// the ZK-capable key), so a key that was never individually revoked is
     /// still refused when its identity is suspended.
+    ///
+    /// Per R41: MUST NOT be an unbounded materialisation. A verifier MUST
+    /// receive an indexed lookup result (see §Configuration Validation), and a
+    /// `Vec::contains` scan over an unbounded revoked set has no relationship to
+    /// the G2 sub-100ms target.
     pub revoked_identities: Vec<DID>,
 }
 
-/// **v1.6:** verifier-side freshness policy.
+/// **v1.7:** verifier-side freshness policy.
 ///
-/// These are deployment parameters, not protocol constants. Revocation latency
-/// differs per deployment, so a value hard-coded in the spec would force a
-/// spec amendment to tighten the window for a high-value capability class.
+/// These are deployment parameters, not protocol constants, and they are NOT
+/// independently tunable — see §Configuration Validation. The relationships
+/// between them are load-bearing and a policy that violates them is rejected at
+/// construction rather than silently accepted.
 #[derive(Debug, Clone)]
 pub struct VerifierFreshnessPolicy {
-    /// How stale a proof's claimed `current_unix_time` may be. Asymmetric:
-    /// past is bounded by this, future by `max_future_skew`.
+    /// How stale a proof's claimed `current_unix_time` may be.
+    ///
+    /// This bounds the proof's age only. The proof's *total lifetime* from mint
+    /// is `max_age_secs + max_prover_future_skew_secs`, because the prover
+    /// chooses `current_unix_time` and front-dating it is free up to the
+    /// capability's expiry. Size it as a lifetime, not as an age.
     pub max_age_secs: u64,
-    /// Small forward tolerance for prover clock drift.
-    pub max_future_skew_secs: u64,
-    /// How stale the revocation snapshot may be. SHOULD NOT exceed
-    /// `max_age_secs`, or revocation stops bounding replay within one window.
+    /// Forward tolerance for the **prover's** clock only.
+    ///
+    /// MUST be at most `max_age_secs / 10` (§Configuration Validation). This is
+    /// the field that silently sets the floor under replay exposure, so it is
+    /// sized to prover clock discipline and nothing else.
+    pub max_prover_future_skew_secs: u64,
+    /// Forward tolerance for the **revocation store's** `effective_at`.
+    ///
+    /// A different trust domain from the prover's clock: this one is first
+    /// party, and sized to intra-cluster clock agreement — seconds, not hours.
+    /// MUST be at least 1 so that a strict configuration cannot self-DoS on
+    /// sub-second clock disagreement between the store's write timestamp and
+    /// the verifier's read clock.
+    pub max_snapshot_future_skew_secs: u64,
+    /// How stale the revocation snapshot may be.
+    ///
+    /// This bounds the revocation *response time*, not replay: a stale snapshot
+    /// means revocation takes longer to bite. Combined with the proof's own
+    /// lifetime, a revocation committed at `R` may still be invisible until
+    /// `R + max_age_secs + max_revocation_staleness_secs`. MUST be at most
+    /// `max_age_secs` (§Configuration Validation), and in practice an order of
+    /// magnitude below it.
     pub max_revocation_staleness_secs: u64,
+}
+
+impl VerifierFreshnessPolicy {
+    /// **v1.7:** constructor validation. R41 found the same constraint stated
+    /// as SHOULD in §Data Structures and MUST in §Time Bounds, with nothing
+    /// enforcing either. Making it MUST obliges it to be enforced somewhere, so
+    /// it lives here and an invalid policy cannot be constructed.
+    ///
+    /// Rejected:
+    /// - `max_prover_future_skew_secs * 10 > max_age_secs`. This is the check
+    ///   that makes the asymmetry worth anything. Without it, a policy with
+    ///   both values at 300 reproduces the pre-v1.6 symmetric bound exactly,
+    ///   and the asymmetric form delivers zero reduction while appearing to
+    ///   deliver some.
+    /// - `max_revocation_staleness_secs > max_age_secs`.
+    /// - `max_snapshot_future_skew_secs == 0`, which would make every
+    ///   verification fail on sub-second clock disagreement.
+    pub fn new(/* ... */) -> Result<Self, PolicyError>;
 }
 
 /// Private witness (4 fields per S05 §2 Decision 7 + R1 fix C1: holder_sig is private).
@@ -443,38 +514,81 @@ fn mint_with_zk(
 
 ```rust
 // crates/quota-router-core/src/zk_verify/capability.rs
+// Per R41: v1.6 replaced this block's CASM check with a single const, which
+// silently undid the N=2 rotation grace the real signature carries. Restored
+// to `accepted_casm_blake3_hashes` to match `capability.rs` and the R1 H13
+// migration design. The v1.6 and v1.7 freshness/revocation steps below are
+// NOT yet in the file — `capability.rs` still holds the symmetric `abs_diff`
+// against `MAX_SKEW_SECS` and has no revocation step.
 fn verify_capability_zk(
     proof: &ProofBundle,
     expected_public_inputs: &PublicInputs,
-    verifier_local_unix_time: u64,    // R1 H8 fix: clock for skew bounds check
-    revocation: &RevocationSnapshot,  // v1.6: read at verify time, never cached past policy
-    policy: &VerifierFreshnessPolicy, // v1.6: deployment policy, not a protocol constant
+    accepted_casm_blake3_hashes: &[[u8; 32]], // R1 H13 — N=2 rotation grace
+    verifier_local_unix_time: u64,        // R1 H8 fix; trust root per IA-6
+    revocation: &RevocationSnapshot,      // v1.7: read at verify time, never cached past policy
+    policy: &VerifierFreshnessPolicy,     // v1.7: deployment policy, validated at construction
 ) -> Result<(), ZkVerifyError> {
     // 1. Public inputs MUST match expected (defense against replay with stale inputs)
     if proof.public_inputs != *expected_public_inputs {
         return Err(ZkVerifyError::PublicInputMismatch);
     }
-    // 2. CASM hash MUST match compiled CASM at verify time (drift detection)
-    if proof.casm_hash != COMPILED_CASM_BLAKE3_HASH {
+    // 2. CASM hash MUST match one of the accepted compiled CASM digests at
+    //    verify time (drift detection, with R1 H13 rotation grace).
+    if !accepted_casm_blake3_hashes.contains(&proof.casm_hash) {
         return Err(ZkVerifyError::CasmHashMismatch);
     }
-    // 3. Freshness window (v1.6 — asymmetric). R1 H8 introduced this as
-    //    `abs_diff(now, t) <= 300`, which is a *symmetric* bound: a prover may
-    //    backdate its clock by the full tolerance and still be accepted the
-    //    full tolerance later, so one mint buys up to 2x the intended exposure.
-    //    Age is bounded by `max_age_secs`; only the forward direction gets slack.
+    // 3. Freshness window (v1.7 — corrected). R1 H8 introduced a symmetric
+    //    `abs_diff(now, t) <= 300`. v1.6 replaced that with an asymmetric pair
+    //    and claimed the exposure was `max_age_secs`. Both were wrong, and the
+    //    error ran in the same direction twice:
+    //
+    //    The prover chooses `current_unix_time`; the circuit only asserts
+    //    `current_unix_time <= before` (the capability's expiry, typically far
+    //    future). So the prover may set it to anything up to `before`. A proof
+    //    is accepted at verifier time `T` iff `c ∈ [T - max_age, T + future]`,
+    //    and minted at `M` it survives until `T = c + max_age`. MAXIMISING `c`
+    //    maximises survival — so **front**-dating buys the extra lifetime, and
+    //    back-dating kills the proof at mint.
+    //
+    //    Total lifetime is therefore `max_age_secs + future_skew`, not
+    //    `max_age_secs`. With both set to 300 the "asymmetric" pair is the
+    //    original symmetric bound. The asymmetry only buys anything when the
+    //    forward tolerance is far smaller than the past one, which is why
+    //    `VerifierFreshnessPolicy::new` rejects policies that do not enforce it.
     let age = verifier_local_unix_time.saturating_sub(proof.public_inputs.current_unix_time);
     if age > policy.max_age_secs {
         return Err(ZkVerifyError::ProofTooOld { age_secs: age, max_secs: policy.max_age_secs });
     }
-    let future_skew = proof.public_inputs.current_unix_time.saturating_sub(verifier_local_unix_time);
-    if future_skew > policy.max_future_skew_secs {
-        return Err(ZkVerifyError::ClockSkewExceeded { skew: future_skew, max: policy.max_future_skew_secs });
+    let prover_future_skew = proof.public_inputs.current_unix_time.saturating_sub(verifier_local_unix_time);
+    if prover_future_skew > policy.max_prover_future_skew_secs {
+        return Err(ZkVerifyError::ClockSkewExceeded {
+            skew: prover_future_skew,
+            max: policy.max_prover_future_skew_secs,
+        });
     }
-    // 4. Revocation (v1.6). MANDATORY, on every ZK path, fail-closed. This is
+    // 4. STWO verify. Ordered BEFORE the revocation lookup (v1.7): the
+    //    revocation read is the most expensive non-STARK operation in this
+    //    function, and running it ahead of STWO verification makes it
+    //    reachable by an unauthenticated caller submitting a garbage proof
+    //    with a chosen `holder_did`. The "structural checks first, they are
+    //    cheap" rationale that orders steps 1-3 does not extend to step 4.
+    stwo_plugin::verify(
+        &proof.stark_proof,
+        &proof.public_inputs,
+        proof.security_bits,
+    )?;
+    // 5. Revocation (v1.7). MANDATORY, on every ZK path, fail-closed. This is
     //    the check most likely to be skipped, because rate-limit was genuinely
     //    eliminated by moving it into the circuit while revocation could not be
     //    — see §Adversary Analysis A6.
+    //
+    //    Note what this does NOT cover. RFC-0009 A14 requires a per-key
+    //    revocation gate (`VerificationMethod.revoked_at`) consulted before
+    //    this identity gate. That gate is enforced by the verifier when it
+    //    resolves the DID out of circuit, which §Algorithms step 5 does not yet
+    //    do — it resolves inside the circuit instead. Until that is fixed, a
+    //    compromised *key* on a sound identity passes this check. Tracked as
+    //    F7, and it needs a circuit change rather than a verifier one.
     let snapshot_age = verifier_local_unix_time.saturating_sub(revocation.effective_at);
     if snapshot_age > policy.max_revocation_staleness_secs {
         return Err(ZkVerifyError::RevocationStateStale {
@@ -483,28 +597,26 @@ fn verify_capability_zk(
         });
     }
     // A snapshot dated in the future saturates `snapshot_age` to 0 and would
-    // otherwise sail through as maximally fresh. That is a fail-open, not a
-    // rounding detail: it means a store whose clock runs fast can certify
-    // itself fresh indefinitely. Bound the forward direction too.
+    // otherwise pass as maximally fresh. This bounds the offset, and only the
+    // offset — a store whose clock runs permanently ahead stays permanently
+    // fresh for as long as it stays ahead. It is sized against first-party
+    // clock agreement, not against prover drift, so it is not widened by a
+    // loose prover setting.
     let snapshot_future = revocation.effective_at.saturating_sub(verifier_local_unix_time);
-    if snapshot_future > policy.max_future_skew_secs {
-        return Err(ZkVerifyError::RevocationStateStale {
-            age_secs: 0,
-            max_secs: policy.max_future_skew_secs,
+    if snapshot_future > policy.max_snapshot_future_skew_secs {
+        return Err(ZkVerifyError::RevocationSnapshotFuture {
+            ahead_secs: snapshot_future,
+            max_secs: policy.max_snapshot_future_skew_secs,
         });
     }
     if revocation.revoked_identities.contains(&proof.public_inputs.holder_did) {
         return Err(ZkVerifyError::IdentityRevoked { holder_did: proof.public_inputs.holder_did.clone() });
     }
-    // 5. STWO verify
-    stwo_plugin::verify(
-        &proof.stark_proof,
-        &proof.public_inputs,
-        proof.security_bits,
-    )?;
     Ok(())
 }
 ```
+
+### Revocation and freshness
 
 **Why revocation is not in the circuit.** A STARK commits to a trace over fixed
 public inputs; nothing mutable is reachable from inside a proof, so revocation
@@ -522,10 +634,31 @@ alone would miss an identity that is suspended without any individual key being
 revoked. Revocation is therefore keyed on `holder_did`, which the circuit
 already binds as a public input — so this costs no extra constraint.
 
-**The residual, stated plainly.** Within one `max_age_secs` window a stolen proof
-still verifies. That window _is_ the replay exposure; the revocation check itself
-is instant. Tightening it is a policy change, not a protocol change. The
-dangerous configuration is not a wide window, it is an optional check.
+**The two residual figures, stated honestly (corrected in R41).** v1.6 stated
+both as single windows. Neither is:
+
+- **Proof lifetime** from mint is `max_age_secs + max_prover_future_skew_secs`,
+  because the prover controls `current_unix_time` and front-dating it extends
+  survival. v1.6 attributed the symmetric bound's extra exposure to
+  _back_-dating, which is exactly backwards — back-dating shortens a proof's
+  life to zero.
+- **Revocation response time** is `max_age_secs + max_revocation_staleness_secs`.
+  A revocation committed at `R` can still be invisible at
+  `R + max_age_secs + max_revocation_staleness_secs`: the proof may already be
+  `max_age_secs` old on arrival, and the snapshot may lag by the staleness bound
+  on top of that. Staleness does not make replay unbounded — the proof window
+  still bounds it. It makes revocation slow, which is a different problem.
+
+Size the policy against those sums, not against the individual fields. A
+deployment needing faster revocation cuts `max_age_secs` **and**
+`max_revocation_staleness_secs`; cutting only the first leaves the response time
+floored by the staleness bound.
+
+**What this does not yet cover.** RFC-0009 A14's per-key revocation gate is not
+enforced on this path, because §Algorithms still resolves the DID inside the
+circuit. A compromised _key_ on a sound identity passes the identity check.
+Closing it is a circuit change, tracked as a follow-on amendment, not a verifier
+fix.
 
 #### Wire Format Extension
 
@@ -572,7 +705,11 @@ stateDiagram-v2
     InFlight --> Verified: zk_verify::capability::verify returns Ok
     InFlight --> ZkVerifyError: STARK verify fails
     InFlight --> PublicInputMismatch: proof.public_inputs != expected
-    InFlight --> ClockSkewExceeded: |proof.current_unix_time - verifier_local| > MAX_SKEW_SECS (R3 N5 fix)
+    InFlight --> ClockSkewExceeded: proof.current_unix_time beyond verifier_local by more than the policy bound
+    InFlight --> ProofTooOld: age exceeds max_age_secs
+    InFlight --> RevocationStateStale: snapshot age exceeds max_revocation_staleness_secs
+    InFlight --> RevocationSnapshotFuture: snapshot ahead of verifier clock by more than max_snapshot_future_skew_secs
+    InFlight --> IdentityRevoked: holder_did present in snapshot
     Verified --> Consumed: settlement complete (RFC-0959)
     ProofStale --> [*]
     WholesaleAttempt --> [*]
@@ -580,23 +717,27 @@ stateDiagram-v2
     PublicInputMismatch --> [*]
 ```
 
-| From                | To                  | Trigger                                                                                                                                                                                         | Deterministic?                                                                                             | Side Effects                                                                                                                                                     | Signing Requirement                                                           |
-| ------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `[*]`               | Minted              | `mint_with_zk(witness, public_inputs, casm_hash)` returns Ok; holder signs (RFC-0957 path)                                                                                                      | **Yes** (v1.2 M3 fix: holder signing is RFC-0957 path; STWO Fiat-Shamir is not invoked at this transition) | Emit `TokenMinted { root_id, capability_class: ZKBearing }` per RFC-0957 §Lifecycle                                                                              | Holder signs `Ed25519(holder_seed, canonical_ser(root_id \|\| caveats_wire))` |
-| Minted              | ProofGenerated      | `stwo_plugin::prove(witness, public_inputs)` returns Ok                                                                                                                                         | Yes (modulo STWO Fiat-Shamir)                                                                              | Emit `ZkProofGenerated { root_id, proof_size_bytes }`                                                                                                            | n/a (proof itself is the attestation)                                         |
-| ProofGenerated      | InFlight            | HTTP request issued with `X-Capability-Token` header carrying `proof_bundle_borsh` 4th segment                                                                                                  | Yes (request is a discrete event)                                                                          | Log request (root_id only, never contents)                                                                                                                       | n/a                                                                           |
-| ProofGenerated      | ProofStale          | `casm_hash != COMPILED_CASM_BLAKE3_HASH` at gen time                                                                                                                                            | Yes                                                                                                        | Emit `ZkProofStale { root_id, casm_hash }` event; **proof_bundle_borsh NEVER transmitted** (no HTTP request issued); holder must regenerate against current CASM | n/a                                                                           |
-| ProofGenerated      | WholesaleAttempt    | `node_type == Wholesale` AND `mint_with_zk` called (Note: Wholesale gating at mint prevents entering ProofGenerated for Wholesale; this row covers the race where NodeType downgrades mid-mint) | Yes                                                                                                        | Emit `WholesaleAttemptBlocked { node_did }`; **proof_bundle_borsh NEVER transmitted**; proof discarded by holder                                                 | n/a                                                                           |
-| InFlight            | Verified            | `verify_capability_zk(proof, expected_public_inputs, verifier_local_unix_time)` returns Ok (R2 F-N2 fix: arg list updated for clock skew)                                                       | Yes                                                                                                        | Emit `TokenVerified { root_id }`                                                                                                                                 | n/a                                                                           |
-| InFlight            | ZkVerifyError       | STWO verify returns Err                                                                                                                                                                         | Yes                                                                                                        | Emit `ZkVerifyError { root_id, reason }`                                                                                                                         | n/a                                                                           |
-| InFlight            | PublicInputMismatch | `proof.public_inputs != expected_public_inputs` at verify time                                                                                                                                  | Yes                                                                                                        | Emit `PublicInputMismatch { root_id, expected_ask_id, got_ask_id }`                                                                                              | n/a                                                                           |
-| InFlight            | ClockSkewExceeded   | `                                                                                                                                                                                               | proof.current_unix_time - verifier_local_unix_time                                                         | > MAX_SKEW_SECS` at verify time (R3 N5 fix)                                                                                                                      | Yes                                                                           | Emit `ClockSkewExceeded { root_id, skew_secs, max_secs }` | n/a |
-| Verified            | Consumed            | Settlement complete (RFC-0959 v2.0 independent settlement chain)                                                                                                                                | Yes                                                                                                        | Emit `TokenConsumed { root_id, settlement_receipt_hash }`                                                                                                        | n/a                                                                           |
-| ProofStale          | `[*]`               | Terminal sink (proof discarded)                                                                                                                                                                 | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
-| WholesaleAttempt    | `[*]`               | Terminal sink (mint rejected)                                                                                                                                                                   | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
-| ZkVerifyError       | `[*]`               | Terminal sink (request denied)                                                                                                                                                                  | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
-| PublicInputMismatch | `[*]`               | Terminal sink (request denied)                                                                                                                                                                  | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
-| ClockSkewExceeded   | `[*]`               | Terminal sink (request denied; holder must re-mint with synchronized clock; R3 N5 fix)                                                                                                          | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
+| From                | To                       | Trigger                                                                                                                                                                                         | Deterministic?                                                                                             | Side Effects                                                                                                                                                     | Signing Requirement                                                           |
+| ------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `[*]`               | Minted                   | `mint_with_zk(witness, public_inputs, casm_hash)` returns Ok; holder signs (RFC-0957 path)                                                                                                      | **Yes** (v1.2 M3 fix: holder signing is RFC-0957 path; STWO Fiat-Shamir is not invoked at this transition) | Emit `TokenMinted { root_id, capability_class: ZKBearing }` per RFC-0957 §Lifecycle                                                                              | Holder signs `Ed25519(holder_seed, canonical_ser(root_id \|\| caveats_wire))` |
+| Minted              | ProofGenerated           | `stwo_plugin::prove(witness, public_inputs)` returns Ok                                                                                                                                         | Yes (modulo STWO Fiat-Shamir)                                                                              | Emit `ZkProofGenerated { root_id, proof_size_bytes }`                                                                                                            | n/a (proof itself is the attestation)                                         |
+| ProofGenerated      | InFlight                 | HTTP request issued with `X-Capability-Token` header carrying `proof_bundle_borsh` 4th segment                                                                                                  | Yes (request is a discrete event)                                                                          | Log request (root_id only, never contents)                                                                                                                       | n/a                                                                           |
+| ProofGenerated      | ProofStale               | `casm_hash != COMPILED_CASM_BLAKE3_HASH` at gen time                                                                                                                                            | Yes                                                                                                        | Emit `ZkProofStale { root_id, casm_hash }` event; **proof_bundle_borsh NEVER transmitted** (no HTTP request issued); holder must regenerate against current CASM | n/a                                                                           |
+| ProofGenerated      | WholesaleAttempt         | `node_type == Wholesale` AND `mint_with_zk` called (Note: Wholesale gating at mint prevents entering ProofGenerated for Wholesale; this row covers the race where NodeType downgrades mid-mint) | Yes                                                                                                        | Emit `WholesaleAttemptBlocked { node_did }`; **proof_bundle_borsh NEVER transmitted**; proof discarded by holder                                                 | n/a                                                                           |
+| InFlight            | Verified                 | `verify_capability_zk(proof, expected_public_inputs, accepted_casm_blake3_hashes, verifier_local_unix_time, revocation, policy)` returns Ok (v1.7 arg list)                                     | Yes                                                                                                        | Emit `TokenVerified { root_id }`                                                                                                                                 | n/a                                                                           |
+| InFlight            | ZkVerifyError            | STWO verify returns Err                                                                                                                                                                         | Yes                                                                                                        | Emit `ZkVerifyError { root_id, reason }`                                                                                                                         | n/a                                                                           |
+| InFlight            | PublicInputMismatch      | `proof.public_inputs != expected_public_inputs` at verify time                                                                                                                                  | Yes                                                                                                        | Emit `PublicInputMismatch { root_id, expected_ask_id, got_ask_id }`                                                                                              | n/a                                                                           |
+| InFlight            | ClockSkewExceeded        | prover `current_unix_time` is further ahead of `verifier_local_unix_time` than `max_prover_future_skew_secs`                                                                                    | Yes                                                                                                        | Emit `ClockSkewExceeded { root_id, skew_secs, max_secs }`                                                                                                        | n/a                                                                           |
+| InFlight            | ProofTooOld              | `verifier_local_unix_time - current_unix_time > max_age_secs`                                                                                                                                   | Yes                                                                                                        | Emit `ProofTooOld { root_id, age_secs, max_secs }`                                                                                                               | n/a                                                                           |
+| InFlight            | RevocationStateStale     | `verifier_local_unix_time - revocation.effective_at > max_revocation_staleness_secs`                                                                                                            | Yes                                                                                                        | Emit `RevocationStateStale { root_id, age_secs, max_secs }`                                                                                                      | n/a                                                                           |
+| InFlight            | RevocationSnapshotFuture | `revocation.effective_at - verifier_local_unix_time > max_snapshot_future_skew_secs`                                                                                                            | Yes                                                                                                        | Emit `RevocationSnapshotFuture { root_id, ahead_secs, max_secs }` — distinct remedy from stale: the store clock is wrong, not the read old                       | n/a                                                                           |
+| InFlight            | IdentityRevoked          | `holder_did` present in the snapshot's revoked set                                                                                                                                              | Yes                                                                                                        | Emit `IdentityRevoked { root_id, holder_did }`                                                                                                                   | n/a                                                                           |
+| Verified            | Consumed                 | Settlement complete (RFC-0959 v2.0 independent settlement chain)                                                                                                                                | Yes                                                                                                        | Emit `TokenConsumed { root_id, settlement_receipt_hash }`                                                                                                        | n/a                                                                           |
+| ProofStale          | `[*]`                    | Terminal sink (proof discarded)                                                                                                                                                                 | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
+| WholesaleAttempt    | `[*]`                    | Terminal sink (mint rejected)                                                                                                                                                                   | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
+| ZkVerifyError       | `[*]`                    | Terminal sink (request denied)                                                                                                                                                                  | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
+| PublicInputMismatch | `[*]`                    | Terminal sink (request denied)                                                                                                                                                                  | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
+| ClockSkewExceeded   | `[*]`                    | Terminal sink (request denied; holder must re-mint with synchronized clock; R3 N5 fix)                                                                                                          | Yes                                                                                                        | n/a                                                                                                                                                              | n/a                                                                           |
 
 #### Liveness Check
 
@@ -613,15 +754,43 @@ stateDiagram-v2
 
 #### Time Bounds
 
-| Bound                         | Value                                              | Rationale                                                                                                                                                                           |
-| ----------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Proof gen                     | <2s reference HW (G1)                              | Self-host latency budget                                                                                                                                                            |
-| Verify                        | <100ms (G2)                                        | In-line verify per request                                                                                                                                                          |
-| CASM validity                 | Permanent until circuit change                     | No TTL; CASM hash drift is the only invalidation                                                                                                                                    |
-| PublicInputMismatch window    | N/A (deterministic)                                | Proof MUST match expected inputs exactly                                                                                                                                            |
-| Clock skew tolerance          | `max_future_skew_secs`, deployment policy          | R1 H8 fix: verifier bounds `current_unix_time` against local clock. **v1.6:** split into an asymmetric pair — the past side is the replay window and is the security-relevant bound |
-| Proof freshness window        | `max_age_secs`, deployment policy                  | **v1.6:** how old a proof's claimed time may be. This, not the revocation check, is the replay exposure                                                                             |
-| Revocation snapshot staleness | `max_revocation_staleness_secs`, deployment policy | **v1.6:** MUST NOT exceed `max_age_secs`; otherwise a cached revocation answer outlives the proof window and replay becomes unbounded again                                         |
+| Bound                         | Value                                              | Rationale                                                                                                                                                                                                                                                     |
+| ----------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Proof gen                     | <2s reference HW (G1)                              | Self-host latency budget                                                                                                                                                                                                                                      |
+| Verify                        | <100ms (G2)                                        | In-line verify per request                                                                                                                                                                                                                                    |
+| CASM validity                 | Permanent until circuit change                     | No TTL; CASM hash drift is the only invalidation                                                                                                                                                                                                              |
+| PublicInputMismatch window    | N/A (deterministic)                                | Proof MUST match expected inputs exactly                                                                                                                                                                                                                      |
+| Prover clock tolerance        | `max_prover_future_skew_secs`, deployment policy   | R1 H8 introduced the check; **v1.6** split it into two trust domains; **v1.7** sized it against prover clock discipline and capped it at `max_age_secs / 10`. Forward-dating is what extends a proof's life, so this value sets a floor under replay exposure |
+| Proof freshness window        | `max_age_secs`, deployment policy                  | **v1.7:** bounds a proof's _age_, not its lifetime. Total lifetime is `max_age_secs + max_prover_future_skew_secs`                                                                                                                                            |
+| Revocation snapshot staleness | `max_revocation_staleness_secs`, deployment policy | **v1.7:** MUST be at most `max_age_secs` (enforced by `VerifierFreshnessPolicy::new`). Bounds revocation _response time_, not replay. Total response is `max_age_secs + max_revocation_staleness_secs`                                                        |
+| Snapshot forward tolerance    | `max_snapshot_future_skew_secs`, deployment policy | **v1.7:** split from the prover tolerance per R41. First-party clock agreement, seconds not hours; MUST be at least 1                                                                                                                                         |
+
+## Configuration Validation
+
+**v1.7, added per R41.** RFC-0958 had no such section, and that absence is what
+let four independent defects through: a policy relationship stated as SHOULD in
+one section and MUST in another, a shared tolerance silently weakening a control
+in the other trust domain, an unbounded revoked-set materialisation, and a
+claim that snapshot staleness made replay unbounded when it does not.
+
+A `VerifierFreshnessPolicy` MUST be constructed through
+`VerifierFreshnessPolicy::new`, which rejects:
+
+| Condition                                         | Why it is rejected                                                                                                                 |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `max_prover_future_skew_secs * 10 > max_age_secs` | Without this the asymmetric pair reproduces the pre-v1.6 symmetric bound and delivers no reduction while appearing to deliver some |
+| `max_revocation_staleness_secs > max_age_secs`    | Response time then exceeds `2 x max_age_secs`                                                                                      |
+| `max_snapshot_future_skew_secs == 0`              | Every verification fails on sub-second disagreement between the store's write clock and the verifier's read clock                  |
+
+An implementation MUST NOT provide a constructor that bypasses these checks.
+
+The revocation lookup MUST be served by an indexed query against the store. The
+verifier MUST NOT receive an unbounded materialisation of the revoked set:
+`revoked_identities` is the _result_ of a lookup for one `holder_did`, not the
+whole registry, and a `Vec::contains` over an unbounded set has no stated
+relationship to the G2 sub-100ms target. The revoked set is a string-typed
+`DID` comparison and is not constant-time; it is a set membership test, not a
+secret-dependent comparison, so this is recorded rather than mitigated.
 
 ## Determinism Requirements
 
@@ -693,13 +862,21 @@ pub enum ZkVerifyError {
     #[error("Unsupported Cairo version: proof was generated with {proof_version}, verifier supports {verifier_version}")]
     UnsupportedCairoVersion { proof_version: String, verifier_version: String },
 
-    // v1.6 — revocation contract. All three fail closed: an unavailable or
-    // stale answer is a rejection, never a degraded accept.
+    // v1.7 — revocation contract. All fail closed: an unavailable or stale
+    // answer is a rejection, never a degraded accept.
     #[error("Proof too old: age {age_secs}s > {max_secs}s policy window")]
     ProofTooOld { age_secs: u64, max_secs: u64 },
 
-    #[error("Revocation snapshot outside freshness bounds: age {age_secs}s > {max_secs}s")]
+    #[error("Revocation snapshot too stale: age {age_secs}s > {max_secs}s")]
     RevocationStateStale { age_secs: u64, max_secs: u64 },
+
+    // Per R41: split out from RevocationStateStale. The future-dated case is
+    // not staleness and has the opposite remediation — "too stale" means
+    // refresh the read, "too far ahead" means the store's clock is wrong.
+    // Sharing one variant rendered as `age 0s > 300s`, which is false and
+    // indistinguishable in alerting.
+    #[error("Revocation snapshot dated ahead of verifier clock by {ahead_secs}s > {max_secs}s")]
+    RevocationSnapshotFuture { ahead_secs: u64, max_secs: u64 },
 
     #[error("Holder identity revoked: {holder_did}")]
     IdentityRevoked { holder_did: DID },
@@ -744,8 +921,9 @@ pub enum ZkVerifyError {
 - **PublicInputMismatch**: proof rejected if `public_inputs != expected_public_inputs` (defense against replay with different inputs).
 - **InvocationHashBind**: proof's `invocation_hash` binds the proof to a specific request body (inherited from RFC-0957 §Caveat::InvocationHashBind).
 - **No nonce-based dedup**: STARK proofs are not replay-deduped; verifiers rely on `PublicInputMismatch` + downstream settlement receipt uniqueness (RFC-0959 §Algorithms `ConsumedReceiptIndex` provides nonce-based settlement-side dedup; cross-ref). (v1.2 L6 fix: settlement-side ConsumedReceiptIndex catches replay attempts at settlement time even if the ZK proof itself is accepted — defense-in-depth, two independent dedup layers.)
-- **Freshness window (v1.6)**: the skew check is a security control, not clock hygiene. It is what bounds replay of a _legitimately minted_ proof, which is the actual threat — a prover claiming a bogus clock is caught trivially by the expiry assertion in the circuit, and conflating the two is why R1 H8 documented it as clock defence. Asymmetric since v1.6; see §Verification.
-- **Revocation check (v1.6)**: mandatory, identity-scoped, fail-closed, on every ZK path. Not a discharge channel and not gated on the subclass. See §Adversary Analysis A6 for why this is the check most likely to be dropped.
+- **Freshness window (v1.7)**: the skew check is a security control, not clock hygiene, and it is the **only** defence against back-dating. Correcting v1.6: the circuit asserts `current_unix_time <= before`, which bounds only the forward direction and only against the capability's expiry — it catches a prover dating the proof past expiry, not one dating it into the past. A prover may set `current_unix_time` to anything at or below `before`, including zero. Back-dating is caught exclusively by `max_age_secs`, so that value is the sole back-dating defence and must be sized as one. Conversely it is _forward_-dating that extends a proof's life, by `max_prover_future_skew_secs` — see §Revocation and freshness.
+- **Revocation check (v1.7)**: mandatory, identity-scoped, fail-closed, on every ZK path, and ordered after STWO verification. Not a discharge channel and not gated on the subclass. See §Adversary Analysis A6 for why this is the check most likely to be dropped.
+- **Per-key revocation is not yet enforced on this path (v1.7).** RFC-0009 A14 requires a key-level gate ahead of the identity gate. §Algorithms still resolves the DID inside the circuit, so a compromised key on a sound identity passes the identity check. Recorded rather than claimed solved; closing it needs a circuit change.
 
 ## Roles and Authorities
 
@@ -842,16 +1020,30 @@ This RFC is security-sensitive (authorization, cryptographic proof, provider-key
    elimination of one channel is precisely what makes skipping the other
    look reasonable.
 5. **What's our defense?** — A mandatory identity-scoped revocation check at
-   verify time (§Verification step 4), fail-closed on an unavailable or stale
-   answer, with snapshot staleness bounded by `max_revocation_staleness_secs`
-   so a cached "this identity is fine" cannot outlive the proof window.
-6. **What's the residual risk?** — Within one `max_age_secs` window a stolen
-   proof still verifies. The check is instant; the window is the exposure.
-   Deployments needing faster revocation cut `max_age_secs` for that
-   capability class. The genuinely bad configuration is an optional check,
-   which reopens replay as unbounded rather than as a bounded window.
+   verify time (§Verification step 5), fail-closed on an unavailable or stale
+   answer, with snapshot staleness bounded by `max_revocation_staleness_secs`.
+   Ordered after STWO verification so the store read is not reachable by an
+   unauthenticated caller.
+6. **What's the residual risk?** — Corrected per R41. v1.6 claimed "within one
+   `max_age_secs` window"; both of the two figures below were understated by up
+   to 2x.
+   - **Proof lifetime** is `max_age_secs + max_prover_future_skew_secs`, because
+     the prover controls `current_unix_time` and front-dating extends survival.
+   - **Revocation response time** is `max_age_secs + max_revocation_staleness_secs`.
+     Staleness does not make replay unbounded — the proof window bounds it — it
+     makes revocation slow.
+   - **A compromised key on a sound identity is not caught at all on this path**,
+     because the per-key gate of RFC-0009 A14 is not implemented here (§Algorithms
+     still resolves the DID in-circuit). This is a hole, not a bounded residual,
+     and it is recorded as one.
+     Deployments needing faster revocation cut `max_age_secs` **and**
+     `max_revocation_staleness_secs`; cutting only the first leaves the response
+     time floored by the staleness bound.
 
-**Verdict:** MITIGATED with a bounded residual equal to `max_age_secs`.
+**Verdict: PARTIALLY MITIGATED.** The identity-scoped control is specified,
+fail-closed and ordered correctly. It does not bound replay to one window, and
+it is one half of a two-gate control whose other half is not implemented on this
+path. Not "MITIGATED" as v1.6 claimed.
 
 ## Dependency Validation
 
@@ -878,20 +1070,22 @@ Per BLUEPRINT.md v1.3 consistency checklist:
 
 Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries with non-trivial blast radius MUST be tracked to closure.
 
-| #     | Assumption                                                                                                                                                                                                                                                       | Where Relied Upon                                                                                                                                                          | Blast Radius if False                                                                                                                                            | Mitigation / Status                                                                                                                                                                                                                                                                                                                        |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| IA-1  | STWO 128-bit security holds against known cryptanalysis                                                                                                                                                                                                          | §Adversary Analysis header; A1 finding content, 5-Question Test MITIGATED verdict); §Determinism Requirements (proof gen Class C)                                          | If broken, all ZK-bearing caps forgeable                                                                                                                         | Track STWO cryptanalysis status; migration path to Plonky3 (F2)                                                                                                                                                                                                                                                                            |
-| IA-2  | Cairo 2.6.0 is deterministic across implementations                                                                                                                                                                                                              | §Algorithms header; Cairo circuit sub-header; body; §Implementation Phases Phase B.2                                                                                       | Drift → CASM hash mismatch across implementations                                                                                                                | Pin cairo-compile version; CI snapshot test; document compatibility matrix                                                                                                                                                                                                                                                                 |
-| IA-3  | `stwo-plugin` crate builds on stable rustc                                                                                                                                                                                                                       | §Implementation Phases Phase C.2 ( header; content)                                                                                                                        | If requires nightly, blocks MVP                                                                                                                                  | Phase C.2 vendoring per master plan §4 Phase C.2                                                                                                                                                                                                                                                                                           |
-| IA-4  | Inference trace emitted by self-host worker is honest                                                                                                                                                                                                            | §Algorithms trace_hash assertion `assert(trace_hash == expected_output_hash, 'TraceHashMismatch')`; §Data Structures `ExecutionTrace` + `TraceStep`; §Adversary A4         | Dishonest trace → fake attestation                                                                                                                               | Live debugger out of scope; Poseidon hash check inside circuit; hardware attestation (F6)                                                                                                                                                                                                                                                  |
-| IA-5  | `current_unix_time` public input is sourced from a trusted clock                                                                                                                                                                                                 | §Algorithms ( Cairo circuit assertion `current_unix_time <= before`; block comment); §Data Structures `PublicInputs`                                                       | Drift → false acceptances                                                                                                                                        | Inherit from RFC-0957 §IA-2 (monotonic + NTP-synced)                                                                                                                                                                                                                                                                                       |
-| IA-6  | PublicInputMismatch is a hard rejection (no fallthrough)                                                                                                                                                                                                         | §Algorithms `verify_capability_zk` section ( header); pseudocode; §Adversary A5; §Lifecycle Requirements transition table including InFlight → PublicInputMismatch row     | Soft fallback → replay vulnerability                                                                                                                             | `verify_capability_zk` returns Err; no recovery path                                                                                                                                                                                                                                                                                       |
-| IA-7  | NodeType registry is honest                                                                                                                                                                                                                                      | §NodeType Gating Matrix; §NodeType Gating Rule; §Algorithms `mint_with_zk` declaration; body; §Adversary A3, Finding A3 header)                                            | Forged NodeType → gating bypass                                                                                                                                  | Three-layer defense (mint + registry + CI lint); out-of-scope binary modification                                                                                                                                                                                                                                                          |
-| IA-8  | Capability root secret is zeroized after proof gen                                                                                                                                                                                                               | §Algorithms `mint_with_zk` step 4 CASM hash check (zeroize location: §Key Handling Rules); §Key Handling Rules, includes header)                                           | Retention → verifier compromise                                                                                                                                  | Inherit from RFC-0957 §IA-7 + RFC-0009 §Vault — Provider-Key Handling                                                                                                                                                                                                                                                                      |
-| IA-9  | Stoolap fork `feat/blockchain-sql` branch is the canonical source for CASM + STWO                                                                                                                                                                                | §Cross-Repo Coordination header; content; §Implementation Phases Phase B.2 + Phase C.2 ( header; content); §Dependencies Optional (RFC-0959, RFC-0955)                     | Fork drift → CASM hash mismatch across implementations                                                                                                           | Pin commit hash; weekly diff vs upstream; per master plan §8 Risk #6                                                                                                                                                                                                                                                                       |
-| IA-10 | Stoolap fork PR (Phase B.2 + C.2) MUST land before cipherocto's `verify_capability_zk` can promote from MVP stub to production (v1.3 amendment: explicit cross-repo coupling documented; previously implicit in §Cross-Repo Coordination ordering)               | §Cross-Repo Coordination; §Implementation Phases Phase G Cross-Repo Coordination checklist                                                                                 | Cipherocto verifier accepts all-comments match as Ok in MVP (per R1 H8 + R1 C5 MVP stub); without fork PR, `stark_proof` is never actually verified              | Block on stoolap fork PR landing per master plan §Cross-Repo Coordination; cipherocto PR review includes fork readiness check                                                                                                                                                                                                              |
-| IA-11 | **v1.4:** `provider_slot_id` is a stable, globally-unique identifier for the vault slot that the capability is bound to; proofer and verifier MUST agree on the slot ID for the proof to verify. Sourced from RFC-0009 §Vault — Provider-Key Handling substrate. | §Data Structures `PublicInputs.provider_slot_id` (v1.4 field); §Algorithms `verify_capability_zk` (slot comparison); §Algorithms `mint_with_zk` (slot sourcing from vault) | Cross-slot replay: attacker captures a proof bound to slot A, replays against token claiming slot B → authorization grant against wrong slot                     | Verifier compares `proof.public_inputs.provider_slot_id` against token envelope's `provider_slot_id` (RFC-0957 §Wire Format v3 slot segment); mismatch returns `ZkVerifyError::PublicInputMismatch`. Mint API rejects empty / unparseable slot IDs. Vault substrate (RFC-0009 §Vault — Provider-Key Handling) provides slot ID provenance. |
-| IA-12 | **v1.6:** the revocation store is reachable at verify time and its snapshot is no older than `max_revocation_staleness_secs`. This RFC does not specify the store; it specifies the obligation.                                                                  | §Data Structures `RevocationSnapshot`; §Verification step 4; §Adversary Analysis A6                                                                                        | Revocation store unavailable → the check cannot answer → a naive implementation degrades to accept, which converts a bounded replay window into unbounded replay | Fail closed: an unavailable or stale snapshot returns `ZkVerifyError::RevocationStateStale` and never falls through to accept. The typed query boundary is RFC-0009 §Principle 12 — storage is not a protocol, so the store can be swapped without changing this contract.                                                                 |
+| #     | Assumption                                                                                                                                                                                                                                                       | Where Relied Upon                                                                                                                                                          | Blast Radius if False                                                                                                                                                                                                                      | Mitigation / Status                                                                                                                                                                                                                                                                                                                                                                       |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IA-1  | STWO 128-bit security holds against known cryptanalysis                                                                                                                                                                                                          | §Adversary Analysis header; A1 finding content, 5-Question Test MITIGATED verdict); §Determinism Requirements (proof gen Class C)                                          | If broken, all ZK-bearing caps forgeable                                                                                                                                                                                                   | Track STWO cryptanalysis status; migration path to Plonky3 (F2)                                                                                                                                                                                                                                                                                                                           |
+| IA-2  | Cairo 2.6.0 is deterministic across implementations                                                                                                                                                                                                              | §Algorithms header; Cairo circuit sub-header; body; §Implementation Phases Phase B.2                                                                                       | Drift → CASM hash mismatch across implementations                                                                                                                                                                                          | Pin cairo-compile version; CI snapshot test; document compatibility matrix                                                                                                                                                                                                                                                                                                                |
+| IA-3  | `stwo-plugin` crate builds on stable rustc                                                                                                                                                                                                                       | §Implementation Phases Phase C.2 ( header; content)                                                                                                                        | If requires nightly, blocks MVP                                                                                                                                                                                                            | Phase C.2 vendoring per master plan §4 Phase C.2                                                                                                                                                                                                                                                                                                                                          |
+| IA-4  | Inference trace emitted by self-host worker is honest                                                                                                                                                                                                            | §Algorithms trace_hash assertion `assert(trace_hash == expected_output_hash, 'TraceHashMismatch')`; §Data Structures `ExecutionTrace` + `TraceStep`; §Adversary A4         | Dishonest trace → fake attestation                                                                                                                                                                                                         | Live debugger out of scope; Poseidon hash check inside circuit; hardware attestation (F6)                                                                                                                                                                                                                                                                                                 |
+| IA-5  | `current_unix_time` public input is sourced from a trusted clock                                                                                                                                                                                                 | §Algorithms ( Cairo circuit assertion `current_unix_time <= before`; block comment); §Data Structures `PublicInputs`                                                       | Drift → false acceptances                                                                                                                                                                                                                  | Inherit from RFC-0957 §IA-2 (monotonic + NTP-synced)                                                                                                                                                                                                                                                                                                                                      |
+| IA-6  | PublicInputMismatch is a hard rejection (no fallthrough)                                                                                                                                                                                                         | §Algorithms `verify_capability_zk` section ( header); pseudocode; §Adversary A5; §Lifecycle Requirements transition table including InFlight → PublicInputMismatch row     | Soft fallback → replay vulnerability                                                                                                                                                                                                       | `verify_capability_zk` returns Err; no recovery path                                                                                                                                                                                                                                                                                                                                      |
+| IA-7  | NodeType registry is honest                                                                                                                                                                                                                                      | §NodeType Gating Matrix; §NodeType Gating Rule; §Algorithms `mint_with_zk` declaration; body; §Adversary A3, Finding A3 header)                                            | Forged NodeType → gating bypass                                                                                                                                                                                                            | Three-layer defense (mint + registry + CI lint); out-of-scope binary modification                                                                                                                                                                                                                                                                                                         |
+| IA-8  | Capability root secret is zeroized after proof gen                                                                                                                                                                                                               | §Algorithms `mint_with_zk` step 4 CASM hash check (zeroize location: §Key Handling Rules); §Key Handling Rules, includes header)                                           | Retention → verifier compromise                                                                                                                                                                                                            | Inherit from RFC-0957 §IA-7 + RFC-0009 §Vault — Provider-Key Handling                                                                                                                                                                                                                                                                                                                     |
+| IA-9  | Stoolap fork `feat/blockchain-sql` branch is the canonical source for CASM + STWO                                                                                                                                                                                | §Cross-Repo Coordination header; content; §Implementation Phases Phase B.2 + Phase C.2 ( header; content); §Dependencies Optional (RFC-0959, RFC-0955)                     | Fork drift → CASM hash mismatch across implementations                                                                                                                                                                                     | Pin commit hash; weekly diff vs upstream; per master plan §8 Risk #6                                                                                                                                                                                                                                                                                                                      |
+| IA-10 | Stoolap fork PR (Phase B.2 + C.2) MUST land before cipherocto's `verify_capability_zk` can promote from MVP stub to production (v1.3 amendment: explicit cross-repo coupling documented; previously implicit in §Cross-Repo Coordination ordering)               | §Cross-Repo Coordination; §Implementation Phases Phase G Cross-Repo Coordination checklist                                                                                 | Cipherocto verifier accepts all-comments match as Ok in MVP (per R1 H8 + R1 C5 MVP stub); without fork PR, `stark_proof` is never actually verified                                                                                        | Block on stoolap fork PR landing per master plan §Cross-Repo Coordination; cipherocto PR review includes fork readiness check                                                                                                                                                                                                                                                             |
+| IA-11 | **v1.4:** `provider_slot_id` is a stable, globally-unique identifier for the vault slot that the capability is bound to; proofer and verifier MUST agree on the slot ID for the proof to verify. Sourced from RFC-0009 §Vault — Provider-Key Handling substrate. | §Data Structures `PublicInputs.provider_slot_id` (v1.4 field); §Algorithms `verify_capability_zk` (slot comparison); §Algorithms `mint_with_zk` (slot sourcing from vault) | Cross-slot replay: attacker captures a proof bound to slot A, replays against token claiming slot B → authorization grant against wrong slot                                                                                               | Verifier compares `proof.public_inputs.provider_slot_id` against token envelope's `provider_slot_id` (RFC-0957 §Wire Format v3 slot segment); mismatch returns `ZkVerifyError::PublicInputMismatch`. Mint API rejects empty / unparseable slot IDs. Vault substrate (RFC-0009 §Vault — Provider-Key Handling) provides slot ID provenance.                                                |
+| IA-12 | **v1.6:** the revocation store is reachable at verify time and its snapshot is no older than `max_revocation_staleness_secs`. This RFC does not specify the store; it specifies the obligation.                                                                  | §Data Structures `RevocationSnapshot`; §Verification step 5; §Adversary Analysis A6                                                                                        | Revocation store unavailable → the check cannot answer → a naive implementation degrades to accept, which converts a bounded replay window into unbounded replay                                                                           | Fail closed: an unavailable or stale snapshot returns `ZkVerifyError::RevocationStateStale` and never falls through to accept. The typed query boundary is RFC-0009 §Principle 12 — storage is not a protocol, so the store can be swapped without changing this contract. See IA-14 for the completeness half of the same obligation.                                                    |
+| IA-13 | **v1.7:** `verifier_local_unix_time` is the sole reference for all three freshness bounds and MUST come from a verifier-local trusted clock. It MUST NOT come from the proof, from the presenting party, or from request context.                                | §Verification (steps 3 and 5); §Configuration Validation                                                                                                                   | An attacker who influences the verifier's reference clock chooses its own replay window. Setting it forward only tightens checks, so the dangerous direction is backward — and that direction is caught only by the snapshot forward bound | Sourced from a verifier-local monotonic clock or a verifier-minted token. **Live-code defect:** `CapabilityVerifier::at_time` in `quota-router-core` documents "typically the slot's issuance time from the request context", which is exactly the forbidden source. That doc comment is wrong and must be corrected alongside the implementation. IA-5 covers only the _prover's_ clock. |
+| IA-14 | **v1.7:** the revocation store's `effective_at` is the wall clock at which the returned set became **complete**. A store that is merely recent but incomplete violates this.                                                                                     | §Data Structures `RevocationSnapshot`                                                                                                                                      | A lagging replica, partial compaction, or incremental-write bug yields a snapshot fresh by every measure the struct exposes while omitting a revoked identity — the verifier returns Ok on a revoked identity and cannot detect it         | Completeness is a store obligation the verifier cannot check, recorded because the failure is silent. Fail-closed on unavailability covers a missing store, not a wrong one.                                                                                                                                                                                                              |
 
 ## Adversarial Review
 
@@ -994,23 +1188,32 @@ RFC-0958 does NOT alter token flow. Settlement continues per RFC-0959 (independe
 - v1.3 (2026-07-22): added IA-10 (cross-repo coupling explicit); F4 promotion path documented.
 - v1.4 (2026-07-22): added `provider_slot_id: String` field to `PublicInputs` for slot-binding defense against cross-slot replay. Mint-side sources from holder's vault slot (RFC-0009 §Vault — Provider-Key Handling); verifier-side compares against token envelope's `provider_slot_id` (RFC-0957 §Wire Format v3 adds slot segment). Cross-impl test vectors now carry concrete slot IDs; placeholder sentinel ("test-slot") removed from CipherOcto verifier. Implementations claiming compatibility with this RFC MUST implement the v1.4 surface (8-field PublicInputs including `provider_slot_id` + v1.3 surface).
 - v1.5 (2026-10-07): ZK mint authority rekeyed from role name to served payload kinds; `NodeType` retained as a CLI/storage projection only.
-- v1.6 (2026-10-08): verifier signature became 6-arg (`verifier_local_unix_time` + `RevocationSnapshot` + `VerifierFreshnessPolicy`). Added `RevocationSnapshot` + `VerifierFreshnessPolicy` to §Data Structures and `ProofTooOld` + `RevocationStateStale` + `IdentityRevoked` to `ZkVerifyError`. The symmetric `abs_diff` clock bound is replaced by the asymmetric `max_age_secs` / `max_future_skew_secs` pair. **No new public input and no circuit change**, so the CASM hash is unchanged and proofs minted before v1.6 remain cryptographically valid — a v1.5 verifier will still accept them, which is exactly the gap A6 describes. Implementations claiming compatibility MUST implement the v1.6 surface (6-arg verifier + revocation check). There is no shim: a v1.5 verifier cannot be configured into the v1.6 behaviour, because the missing argument is the revocation state itself.
-- Implementations claiming compatibility with this RFC MUST implement the v1.6 surface (8-field PublicInputs including `provider_slot_id` + 6-arg verifier + revocation check + 12-variant ZkVerifyError + asymmetric freshness bounds).
+- v1.6 (2026-10-08): verifier signature became 6-arg. Added `RevocationSnapshot` + `VerifierFreshnessPolicy` and three error variants. Replaced the symmetric `abs_diff` bound with an asymmetric pair. **Superseded in large part by v1.7 — the stated rationale was backwards and the stated exposure was wrong. Kept in the history because the error is instructive.**
+- v1.7 (2026-10-09): R41 review of the v1.6 delta, which found 3 CRITICAL + 6 HIGH. Corrects the exposure arithmetic (§Revocation and freshness): proof lifetime is `max_age_secs + max_prover_future_skew_secs` and revocation response is `max_age_secs + max_revocation_staleness_secs`; v1.6 attributed the symmetric bound's extra exposure to back-dating when front-dating is what extends a proof's life, which made the "asymmetric" pair deliver no reduction at equal values. Deletes `RevocationSnapshot.version`, whose stated rationale no check performed and whose monotonicity-floor implementation §Determinism forbids. Splits `max_future_skew_secs` into `max_prover_future_skew_secs` and `max_snapshot_future_skew_secs` across trust domains, and adds §Configuration Validation with constructor enforcement. Adds `RevocationSnapshotFuture` (the old variant rendered as `age 0s > 300s`). Orders the revocation lookup after STWO verification. Restores `accepted_casm_blake3_hashes` to the verifier signature — v1.6's const-based CASM check silently undid the R1 H13 N=2 rotation grace the real code implements. Adds IA-13 (verifier clock trust root, including the live-code defect in `at_time`) and IA-14 (snapshot completeness). Updates §Lifecycle, §Time Bounds, §Replay Protection and A6, whose verdict drops from MITIGATED to PARTIALLY MITIGATED because the per-key gate of RFC-0009 A14 is not implemented on this path.
+- Implementations claiming compatibility with this RFC MUST implement the v1.7 surface: 8-field `PublicInputs` including `provider_slot_id`, a 6-arg verifier (`proof`, `expected_public_inputs`, `accepted_casm_blake3_hashes`, `verifier_local_unix_time`, `revocation`, `policy`), a 10-variant `ZkVerifyError`, the four freshness bounds with their enforced relationships, and the revocation check ordered after STWO verification. **No new public input and no circuit change**, so the CASM hash is unchanged and proofs minted under earlier versions remain cryptographically valid — which means an older verifier will still accept them, and that is precisely the gap A6 describes. There is no shim: an older verifier cannot be configured into this behaviour, because the missing arguments are the revocation state and the policy.
 
 ## Test Vectors
 
 Canonical test cases for cross-implementation verification. Located at `crates/octo-wallet/tests/fixtures/capability-zk/`:
 
-| Vector                                 | Scenario                                                               | Expected                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zk-mint-self-host.json`               | SelfHost node mints ZK cap with inference trace                        | ProofBundle with casm_hash == COMPILED_CASM_BLAKE3_HASH; verify passes                                                                                                                                                                                                                                                                                                                                                                         |
-| `zk-mint-hybrid-no-trace.json`         | Hybrid node mints ZK cap without inference trace                       | ProofBundle valid; verify passes (Hybrid opt-in allowed)                                                                                                                                                                                                                                                                                                                                                                                       |
-| `zk-mint-wholesale-reject.json`        | Wholesale node attempts `mint_with_zk`                                 | Error: `NodeTypeCannotMintZKCap`                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `zk-verify-public-input-mismatch.json` | Proof generated with ask_id=A; verified with ask_id=B                  | Error: `PublicInputMismatch`                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `zk-verify-casm-drift.json`            | CASM regenerated; old proof verified                                   | Error: `CasmHashMismatch`                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `zk-verify-stwo-fail.json`             | STARK proof bytes corrupted by 1 bit                                   | Error: `StwoVerifyError`                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `zk-verify-expired.json`               | Proof's current_unix_time > Before caveat                              | Error: `Expired` (caught at circuit assertion Step 7; surfaced as `ZkVerifyError` not `ZkMintError` because mint succeeds — circuit-level assertion failure during proof gen is rare; in practice expired proofs are caught at verify via `Before` caveat check) (v1.2 L9 fix: original phrasing was misleading; ZkMintError::Expired only triggers when mint-time clock exceeds Before, which is a holder-side bug not a verify-time concern) |
-| `zk-cross-impl-tv1.json`               | Same witness + public_inputs fed to 2 different prover implementations | Both proofs accepted by same verifier                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Vector                                    | Scenario                                                                                         | Expected                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zk-mint-self-host.json`                  | SelfHost node mints ZK cap with inference trace                                                  | ProofBundle with casm_hash == COMPILED_CASM_BLAKE3_HASH; verify passes                                                                                                                                                                                                                                                                                                                                                                         |
+| `zk-mint-hybrid-no-trace.json`            | Hybrid node mints ZK cap without inference trace                                                 | ProofBundle valid; verify passes (Hybrid opt-in allowed)                                                                                                                                                                                                                                                                                                                                                                                       |
+| `zk-mint-wholesale-reject.json`           | Wholesale node attempts `mint_with_zk`                                                           | Error: `NodeTypeCannotMintZKCap`                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `zk-verify-public-input-mismatch.json`    | Proof generated with ask_id=A; verified with ask_id=B                                            | Error: `PublicInputMismatch`                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `zk-verify-casm-drift.json`               | CASM regenerated; old proof verified                                                             | Error: `CasmHashMismatch`                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `zk-verify-stwo-fail.json`                | STARK proof bytes corrupted by 1 bit                                                             | Error: `StwoVerifyError`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `zk-verify-expired.json`                  | Proof's current_unix_time > Before caveat                                                        | Error: `Expired` (caught at circuit assertion Step 7; surfaced as `ZkVerifyError` not `ZkMintError` because mint succeeds — circuit-level assertion failure during proof gen is rare; in practice expired proofs are caught at verify via `Before` caveat check) (v1.2 L9 fix: original phrasing was misleading; ZkMintError::Expired only triggers when mint-time clock exceeds Before, which is a holder-side bug not a verify-time concern) |
+| `zk-cross-impl-tv1.json`                  | Same witness + public_inputs fed to 2 different prover implementations                           | Both proofs accepted by same verifier                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `zk-verify-revoked-identity.json` (v1.7)  | Proof minted while identity sound; identity revoked before presentation                          | Error: `IdentityRevoked`. Named by RFC-0009 A13 as `revoked_identity_replay_rejected` — it was specified cross-RFC and had no vector here.                                                                                                                                                                                                                                                                                                     |
+| `zk-verify-stale-revocation.json` (v1.7)  | Snapshot `effective_at` older than `max_revocation_staleness_secs`                               | Error: `RevocationStateStale`. Named by RFC-0009 A13 as `stale_revocation_snapshot_is_rejected`.                                                                                                                                                                                                                                                                                                                                               |
+| `zk-verify-future-revocation.json` (v1.7) | Snapshot `effective_at` ahead of the verifier clock beyond tolerance                             | Error: `RevocationSnapshotFuture` — **not** `RevocationStateStale`, and not `age 0s > 300s`. Pins the split so the two root causes stay distinguishable.                                                                                                                                                                                                                                                                                       |
+| `zk-verify-proof-too-old.json` (v1.7)     | Proof presented `max_age_secs + 1` after its claimed time                                        | Error: `ProofTooOld`.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `zk-verify-forward-dated.json` (v1.7)     | Prover sets `current_unix_time` ahead of the verifier clock beyond `max_prover_future_skew_secs` | Error: `ClockSkewExceeded`. This vector exists because forward-dating — not back-dating — is what extends a proof's life, which v1.6 got backwards.                                                                                                                                                                                                                                                                                            |
+| `zk-verify-backdated.json` (v1.7)         | Prover sets `current_unix_time` far in the past, below `Before`                                  | Accepted if within `max_age_secs`; rejected as `ProofTooOld` beyond it. Pins that the circuit's `current_unix_time <= before` does **not** catch back-dating.                                                                                                                                                                                                                                                                                  |
+| `zk-verify-policy-rejects.json` (v1.7)    | Policy with `max_prover_future_skew_secs * 10 > max_age_secs`                                    | `VerifierFreshnessPolicy::new` returns `Err` at construction. Pins the §Configuration Validation relationships as enforceable rather than documented.                                                                                                                                                                                                                                                                                          |
+| `zk-verify-compromised-key.json` (v1.7)   | One key revoked on a sound identity                                                              | **Currently ACCEPTED — this vector documents a known hole.** RFC-0009 A14 requires `compromised_key_revoked_without_identity_revocation` to reject; the per-key gate is not implemented on the ZK path because §Algorithms resolves the DID in-circuit. Kept as a failing vector so the gap is visible until the circuit amendment lands.                                                                                                      |
 
 ## Alternatives Considered
 

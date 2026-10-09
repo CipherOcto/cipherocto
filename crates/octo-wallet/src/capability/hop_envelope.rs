@@ -347,29 +347,36 @@ pub fn unwrap_at_destination(
     })
 }
 
-/// Verify the Ed25519 hop signature (mission 0970-a1 §Hop Signature).
+/// Verify the hop signature (mission 0970-a1 §Hop Signature).
 ///
 /// Verifies `HopCapability.signature` over the canonical signed-bytes
 /// `(b"hpsg" || chain_hash || next_hop_did || ttl_millis_unix_be ||
-/// node_epoch_be)` using the wrapping node's Ed25519 verifying key derived
-/// from `wrapping_node_pub`. Replaces 0970-a's BLAKE3 placeholder.
+/// node_epoch_be)` using the wrapping node's key derived from
+/// `wrapping_node_pub`. Replaces 0970-a's BLAKE3 placeholder.
+///
+/// Dispatches through `AlgorithmRegistry` (RFC-0009 AC#11) rather than
+/// building a `VerifyingKey` here. The check stays `verify_strict` —
+/// the registry's Ed25519 implementation is the strict one, so this
+/// site does not lose the small-order and non-canonical-scalar
+/// rejection it asked for.
 ///
 /// # Errors
-/// Returns [`HopError::SignatureInvalid`] on signature mismatch.
+/// Returns [`HopError::SignatureInvalid`] on signature mismatch or if
+/// the algorithm is not registered in this deployment.
 pub fn verify_hop_signature(envelope: &HopEnvelope) -> Result<(), HopError> {
-    let verifying_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&envelope.hop_cap.wrapping_node_pub)
-            .map_err(|_| HopError::SignatureInvalid)?;
     let mut signed = Vec::with_capacity(4 + 32 + envelope.hop_cap.next_hop_did.len() + 8 + 8);
     signed.extend_from_slice(b"hpsg");
     signed.extend_from_slice(&envelope.chain_hash);
     signed.extend_from_slice(envelope.hop_cap.next_hop_did.as_bytes());
     signed.extend_from_slice(&envelope.hop_cap.ttl_millis_unix.to_be_bytes());
     signed.extend_from_slice(&envelope.hop_cap.node_epoch.to_be_bytes());
-    let signature = ed25519_dalek::Signature::from_bytes(&envelope.hop_cap.signature);
-    verifying_key
-        .verify_strict(&signed, &signature)
-        .map_err(|_| HopError::SignatureInvalid)
+    octo_algo_ed25519::verify_dispatch(
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+        &envelope.hop_cap.wrapping_node_pub,
+        &signed,
+        &envelope.hop_cap.signature,
+    )
+    .map_err(|_| HopError::SignatureInvalid)
 }
 
 /// Free function chain-hash verify (RFC-0970 §Algorithms, mission 0970-a1).

@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use octo_ident::{
     bootstrap, global, AlgorithmId, AlgorithmRegistryError, BootstrapError, SignatureAlgorithm,
     SignatureError, ZkSupport,
@@ -139,8 +139,14 @@ impl SignatureAlgorithm for Ed25519Algorithm {
         let verifying_key = VerifyingKey::from_bytes(key_bytes)
             .map_err(|_| SignatureError::Invalid(ED25519_NAME))?;
         let sig = Signature::from_bytes(sig_bytes);
+        // `verify_strict`, not `verify`. Strict additionally rejects
+        // small-order keys and non-canonical scalars. Some call sites were
+        // already asking for it — the hop-capability path does — so the
+        // shared implementation takes the stronger check. Otherwise the
+        // sites that refactor here would silently lose it, which is the
+        // same class of regression as dispatching to the wrong algorithm.
         verifying_key
-            .verify(message, &sig)
+            .verify_strict(message, &sig)
             .map_err(|_| SignatureError::Invalid(ED25519_NAME))
     }
 }

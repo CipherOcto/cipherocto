@@ -243,7 +243,6 @@ impl HsmAdapter for NullSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Verifier;
 
     fn sample_seed() -> [u8; 32] {
         [
@@ -265,10 +264,12 @@ mod tests {
         let msg = b"phase h smoke test";
         let sig_bytes = s.sign(msg).expect("sign");
         assert_eq!(sig_bytes.len(), 64);
-        // Verify with ed25519-dalek directly.
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&sample_pub()).unwrap();
-        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        vk.verify(msg, &sig).expect("verify");
+        // Verify through the registry, not with a locally built
+        // VerifyingKey. This is a holder signature, so it is in AC#11's
+        // scope, and routing it through dispatch means the smoke test
+        // exercises the same path production verification takes.
+        octo_algo_ed25519::verify_dispatch(&s.algorithm_id(), &sample_pub(), msg, &sig_bytes)
+            .expect("verify");
     }
 
     #[test]
@@ -279,8 +280,7 @@ mod tests {
         let msg = b"ledger smoke";
         let sig_bytes = l.sign(msg).expect("sign");
         assert_eq!(sig_bytes.len(), 64);
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&sample_pub()).unwrap();
-        vk.verify(msg, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+        octo_algo_ed25519::verify_dispatch(&l.algorithm_id(), &sample_pub(), msg, &sig_bytes)
             .expect("verify");
     }
 

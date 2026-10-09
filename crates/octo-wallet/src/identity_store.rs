@@ -2711,10 +2711,16 @@ mod tests {
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
         let sig = handle.sign(b"hello").expect("sign");
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey).expect("vk");
-        verifying_key
-            .verify_strict(b"hello", &sig)
-            .expect("signature must verify against recorded pubkey");
+        // Holder signature, so in AC#11's scope: dispatch rather than
+        // building a local VerifyingKey. The registry's Ed25519 is the
+        // strict check this site was already asking for.
+        octo_algo_ed25519::verify_dispatch(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &pubkey,
+            b"hello",
+            &sig.to_bytes(),
+        )
+        .expect("signature must verify against recorded pubkey");
     }
 
     /// `tv_x_22` (mission §AC-31 stub note): the substrate's
@@ -4543,7 +4549,7 @@ mod tests {
     /// boundary, and it is the site the CLI actually reaches after a
     /// reopen. It was untested. The only `InvalidSuccessorProof`
     /// assertion in the crate sits on a different site - the
-    /// `VerifyingKey::from_bytes` failure inside `IdentityKey` - so
+    /// unregistered-algorithm refusal inside `IdentityKey::verify` - so
     /// the suite was green with this guard removable.
     ///
     /// Unlike tv_x_64 the corruption needs no second identity: the

@@ -1,4 +1,3 @@
-ac, §e, §c
 ac-8 2-cycle
 adapter crate list
 adapter crate list (5
@@ -13,10 +12,8 @@ adversarial review phase 6
 adversarial review phase 7
 adversarial review phase 9
 adversarial review process —
-adversarial review process, r12
 adversary a2
 adversary a3
-adversary a3, finding a3
 adversary a4
 adversary a5
 adversary a5; §lifecycle requirements
@@ -27,27 +24,25 @@ adversary analysis + §compatibility #5 + §key files + §rationale
 adversary analysis / ia-dc-13/14/16 / roles-and-authorities / phase 1 / integration order
 adversary analysis 5-question test
 adversary analysis a1
-adversary analysis a1, a2
 adversary analysis a1-a7
 adversary analysis a12
 adversary analysis a1–a7
 adversary analysis a2
-adversary analysis a2, a3, a4
 adversary analysis a3
 adversary analysis a4
 adversary analysis a5
 adversary analysis a6
 adversary analysis concurrent-call
 adversary analysis decision table (5-question
+adversary analysis finding a21
 adversary analysis q1 + q5 + q7
 adversary analysis q1 + q5 + q7; §security considerations
 adversary analysis reason-field xss
-adversary analysis threat 10, 11, 16
-adversary analysis threat 4, 8, 12
+adversary analysis threat 10
+adversary analysis threat 4
 adversary analysis threat 6
 adversary analysis threat 7
 adversary analysis §timestamp-future
-adversary analysis, rfc-0855p-d2 §adversary analysis, rfc-0855p-d3 §adversary analysis
 adversary analysis; rfc-0855p-b §"adversary analysis" (sister
 agent state machine's
 agent state machine; rfc-0002 §capability validation
@@ -70,13 +65,10 @@ algorithms §compute
 algorithms) — pure
 algorithms) — router
 algorithms) — token issuer
-algorithms), not
 algorithms); --confirm-acknowledge
-algorithms, §performance targets
 algorithms:phantomcallsite (r55-n5
 alreadyintransition (cli
 alternatives considered + §why
-alternatives considered, rfc-0855p-d2 §alternatives considered, rfc-0855p-d3 §alternatives considered
 amendment surface
 amendment surface (
 amendment surface (commit
@@ -107,7 +99,6 @@ asset id derivation —
 attenuation invariant) +
 attenuation invariant; cli
 attenuation →
-attenuation), not
 attestation kind registry (forward
 attestation kind registry —
 attestation kinds (forward
@@ -125,15 +116,11 @@ auditfilter (cursor
 auditsubstratenotready (already
 auth flow
 authority rotation
-authors, §maintainers
-authors, §maintainers (relocated
-authors, §maintainers, §performance targets, §compatibility, §test vectors
 azure special case
 b5 provider resolution
 background requests
 balance history: projectionevent (substrate-side; cli
 base url alias
-binary surface, §output envelope
 binding domain
 bootstrap envelope types
 bootstrap orchestrator
@@ -150,9 +137,8 @@ canonical serialization
 capability extension
 capability keys + §hsmadapter integration
 capability keys) —
-capability keys, hkdf-blake3
 capability keys; hkdf-blake3
-capability macaroon, not
+capability macaroon
 capability validation
 capability validation (6-step
 capability validation (the 6-step
@@ -164,7 +150,6 @@ chain-id derivation
 chainid 32-byte
 channel binding
 channel compromise analysis
-ci mode rationale), ci
 compatibility "additive
 compatibility "backward
 compatibility #1
@@ -180,8 +165,6 @@ compatibility —
 component integration architecture —
 concurrency —
 confirmation flag + per-axis exit code matrix —
-confirmation flag + per-axis exit code matrix, phase 7
-confirmation flag matrix), 64
 confirmation flag phase 9
 constraint encoding
 coordinator lifecycle
@@ -202,9 +185,6 @@ data structures + §lifecycle
 data structures + §state machine
 data structures pk
 data structures publicinputs
-data structures), not
-data structures, §test vectors, §implementation phases, §key files
-data structures, §wiretoraw
 data structures:caproothash
 data structures:destinationnoncestore
 data structures:destinationnoncestore (3-arg
@@ -214,25 +194,20 @@ databasesyncadapter durability
 databasesyncadapter lsn advancement
 dependencies +
 dependencies optional
-dependencies optional (rfc-0959, rfc-0955
+dependencies optional (rfc-0959
 dependencies rfc-0009-b1
-dependencies, rfc-0871
-dependencies, §compatibility
 dependency validation rule 1
 dependency validation rules → 2-cycle atomic promotion
 dependency validation rules → 2-cycle atomic promotion (amendment
 dependency validation rules → 2-cycle atomic promotion (rule 5
-dependency validation, §version history
 design goal 3
 design goals #3
 design goals #3 + §dependencies
 design goals g1
+design goals g2/g3
 design goals g2/g5 (lru + ttl
 design goals g3
 design goals g6
-design goals g6, §implementation phases phase 1
-design goals g6, §security considerations
-design goals g6, §why needed 2, §data structures (nodetype registry
 design goals g8
 destination ranking
 detailed design §cross-rfc
@@ -249,7 +224,6 @@ determinism requirements 2
 determinism requirements §json
 determinism requirements —
 determinism requirements — dcs
-determinism requirements, rfc-0855p-d2 §determinism requirements, rfc-0855p-d3 §determinism requirements
 determinism) —
 deterministic canonical serialization (dcs
 deterministic constant
@@ -257,8 +231,6 @@ deterministic encoding
 deterministic encoding (big-endian
 documentation standards
 domain separators
-dqa serialization, not rfc-0105
-dqaencoding, not
 driver surface / §wire form
 dual-stake; rfc-0909
 dual-stake; rfc-0909 §economic analysis
@@ -280,7 +252,6 @@ error handling phase 9
 error handling —
 error handling →
 error handling); cli
-error handling, §exit codes
 event identity
 execution class a —
 execution class mapping
@@ -298,12 +269,10 @@ extension surface (forward
 external blockers + §22 b0
 extra headers
 f1): ml-dsa + slh-dsa
-f1, did
 f3 holderregistry
 feature gate architecture):                         ║
 feature-gated provider initialization
 fiat-shamir "internal
-filters, §substrate
 firmware attestation
 follow-on §f
 format bypass defense
@@ -324,10 +293,8 @@ future work f3 — audit log (canonical
 future work f4
 future work f8 + f11
 future work or §specification
-future work or §specification, before
 future work §fw5 + §fw6 layer c
 future work) —
-future work, rfc-0855p-d2 §future work, rfc-0855p-d3 §future work
 fw1 — cross-rfc
 fw1 — rfc-0012-v3
 fw1 — rfc-0014-v3
@@ -354,15 +321,12 @@ fw6 + ac-11 + ac-12
 fw6 —
 fw6 — canonical scrubber patterns
 fw6 — cross-rfc
-fw6, ac-11
 g5 "gateway federation: 1000+
-gas model, dqa mul
 gossip envelope
 gossip heartbeat
 gossip heartbeat + partition recovery
 gossip heartbeat + retry
 gossip payload
-handover race resolution, not
 hex32 +
 holder sign; ed25519
 holderkind and
@@ -375,12 +339,10 @@ ia #7
 ia-2 (monotonic + ntp-synced
 ia-7 + rfc-0009 §vault — provider-key handling
 identity key format + §capability keys + §verification must
-identity key format, §node, §vault, §capability keys
 identity lifecycle state machine —
 identity management
 identity stability
 identity struct + §hsmadapter integration
-identity, not
 identitykey +
 identityrecord + rfc-0009 §identity struct + §hsmadapter integration
 implementation phase 2
@@ -388,6 +350,7 @@ implementation phase 2; rfc-0870 §nodeenvelope adoption
 implementation phases + §compatibility
 implementation phases + §key files + §compatibility + §layer
 implementation phases 1
+implementation phases 1–5
 implementation phases commit 1) +
 implementation phases commit 2
 implementation phases implementation
@@ -432,8 +395,6 @@ implementation phases §phase 1
 implementation phases §phase 2
 implementation phases §phase 3+
 implementation phases) +
-implementation phases, rfc-0855p-d2 §implementation phases, rfc-0855p-d3 §implementation phases
-implementation phases, §determinism requirements
 implementation phases; §compatibility
 implementation reference → §implementation phases
 implicit assumptions audit "executedatunix
@@ -443,7 +404,8 @@ implicit assumptions audit "receipts
 implicit assumptions audit #7 —
 implicit assumptions audit 'receipts
 implicit assumptions audit + §key files<br/>• f-11 — §7
-implicit assumptions audit ia-1, ia-2
+implicit assumptions audit ia-1
+implicit assumptions audit ia-4/ia-5/ia-6
 implicit assumptions audit phase 10
 implicit assumptions audit phase 2
 implicit assumptions audit phase 3
@@ -452,14 +414,11 @@ implicit assumptions audit phase 5
 implicit assumptions audit phase 6
 implicit assumptions audit phase 7
 implicit assumptions audit phase 9
-implicit assumptions audit, "local
-implicit assumptions audit, rfc-0855p-d2 §implicit assumptions audit, rfc-0855p-d3 §implicit assumptions audit
 implicit assumptions audit; rfc-0855p-b §"implicit assumptions audit" (sister
 implicit assumptions ia-6
 implicit assumptions); §4 cross-references: "rfc-0957 §capability" → "rfc-0957 §capabilitytoken state machine"; "rfc-0964 §0
 inbound path
 inference pipeline
-input canonicalization requirement, bigint
 interface segregation
 invalidstatetransition (cli
 json schema validation
@@ -486,38 +445,28 @@ layer stability
 lifecycle requirements §classa
 lifecycle requirements §role-binding state machine
 lifecycle requirements —
-lifecycle requirements, "register
-lifecycle requirements, §determinism requirements (rfc-0008
 lifecycle time bounds
-lifecycle, §time bounds, §replay protection
-limbs, bigint
 lock ordering invariant: always
 manifest schema
 market delivery
 migration etiquette
 migration order ≥ 6-month
-migration order, ≥ 6-month
 migration plan phase 2 sql
 migration plan §cli
 migration" → "rfc-0206
-mint, §replay protection, §adversary
-mint, §wire format, §verify-time extension
 mission decomposition m10
 mission lifecycle 2-cycle atomic promotion
 mission lifecycle's
-mission lifecycle, multi-mission decomposition
 model list
 motivation + §implementation phases task 1 ("variant
 motivation 4
 multi-mission decomposition
-multi-mission decomposition, (2
 namespace byte
 network bootstrap phase 1
 network cli surface
 node destination selection
 node destination selection algorithm —
 node taxonomy
-node, §vault, §capability keys, §identity key format
 nodeenvelope adoption
 nodeenvelope adoption (atomicity
 nodeenvelope adoption uuid
@@ -529,8 +478,7 @@ nonce store
 nonce store gc
 notactive (substrate-faithful
 numericscalar implementation —
-open questions → resolved decisions, rfc-0963 §resolved decisions, rfc-0964 §resolved decisions, rfc-0965 §resolved decisions, rfc-0967 §15
-open questions, §out
+open questions → resolved decisions
 operational requirements
 orchestrator contract —
 out-of-scope +
@@ -550,7 +498,6 @@ overlay cryptography (blake3
 pairing discipline (paired keep +
 pastejacking defense phase 9
 peer summary shape "trustlevel
-peer summary shape, §trust level canonical uuids); not
 per-extension crate layout; rfc-0871 §wallet node lifecycle
 per-extension crate layout; rfc-0871 §wallet node lifecycle; layer 4
 performance targets "end-to-end
@@ -564,13 +511,11 @@ performance targets phase 7
 performance targets phase 9
 performance targets tv
 performance targets —
-performance targets, §alternatives considered
-performance targets, §implicit assumptions audit (8
 performance targets; hkdf-blake3
 phantom types
 phantom types + rfc-0959-a1 §algorithms:phantomcallsite + rfc-0969 §algorithms:phantomcallsite
+phantom types:identitykey
 phantom types:identitykey + rfc-0959-a1 §algorithms:phantomcallsite (r60-n4
-phantom types:identitykey, rfc-0959-a1 §algorithms:phantomcallsite, rfc-0969 §algorithms:phantomcallsite
 phase 1 r13-n8
 phase 3 peer exchange
 platform-mediated handover
@@ -585,6 +530,7 @@ pre-v0 tag lifecycle
 primary key
 principle 12 —
 promotion path
+promotion path (gated
 promotion path condition 1
 prompt cache
 provider sdk type registry
@@ -600,14 +546,13 @@ reasoncontainscontrolchars + §reasontoolong
 receipt shape
 receipt shape (adds
 receipt shape must
-receipt shape, §filters
 receipt status
 redaction layer +
 redaction layer §stdin
 redaction layer) must
 redaction layer; json
 refers) —
-related use cases + §appendices (template §731, §735
+related use cases + §appendices (template §731
 release-tag pin policy
 request routing algorithm
 reserved exit codes + appendix d)<br/>low (5):<br/>• f-12 —
@@ -630,7 +575,7 @@ rfc-0008 execution class mapping 15-row
 rfc-0008 execution class mapping —
 rfc-0008 execution class mapping; §future work f1
 rfc-0015 r40
-rfc-0105 §sql column scale semantics, §research §8
+rfc-0105 §sql column scale semantics
 rfc-0962 §4
 role token economics) —
 role/authority egress module
@@ -642,10 +587,8 @@ roles token issuer
 roles token issuer update
 roles update
 roles virtual-key operator
-roles, §algorithms (verifyreceipt
 roles/§adversary (5-question a1-a5)/§lifecycle (ask + marketplace index
 router node configuration
-rust feature gates, the
 s1 + appendix a (substrate
 s1 + appendix a must
 s1 + §s2
@@ -669,10 +612,9 @@ s7 + §fw2 (settlement-side
 s7 §table c
 s7 — cross-rfc
 s7) — deferred —
-safetyshutdown, §masskick
 sample kinds (forward
 sample walk-through a
-sample walk-through §a, §upstream dependencies, §alternatives considered (e), §conclusion, §backward compatibility
+sample walk-through §a
 sc1 — typed-discriminator
 sc2 (canonical
 sc2 (this rfc); rfc-0014-v2 §s5
@@ -685,7 +627,6 @@ sc4 — eventid
 sc4 — receiptid
 sc5 — atomic
 sc6 — router
-scope, §performance targets, §rationale (retitled
 security #1
 security #2
 security #3
@@ -724,18 +665,12 @@ security considerations phase 7
 security considerations phase 9
 security considerations ttl
 security considerations); ci
-security considerations, rfc-0855p-d2 §security considerations, rfc-0855p-d3 §security considerations
-security considerations, §adversary analysis (5-question test
-security considerations, §implicit assumptions audit (8
-security considerations, §implicit assumptions audit (9
-security considerations, §implicit assumptions audit, §dependency validation
 security considerations: transfer replay
 security note — no field delimiters
 service tier
 session resumption
 settlementenvelope + §defaults +
 settlementevent + §settlementreceipt
-severity classification, §compatibility (backward/forward), §test vectors (4
 shared session
 signature coverage
 snapshot ttl
@@ -768,8 +703,6 @@ specification §substrate
 specification §tally helpers
 specification §trait
 specification) +
-specification, §data structures, §algorithms, §test vectors, §adversary analysis
-specification, §lifecycle requirements, §determinism requirements, §rfc-0008 execution class mapping, §implicit assumptions audit, §security considerations, §adversary analysis a1–a7, §compatibility, §test vectors tv1–tv8, §alternatives considered, §implementation phases 1–5, §future work, §version history, §related rfcs
 spendledger substrate
 spendledger substrate —
 sql column scale semantics §expression-to-column assignment coercion
@@ -778,12 +711,10 @@ stable abstractions principle +
 stable abstractions principle + phase 14 r2
 stable abstractions principle + §attenuation
 stable abstractions principle + §no
-stable abstractions principle, layer a
 stable abstractions principle: layer b (substrate
 stark curve
 state machine +
 state machine + §layer-c substrate surface (creation/query) +
-status, §authors, §maintainers, §summary, §dependencies, §design goals (g1-g6), §motivation (why
 storage extension §data structures
 storage extension §out
 storage overhead) —
@@ -825,7 +756,6 @@ substrate-additions companion missions g-rows g9-g17
 substrate-additions companion missions g3
 substrate-additions g-rows
 substrate-additions g1
-substrate-additions g1, g3b, g6, g6b, g8, g12, g12b, g22, g23, g24
 substrate-additions g12b
 substrate-additions g21
 substrate-additions g21 (the
@@ -838,9 +768,7 @@ summary "internet analogy"
 summary "substrate-faithful
 summary #6 (mintdual algorithm
 summary updates
-summary, §dependencies, §subcommand taxonomy, §implicit assumptions audit, §substrate-additions companion missions, §key files
 system architecture layer 1; ci
-system architecture, §implementation phases
 tally canonicalisation
 test vectors + 4
 test vectors /
@@ -860,12 +788,13 @@ test vectors phase 8 (6
 test vectors phase 9
 test vectors tv-agt1
 test vectors tv-aud-7-canonical-bytes
+test vectors tv1–tv8
 test vectors tv5
 test vectors §
 test vectors §1
 test vectors §squareddistance
 test vectors —
-test vectors): tv-aud-3, tv-aud-3b, tv-aud-3c, tv-aud-4, tv-aud-4b, tv-aud-4c, tv-aud-4d, tv-aud-4e, tv-aud-5, tv-aud-7, tv-aud-8, tv-aud-11, tv-aud-11a, tv-aud-11b, tv-aud-11c, tv-aud-11d, tv-aud-11e, tv-aud-11f, tv-aud-11g, tv-aud-11h, tv-aud-11i, tv-aud-11j, tv-aud-11k, tv-aud-list-chain-1, tv-aud-list-chain-2, tv-aud-get-receipt-chain-1, tv-aud-get-receipt-chain-2, tv-aud-redact-token-1, tv-aud-redact-token-2, tv-aud-permission-check-1, tv-aud-permission-check-2
+test vectors): tv-aud-3
 the rfc process: "1
 third-party discharge
 three-tier architecture
@@ -878,10 +807,10 @@ trait version enforcement
 transactionext —
 transfer flow: pre-flight
 transfer flow: pre-flight (transfer
-transfer flow: pre-flight, §performance targets
 transfer flow: replay
 transitionreceipt; cli
 trust level canonical uuids); must
+trust level canonical uuids); not
 two-tier architecture
 type system —
 typed uuid
@@ -891,7 +820,6 @@ value-preserving conversion
 vault +
 vault substrate
 vault substrate (chain-aware pk
-vault summary shape, §security considerations
 vault/§vault substrate
 verification); dkg-based pk-set
 verificationmethodkind (per r41 — conflict
@@ -901,17 +829,15 @@ vm canonicalization rule
 wallet node lifecycle tv5 + rfc-0870 §nodeenvelope adoption
 wallet node lifecycle; rfc-0870 §version history
 web search options
+why needed 2
 why needed §3
-why needed, §scope, §header precedence rules, §design goals g2/g3, §wire format, §determinism requirements, §threat model, §replay protection, §adversary analysis finding a21, §implicit assumptions audit ia-4/ia-5/ia-6, §system architecture
 why phase 1/2
 wire contract"
 wire format 3-segment
 wire format extension and rfc-0126
 wire format)"
-wire format, 3-segment
 wiredid + §canonicalcodec (rfc-0010
 wiring diagram
-wiring pattern, §promotion path (gated
 witness set aggregation
 writer election
 writerelection protocol); §implementation phases

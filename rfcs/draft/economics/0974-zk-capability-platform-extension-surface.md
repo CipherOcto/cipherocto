@@ -97,6 +97,51 @@ for a caveat has no extension point.
 | **G3: Unverifiable means rejected, not assumed**       | An unregistered evaluator rejects; a commitment never stands in for a validity check | Fuzz + boot-validation coverage               |
 | **G4: Spec text matches built circuit**                | No spec'd circuit step is described as implemented when it is not                    | Step-by-step implementation matrix            |
 
+## Motivation
+
+§Why Needed states the goal. This section states what is broken, with counts.
+
+**A third party can add a caveat type and cannot add a caveat decision.** `Caveat`
+is `#[non_exhaustive]` with a `Raw` escape hatch and a domain-separated name, so
+adding a caveat type needs no core edit. Deciding whether it holds does: there is
+no evaluator trait, and evaluation is hardcoded across **664 `Caveat::` match
+sites in 37 files**, plus an `evaluate_first_party` loop inside the circuit. The
+encode/evaluate asymmetry is the whole problem. RFC-0965 §Out of Scope declined
+this on the record and nothing has picked it up.
+
+**The three specified circuit steps are roughly an order of magnitude over
+budget.** In-circuit BLAKE3 measured at 17,628 CASM words against a 1,600-word
+ceiling. Holder Ed25519 verify, HMAC-BLAKE3 chain re-derivation, and discharge
+chain re-derivation each require reimplementing a native primitive in-field.
+
+**The circuit does not do what its spec text says.** It implements
+commitment-binding: hash private witness material, assert it matches a public
+input. It does not verify a signature or re-derive a chain. In a class A
+relation the prover chooses the public input, so the proof binds the prover to
+itself and nothing else.
+
+**Measuring this found defects that were already there.** The Ed25519 work
+surfaced a real pre-existing bug: the field decoder never masked bit 255, so
+roughly half of all valid points were rejected. That is recorded in
+§Implementation Status rather than hidden, because a survey that only reports
+good news is not a survey.
+
+## Roles and Authorities
+
+| Role                    | Identifier                 | Authority scope                                                                 | Lifecycle        | Source               |
+| ----------------------- | -------------------------- | ------------------------------------------------------------------------------- | ---------------- | -------------------- |
+| Macaroon core           | `crates/octo-cap-macaroon` | Owns `CaveatEvaluator` trait and `CaveatRefusal`. Never an implementation.      | Years-stable     | This RFC Amendment 1 |
+| Caveat evaluator author | `CaveatEvaluator::key`     | Decides whether one caveat holds. Answers a predicate; cannot return authority. | Per registration | This RFC             |
+| Registry builder        | boot site                  | Populates `CaveatEvaluatorRegistry` before any verification.                    | Per boot         | This RFC Amendment 1 |
+| Relation author         | `RelationDeclaration`      | Declares a relation's class and which public inputs are verifier-derived.       | Per relation     | This RFC Amendment 2 |
+| Prover                  | `ProverProfile`            | Supplies the claimed security level; compared at boot against the circuit's.    | Per deployment   | This RFC Amendment 4 |
+| Verifier                | `CaveatEvaluatorRegistry`  | Resolves a caveat key to an evaluator, fail-closed.                             | Per verification | This RFC Amendment 1 |
+
+The division that matters: the evaluator **is not trusted to widen**. It answers
+a predicate. Attenuation monotonicity stays in `parent_caveat_implies`, which is
+core-owned and deliberately gets no extension point — see Amendment 1 for why
+subsumption is excluded.
+
 ## The Survey
 
 ### Classification axis: what the relation requires
@@ -488,6 +533,215 @@ pinned `tv_0957_verify_time` / `tv_c1_verify_time` vectors pass with only a
 call-site change to lift the fixture into an `Arc`, and `octo-cap-macaroon-vault`
 plus `quota-router-storage` are green. Clippy clean with warnings denied on all
 targets and all features.
+
+## Specification
+
+### System Architecture
+
+```mermaid
+graph TD
+    A[Minted capability token<br/>causal chain of Caveats] --> B[ProposedOperation<br/>open fact bag]
+    B --> C{Any caveat lacks a<br/>registered evaluator?}
+    C -->|Yes| R1[Refuse: EvaluatorNotFound<br/>fail-closed]
+    C -->|No| D[Evaluate each caveat in<br/>authenticated set order]
+    D --> E{Required fact absent?}
+    E -->|Yes| R2[Refuse: MissingFact<br/>before evaluator runs]
+    E -->|No| F[Evaluator predicate<br/>pure fn of ctx]
+    F -->|Err| R3[Refuse: Violated]
+    F -->|Ok| G[All caveats hold]
+    G --> H{Is the capability ZKBearing?}
+    H -->|Yes| I[Verify STARK proof<br/>RFC-0958]
+    H -->|No| J[Authorization granted]
+    I --> J
+    R1 --> K[No authority]
+    R2 --> K
+    R3 --> K
+
+    subgraph Registry
+        L[CaveatEvaluatorRegistry<br/>built at boot, exclusive registration]
+    end
+    L -.lookup.-> D
+```
+
+Two extension points, deliberately the same shape. `CaveatEvaluator` mirrors
+`AttestationStrategy`: same id discipline, same registry shape, same
+fail-closed rule. A platform with two different extension idioms is worse than
+one with a single one, because every third party has to learn both.
+
+The circuit's `evaluate_first_party` loop is the reason this is a change and not
+a refactor: it is a second, in-circuit evaluation path that would silently
+accept a caveat the host registry refuses. Algorithms makes its dispatch a
+registry obligation for exactly that reason.
+
+### Data Structures
+
+The normative definitions live in the amendments — `CaveatEvaluator`,
+`CaveatRefusal`, `CaveatEvalCtx`, `CaveatEvaluatorRegistry`,
+`ProposedOperation`, `SecurityFigure`, `SecurityParams` and `ProverProfile` are
+specified in Amendment 1 and Amendment 4. This section indexes them and adds the
+one type the amendments need but do not yet define.
+
+```rust
+/// A public input is either verifier-derived or prover-supplied. This enum is
+/// the declaration, and it exists because the difference is invisible in the
+/// relation's spec text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InputProvenance {
+    /// The verifier computed this value from state it already holds — the
+    /// macaroon, the token envelope, its own clock. A proof that binds this
+    /// binds the authorization to the verifier.
+    VerifierDerived,
+    /// The prover chose this value. Binding it proves only that the prover
+    /// knows a preimage of its own choice.
+    ProverSupplied,
+}
+
+/// What a relation demands of the proof system.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RelationClass {
+    /// `H(private_witness) == public_input`. One hash, no validity check.
+    CommitmentBinding,
+    /// Re-derives a native primitive in-field. 17,628 words for BLAKE3
+    /// against a 1,600-word ceiling — unaffordable as measured.
+    NativePrimitive,
+    /// Proves membership or consistency against an authenticated structure.
+    Accumulator,
+}
+
+/// A relation MUST NOT reach `Accepted` without this.
+#[derive(Clone, Debug)]
+pub struct RelationDeclaration {
+    pub class: RelationClass,
+    /// One entry per public input, in wire order. A class A relation with any
+    /// `ProverSupplied` entry the verifier does not independently derive is
+    /// vacuous, and MUST be described as such.
+    pub public_inputs: Vec<InputProvenance>,
+}
+```
+
+`public_inputs` is ordered by wire position rather than a map, because a map
+lets an implementation omit a field it has not thought about — and an omitted
+field is exactly the one that turns a binding into a self-binding.
+
+### Algorithms
+
+**Caveat resolution.** The six rules are stated in Amendment 1. In order: pure
+fail-closed lookup; unregistered key refuses; a declared-required fact the
+operation does not carry refuses with `MissingFact` _before_ the evaluator runs;
+a `Raw` caveat colliding with a core caveat name refuses with `KeyCollision`
+unless the evaluator sets `handles_raw`; composition is logical AND over the
+authenticated caveat order, failing fast in set order so the reported reason is
+deterministic; the evaluator cannot widen.
+
+**`evaluate_registered`.** Evaluates a caveat through the registry and pairs it
+with the core gates. Both halves MUST run on the same input, and the registry
+half does not replace the core half — an evaluator that returns `Ok` for a caveat
+the core would refuse must not turn into authorization.
+
+**`evaluate_first_party` — the obligation this RFC adds.** The circuit's
+in-circuit loop over first-party caveats MUST dispatch through the same registry
+rather than matching hardcoded variants. An evaluator with no circuit
+implementation MUST be refused at **registration** time, not discovered at proof
+time: registering an evaluator the circuit cannot honour creates a capability
+that verifies on the host and fails in the proof, which is the hardest class of
+bug to diagnose from a failed attestation.
+
+**`ProverProfile` comparison at boot.** A deployment supplies its claimed
+security level; the circuit's actual level is fixed at compile time. A mismatch
+refuses with `BootRefusal::InsufficientSecurity` carrying **both** figures, so
+the operator can see which side is wrong.
+
+**Relation-class declaration.** Checked at review, not runtime. It does not
+change behaviour; it changes what a strategy is permitted to be described as.
+
+### Lifecycle Requirements
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unregistered
+    Unregistered --> Registered: register() succeeds
+    Unregistered --> Refused: duplicate key
+    Registered --> ShadowingCore: key matches a core caveat name
+    Registered --> Unregistered: revoked at boot rebuild
+    ShadowingCore --> Registered: core logic restored
+    Registered --> CircuitRefused: no circuit implementation for the relation
+    CircuitRefused --> Refused: mint rejected, not deferred
+    Registered --> Active
+    Active --> Refused: evaluate() returns Err
+    Active --> Active: evaluate() returns Ok
+    Refused --> [*]
+```
+
+Three states worth naming. **Registering a core key is permitted and reported** —
+shadowing is the migration path off hardcoded logic, so `register` returns
+`shadows_core_caveat` and the registry exposes `core_shadowing_keys` for an
+operator to read at boot. **`CircuitRefused` is terminal, not pending** — an
+evaluator the circuit cannot honour is refused at registration so no capability
+is ever minted against it. **Revocation is a boot-time rebuild**, not a runtime
+mutation; a registry that changes under a running verifier would break the
+fleet-wide determinism that Determinism Requirements exists to protect.
+
+### Determinism Requirements
+
+Per RFC-0008 Execution Class Mapping:
+
+| Operation                                    | Execution Class                | Rationale                                                                                            |
+| -------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Caveat name keying and canonical encoding    | **A** (Protocol Deterministic) | Pure function of the wire form                                                                       |
+| `CaveatEvaluator::evaluate`                  | **A**                          | MUST be pure in `(ctx, evaluator state)`. Divergence is a consensus failure, not a policy difference |
+| Required-fact resolution before `evaluate`   | **A**                          | Pure set membership; order-independent                                                               |
+| Logical-AND composition in set order         | **A**                          | Set order is the authenticated order; fail-fast makes the reason deterministic                       |
+| `CaveatEvaluatorRegistry` population         | **A**                          | Boot-time, before any verification; duplicate registration refuses                                   |
+| `ProverProfile` comparison at boot           | **B**                          | Depends on deployment-supplied configuration                                                         |
+| Evaluator state acquisition (vault, balance) | **B**                          | Cross-system reads; the side owning the data owns the access                                         |
+
+The class A requirement on `evaluate` is the load-bearing one. If two nodes
+holding the same token reach different outcomes, verification diverges across the
+fleet — which is a fork, not a policy disagreement, and no amount of
+configuration corrects it.
+
+### RFC-0008 Execution Class Mapping
+
+Carried by Determinism Requirements above.
+
+### Error Handling
+
+```rust
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CaveatEvalError {
+    #[error("no evaluator registered for caveat key {0:?}")]
+    EvaluatorNotFound(String),
+    #[error("required fact {key:?} absent for evaluator {evaluator:?}")]
+    MissingFact { key: String, evaluator: String },
+    #[error("raw caveat {key:?} collides with a core caveat name")]
+    KeyCollision { key: String },
+    #[error("evaluator {evaluator:?} refused: {detail}")]
+    Violated { evaluator: String, detail: Cow<'static, str> },
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RegistryError {
+    #[error("evaluator already registered for key {0:?}")]
+    AlreadyRegistered(String),
+    #[error("evaluator {evaluator:?} needs a circuit implementation for class {class:?}, which does not exist")]
+    NoCircuitImplementation { evaluator: String, class: RelationClass },
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum BootRefusal {
+    #[error("registry not populated before first verification")]
+    RegistryNotPopulated,
+    #[error("prover claims {claimed:?}, circuit provides {available:?}")]
+    InsufficientSecurity { claimed: SecurityFigure, available: SecurityFigure },
+}
+```
+
+Every variant is a **refusal**, never a warning. `RegistryNotPopulated` is
+distinct from `EvaluatorNotFound` for the same reason RFC-0009's
+`AlgorithmRegistry` keeps `NotPopulated` and `UnknownAlgorithm` distinct: the
+first is a deployment that has not finished booting, the second is an
+authorization that was never granted. Conflating them lets a verifier report "no
+evaluator" for a key that exists.
 
 ## Implementation Status — RFC-0958 §Algorithms steps 1, 2 and 4
 
@@ -1167,6 +1421,158 @@ confused are:
 A prototype that varies (1) alone cannot answer the question. A prototype that varies
 (1) and (3) but holds (2) fixed will report a number that does not transfer.
 
+## Performance Targets
+
+| Metric                                | Target             | Measured                                           | Source                |
+| ------------------------------------- | ------------------ | -------------------------------------------------- | --------------------- |
+| In-circuit BLAKE3                     | ≤ 1,600 CASM words | **17,628** — 11x over                              | The Survey            |
+| Circuit baseline (commitment-binding) | —                  | 3,004 CASM words                                   | Implementation Status |
+| + conformant Ed25519 verifier         | affordable         | **+41,439** (44,443 total)                         | Implementation Status |
+| + STARK-curve Schnorr verifier        | affordable         | **+295** (3,299 total), 465.19s vs 440.58s (+5.6%) | Implementation Status |
+| Commitment-binding relation cost      | —                  | 27 words / 1,588 words for two relations           | The Survey            |
+| Full prove-and-verify (STARK curve)   | < 2s reference HW  | 465.19s, including tampered-proof rejection        | Implementation Status |
+| Caveat resolution (host)              | —                  | Not measured; 664 match sites remain               | Motivation            |
+
+The gap between the 1,600-word ceiling and the 17,628-word BLAKE3 measurement is
+the finding that produces this RFC. The STARK-curve figure is the finding that
+closes RFC-0009's step-1 option: a real signature check costs 5.6% and 295
+words, against 11x budget for the hash it was avoiding.
+
+## Implicit Assumptions Audit
+
+| ID   | Assumption                                                                                   | Consequence if false                                                                       | Mitigation                                                                             |
+| ---- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| IA-1 | A third party can depend on `octo-cap-macaroon` and register an evaluator with no core edit. | G1 fails; the extension surface is nominal and platform value is zero.                     | `CaveatEvaluator` lives in the years-stable crate, not a plugin crate                  |
+| IA-2 | `CaveatEvaluator::evaluate` is pure in `(ctx, evaluator state)`.                             | Verification diverges across the fleet — a fork, not a policy difference.                  | Class A in Determinism Requirements; cross-system state is constructed at registration |
+| IA-3 | Every mint path producing a ZKBearing capability goes through the same verification.         | `evaluate_first_party` and the host registry disagree; a caveat passes in one path only.   | The registry obligation in Algorithms, plus `CircuitRefused` at registration           |
+| IA-4 | The 1,600-word ceiling is a real constraint, not an artefact of one measurement.             | The class B verdict is wrong and native primitives are affordable after all.               | 17,628 words measured end to end, not estimated; the ceiling is quoted from RFC-0973   |
+| IA-5 | A token carries every fact its evaluators need, or the redemption site can supply it.        | Evaluators refuse with `MissingFact` and the capability is unusable for an unseen reason.  | Rule 3 refuses _before_ `evaluate`, naming the missing fact and the evaluator          |
+| IA-6 | Core caveat names stay a closed set a third party cannot guess.                              | `KeyCollision` fires on legitimate caveats, or a spoof succeeds if `handles_raw` is loose. | `handles_raw` defaults `false`; collision refuses unless explicitly opted in           |
+| IA-7 | Registering a core key is a migration path, not an attack surface.                           | A third party silently takes over a built-in check.                                        | `register` returns `shadows_core_caveat`; `core_shadowing_keys` is readable at boot    |
+| IA-8 | Subsumption stays core-owned.                                                                | A third party can forge a delegation by asserting `true`.                                  | **Excluded by design.** No trait exists. See Amendment 1 for the forgery rationale     |
+| IA-9 | Poseidon is a hash, and a measured Poseidon figure is never quoted as a MAC cost.            | Someone budgets for a MAC on the strength of a hash measurement.                           | Poseidon Macaroon records this explicitly so it cannot be re-read as a MAC figure      |
+
+## Security Considerations
+
+**An evaluator is untrusted input that decides authorization.** It runs inside a
+node's verification path. It is confined by refusing rather than trusting: it
+answers a predicate, it cannot return authority, it cannot widen, and a missing
+fact refuses before it runs. It is not confined by sandboxing, and this RFC does
+not pretend otherwise — a malicious extension crate is a compromised node, which
+is a different problem with a different answer.
+
+**The `Raw` name collision is the sharpest edge.** `RawCaveat.name` is a string
+the holder chose. Minting `Raw { name: "vault", .. }` must not reach an evaluator
+written for `Caveat::Vault`, which may then approve on the strength of bytes it
+does not understand. `handles_raw` defaults `false` and `KeyCollision` refuses.
+
+**Class A commitment-binding is worth less than it looks, and this RFC says so
+repeatedly.** `H(secret) == public_input` proves the prover knows a preimage. If
+the verifier derived `public_input`, that binds the macaroon. If the prover
+supplied it, it binds the prover to itself. Both are described identically in
+existing spec text, which is why `InputProvenance` is a declaration rather than a
+convention.
+
+**The circuit cannot read mutable state.** No revocation set, no clock, no
+balance enters a proof. Any relation needing one is class B or worse. This
+constrains what can be proven, not just what is expensive to prove.
+
+**Host-side hashes are not circuit-side hashes.** corelib's
+`Sha512ProcessBlock` is a syscall, and enabling syscalls compiles, runs and
+proves — while being unsound, because the digest is written by a host hint and
+only read back under an assert. Poseidon and Pedersen are pure; every other
+corelib hash is a syscall. Recorded in Implementation Status because it is a
+trap that works.
+
+## Adversarial Review
+
+Multi-round adversarial review per BLUEPRINT §RFC Process. Findings and their
+disposition are recorded in Version History and in `docs/reviews/`, which is
+gitignored.
+
+| Finding                                                           | Severity | Disposition                                                                                                      |
+| ----------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| Ed25519 field decoder never masked bit 255                        | CRITICAL | Fixed. Roughly half of all valid points were rejected. Two regression tests added.                               |
+| The stated premise for RFC-0958 step 1 was wrong twice            | HIGH     | Corrected. The slot verifies nothing today; the measurement is of adding a verifier to a circuit that lacks one. |
+| Symmetric-skew reasoning attributed to the wrong direction        | HIGH     | Corrected in RFC-0958 v1.7. Front-dating extends a proof's life; back-dating does not.                           |
+| Poseidon figure quotable as a MAC cost                            | MEDIUM   | Poseidon Macaroon records it as a hash so it cannot be re-read that way.                                         |
+| Spec text described circuit steps as implemented that are not     | HIGH     | Implementation Status, plus the matrix in RFC-0958 §Algorithms.                                                  |
+| 21 of 29 mandatory sections absent while promoted toward Accepted | HIGH     | Added in v0.3. See Version History.                                                                              |
+
+## Adversary Analysis
+
+| ID  | Adversary                                           | Defense                                                                                               | Residual                                                                         |
+| --- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| A1  | Raw caveat spoofing a core name                     | `KeyCollision` refuses unless `handles_raw` is set explicitly                                         | An evaluator that opts in and mishandles raw bytes is its own bug                |
+| A2  | Evaluator returns `true` to forge a delegation      | No subsumption extension point exists; it stays core-owned                                            | None by construction                                                             |
+| A3  | Absent fact read as "absent" by an evaluator        | Rule 3 refuses with `MissingFact` before `evaluate` runs                                              | An evaluator requiring no facts yet reading context is undiscoverable            |
+| A4  | Commitment-binding proof passed off as validity     | `InputProvenance` declaration; a class A relation with prover-supplied inputs is described as vacuous | A reviewer may still call it a validity check; the declaration is the instrument |
+| A5  | Core key shadowed by a third party                  | Permitted and reported via `shadows_core_caveat` and `core_shadowing_keys` at boot                    | An operator who never reads the boot log                                         |
+| A6  | Syscall-backed hash used in-circuit for soundness   | Unbuildable in practice: `ProverInput` has no hint field, so the proof never sees the handler         | None sound; the failure is build-time or review-time                             |
+| A7  | Evaluator with no circuit implementation registered | Refused at registration (`CircuitRefused`), not deferred to proof time                                | None — this closes the "verifies on host, fails in proof" bug                    |
+
+## Economic Analysis
+
+**Computational cost impact.**
+
+| Consumer | Additional cost                                               | Trigger                                   |
+| -------- | ------------------------------------------------------------- | ----------------------------------------- |
+| Router   | Registry population at boot; one lookup per caveat resolution | Any node evaluating a caveat              |
+| Node     | Evaluator state acquisition at registration                   | An evaluator needs vault or balance state |
+| Prover   | Unchanged for class A; unaffordable for class B as measured   | Only if a class B relation is attempted   |
+
+**Token flow.** Unchanged. No token, holder record or spend-ledger schema
+changes, and no settlement behaviour moves.
+
+**Stakeholder incentives.**
+
+| Stakeholder       | Incentive to adopt                                          | Incentive to NOT adopt                                          |
+| ----------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| Third-party dev   | Adds an evaluable caveat with no core edit and no PR        | Must write a pure evaluator and accept fail-closed refusal      |
+| Node operator     | Can move a built-in check off hardcoded logic via shadowing | Owns the responsibility of every evaluator its config registers |
+| Security reviewer | A relation cannot be accepted without declaring its class   | Must review more declarations before anything merges            |
+
+**Anti-fraud.** The class declaration is the economic lever. A strategy that
+cannot be honestly described cannot be accepted, so the cost of overclaiming
+moves from post-deployment fraud to pre-merge review.
+
+## Compatibility
+
+**No wire change.** No token minted under RFC-0957 or RFC-0958 changes. No
+`HolderRecord`, `StoolapHolderRegistry` or `StoolapSpendLedger` schema changes.
+Every existing byte-exact test vector stays valid.
+
+**Additive.** `CaveatEvaluator` registration is optional. A node registering no
+evaluators behaves exactly as today: every caveat with no core evaluator refuses.
+
+**Two extension idioms become one.** `CaveatEvaluator` deliberately mirrors
+`AttestationStrategy` — same id discipline, same registry shape, same
+fail-closed rule.
+
+**Cross-implementation determinism is preserved.** Because `evaluate` is Class A,
+two independent implementations given the same token MUST reach the same
+outcome. This is why the registry key is the existing wire name rather than a new
+`CaveatTypeId`: a second identifier derivation would carry its own allocation
+record and its own cross-implementation compatibility burden.
+
+## Test Vectors
+
+Cross-implementation vectors for the resolution rules, at
+`crates/octo-cap-macaroon/tests/fixtures/caveat-eval-tv/`.
+
+| Vector                              | Scenario                                                          | Expected                                                            |
+| ----------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `raw_unregistered_refuses.json`     | `Raw` caveat, no evaluator under its name                         | `EvaluatorNotFound`                                                 |
+| `raw_core_name_collision.json`      | `Raw { name: "vault", .. }`, evaluator does not set `handles_raw` | `KeyCollision`                                                      |
+| `raw_opted_in_evaluates.json`       | Same, evaluator sets `handles_raw`                                | Evaluator verdict                                                   |
+| `missing_fact_refuses_first.json`   | Operation omits a declared-required fact                          | `MissingFact`, and `evaluate` never ran                             |
+| `composition_and_is_fail_fast.json` | Two caveats, the second fails                                     | First refusal in authenticated set order                            |
+| `duplicate_registration.json`       | Register the same key twice                                       | `AlreadyRegistered`                                                 |
+| `register_without_circuit.json`     | Register a class B evaluator with no circuit implementation       | `NoCircuitImplementation`, never registered                         |
+| `shadowing_core_is_reported.json`   | Register a core caveat key                                        | Ok, plus `shadows_core_caveat` and the key in `core_shadowing_keys` |
+| `class_a_vacuous_declared.json`     | Class A relation with a prover-supplied public input              | Declaration records `ProverSupplied`; described as vacuous          |
+| `boot_security_mismatch.json`       | `ProverProfile` claims more than the circuit provides             | `InsufficientSecurity` carrying both figures                        |
+
 ## Alternatives Considered
 
 **Amend RFC-0958 only, leave RFC-0957 alone.** Rejected: the caveat-evaluator gap is
@@ -1270,6 +1676,120 @@ The correct next step is to measure a MAC.
       See §Step 1.
 - [ ] Follow-on: migrate the scattered core caveat checks onto the registry. A
       migration path that is never exercised is a second extension idiom.
+
+## Implementation Phases
+
+**Phase 0 — spec only (complete).** The trait, the refusal type, the registry,
+the resolution rules and the relation-class declaration are specified. Nothing
+is wired. This is the state the RFC was reviewed in.
+
+**Phase 1 — `BeforeEvaluator` reference implementation.** One evaluator, one
+caveat type, wired into no verify path. Its purpose is to prove the trait is
+implementable by a third party and to give the resolution rules something real
+to bite on. If a reference implementation has to touch core, the interface is
+wrong.
+
+**Phase 2 — first core migration.** Move the core vault check onto the registry,
+the way `AttestationStrategy` was migrated. This proves the shadowing path works,
+and it is deliberately before any third-party evaluator lands: the core has a
+stronger reason to get it right.
+
+**Phase 3 — extension pass.** Register an evaluator from an external crate with
+zero core commits. This is the phase G1 is measured by, and the first where a
+failure means the extension surface is nominal.
+
+**Phase 4 — relation-class sweep.** Every existing ZK relation carries a
+`RelationDeclaration`, and every class A relation has its public inputs marked
+verifier-derived or prover-supplied. This makes the survey enforceable rather
+than descriptive.
+
+**Phase 5 — `evaluate_first_party` dispatch.** The in-circuit loop moves onto the
+registry, and registration refuses evaluators the circuit cannot honour. Not
+deferrable: until it lands, the host and the circuit can disagree about whether a
+caveat holds.
+
+## Key Files to Modify
+
+| Path                                                      | Change                                                         | Phase |
+| --------------------------------------------------------- | -------------------------------------------------------------- | ----- |
+| `crates/octo-cap-macaroon/src/lib.rs`                     | Own `CaveatEvaluator`, `CaveatRefusal`, `CaveatEvalCtx`        | 0     |
+| `crates/octo-cap-macaroon/src/registry.rs`                | New. `CaveatEvaluatorRegistry`                                 | 0     |
+| `crates/octo-cap-macaroon/src/eval.rs`                    | New. `evaluate_registered` and the six rules                   | 0     |
+| `crates/octo-cap-macaroon/src/relation.rs`                | New. `RelationClass`, `InputProvenance`, `RelationDeclaration` | 0     |
+| `cairo/src/lib.cairo`                                     | `evaluate_first_party` dispatches to the registry              | 5     |
+| `crates/octo-cap-macaroon/src/vault_check.rs`             | Migrate the core vault check onto the registry                 | 2     |
+| `crates/octo-cap-macaroon/tests/fixtures/caveat-eval-tv/` | The Test Vectors corpus                                        | 1     |
+
+The 664 match sites in 37 files are **not** in scope. This RFC makes them
+_possible_ to migrate, one at a time, each independently. A 664-site mechanical
+rewrite would be unreviewable and would conflate a refactor with a behaviour
+change.
+
+## Future Work
+
+- **Class C accumulators are unexplored, not ruled out.** Membership and
+  consistency against an authenticated structure is a different shape from
+  everything measured here, and nothing in this RFC says it is affordable or that
+  it is not. It needs its own measurement before its own RFC.
+- **Migrating the remaining 664 match sites** is a per-caveat-type exercise. The
+  registry makes each one an independent decision rather than a campaign.
+- **A Poseidon-based macaroon** is scoped by Poseidon Macaroon and should be
+  prototyped on the axis named there, not dropped in.
+- **The holder-signature slot is still unwired.** RFC-0009 v1.3 specifies the
+  ZK-capable key and mission `0009-d` registers the algorithm, but the circuit's
+  holder slot remains commitment-binding. Wiring it changes the CASM hash and
+  needs an RFC-0958 amendment.
+
+## Rationale
+
+**Why a trait and not a closure, a function pointer, or a plugin protocol.** A
+closure cannot be registered from another crate without core knowing its type. A
+function pointer erases the key, and the key is the authorization decision. A
+plugin protocol would add a deployment story this platform does not have. The
+trait mirrors `AttestationStrategy` precisely so there is one idiom to learn.
+
+**Why the registry key is the existing wire name and not a new id type.** A
+caveat already has a wire-level name. Minting a parallel `CaveatTypeId` is a
+second identifier derivation for one concept, with its own allocation record and
+its own cross-implementation compatibility burden. This is the one design choice
+in Amendment 1 that departs from the precedent it otherwise follows, so it gets
+its own defence.
+
+**Why subsumption gets no extension point.** Subsumption is conservative and
+one-sided in the safe direction — until it is not. It governs whether an
+attenuation chain is legitimate, so an externally supplied rule returning `true`
+forges a delegation. Evaluation and subsumption have genuinely different extension
+needs, and conflating them would put a forgery primitive behind a convenience
+interface. If a use case needs external subsumption, the answer is a new RFC that
+changes the delegation trust model.
+
+**Why the survey came first.** The trait is one API. The survey is what says
+which relations are worth an API, what they cost, and — as it turned out — that
+the premise behind the most expensive one was wrong. Amendment 1 alone would
+have been a smaller document and a less useful one.
+
+## Version History
+
+| Version | Date       | Status            | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------- | ---------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1     | 2026-08-20 | Draft             | Initial Draft: the relation survey, the `CaveatEvaluator` amendment, and the Poseidon macaroon scoping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 0.2     | 2026-10-08 | Draft (amendment) | Added the RFC-0973 measurement record and the step-1 implementation status: the Ed25519 premise was wrong twice, corelib SHA-512 is a syscall rather than a hash, the sign-bit defect in the field decoder, and the STARK-curve Schnorr option that changes the shape of the decision.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 0.3     | 2026-10-09 | Draft (amendment) | Mandatory-section completion for the Draft → Accepted review. **21 of 29 BLUEPRINT mandatory sections were missing.** Added Motivation, Roles and Authorities, System Architecture, Data Structures, Algorithms, Lifecycle Requirements, Determinism Requirements, the RFC-0008 execution class mapping, Error Handling, Performance Targets, Implicit Assumptions Audit, Security Considerations, Adversarial Review, Adversary Analysis, Economic Analysis, Compatibility, Test Vectors, Implementation Phases, Key Files to Modify, Future Work, Rationale, Version History and Related RFCs. Added `InputProvenance` and `RelationDeclaration`, which the amendments needed and did not define. No runtime behaviour changed — documentation and review-instrument work, not an implementation change. |
+
+## Related RFCs
+
+This RFC amends two Accepted RFCs in place and draws on five others. The
+bibliographic list is References.
+
+| RFC      | Relationship                                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------------------------------- |
+| RFC-0957 | **Amended.** Verify-Time Extension gains `CaveatEvaluator`, `CaveatRefusal`, `CaveatEvalCtx` and the registry.       |
+| RFC-0958 | **Amended.** Algorithms gains the relation-class declaration and the implementation matrix marking steps 1, 2 and 4. |
+| RFC-0965 | Declined caveat evaluation on the record in Out of Scope. This RFC picks that up.                                    |
+| RFC-0964 | Short tags for core caveat variants, which are the registry keys for built-in caveats.                               |
+| RFC-0973 | The 1,600-word CASM ceiling and the attestation substrate.                                                           |
+| RFC-0009 | v1.3 supplies the ZK-capable identity key that makes the step-1 holder signature affordable.                         |
+| RFC-0126 | Canonical serialization, used for the evaluator's deterministic encoding.                                            |
 
 ## References
 

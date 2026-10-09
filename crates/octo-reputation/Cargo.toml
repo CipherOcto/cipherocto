@@ -26,6 +26,12 @@ stoolap = ["dep:serde_json", "dep:octo-storage-core"]
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Canonical OctoID codec per RFC-0010 — `RecorderDid::to_wire()` delegate.
 octo-ident = { path = "../octo-ident" }
+
+# Mission 0009-c: Ed25519 `SignatureAlgorithm` implementation, so
+# `auth::verify_governance_signature` dispatches through `AlgorithmRegistry`
+# instead of constructing a `VerifyingKey` (RFC-0009 AC#11). Layer E
+# per-algorithm extension over the Layer B registry.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 # Hashing — 13 reputation domain separators + governance-set domain + RetirementEligibility envelope
 blake3 = "1.5"
 # Error enum with `#[repr(u8)]` discriminants 0x01..=0x39

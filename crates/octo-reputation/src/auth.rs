@@ -279,13 +279,22 @@ pub fn governance_suspension_digest(
 /// implementation delegates here rather than re-deriving the preimage, so the
 /// three store impls cannot drift apart.
 ///
-/// Returns `Ok(())` only when the ed25519 signature over
-/// [`governance_suspension_digest`] verifies against `governance_pubkey`.
-/// A zero pubkey, a signature of the wrong length, a malformed key, and a
-/// genuine signature mismatch all return `GovernanceSignatureInvalid` — the
-/// error does not distinguish them, so a caller cannot use the error to learn
-/// which key was tried.
+/// Dispatches through `AlgorithmRegistry` on `algorithm_id` rather than
+/// building an Ed25519 `VerifyingKey` here (RFC-0009 AC#11). The
+/// algorithm is a parameter because a governance key arrives as 32 raw
+/// bytes with nothing to name an algorithm; the caller knows which
+/// algorithm that key speaks.
+///
+/// Returns `Ok(())` only when the signature over
+/// [`governance_suspension_digest`] verifies against `governance_pubkey`
+/// under `algorithm_id`. A zero pubkey, a signature of the wrong length, a
+/// malformed key, an unregistered algorithm, and a genuine signature
+/// mismatch all return `GovernanceSignatureInvalid` — the error does not
+/// distinguish them, so a caller cannot use the error to learn which key
+/// was tried or whether the deployment supports the algorithm at all.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_governance_signature(
+    algorithm_id: &octo_ident::AlgorithmId,
     governance_pubkey: &[u8; 32],
     recorder_id: &RecorderId,
     reason_hash: &[u8; 32],
@@ -295,21 +304,37 @@ pub fn verify_governance_signature(
     if *governance_pubkey == [0u8; 32] {
         return Err(ReputationError::GovernanceSignatureInvalid);
     }
-    // ed25519 signatures are exactly 64 bytes. Checking the length before the
-    // parse keeps a caller-supplied blob from reaching `Signature::from_slice`,
-    // which panics on a short slice.
+    // Length is checked before dispatch so a caller-supplied blob cannot
+    // reach the algorithm as a short slice. Every registered algorithm
+    // fixes its own signature length, so the check is really the
+    // registry's; doing it here just keeps the error type uniform across
+    // the reasons a caller can be refused.
     let signature: [u8; 64] = signature
         .try_into()
         .map_err(|_| ReputationError::GovernanceSignatureInvalid)?;
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(governance_pubkey)
-        .map_err(|_| ReputationError::GovernanceSignatureInvalid)?;
-    let signature = ed25519_dalek::Signature::from_bytes(&signature);
     let message =
         governance_suspension_digest(recorder_id, reason_hash, governance_pubkey, now_unix);
-    use ed25519_dalek::Verifier as _;
-    verifying_key
-        .verify(&message, &signature)
+    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, &message, &signature)
         .map_err(|_| ReputationError::GovernanceSignatureInvalid)
+}
+
+/// The algorithm governance suspension/slash signatures are verified
+/// under.
+///
+/// Centralised here so the two store impls cannot disagree about it, and
+/// so the choke point below has a single, greppable answer to "which
+/// algorithm is this".
+///
+/// **Follow-on, recorded not hidden:** the honest home for this is a
+/// field on [`SuspensionAuth`], so the algorithm travels with the
+/// authorization rather than being assumed by the verifier. That needs
+/// `octo_ident::AlgorithmId` to carry serde, which is a Layer B
+/// wire-form change and out of scope for the dispatch slice. Until
+/// then this constant is the assumption, stated once instead of being
+/// spread across the verifier and both stores.
+#[must_use]
+pub fn governance_algorithm_id() -> octo_ident::AlgorithmId {
+    octo_algo_ed25519::ed25519_algorithm_id()
 }
 
 /// Authorisation for `verify_governance_suspension` (read-side). Carries
@@ -1107,6 +1132,7 @@ mod tests {
             p.suspension_signature_digest(now)
         );
         verify_governance_signature(
+            &governance_algorithm_id(),
             &p.governance_pubkey,
             &p.recorder_id,
             &p.reason_hash,
@@ -1125,6 +1151,7 @@ mod tests {
         let (sk, valid) = signed_suspension_proof(now);
         let verify = |p: &GovernanceProof, now: u64| {
             verify_governance_signature(
+                &governance_algorithm_id(),
                 &p.governance_pubkey,
                 &p.recorder_id,
                 &p.reason_hash,

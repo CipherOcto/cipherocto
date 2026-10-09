@@ -481,10 +481,22 @@ fn c4_the_signature_verifier_is_a_single_shared_choke_point() {
         auth.contains("pub fn verify_governance_signature("),
         "C-4: auth.rs must own the single verification choke point"
     );
-    let calls = auth.matches(".verify(&message, &signature)").count();
+    // The count was on `.verify(&message, &signature)`, which pinned the
+    // *implementation* (a direct dalek call) rather than the property the
+    // guard exists for: one place where the check happens. Mission 0009-c
+    // moved that check behind `AlgorithmRegistry`, so the count now follows
+    // the dispatch call. Same intent, same failure mode if the choke point
+    // is duplicated or removed — which is what the count is for.
+    let calls = auth.matches("verify_dispatch(").count();
     assert_eq!(
         calls, 1,
-        "C-4: expected exactly one ed25519 verify site in auth.rs, found {calls}"
+        "C-4: expected exactly one registry dispatch site in auth.rs, found {calls}"
+    );
+    // And the choke point must not have grown a second algorithm inline.
+    assert!(
+        !auth.contains("VerifyingKey::from_bytes"),
+        "C-4: auth.rs rebuilt an Ed25519 key inline. The whole point of the \
+         choke point is that the algorithm is chosen once, in one place."
     );
 }
 

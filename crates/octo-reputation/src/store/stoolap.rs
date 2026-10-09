@@ -943,6 +943,7 @@ mod real {
             // Same ed25519 check as the memory store, via the shared helper —
             // see `auth::verify_governance_signature`.
             crate::auth::verify_governance_signature(
+                &crate::auth::governance_algorithm_id(),
                 &auth.governance_pubkey,
                 &auth.recorder_id,
                 &auth.reason_hash,

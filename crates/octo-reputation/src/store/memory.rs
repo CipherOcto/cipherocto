@@ -338,6 +338,7 @@ impl ReputationStore for InMemoryReputationStore {
         // Shared with the other store impls via `auth::verify_governance_signature`
         // so the three cannot drift apart.
         crate::auth::verify_governance_signature(
+            &crate::auth::governance_algorithm_id(),
             &auth.governance_pubkey,
             &auth.recorder_id,
             &auth.reason_hash,

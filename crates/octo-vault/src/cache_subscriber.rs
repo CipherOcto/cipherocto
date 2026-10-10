@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use dashmap::DashMap;
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use octo_algo_ed25519::ed25519_algorithm_id;
 
 use crate::event_log_producer::VaultProjectionInvalidationEnvelope;
 use crate::vault_balance_projection::VaultBalanceCache;
@@ -91,11 +92,29 @@ pub enum EnvelopeVerificationError {
 /// updated on accept-only (concurrent-safe via DashMap).
 #[derive(Debug)]
 pub struct ProducerTrustList {
-    /// Authoritative list of `OverlayIdentity → VerifyingKey` pairs at init.
-    trust_keys: std::collections::HashMap<String, VerifyingKey>,
+    /// Authoritative list of `OverlayIdentity → (AlgorithmId, VerifyingKey)`
+    /// pairs at init.
+    ///
+    /// The algorithm is stored rather than assumed. This list receives its
+    /// keys from the caller as already-typed `VerifyingKey`s, so the caller
+    /// knows which algorithm produced each one — recording it here is the
+    /// difference between dispatching on it and hardcoding Ed25519
+    /// (RFC-0009 AC#11).
+    trust_keys: std::collections::HashMap<String, TrustedProducerKey>,
     /// Per-producer monotonic last-seen sequence (replay defense). Updated
     /// on accept-only; concurrent via DashMap.
     last_seen_sequence: DashMap<String, u64>,
+}
+
+/// One producer's key together with the algorithm it must verify under.
+///
+/// Not a tuple in the public constructor's signature: a three-element tuple
+/// invites a caller to pass the algorithm in the wrong position, and a
+/// mis-ordered algorithm is a signature that verifies under the wrong rule.
+#[derive(Debug, Clone, Copy)]
+struct TrustedProducerKey {
+    algorithm: octo_ident::AlgorithmId,
+    key: VerifyingKey,
 }
 
 impl ProducerTrustList {
@@ -119,8 +138,38 @@ impl ProducerTrustList {
     /// after dev tests pass).
     #[must_use]
     pub fn new(keys: Vec<(String, VerifyingKey)>) -> Self {
-        let trust_keys: std::collections::HashMap<String, VerifyingKey> =
-            keys.iter().cloned().collect();
+        Self::with_algorithms(
+            keys.into_iter()
+                .map(|(did, key)| (did, ed25519_algorithm_id(), key))
+                .collect(),
+        )
+    }
+
+    /// Build a trust list where each producer declares its algorithm.
+    ///
+    /// This is the entry point that satisfies RFC-0009 AC#11: verification
+    /// dispatches on the algorithm named here, so a producer registered under
+    /// a non-Ed25519 algorithm is verified under its own rules rather than
+    /// being force-fit through Ed25519.
+    ///
+    /// [`Self::new`] delegates here with Ed25519 and is kept for callers that
+    /// genuinely only have Ed25519 keys. It is **not** a fallback: an entry
+    /// built here with an unregistered algorithm is refused at verification
+    /// time, never quietly verified under something else.
+    #[must_use]
+    pub fn with_algorithms(keys: Vec<(String, octo_ident::AlgorithmId, VerifyingKey)>) -> Self {
+        let trust_keys: std::collections::HashMap<String, TrustedProducerKey> = keys
+            .iter()
+            .map(|(did, algorithm, key)| {
+                (
+                    did.clone(),
+                    TrustedProducerKey {
+                        algorithm: *algorithm,
+                        key: *key,
+                    },
+                )
+            })
+            .collect();
         debug_assert_eq!(
             keys.len(),
             trust_keys.len(),
@@ -137,7 +186,13 @@ impl ProducerTrustList {
     /// Lookup the verifying key for a producer DID.
     #[must_use]
     pub fn get_verifying_key(&self, producer_did: &str) -> Option<&VerifyingKey> {
-        self.trust_keys.get(producer_did)
+        self.trust_keys.get(producer_did).map(|t| &t.key)
+    }
+
+    /// Lookup the algorithm a producer's key must verify under.
+    #[must_use]
+    pub fn algorithm_for(&self, producer_did: &str) -> Option<octo_ident::AlgorithmId> {
+        self.trust_keys.get(producer_did).map(|t| t.algorithm)
     }
 
     /// Verify an envelope's signature + monotonic sequence. Updates
@@ -153,18 +208,28 @@ impl ProducerTrustList {
             ));
         }
         // 2. Producer trust list lookup (fail-closed).
-        let vk = self
-            .get_verifying_key(&envelope.producer_did)
-            .ok_or_else(|| EnvelopeVerificationError::UnknownProducer {
+        let trusted = self.trust_keys.get(&envelope.producer_did).ok_or_else(|| {
+            EnvelopeVerificationError::UnknownProducer {
                 producer_did: envelope.producer_did.clone(),
-            })?;
-        // 3. Signature verification.
+            }
+        })?;
+        // 3. Signature verification, dispatched on the algorithm this
+        // producer was registered under (RFC-0009 AC#11).
+        //
+        // Dispatch reads raw bytes rather than building a dalek `Signature`
+        // first. That is the whole point: a dalek value would assert Ed25519
+        // before the registry ever got a say, and an unregistered algorithm
+        // would fail as a malformed signature rather than as an unknown one.
         let preimage = envelope.preimage();
-        let sig = ed25519_dalek::Signature::from_bytes(&envelope.producer_signature);
-        vk.verify(&preimage, &sig)
-            .map_err(|_| EnvelopeVerificationError::InvalidSignature {
-                producer_did: envelope.producer_did.clone(),
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            &trusted.algorithm,
+            trusted.key.as_bytes(),
+            &preimage,
+            &envelope.producer_signature,
+        )
+        .map_err(|_| EnvelopeVerificationError::InvalidSignature {
+            producer_did: envelope.producer_did.clone(),
+        })?;
         // 4. Sequence monotonicity (replay defense).
         let mut entry = self
             .last_seen_sequence
@@ -631,6 +696,89 @@ mod tests {
         let env = signed_v2_envelope(&sk, &did, 1, 2);
         let tl = ProducerTrustList::new(vec![(did.clone(), vk)]);
         assert!(tl.verify_and_update_sequence(&env).is_ok());
+    }
+
+    // ── AC#11: dispatch on the producer's declared algorithm ────────────────
+
+    /// The happy path through the *explicit* algorithm constructor.
+    ///
+    /// **Control:** a trust list that refused everything would also pass
+    /// nothing here, so this vector alone does not prove dispatch. The
+    /// unregistered-algorithm vector below is what makes the pair meaningful.
+    #[test]
+    fn trust_list_verification_dispatches_on_the_registered_algorithm() {
+        let sk = sample_signing_key();
+        let did = sample_did(40);
+        let env = signed_v2_envelope(&sk, &did, 1, 40);
+        let tl = ProducerTrustList::with_algorithms(vec![(
+            did.clone(),
+            ed25519_algorithm_id(),
+            sk.verifying_key(),
+        )]);
+        assert_eq!(tl.algorithm_for(&did), Some(ed25519_algorithm_id()));
+        assert!(tl.verify_and_update_sequence(&env).is_ok());
+    }
+
+    /// The fail-closed half, and the control that proves the dispatch is real.
+    ///
+    /// An algorithm this deployment never registered must be **refused**, not
+    /// quietly verified under Ed25519. Before the change this was impossible
+    /// to express: the constructor took a bare `VerifyingKey`, so the only
+    /// algorithm in play was whatever the type said. An entry naming
+    /// something unregistered would have verified exactly like an Ed25519 one.
+    #[test]
+    fn trust_list_refuses_an_unregistered_algorithm() {
+        let sk = sample_signing_key();
+        let did = sample_did(41);
+        let env = signed_v2_envelope(&sk, &did, 1, 41);
+        // A well-formed AlgorithmId that this deployment has not registered.
+        let bogus = octo_ident::AlgorithmId::derive("definitely-not-registered");
+        assert_ne!(bogus, ed25519_algorithm_id());
+        let tl = ProducerTrustList::with_algorithms(vec![(did.clone(), bogus, sk.verifying_key())]);
+        // A genuine Ed25519 signature, a valid key, and a real sequence —
+        // the only thing wrong is the algorithm. It must still be refused.
+        assert!(tl.verify_and_update_sequence(&env).is_err());
+    }
+
+    /// Dispatch must not degrade the check into a lookup: a corrupted
+    /// signature under the *correct* algorithm is still refused.
+    #[test]
+    fn trust_list_still_refuses_a_bad_signature() {
+        let sk = sample_signing_key();
+        let other = sample_signing_key();
+        let did = sample_did(42);
+        let mut env = signed_v2_envelope(&sk, &did, 1, 42);
+        env.producer_signature = sign_envelope(&env.preimage(), &other);
+        let tl = ProducerTrustList::with_algorithms(vec![(
+            did.clone(),
+            ed25519_algorithm_id(),
+            sk.verifying_key(),
+        )]);
+        assert!(tl.verify_and_update_sequence(&env).is_err());
+    }
+
+    /// Replay defence survives the change: a repeat of an accepted sequence
+    /// is still dropped, so dispatch did not reorder the checks.
+    #[test]
+    fn trust_list_still_enforces_replay_and_sequence_monotonicity() {
+        let sk = sample_signing_key();
+        let did = sample_did(43);
+        let tl = ProducerTrustList::new(vec![(did.clone(), sk.verifying_key())]);
+        assert!(tl
+            .verify_and_update_sequence(&signed_v2_envelope(&sk, &did, 5, 43))
+            .is_ok());
+        // Same sequence again — replay.
+        assert!(tl
+            .verify_and_update_sequence(&signed_v2_envelope(&sk, &did, 5, 43))
+            .is_err());
+        // Lower sequence — still monotonic, still refused.
+        assert!(tl
+            .verify_and_update_sequence(&signed_v2_envelope(&sk, &did, 4, 43))
+            .is_err());
+        // Higher sequence — accepted.
+        assert!(tl
+            .verify_and_update_sequence(&signed_v2_envelope(&sk, &did, 6, 43))
+            .is_ok());
     }
 
     /// TV-CB-3: tampered envelope (modify `vault_id` after signing) fails

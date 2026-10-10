@@ -1770,10 +1770,12 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/octo-vault/src/cache_subscriber.rs",
-        1,
-        "resolves a producer key by DID then verifies under hardcoded Ed25519. \
-         The DID lookup already exists here, so this is the closest thing to \
-         dispatchable — the algorithm is simply not read. Blocked on the codec.",
+        0,
+        "mission 0009-c5: DISPATCHED. Recorded with a count of zero rather \
+         than removed, so that adding a site here is a gate failure instead of \
+         a silent new gap. This was the one pending site the RFC-0010 DID \
+         codec did not actually block — the trust list receives its keys from \
+         the caller rather than parsing them out of a DID string.",
     ),
     (
         "crates/quota-router-core/src/receipt.rs",

@@ -52,6 +52,17 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # envelope signing/verification on the cache invalidation bus. Same
 # crate that octo-policy uses (Cargo.toml L36).
 ed25519-dalek = { version = "2.2", features = ["serde"] }
+# RFC-0009 AC#11: the cache-bus trust list verifies under a named algorithm
+# rather than a hardcoded Ed25519. Layer E per-algorithm extension depending
+# on Layer B — the arrow never points back, which is why `octo-ident` itself
+# has no ed25519-dalek dependency. Same edge `octo-wallet` and
+# `octo-reputation` take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# RFC-0009 AC#11: the trust list records the algorithm each producer's key
+# verifies under, so the name travels with the key instead of being assumed.
+# Layer B identity substrate, reached directly for `AlgorithmId` — the same
+# edge `octo-wallet` and `octo-role` take.
+octo-ident = { path = "../octo-ident" }
 # DashMap for per-producer last-seen-sequence tracking in the
 # cache-subscriber. Lightweight concurrent map; no async runtime.
 dashmap = "6"

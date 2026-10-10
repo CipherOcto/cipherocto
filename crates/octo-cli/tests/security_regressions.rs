@@ -1753,3 +1753,40 @@ fn ac11_the_ed25519_registration_itself_is_where_keys_get_built() {
          otherwise the dispatching crates have nowhere legal to build one."
     );
 }
+
+// ── Capability-token API must not name ed25519-dalek ─────────────────────
+
+#[test]
+fn no_capability_token_api_names_ed25519_dalek() {
+    // RFC-0009 AC#11's requirement is stronger than "dispatch somewhere".
+    // While `CapabilityToken.holder_sig` was typed
+    // `ed25519_dalek::Signature`, the type itself asserted Ed25519 and no
+    // amount of dispatch elsewhere could make a non-Ed25519 holder
+    // signature expressible — so the mission `0009-c4` could not write this
+    // guard, because it would have failed on arrival.
+    //
+    // Scoped to the capability substrate. `octo-cap-zk`'s `PrivateWitness`
+    // is deliberately exempt and is NOT a capability-token API: its
+    // `holder_sig` is circuit witness data, a 64-byte blob the STARK
+    // commits to without constraining an algorithm, so carrying an
+    // AlgorithmId there would change the committed witness shape and
+    // require a circuit amendment.
+    // Comments are stripped: the newtype's doc comment necessarily names the
+    // dalek type it replaced, and a guard that matched prose would fail on
+    // its own explanation.
+    let token = strip_comments(&read("crates/octo-cap-macaroon/src/token.rs"));
+    assert!(
+        !token.contains("ed25519_dalek::Signature"),
+        "AC-11: CapabilityToken must not expose an ed25519_dalek signature \
+         type. The type asserts the algorithm; the registry exists so \
+         nothing asserts it."
+    );
+
+    // The dispatch must actually read the algorithm off the signature.
+    let body = &token;
+    assert!(
+        body.contains("verify_dispatch(") && body.contains("self.holder_sig.algorithm_id()"),
+        "AC-11: verify_holder_sig must dispatch on the signature's own \
+         algorithm, not on a hardcoded one."
+    );
+}

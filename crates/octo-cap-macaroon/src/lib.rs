@@ -150,7 +150,7 @@ pub use substrate::{
 // Re-export Dqa from `octo_determin` for downstream substrate consumers
 // (Mission F BurnEventRef amount field uses Dqa).
 pub use octo_determin::Dqa;
-pub use token::{CapabilityToken, DischargeMacaroon, MintError};
+pub use token::{CapabilityToken, DischargeMacaroon, HolderSignature, MintError};
 pub use vault_lookup::{VaultLookup, VaultLookupExt, VaultRowSnapshot};
 pub use vault_verify_error::VaultVerifyError;
 pub use wire::{

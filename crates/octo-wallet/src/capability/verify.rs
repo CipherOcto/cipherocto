@@ -399,7 +399,11 @@ mod tests {
             macaroon: minted.clone(),
             holder_pub: [0xBB; 32],
             holder_did: octo_ident::test_helpers::sample_did(31),
-            holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            holder_sig: crate::capability::HolderSignature::new(
+                octo_algo_ed25519::ed25519_algorithm_id(),
+                &[0u8; 64],
+            )
+            .expect("64-byte signature"),
             discharges: vec![],
             holder_sig_stale: false,
         })

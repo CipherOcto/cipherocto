@@ -60,7 +60,7 @@ pub use wire::{
 // `MintError::Hsm` variant is replaced by `MintError::Signer` (new
 // `CapabilitySigner` trait abstraction); callers mapping to `WalletError`
 // should update their error mapping.
-pub use octo_cap_macaroon::{CapabilityToken, MintError};
+pub use octo_cap_macaroon::{CapabilityToken, HolderSignature, MintError};
 
 #[cfg(test)]
 mod tests {

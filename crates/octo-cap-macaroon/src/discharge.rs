@@ -1138,7 +1138,11 @@ mod tests {
             macaroon,
             holder_pub: holder.public_key_bytes(),
             holder_did: holder_did.to_owned(),
-            holder_sig: ed25519_dalek::Signature::from_bytes(&sig),
+            holder_sig: crate::token::HolderSignature::new(
+                crate::governance_signature::governance_algorithm_id(),
+                &sig,
+            )
+            .expect("64-byte signature"),
             discharges: Vec::new(),
             holder_sig_stale: false,
         }

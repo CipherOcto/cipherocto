@@ -10,7 +10,6 @@
 //! (the `CapabilitySigner` trait abstraction for the holder key — the
 //! `IdentityKey` blanket impl lives in `octo-wallet`).
 
-use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 
 use crate::caveat::Caveat;
@@ -73,9 +72,10 @@ pub struct CapabilityToken {
     pub holder_pub: [u8; 32],
     /// Holder DID string (`did:octo:...`).
     pub holder_did: String,
-    /// Ed25519 signature over `canonical_ser(macaroon.root_id || caveats_wire)`.
-    #[serde(with = "ed25519_sig_serde")]
-    pub holder_sig: ed25519_dalek::Signature,
+    /// Holder signature over `canonical_ser(macaroon.root_id || caveats_wire)`,
+    /// with the algorithm it is verified under.
+    #[serde(with = "holder_signature_serde")]
+    pub holder_sig: HolderSignature,
     /// Discharge macaroons (escrow / revocation / rate-limit channels).
     pub discharges: Vec<DischargeMacaroon>,
     /// True iff the holder signature was invalidated by a subsequent
@@ -104,17 +104,98 @@ impl std::fmt::Debug for CapabilityToken {
 }
 
 /// Serialize a `CapabilityToken` with Ed25519 signature as raw bytes.
-mod ed25519_sig_serde {
-    use ed25519_dalek::Signature;
+/// Holder signature over a capability token, paired with the algorithm it
+/// is verified under.
+///
+/// Replaces a bare `ed25519_dalek::Signature` in [`CapabilityToken`]'s
+/// public API. The point is not tidiness: with the dalek type in the
+/// signature, the type itself asserts Ed25519 and no amount of dispatch
+/// elsewhere can make a non-Ed25519 holder signature expressible
+/// (RFC-0009 AC#11).
+///
+/// The wire form is unchanged. [`HolderSignature::to_bytes`] returns the
+/// same 64 bytes the encoder already wrote, so `serialize_wire` produces
+/// byte-identical output. The **algorithm is not serialised with the
+/// token** — `deserialize_wire` already takes the holder public key out of
+/// band from the caller's DID resolution, and RFC-0009 BC#13 puts
+/// `algorithm_id` on the `VerificationMethod` beside the key it
+/// describes. The verifier is handed the algorithm; duplicating it in
+/// every message that references a document is how the two drift apart.
+///
+/// **Signature length is fixed at 64 bytes.** Ed25519 and STARK-Schnorr
+/// both produce 64; an algorithm that does not forces this to change,
+/// which is the same constraint `GovernanceSignatureBytes` already
+/// carries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct HolderSignature {
+    algorithm_id: octo_ident::AlgorithmId,
+    bytes: [u8; 64],
+}
+
+impl HolderSignature {
+    /// Wrap `bytes` as a signature made under `algorithm_id`.
+    ///
+    /// # Errors
+    /// [`MintError::HolderSig`] if `bytes` is not exactly 64 long.
+    pub fn new(algorithm_id: octo_ident::AlgorithmId, bytes: &[u8]) -> Result<Self, MintError> {
+        let bytes: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| MintError::HolderSig("holder signature must be 64 bytes".to_owned()))?;
+        Ok(Self {
+            algorithm_id,
+            bytes,
+        })
+    }
+
+    /// The algorithm this signature is verified under.
+    #[must_use]
+    pub fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        self.algorithm_id
+    }
+
+    /// Raw signature bytes. The encoder's view, and the only place the
+    /// bytes leave this type.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 64] {
+        self.bytes
+    }
+}
+
+/// **Redacted on purpose.** A holder signature is a bearer credential over
+/// the token; printing it into a log, a panic message or a `dbg!` leaks
+/// it. The existing token `Debug` already redacts the equivalent bytes, and
+/// deriving `Debug` here would quietly undo that.
+impl std::fmt::Debug for HolderSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HolderSignature({:?}, [REDACTED 64 bytes])",
+            self.algorithm_id
+        )
+    }
+}
+
+/// Wire form for [`HolderSignature`]: the same 64 raw bytes the previous
+/// `ed25519_sig_serde` wrote. The algorithm travels out of band, so this
+/// stays byte-identical and an existing token parses unchanged.
+mod holder_signature_serde {
+    use super::HolderSignature;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(sig: &Signature, ser: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(sig: &HolderSignature, ser: S) -> Result<S::Ok, S::Error> {
         ser.serialize_bytes(&sig.to_bytes())
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Signature, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<HolderSignature, D::Error> {
         let bytes: Vec<u8> = Deserialize::deserialize(de)?;
-        Signature::from_slice(&bytes).map_err(serde::de::Error::custom)
+        // The algorithm is not on the wire. Ed25519 is the historical
+        // form, and a caller that resolved a different algorithm must
+        // re-stamp the signature rather than have one invented here.
+        HolderSignature::new(
+            crate::governance_signature::governance_algorithm_id(),
+            &bytes,
+        )
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -156,7 +237,10 @@ impl CapabilityToken {
 
         let msg = Self::holder_msg(&macaroon.root_id, &macaroon.caveats);
         let sig_bytes = holder.sign(&msg)?;
-        let holder_sig = Signature::from_bytes(&sig_bytes);
+        let holder_sig = HolderSignature::new(
+            crate::governance_signature::governance_algorithm_id(),
+            &sig_bytes,
+        )?;
 
         Ok(Self {
             macaroon,
@@ -209,7 +293,10 @@ impl CapabilityToken {
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
         let sig_bytes = holder.sign(&msg)?;
-        next.holder_sig = Signature::from_bytes(&sig_bytes);
+        next.holder_sig = HolderSignature::new(
+            crate::governance_signature::governance_algorithm_id(),
+            &sig_bytes,
+        )?;
         next.holder_sig_stale = false;
         Ok(next)
     }
@@ -230,10 +317,17 @@ impl CapabilityToken {
             ));
         }
         let msg = Self::holder_msg(&self.macaroon.root_id, &self.macaroon.caveats);
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&self.holder_pub)
-            .map_err(|e| MintError::HolderSig(e.to_string()))?;
-        vk.verify_strict(&msg, &self.holder_sig)
-            .map_err(|e| MintError::HolderSig(e.to_string()))?;
+        // Dispatch, not a locally constructed key (RFC-0009 AC#11). The
+        // algorithm comes from the signature itself, so a token naming an
+        // algorithm this deployment does not implement fails closed instead
+        // of being checked as though it were Ed25519.
+        octo_algo_ed25519::verify_dispatch(
+            &self.holder_sig.algorithm_id(),
+            &self.holder_pub,
+            &msg,
+            &self.holder_sig.to_bytes(),
+        )
+        .map_err(|e| MintError::HolderSig(e.to_string()))?;
         Ok(())
     }
 
@@ -301,6 +395,110 @@ mod tests {
 
     fn empty_catalog() -> InMemoryCatalog {
         InMemoryCatalog::default()
+    }
+
+    /// A minted token plus the signer that made it, for the vectors below.
+    fn minted_token() -> (CapabilityToken, TestSigner) {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::Audience("aud".to_owned())],
+        )
+        .expect("mint");
+        (token, signer)
+    }
+
+    #[test]
+    fn holder_sig_dispatches_on_its_own_algorithm() {
+        // The happy path, and the control on every refusal test below:
+        // refusing everything would also pass those.
+        let (token, _) = minted_token();
+        token
+            .verify_holder_sig()
+            .expect("a genuine holder signature must verify through dispatch");
+    }
+
+    #[test]
+    fn a_token_naming_an_unregistered_algorithm_is_refused() {
+        // The property that matters. Before this, `verify_holder_sig`
+        // built an Ed25519 key unconditionally, so a token naming any
+        // other algorithm was checked as though it were Ed25519 and
+        // reported the result as authoritative.
+        let (mut token, _) = minted_token();
+        let stranger = octo_ident::AlgorithmId::derive("not-a-registered-algorithm");
+        token.holder_sig =
+            HolderSignature::new(stranger, &token.holder_sig.to_bytes()).expect("wrap");
+        let err = token
+            .verify_holder_sig()
+            .expect_err("an unregistered algorithm must not verify");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no registered algorithm"),
+            "expected an unknown-algorithm refusal, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_tampered_holder_signature_is_still_rejected() {
+        // Dispatch must not have turned the check into a lookup-only
+        // operation. Same algorithm, same key, one flipped byte.
+        let (mut token, _) = minted_token();
+        let mut bytes = token.holder_sig.to_bytes();
+        bytes[0] ^= 0x01;
+        token.holder_sig =
+            HolderSignature::new(token.holder_sig.algorithm_id(), &bytes).expect("wrap");
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a tampered signature must not verify"
+        );
+    }
+
+    #[test]
+    fn holder_signature_debug_redacts_the_bytes() {
+        // A newtype is exactly where a derived Debug would leak a bearer
+        // credential into a log line or a panic message.
+        let (token, _) = minted_token();
+        let rendered = format!("{:?}", token.holder_sig);
+        assert!(
+            rendered.contains("REDACTED"),
+            "holder signature Debug must redact, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&hex::encode(token.holder_sig.to_bytes())),
+            "holder signature Debug must not print the signature bytes"
+        );
+    }
+
+    #[test]
+    fn holder_signature_round_trips_through_its_wire_form() {
+        // The wire form is unchanged by this change — same 64 bytes — so a
+        // token encoded before still parses. If this regresses, the
+        // newtype quietly became a wire-format change.
+        let (token, _) = minted_token();
+        let original = token.holder_sig.to_bytes();
+        // Through the token, not the newtype directly: the newtype has no
+        // serde impl of its own, so this is the path a real document takes.
+        let encoded = serde_json::to_vec(&token).expect("serialize");
+        let decoded: CapabilityToken = serde_json::from_slice(&encoded).expect("deserialize");
+        assert_eq!(decoded.holder_sig.to_bytes(), original);
+        let decoded = decoded.holder_sig;
+        assert_eq!(
+            decoded.algorithm_id(),
+            token.holder_sig.algorithm_id(),
+            "the historical wire form carries no algorithm, so parsing stamps \
+             the Ed25519 default; a caller holding another algorithm \
+             re-stamps after parsing"
+        );
+    }
+
+    #[test]
+    fn holder_signature_rejects_a_wrong_length() {
+        assert!(
+            HolderSignature::new(octo_ident::AlgorithmId::derive("ed25519"), &[0u8; 63]).is_err(),
+            "a 63-byte signature must be refused, not truncated"
+        );
     }
 
     /// Test signer backing a fixed seed (no HSM, no failure modes).
@@ -374,7 +572,7 @@ mod tests {
     /// `wire_roundtrip` test in `wire.rs` exercises the full token through
     /// the base64-wrapped wire format, but a direct `serde_json` roundtrip
     /// pins JSON-specific concerns (field tag preservation, signature
-    /// byte-array encoding via `ed25519_sig_serde`).
+    /// byte-array encoding via `holder_signature_serde`).
     #[test]
     fn capability_token_serde_json_roundtrip() {
         let holder = sample_signer();

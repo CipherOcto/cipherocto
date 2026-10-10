@@ -258,7 +258,15 @@ fn private_witness_debug_does_not_leak_root_secret_or_holder_sig() {
     let token = CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &[]).unwrap();
     let witness = PrivateWitness {
         cap_root_secret: ROOT_SECRET_MARKER,
-        holder_sig: token.holder_sig,
+        // Conversion at the ZK boundary, deliberately.
+        //
+        // `PrivateWitness.holder_sig` is circuit witness data: the STARK
+        // commits to the 64 bytes and does not constrain an algorithm, so
+        // carrying an `AlgorithmId` there would add a field nothing
+        // verifies and would change the committed witness shape — which
+        // means a circuit amendment. The capability token's signature type
+        // carries the algorithm; the witness carries bytes.
+        holder_sig: ed25519_dalek::Signature::from_bytes(&token.holder_sig.to_bytes()),
         caveats_full: vec![],
         discharges_full: vec![],
         inference_trace: None,

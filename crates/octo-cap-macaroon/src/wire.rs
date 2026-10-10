@@ -193,8 +193,18 @@ fn parse_wire_to_token(
     }
     let mut sig_arr = [0u8; 64];
     sig_arr.copy_from_slice(&sig_bytes);
-    let holder_sig = ed25519_dalek::Signature::from_slice(&sig_arr)
-        .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
+    // The wire carries signature bytes only. The algorithm is not on the
+    // wire — it is resolved out of band by the caller, exactly as
+    // `holder_pub` and `holder_did` are — because RFC-0009 BC#13 puts it on
+    // the `VerificationMethod` beside the key. Stamping the historical
+    // Ed25519 form here is what the previous dalek-parsing code did
+    // implicitly; a caller holding a non-Ed25519 key re-stamps after
+    // parsing rather than having the wire assert an algorithm for it.
+    let holder_sig = crate::token::HolderSignature::new(
+        crate::governance_signature::governance_algorithm_id(),
+        &sig_arr,
+    )
+    .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
 
     let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
         .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
@@ -370,7 +380,11 @@ mod tests {
             macaroon,
             holder_pub: [0xCC; 32],
             holder_did: octo_ident::test_helpers::sample_did(2),
-            holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            holder_sig: crate::token::HolderSignature::new(
+                crate::governance_signature::governance_algorithm_id(),
+                &[0u8; 64],
+            )
+            .expect("64-byte signature"),
             discharges: vec![],
             holder_sig_stale: false,
         };
@@ -387,7 +401,11 @@ mod tests {
             macaroon: macaroon.clone(),
             holder_pub: [0xCC; 32],
             holder_did: octo_ident::test_helpers::sample_did(2),
-            holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            holder_sig: crate::token::HolderSignature::new(
+                crate::governance_signature::governance_algorithm_id(),
+                &[0u8; 64],
+            )
+            .expect("64-byte signature"),
             discharges: vec![],
             holder_sig_stale: false,
         };

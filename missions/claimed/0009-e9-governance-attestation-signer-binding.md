@@ -166,10 +166,20 @@ What survived that check:
   `attest::blake3_256` so a caller could reach either. It had no external
   user. Deleting `vote` exposed it; it is now shared.
 
-The same trait name collision with `octo_cap_macaroon::CapabilitySigner`
-remains open and is the natural next step. Renaming the governance trait is
-mechanical but reaches the CLI, so it wants its own diff rather than riding
-along here.
+The trait name collision with `octo_cap_macaroon::CapabilitySigner` named
+above is now closed: the governance trait is `EnvelopeSigner`. It was renamed
+rather than merged, because the two have genuinely different contracts — this
+one signs opaque envelopes and has no public key, the macaroon one is the
+capability substrate's signer abstraction and needs one. The new name states
+what it does and reads as the contrast it is. `AnchorGovernanceSigner` in
+`octo-reputation` was rejected as a target precisely because it would have
+recreated a smaller version of the same grep hazard one crate over.
+
+`EnvelopeSigner` gained `did()` here and is still missing `algorithm_id()`. The
+missing `algorithm_id()` is the remaining half of §Why the trait is the root,
+and it stays deferred for the reason given in §What must not be done: the
+signature is discarded, so an algorithm stamp has no carrier until
+§Substrate `[ADD]` persists one.
 
 ## §What must not be done
 

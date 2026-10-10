@@ -32,7 +32,7 @@ pub mod vote;
 
 #[allow(deprecated)]
 pub use attest::{
-    attest_v2, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
+    attest_v2, AttestationKind, AttestationKindResolution, AttestationLog, EnvelopeSigner,
 };
 pub use cache::{OctoGovernanceSnapshotCache, SnapshotCacheKey, SNAPSHOT_CACHE_CAPACITY};
 pub use error::GovernanceSnapshotError;

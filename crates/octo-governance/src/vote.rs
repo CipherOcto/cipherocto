@@ -10,7 +10,7 @@
 //!   `[ADD]`. In-memory for Phase 2. Persistence substrate lands in
 //!   a follow-on mission.
 //! - [`CapabilityRegistry`] — `HashMap<voter_cap_id, Arc<dyn
-//!   CapabilitySigner>>` lookup. The CLI populates this at startup
+//!   EnvelopeSigner>>` lookup. The CLI populates this at startup
 //!   from the wallet's capability set. Unknown `voter_cap_id`
 //!   fails-closed with `GovernanceError::UnknownCapability`.
 //! - [`vote_v2`] — `pub fn vote_v2(...) -> Result<(VoteReceipt,
@@ -45,7 +45,7 @@ use octo_governance_core::tally_quorum;
 use octo_governance_core::{CapabilityToken, GovernanceError, VoteReceipt};
 use serde::{Deserialize, Serialize};
 
-use crate::attest::{blake3_256, CapabilitySigner};
+use crate::attest::{blake3_256, EnvelopeSigner};
 use crate::session::GovernanceSession;
 
 /// Vote choice (RFC-0011-g §Vote Choice + §Command Taxonomy).
@@ -106,13 +106,13 @@ impl VoteChoice {
     }
 }
 
-/// Capability registry mapping `voter_cap_id → Arc<dyn CapabilitySigner>`.
+/// Capability registry mapping `voter_cap_id → Arc<dyn EnvelopeSigner>`.
 /// Populated by the CLI at startup from the wallet's capability set.
 /// Unknown `voter_cap_id` fails-closed with
 /// `GovernanceError::UnknownCapability { voter_cap_id }`.
 #[derive(Default)]
 pub struct CapabilityRegistry {
-    caps: Mutex<HashMap<String, Arc<dyn CapabilitySigner>>>,
+    caps: Mutex<HashMap<String, Arc<dyn EnvelopeSigner>>>,
 }
 
 impl CapabilityRegistry {
@@ -132,7 +132,7 @@ impl CapabilityRegistry {
     pub fn register(
         &self,
         voter_cap_id: String,
-        signer: Arc<dyn CapabilitySigner>,
+        signer: Arc<dyn EnvelopeSigner>,
     ) -> Result<(), GovernanceError> {
         let mut caps = self.caps.lock().map_err(|e| GovernanceError::Internal {
             reason: format!("capability registry mutex poisoned: {e}"),
@@ -141,7 +141,7 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    /// Resolve a `voter_cap_id` to its `CapabilitySigner`. Returns
+    /// Resolve a `voter_cap_id` to its `EnvelopeSigner`. Returns
     /// `GovernanceError::UnknownCapability` on miss.
     ///
     /// Fail-closed on mutex poisoning: a prior panicking holder
@@ -149,10 +149,7 @@ impl CapabilityRegistry {
     /// than aborting the substrate ledger reader (RFC-0011-g
     /// §Error Handling fail-closed invariant — substrate must
     /// never panic on the caller).
-    pub fn resolve(
-        &self,
-        voter_cap_id: &str,
-    ) -> Result<Arc<dyn CapabilitySigner>, GovernanceError> {
+    pub fn resolve(&self, voter_cap_id: &str) -> Result<Arc<dyn EnvelopeSigner>, GovernanceError> {
         let caps = self.caps.lock().map_err(|e| GovernanceError::Internal {
             reason: format!("capability registry mutex poisoned: {e}"),
         })?;
@@ -489,10 +486,10 @@ mod tests {
     //!   100_000 bps (11+ voters each capped at 10_000)
 
     use super::*;
-    use crate::attest::CapabilitySigner;
+    use crate::attest::EnvelopeSigner;
     use crate::session::FixedClock;
 
-    /// Test `CapabilitySigner` impl that returns a fixed 64-byte
+    /// Test `EnvelopeSigner` impl that returns a fixed 64-byte
     /// signature. Distinct from the attest test signer to avoid
     /// cross-test state leakage.
     struct TestSigner {
@@ -521,7 +518,7 @@ mod tests {
         }
     }
 
-    impl CapabilitySigner for TestSigner {
+    impl EnvelopeSigner for TestSigner {
         fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
             Ok(self.signature)
         }
@@ -920,7 +917,7 @@ mod tests {
         for i in 0..10 {
             let cap_id = format!("voter-cap-{i:02}");
             let did = format!("did:octo:z6MkVoter{i:02}XYZABCDEF1234567890abcdef1234567890ab");
-            let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::with_did(&did));
+            let signer: Arc<dyn EnvelopeSigner> = Arc::new(TestSigner::with_did(&did));
             session
                 .register_capability(&cap_id, signer)
                 .expect("register unpoisoned");
@@ -939,7 +936,7 @@ mod tests {
         // 11th voter crosses the 100_000 bps tally guard.
         let cap_id = "voter-cap-overflow".to_string();
         let did = "did:octo:z6MkVoterXXXYZABCDEF1234567890abcdef1234567890ab".to_string();
-        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::with_did(&did));
+        let signer: Arc<dyn EnvelopeSigner> = Arc::new(TestSigner::with_did(&did));
         session
             .register_capability(&cap_id, signer)
             .expect("register unpoisoned");
@@ -1067,8 +1064,8 @@ mod tests {
     //      §Error Handling) ----
     //
     // NOTE: We do NOT poison the registry mutex via panic +
-    // catch_unwind because HashMap<String, Arc<dyn CapabilitySigner>>
-    // would require `dyn CapabilitySigner: Debug` (a trait surface
+    // catch_unwind because HashMap<String, Arc<dyn EnvelopeSigner>>
+    // would require `dyn EnvelopeSigner: Debug` (a trait surface
     // broadening we deliberately avoid). The translation logic is
     // identical to `VoteLog` (both translate
     // `Mutex::lock().map_err(...)` to
@@ -1081,7 +1078,7 @@ mod tests {
     #[test]
     fn vote_capability_registry_register_then_resolve_roundtrip() {
         let registry = CapabilityRegistry::new();
-        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+        let signer: Arc<dyn EnvelopeSigner> = Arc::new(TestSigner::new());
         registry
             .register("voter-cap-rtp".to_string(), signer.clone())
             .expect("register unpoisoned");
@@ -1101,7 +1098,7 @@ mod tests {
     #[test]
     fn vote_capability_registry_resolve_unknown_cap_returns_err() {
         let registry = CapabilityRegistry::new();
-        // Cannot use `expect_err` because `Arc<dyn CapabilitySigner>`
+        // Cannot use `expect_err` because `Arc<dyn EnvelopeSigner>`
         // has no `Debug` bound (deliberate trait-surface constraint).
         // Match explicitly instead.
         match registry.resolve("unknown-cap") {
@@ -1126,7 +1123,7 @@ mod tests {
         // is covered by the VoteLog poison tests' shared
         // translation shape.
         let registry = CapabilityRegistry::new();
-        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+        let signer: Arc<dyn EnvelopeSigner> = Arc::new(TestSigner::new());
         registry
             .register("cap-sanity".to_string(), signer)
             .expect("register on fresh registry succeeds");

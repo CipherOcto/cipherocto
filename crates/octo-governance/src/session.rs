@@ -138,7 +138,7 @@ pub struct GovernanceSession {
     /// Append-only attestation ledger. `attest_v2` consults + extends.
     attestation_log: AttestationLog,
     /// Capability registry mapping `voter_cap_id → Arc<dyn
-    /// CapabilitySigner>`. The CLI populates this at session
+    /// EnvelopeSigner>`. The CLI populates this at session
     /// construction from the wallet's capability set.
     capability_registry: CapabilityRegistry,
     /// Substrate clock (deterministic for tests via `FixedClock`,
@@ -171,7 +171,7 @@ impl GovernanceSession {
     pub fn register_capability(
         &self,
         voter_cap_id: impl Into<String>,
-        signer: Arc<dyn crate::attest::CapabilitySigner>,
+        signer: Arc<dyn crate::attest::EnvelopeSigner>,
     ) -> Result<(), GovernanceError> {
         self.capability_registry
             .register(voter_cap_id.into(), signer)
@@ -252,10 +252,10 @@ mod tests {
 
     #[test]
     fn governance_session_register_capability_populates_registry() {
-        use crate::attest::CapabilitySigner;
+        use crate::attest::EnvelopeSigner;
 
         struct DummySigner;
-        impl CapabilitySigner for DummySigner {
+        impl EnvelopeSigner for DummySigner {
             fn sign_envelope(&self, _: &[u8]) -> Result<[u8; 64], String> {
                 Ok([0u8; 64])
             }

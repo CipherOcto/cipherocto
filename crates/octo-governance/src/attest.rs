@@ -9,7 +9,7 @@
 //!   `attestation_id = BLAKE3-256(canonical_ser(envelope))`
 //!   per RFC-0011-g §Substrate `[ADD]`. In-memory for Phase 2;
 //!   persistence substrate lands in a follow-on mission.
-//! - [`CapabilitySigner`] — abstraction over the HSM-bound
+//! - [`EnvelopeSigner`] — abstraction over the HSM-bound
 //!   signing primitive; CLI calls through
 //!   `octo-wallet::sign_envelope` (Layer A RFC-frozen) without
 //!   holding private-key material locally. The trait is defined
@@ -47,14 +47,30 @@ use serde::{Deserialize, Serialize};
 use crate::session::GovernanceSession;
 
 /// Trait abstraction over the HSM-bound signing primitive used
-/// by `attest`. The CLI implements this trait via
-/// `octo-wallet::sign_envelope` (Layer A frozen) so the substrate
-/// does not depend on `octo-wallet` directly.
+/// by `attest_v2` and `vote_v2`. The CLI implements this trait over
+/// the operator's `IdentityKey` so the substrate does not depend on
+/// `octo-wallet` directly.
 ///
 /// Per RFC-0011-g §Redaction, the signer sees the BLAKE3-256
 /// canonical envelope bytes only (raw evidence bytes NEVER
 /// reach the signer).
-pub trait CapabilitySigner {
+///
+/// # Why this is not called `CapabilitySigner`
+///
+/// It was, and that was the hazard. `octo_cap_macaroon` has its own
+/// `CapabilitySigner` with a genuinely different contract — it signs
+/// capability holder messages and returns a public key — so an
+/// implementor grepping for `CapabilitySigner` found two unrelated
+/// traits and had to work out which one they were holding. Worse, the
+/// missing `did()` method on this one is exactly what allowed
+/// `vote_v2` to accept a signer attribution the key never confirmed
+/// (mission `0009-e9`), and the weak copy is what made that invisible.
+///
+/// The two are not mergeable: this trait signs opaque envelopes and has
+/// no public key, while the macaroon one is the capability substrate's
+/// signer abstraction and needs one. The name now states what it does —
+/// it signs envelopes — which also reads as the contrast it is.
+pub trait EnvelopeSigner {
     /// Sign the canonical envelope bytes. Returns the 64-byte
     /// Ed25519 signature. Failures bubble up to the substrate
     /// as `GovernanceError::Internal`.
@@ -256,7 +272,7 @@ pub fn attest_v2(
     expires_at_unix: Option<u64>,
     snapshot_id: Option<&[u8; 32]>,
     allow_stale: bool,
-    signer: &dyn CapabilitySigner,
+    signer: &dyn EnvelopeSigner,
 ) -> Result<AttestationReceipt, GovernanceError> {
     let appended_at_unix = session.now_unix();
 
@@ -346,7 +362,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    /// Test `CapabilitySigner` impl that records the envelope it
+    /// Test `EnvelopeSigner` impl that records the envelope it
     /// was asked to sign and returns a fixed 64-byte signature.
     struct FixedSigner {
         signature: [u8; 64],
@@ -360,7 +376,7 @@ mod tests {
         }
     }
 
-    impl CapabilitySigner for FixedSigner {
+    impl EnvelopeSigner for FixedSigner {
         fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
             Ok(self.signature)
         }
@@ -734,7 +750,7 @@ mod tests {
     fn attest_a13_receipt_carries_the_signers_own_did() {
         struct DistinctDidSigner;
 
-        impl CapabilitySigner for DistinctDidSigner {
+        impl EnvelopeSigner for DistinctDidSigner {
             fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
                 Ok([0x11; 64])
             }

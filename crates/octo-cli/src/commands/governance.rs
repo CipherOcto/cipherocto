@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use clap::Subcommand;
 use octo_governance::{
-    attest::CapabilitySigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
+    attest::EnvelopeSigner, attest_v2, snapshot, vote_v2, AttestationReceipt, CapabilityToken,
     GovernanceError, GovernanceSession, GovernanceSnapshotError, OctoGovernanceSnapshotCache,
     ProposalFilter, ProposalState as SubstrateProposalState, ProposalSummary, QuorumProjection,
     SnapshotView, SystemClock, VoteChoice, VoteReceipt,
@@ -41,8 +41,8 @@ use crate::flags::{OperatorModeFlags, OutputFlags};
 use crate::output::{OutputEnvelope, RedactionContext};
 use crate::Octo;
 
-/// Wallet-backed `CapabilitySigner` adapter (RFC-0011-g §7.4
-/// substrate signature `&dyn CapabilitySigner`). Wraps the
+/// Wallet-backed `EnvelopeSigner` adapter (RFC-0011-g §7.4
+/// substrate signature `&dyn EnvelopeSigner`). Wraps the
 /// active `IdentityKey` so the substrate can perform the HSM-bound
 /// `sign_envelope` call without leaking private-key material
 /// outside the wallet boundary. Failure paths collapse to
@@ -68,7 +68,7 @@ impl WalletSignerAdapter {
     }
 }
 
-impl CapabilitySigner for WalletSignerAdapter {
+impl EnvelopeSigner for WalletSignerAdapter {
     /// Sign under the identity's own signable prefix.
     ///
     /// This called `IdentityKey::sign` — the bare primitive — so the
@@ -641,7 +641,7 @@ fn attest_handler(
     // 4c(b) audit migration: the production signing path now
     // routes through `WalletStore::unlock(passphrase)` rather than
     // the metadata-only `try_active_identity` stub. The substrate's
-    // `&dyn CapabilitySigner` interface still consumes an owned
+    // `&dyn EnvelopeSigner` interface still consumes an owned
     // `IdentityKey`, which `unlocked.active_identity().clone()`
     // provides (cheap Arc clone — `IdentityKey` wraps
     // `Arc<dyn HsmAdapter>`).
@@ -819,7 +819,7 @@ fn vote_handler(
     // 4c(b) audit migration: the production signing path now
     // routes through `WalletStore::unlock(passphrase)` rather than
     // the metadata-only `try_active_identity` stub. The substrate's
-    // `&dyn CapabilitySigner` interface still consumes an owned
+    // `&dyn EnvelopeSigner` interface still consumes an owned
     // `IdentityKey`, which `unlocked.active_identity().clone()`
     // provides (cheap Arc clone — `IdentityKey` wraps
     // `Arc<dyn HsmAdapter>`).
@@ -845,12 +845,12 @@ fn vote_handler(
 
     // Substrate v2 call: build a GovernanceSession with the
     // production SystemClock, register the wallet-backed
-    // CapabilitySigner under the supplied voter_cap_id, build
+    // EnvelopeSigner under the supplied voter_cap_id, build
     // a CapabilityToken from (voter_cap_id, signer_did,
     // weight_bps), and call vote_v2 which reads the clock via
     // the session.
     let session = GovernanceSession::new(&signer_did, Arc::new(SystemClock));
-    let signer_arc: Arc<dyn octo_governance::attest::CapabilitySigner> = Arc::new(signer);
+    let signer_arc: Arc<dyn octo_governance::attest::EnvelopeSigner> = Arc::new(signer);
     session
         .register_capability(&voter_cap_id, signer_arc)
         .map_err(map_governance_error)?;

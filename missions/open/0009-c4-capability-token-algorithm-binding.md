@@ -16,8 +16,19 @@ metadata:
 
 ## Status
 
-Open (2026-10-09). **Unblocked** as of mission `0009-c`: `octo_ident::AlgorithmId`
-carries serde, which was the prerequisite. See §Prerequisite, now met.
+**Claimed and implemented (2026-10-09).** 407 `octo-cap-macaroon` tests and
+43 `octo-cli` security guards pass; clippy clean across
+`octo-cap-macaroon`, `octo-cap-zk`, `octo-wallet` and `octo-cli` with
+`--all-targets --all-features`.
+
+The wire-format blocker this file originally assumed turned out not to
+exist — see §The wire format does not have to change. The real work was
+narrower and is done: `HolderSignature`, dispatch in `verify_holder_sig`,
+and the API grep guard that mission `0009-c` could not write.
+
+**One AC-11 site remains open workspace-wide:**
+`octo-protocol` §`verify_ed25519_signature`, which is a Layer 1 envelope
+change and deliberately not folded in here.
 
 This is one of the two sites mission `0009-c` explicitly could not dispatch.
 The other is `octo-protocol` §`verify_ed25519_signature`; see
@@ -124,6 +135,26 @@ in every message that already references a document is how the two drift
 apart. A token claiming algorithm A while the document says B is a
 contradiction the type system cannot see; a verifier handed A and holding a
 key the document says belongs to B fails closed.
+
+## What landed
+
+| Vector                                                   | What it pins                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `holder_sig_dispatches_on_its_own_algorithm`             | the happy path, and the control that refusing everything would also pass |
+| `a_token_naming_an_unregistered_algorithm_is_refused`    | the fail-closed half — the property the field exists for                 |
+| `a_tampered_holder_signature_is_still_rejected`          | dispatch did not degrade the check into a lookup                         |
+| `holder_signature_debug_redacts_the_bytes`               | a newtype is exactly where a derived `Debug` would leak a credential     |
+| `holder_signature_round_trips_through_its_wire_form`     | the wire form is unchanged; a regression here means it became one        |
+| `holder_signature_rejects_a_wrong_length`                | 63 bytes is refused, not truncated                                       |
+| `no_capability_token_api_names_ed25519_dalek` (octo-cli) | the API guard, which could not be written before this change             |
+
+**Two lessons from building the guard, recorded because both cost a
+cycle.** It strips comments first — the newtype's doc comment names the
+dalek type it replaced, and a guard matching prose fails on its own
+explanation. And its first control was invalid: the mutation changed the
+field type, which does not compile, so the guard never ran and the run
+looked green. **A grep guard needs a mutation that compiles.** Re-exposing
+the dalek type through a public alias is one, and the guard fails on it.
 
 ## Domain separation — audited, and the answer is reassuring
 

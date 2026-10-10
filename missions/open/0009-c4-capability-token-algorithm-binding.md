@@ -82,12 +82,40 @@ and `octo-wallet` §`capability/verify` with its `redemption_subgraph` test.
 
 `octo-cap-zk` pins `holder_sig` as `ed25519_dalek::Signature` in seven
 places and is owned by `0957-ext-zk-crate`. `octo-cap-macaroon` is owned by
-`0957-ext-macaroon-crate`. **Coordinate both before landing** — per
-§No parallel abstractions, this must not sit on top of in-flight work in
-either crate.
+`0957-ext-macaroon-crate`.
+
+**The coordination question, answered rather than assumed.** The earlier
+draft of this file said "coordinate both before landing" as though work
+were in flight. Checked: `0957-ext-macaroon-crate` is **closed** (Phase 2,
+2026-08-09) and `0957-ext-zk-crate` has sat Open since 2026-08-08 with no
+activity. There is no concurrent work to collide with.
+
+The real coupling is not a schedule conflict, it is that `octo-cap-zk`
+reads `holder_sig` as a dalek type in seven places. That is a **compile
+dependency this change invalidates**, and it has to be updated in the same
+change or the workspace does not build. It is listed above as blast radius
+for exactly that reason.
 
 Nothing is deployed, so there is no migration cost. That is not a reason to
 skip the coordination; it is a reason not to add a compatibility shim.
+
+## Domain separation — audited, and the answer is reassuring
+
+`AlgorithmId` now serialises as the textual UUID while the signable prefix
+must use 16 raw bytes (RFC-0009 §Domain separation). The obvious hazard is
+a deserialised id reaching a prefix as text.
+
+**There is no production signable-prefix builder.** The only construction
+anywhere is in the `raw_prefix_is_self_delimiting` test, and it reads
+`as_bytes()`. So no code path can produce a textual prefix today, and
+adding serde introduced no reachable hazard.
+
+**When the builder lands, it must read `as_bytes()`.** Not `to_uuid()`,
+not `to_string()`, not a serde round-trip. Two vectors already pin the
+distinction: one asserts serde emits 38 characters while storage stays 16
+raw bytes, the other asserts an upper-case document yields the same 16
+bytes. This file restates it because the builder does not exist yet, and
+the rule has to be read at the moment someone writes it.
 
 ## Acceptance Criteria
 

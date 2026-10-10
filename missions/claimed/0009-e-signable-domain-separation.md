@@ -150,16 +150,36 @@ here rather than left to be discovered:
 
 - `IdentityKey::sign` and `IdentityKey::verify` still sign and verify **bare**
   messages. `sign_prefixed` / `verify_prefixed` are the prefixed path and are
-  complete, but nothing forces a caller onto them. There are **30 in-crate
-  `sign` call sites** and roughly **ten downstream crates** using
-  `IdentityKey`.
+  complete, but nothing forces a caller onto them.
+
+  An earlier draft of this section said "30 in-crate call sites and roughly ten
+  downstream crates". **That number was wrong** and is corrected here. It came
+  from a raw `grep -c '\.sign('` over `crates/octo-wallet/src`, which counted
+  `ed25519_dalek::SigningKey::sign`, `HsmAdapter` internals, and test bodies
+  alongside genuine `IdentityKey::sign` calls. Counting only non-test
+  production sites gives **eight**:
+
+  | Site                                 | What it signs                                     |
+  | ------------------------------------ | ------------------------------------------------- |
+  | `octo-wallet` §`revoke`              | `b"revoke"` — a 6-byte constant, bound to nothing |
+  | `octo-wallet` §`begin_rotation`      | `b"rotate" ‖ new_pub`                             |
+  | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         |
+  | `octo-wallet` §`identity_store`      | a wrapper over the above                          |
+  | `octo-wallet-node` §sign handler     | the request bytes                                 |
+  | `octo-runtime` §handle/signing (two) | the holder message                                |
+  | `quota-router-core` §`envelope_v2`   | a preimage that may already carry its own domain  |
+
+  The last one must be checked before migrating: if that preimage already
+  contains a domain separator, prefixing it would bind two domains at once.
+
 - `CapabilitySigner::sign(&self, msg: &[u8])` in `octo-cap-macaroon` is
   unchanged. It carries no key context at all, so the RFC-named "real
   signers" list is only half covered. Making it carry one is a trait change
   across every implementor.
-- The `verify_successor_proof` / `verify_revocation_proof` pair already take
-  an `algorithm_id` out of band but sign `b"rotate" ‖ new_pub` and `b"revoke"`
-  with no prefix.
+- `verify_successor_proof` / `verify_revocation_proof` take an `algorithm_id`
+  **out of band** because they are pure static helpers with no signer to ask.
+  That is exactly the "verifier prefers its own algorithm" shape the prefix
+  removes, and it is the first migration slice.
 - `IdentityRecord` does not persist a `key_id`.
 
 The follow-up is a migration mission, not an extension of this one: replace

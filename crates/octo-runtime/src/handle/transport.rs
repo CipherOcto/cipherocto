@@ -196,6 +196,11 @@ mod tests {
             mint_timestamp_unix: 1_700_000_000,
             ttl_unix: 1_700_003_600,
             signature: Signature([0x42; 64]),
+            signable_prefix: octo_wallet::SignablePrefix::new(
+                octo_wallet::ed25519_algorithm_id(),
+                octo_wallet::VerificationMethodId::derive("attach-holder"),
+            )
+            .to_bytes(),
             payload: AttachPayload {
                 agent_id: Uuid::from_bytes([0xcd; 16]),
                 since_cursor: 7,
@@ -214,6 +219,11 @@ mod tests {
             mint_timestamp_unix: mint_unix,
             ttl_unix: u64::MAX,
             signature: Signature([0x42; 64]),
+            signable_prefix: octo_wallet::SignablePrefix::new(
+                octo_wallet::ed25519_algorithm_id(),
+                octo_wallet::VerificationMethodId::derive("attach-holder"),
+            )
+            .to_bytes(),
             payload: AttachPayload {
                 agent_id: handle.agent_id,
                 since_cursor: 0,

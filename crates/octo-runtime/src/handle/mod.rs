@@ -341,6 +341,16 @@ pub struct AttachHandle {
     pub ttl_unix: u64,
     /// Ed25519 signature over `session_id || payload || mint_timestamp_unix || ttl_unix`.
     pub signature: Signature,
+    /// RFC-0009 signable prefix: `algorithm_id ‖ key_id`, 32 raw bytes.
+    ///
+    /// Carried as the canonical wire form rather than as a `SignablePrefix`
+    /// because this struct is serde-derived and the prefix is not. It must be
+    /// a *field*, not merely part of the signed bytes: the verifier rebuilds
+    /// the message from the token's fields, so a prefix spliced into the
+    /// canonical bytes alone would be unreadable at verification time, which
+    /// is exactly why the older `key_id` byte suffix could only ever bind a
+    /// claim the verifier supplied itself.
+    pub signable_prefix: [u8; 32],
     /// Per-token payload (agent_id + since_cursor).
     pub payload: AttachPayload,
     /// Transport selector (in-process / unix socket / raw escape hatch).
@@ -760,6 +770,11 @@ mod tests {
             mint_timestamp_unix: 1_700_000_000,
             ttl_unix: 1_700_003_600,
             signature: Signature([0x42; 64]),
+            signable_prefix: octo_wallet::SignablePrefix::new(
+                octo_wallet::ed25519_algorithm_id(),
+                octo_wallet::VerificationMethodId::derive("attach-holder"),
+            )
+            .to_bytes(),
             payload: AttachPayload {
                 agent_id: Uuid::from_bytes([0xcd; 16]),
                 since_cursor: 7,

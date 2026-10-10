@@ -69,6 +69,16 @@ pub use octo_algo_ed25519::{
     ed25519_algorithm_id, verify_dispatch, DispatchError, Ed25519Algorithm,
 };
 pub use octo_ident::AlgorithmId;
+// The RFC-0009 prefix substrate, re-exported alongside `AlgorithmId` so a
+// downstream crate that must *carry* a prefix on the wire (an attach-handle
+// token, for instance) reaches it through the same path as the identity
+// operations that produce one. Without this, every such crate grows its own
+// `octo-ident` edge to reach a type `octo-wallet` already owns semantics for —
+// two import paths to one concept (principle §No parallel abstractions).
+pub use octo_ident::{
+    CanonicalPayload, SignableError, SignableForm, SignablePrefix, SignedMessage,
+    VerificationMethodId,
+};
 pub use role_nonce::next_nonce_counter;
 
 #[cfg(test)]

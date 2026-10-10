@@ -104,6 +104,7 @@ pub async fn attach_with_token(
 ) -> Result<AttachedSession, AttachError> {
     verify_attach_handle_payload(
         holder_pubkey,
+        &token.signable_prefix,
         &token.session_id,
         &token.payload,
         token.mint_timestamp_unix,

@@ -25,19 +25,45 @@ use crate::handle::key_id::KeyId;
 use crate::handle::KeySet;
 use crate::handle::{AttachHandle, AttachPayload, SessionId, Signature, Transport};
 
+/// The canonical bytes an `AttachHandle` signature actually covers:
+/// the RFC-0009 prefix ‖ DCS(canonical payload bytes).
+///
+/// Single source of truth for both sign and verify. The prefix is carried on
+/// the token as [`AttachHandle::signable_prefix`], so the verifier rebuilds
+/// these bytes from the token rather than from its own configuration — which
+/// is what lets the algorithm come from the message instead of from a
+/// hardcoded preference.
+fn signable_bytes(
+    prefix: &octo_wallet::SignablePrefix,
+    canonical: &[u8],
+) -> Result<Vec<u8>, AttachError> {
+    octo_wallet::SignedMessage::new(*prefix, canonical.to_vec())
+        .signable(octo_wallet::SignableForm::Raw)
+        .map_err(|e| AttachError::BadSignature {
+            reason: format!("prefix construction: {e}"),
+        })
+}
+
+/// Parse the prefix carried on a token, mapping the failure into
+/// `AttachError` so callers on the decode path stay in one error space.
+fn prefix_from_token(bytes: &[u8; 32]) -> Result<octo_wallet::SignablePrefix, AttachError> {
+    octo_wallet::SignablePrefix::from_bytes(bytes).map_err(|e| AttachError::BadSignature {
+        reason: format!("signable prefix: {e}"),
+    })
+}
+
 /// Sign the canonical payload bytes for an `AttachHandle` token.
 ///
 /// Composes `IdentityKey::sign` (Layer B substrate per RFC-0015-a
-/// Appendix A) over the canonical signed bytes (single source of
-/// truth per [`crate::handle::encoding::canonical_payload_bytes`]).
-/// The returned `Signature` is the substrate-visible newtype — it
-/// wraps `ed25519_dalek::Signature` at the boundary so Layer A
-/// primitive types don't leak across the Layer A/B seam.
+/// Appendix A) over the RFC-0009 signable bytes — the prefix ‖ DCS of the
+/// canonical payload — so the signature commits to the holder's algorithm and
+/// verification method, not just to the session fields.
 ///
 /// # Errors
-/// Returns `AttachError::BadSignature` when the underlying HSM
-/// adapter surfaces a `WalletError` (lifecycle gate, HSM transport,
-/// or user rejection).
+/// Returns `AttachError::BadSignature` when the holder carries no
+/// `key_id` (nothing may be signed without a key context), or when the
+/// underlying HSM adapter surfaces a `WalletError` (lifecycle gate, HSM
+/// transport, or user rejection).
 pub fn sign_attach_handle_payload(
     holder: &IdentityKey,
     session_id: SessionId,
@@ -45,7 +71,13 @@ pub fn sign_attach_handle_payload(
     mint_timestamp_unix: u64,
     ttl_unix: u64,
 ) -> Result<Signature, AttachError> {
-    let msg = canonical_payload_bytes(&session_id, payload, mint_timestamp_unix, ttl_unix);
+    let prefix = holder
+        .signable_prefix()
+        .map_err(|e| AttachError::BadSignature {
+            reason: format!("IdentityKey signable prefix: {e}"),
+        })?;
+    let canonical = canonical_payload_bytes(&session_id, payload, mint_timestamp_unix, ttl_unix);
+    let msg = signable_bytes(&prefix, &canonical)?;
     let dalek_sig = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
         reason: format!("IdentityKey::sign: {e}"),
     })?;
@@ -56,22 +88,31 @@ pub fn sign_attach_handle_payload(
 /// against an arbitrary public key (pure helper mirroring
 /// `verify_revocation_proof` shape).
 ///
+/// `signable_prefix` is the 32-byte prefix carried on the token. It is the
+/// source of truth for the algorithm: verification dispatches on the one the
+/// prefix names, never on a hardcoded preference. A verifier that expected
+/// Ed25519 and is handed a token naming something else fails closed rather
+/// than misreading the message.
+///
 /// Consumed by `attach_with_token` per §F.2 validation chain step (a);
 /// `decode_token` per §F.1 also invokes verify-on-decode.
 ///
 /// # Errors
-/// Returns `AttachError::BadSignature` on signature mismatch or
-/// malformed public key bytes.
+/// Returns `AttachError::BadSignature` on a malformed prefix, signature
+/// mismatch, or malformed public key bytes.
 pub fn verify_attach_handle_payload(
     holder_pubkey: &[u8; 32],
+    signable_prefix: &[u8; 32],
     session_id: &SessionId,
     payload: &AttachPayload,
     mint_timestamp_unix: u64,
     ttl_unix: u64,
     sig: &Signature,
 ) -> Result<(), AttachError> {
-    let msg = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
-    verify_bytes(&attach_algorithm_id(), holder_pubkey, &msg, sig)
+    let prefix = prefix_from_token(signable_prefix)?;
+    let canonical = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
+    let msg = signable_bytes(&prefix, &canonical)?;
+    verify_bytes(&prefix.algorithm_id().to_owned(), holder_pubkey, &msg, sig)
 }
 
 /// The algorithm attach-handle signatures are verified under.
@@ -251,6 +292,11 @@ pub fn mint_attach_handle(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let prefix = holder
+        .signable_prefix()
+        .map_err(|e| AttachError::BadSignature {
+            reason: format!("IdentityKey signable prefix: {e}"),
+        })?;
     let signature =
         sign_attach_handle_payload(holder, session_id, &payload, mint_timestamp_unix, ttl_unix)?;
     Ok(AttachHandle {
@@ -258,6 +304,7 @@ pub fn mint_attach_handle(
         mint_timestamp_unix,
         ttl_unix,
         signature,
+        signable_prefix: prefix.to_bytes(),
         payload,
         transport,
     })
@@ -269,9 +316,22 @@ mod tests {
     use octo_wallet::IdentityKey;
 
     fn activated_holder() -> IdentityKey {
-        let mut k = IdentityKey::generate().expect("generate");
+        // The `key_id` is not optional here: `sign_attach_handle_payload`
+        // refuses an identity with no key context, because a token that names
+        // no key is exactly the unbound token this migration removes.
+        let mut k = IdentityKey::generate()
+            .expect("generate")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "attach-holder",
+            ));
         k.activate(1_700_000_000).expect("activate");
         k
+    }
+
+    /// The prefix the holder embeds in a token, for tests that call the verify
+    /// helper directly rather than going through `mint_attach_handle`.
+    fn holder_prefix(holder: &IdentityKey) -> [u8; 32] {
+        holder.signable_prefix().expect("key context").to_bytes()
     }
 
     #[test]
@@ -285,8 +345,16 @@ mod tests {
         };
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
-        verify_attach_handle_payload(&pk, &session_id, &payload, 1_000, 2_000, &sig)
-            .expect("verify");
+        verify_attach_handle_payload(
+            &pk,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        )
+        .expect("verify");
     }
 
     #[test]
@@ -301,7 +369,15 @@ mod tests {
         let mut sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         sig.0[0] ^= 0x01;
-        let result = verify_attach_handle_payload(&pk, &session_id, &payload, 1_000, 2_000, &sig);
+        let result = verify_attach_handle_payload(
+            &pk,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        );
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "tampered sig must reject, got {result:?}"
@@ -319,8 +395,15 @@ mod tests {
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         let wrong_pk = [0xee; 32];
-        let result =
-            verify_attach_handle_payload(&wrong_pk, &session_id, &payload, 1_000, 2_000, &sig);
+        let result = verify_attach_handle_payload(
+            &wrong_pk,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        );
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "wrong pubkey must reject, got {result:?}"
@@ -338,7 +421,15 @@ mod tests {
         };
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
-        let result = verify_attach_handle_payload(&pk, &session_id, &payload, 9_999, 2_000, &sig);
+        let result = verify_attach_handle_payload(
+            &pk,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            9_999,
+            2_000,
+            &sig,
+        );
         assert!(
             matches!(result, Err(AttachError::BadSignature { .. })),
             "tampered mint must reject, got {result:?}"
@@ -363,6 +454,7 @@ mod tests {
         // Token is signed; verify using the static helper.
         verify_attach_handle_payload(
             &pk,
+            &token.signable_prefix,
             &token.session_id,
             &token.payload,
             token.mint_timestamp_unix,
@@ -553,5 +645,154 @@ mod tests {
             Err(AttachError::UnknownKeyId { key_id, .. }) => assert_eq!(key_id, 99),
             other => panic!("grace key must NOT vouch for claimed key_id=99, got {other:?}"),
         }
+    }
+    // ── The prefix is carried, and the algorithm comes from it ──────────
+
+    #[test]
+    fn the_token_carries_the_prefix_in_band() {
+        let holder = activated_holder();
+        let token = mint_attach_handle(
+            &holder,
+            Uuid::from_bytes([0x77; 16]),
+            [0x5a; 32],
+            0,
+            1_700_003_600,
+            Transport::IN_PROCESS,
+        )
+        .expect("mint");
+
+        // Not merely signed over — transported as a field, so a verifier
+        // holding only the token can read the binding without being told it.
+        assert_eq!(token.signable_prefix, holder_prefix(&holder));
+
+        // And it survives the wire form, which is the only reason carrying it
+        // is worth anything.
+        let encoded = crate::handle::encoding::encode_token(&token).expect("encode");
+        let decoded = crate::handle::encoding::decode_token(&encoded, &holder.public_key_bytes())
+            .expect("decode");
+        assert_eq!(
+            decoded.signable_prefix, token.signable_prefix,
+            "the prefix must survive encode/decode"
+        );
+    }
+
+    #[test]
+    fn the_verifier_dispatches_on_the_named_algorithm() {
+        let holder = activated_holder();
+        let session_id = [0x61; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0x62; 16]),
+            since_cursor: 5,
+        };
+        let canonical = canonical_payload_bytes(&session_id, &payload, 1_000, 2_000);
+        let prefix =
+            octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
+        let msg = signable_bytes(&prefix, &canonical).expect("signable");
+        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+
+        // Proof the verifier is reading the algorithm from the prefix rather
+        // than assuming Ed25519: hand it a token whose prefix names a
+        // different algorithm. There is no such registered algorithm under
+        // that name, so dispatch must fail closed.
+        let foreign = octo_wallet::SignablePrefix::new(
+            octo_wallet::AlgorithmId::derive("not-a-registered-algorithm"),
+            octo_wallet::VerificationMethodId::derive("attach-holder"),
+        )
+        .to_bytes();
+
+        let result = verify_attach_handle_payload(
+            &holder.public_key_bytes(),
+            &foreign,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        );
+        assert!(
+            matches!(result, Err(AttachError::BadSignature { .. })),
+            "an unknown algorithm must fail closed, got {result:?}"
+        );
+
+        // Control: the same signature verifies under its own prefix. Without
+        // this the assertion above could pass merely because the helper is
+        // broken for every input.
+        verify_attach_handle_payload(
+            &holder.public_key_bytes(),
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        )
+        .expect("the real prefix must still verify");
+    }
+
+    #[test]
+    fn a_token_naming_another_key_id_is_refused() {
+        let holder = activated_holder();
+        let session_id = [0x71; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0x72; 16]),
+            since_cursor: 3,
+        };
+        let canonical = canonical_payload_bytes(&session_id, &payload, 1_000, 2_000);
+        let real =
+            octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
+        let msg = signable_bytes(&real, &canonical).expect("signable");
+        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+
+        // Same key, same algorithm, different `key_id` in the prefix. This is
+        // the substitution the prefix exists to refuse: an attacker who can
+        // rewrite the token's key_id must not be able to keep the signature.
+        let swapped = octo_wallet::SignablePrefix::new(
+            real.algorithm_id(),
+            octo_wallet::VerificationMethodId::derive("some-other-key"),
+        )
+        .to_bytes();
+
+        let result = verify_attach_handle_payload(
+            &holder.public_key_bytes(),
+            &swapped,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        );
+        assert!(
+            matches!(result, Err(AttachError::BadSignature { .. })),
+            "a swapped key_id must refuse, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn minting_refuses_a_holder_with_no_key_context() {
+        // A token that names no key is exactly the unbound token this
+        // migration removes, so minting must fail rather than emit one.
+        let mut holder = IdentityKey::generate().expect("generate");
+        holder.activate(1_700_000_000).expect("activate");
+        assert!(
+            holder.verification_method_id().is_none(),
+            "control: this identity really has no key context"
+        );
+
+        let err = mint_attach_handle(
+            &holder,
+            Uuid::from_bytes([0x81; 16]),
+            [0x82; 32],
+            0,
+            1_700_003_600,
+            Transport::IN_PROCESS,
+        )
+        .expect_err("a holder with no key_id must not mint a token");
+        let AttachError::BadSignature { reason } = &err else {
+            panic!("expected BadSignature, got {err:?}");
+        };
+        assert!(
+            reason.to_lowercase().contains("key"),
+            "the refusal must be the missing key context, not another error: {reason}"
+        );
     }
 }

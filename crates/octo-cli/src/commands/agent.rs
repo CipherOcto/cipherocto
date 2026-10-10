@@ -2338,7 +2338,11 @@ mod tests {
         use octo_wallet::IdentityKey;
         use uuid::Uuid;
 
-        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        let mut holder = IdentityKey::generate()
+            .expect("IdentityKey::generate must succeed")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "cli-attach-holder",
+            ));
         // Activate the identity so `sign_attach_handle_payload` (which
         // gates on `IdentityKey::activated_at_unix_secs().is_some()`)
         // accepts the mint. The CLI activation flow happens at the
@@ -2443,7 +2447,11 @@ mod tests {
         //     The session_id MUST match the registry entry, else
         //     `bind` returns `UnknownSession` (the substrate-
         //     faithful failure surface for an unregistered session).
-        let mut holder = IdentityKey::generate().expect("IdentityKey::generate");
+        let mut holder = IdentityKey::generate()
+            .expect("IdentityKey::generate")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "cli-attach-holder",
+            ));
         let now_unix_secs: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -2554,7 +2562,11 @@ mod tests {
         use octo_wallet::IdentityKey;
         use uuid::Uuid;
 
-        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        let mut holder = IdentityKey::generate()
+            .expect("IdentityKey::generate must succeed")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "cli-attach-holder",
+            ));
         let now_unix_secs: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -2855,7 +2867,11 @@ mod tests {
         use octo_wallet::IdentityKey;
         use uuid::Uuid;
 
-        let mut holder = IdentityKey::generate().expect("IdentityKey::generate must succeed");
+        let mut holder = IdentityKey::generate()
+            .expect("IdentityKey::generate must succeed")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "cli-attach-holder",
+            ));
         let now_unix_secs: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())

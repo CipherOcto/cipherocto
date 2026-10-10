@@ -166,7 +166,7 @@ here rather than left to be discovered:
   | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         | outstanding                  |
   | `octo-wallet` §`identity_store`      | a wrapper over the above                          | outstanding                  |
   | `octo-wallet-node` §sign handler     | the request bytes                                 | migrated in `0009-e3`        |
-  | `octo-runtime` §handle/signing (two) | the holder message                                | outstanding                  |
+  | `octo-runtime` §handle/signing (two) | the holder message                                | migrated in `0009-e4` (v1)   |
   | `quota-router-core` §`envelope_v2`   | a domain-separated preimage                       | **not migrated — see below** |
 
   Three sites remain outstanding, plus the `CapabilitySigner` trait change
@@ -311,7 +311,7 @@ BLAKE3-256 digest over canonical envelope bytes, so this needs the same
 inquiry `envelope_v2` got rather than an assumption either way. Recorded
 here as a gap, not answered.
 
-### The two `octo-runtime` attach-handle paths, and why v2's suffix is not redundant
+### The `octo-runtime` attach-handle paths, and what the token actually binds
 
 `octo-runtime` §`handle/signing` has two, and only one is live.
 `octo-attach-key-rotation` is **opt-in and off by default**, so v2 — which
@@ -319,36 +319,38 @@ binds a `key_id` — does not compile in a default build, while v1 is what
 `mint_attach_handle`, `attach_with_token`, `decode_token` and the CLI's
 `agent run --detach` path all use.
 
-v2 binds by appending `key_id.to_be_bytes()` to the canonical payload. An
-earlier reading of this called that a parallel mechanism the RFC-0009 prefix
-already subsumes, and therefore redundant. **That was wrong, and the reason it
-is wrong dictates the shape of the migration.** Everywhere else in this table —
-the wallet-node oracle, `envelope_v2` — the prefix is reconstructed by the
-verifier from resolved key context, so nothing is transported. An attach-handle
-token is different: **it travels.** The verifier arrives holding the token
-bytes and the holder DID, and nothing else. It has the public key (derived from
-the DID) but it has no `key_id` — and RFC-0009 forbids deriving a `key_id`
-from the public key, precisely so a key can be rotated independently. So a
-reconstructed prefix is not merely weaker here, it is _unavailable_: there is
-no out-of-band source to reconstruct it from.
+`AttachHandle` has six fields and carries **no `key_id` and no algorithm**;
+`encoding.rs` and the struct definition contain zero `key_id` references. So
+neither path has the token naming its own binding. v1's verifier takes a bare
+32-byte pubkey from the caller, and v2's takes `key_id: KeyId` from the caller
+and folds that _claim_ into the signed bytes. v2's suffix is therefore a real
+anti-swap property — the code documents the forgery it prevents, where a
+grace-key holder mints a token claiming a victim's `key_id` — but it binds a
+`key_id` the **verifier** chose, not one the token carries.
 
-That is what the v2 suffix is for. Putting the `key_id` in band is the correct
-choice for a transported token, and it is the one place in this table where a
-hand-rolled suffix is doing something the prefix is not.
+And in both, the algorithm is a hardcoded verifier preference via
+`attach_algorithm_id()`. Stated so it is not over-claimed: that is **latent,
+not a live break**, because `IdentityKey`'s signer is Ed25519-typed today, so
+every identity able to mint a token is Ed25519 and the assumption currently
+holds. It becomes real the moment a second algorithm is usable as a holder key.
 
-So the migration runs the opposite way to the rest of this table: the
-attach-handle should carry a real `SignablePrefix` **in band** in the token,
-not a reconstructed one. That is strictly better than the suffix it replaces,
-because the prefix also carries the algorithm — which retires
-`verify_attach_handle_payload`'s hardcoded `attach_algorithm_id()`. That
-hardcoding is the RFC-0009 violation here: the verifier learns the algorithm
-from its own configuration rather than from the message.
+Two readings of this were recorded and both were wrong, in opposite
+directions: first that v2's suffix is redundant with the prefix, then that it
+is the one case where a hand-rolled suffix does a job the prefix cannot. The
+data flow settles it — the verifier rebuilds signed bytes from the token's
+_fields_, so a prefix spliced into the canonical bytes is unreadable, which is
+why the prefix has to become a **field**. With it as a field the suffix is
+genuinely redundant, because it binds the same `key_id`, is readable rather
+than verifier-chosen, and adds the algorithm. See `0009-e4` §Why this one is
+not like the others.
 
-Stated so it is not over-claimed: the hardcoding is **latent, not a live
-break**. `IdentityKey`'s signer is Ed25519-typed today, so every `IdentityKey`
-able to mint a token is Ed25519 and the assumption currently holds. It becomes
-a real defect the moment a second algorithm is usable as a holder key — which
-is the direction RFC-0009 and the `octo-algo-*` crates are already moving.
+**v1 is migrated; v2 is not.** `0009-e4` put the prefix on the token as a
+field, made v1 signing and verification go through it, and retired the
+hardcoded Ed25519 from the v1 verify path. The wire form grew 32 bytes and the
+encoding version moved to `0x01`. The feature-gated v2 suffix survives and
+`attach_algorithm_id` still has that one caller; the `KeySet` grace-window work
+is deliberately separate, since the KeySet resolves _which pubkey_ to try and
+the prefix binds _which key_.
 
 The `KeySet` grace-window lookup is a separate concern and survives: it
 resolves _which pubkey_ to try, whereas the prefix binds _which key_.

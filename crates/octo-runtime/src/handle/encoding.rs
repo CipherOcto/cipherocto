@@ -9,7 +9,9 @@
 //! ## Wire format (length-prefixed, canonical)
 //!
 //! ```text
-//! [version: u8 = 0x00]                                   (1 byte)
+//! [version: u8 = 0x01]                                   (1 byte)
+//! [signable_prefix: 32 bytes]                            (32 bytes)
+//!     // RFC-0009 `algorithm_id (16) || key_id (16)`
 //! [session_id: 32 bytes]                                 (32 bytes)
 //! [mint_timestamp_unix: u64 BE]                          (8 bytes)
 //! [ttl_unix: u64 BE]                                     (8 bytes)
@@ -24,17 +26,24 @@
 //! [transport_scheme_uuid: 16 bytes]                      (16 bytes; only when kind=Raw)
 //! ```
 //!
-//! Total fixed prefix (excluding signature): version(1) + session_id(32) +
-//!     mint(8) + ttl(8) + blake3(32) = 81 bytes.
-//! Total fixed prefix (including signature): 81 + 64 = 145 bytes.
+//! Total fixed prefix (excluding signature): version(1) + signable_prefix(32) +
+//!     session_id(32) + mint(8) + ttl(8) + blake3(32) = 113 bytes.
+//! Total fixed prefix (including signature): 113 + 64 = 177 bytes.
 //! Variable trailer: payload(24) + `transport_addr_len + (kind==Raw ? 16 : 0)`.
 //!
 //! ## Signing surface
 //!
-//! The signature is computed over
-//! `canonical_payload_bytes(session_id, payload, mint, ttl)` —
-//! a single source of truth consumed by both `sign_attach_handle_payload`
-//! and `verify_attach_handle_payload`. The transport is signed
+//! The signature is computed over the RFC-0009 signable bytes
+//! `signable_prefix || DCS(canonical_payload_bytes(session_id, payload,
+//! mint, ttl))` — a single source of truth consumed by both
+//! `sign_attach_handle_payload` and `verify_attach_handle_payload`.
+//!
+//! The prefix is a *token field*, not just part of the signed bytes, and that
+//! is load-bearing: the verifier rebuilds the signed message from the token's
+//! fields, so a prefix spliced into the canonical bytes alone would be
+//! unreadable at verification time. Carrying it also makes the algorithm come
+//! from the token, so verification dispatches on the algorithm the token
+//! names rather than on a hardcoded preference. The transport is signed
 //! INDIRECTLY via the BLAKE3 integrity hash that covers
 //! `[payload || transport]` (a transport-only mutation invalidates
 //! the hash and is rejected on decode).
@@ -46,7 +55,11 @@ use crate::handle::{AttachHandle, AttachPayload, SessionId, Signature, Transport
 
 /// Encoding version byte. Bumped on canonical-bytes changes per
 /// RFC-0016-a §6.10 invariant.
-const ENCODING_VERSION: u8 = 0x00;
+const ENCODING_VERSION: u8 = 0x01;
+
+/// Width of the RFC-0009 signable prefix carried on the token:
+/// `algorithm_id (16) ‖ key_id (16)`.
+const SIGNABLE_PREFIX_LEN: usize = 32;
 
 /// Discriminant for `TransportKind::InProcess`.
 const TRANSPORT_KIND_IN_PROCESS: u8 = 0;
@@ -101,9 +114,17 @@ pub fn encode_token(token: &AttachHandle) -> Result<Vec<u8>, AttachError> {
     let blake3_hash = blake3::hash(&integrity_input);
 
     let mut out = Vec::with_capacity(
-        1 + 32 + 8 + 8 + 64 + 32 + payload_canonical.len() + transport_canonical.len(),
+        1 + SIGNABLE_PREFIX_LEN
+            + 32
+            + 8
+            + 8
+            + 64
+            + 32
+            + payload_canonical.len()
+            + transport_canonical.len(),
     );
     out.push(ENCODING_VERSION);
+    out.extend_from_slice(&token.signable_prefix);
     out.extend_from_slice(&token.session_id);
     out.extend_from_slice(&token.mint_timestamp_unix.to_be_bytes());
     out.extend_from_slice(&token.ttl_unix.to_be_bytes());
@@ -127,8 +148,9 @@ pub fn encode_token(token: &AttachHandle) -> Result<Vec<u8>, AttachError> {
 /// - `BadSignature { reason: "blake3 hash mismatch" }` — the
 ///   embedded hash does not match `[payload || transport]`
 pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHandle, AttachError> {
-    // Wire form minimum: 1 + 32 + 8 + 8 + 64 + 32 + 24 (payload) + 5 (transport minimum) = 174 bytes.
-    const MIN_WIRE_LEN: usize = 1 + 32 + 8 + 8 + 64 + 32 + 24 + 5;
+    // Wire form minimum: 1 + 32 (prefix) + 32 + 8 + 8 + 64 + 32 + 24 (payload)
+    // + 5 (transport minimum) = 206 bytes.
+    const MIN_WIRE_LEN: usize = 1 + SIGNABLE_PREFIX_LEN + 32 + 8 + 8 + 64 + 32 + 24 + 5;
     if bytes.len() < MIN_WIRE_LEN {
         return Err(AttachError::PersistenceError(format!(
             "token too short: got {} bytes, expected at least {MIN_WIRE_LEN}",
@@ -145,6 +167,13 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
             "unsupported encoding version: 0x{version:02x} (expected 0x{ENCODING_VERSION:02x})"
         )));
     }
+
+    // The RFC-0009 prefix the token names itself under. Read before any
+    // signature work so the algorithm comes from the token rather than from
+    // the verifier's configuration.
+    let mut signable_prefix = [0u8; SIGNABLE_PREFIX_LEN];
+    signable_prefix.copy_from_slice(&bytes[cursor..cursor + SIGNABLE_PREFIX_LEN]);
+    cursor += SIGNABLE_PREFIX_LEN;
 
     let mut session_id = [0u8; 32];
     session_id.copy_from_slice(&bytes[cursor..cursor + 32]);
@@ -194,7 +223,7 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
     // auditable (the canonical wire form is documented at the
     // module head — see doc-comment above).
     const PAYLOAD_FIXED_LEN: usize = 24;
-    const FIXED_PREFIX_LEN: usize = 1 + 32 + 8 + 8 + 64 + 32;
+    const FIXED_PREFIX_LEN: usize = 1 + SIGNABLE_PREFIX_LEN + 32 + 8 + 8 + 64 + 32;
     let mut integrity_input = Vec::with_capacity(PAYLOAD_FIXED_LEN + transport_consumed);
     integrity_input.extend_from_slice(
         &bytes[FIXED_PREFIX_LEN..FIXED_PREFIX_LEN + PAYLOAD_FIXED_LEN + transport_consumed],
@@ -209,6 +238,7 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
     // Verify signature.
     crate::handle::signing::verify_attach_handle_payload(
         holder_pubkey,
+        &signable_prefix,
         &session_id,
         &payload_canonical,
         mint_timestamp_unix,
@@ -221,6 +251,7 @@ pub fn decode_token(bytes: &[u8], holder_pubkey: &[u8; 32]) -> Result<AttachHand
         mint_timestamp_unix,
         ttl_unix,
         signature,
+        signable_prefix,
         payload: payload_canonical,
         transport,
     })
@@ -375,6 +406,17 @@ mod tests {
     use crate::handle::AttachPayload;
     use octo_wallet::ed25519_dalek::{Signer, SigningKey};
 
+    /// A fixed prefix for fixtures that build a token directly rather than
+    /// minting one. The bytes only need to be well-formed — those fixtures
+    /// assert decode behaviour, not signature validity.
+    fn test_prefix() -> [u8; 32] {
+        octo_wallet::SignablePrefix::new(
+            octo_wallet::ed25519_algorithm_id(),
+            octo_wallet::VerificationMethodId::derive("attach-holder"),
+        )
+        .to_bytes()
+    }
+
     fn mint_test_token(session_id: SessionId, agent_id: Uuid) -> AttachHandle {
         // Mint a real, well-formed `AttachHandle` token. Routes
         // through the substrate-boundary `sign_attach_handle_payload`
@@ -385,7 +427,9 @@ mod tests {
         // the production mint path uses; if `sign_attach_handle_payload`
         // ever drifts from `canonical_payload_bytes`, this test fails.
         let seed = [0x42u8; 32];
-        let mut holder = octo_wallet::IdentityKey::from_seed(seed);
+        let mut holder = octo_wallet::IdentityKey::from_seed(seed).with_verification_method_id(
+            octo_wallet::VerificationMethodId::derive("attach-holder"),
+        );
         // `from_seed` returns a `Designated` identity; `sign` refuses
         // non-active identities per Layer A frozen lifecycle contract.
         // Activate with a fixed test-time so the mint is deterministic.
@@ -409,6 +453,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature,
+            signable_prefix: holder.signable_prefix().expect("key context").to_bytes(),
             payload,
             transport: Transport::IN_PROCESS,
         }
@@ -451,7 +496,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -461,6 +517,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::IN_PROCESS,
         };
@@ -484,7 +541,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -494,6 +562,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::unix_socket("/tmp/octo-attach.sock"),
         };
@@ -517,7 +586,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -528,6 +608,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::IN_PROCESS,
         };
@@ -552,7 +633,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -562,6 +654,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::IN_PROCESS,
         };
@@ -589,7 +682,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -599,6 +703,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::IN_PROCESS,
         };
@@ -641,7 +746,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -651,6 +767,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::IN_PROCESS,
         };
@@ -699,7 +816,18 @@ mod tests {
         };
         let mint = 1_700_000_000u64;
         let ttl = 1_700_003_600u64;
-        let msg = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        // These fixtures sign the substrate bytes directly rather than going
+        // through `mint_attach_handle`, so they must build the signable bytes
+        // the way the substrate does: prefix ‖ DCS(canonical). Signing the
+        // bare canonical bytes here would test a message the substrate never
+        // produces, and a rejection would prove nothing.
+        let canonical = canonical_payload_bytes(&session_id, &payload, mint, ttl);
+        let msg = octo_wallet::SignedMessage::new(
+            octo_wallet::SignablePrefix::from_bytes(&test_prefix()).expect("fixture prefix"),
+            canonical,
+        )
+        .signable(octo_wallet::SignableForm::Raw)
+        .expect("signable bytes");
         let sig = sk.sign(&msg);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig.to_bytes());
@@ -709,6 +837,7 @@ mod tests {
             mint_timestamp_unix: mint,
             ttl_unix: ttl,
             signature: Signature(sig_bytes),
+            signable_prefix: test_prefix(),
             payload,
             transport: Transport::raw(scheme_id, Some("custom://addr".into())),
         };

@@ -26,6 +26,7 @@ pub mod in_memory_did_registry;
 pub mod registry;
 pub mod resolver_backend;
 pub mod rich_document;
+pub mod signable_prefix;
 pub mod signature_algorithm;
 pub mod test_helpers;
 pub mod write_coordinator;
@@ -45,6 +46,10 @@ pub use rich_document::{
     CustodyPosture, ServiceEndpoint, ServiceEndpointError, VerificationMethod,
     MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_PUBLIC_KEY_LEN, MAX_SERVICE_ENDPOINTS,
     MAX_VERIFICATION_METHODS,
+};
+pub use signable_prefix::{
+    signable_bytes, CanonicalPayload, SignableError, SignableForm, SignablePrefix, SignedMessage,
+    SIGNABLE_DOMAIN,
 };
 pub use signature_algorithm::{
     bootstrap, bootstrap_additional, global, AlgorithmId, AlgorithmRegistry,

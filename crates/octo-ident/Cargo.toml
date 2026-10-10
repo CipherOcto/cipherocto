@@ -62,6 +62,19 @@ serde = { version = "1", optional = true, default-features = false, features = [
 # wire form byte-for-byte; the Layer-C handler converts via `From` at the
 # wire boundary (Layer C → A is allowed).
 
+# Layer A canonical encoding — RFC-0126 §Part 3: Deterministic Canonical
+# Serialization, via `dcs::dcs_serialize_bytes`.
+#
+# This is what `canonical_ser` in RFC-0009 §Domain separation resolves to.
+# It is NOT any of the five functions in this repository named
+# `canonical_ser`: one is a hand-rolled encoding with its own domain byte, two
+# are borsh, and two are JSON — which RFC-0126 §JSON Allowed Contexts forbids
+# for cryptographic proofs. Naming `octo-determin` by path rather than
+# reaching for the bare symbol is the point.
+#
+# Layer B depends on Layer A, so this arrow is the correct direction.
+octo-determin = { path = "../../determin", version = "0.1.0" }
+
 [features]
 default = []
 # Enables long-running legacy-form parsing for environments still mid-migration.

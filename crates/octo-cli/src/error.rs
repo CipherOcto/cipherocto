@@ -950,13 +950,14 @@ pub enum OctoCliError {
     /// [^rotation-error-slot-prealloc].
     #[error("network key rotation: unknown key_id 0x{key_id_hex} (known_keys band: {known_keys_band:?})")]
     NetworkKeyRotationUnknownId {
-        /// `key_id` discriminator rendered as 8 hex chars.
-        /// Substrate `KeyId = u32` (typed version discriminator
-        /// for holder signing key per RFC-0011-c §F.5.1; NOT a
-        /// Layer A cryptographic secret) hex-encoded big-endian
-        /// via `key_id.to_be_bytes()`. Mirrors the
-        /// `hex::encode(declared)` / `hex::encode(actual)` pattern
-        /// in the `SessionMismatch` translation arm.
+        /// `key_id` discriminator hex-encoded. The substrate `KeyId` is
+        /// RFC-0009 `VerificationMethodId` — 16 bytes, so 32 hex chars
+        /// after mission `0009-e7` unified it with the DID document's
+        /// verification-method identity (it was a `u32` generation counter
+        /// rendered as 8 hex chars before that). NOT a Layer A
+        /// cryptographic secret. Mirrors the `hex::encode(declared)` /
+        /// `hex::encode(actual)` pattern in the `SessionMismatch`
+        /// translation arm.
         key_id_hex: String,
         /// Categorical band of known keys in the verifier's
         /// `KeySet` (active + grace period). 3-band quantization
@@ -2096,21 +2097,22 @@ impl From<octo_runtime::AttachError> for OctoCliError {
     }
 }
 
-/// Redact the substrate `KeyId = u32` discriminator to 8 hex
-/// chars via `hex::encode(key_id.to_be_bytes())` per
-/// RFC-0011-h §Redaction Layer. Mirrors the existing
-/// `hex::encode(declared)` / `hex::encode(actual)` pattern in
-/// the `SessionMismatch` translation arm (which hex-encodes
-/// the 32-byte `SessionId`); per RFC-0011-c §F.5.1 the
-/// substrate `KeyId` has different byte width but the same
-/// RFC-0008 §Deterministic Encoding contract applies
-/// (big-endian byte order). Feature-gated to mirror the
+/// Redact the substrate key discriminator to hex via
+/// `hex::encode(key_id.as_bytes())` per RFC-0011-h §Redaction Layer.
+/// Mirrors the existing `hex::encode(declared)` / `hex::encode(actual)`
+/// pattern in the `SessionMismatch` translation arm (which hex-encodes
+/// the 32-byte `SessionId`). Feature-gated to mirror the
 /// `AttachError::UnknownKeyId` translation arm: only callable
-/// when the `octo-attach-key-rotation` Cargo feature is
-/// enabled.
+/// when the `octo-attach-key-rotation` Cargo feature is enabled.
+///
+/// The width moved with mission `0009-e7`: `KeyId` was a `u32` generation
+/// counter rendered as 8 hex chars, and is now unified with RFC-0009
+/// `VerificationMethodId` (16 bytes → 32 hex chars). The discriminator is
+/// still NOT a Layer A cryptographic secret, so full-width hex remains
+/// safe to render.
 #[cfg(feature = "octo-attach-key-rotation")]
 fn redact_key_id(key_id: &octo_runtime::handle::KeyId) -> String {
-    hex::encode(key_id.to_be_bytes())
+    hex::encode(key_id.as_bytes())
 }
 
 /// RFC-0011-x §Error Handling: `octo_wallet::WalletError` →
@@ -4841,8 +4843,11 @@ mod tests {
 
     /// RFC-0011-w §Test Vectors `tv_w_1` — variant construction,
     /// `exit_code()` returns 91, and `user_message()` renders the
-    /// `#[error]` template with both `key_id_hex` (8 hex chars
-    /// via `hex::encode(key_id.to_be_bytes())`) and
+    /// `#[error]` template with both `key_id_hex` (hex-encoded via
+    /// `hex::encode(key_id.as_bytes())`; 32 chars for the 16-byte
+    /// `VerificationMethodId` that `KeyId` unified with in mission
+    /// `0009-e7` — this vector pins template interpolation, not width,
+    /// so it constructs the field literally) and
     /// `known_keys_band` (Debug-rendered enum tag `None` / `Few`
     /// / `Many`) interpolated. Feature OFF build: variant mints
     /// unconditionally per RFC-0011-w §Motivation so the slot 91
@@ -4930,16 +4935,27 @@ mod tests {
     /// RFC-0011-w §Test Vectors `tv_w_2` — `From<octo_runtime::AttachError>`
     /// translation arm signature: maps
     /// `AttachError::UnknownKeyId { key_id, known_keys }` to
-    /// `Self::NetworkKeyRotationUnknownId { key_id_hex: hex::encode(key_id.to_be_bytes()),
+    /// `Self::NetworkKeyRotationUnknownId { key_id_hex: hex::encode(key_id.as_bytes()),
     /// known_keys_band: KnownKeysBand::from_count(known_keys.len()) }`.
     /// Feature ON build: the substrate `AttachError::UnknownKeyId`
     /// variant exists per RFC-0011-c §F.5.1 paired-acceptance bridge.
+    ///
+    /// The fixture uses RFC-0009 `VerificationMethodId` values, the type
+    /// `KeyId` unified with in mission `0009-e7`; the expected
+    /// `key_id_hex` is therefore the full 32-char hex of a 16-byte id,
+    /// not the 8 chars a `u32` generation counter produced.
     #[cfg(feature = "octo-attach-key-rotation")]
     #[test]
     fn tv_w_2_attach_unknown_key_id_translates_to_slot_91_variant() {
-        let known = vec![1u32, 2, 3, 4];
+        let key = octo_wallet::VerificationMethodId::from_uuid(uuid::Uuid::from_u128(
+            0xdead_beef_0000_0000_0000_0000_0000_0001,
+        ));
+        let known: Vec<octo_wallet::VerificationMethodId> = [1u128, 2, 3, 4]
+            .iter()
+            .map(|n| octo_wallet::VerificationMethodId::from_uuid(uuid::Uuid::from_u128(*n)))
+            .collect();
         let substrate_err = octo_runtime::AttachError::UnknownKeyId {
-            key_id: 0xdeadbeef,
+            key_id: key,
             known_keys: known.clone(),
         };
         let cli_err: OctoCliError = substrate_err.into();
@@ -4949,8 +4965,9 @@ mod tests {
                 known_keys_band,
             } => {
                 assert_eq!(
-                    key_id_hex, "deadbeef",
-                    "key_id_hex MUST be hex::encode(key_id.to_be_bytes()) per RFC-0011-w §Substrate-faithfulness audit, got: {key_id_hex}"
+                    key_id_hex,
+                    hex::encode(key.as_bytes()),
+                    "key_id_hex MUST be hex::encode(key_id.as_bytes()) per RFC-0011-w §Substrate-faithfulness audit, got: {key_id_hex}"
                 );
                 assert_eq!(
                     known_keys_band,

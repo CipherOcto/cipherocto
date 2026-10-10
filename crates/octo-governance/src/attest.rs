@@ -56,6 +56,18 @@ pub trait CapabilitySigner {
     /// Ed25519 signature. Failures bubble up to the substrate
     /// as `GovernanceError::Internal`.
     fn sign_envelope(&self, envelope_bytes: &[u8]) -> Result<[u8; 64], String>;
+
+    /// The canonical DID this signer signs as.
+    ///
+    /// Required, with no default. This is the substrate's only route to
+    /// learning who signed: without it the caller supplies the attribution
+    /// and the substrate records it on trust, which is how
+    /// [`attest_v2`] and [`vote_v2`] ended up able to attribute an envelope
+    /// to a DID the signing key never confirmed. See mission `0009-e9`.
+    ///
+    /// Implementors MUST return the substrate-derived canonical form, not a
+    /// CLI-side derivation of the caller's choosing.
+    fn did(&self) -> String;
 }
 
 /// TypedDiscriminator for the attestation kind per RFC-0011-g
@@ -216,12 +228,14 @@ pub fn attest(
     allow_stale: bool,
     signer: &dyn CapabilitySigner,
     appended_at_unix: u64,
-    signer_did: &str,
 ) -> Result<AttestationReceipt, GovernanceError> {
     // Sub-group prereq gate (RFC-0855p-d). Subject DIDs prefixed
     // `did:octo:subgroup:` are gated until `RFC-0855p-d`
     // reaches Accepted.
     prereq_attest_subgroup_check(subject_did)?;
+
+    // Derived, not supplied — see `attest_v2` (mission `0009-e9`).
+    let signer_did = signer.did();
 
     // `kind_ref` resolution — TypedDiscriminator.
     let _kind = resolve_kind(kind_ref)?;
@@ -280,7 +294,7 @@ pub fn attest(
         attestation_id,
         subject_did: subject_did.to_string(),
         kind_ref: kind_ref.to_string(),
-        signer_did: signer_did.to_string(),
+        signer_did,
         evidence_hash: computed_evidence_hash,
         expires_at_unix,
         appended_at_unix,
@@ -356,9 +370,14 @@ pub fn attest_v2(
     snapshot_id: Option<&[u8; 32]>,
     allow_stale: bool,
     signer: &dyn CapabilitySigner,
-    signer_did: &str,
 ) -> Result<AttestationReceipt, GovernanceError> {
     let appended_at_unix = session.now_unix();
+
+    // The attribution comes off the signer, never off the caller. This
+    // parameter used to be passed in and recorded on trust, which meant a
+    // caller could name any DID as the attester regardless of which key
+    // actually signed (mission `0009-e9`).
+    let signer_did = signer.did();
 
     prereq_attest_subgroup_check(subject_did)?;
 
@@ -408,7 +427,7 @@ pub fn attest_v2(
         attestation_id,
         subject_did: subject_did.to_string(),
         kind_ref: kind_ref.to_string(),
-        signer_did: signer_did.to_string(),
+        signer_did,
         evidence_hash: computed_evidence_hash,
         expires_at_unix,
         appended_at_unix,
@@ -458,6 +477,15 @@ mod tests {
         fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
             Ok(self.signature)
         }
+
+        /// Reports the DID the tests assert the receipt carries. The
+        /// substrate now reads the attribution off the signer rather than
+        /// taking it from the caller (mission `0009-e9`), so a fixture that
+        /// did not implement this would fail every happy-path vector for a
+        /// reason unrelated to what those vectors test.
+        fn did(&self) -> String {
+            signer_did().to_string()
+        }
     }
 
     fn subject_did() -> &'static str {
@@ -483,7 +511,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect("happy path should succeed");
         assert_eq!(receipt.subject_did, subject_did());
@@ -518,7 +545,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect("first append should succeed");
         // Same envelope → same PK → duplicate.
@@ -533,7 +559,6 @@ mod tests {
             false,
             &signer,
             1_700_000_001,
-            signer_did(),
         )
         .expect_err("duplicate attestation_id must error");
         match err {
@@ -561,7 +586,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect_err("unknown kind_ref must error");
         match err {
@@ -588,7 +612,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect_err("subgroup subject DID must fail-closed until RFC-0855p-d accepted");
         match err {
@@ -616,7 +639,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect_err("both evidence + evidence_hash must error");
         match err {
@@ -646,7 +668,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect_err("missing both evidence and evidence_hash must error");
         match err {
@@ -676,7 +697,6 @@ mod tests {
             true,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect("allow_stale=true should still succeed");
         assert_eq!(receipt.overrode_staleness_at_unix, Some(1_700_000_000));
@@ -702,7 +722,6 @@ mod tests {
             false,
             &signer,
             1_700_000_000,
-            signer_did(),
         )
         .expect("evidence-only path should succeed");
         let expected_hash = blake3_256(evidence);
@@ -739,7 +758,6 @@ mod tests {
             None,
             false,
             &*signer,
-            signer_did(),
         )
         .expect("happy path should succeed");
         assert_eq!(receipt.subject_did, subject_did());
@@ -772,7 +790,6 @@ mod tests {
             None,
             false,
             &*signer,
-            signer_did(),
         )
         .expect_err("unregistered kind_ref must error");
         match err {
@@ -799,7 +816,6 @@ mod tests {
             None,
             false,
             &*signer,
-            signer_did(),
         )
         .expect_err("evidence + evidence_hash XOR must error");
         match err {
@@ -831,7 +847,6 @@ mod tests {
             None,
             false,
             &*signer,
-            signer_did(),
         )
         .expect("first attest should succeed");
         let r2 = attest_v2(
@@ -844,7 +859,6 @@ mod tests {
             None,
             false,
             &*signer,
-            signer_did(),
         )
         .expect("second attest should succeed");
         assert_eq!(r1.appended_at_unix, 1_700_000_777);
@@ -899,7 +913,6 @@ mod tests {
                 snap,
                 false,
                 signer.as_ref(),
-                signer_did(),
             )
             .expect("attest");
             ids.push(receipt.attestation_id);
@@ -912,6 +925,46 @@ mod tests {
             sorted.len(),
             ids.len(),
             "every presence/value combination must produce a distinct attestation id"
+        );
+    }
+
+    /// Mission `0009-e9`: the receipt's attribution must come off the
+    /// signer. `attest_v2` used to take `signer_did` as a parameter and
+    /// record it on trust, so a caller could name any DID as the attester
+    /// regardless of which key signed. The parameter is gone; this vector
+    /// pins that the only remaining source is the signer itself.
+    #[test]
+    fn attest_a9_receipt_carries_the_signers_own_did() {
+        struct DistinctDidSigner;
+
+        impl CapabilitySigner for DistinctDidSigner {
+            fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
+                Ok([0x11; 64])
+            }
+
+            fn did(&self) -> String {
+                "did:octo:z6MkDistinctSignerOnlySourceOfThisIdentity".to_string()
+            }
+        }
+
+        let (session, _) = attest_session_with_signer(signer_did(), 1_700_000_555);
+        let receipt = attest_v2(
+            &session,
+            subject_did(),
+            "route-quality:uptime-30d",
+            None,
+            Some([0x42; 32]),
+            Some(1_900_000_000),
+            None,
+            false,
+            &DistinctDidSigner,
+        )
+        .expect("attest");
+
+        assert_eq!(
+            receipt.signer_did, "did:octo:z6MkDistinctSignerOnlySourceOfThisIdentity",
+            "the receipt must carry the signer's own DID; the caller has no \
+             other way to influence it"
         );
     }
 }

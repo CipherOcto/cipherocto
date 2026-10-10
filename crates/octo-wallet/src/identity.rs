@@ -701,15 +701,36 @@ impl IdentityKey {
         crate::identity_record::Did(format!("did:octo:{}", hex::encode(self.public_key)))
     }
 
-    /// Ed25519 signature over `msg`. Delegates to the underlying
-    /// `HsmAdapter::sign` — production `LedgerSigner` will prompt the user
-    /// on-device; rejection propagates as `WalletError::Hsm(HsmError::UserRejected)`.
+    /// Ed25519 signature over `msg`, with **no** signable prefix.
+    ///
+    /// Delegates to the underlying `HsmAdapter::sign` — production
+    /// `LedgerSigner` will prompt the user on-device; rejection propagates as
+    /// `WalletError::Hsm(HsmError::UserRejected)`.
     ///
     /// Gates on lifecycle state per RFC-0009 §Lifecycle Requirements:
     /// - `Designated`: rejects with `WalletError::NotActive`
     /// - `Active`: proceeds normally
     /// - `Rotating`: proceeds (old key valid during grace per RFC-0009 row 3)
     /// - `Revoked`: rejects with `WalletError::NotActive`
+    ///
+    /// # This is the low-level primitive, not the domain-separated one
+    ///
+    /// A signature made here binds neither the algorithm nor the key — it
+    /// commits to exactly the bytes handed in. RFC-0009 §Signable Domain
+    /// Separation requires more than that, so:
+    ///
+    /// - Prefer [`Self::sign_prefixed`], which emits
+    ///   `SignablePrefix ‖ payload` and refuses without a key context.
+    /// - `octo-runtime`'s attach-handle path is also correct: it composes
+    ///   `signable_bytes(prefix, canonical)` itself and uses this only to sign
+    ///   bytes it has already domain-separated.
+    /// - The `octo_cap_macaroon::CapabilitySigner` impl signs bare. That form
+    ///   is still an open decision (whether the holder message's prefix travels
+    ///   in band) and is tracked separately from mission `0009-e9`.
+    ///
+    /// Any new caller that does not compose a prefix first is a domain-separation
+    /// defect, and this method's existence is what makes that mistake easy to
+    /// make quietly.
     ///
     /// # Errors
     /// Returns `WalletError::NotActive` when lifecycle ≠ Active/Rotating,

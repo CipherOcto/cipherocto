@@ -160,6 +160,7 @@ mod tests {
             mint_timestamp_unix: 1_700_000_000,
             ttl_unix: u64::MAX,
             signature: Signature([0x42; 64]),
+            signable_prefix: [0x42; 32],
             payload: AttachPayload {
                 agent_id: Uuid::from_bytes([0xcd; 16]),
                 since_cursor: 0,
@@ -187,6 +188,7 @@ mod tests {
             mint_timestamp_unix: 0,
             ttl_unix: 0,
             signature: Signature([0x42; 64]),
+            signable_prefix: [0x42; 32],
             payload: AttachPayload {
                 agent_id: Uuid::nil(),
                 since_cursor: 0,

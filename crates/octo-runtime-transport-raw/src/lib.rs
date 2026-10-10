@@ -115,6 +115,7 @@ mod tests {
             mint_timestamp_unix: 0,
             ttl_unix: 0,
             signature: Signature([0; 64]),
+            signable_prefix: [0x42; 32],
             payload: AttachPayload {
                 agent_id: Uuid::nil(),
                 since_cursor: 0,

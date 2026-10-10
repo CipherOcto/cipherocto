@@ -360,6 +360,18 @@ pub fn vote(
     // Capability verification — unknown voter_cap_id fails-closed.
     let _signer = registry.resolve(voter_cap_id)?;
 
+    // Same binding as `vote_v2`. This entry point is deprecated but still
+    // public, so leaving the check off it would keep a working forgery
+    // reachable (mission `0009-e9`).
+    let signer_did = _signer.did();
+    if voter_did != signer_did {
+        return Err(GovernanceError::InvalidArgument {
+            reason: format!(
+                "voter DID {voter_did} does not match the registered signer's DID {signer_did}"
+            ),
+        });
+    }
+
     // weight_bps invariant — caller must clamp at the boundary.
     if weight_bps > 10_000 {
         return Err(GovernanceError::InvalidArgument {
@@ -504,6 +516,21 @@ pub fn vote_v2(
     // Capability verification — unknown voter_cap.cap_id fails-closed.
     let signer = session.capability_registry().resolve(voter_cap_id)?;
 
+    // The envelope names `voter_did` (from `voter_cap.issuer_did`) but is
+    // signed by `signer` (resolved by `voter_cap.cap_id`). Those are two
+    // independent caller-supplied fields and nothing bound them, so a caller
+    // holding any registered capability could name any DID as the voter and
+    // have the substrate sign for it and record it on the receipt. Bind the
+    // claim to the key that actually signed (mission `0009-e9`).
+    let signer_did = signer.did();
+    if voter_did != signer_did {
+        return Err(GovernanceError::InvalidArgument {
+            reason: format!(
+                "capability token issuer {voter_did} does not match the registered signer's DID {signer_did}"
+            ),
+        });
+    }
+
     // weight_bps invariant — caller must clamp at the boundary.
     if weight_bps > 10_000 {
         return Err(GovernanceError::InvalidArgument {
@@ -620,12 +647,26 @@ mod tests {
     /// cross-test state leakage.
     struct TestSigner {
         signature: [u8; 64],
+        did: String,
     }
 
     impl TestSigner {
         fn new() -> Self {
             Self {
                 signature: [0xCD; 64],
+                did: voter_did().to_string(),
+            }
+        }
+
+        /// A signer that reports `did` as its own identity.
+        ///
+        /// The multi-voter vectors previously registered one shared signer
+        /// for every voter, which the binding added in mission `0009-e9`
+        /// now correctly refuses: one key cannot attest to several DIDs.
+        fn with_did(did: &str) -> Self {
+            Self {
+                signature: [0xCD; 64],
+                did: did.to_string(),
             }
         }
     }
@@ -633,6 +674,12 @@ mod tests {
     impl CapabilitySigner for TestSigner {
         fn sign_envelope(&self, _envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
             Ok(self.signature)
+        }
+
+        /// The DID this signer attests to. Both entry points require the
+        /// claimed voter to match it (mission `0009-e9`).
+        fn did(&self) -> String {
+            self.did.clone()
         }
     }
 
@@ -856,10 +903,16 @@ mod tests {
         let log = VoteLog::new();
         let registry = CapabilityRegistry::new();
         registry
-            .register("cap-a".to_string(), Arc::new(TestSigner::new()))
+            .register(
+                "cap-a".to_string(),
+                Arc::new(TestSigner::with_did("did:octo:voter-a")),
+            )
             .expect("register unpoisoned");
         registry
-            .register("cap-b".to_string(), Arc::new(TestSigner::new()))
+            .register(
+                "cap-b".to_string(),
+                Arc::new(TestSigner::with_did("did:octo:voter-b")),
+            )
             .expect("register unpoisoned");
         // Voter A: approve 3000 bps
         vote(
@@ -1094,7 +1147,7 @@ mod tests {
         for i in 0..10 {
             let cap_id = format!("voter-cap-{i:02}");
             let did = format!("did:octo:z6MkVoter{i:02}XYZABCDEF1234567890abcdef1234567890ab");
-            let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+            let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::with_did(&did));
             session
                 .register_capability(&cap_id, signer)
                 .expect("register unpoisoned");
@@ -1113,7 +1166,7 @@ mod tests {
         // 11th voter crosses the 100_000 bps tally guard.
         let cap_id = "voter-cap-overflow".to_string();
         let did = "did:octo:z6MkVoterXXXYZABCDEF1234567890abcdef1234567890ab".to_string();
-        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::new());
+        let signer: Arc<dyn CapabilitySigner> = Arc::new(TestSigner::with_did(&did));
         session
             .register_capability(&cap_id, signer)
             .expect("register unpoisoned");
@@ -1305,5 +1358,95 @@ mod tests {
             .register("cap-sanity".to_string(), signer)
             .expect("register on fresh registry succeeds");
         assert_eq!(registry.len().expect("unpoisoned"), 1);
+    }
+
+    // ── Mission 0009-e9: the claimed voter must be the signing key ─────────
+    //
+    // `vote_v2` reads the claimed voter from `voter_cap.issuer_did` but
+    // resolves the key that signs from `voter_cap.cap_id`. Those are two
+    // independent caller-supplied fields on a publicly constructible token
+    // (`CapabilityToken::new`), so before the binding a caller could name
+    // any DID as the voter and have the substrate sign an envelope for it
+    // and record it on the receipt. These two vectors are a pair: the
+    // first alone would also be satisfied by a check that always refuses.
+
+    /// A token whose `issuer_did` is not the DID the signing key reports
+    /// must be refused, and must not leave a receipt behind.
+    #[test]
+    fn vote_v14_token_issuer_must_match_the_signing_key() {
+        let session = GovernanceSession::new(voter_did(), Arc::new(FixedClock::new(1_700_000_900)));
+        let cap_id = "cap-forged".to_string();
+        session
+            .register_capability(
+                &cap_id,
+                Arc::new(TestSigner::with_did("did:octo:voter-real")),
+            )
+            .expect("register unpoisoned");
+
+        let token = CapabilityToken::new(&cap_id, "did:octo:voter-forged", 5_000);
+        let err = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token,
+            None,
+            None,
+            false,
+        )
+        .expect_err("a token whose issuer is not the signing key must be refused");
+
+        match err {
+            GovernanceError::InvalidArgument { reason } => assert!(
+                reason.contains("voter-forged") && reason.contains("voter-real"),
+                "the refusal must name both the claimed and the actual identity so \
+                 an operator can tell a misconfiguration from a forgery; got: {reason}"
+            ),
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            0,
+            "a refused forgery must not append a receipt"
+        );
+    }
+
+    /// The positive control for the vector above: matching identities must
+    /// still succeed. Without this, a check that unconditionally refused
+    /// would pass the forgery test and break governance.
+    #[test]
+    fn vote_v15_matching_token_issuer_still_votes() {
+        let session = GovernanceSession::new(voter_did(), Arc::new(FixedClock::new(1_700_000_901)));
+        let cap_id = "cap-matching".to_string();
+        session
+            .register_capability(
+                &cap_id,
+                Arc::new(TestSigner::with_did("did:octo:voter-match")),
+            )
+            .expect("register unpoisoned");
+
+        let token = CapabilityToken::new(&cap_id, "did:octo:voter-match", 5_000);
+        let (receipt, _) = vote_v2(
+            &session,
+            proposal_id(),
+            VoteChoice::Yes,
+            &token,
+            None,
+            None,
+            false,
+        )
+        .expect("a token whose issuer matches the signing key must still vote");
+
+        assert_eq!(receipt.voter_did, "did:octo:voter-match");
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            1,
+            "the matching vote must be recorded"
+        );
     }
 }

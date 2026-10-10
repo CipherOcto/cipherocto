@@ -66,21 +66,30 @@ impl WalletSignerAdapter {
             identity: Arc::new(identity),
         }
     }
-
-    /// `signer_did` for substrate receipt population. Substrate
-    /// expects the canonical DID form (RFC-0010 §canonical form).
-    #[must_use]
-    pub fn signer_did(&self) -> String {
-        self.identity.did().0
-    }
 }
 
 impl CapabilitySigner for WalletSignerAdapter {
+    /// Sign under the identity's own signable prefix.
+    ///
+    /// This called `IdentityKey::sign` — the bare primitive — so the
+    /// attestation envelope was signed with no algorithm and no key binding,
+    /// the only production sign site in the RFC-0009 chain still doing so.
+    /// The prefix comes from the identity's own key context, never from the
+    /// caller: letting the requester name the algorithm inverts the control
+    /// (mission `0009-e9`).
+    ///
+    /// An identity with no `VerificationMethodId` is refused by
+    /// `sign_prefixed` with `NoKeyContext`. That refusal is deliberate — a
+    /// fallback to the bare form would leave exactly the signature this
+    /// mission removes.
     fn sign_envelope(&self, envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
         self.identity
-            .sign(envelope_bytes)
-            .map(|s| s.to_bytes())
+            .sign_prefixed(envelope_bytes)
             .map_err(|e| e.to_string())
+    }
+
+    fn did(&self) -> String {
+        self.identity.did().0
     }
 }
 
@@ -655,7 +664,7 @@ fn attest_handler(
             other => OctoCliError::from(other),
         })?;
     let signer = WalletSignerAdapter::new(unlocked.active_identity().clone());
-    let signer_did = signer.signer_did();
+    let signer_did = signer.did();
 
     // Substrate v2 call: build a GovernanceSession with the
     // production SystemClock and pass the session + signer by
@@ -672,7 +681,6 @@ fn attest_handler(
         snapshot_id.as_ref(),
         allow_stale,
         &signer,
-        &signer_did,
     )
     .map_err(map_governance_error)?;
 
@@ -833,7 +841,7 @@ fn vote_handler(
             other => OctoCliError::from(other),
         })?;
     let signer = WalletSignerAdapter::new(unlocked.active_identity().clone());
-    let signer_did = signer.signer_did();
+    let signer_did = signer.did();
 
     // Substrate v2 call: build a GovernanceSession with the
     // production SystemClock, register the wallet-backed
@@ -2101,6 +2109,107 @@ mod tests {
         assert!(
             preview.preview_note.contains("no wallet IO"),
             "preview_note MUST declare no wallet IO: {preview:?}"
+        );
+    }
+
+    // ── Mission 0009-e9: the governance signer signs under the prefix ────────
+    //
+    // The trap these guard against is the one that has bitten this chain
+    // three times: a vector set that only ever exercises Ed25519 cannot
+    // tell "signs the prefixed message" from "signs the bare message".
+    // Both produce a valid 64-byte Ed25519 signature, so an assertion
+    // that only checks "signing succeeded" would stay green against the
+    // exact defect this mission removes.
+    //
+    // `WalletSignerAdapter::sign_envelope` returns only the signature, so
+    // these observe the *signature* rather than the bytes handed to the
+    // signer. That is the stronger check anyway: it pins what a verifier
+    // would actually be able to verify, not what the code intended to
+    // hand over.
+
+    /// An operator identity in the shape `octo identity register` leaves
+    /// it: key context attached, lifecycle `Active`. This is the same
+    /// shape `WalletStore::unlock` rehydrates, so the vectors exercise
+    /// the identity the production path really carries.
+    fn registered_operator() -> octo_wallet::IdentityKey {
+        let mut key = octo_wallet::IdentityKey::from_seed([0x21; 32])
+            .with_verification_method_id(octo_ident::VerificationMethodId::derive("key-0"));
+        key.activate(1_700_000_000)
+            .expect("registered operator activates");
+        key
+    }
+
+    /// The governance signature must verify against `prefix ‖ envelope`
+    /// and must NOT verify against the bare envelope. The second half is
+    /// what carries the weight: reverting `sign_envelope` to the bare
+    /// `IdentityKey::sign` flips both assertions, so this vector cannot
+    /// pass against the defect it exists to catch.
+    #[test]
+    fn governance_attestation_signature_is_domain_separated() {
+        let identity = registered_operator();
+        let adapter = WalletSignerAdapter::new(identity.clone());
+        let envelope = b"subject_did\0route-quality:uptime-30d\0<evidence>";
+
+        let sig = adapter
+            .sign_envelope(envelope)
+            .expect("governance signing must succeed for a registered identity");
+
+        let wire = identity
+            .prefixed_message(envelope)
+            .expect("signable prefix resolves");
+        identity
+            .verify_prefixed(&wire, &sig)
+            .expect("the signature must verify over `prefix || envelope`");
+        assert!(
+            identity.verify(envelope, &sig).is_err(),
+            "the signature must NOT verify over the bare envelope — that is the \
+             unprefixed downgrade this mission removes"
+        );
+    }
+
+    /// No key context must be a refusal, not a silent bare signature.
+    ///
+    /// `IdentityKey::from_seed` attaches no `VerificationMethodId`, which
+    /// is the shape mission `0009-e6` found every normally-registered
+    /// operator had before `register` began minting `key-0`. Falling back
+    /// to the unprefixed form here would reintroduce exactly the downgrade
+    /// path that keeps an unprefixed message verifying after the prefix
+    /// ships.
+    #[test]
+    fn governance_signer_refuses_identity_without_key_context() {
+        let mut key = octo_wallet::IdentityKey::from_seed([0x22; 32]);
+        key.activate(1_700_000_000).expect("activates");
+        assert!(
+            key.verification_method_id().is_none(),
+            "fixture must have no key context, or this vector tests nothing"
+        );
+
+        let adapter = WalletSignerAdapter::new(key);
+        let err = adapter
+            .sign_envelope(b"envelope")
+            .expect_err("an identity with no key context must not sign");
+        // `WalletError::NoKeyContext`'s own wording. Asserted against the
+        // real string rather than a paraphrase of it: a substring check on
+        // wording pins nothing about behaviour unless the wording is the
+        // one the operator will actually be shown.
+        assert!(
+            err.contains("no verification-method id attached"),
+            "the refusal must name the missing key context so an operator can \
+             remediate; got: {err}"
+        );
+    }
+
+    /// The substrate reads the attribution off the signer, so the adapter
+    /// must report the identity's own DID rather than anything the caller
+    /// supplied.
+    #[test]
+    fn governance_signer_reports_the_identitys_own_did() {
+        let identity = registered_operator();
+        let adapter = WalletSignerAdapter::new(identity.clone());
+        assert_eq!(
+            adapter.did(),
+            identity.did().0,
+            "the signer must report the identity it wraps, not a derived label"
         );
     }
 }

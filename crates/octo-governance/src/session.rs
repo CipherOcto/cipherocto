@@ -259,6 +259,10 @@ mod tests {
             fn sign_envelope(&self, _: &[u8]) -> Result<[u8; 64], String> {
                 Ok([0u8; 64])
             }
+
+            fn did(&self) -> String {
+                "did:octo:test".to_string()
+            }
         }
 
         let session = GovernanceSession::new("did:octo:test", Arc::new(FixedClock::new(0)));

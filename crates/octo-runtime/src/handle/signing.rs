@@ -20,8 +20,6 @@ use octo_wallet::IdentityKey;
 use crate::handle::encoding::canonical_payload_bytes;
 use crate::handle::error::AttachError;
 #[cfg(feature = "octo-attach-key-rotation")]
-use crate::handle::key_id::KeyId;
-#[cfg(feature = "octo-attach-key-rotation")]
 use crate::handle::KeySet;
 use crate::handle::{AttachHandle, AttachPayload, SessionId, Signature, Transport};
 
@@ -115,16 +113,6 @@ pub fn verify_attach_handle_payload(
     verify_bytes(&prefix.algorithm_id().to_owned(), holder_pubkey, &msg, sig)
 }
 
-/// The algorithm attach-handle signatures are verified under.
-///
-/// Centralised so the three verify paths cannot disagree about it.
-/// The honest home is a field alongside the holder key on the token,
-/// which this slice does not change.
-#[must_use]
-pub fn attach_algorithm_id() -> octo_wallet::AlgorithmId {
-    octo_wallet::ed25519_algorithm_id()
-}
-
 /// Shared verify helper: verify `sig` over precomputed `msg` against
 /// the pubkey bytes `pk`. Used by both the v1 single-pubkey verifier
 /// (which computes `msg` inline via `canonical_payload_bytes`) and
@@ -145,31 +133,6 @@ fn verify_bytes(
     })
 }
 
-/// Additive v2 canonical payload bytes for an `AttachHandle` token
-/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge).
-///
-/// `v1_bytes || key_id_be` — the `key_id` suffix is the
-/// discriminator that lets a verifier know which holder pubkey to
-/// consult from the holder's `KeySet`. Single source of truth for
-/// both `sign_attach_handle_payload_v2` +
-/// `verify_attach_handle_payload_v2`. When the
-/// `octo-attach-key-rotation` feature is OFF, this function is
-/// hidden and `canonical_payload_bytes` (v1) is the only canonical
-/// helper.
-#[cfg(feature = "octo-attach-key-rotation")]
-#[must_use]
-pub fn canonical_payload_bytes_v2(
-    session_id: &SessionId,
-    payload: &AttachPayload,
-    mint_timestamp_unix: u64,
-    ttl_unix: u64,
-    key_id: KeyId,
-) -> Vec<u8> {
-    let mut out = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
-    out.extend_from_slice(&key_id.to_be_bytes());
-    out
-}
-
 /// Sign the canonical v2 payload bytes for an `AttachHandle` token
 /// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge +
 /// RFC-0015-a Appendix A `IdentityKey` substrate).
@@ -183,20 +146,29 @@ pub fn canonical_payload_bytes_v2(
 /// adapter surfaces a `WalletError` (lifecycle gate, HSM transport,
 /// or user rejection).
 #[cfg(feature = "octo-attach-key-rotation")]
+/// Sign an `AttachHandle` token to be verified against the holder's `KeySet`
+/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge).
+///
+/// The bytes signed are exactly the ones v1 signs — the RFC-0009 prefix ‖ DCS
+/// of the canonical payload. There is **no `key_id` parameter and no
+/// `key_id` suffix**: the prefix already carries the verification method id,
+/// and `0009-e4` put it on the token as a field so a verifier can read it.
+/// The suffix was a second, parallel binding of the same fact whose only real
+/// effect was forcing the verifier to *supply* the key id instead of reading
+/// it.
+///
+/// # Errors
+/// Returns `AttachError::BadSignature` when the holder carries no key
+/// context, or when the underlying HSM adapter surfaces a `WalletError`.
+#[cfg(feature = "octo-attach-key-rotation")]
 pub fn sign_attach_handle_payload_v2(
     holder: &IdentityKey,
     session_id: SessionId,
     payload: &AttachPayload,
     mint_timestamp_unix: u64,
     ttl_unix: u64,
-    key_id: KeyId,
 ) -> Result<Signature, AttachError> {
-    let msg =
-        canonical_payload_bytes_v2(&session_id, payload, mint_timestamp_unix, ttl_unix, key_id);
-    let dalek_sig = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
-        reason: format!("IdentityKey::sign v2: {e}"),
-    })?;
-    Ok(Signature(dalek_sig.to_bytes()))
+    sign_attach_handle_payload(holder, session_id, payload, mint_timestamp_unix, ttl_unix)
 }
 
 /// Verify the canonical v2 payload bytes for an `AttachHandle` token
@@ -227,35 +199,78 @@ pub fn sign_attach_handle_payload_v2(
 /// when neither the active nor the grace set contains a key
 /// matching `key_id`.
 #[cfg(feature = "octo-attach-key-rotation")]
+/// Verify an `AttachHandle` token against the holder's `KeySet`
+/// (RFC-0011-c §F.5.1 + RFC-0015-a §6.5 paired-acceptance bridge).
+///
+/// The key comes from **the token's own prefix**, not from a caller argument.
+/// That is the whole difference from the pre-`0009-e4` shape: a verifier
+/// holding only a token used to have to be handed the key id, which meant the
+/// binding it enforced was one it chose itself. Now the token names its key and
+/// the verifier reads it.
+///
+/// Lookup order:
+/// 1. Active `KeySet::lookup(key_id)` from the prefix.
+/// 2. Otherwise `KeySet::grace_key(key_id)`. Only the grace entry matching the
+///    token's own `key_id` — never an arbitrary grace key. Iterating every
+///    grace pubkey against a token naming `key_id` X would let any holder of
+///    *any* grace key's private material forge tokens claiming X.
+/// 3. Otherwise `AttachError::UnknownKeyId`.
+///
+/// The grace window accepts the standard rotation case: the holder keeps one
+/// `key_id` across a pubkey change, so a token signed under the rotated-out
+/// pubkey still names the same `key_id` and resolves through step 2.
+///
+/// # Errors
+/// Returns `AttachError::BadSignature` on a malformed prefix or signature
+/// mismatch against the matched pubkey, or `AttachError::UnknownKeyId` when
+/// neither the active nor the grace set holds the token's key.
+#[cfg(feature = "octo-attach-key-rotation")]
 pub fn verify_attach_handle_payload_v2(
     key_set: &KeySet,
+    signable_prefix: &[u8; 32],
     session_id: &SessionId,
     payload: &AttachPayload,
     mint_timestamp_unix: u64,
     ttl_unix: u64,
-    key_id: KeyId,
     sig: &Signature,
 ) -> Result<(), AttachError> {
-    let msg =
-        canonical_payload_bytes_v2(session_id, payload, mint_timestamp_unix, ttl_unix, key_id);
+    let prefix = prefix_from_token(signable_prefix)?;
+    let key_id = prefix.key_id();
+    let canonical = canonical_payload_bytes(session_id, payload, mint_timestamp_unix, ttl_unix);
+    let msg = signable_bytes(&prefix, &canonical)?;
+    let algorithm = prefix.algorithm_id();
 
-    // 1. Try the active lookup.
+    // 1. Active lookup. A mismatch here does NOT end the story — the whole
+    //    point of the grace window is that a token signed before a rotation
+    //    verifies against the retired key. The previous code returned the
+    //    error from this step, so `grace_key` was unreachable and the grace
+    //    window never accepted anything: a rotation silently invalidated
+    //    every in-flight token, which is the failure mode the window exists
+    //    to prevent.
+    let mut last_err = None;
     if let Some(pk) = key_set.lookup(key_id) {
-        return verify_bytes(&attach_algorithm_id(), pk, &msg, sig);
+        match verify_bytes(&algorithm.to_owned(), pk, &msg, sig) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
     }
 
-    // 2. Try the grace entry for the CLAIMED key_id only. Iterating
-    //    every grace pubkey against a msg keyed by `key_id` X would
-    //    let any holder of a grace key's private material forge
-    //    tokens claiming arbitrary key_ids — a forgery vulnerability.
-    //    Standard rotation keeps the same key_id across pubkey
-    //    changes, so the rotated-out pubkey is recovered by looking
-    //    up the claimed key_id in the grace map.
-    if let Some(pk) = key_set.grace_key(key_id) {
-        return verify_bytes(&attach_algorithm_id(), pk, &msg, sig);
+    // 2. Grace entries for the token's OWN key id only. Every retired pubkey
+    //    under that one id is tried — a key id can have more than one, since
+    //    a rotation under a stable verification method id changes the key and
+    //    keeps the id. Walking grace pubkeys across *other* ids is what would
+    //    enable forgery, and is never done.
+    for pk in key_set.grace_keys_for(key_id) {
+        match verify_bytes(&algorithm.to_owned(), pk, &msg, sig) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    if let Some(e) = last_err {
+        return Err(e);
     }
 
-    // 3. Exhausted.
+    // 3. Exhausted: the id is known to neither map.
     Err(AttachError::UnknownKeyId {
         key_id,
         known_keys: key_set.known_key_ids(),
@@ -485,167 +500,6 @@ mod tests {
             "inactive holder must reject, got {result:?}"
         );
     }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn sign_v2_includes_key_id_in_canonical_bytes() {
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 42,
-        };
-        let v1 = canonical_payload_bytes(&session_id, &payload, 1_000, 2_000);
-        let v2 = canonical_payload_bytes_v2(&session_id, &payload, 1_000, 2_000, 7);
-        // v2 = v1 ++ key_id_be(7) == 4 trailing zero bytes plus the high 3 zero bytes.
-        assert_eq!(v2.len(), v1.len() + 4, "v2 must append exactly 4 bytes");
-        assert_eq!(&v2[..v1.len()], &v1[..], "v2 prefix must equal v1 bytes");
-        assert_eq!(
-            &v2[v1.len()..],
-            &[0, 0, 0, 7],
-            "key_id=7 trailing bytes must be big-endian"
-        );
-    }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn sign_v2_happy_path() {
-        let holder = activated_holder();
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 42,
-        };
-        let mut key_set = KeySet::new();
-        key_set.insert(7, holder.public_key_bytes());
-        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 7)
-            .expect("sign v2");
-        verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 7, &sig)
-            .expect("verify v2 active lookup");
-    }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn verify_v2_grace_period_accepts_rotated_key() {
-        let holder = activated_holder();
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 42,
-        };
-        let mut key_set = KeySet::new();
-        key_set.insert(1, holder.public_key_bytes());
-        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 1)
-            .expect("sign v2");
-        // Rotate key_id=1 out of the active set into the grace window.
-        key_set.move_to_grace(1);
-        assert_eq!(key_set.lookup(1), None);
-        // Verify still succeeds via the grace fallback.
-        verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 1, &sig)
-            .expect("verify v2 grace fallback");
-    }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn verify_v2_unknown_key_id_returns_error() {
-        let holder = activated_holder();
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 0,
-        };
-        let mut key_set = KeySet::new();
-        key_set.insert(1, holder.public_key_bytes());
-        key_set.insert(2, [0xee; 32]);
-        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 99)
-            .expect("sign v2");
-        let result = verify_attach_handle_payload_v2(
-            &key_set,
-            &session_id,
-            &payload,
-            1_000,
-            2_000,
-            99,
-            &sig,
-        );
-        match result {
-            Err(AttachError::UnknownKeyId { key_id, known_keys }) => {
-                assert_eq!(key_id, 99);
-                assert!(known_keys.contains(&1));
-                assert!(known_keys.contains(&2));
-            }
-            other => panic!("expected UnknownKeyId, got {other:?}"),
-        }
-    }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn verify_v2_active_lookup_mismatch_returns_bad_signature() {
-        // Two keys in active: key_a (id=1, sign here) and key_b (id=2, mismatch).
-        // Verify with key_id=2 must hit active lookup of key_b's pubkey
-        // and reject (sig was signed by key_a over key_id=1 bytes — msg
-        // differs from the key_id=2 bytes).
-        let holder_a = activated_holder();
-        let holder_b = activated_holder();
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 0,
-        };
-        let mut key_set = KeySet::new();
-        key_set.insert(1, holder_a.public_key_bytes());
-        key_set.insert(2, holder_b.public_key_bytes());
-        let sig = sign_attach_handle_payload_v2(&holder_a, session_id, &payload, 1_000, 2_000, 1)
-            .expect("sign v2 by holder_a with key_id=1");
-        let result =
-            verify_attach_handle_payload_v2(&key_set, &session_id, &payload, 1_000, 2_000, 2, &sig);
-        assert!(
-            matches!(result, Err(AttachError::BadSignature { .. })),
-            "active lookup of key_id=2 must fail BadSignature, got {result:?}"
-        );
-    }
-
-    #[cfg(feature = "octo-attach-key-rotation")]
-    #[test]
-    fn verify_v2_grace_key_does_not_vouch_for_arbitrary_key_id() {
-        // Regression: a grace key must NOT vouch for a token that
-        // claims a DIFFERENT key_id. Holder rotates key_id=1 to
-        // grace (so key_set has active={2}, grace={1}). Attacker
-        // (with holder's old key_id=1 private material) signs a
-        // token claiming key_id=99; verifier must reject via
-        // UnknownKeyId, NOT accept via grace fallback.
-        //
-        // Pre-fix behavior (R1 CRIT): grace_period() iteration
-        // tried every grace pubkey against the msg, so any grace
-        // key holder could forge tokens claiming any key_id.
-        let holder = activated_holder();
-        let other_holder = activated_holder();
-        let session_id = [0xab; 32];
-        let payload = AttachPayload {
-            agent_id: Uuid::from_bytes([0xcd; 16]),
-            since_cursor: 0,
-        };
-        let mut key_set = KeySet::new();
-        key_set.insert(2, other_holder.public_key_bytes());
-        key_set.insert(1, holder.public_key_bytes());
-        key_set.move_to_grace(1);
-        // Attacker signs msg with key_id=99 suffix using holder's
-        // (now grace) key_id=1 private key.
-        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000, 99)
-            .expect("sign v2");
-        let result = verify_attach_handle_payload_v2(
-            &key_set,
-            &session_id,
-            &payload,
-            1_000,
-            2_000,
-            99,
-            &sig,
-        );
-        match result {
-            Err(AttachError::UnknownKeyId { key_id, .. }) => assert_eq!(key_id, 99),
-            other => panic!("grace key must NOT vouch for claimed key_id=99, got {other:?}"),
-        }
-    }
     // ── The prefix is carried, and the algorithm comes from it ──────────
 
     #[test]
@@ -794,5 +648,202 @@ mod tests {
             reason.to_lowercase().contains("key"),
             "the refusal must be the missing key context, not another error: {reason}"
         );
+    }
+
+    // ── The KeySet path: the key comes from the token, not the caller ───
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    /// A key id derived from a name, so a fixture can stand in for "a
+    /// different verification method on the same holder".
+    fn vmid(name: &str) -> octo_wallet::VerificationMethodId {
+        octo_wallet::VerificationMethodId::derive(name)
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    fn v2_fixture() -> (IdentityKey, KeySet, SessionId, AttachPayload) {
+        let holder = activated_holder();
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 42,
+        };
+        let mut key_set = KeySet::new();
+        key_set.insert(
+            holder.signable_prefix().expect("key").key_id(),
+            holder.public_key_bytes(),
+        );
+        (holder, key_set, session_id, payload)
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn sign_v2_binds_the_prefix_not_a_key_id_suffix() {
+        let (holder, key_set, session_id, payload) = v2_fixture();
+
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000)
+            .expect("sign v2");
+        verify_attach_handle_payload_v2(
+            &key_set,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        )
+        .expect("verify v2 active lookup");
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn the_key_is_read_from_the_token_not_supplied_by_the_caller() {
+        let (holder, key_set, session_id, payload) = v2_fixture();
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000)
+            .expect("sign v2");
+
+        // A token naming a key the KeySet does not hold must be rejected on
+        // the token's own claim. Before the prefix landed on the token, the
+        // verifier was *told* which key to try, so this state was not
+        // expressible: the caller simply named a key that existed.
+        let forged_prefix = octo_wallet::SignablePrefix::new(
+            holder.signable_prefix().expect("key").algorithm_id(),
+            vmid("a-key-this-set-does-not-hold"),
+        )
+        .to_bytes();
+
+        match verify_attach_handle_payload_v2(
+            &key_set,
+            &forged_prefix,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        ) {
+            Err(AttachError::UnknownKeyId { key_id, .. }) => {
+                assert_eq!(key_id, vmid("a-key-this-set-does-not-hold"));
+            }
+            other => panic!("a token naming an unknown key must not verify, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_grace_period_accepts_rotated_key() {
+        // This test builds its own rotated set, so the fixture's set is unused.
+        let (holder, _key_set, session_id, payload) = v2_fixture();
+        let key_id = holder.signable_prefix().expect("key").key_id();
+        // A real rotation under a stable verification method id: the old
+        // pubkey goes to grace, the new one becomes active, and the id is
+        // unchanged. The token was signed by the OLD key.
+        let mut rotated = KeySet::new();
+        rotated.insert(key_id, holder.public_key_bytes());
+        rotated.move_to_grace(key_id);
+        rotated.insert(key_id, [0xee; 32]);
+        assert_eq!(
+            rotated.grace_keys_for(key_id),
+            &[holder.public_key_bytes()],
+            "control: the rotated-out pubkey must still be retained"
+        );
+
+        let sig = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000)
+            .expect("sign under the rotated-out key");
+
+        verify_attach_handle_payload_v2(
+            &rotated,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        )
+        .expect("a token signed before rotation must survive the grace window");
+    }
+
+    #[cfg(feature = "octo-attach-key-rotation")]
+    #[test]
+    fn verify_v2_grace_key_does_not_vouch_for_another_keys_token() {
+        // Regression, carried over from the pre-prefix shape. A grace key must
+        // NOT vouch for a token naming a DIFFERENT key id: iterating every
+        // grace pubkey would let any holder of any grace key's private material
+        // forge tokens claiming someone else's key.
+        let (holder, _key_set, session_id, payload) = v2_fixture();
+        let grace_key_id = holder.signable_prefix().expect("key").key_id();
+        let mut rotated = KeySet::new();
+        rotated.insert(grace_key_id, holder.public_key_bytes());
+        rotated.move_to_grace(grace_key_id);
+        rotated.insert(vmid("someone-elses-active-key"), [0xee; 32]);
+
+        // The attacker holds the grace key's private material but signs a token
+        // claiming a different verification method.
+        let forged = octo_wallet::SignablePrefix::new(
+            holder.signable_prefix().expect("key").algorithm_id(),
+            vmid("someone-elses-active-key"),
+        )
+        .to_bytes();
+        let canonical = canonical_payload_bytes(&session_id, &payload, 1_000, 2_000);
+        let msg = signable_bytes(
+            &octo_wallet::SignablePrefix::from_bytes(&forged).expect("prefix"),
+            &canonical,
+        )
+        .expect("signable");
+        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+
+        match verify_attach_handle_payload_v2(
+            &rotated,
+            &forged,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        ) {
+            // `BadSignature`, not `UnknownKeyId`: the claimed id IS in the
+            // active set — it just does not match this signature. The grace
+            // window was consulted only under the claimed id and holds no
+            // entry for it, so the grace key did not vouch. Returning
+            // `UnknownKeyId` here would be the wrong diagnosis and would also
+            // mislead an operator about what to rotate.
+            Err(AttachError::BadSignature { .. }) => {}
+            other => panic!("a grace key must not vouch for another key id, got {other:?}"),
+        }
+
+        // The other branch: a token naming an id neither map holds. That is
+        // the genuine unknown-key case, and it must be distinguished from the
+        // mismatch above.
+        let unknown = octo_wallet::SignablePrefix::new(
+            holder.signable_prefix().expect("key").algorithm_id(),
+            vmid("an-id-nobody-has"),
+        )
+        .to_bytes();
+        match verify_attach_handle_payload_v2(
+            &rotated,
+            &unknown,
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        ) {
+            Err(AttachError::UnknownKeyId { key_id, .. }) => {
+                assert_eq!(key_id, vmid("an-id-nobody-has"));
+            }
+            other => panic!("an unknown key id must say so, got {other:?}"),
+        }
+        // Control: the real token does verify against the same set, so the
+        // rejection above is about the key id and not a broken fixture.
+        let real = sign_attach_handle_payload_v2(&holder, session_id, &payload, 1_000, 2_000)
+            .expect("sign real");
+        verify_attach_handle_payload_v2(
+            &rotated,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &real,
+        )
+        .expect("control: the genuine token verifies");
     }
 }

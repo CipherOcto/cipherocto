@@ -9,8 +9,6 @@
 
 use thiserror::Error;
 
-#[cfg(feature = "octo-attach-key-rotation")]
-use crate::handle::KeyId;
 use crate::handle::SessionId;
 
 /// Substrate error envelope for `AttachHandle` operations
@@ -22,6 +20,19 @@ use crate::handle::SessionId;
 /// pattern; `ReplayDetected` occupies its own slot 61 per the §9.7
 /// follow-on amendment). The CLI boundary translates per-variant;
 /// the substrate owns the canonical distinction.
+/// Render a `VerificationMethodId` as a short hex prefix.
+///
+/// The full 16 bytes are a wall of digits in an operator-facing error, and
+/// the type has no `Display`. Eight bytes is far more than enough to
+/// disambiguate a key id in a diagnostic.
+#[cfg(feature = "octo-attach-key-rotation")]
+fn short_id(id: octo_wallet::VerificationMethodId) -> String {
+    id.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+}
+
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum AttachError {
@@ -142,17 +153,15 @@ pub enum AttachError {
     /// RFC-0015-a §6.5 paired-acceptance bridge). CLI exit 62 if
     /// mapped (out of scope for D2.1 — defaults to the
     /// `Internal(reason)` wildcard via the existing `From<AttachError>`
-    /// arm in `crates/octo-cli/src/error.rs`).
+    ///
+    // arm in `crates/octo-cli/src/error.rs`).
     #[cfg(feature = "octo-attach-key-rotation")]
-    #[error("unknown key_id {key_id} (known: {known_keys:?})")]
+    #[error("unknown key_id {} (known: {})", short_id(*.key_id), .known_keys.iter().copied().map(short_id).collect::<Vec<_>>().join(", "))]
     UnknownKeyId {
-        /// `key_id` discriminator from the token's canonical bytes.
-        key_id: KeyId,
-        /// Diagnostic union of active + grace key ids in the
-        /// verifier's `KeySet` (the operator can read the
-        /// populated set without re-deriving it from the
-        /// substrate envelope).
-        known_keys: Vec<KeyId>,
+        /// The verification method the token named.
+        key_id: octo_wallet::VerificationMethodId,
+        /// Every key id the registry holds, for diagnosis.
+        known_keys: Vec<octo_wallet::VerificationMethodId>,
     },
 }
 
@@ -294,8 +303,12 @@ mod tests {
     #[test]
     fn unknown_key_id_display_includes_id_and_known() {
         let e = AttachError::UnknownKeyId {
-            key_id: 99,
-            known_keys: vec![1, 2, 7],
+            key_id: octo_wallet::VerificationMethodId::derive("key-99"),
+            known_keys: vec![
+                octo_wallet::VerificationMethodId::derive("key-1"),
+                octo_wallet::VerificationMethodId::derive("key-2"),
+                octo_wallet::VerificationMethodId::derive("key-7"),
+            ],
         };
         let s = e.to_string();
         assert!(s.contains("99"), "{s}");

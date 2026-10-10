@@ -118,14 +118,10 @@ is the design below.
 - [x] Clippy clean with `--all-targets --all-features` on `octo-runtime`,
       `octo-wallet` and `octo-cli`.
 
-**Not done: the rotation gate and the v2 suffix.** `octo-attach-key-rotation`
-and the `key_id.to_be_bytes()` suffix are untouched, and `attach_algorithm_id`
-still has one caller left — the feature-gated v2 verify path. v1 and v2 are not
-yet unified. That is deliberately deferred rather than half-attempted: v2's
-suffix is now provably redundant, but removing it means deleting the KeySet
-grace-window tests that currently give it a job, and that belongs in its own
-commit with the `KeySet` behaviour pinned. Recorded as the remaining work
-rather than silently dropped.
+**Done in `0009-e7` (follow-on): the rotation gate and the v2 suffix.**
+`0009-e7` unified `KeyId` with RFC-0009's `VerificationMethodId`, removed the
+`key_id.to_be_bytes()` suffix and the `attach_algorithm_id` hardcode, and fixed
+a pre-existing bug in which the grace window could never accept anything.
 
 **The encoding version moved to `0x01`.** The wire form gained 32 bytes before
 the session id and the fixed prefix is now 177 rather than 145, so this is a

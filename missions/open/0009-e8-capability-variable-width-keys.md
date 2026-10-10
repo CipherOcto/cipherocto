@@ -22,6 +22,13 @@ regardless of how much domain separation is layered on top.
 
 The blocker is width, not policy. Measured, not estimated.
 
+**Scoping corrected.** This mission was originally scoped as carrying a
+storage-migration risk. That risk was measured and does not exist: the widened
+field serializes byte-identically to the current one, so there is nothing to
+migrate. See §Why it is decomposed rather than done. The blocker itself — the
+widths — is unchanged and still real; what changed is how expensive it is to
+remove.
+
 ## §What is actually blocked
 
 `octo_algo_ed25519::verify_dispatch` already takes `&[u8]` for both key and
@@ -55,18 +62,48 @@ so this is a **storage schema change**, not a type alias swap.
 
 Three reasons, in order of weight:
 
-1. **The registry schema.** `HolderRecord` is persisted and gossiped. Widening
-   its key column needs a migration and a decision about what reads pre-migration
-   rows. That is a different piece of work from a Rust type change and should not
-   be entangled with one.
-2. **Half-measures achieve nothing.** Widening the trait and `HolderSignature`
+1. **Half-measures achieve nothing.** Widening the trait and `HolderSignature`
    while `holder_pub` stays 32 bytes leaves a non-Ed25519 signer that can sign
    but cannot be registered — a new state that is strictly worse than the
    current one, because it looks supported. The change is all-or-nothing.
-3. **Layer direction.** `octo-cap-macaroon` must not gain an edge on
+2. **Layer direction.** `octo-cap-macaroon` must not gain an edge on
    `octo-algo-stark-schnorr` just to name a width. The width should come from
    the `SignatureAlgorithm` trait at the point of use, which is what
    `verify_dispatch` already does on the verify side.
+3. **Blast radius.** 106 sites across 18 files in 8 crates, so a partial
+   landing leaves the tree uncompilable rather than half-done.
+
+### The third original reason was wrong, and was removed
+
+An earlier revision of this section led with the registry schema:
+
+> `HolderRecord` is persisted and gossiped. Widening its key column needs a
+> migration and a decision about what reads pre-migration rows.
+
+**That is false, and it was the reason this mission was treated as risky.** It
+was measured rather than assumed: `serde_bytes::Bytes` and `Vec<u8>` both
+serialize through `serde_json` as a JSON array of integers, so
+`holder_pub: [u8; 32]` under `serde_bytes_32` and `holder_pub: Vec<u8>` produce
+byte-identical gossip for every key that exists today. Existing rows
+deserialize into the widened field unchanged, so there is no migration and
+nothing to decide about pre-migration reads.
+
+The probe that established this was run against the real serde stack, not
+derived from documentation, and is why the claim is retracted rather than
+merely softened.
+
+What genuinely remains for `e8b`, having removed the false blocker:
+
+- **Field declaration order must not change.** The determinism contract at
+  §G5 cross-node mint verifiability is `serde_json` in declaration order, so
+  widening a field's type is safe but moving one is a breaking change.
+- **The `Debug` redaction string** hardcodes `<redacted 32 bytes>` and a test
+  asserts no key bytes leak. It must stop claiming a width it no longer knows.
+- **Constructor signatures** (`from_bearer`, `from_capability`,
+  `from_hop_capability`) take `&[u8; 32]` and must take a slice.
+
+None of these is a migration. `e8b` is mechanical, and this mission is no
+longer the risky one it was scoped to be.
 
 ## §Proposed decomposition
 
@@ -75,12 +112,16 @@ Three reasons, in order of weight:
   wire/serde segments length-delimited rather than "16 bytes then the rest".
   Mechanical, no schema.
 - **`0009-e8b` — `holder_pub` becomes variable width** across
-  `CapabilityToken` and `HolderRecord`, including the storage migration and the
-  gossip determinism contract. The risky one; carries its own review.
-- **`0009-e8c` — `CapabilitySigner` returns `Vec<u8>`**, once `e8b` has made a
-  non-Ed25519 holder representable. Without this the first two are inert.
+  `CapabilityToken` and `HolderRecord`. There is **no storage migration** — see
+  §Why it is decomposed rather than done for the measurement that retracted
+  that claim. What remains is the gossip determinism contract (declaration
+  order), the `Debug` redaction string, and the constructor signatures.
+- **`0009-e8c` — `CapabilitySigner` returns `Vec<u8>`**. This is the source of
+  the wide values, so logically it comes first: without it `e8a` and `e8b`
+  have nothing to carry. In practice all three land together because each one
+  alone leaves the tree uncompilable.
 
-Order is forced by reason 2: `e8a` and `e8b` land together or neither does.
+Order is forced by reason 1: the change is all-or-nothing.
 
 ## §What must not be done
 

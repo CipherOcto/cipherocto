@@ -1692,9 +1692,21 @@ fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
     let mut offenders: Vec<String> = Vec::new();
 
     let mut dirs: Vec<&str> = AC11_DISPATCHED.to_vec();
-    // The allowlist entries live under these two crates, so they are walked
-    // too — otherwise adding a NEW hardcoded site to them would go unseen
-    // merely because they are currently excepted.
+    // These two are scanned *only* because of this line — neither is in
+    // `AC11_DISPATCHED`. For `octo-protocol` that is because it holds the one
+    // allowlisted file, so the crate is walked even though that file is
+    // skipped, and a NEW hardcoded site beside the exception is still caught.
+    //
+    // `octo-cap-macaroon` is here for a different reason now, and the reason
+    // matters: it was here because `token.rs` was allowlisted, and it stopped
+    // being allowlisted in the same change. The justification comment above it
+    // went stale immediately, which made this line look like leftover tidying.
+    //
+    // It is not. Removing it silently un-scans the entire crate. Verified:
+    // with this line gone, a `VerifyingKey::from_bytes` reintroduced into
+    // `token.rs` passes this gate. Do not remove it on the grounds that the
+    // crate is no longer excused — the crate was never listed here to begin
+    // with.
     dirs.push("crates/octo-cap-macaroon/src");
     dirs.push("crates/octo-protocol/src");
 
@@ -1959,14 +1971,33 @@ fn ac11_every_out_of_scope_crate_is_justified_and_disjoint() {
             "AC-11: out-of-scope path {crate_path} no longer exists. Remove the \\
              entry; a stale exception is a silent hole."
         );
+        // And the exception must stay pinned to what it claims: the crate
+        // still has the site that justifies excluding it. If that site is
+        // routed through the registry or deleted, the entry describes nothing,
+        // and an out-of-scope entry describes nothing *forever* unless
+        // something checks.
+        //
+        // This used to be a hand-written assertion naming the nostr crate, so
+        // it protected exactly one entry and a second entry added later would
+        // have come in silently unguarded. Running it per entry is the only
+        // version that survives the next entry.
+        let has_site = std::fs::read_dir(workspace_root().join(crate_path))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rs"))
+                    .any(|e| {
+                        std::fs::read_to_string(e.path())
+                            .map(|src| strip_comments(&src).contains("VerifyingKey::from_bytes"))
+                            .unwrap_or(false)
+                    })
+            })
+            .unwrap_or(false);
+        assert!(
+            has_site,
+            "AC-11: out-of-scope {crate_path} no longer contains a VerifyingKey::from_bytes \
+             site, so the excuse describes nothing. Re-decide it rather than leaving a \
+             reason for a thing that is gone."
+        );
     }
-
-    // And the exception must stay pinned to what it claims. If the nostr
-    // site ever disappears, the entry is describing nothing.
-    let nostr = read("crates/octo-adapter-nostr/src/lib.rs");
-    assert!(
-        nostr.contains("VerifyingKey::from_bytes"),
-        "AC-11: the nostr site this exception describes no longer exists. \\
-         Re-decide it rather than leaving a reason for a thing that is gone."
-    );
 }

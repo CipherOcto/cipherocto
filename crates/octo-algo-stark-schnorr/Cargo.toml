@@ -1,0 +1,60 @@
+[package]
+name = "octo-algo-stark-schnorr"
+version = "0.1.0"
+edition = "2021"
+description = "Schnorr over the Cairo STARK curve, implementing octo_ident::SignatureAlgorithm and registering with ZkSupport::None. Mission 0009-d."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# The Layer B registry this implements. Layer E depends on Layer B for the
+# trait; the arrow never points back — octo-ident carries no curve-crypto
+# dependency, which is the point of the registry. Without the split, every
+# consumer of octo-ident would inherit a specific algorithm.
+octo-ident = { path = "../octo-ident" }
+
+# The same crate family the Cairo toolchain builds against. That is the whole
+# reason this dependency exists rather than a hand-rolled Poseidon: host and
+# circuit are then held to identical vectors instead of an assumption, which
+# is the property RFC-0009 §Dual-format signature algorithms and the
+# ZK-capable key depends on. Same version pin as octo-cap-macaroon, so a
+# single build serves both crates.
+starknet-crypto = "0.8"
+
+# Curve arithmetic (AffinePoint / ProjectivePoint) and the felt type.
+# starknet-crypto re-exports Felt but not the curve module, so the point
+# types need naming directly. Version matches the one starknet-crypto 0.8
+# resolves, so there is a single Starkfield in the graph.
+starknet-types-core = "0.2"
+
+# Scalar arithmetic modulo the curve order, for signing.
+#
+# Signatures need `s = (k + e·x) mod ORDER`, and ORDER is not the field
+# prime: p = 2·ORDER − 1, so reducing mod p gives a *different* group element,
+# not an equivalent one. Field-element arithmetic therefore cannot express
+# this and an explicit big-integer reduction is required.
+#
+# starknet-crypto solves the same problem in its own ECDSA with num-bigint
+# (`fe_utils::mul_mod_floor`); this follows that choice rather than
+# introducing a second arbitrary-precision stack behind a parallel
+# abstraction. Already in the lockfile via zk-circuit.
+num-bigint = "0.4"
+
+# Derive for the crate's own error types and reuses octo-ident's error
+# style, so a caller matching on failures reads the same way as one matching
+# on registry failures. Same version pin as octo-ident.
+thiserror = "1"
+
+[dev-dependencies]
+# The other algorithm, so the suite can demonstrate what one registration
+# never could: both installed at once, each dispatching only its own
+# material. Dev-only — the shipped crate must not require a peer algorithm
+# to be present, or "two independent per-algorithm extensions" would become
+# "a fixed set of two".
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
+# Build real Ed25519 signatures for the cross-algorithm replay vectors.
+# Same version pin as octo-algo-ed25519.
+ed25519-dalek = { version = "2.2", features = ["serde"] }

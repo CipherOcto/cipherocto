@@ -1777,6 +1777,117 @@ fn ac11_the_ed25519_registration_itself_is_where_keys_get_built() {
     );
 }
 
+// ── Two algorithms, still independent ────────────────────────────────────
+
+/// Body of one `[section]` of a Cargo.toml, or `None` if it has none.
+///
+/// Section-aware on purpose. `octo-algo-stark-schnorr` names
+/// `octo-algo-ed25519` in `[dev-dependencies]` — its suite must be able to
+/// build a real Ed25519 signature to show the two algorithms coexist — and a
+/// bare `contains` over the whole manifest would read that as a runtime edge
+/// and demand the dependency be deleted, which would delete the proof.
+fn cargo_section(manifest: &str, section: &str) -> Option<String> {
+    let header = format!("[{section}]");
+    let start = manifest.lines().position(|l| l.trim() == header)?;
+    Some(
+        manifest
+            .lines()
+            .skip(start + 1)
+            .take_while(|l| !l.trim_start().starts_with('['))
+            .collect(),
+    )
+}
+
+/// Assert a section exists before relying on its contents being empty.
+fn cargo_section_present(manifest: &str, section: &str) -> String {
+    cargo_section(manifest, section).unwrap_or_else(|| {
+        panic!(
+            "no [{section}] section in manifest — if it was renamed, amend \
+             this guard rather than letting it pass on a section that does \
+             not exist"
+        )
+    })
+}
+
+/// RFC-0009's second algorithm must be a real peer of Ed25519, not a
+/// replacement or a wrapper around it.
+///
+/// With one registered algorithm, everything this registry exists to prevent
+/// is unobservable: a verifier that returned Ed25519 for *any* identifier
+/// would answer every lookup correctly, and a cross-algorithm replay would
+/// look like an ordinary verification. Two algorithms are what make those
+/// wrong answers visible, so the properties that make a second algorithm
+/// possible are worth guarding — each one is a silent regression that leaves
+/// every other test in the workspace green.
+#[test]
+fn the_two_algorithm_crates_stay_independent_and_additive() {
+    // 1. Layer B must not know either Layer E crate. If octo-ident depended
+    //    on an algorithm, the registry would be a wrapper over a hardcoded
+    //    choice rather than the thing that removes one.
+    let ident = read("crates/octo-ident/Cargo.toml");
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let body = cargo_section(&ident, section).unwrap_or_default();
+        assert!(
+            !body.contains("octo-algo-"),
+            "octo-ident [{section}] names an algorithm crate. Layer B must not \
+             depend on Layer E: the registry exists so no algorithm is baked \
+             into the identity substrate."
+        );
+    }
+
+    // 2. Neither algorithm may depend on the other at runtime. They are
+    //    independently selectable per-algorithm crates; a dependency either
+    //    way means a deployment cannot take one without the other, and
+    //    "this deployment rejects stark-schnorr" stops being expressible.
+    //
+    //    `[dev-dependencies]` is deliberately NOT checked: the coexistence
+    //    test needs both, and that is a test-time edge only.
+    let stark = read("crates/octo-algo-stark-schnorr/Cargo.toml");
+    assert!(
+        !cargo_section_present(&stark, "dependencies").contains("octo-algo-ed25519"),
+        "octo-algo-stark-schnorr takes a runtime dependency on \
+         octo-algo-ed25519. The two must be independently installable; a \
+         dependency makes 'this deployment supports only one of them' \
+         unexpressible."
+    );
+
+    // 3. Both registrations must ADD to the registry rather than declare it.
+    //
+    //    `bootstrap` declares the deployment's whole algorithm set and is
+    //    idempotent only for an identical one, so two crates calling it each
+    //    get one winner and one `ConflictingBootstrap`. That is a registry of
+    //    one algorithm with a deadlock at the install site. This is a
+    //    one-word slip, and reverting it is invisible to any test that does
+    //    not happen to install both in one process.
+    for (path, why) in [
+        ("crates/octo-algo-ed25519/src/lib.rs", "Ed25519"),
+        (
+            "crates/octo-algo-stark-schnorr/src/lib.rs",
+            "STARK-curve Schnorr",
+        ),
+    ] {
+        let src = strip_comments(&read(path));
+        let installs: Vec<&str> = src
+            .lines()
+            .filter(|l| l.contains("vec![") && l.contains("Algorithm::shared()"))
+            .collect();
+        assert!(
+            !installs.is_empty(),
+            "{why}: no `install()` body found in {path}. If the install path \
+             moved, amend this guard rather than deleting it."
+        );
+        for line in installs {
+            assert!(
+                line.contains("bootstrap_additional("),
+                "{why}: install() in {path} calls `{line}`, which declares the \
+                 deployment's whole algorithm set instead of adding to it. \
+                 The first caller would win and every other algorithm crate \
+                 would report ConflictingBootstrap."
+            );
+        }
+    }
+}
+
 // ── Capability-token API must not name ed25519-dalek ─────────────────────
 
 #[test]

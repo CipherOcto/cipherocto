@@ -11,11 +11,124 @@ metadata:
     - 0009-b-algorithm-registry
 ---
 
-# Mission `0009-d-stark-schnorr-algorithm` — OPEN 2026-10-09
+# Mission `0009-d-stark-schnorr-algorithm` — IMPLEMENTED 2026-10-09
 
 ## Status
 
-Open (2026-10-09). Claimable once `0009-b-algorithm-registry` lands.
+**Claimed and implemented (2026-10-09).** `octo-algo-stark-schnorr` 46,
+`octo-algo-ed25519` 11, `octo-ident` 84, `octo-cli` security guards 45, and
+`scarb test` in `cairo/` 111 — all passing. Clippy clean with
+`--all-targets --all-features` across all four crates.
+
+All seven §Test Vectors are in place under the specified names. The mission's
+framing holds: the algorithm registers with `ZkSupport::None`, and nothing
+touched `stage2_main` or the committed CASM hash.
+
+### Three findings worth the read
+
+**1. `bootstrap` could not hold two algorithms, and the second crate proved
+it.** `bootstrap` is idempotent only for an _identical_ set — a second call
+with different ids is a conflict. So with one algorithm everything worked, and
+the moment a second one existed, whichever crate installed second got
+`ConflictingBootstrap`. A registry of one algorithm with a deadlock at the
+install site.
+
+The fix is `octo_ident::bootstrap_additional`, which _adds_ to a populated
+registry and only ever treats an already-registered algorithm as idempotent.
+Both per-crate `install()`s now use it. Per RFC-0009 §Dual-format signature
+algorithms and the ZK-capable key this was expected — two algorithms on one
+identity — but it could not be seen until the second algorithm existed.
+
+The honest limitation is recorded rather than hidden: additive install means a
+deployment cannot _restrict_ the set, only extend it. See §What this does not
+do: restrict a set in `bootstrap_additional`.
+
+**2. `starknet_crypto::poseidon_hash` is not Cairo's `poseidon_hash_span`.**
+This is the trap the crate is most exposed to. Cairo's
+`schnorr_challenge(r_x, m)` is `poseidon_hash_span([r_x, m])`, whose Rust
+counterpart is `poseidon_hash_many`. The two-_argument_ `poseidon_hash` has
+the right arity, the right return type and a plausible name, and it is a
+**different hash** — it permutes `[x, y, 2]` where the span form absorbs into
+`[0, 0, 0]` and applies two permutations.
+
+Using it would have produced an implementation entirely self-consistent,
+passing every positive vector written against itself, and disagreeing with
+the circuit on every message. `the_two_argument_poseidon_is_a_different_function`
+pins the distinction, and `challenge_matches_the_circuit_vectors` pins the
+value against the identical constant asserted in
+`cairo/src/stark_schnorr.cairo` §`challenge_parity_vector`.
+
+**3. `ProjectivePoint::x()` is homogeneous; `AffinePoint::x()` is affine.**
+The verification equation compares `[s]G - [e]Q` against `R` on the
+x-coordinate. In `starknet-types-core`, `AffinePoint::x()` normalises through
+`to_affine()` and `ProjectivePoint::x()` does not — it returns `X`, where the
+affine x is `X/Z`. Comparing `lhs.x()` against `r` compares against a value
+scaled by an unknown `Z`.
+
+It shipped in the first draft of this crate and rejected every honest
+signature while still rejecting every forgery, so a positive vector is the
+only thing that catches it. `verify_with_challenge` now goes through
+`to_affine()`, which also supplies the point-at-infinity refusal for free.
+
+### And one that the tests caught, not the code
+
+`pk_lo`/`pk_hi` split the **low 31 bytes** of the x-coordinate little-endian.
+The first draft read `x` as little-endian and so packed `x[0]` at bit
+position 0 — but `x` is stored big-endian, where `x[0]` is the _most_
+significant byte. Split and join were mutual inverses, so every round-trip
+test passed; the values were simply the wrong 31 bytes with the wrong byte in
+`pk_hi`.
+
+The vector that catches it is
+`stark_schnorr_pk_lo_hi_round_trip`'s sibling
+`pk_lo_holds_the_low_thirty_one_bytes_little_endian`, which asserts each
+byte's exact position rather than only that the pair round-trips. A symmetric
+x-coordinate could not tell the two apart either — the ascending pattern in
+that test is what makes an endianness slip visible at all.
+
+### Mutation-verified
+
+Nine mutations were applied and reverted; every one turned the suite red.
+A vector nobody has seen fail is a vector nobody knows works.
+
+| Mutation                                          | Caught by                                      |
+| ------------------------------------------------- | ---------------------------------------------- |
+| `pk_lo` byte order reverted                       | `pk_lo_holds_the_low_thirty_one_bytes…`        |
+| Challenge built with two-argument `poseidon_hash` | `challenge_matches_the_circuit_vectors`        |
+| Verify compares the homogeneous x                 | `stark_schnorr_verifies_against_reference_…`   |
+| Curve order off by one                            | `order_is_the_curve_group_order`               |
+| `zk_support` claims `Circuit`                     | `zk_support_is_none_while_no_in_circuit_…`     |
+| Ed25519 `install()` declares the whole set        | coexistence test + `the_two_algorithm_crates…` |
+| STARK `install()` declares the whole set          | `the_two_algorithm_crates…`                    |
+| STARK takes a runtime dep on Ed25519              | `the_two_algorithm_crates…`                    |
+| `octo-ident` names an algorithm crate             | `the_two_algorithm_crates…`                    |
+
+### Decisions taken here
+
+- **Wire form is 33 bytes** — 32-byte big-endian x-coordinate plus one parity
+  byte. RFC-0009 says "a 32-byte x-coordinate plus a parity bit" without
+  fixing a layout, and `VerificationMethod.public_key` is a `Vec<u8>` bounded
+  by `public_key_len`, so the crate states it. Bit-packing the parity into the
+  spare high nibble would also have been legal and is deliberately not done:
+  it is the kind of cleverness that reads as a bug three months later.
+- **The challenge absorbs `[r] ++ message_felts`**, with byte messages packed
+  31 bytes per felt and length-prefixed. That mirrors the existing convention
+  in `octo-cap-macaroon` §`substrate_poseidon` for "bytes into a Poseidon
+  absorption" and it is _not_ that crate's caveat-chain encoding — reusing a
+  chain encoding here would put a capability-chain value into a signature
+  domain. The crate owns this encoding and says so.
+- **`pk_hi = (leading_byte << 1) | parity`.** RFC-0009's "with the parity bit
+  as its only significant bit" reads as _in addition to_ the byte it carries;
+  discarding the byte would make two keys sharing 31 bytes indistinguishable,
+  which is the ambiguity the parity bit exists to resolve. The round trip pins
+  the reading.
+- **`sign` takes a caller-supplied nonce** and refuses to invent one. A
+  deterministic nonce needs a keyed derivation this crate would have to make
+  up, and an invented one is worse than an explicit freshness obligation.
+- **The constants are checked, not remembered.** `curve_order()` is verified
+  by `[ORDER]G == O` (and `[ORDER−1]G != O`, which rules out an off-by-one),
+  and the generator is asserted against the hex `core::ec::stark_curve` prints.
+  Both were measured from the toolchain rather than transcribed.
 
 ## Dependencies
 
@@ -152,10 +265,16 @@ working around it.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy -p <new-crate> --all-targets --all-features -- -D warnings
+cargo clippy -p octo-algo-stark-schnorr -p octo-algo-ed25519 -p octo-ident -p octo-cli \
+  --all-targets --all-features -- -D warnings
 scarb test          # in cairo/
-cargo test -p <new-crate>
+cargo test -p octo-algo-stark-schnorr
+cargo test -p octo-cli --test security_regressions
 ```
+
+`octo-algo-ed25519` and `octo-ident` are in the list because this mission
+changed both: the Ed25519 `install()` path, and the registry's install
+interface it moved to.
 
 ## Backward compat
 
@@ -171,12 +290,14 @@ back — AC#14.
   the circuit wiring that this mission deliberately does not touch
 - `rfcs/draft/economics/0974-zk-capability-platform-extension-surface.md` —
   §Step 1, where the full measurement record lives
-- `cairo/src/stark_schnorr.cairo` — the existing verifier
-- `missions/open/0009-b-algorithm-registry`
+- `cairo/src/stark_schnorr.cairo` — the existing verifier, and now the other
+  end of the host/circuit challenge parity vector
+- `crates/octo-algo-stark-schnorr` — the crate this mission produced
+- `missions/claimed/0009-b-algorithm-registry`
 
 ## Claimant
 
-@unassigned
+@mmacedoeu
 
 ## Pull Request
 

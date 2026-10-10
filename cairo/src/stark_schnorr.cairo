@@ -136,7 +136,48 @@ pub fn schnorr_verify_stark_curve(
 
 #[cfg(test)]
 mod tests {
+    use super::schnorr_challenge;
     use super::schnorr_verify_stark_curve;
+
+    #[test]
+    fn measure_constants() {
+        use core::ec::stark_curve::{GEN_X, GEN_Y, ORDER};
+        println!("ORDER={}", ORDER);
+        println!("GEN_X={}", GEN_X);
+        println!("GEN_Y={}", GEN_Y);
+    }
+
+    /// Host/circuit parity for the Schnorr challenge.
+    ///
+    /// `substrate_schnorr::tests::challenge_matches_the_circuit_vectors`
+    /// in the Rust crate asserts this **identical** constant. The challenge
+    /// is the one value in this scheme that has no algebraic check on it:
+    /// `schnorr_verify_stark_curve` takes `e` as a parameter, so both sides
+    /// still run and still produce plausible felts when the two disagree
+    /// about how it is derived. Every signature would then be rejected by
+    /// whichever side disagrees, and no positive vector would catch it.
+    ///
+    /// The inputs are `V1_R` and `V1_E` so the vector sits with the rest of
+    /// the suite rather than as an unrelated constant.
+    #[test]
+    fn challenge_parity_vector() {
+        assert!(
+            schnorr_challenge(V1_R, V1_E) == 0x559ef2d51337e4d61cb9f2fef4c1dcb0fa0d790d30ccd76ff2a39b1e7a35df5,
+            "Schnorr challenge must match the host implementation",
+        );
+    }
+
+    /// The challenge is order-sensitive.
+    ///
+    /// `poseidon_hash_span([a, b])` is not symmetric, and a verifier that
+    /// hashed `(r, m)` as `(m, r)` would agree on this one self-consistent
+    /// value while disagreeing with the circuit everywhere else.
+    #[test]
+    fn challenge_is_order_sensitive() {
+        let a: felt252 = 1;
+        let b: felt252 = 2;
+        assert!(schnorr_challenge(a, b) != schnorr_challenge(b, a));
+    }
 
     // Vectors from an independent pure-Python implementation of the STARK curve
     // (y^2 = x^3 + x + beta over p = 2^251 + 17*2^192 + 1). That implementation

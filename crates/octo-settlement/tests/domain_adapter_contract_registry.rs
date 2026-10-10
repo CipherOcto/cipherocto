@@ -61,7 +61,7 @@ fn no_bare_to_string_in_storage_modules() {
     let settlement = Path::new(manifest_dir).join("../octo-settlement/src");
 
     for root in [&sm_engine, &settlement] {
-        for entry in walk_rs(root) {
+        for entry in walk_rs_checked(root) {
             // R5.5 fix: structural Layer C non-DOMAIN-adapter
             // exemption (R4.5), now using shared `is_domain_adapter`
             // helper (R5-L/R5-S) so the rule is defined ONCE for both
@@ -187,7 +187,7 @@ fn no_bare_format_e_in_storage_modules() {
     let sm_engine = Path::new(manifest_dir).join("../quota-router-sm-engine/src");
 
     for root in [&settlement, &audit_storage, &sm_engine] {
-        for entry in walk_rs(root) {
+        for entry in walk_rs_checked(root) {
             // R5.5 fix: apply the same Layer C non-DOMAIN-adapter
             // exemption here as the bare-`.to_string()` test uses
             // (via the shared `is_layer_c_non_domain_adapter` helper).
@@ -256,6 +256,23 @@ fn is_layer_c_non_domain_adapter(entry: &Path, sm_engine: &Path) -> bool {
     let is_domain_adapter = is_current_domain_adapter || is_future_domain_adapter_under_storage;
     // Exempt = Layer C AND not DOMAIN adapter.
     in_sm_engine && !is_domain_adapter
+}
+
+/// `walk_rs` returns an empty vec for a directory it cannot read, so a root
+/// that has been renamed or moved is indistinguishable from a clean tree —
+/// and this guard reports success in both cases.
+///
+/// Verified: repointing a scanned root at a path that does not exist left every
+/// test here green, including the ones that walk. Proved, not argued.
+fn walk_rs_checked(dir: &Path) -> Vec<std::path::PathBuf> {
+    let files = walk_rs(dir);
+    assert!(
+        !files.is_empty(),
+        "no Rust sources found under {} — the path is wrong, so this guard is \
+         passing vacuously",
+        dir.display()
+    );
+    files
 }
 
 fn walk_rs(dir: &Path) -> Vec<std::path::PathBuf> {

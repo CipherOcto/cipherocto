@@ -70,7 +70,7 @@ fn no_bare_format_e_in_storage_modules() {
     let sm_engine = Path::new(manifest_dir).join("../quota-router-sm-engine/src");
 
     for root in [&audit_storage, &sm_engine] {
-        for entry in walk_rs(root) {
+        for entry in walk_rs_checked(root) {
             let contents = std::fs::read_to_string(&entry).expect("read");
             for line in contents.lines() {
                 for pattern in BARE_FORMAT_PATTERNS {
@@ -95,6 +95,23 @@ fn no_bare_format_e_in_storage_modules() {
             }
         }
     }
+}
+
+/// `walk_rs` returns an empty vec for a directory it cannot read, so a root
+/// that has been renamed or moved is indistinguishable from a clean tree —
+/// and this guard reports success in both cases.
+///
+/// Verified: repointing a scanned root at a path that does not exist left every
+/// test here green, including the ones that walk. Proved, not argued.
+fn walk_rs_checked(dir: &Path) -> Vec<std::path::PathBuf> {
+    let files = walk_rs(dir);
+    assert!(
+        !files.is_empty(),
+        "no Rust sources found under {} — the path is wrong, so this guard is \
+         passing vacuously",
+        dir.display()
+    );
+    files
 }
 
 fn walk_rs(dir: &Path) -> Vec<std::path::PathBuf> {

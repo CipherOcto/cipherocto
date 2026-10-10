@@ -2,7 +2,7 @@
 //! §Module Layout).
 //!
 //! This facade re-exports the substrate surface (`octo-governance-core`)
-//! verbatim. IO functions (`snapshot`, `attest`, `vote`) live at the
+//! verbatim. IO functions (`snapshot`, `attest_v2`, `vote_v2`) live at the
 //! DOMAIN layer in `octo-network::mon::governance` per RFC-0013 §Scope.
 //!
 //! ## Snapshot projection (RFC-0011-g Phase 1)
@@ -32,7 +32,7 @@ pub mod vote;
 
 #[allow(deprecated)]
 pub use attest::{
-    attest, attest_v2, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
+    attest_v2, AttestationKind, AttestationKindResolution, AttestationLog, CapabilitySigner,
 };
 pub use cache::{OctoGovernanceSnapshotCache, SnapshotCacheKey, SNAPSHOT_CACHE_CAPACITY};
 pub use error::GovernanceSnapshotError;
@@ -54,7 +54,4 @@ pub use snapshot::{
     snapshot, ProposalFilter, ProposalSummary, SnapshotRef, SnapshotView, TTL_SNAPSHOT_SECONDS,
 };
 #[allow(deprecated)]
-pub use vote::{
-    blake3_256 as blake3_256_vote, vote, vote_v2, CapabilityRegistry, QuorumProjection, VoteChoice,
-    VoteLog,
-};
+pub use vote::{vote_v2, CapabilityRegistry, QuorumProjection, VoteChoice, VoteLog};

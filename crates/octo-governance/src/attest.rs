@@ -15,8 +15,11 @@
 //!   holding private-key material locally. The trait is defined
 //!   here so the substrate does not need to depend on
 //!   `octo-wallet` directly (Layer B independence).
-//! - [`attest`] — `pub fn attest(...) -> Result<AttestationReceipt,
-//!   GovernanceError>` per RFC-0011-g §7.4 substrate signature.
+//! - [`attest_v2`] — `pub fn attest_v2(...) -> Result<AttestationReceipt,
+//!   GovernanceError>` per RFC-0011-g §7.4 stateless substrate
+//!   signature. The pre-session `attest` was removed: it built the
+//!   canonical envelope byte-for-byte identically, so any fix to one
+//!   would have silently diverged from the other.
 //!
 //! ## Layer discipline
 //!
@@ -28,7 +31,7 @@
 //!
 //! ## Prereq gate (RFC-0011-g §Compatibility Mixed-Version)
 //!
-//! The `attest` function returns
+//! The `attest_v2` function returns
 //! `GovernanceError::PrereqNotAccepted { rfc_ref }` until
 //! `RFC-0855p-d` reaches Accepted. The CLI surfaces this as
 //! `OctoCliError::PrereqNotAccepted` (exit 38) per RFC-0011-g
@@ -190,122 +193,6 @@ impl AttestationLog {
         entries.insert(pk, receipt);
         Ok(())
     }
-}
-
-/// Append a new attestation to the ledger per RFC-0011-g
-/// §7.4 substrate signature. The canonical envelope bytes are
-/// `subject_did || kind_ref || evidence_hash || signer_did ||
-/// expires_at_unix_be || snapshot_id_be || allow_stale_bool`.
-/// The PK is `BLAKE3-256` of those bytes; the
-/// `AttestationReceipt.attestation_id` is set to the PK for
-/// downstream tooling convenience.
-///
-/// Returns `GovernanceError::UnknownAttestationKind` for
-/// unrecognized `kind_ref`; `GovernanceError::PrereqNotAccepted`
-/// for sub-group subjects until `RFC-0855p-d` reaches Accepted
-/// (gate enforced via [`prereq_attest_subgroup_check`] before
-/// the envelope is built).
-///
-/// ## Deprecation
-///
-/// This 11-parameter surface predates the RFC-0011-g §7.4
-/// stateless caller-owned-session design. New callers should use
-/// [`attest_v2`] which accepts `&GovernanceSession` and reads
-/// the clock from the session.
-#[deprecated(
-    since = "0.0.0",
-    note = "use attest_v2 with a GovernanceSession (RFC-0011-g §7.4 stateless substrate signature)"
-)]
-#[allow(clippy::too_many_arguments)]
-pub fn attest(
-    log: &AttestationLog,
-    subject_did: &str,
-    kind_ref: &str,
-    evidence: Option<&[u8]>,
-    evidence_hash: Option<[u8; 32]>,
-    expires_at_unix: Option<u64>,
-    snapshot_id: Option<&[u8; 32]>,
-    allow_stale: bool,
-    signer: &dyn CapabilitySigner,
-    appended_at_unix: u64,
-) -> Result<AttestationReceipt, GovernanceError> {
-    // Sub-group prereq gate (RFC-0855p-d). Subject DIDs prefixed
-    // `did:octo:subgroup:` are gated until `RFC-0855p-d`
-    // reaches Accepted.
-    prereq_attest_subgroup_check(subject_did)?;
-
-    // Derived, not supplied — see `attest_v2` (mission `0009-e9`).
-    let signer_did = signer.did();
-
-    // `kind_ref` resolution — TypedDiscriminator.
-    let _kind = resolve_kind(kind_ref)?;
-
-    // `evidence` XOR `evidence_hash` invariant: the substrate
-    // accepts exactly one of the two, never both, per RFC-0011-g
-    // §7.4 substrate signature semantics.
-    let computed_evidence_hash = match (evidence, evidence_hash) {
-        (Some(bytes), None) => blake3_256(bytes),
-        (None, Some(hash)) => hash,
-        (Some(_), Some(_)) => {
-            return Err(GovernanceError::InvalidArgument {
-                reason: "exactly one of `evidence` and `evidence_hash` must be supplied"
-                    .to_string(),
-            });
-        }
-        (None, None) => {
-            return Err(GovernanceError::InvalidArgument {
-                reason: "one of `evidence` or `evidence_hash` must be supplied".to_string(),
-            });
-        }
-    };
-
-    // Canonical envelope bytes (substrate-faithful).
-    let mut envelope: Vec<u8> = Vec::new();
-    envelope.extend_from_slice(subject_did.as_bytes());
-    envelope.push(0x00);
-    envelope.extend_from_slice(kind_ref.as_bytes());
-    envelope.push(0x00);
-    envelope.extend_from_slice(&computed_evidence_hash);
-    envelope.extend_from_slice(signer_did.as_bytes());
-    envelope.push(0x00);
-    if let Some(exp) = expires_at_unix {
-        envelope.extend_from_slice(&exp.to_be_bytes());
-    }
-    envelope.push(0x00);
-    if let Some(snap) = snapshot_id {
-        envelope.extend_from_slice(snap);
-    }
-    envelope.push(0x00);
-    envelope.push(u8::from(allow_stale));
-
-    let attestation_id = blake3_256(&envelope);
-
-    // Signer signs the canonical envelope (HSM-bound). The
-    // signature is recorded for audit but not currently in the
-    // `AttestationReceipt` (audit lives in the substrate's
-    // `governance_envelopes` table per RFC-0862 §Data
-    // Structures; the Stoolap persistence substrate lands as a
-    // follow-on).
-    let _signature = signer
-        .sign_envelope(&envelope)
-        .map_err(|reason| GovernanceError::Internal { reason })?;
-
-    let receipt = AttestationReceipt {
-        attestation_id,
-        subject_did: subject_did.to_string(),
-        kind_ref: kind_ref.to_string(),
-        signer_did,
-        evidence_hash: computed_evidence_hash,
-        expires_at_unix,
-        appended_at_unix,
-        overrode_staleness_at_unix: if allow_stale {
-            Some(appended_at_unix)
-        } else {
-            None
-        },
-    };
-    log.append(receipt.clone())?;
-    Ok(receipt)
 }
 
 /// Sub-group attestation prereq gate (RFC-0855p-d). Until
@@ -496,46 +383,18 @@ mod tests {
         "did:octo:z6MkSignerXyzABCDEF1234567890abcdef1234567890ab"
     }
 
-    #[test]
-    fn attest_a1_happy_path_appends_receipt() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let receipt = attest(
-            &log,
-            subject_did(),
-            "route-quality:uptime-30d",
-            None,
-            Some([0x42; 32]),
-            Some(1_900_000_000),
-            Some(&[0xCD; 32]),
-            false,
-            &signer,
-            1_700_000_000,
-        )
-        .expect("happy path should succeed");
-        assert_eq!(receipt.subject_did, subject_did());
-        assert_eq!(receipt.kind_ref, "route-quality:uptime-30d");
-        assert_eq!(receipt.signer_did, signer_did());
-        assert_eq!(receipt.evidence_hash, [0x42; 32]);
-        assert_eq!(receipt.expires_at_unix, Some(1_900_000_000));
-        assert_eq!(receipt.appended_at_unix, 1_700_000_000);
-        assert_eq!(receipt.overrode_staleness_at_unix, None);
-        // PK = BLAKE3-256(canonical envelope); ledger contains it.
-        assert_eq!(log.len().expect("unpoisoned"), 1);
-        assert_eq!(
-            log.get(&receipt.attestation_id)
-                .expect("unpoisoned")
-                .as_ref(),
-            Some(&receipt)
-        );
-    }
+    // These five vectors cover behaviour `attest_v2` did not otherwise
+    // exercise. The happy path, unknown-kind refusal and XOR invariant that
+    // the pre-session `attest` also carried are already covered by
+    // `attest_a9` / `attest_a10` / `attest_a11` and are deliberately NOT
+    // duplicated here: two vectors for one behaviour is one too many, and
+    // the second one goes stale silently when the first is edited.
 
     #[test]
-    fn attest_a2_duplicate_attestation_id_rejected() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let first = attest(
-            &log,
+    fn attest_a14_duplicate_attestation_id_rejected() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let first = attest_v2(
+            &session,
             subject_did(),
             "route-quality:uptime-30d",
             None,
@@ -543,13 +402,14 @@ mod tests {
             Some(1_900_000_000),
             Some(&[0xCD; 32]),
             false,
-            &signer,
-            1_700_000_000,
+            &*signer,
         )
         .expect("first append should succeed");
-        // Same envelope → same PK → duplicate.
-        let err = attest(
-            &log,
+        // Same envelope → same PK → duplicate. The clock is not part of
+        // the canonical envelope, so a session-scoped clock produces the
+        // same PK on the second call as a per-call timestamp would.
+        let err = attest_v2(
+            &session,
             subject_did(),
             "route-quality:uptime-30d",
             None,
@@ -557,8 +417,7 @@ mod tests {
             Some(1_900_000_000),
             Some(&[0xCD; 32]),
             false,
-            &signer,
-            1_700_000_001,
+            &*signer,
         )
         .expect_err("duplicate attestation_id must error");
         match err {
@@ -568,41 +427,14 @@ mod tests {
             other => panic!("expected DuplicateAttestation, got {other:?}"),
         }
         // Ledger state unchanged after error (still exactly 1 entry).
-        assert_eq!(log.len().expect("unpoisoned"), 1);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 1);
     }
 
     #[test]
-    fn attest_a3_unknown_kind_ref_rejected() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let err = attest(
-            &log,
-            subject_did(),
-            "novel:kind:not-registered",
-            None,
-            Some([0x42; 32]),
-            None,
-            None,
-            false,
-            &signer,
-            1_700_000_000,
-        )
-        .expect_err("unknown kind_ref must error");
-        match err {
-            GovernanceError::UnknownAttestationKind { kind_ref } => {
-                assert_eq!(kind_ref, "novel:kind:not-registered");
-            }
-            other => panic!("expected UnknownAttestationKind, got {other:?}"),
-        }
-        assert_eq!(log.len().expect("unpoisoned"), 0);
-    }
-
-    #[test]
-    fn attest_a4_subgroup_subject_did_gated() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let err = attest(
-            &log,
+    fn attest_a15_subgroup_subject_did_gated() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let err = attest_v2(
+            &session,
             "did:octo:subgroup:abc123",
             "route-quality:uptime-30d",
             None,
@@ -610,8 +442,7 @@ mod tests {
             None,
             None,
             false,
-            &signer,
-            1_700_000_000,
+            &*signer,
         )
         .expect_err("subgroup subject DID must fail-closed until RFC-0855p-d accepted");
         match err {
@@ -620,45 +451,14 @@ mod tests {
             }
             other => panic!("expected PrereqNotAccepted, got {other:?}"),
         }
-        assert_eq!(log.len().expect("unpoisoned"), 0);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 0);
     }
 
     #[test]
-    fn attest_a5_evidence_xor_evidence_hash_invariant() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        // Both supplied → invalid.
-        let err = attest(
-            &log,
-            subject_did(),
-            "route-quality:uptime-30d",
-            Some(&[0x01, 0x02, 0x03]),
-            Some([0xAA; 32]),
-            None,
-            None,
-            false,
-            &signer,
-            1_700_000_000,
-        )
-        .expect_err("both evidence + evidence_hash must error");
-        match err {
-            GovernanceError::InvalidArgument { reason } => {
-                assert!(
-                    reason.contains("exactly one"),
-                    "reason should describe XOR invariant: {reason}"
-                );
-            }
-            other => panic!("expected InvalidArgument, got {other:?}"),
-        }
-        assert_eq!(log.len().expect("unpoisoned"), 0);
-    }
-
-    #[test]
-    fn attest_a6_neither_evidence_nor_hash_supplied() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let err = attest(
-            &log,
+    fn attest_a16_neither_evidence_nor_hash_supplied() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let err = attest_v2(
+            &session,
             subject_did(),
             "route-quality:uptime-30d",
             None,
@@ -666,28 +466,24 @@ mod tests {
             None,
             None,
             false,
-            &signer,
-            1_700_000_000,
+            &*signer,
         )
         .expect_err("missing both evidence and evidence_hash must error");
         match err {
-            GovernanceError::InvalidArgument { reason } => {
-                assert!(
-                    reason.contains("one of"),
-                    "reason should describe required-field invariant: {reason}"
-                );
-            }
+            GovernanceError::InvalidArgument { reason } => assert!(
+                reason.contains("one of"),
+                "reason should describe required-field invariant: {reason}"
+            ),
             other => panic!("expected InvalidArgument, got {other:?}"),
         }
-        assert_eq!(log.len().expect("unpoisoned"), 0);
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 0);
     }
 
     #[test]
-    fn attest_a7_allow_stale_records_overrode_staleness() {
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
-        let receipt = attest(
-            &log,
+    fn attest_a17_allow_stale_records_overrode_staleness() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let receipt = attest_v2(
+            &session,
             subject_did(),
             "route-quality:uptime-30d",
             None,
@@ -695,24 +491,23 @@ mod tests {
             Some(1_900_000_000),
             None,
             true,
-            &signer,
-            1_700_000_000,
+            &*signer,
         )
         .expect("allow_stale=true should still succeed");
+        // The override is stamped from the session clock, so this also
+        // pins that the v2 path reads the clock from the session rather
+        // than from a caller argument.
         assert_eq!(receipt.overrode_staleness_at_unix, Some(1_700_000_000));
     }
 
     #[test]
-    fn attest_a8_evidence_bytes_hash_to_supplied_hash() {
-        // evidence XOR evidence_hash invariant: when only evidence
-        // is supplied, the substrate computes BLAKE3-256(evidence)
-        // and stamps it onto the receipt. Same evidence bytes
-        // must produce same attestation_id (deterministic PK).
-        let log = AttestationLog::new();
-        let signer = FixedSigner::new();
+    fn attest_a18_evidence_bytes_hash_to_supplied_hash() {
+        // When only evidence is supplied the substrate computes
+        // BLAKE3-256(evidence) and stamps it onto the receipt.
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
         let evidence: &[u8] = b"route-quality measurements for may 2026";
-        let r1 = attest(
-            &log,
+        let r1 = attest_v2(
+            &session,
             subject_did(),
             "route-quality:uptime-30d",
             Some(evidence),
@@ -720,15 +515,17 @@ mod tests {
             None,
             None,
             false,
-            &signer,
-            1_700_000_000,
+            &*signer,
         )
         .expect("evidence-only path should succeed");
-        let expected_hash = blake3_256(evidence);
-        assert_eq!(r1.evidence_hash, expected_hash);
-        assert_eq!(log.len().expect("unpoisoned"), 1);
+        assert_eq!(r1.evidence_hash, blake3_256(evidence));
+        assert_eq!(session.attestation_log().len().expect("unpoisoned"), 1);
         assert_eq!(
-            log.get(&r1.attestation_id).expect("unpoisoned").as_ref(),
+            session
+                .attestation_log()
+                .get(&r1.attestation_id)
+                .expect("unpoisoned")
+                .as_ref(),
             Some(&r1)
         );
     }
@@ -934,7 +731,7 @@ mod tests {
     /// regardless of which key signed. The parameter is gone; this vector
     /// pins that the only remaining source is the signer itself.
     #[test]
-    fn attest_a9_receipt_carries_the_signers_own_did() {
+    fn attest_a13_receipt_carries_the_signers_own_did() {
         struct DistinctDidSigner;
 
         impl CapabilitySigner for DistinctDidSigner {

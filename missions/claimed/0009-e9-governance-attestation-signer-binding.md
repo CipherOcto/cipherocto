@@ -136,6 +136,41 @@ callers, and says a new caller that skips prefix composition is a defect.
 What this mission actually removes is the last caller that was signing _bare
 without having composed a prefix itself_.
 
+## §Follow-on: the parallel surfaces this exposed
+
+The root cause named in §Why the trait is the root was duplicated code, so the
+follow-on removed it rather than leaving it documented.
+
+`attest` and `attest_v2` assembled the canonical envelope **byte for byte
+identically**; `vote` and `vote_v2` did the same. Two copies of a canonical
+encoding in one crate is a divergence waiting to happen: a fix applied to one
+is invisible in the other, and both stay green. Neither pair member was ever
+migrated coherently, which is how one attribution defect survived in four
+places at once.
+
+Both pre-session entry points are now removed rather than deprecated — nothing
+is live, and a deprecated entry point is still an entry point. Removing them
+removes the duplication _by construction_, since one function cannot drift
+from itself.
+
+What survived that check:
+
+- **Vectors, not just code.** The pre-session tests carried five behaviours
+  `attest_v2` did not otherwise exercise: duplicate PK, subgroup gate,
+  neither-evidence-supplied, the `allow_stale` override, and evidence hashing.
+  Those migrated onto the session path and were mutation-checked against the
+  implementation rather than merely re-run. The three that duplicated existing
+  vectors were dropped instead of carried along.
+- **A second duplicate, found by accident.** `vote` carried its own
+  byte-identical `blake3_256`, re-exported as `blake3_256_vote` alongside
+  `attest::blake3_256` so a caller could reach either. It had no external
+  user. Deleting `vote` exposed it; it is now shared.
+
+The same trait name collision with `octo_cap_macaroon::CapabilitySigner`
+remains open and is the natural next step. Renaming the governance trait is
+mechanical but reaches the CLI, so it wants its own diff rather than riding
+along here.
+
 ## §What must not be done
 
 - **Do not add an `algorithm_id()` to the governance trait in this mission.** It

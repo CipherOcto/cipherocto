@@ -13,8 +13,12 @@
 //!   CapabilitySigner>>` lookup. The CLI populates this at startup
 //!   from the wallet's capability set. Unknown `voter_cap_id`
 //!   fails-closed with `GovernanceError::UnknownCapability`.
-//! - [`vote`] — `pub fn vote(...) -> Result<VoteReceipt,
-//!   GovernanceError>` per RFC-0011-g §7.4 substrate signature.
+//! - [`vote_v2`] — `pub fn vote_v2(...) -> Result<(VoteReceipt,
+//!   QuorumProjection), GovernanceError>` per RFC-0011-g §7.4
+//!   stateless substrate signature. The pre-session `vote` was
+//!   removed: it built the canonical envelope byte-for-byte
+//!   identically, so any fix to one would have silently diverged
+//!   from the other.
 //!
 //! ## Layer discipline
 //!
@@ -26,7 +30,7 @@
 //!
 //! ## Prereq gate (RFC-0011-g §Compatibility Mixed-Version)
 //!
-//! The `vote` function returns
+//! The `vote_v2` function returns
 //! `GovernanceError::PrereqNotAccepted { rfc_ref }` for
 //! sub-group-scoped proposals until `RFC-0855p-d` reaches
 //! Accepted. The CLI surfaces this as
@@ -37,12 +41,11 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use blake3::Hasher;
 use octo_governance_core::tally_quorum;
 use octo_governance_core::{CapabilityToken, GovernanceError, VoteReceipt};
 use serde::{Deserialize, Serialize};
 
-use crate::attest::CapabilitySigner;
+use crate::attest::{blake3_256, CapabilitySigner};
 use crate::session::GovernanceSession;
 
 /// Vote choice (RFC-0011-g §Vote Choice + §Command Taxonomy).
@@ -300,159 +303,6 @@ pub struct QuorumProjection {
     pub quorum_required_bps: u32,
 }
 
-/// Cast a vote per RFC-0011-g §7.4 substrate signature. The
-/// canonical envelope bytes are `voter_did || 0x00 || proposal_id
-/// || 0x00 || choice_str || 0x00 || weight_be || 0x00 ||
-/// voter_cap_id || 0x00 || snapshot_id || 0x00 ||
-/// allow_stale_bool`. Every field is preceded by an explicit
-/// `0x00` delimiter — the parsing layer does NOT rely on
-/// implicit fixed-length separators (32-byte PK, 4-byte
-/// `u32_be`). The PK is `BLAKE3-256` of those bytes; the
-/// `VoteReceipt.vote_id` is set to the PK for downstream tooling
-/// convenience.
-///
-/// Returns `GovernanceError::UnknownCapability` for unregistered
-/// `voter_cap_id`; `GovernanceError::PrereqNotAccepted` for
-/// sub-group-scoped proposals until `RFC-0855p-d` reaches Accepted
-/// (gate enforced via [`prereq_vote_subgroup_check`] before the
-/// envelope is built); `GovernanceError::DuplicateVote` for repeat
-/// voters; `GovernanceError::InvalidArgument` for invalid
-/// `weight_bps` (> 10_000) or unrecognized `choice`.
-///
-/// `quorum_required_bps` is recorded on the receipt as the
-/// snapshot policy at the time of voting; the substrate does not
-/// enforce a threshold — the CLI does per RFC-0011-g §Quorum
-/// Threshold.
-///
-/// ## Deprecation
-///
-/// This 10-parameter surface predates the RFC-0011-g §7.4
-/// stateless caller-owned-session design (the substrate
-/// accepts state via explicit arguments). New callers should
-/// use [`vote_v2`] which accepts `&GovernanceSession` +
-/// `&CapabilityToken` and reads state from the session.
-#[deprecated(
-    since = "0.0.0",
-    note = "use vote_v2 with a GovernanceSession and CapabilityToken (RFC-0011-g §7.4 stateless substrate signature)"
-)]
-#[allow(clippy::too_many_arguments)]
-pub fn vote(
-    log: &VoteLog,
-    registry: &CapabilityRegistry,
-    proposal_id: [u8; 32],
-    voter_did: &str,
-    choice: VoteChoice,
-    weight_bps: u32,
-    voter_cap_id: &str,
-    snapshot_id: Option<&[u8; 32]>,
-    allow_stale: bool,
-    recorded_at_unix: u64,
-) -> Result<(VoteReceipt, QuorumProjection), GovernanceError> {
-    // Sub-group prereq gate (RFC-0855p-d). Proposal IDs prefixed
-    // `did:octo:subgroup:` (carried via the proposal_id bytes)
-    // are gated until `RFC-0855p-d` reaches Accepted. Substrate
-    // does not parse the proposal_id bytes — the CLI passes the
-    // full 32-byte proposal_id derived from the proposal content.
-    // The gate is keyed on `voter_did` for Phase 2 simplicity
-    // (the CLI surfaces the prereq error on the voter's behalf).
-    prereq_vote_subgroup_check(voter_did)?;
-
-    // Capability verification — unknown voter_cap_id fails-closed.
-    let _signer = registry.resolve(voter_cap_id)?;
-
-    // Same binding as `vote_v2`. This entry point is deprecated but still
-    // public, so leaving the check off it would keep a working forgery
-    // reachable (mission `0009-e9`).
-    let signer_did = _signer.did();
-    if voter_did != signer_did {
-        return Err(GovernanceError::InvalidArgument {
-            reason: format!(
-                "voter DID {voter_did} does not match the registered signer's DID {signer_did}"
-            ),
-        });
-    }
-
-    // weight_bps invariant — caller must clamp at the boundary.
-    if weight_bps > 10_000 {
-        return Err(GovernanceError::InvalidArgument {
-            reason: format!("weight_bps {weight_bps} exceeds 10_000 (100%)"),
-        });
-    }
-
-    // Canonical envelope bytes (substrate-faithful). Every field
-    // is preceded by an explicit `0x00` delimiter; the parsing
-    // layer does NOT rely on implicit fixed-length separators
-    // (32-byte `proposal_id`, 4-byte `weight_bps`).
-    let choice_str = choice.as_str();
-    let mut envelope: Vec<u8> = Vec::new();
-    envelope.extend_from_slice(voter_did.as_bytes());
-    envelope.push(0x00);
-    envelope.extend_from_slice(&proposal_id);
-    envelope.push(0x00);
-    envelope.extend_from_slice(choice_str.as_bytes());
-    envelope.push(0x00);
-    envelope.extend_from_slice(&weight_bps.to_be_bytes());
-    envelope.push(0x00);
-    envelope.extend_from_slice(voter_cap_id.as_bytes());
-    envelope.push(0x00);
-    if let Some(snap) = snapshot_id {
-        envelope.extend_from_slice(snap);
-    }
-    envelope.push(0x00);
-    envelope.push(u8::from(allow_stale));
-
-    let vote_id = blake3_256(&envelope);
-
-    // Signer signs the canonical envelope (HSM-bound). Recorded
-    // for audit but not currently in the `VoteReceipt` (audit
-    // lives in the substrate's governance_envelopes table per
-    // RFC-0862 §Data Structures).
-    let _signature = _signer
-        .sign_envelope(&envelope)
-        .map_err(|reason| GovernanceError::Internal { reason })?;
-
-    let receipt = VoteReceipt {
-        vote_id,
-        proposal_id,
-        voter_did: voter_did.to_string(),
-        choice: choice_str.to_string(),
-        weight_applied: weight_bps,
-        voter_cap_id: voter_cap_id.to_string(),
-        recorded_at_unix,
-        overrode_staleness_at_unix: if allow_stale {
-            Some(recorded_at_unix)
-        } else {
-            None
-        },
-    };
-
-    // Append first; the duplicate-vote check is the substrate
-    // invariant for voter uniqueness within a proposal.
-    log.append(receipt.clone())?;
-
-    // Quorum projection (post-append snapshot).
-    let tally = log.tally_snapshot(&proposal_id)?;
-    let (approval_bps, rejection_bps) = tally_quorum(&tally)?;
-    let projection = QuorumProjection {
-        approval_bps,
-        rejection_bps,
-        quorum_required_bps: 10_000,
-    };
-
-    Ok((receipt, projection))
-}
-
-/// Compute `BLAKE3-256(bytes)` returning a 32-byte array.
-#[must_use]
-pub fn blake3_256(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(bytes);
-    let out = hasher.finalize();
-    let mut pk = [0u8; 32];
-    pk.copy_from_slice(out.as_bytes());
-    pk
-}
-
 /// Cast a vote per RFC-0011-g §7.4 stateless substrate signature.
 ///
 /// ## Substrate surface (new)
@@ -691,106 +541,36 @@ mod tests {
         [0x42; 32]
     }
 
-    #[test]
-    fn vote_v1_happy_path_records_receipt() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register("voter-cap-001".to_string(), Arc::new(TestSigner::new()))
-            .expect("register unpoisoned");
-        let (receipt, projection) = vote(
-            &log,
-            &registry,
-            proposal_id(),
-            voter_did(),
-            VoteChoice::Yes,
-            5000,
-            "voter-cap-001",
-            Some(&[0xAA; 32]),
-            false,
-            1_700_000_000,
-        )
-        .expect("happy path should succeed");
-        assert_eq!(receipt.voter_did, voter_did());
-        assert_eq!(receipt.proposal_id, proposal_id());
-        assert_eq!(receipt.choice, "yes");
-        assert_eq!(receipt.weight_applied, 5000);
-        assert_eq!(receipt.voter_cap_id, "voter-cap-001");
-        assert_eq!(receipt.recorded_at_unix, 1_700_000_000);
-        assert_eq!(receipt.overrode_staleness_at_unix, None);
-        assert_eq!(projection.approval_bps, 5000);
-        assert_eq!(projection.rejection_bps, 0);
-        assert_eq!(projection.quorum_required_bps, 10_000);
-        // Log state.
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 1);
-        assert_eq!(log.proposal_count().expect("unpoisoned"), 1);
-        assert_eq!(
-            log.get(&proposal_id(), voter_did())
-                .expect("unpoisoned")
-                .as_ref(),
-            Some(&receipt)
-        );
-    }
+    // The pre-session `vote` built the canonical envelope byte-for-byte
+    // identically to `vote_v2`, so these vectors migrated rather than
+    // disappeared. The happy path and unknown-capability refusal it also
+    // carried are already covered by `vote_v9` / `vote_v10` and are not
+    // duplicated here.
 
     #[test]
-    fn vote_v2_unknown_capability_rejected() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        // No cap registered.
-        let err = vote(
-            &log,
-            &registry,
+    fn vote_v16_duplicate_voter_rejected() {
+        let session = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_000);
+        let first = vote_v2(
+            &session,
             proposal_id(),
-            voter_did(),
             VoteChoice::Yes,
-            5000,
-            "voter-cap-does-not-exist",
+            &voter_token(),
+            None,
             None,
             false,
-            1_700_000_000,
-        )
-        .expect_err("unknown capability must error");
-        match err {
-            GovernanceError::UnknownCapability { voter_cap_id } => {
-                assert_eq!(voter_cap_id, "voter-cap-does-not-exist");
-            }
-            other => panic!("expected UnknownCapability, got {other:?}"),
-        }
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 0);
-    }
-
-    #[test]
-    fn vote_v3_duplicate_voter_rejected() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register("voter-cap-001".to_string(), Arc::new(TestSigner::new()))
-            .expect("register unpoisoned");
-        let first = vote(
-            &log,
-            &registry,
-            proposal_id(),
-            voter_did(),
-            VoteChoice::Yes,
-            5000,
-            "voter-cap-001",
-            None,
-            false,
-            1_700_000_000,
         )
         .expect("first vote should succeed");
-        // Same (proposal_id, voter_did) → duplicate.
-        let err = vote(
-            &log,
-            &registry,
+        // Same (proposal_id, voter_did) → duplicate, even though the
+        // choice and the weight differ.
+        let second_token = CapabilityToken::new("voter-cap-001", voter_did(), 6_000);
+        let err = vote_v2(
+            &session,
             proposal_id(),
-            voter_did(),
-            VoteChoice::No, // different choice — still duplicate
-            6000,
-            "voter-cap-001",
+            VoteChoice::No,
+            &second_token,
+            None,
             None,
             false,
-            1_700_000_001,
         )
         .expect_err("duplicate voter for same proposal must error");
         match err {
@@ -804,27 +584,36 @@ mod tests {
             other => panic!("expected DuplicateVote, got {other:?}"),
         }
         // Ledger state unchanged (still 1 voter for this proposal).
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 1);
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            1
+        );
     }
 
     #[test]
-    fn vote_v4_subgroup_voter_did_gated() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register("voter-cap-001".to_string(), Arc::new(TestSigner::new()))
+    fn vote_v17_subgroup_voter_did_gated() {
+        // The registered signer reports the SAME subgroup DID, so this
+        // vector isolates the prereq gate. Without that, the signer
+        // binding added in mission `0009-e9` would also reject it and the
+        // vector would pass for the wrong reason.
+        const SUBGROUP: &str = "did:octo:subgroup:abc123";
+        let session = GovernanceSession::new(SUBGROUP, Arc::new(FixedClock::new(1_700_000_000)));
+        session
+            .register_capability("voter-cap-001", Arc::new(TestSigner::with_did(SUBGROUP)))
             .expect("register unpoisoned");
-        let err = vote(
-            &log,
-            &registry,
+        let token = CapabilityToken::new("voter-cap-001", SUBGROUP, 5_000);
+
+        let err = vote_v2(
+            &session,
             proposal_id(),
-            "did:octo:subgroup:abc123",
             VoteChoice::Yes,
-            5000,
-            "voter-cap-001",
+            &token,
+            None,
             None,
             false,
-            1_700_000_000,
         )
         .expect_err("subgroup voter DID must fail-closed until RFC-0855p-d accepted");
         match err {
@@ -833,27 +622,27 @@ mod tests {
             }
             other => panic!("expected PrereqNotAccepted, got {other:?}"),
         }
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 0);
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            0
+        );
     }
 
     #[test]
-    fn vote_v5_weight_over_10k_rejected() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register("voter-cap-001".to_string(), Arc::new(TestSigner::new()))
-            .expect("register unpoisoned");
-        let err = vote(
-            &log,
-            &registry,
+    fn vote_v18_weight_over_10k_rejected() {
+        let session = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_000);
+        let token = CapabilityToken::new("voter-cap-001", voter_did(), 10_001);
+        let err = vote_v2(
+            &session,
             proposal_id(),
-            voter_did(),
             VoteChoice::Yes,
-            10_001,
-            "voter-cap-001",
+            &token,
+            None,
             None,
             false,
-            1_700_000_000,
         )
         .expect_err("weight_bps > 10_000 must error");
         match err {
@@ -865,7 +654,13 @@ mod tests {
             }
             other => panic!("expected InvalidArgument, got {other:?}"),
         }
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 0);
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            0
+        );
     }
 
     #[test]
@@ -899,77 +694,55 @@ mod tests {
     }
 
     #[test]
-    fn vote_v7_tally_snapshot_aggregation() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register(
-                "cap-a".to_string(),
-                Arc::new(TestSigner::with_did("did:octo:voter-a")),
-            )
-            .expect("register unpoisoned");
-        registry
-            .register(
-                "cap-b".to_string(),
-                Arc::new(TestSigner::with_did("did:octo:voter-b")),
-            )
-            .expect("register unpoisoned");
-        // Voter A: approve 3000 bps
-        vote(
-            &log,
-            &registry,
-            proposal_id(),
-            "did:octo:voter-a",
-            VoteChoice::Yes,
-            3000,
-            "cap-a",
-            None,
-            false,
-            1_700_000_000,
-        )
-        .expect("voter-a vote should succeed");
-        // Voter B: reject 2000 bps
-        vote(
-            &log,
-            &registry,
-            proposal_id(),
-            "did:octo:voter-b",
-            VoteChoice::No,
-            2000,
-            "cap-b",
-            None,
-            false,
-            1_700_000_001,
-        )
-        .expect("voter-b vote should succeed");
-        // Snapshot tally.
-        let tally = log.tally_snapshot(&proposal_id()).expect("unpoisoned");
+    fn vote_v19_tally_snapshot_aggregation() {
+        let session = GovernanceSession::new(voter_did(), Arc::new(FixedClock::new(1_700_000_000)));
+        // One signer per voter: a single key cannot attest to two DIDs,
+        // which the mission `0009-e9` binding enforces.
+        for (cap_id, did) in [("cap-a", "did:octo:voter-a"), ("cap-b", "did:octo:voter-b")] {
+            session
+                .register_capability(cap_id, Arc::new(TestSigner::with_did(did)))
+                .expect("register unpoisoned");
+        }
+        for (cap_id, did, choice, weight) in [
+            ("cap-a", "did:octo:voter-a", VoteChoice::Yes, 3000u32),
+            ("cap-b", "did:octo:voter-b", VoteChoice::No, 2000),
+        ] {
+            let token = CapabilityToken::new(cap_id, did, weight);
+            vote_v2(&session, proposal_id(), choice, &token, None, None, false)
+                .unwrap_or_else(|e| panic!("{did} vote should succeed: {e:?}"));
+        }
+
+        let tally = session
+            .vote_log()
+            .tally_snapshot(&proposal_id())
+            .expect("unpoisoned");
         assert_eq!(tally.len(), 2);
         assert_eq!(tally.get("did:octo:voter-a"), Some(&(3000, true)));
         assert_eq!(tally.get("did:octo:voter-b"), Some(&(2000, false)));
-        assert_eq!(log.voter_count(&proposal_id()).expect("unpoisoned"), 2);
+        assert_eq!(
+            session
+                .vote_log()
+                .voter_count(&proposal_id())
+                .expect("unpoisoned"),
+            2
+        );
     }
 
     #[test]
-    fn vote_v8_allow_stale_records_overrode_staleness() {
-        let log = VoteLog::new();
-        let registry = CapabilityRegistry::new();
-        registry
-            .register("voter-cap-001".to_string(), Arc::new(TestSigner::new()))
-            .expect("register unpoisoned");
-        let (receipt, _) = vote(
-            &log,
-            &registry,
+    fn vote_v20_allow_stale_records_overrode_staleness() {
+        let session = session_with_cap(voter_did(), "voter-cap-001", 1_700_000_000);
+        let (receipt, _) = vote_v2(
+            &session,
             proposal_id(),
-            voter_did(),
             VoteChoice::Yes,
-            5000,
-            "voter-cap-001",
+            &voter_token(),
+            None,
             None,
             true,
-            1_700_000_000,
         )
         .expect("allow_stale=true should still succeed");
+        // Stamped from the session clock, which also pins that the v2
+        // path reads the clock from the session rather than an argument.
         assert_eq!(receipt.overrode_staleness_at_unix, Some(1_700_000_000));
     }
 

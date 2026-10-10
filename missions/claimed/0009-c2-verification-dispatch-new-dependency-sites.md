@@ -16,8 +16,14 @@ metadata:
 
 ## Status
 
-Open (2026-10-09). Claimable after `0009-c-verification-dispatch` lands, so the
-dispatch pattern it establishes is available to copy rather than reinvent.
+**Claimed and implemented (2026-10-09).** `quota-router-storage` 156,
+`octo-settlement-core` 12 lib + 88 integration, `octo-adapter-nostr` 18,
+`octo-cli` security guards 44 — all passing. Clippy clean across
+`quota-router-storage`, `octo-settlement-core`, `octo-adapter-nostr`,
+`octo-cli` and `octo-settlement` with `--all-targets --all-features`.
+
+Both dispatchable sites are done. The nostr site is **decided out of scope**
+rather than left unexamined — see §The nostr decision.
 
 ## Dependencies
 
@@ -70,6 +76,24 @@ would even mean before touching the code.
 
 Do not silently dispatch it because it appeared in the same grep as the two
 sites that genuinely need dispatch.
+
+## The nostr decision
+
+`octo-adapter-nostr`'s site verifies a **nostr event** signature. It is a
+test-local check, and NIP-01 specifies Ed25519 with no alternative — there
+is nothing to select.
+
+`AlgorithmRegistry` answers "which algorithm does _this identity document_
+declare for this key". A nostr event has no CipherOcto identity document
+behind it; its key format is a third-party protocol's, fixed and
+non-negotiable. Routing it through the registry would be a **semantic
+error**, not dispatch.
+
+**Decided out of AC-11's scope**, and recorded rather than omitted. AC#11
+reaches "holder- or capability-signature verification sites"; a nostr event
+is neither. If a genuine holder-signature site is ever added to that crate,
+it **is** in scope and must dispatch — which is why the entry lives in a
+table with a guard rather than in a comment.
 
 ## Acceptance Criteria
 

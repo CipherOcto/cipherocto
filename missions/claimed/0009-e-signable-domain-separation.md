@@ -281,6 +281,20 @@ nine are test fixtures and dev-mode stubs spread across `octo-cap-macaroon`
 scaffolding to update — real work, but not a cross-cutting substrate change,
 and it should not be scoped by the raw implementor count.
 
+**A defect found while surveying this: mint stamps an algorithm the signer
+never named.** `CapabilityToken::mint` and `attenuate_with_signer` call
+`holder.sign(&msg)` and then wrap the result with
+`HolderSignature::new(governance_algorithm_id(), ...)`. The trait names no
+algorithm, so the id on the token is a constant chosen by the mint site rather
+than a fact about the signature. Demonstrated by probe: a
+`HolderSignature` stamped `stark-schnorr`, pushed through what the wire
+round-trip does, comes back stamped Ed25519. Latent rather than live — the
+trait's `[u8; 64]` and `[u8; 32]` return types cannot represent a 33-byte key
+at all — but the failure mode when a second algorithm arrives is a silent
+wrong answer, which is the shape AC#11 exists to prevent. Recorded as
+`0009-e5`, with the prefix migration for this trait deliberately split out
+rather than bundled.
+
 **Where a capability key's `key_id` comes from: the holder identity's
 verification method.** No new concept is needed. The trait already carries
 `did()`, and its contract is substrate truth — the same DID the slash ledger

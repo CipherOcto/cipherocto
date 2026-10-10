@@ -174,8 +174,17 @@ pub fn install() -> Result<(), BootstrapError> {
 /// # Errors
 /// [`BootstrapError`] if the install conflicts with an existing set.
 pub fn shared_registry() -> Result<&'static octo_ident::AlgorithmRegistry, BootstrapError> {
+    let registry = global();
+    // Fast path. `install` takes a process-wide mutex, and calling it on
+    // every verification would serialise the whole system behind that one
+    // lock on what is a hot path — every envelope, every hop, every token.
+    // `is_populated` is a read lock, so concurrent verifiers do not
+    // contend. The slow path below still runs exactly once.
+    if registry.is_populated() {
+        return Ok(registry);
+    }
     install()?;
-    Ok(global())
+    Ok(registry)
 }
 
 /// Verify `signature` over `message` under `public_key` for `algorithm_id`,
@@ -184,6 +193,16 @@ pub fn shared_registry() -> Result<&'static octo_ident::AlgorithmRegistry, Boots
 /// The single call a verification site should make. It installs on first
 /// use, so a site cannot forget to bootstrap and get a confusing
 /// `NotPopulated` instead of a verdict.
+///
+/// **The auto-install is a fail-closed default, and here is the exact
+/// shape of that claim.** A deployment that bootstraps a *different*
+/// algorithm set gets [`BootstrapError::ConflictingBootstrap`] — it never
+/// silently gains Ed25519. A deployment that bootstraps **nothing** does
+/// get Ed25519 installed on first verification, because it expressed no
+/// opinion about what it supports. If "this deployment must reject
+/// Ed25519 entirely" is a requirement you need enforced, call
+/// [`octo_ident::bootstrap`] with the intended set during initialisation;
+/// that converts the silent default into a startup conflict.
 ///
 /// # Errors
 /// [`AlgorithmRegistryError`] if `algorithm_id` is not registered, or

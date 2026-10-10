@@ -304,17 +304,18 @@ pub fn verify_governance_signature(
     if *governance_pubkey == [0u8; 32] {
         return Err(ReputationError::GovernanceSignatureInvalid);
     }
-    // Length is checked before dispatch so a caller-supplied blob cannot
-    // reach the algorithm as a short slice. Every registered algorithm
-    // fixes its own signature length, so the check is really the
-    // registry's; doing it here just keeps the error type uniform across
-    // the reasons a caller can be refused.
-    let signature: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| ReputationError::GovernanceSignatureInvalid)?;
+    // NO length pre-filter here. An earlier version coerced the signature
+    // to `[u8; 64]` before dispatch, which would have refused every
+    // algorithm whose signatures are not 64 bytes — reported as
+    // `GovernanceSignatureInvalid`, indistinguishable from a genuinely
+    // bad signature. That is the same silent-wrong-answer shape AC#11
+    // exists to prevent, just moved up a layer: a hardcoded Ed25519
+    // property surviving the dispatch refactor. The registered algorithm
+    // reports `BadSignatureLength` itself, and a short slice reaches it
+    // safely because the implementation checks length before converting.
     let message =
         governance_suspension_digest(recorder_id, reason_hash, governance_pubkey, now_unix);
-    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, &message, &signature)
+    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, &message, signature)
         .map_err(|_| ReputationError::GovernanceSignatureInvalid)
 }
 

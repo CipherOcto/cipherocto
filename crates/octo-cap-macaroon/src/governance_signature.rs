@@ -24,11 +24,15 @@ pub enum GovernanceSignatureError {
     /// Signature bytes length was not 64.
     #[error("governance signature must be 64 bytes (got {0})")]
     InvalidLength(usize),
-    /// Signature verification failed (Ed25519 verify returned Err).
+    /// Signature verification failed under the named algorithm.
+    ///
+    /// Also covers a registry lookup that found nothing, since a caller
+    /// learns the same thing either way and cannot probe which algorithms
+    /// a deployment supports.
     #[error("governance signature verification failed")]
     InvalidSignature,
-    /// Public key bytes length was not 32.
-    #[error("governance pubkey must be 32 bytes (got {0})")]
+    /// Public key length does not match what the named algorithm requires.
+    #[error("governance pubkey length {0} does not match the algorithm")]
     InvalidPubkeyLength(usize),
 }
 
@@ -66,16 +70,23 @@ pub fn verify_governance_signature(
     body_hash: &[u8; 32],
     governance_pubkey: &GovernancePubkey,
 ) -> Result<(), GovernanceSignatureError> {
-    // Length is checked here rather than left to the algorithm so the
-    // error variant stays meaningful: `InvalidPubkeyLength` reports the
-    // pubkey length that was actually supplied, which the dispatch layer
-    // has no way to recover.
-    if governance_pubkey.len() != 32 {
+    // `GovernancePubkey` is `[u8; 32]`, so there is nothing to check here:
+    // the key's length is fixed by its type. Comparing against the
+    // *algorithm's* required length is the check that can actually fire,
+    // and it is what makes `InvalidPubkeyLength` reachable — a caller
+    // holding a 32-byte key for a future 48-byte algorithm gets told the
+    // key length is wrong rather than that the signature is bad.
+    let algorithm = octo_algo_ed25519::shared_registry()
+        .map_err(|_| GovernanceSignatureError::InvalidSignature)?
+        .get(*algorithm_id)
+        .map_err(|_| GovernanceSignatureError::InvalidSignature)?;
+    if algorithm.public_key_len() != governance_pubkey.len() {
         return Err(GovernanceSignatureError::InvalidPubkeyLength(
             governance_pubkey.len(),
         ));
     }
-    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, body_hash, sig)
+    algorithm
+        .verify(governance_pubkey, body_hash, sig)
         .map_err(|_| GovernanceSignatureError::InvalidSignature)
 }
 

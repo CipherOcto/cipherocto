@@ -165,12 +165,22 @@ here rather than left to be discovered:
   | `octo-wallet` §`begin_rotation`      | `b"rotate" ‖ new_pub`                             | migrated in `0009-e2`        |
   | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         | outstanding                  |
   | `octo-wallet` §`identity_store`      | a wrapper over the above                          | outstanding                  |
-  | `octo-wallet-node` §sign handler     | the request bytes                                 | outstanding                  |
+  | `octo-wallet-node` §sign handler     | the request bytes                                 | migrated in `0009-e3`        |
   | `octo-runtime` §handle/signing (two) | the holder message                                | outstanding                  |
   | `quota-router-core` §`envelope_v2`   | a domain-separated preimage                       | **not migrated — see below** |
 
-  Four sites remain outstanding, plus the `CapabilitySigner` trait change
+  Three sites remain outstanding, plus the `CapabilitySigner` trait change
   below.
+
+  The `octo-wallet-node` handler was taken first of the four because it is the
+  only remotely reachable one, and the only one where the missing binding is
+  directly exploitable rather than merely untidy: it signs whatever 32 bytes it
+  is handed, so before `0009-e3` its output was replayable anywhere a
+  bare-message Ed25519 signature is accepted. The design decision that
+  mattered there is written up as `0009-e3` §Who builds the prefix — in
+  particular, that the **signer** supplies the prefix and the requester never
+  names the domain, which is the opposite of how `SignedMessage` would
+  otherwise travel.
 
 ### §`envelope_v2` is already domain-separated, and must not be prefixed
 

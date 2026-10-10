@@ -34,6 +34,17 @@ use octo_ident::DidCodec;
 pub struct IdentityKey {
     signer: Arc<dyn HsmAdapter>,
     public_key: [u8; 32],
+    /// `key_id` for the mandatory signable prefix (RFC-0009 §Domain
+    /// separation), or `None` for an identity restored without one.
+    ///
+    /// `None` means this identity **cannot** sign a prefixed message, and
+    /// [`Self::sign_prefixed`] refuses rather than falling back to an
+    /// unprefixed signature. That is deliberate: RFC-0009 forbids both
+    /// deriving the id from the public key and allocating one at signing
+    /// time, so there is no honest way to invent one here, and a locally
+    /// allocated id would make the signed domain depend on who signed — which
+    /// defeats the entire mechanism.
+    verification_method_id: Option<octo_ident::VerificationMethodId>,
     /// Lifecycle state per RFC-0009 §Identity Lifecycle State Machine.
     /// Defaults to `Designated`; flips to `Active` via [`Self::activate`].
     lifecycle: crate::lifecycle::LifecycleState,
@@ -88,6 +99,7 @@ impl Clone for IdentityKey {
         Self {
             signer: self.signer.clone(),
             public_key: self.public_key,
+            verification_method_id: self.verification_method_id,
             lifecycle: self.lifecycle,
             activated_at_unix_secs: self.activated_at_unix_secs,
             revoked_at_unix_secs: self.revoked_at_unix_secs,
@@ -121,6 +133,7 @@ impl IdentityKey {
         Self {
             signer: Arc::new(InMemorySigner::new(seed, public_key)),
             public_key,
+            verification_method_id: None,
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
@@ -177,6 +190,12 @@ impl IdentityKey {
         Ok(Self {
             signer: Arc::new(InMemorySigner::new(seed, public_key)),
             public_key,
+            // The persisted record carries no `key_id`, so a rehydrated
+            // identity has none. It refuses prefixed signing instead of
+            // allocating one: a locally allocated id would make the signed
+            // domain depend on who signed. Carrying the id through the
+            // record is the follow-up that lifts this.
+            verification_method_id: None,
             lifecycle,
             activated_at_unix_secs: activated_at,
             revoked_at_unix_secs: revoked_at,
@@ -198,6 +217,7 @@ impl IdentityKey {
         Ok(Self {
             signer,
             public_key,
+            verification_method_id: None,
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
@@ -652,6 +672,125 @@ impl IdentityKey {
     #[must_use]
     pub fn algorithm_id(&self) -> octo_ident::AlgorithmId {
         self.signer.algorithm_id()
+    }
+
+    // ── The mandatory signable prefix (RFC-0009 §Domain separation) ──────
+
+    /// Attach the `key_id` this identity signs under.
+    ///
+    /// RFC-0009 forbids deriving it from the public key and forbids
+    /// allocating one at signing time, so it has to come from the DID
+    /// document that already names this key. This is where a caller supplies
+    /// that.
+    ///
+    /// Fails closed rather than guessing: an identity with no key context can
+    /// still sign through [`Self::sign`], but [`Self::sign_prefixed`] and
+    /// [`Self::verify_prefixed`] refuse until this is set.
+    #[must_use]
+    pub fn with_verification_method_id(mut self, key_id: octo_ident::VerificationMethodId) -> Self {
+        self.verification_method_id = Some(key_id);
+        self
+    }
+
+    /// This identity's `key_id`, if it has one.
+    #[must_use]
+    pub fn verification_method_id(&self) -> Option<octo_ident::VerificationMethodId> {
+        self.verification_method_id
+    }
+
+    /// The signable prefix this identity emits.
+    ///
+    /// # Errors
+    /// [`WalletError::NoKeyContext`] when no `key_id` is attached.
+    pub fn signable_prefix(&self) -> Result<octo_ident::SignablePrefix, WalletError> {
+        let key_id = self
+            .verification_method_id
+            .ok_or(WalletError::NoKeyContext)?;
+        Ok(octo_ident::SignablePrefix::new(self.algorithm_id(), key_id))
+    }
+
+    /// The wire message for `payload` under this identity's key.
+    ///
+    /// `prefix ‖ payload`. This is what goes on the wire and what
+    /// [`Self::sign_prefixed`] signs.
+    ///
+    /// # Errors
+    /// [`WalletError::NoKeyContext`] when no `key_id` is attached.
+    pub fn prefixed_message(&self, payload: &[u8]) -> Result<Vec<u8>, WalletError> {
+        Ok(octo_ident::SignedMessage::new(self.signable_prefix()?, payload.to_vec()).to_bytes())
+    }
+
+    /// Sign `payload` under the mandatory prefix.
+    ///
+    /// The signature covers `algorithm_id ‖ key_id ‖ canonical_ser(payload)`,
+    /// not the bare payload, so a signature made here cannot be presented
+    /// against another key or another algorithm.
+    ///
+    /// # Errors
+    /// - [`WalletError::NoKeyContext`] when no `key_id` is attached. Signing
+    ///   without one is refused rather than downgraded to an unprefixed
+    ///   signature: a downgrade path is how an unprefixed message keeps
+    ///   verifying after the prefix is deployed.
+    /// - [`WalletError::NotActive`] when the lifecycle forbids signing.
+    /// - Any error from the underlying [`HsmAdapter::sign`].
+    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<[u8; 64], WalletError> {
+        // Order matters: refusing for a missing key context first would leak
+        // less, but the lifecycle check is the one that must not be
+        // skippable, so both run before the signer is touched.
+        let prefix = self.signable_prefix()?;
+        if !self.lifecycle.can_sign() {
+            return Err(WalletError::NotActive {
+                current_state: self.lifecycle,
+            });
+        }
+        let message = octo_ident::SignedMessage::new(prefix, payload.to_vec());
+        let signable = message
+            .signable(octo_ident::SignableForm::Raw)
+            .map_err(|e| WalletError::Signature(e.to_string()))?;
+        Ok(self.signer.sign(&signable)?)
+    }
+
+    /// Verify a prefixed message and its signature.
+    ///
+    /// RFC-0009 requires a verifier to reject a message with no prefix and to
+    /// "verify under the algorithm the prefix names rather than the one it
+    /// prefers". Both happen here: the prefix is parsed out of the wire
+    /// bytes, the named algorithm is what gets dispatched, and a `key_id`
+    /// that is not this key's is refused.
+    ///
+    /// # Errors
+    /// - [`WalletError::Signature`] if the message carries no usable prefix.
+    /// - [`WalletError::KeyIdMismatch`] if the prefix names a different key.
+    /// - [`WalletError::Signature`] if the named algorithm is unregistered or
+    ///   the signature does not verify.
+    pub fn verify_prefixed(&self, wire: &[u8], sig: &[u8]) -> Result<(), WalletError> {
+        let message = octo_ident::SignedMessage::parse(wire, octo_ident::SignableForm::Raw)
+            .map_err(|e| WalletError::Signature(e.to_string()))?;
+
+        // The key binding. A signature replayed from this identity's other
+        // key, or another identity's, carries a different key_id and is
+        // refused before any equation is evaluated.
+        let expected = self
+            .verification_method_id
+            .ok_or(WalletError::NoKeyContext)?;
+        if message.prefix().key_id() != expected {
+            return Err(WalletError::KeyIdMismatch);
+        }
+
+        let signable = message
+            .signable(octo_ident::SignableForm::Raw)
+            .map_err(|e| WalletError::Signature(e.to_string()))?;
+
+        // Dispatch on the algorithm the PREFIX names. Reading it from the
+        // message rather than from `self.algorithm_id()` is the whole point:
+        // the verifier's own preference is exactly what must not decide.
+        octo_algo_ed25519::verify_dispatch(
+            &message.prefix().algorithm_id(),
+            &self.public_key,
+            &signable,
+            sig,
+        )
+        .map_err(|e| WalletError::Signature(e.to_string()))
     }
 }
 
@@ -1501,5 +1640,213 @@ mod tests {
         let mut backup = backup;
         backup.revoke(3_000).expect("backup revoke");
         assert!(backup.sign(b"msg").is_err());
+    }
+}
+
+#[cfg(test)]
+mod signable_prefix_tests {
+    use super::*;
+    use crate::error::WalletError;
+    use octo_ident::{VerificationMethodId, SIGNABLE_DOMAIN};
+
+    fn active_with_key_id(key_id: &str) -> IdentityKey {
+        let mut key = IdentityKey::from_seed([9u8; 32])
+            .with_verification_method_id(VerificationMethodId::derive(key_id));
+        key.activate(1_000).expect("activate");
+        key
+    }
+
+    #[test]
+    fn a_prefixed_signature_round_trips() {
+        let key = active_with_key_id("key-a");
+        let payload = b"transfer 25 OCTO";
+        let wire = key.prefixed_message(payload).expect("message");
+        let sig = key.sign_prefixed(payload).expect("sign");
+        key.verify_prefixed(&wire, &sig)
+            .expect("a genuine prefixed signature must verify");
+    }
+
+    #[test]
+    fn an_identity_with_no_key_id_refuses_to_sign_a_prefixed_message() {
+        // Fail-closed, not a downgrade. RFC-0009 forbids deriving the id from
+        // the public key and forbids allocating one at signing time, so there
+        // is nothing to invent — and silently signing the bare payload would
+        // keep the pre-prefix shape verifying after the prefix is deployed.
+        let mut key = IdentityKey::from_seed([9u8; 32]);
+        key.activate(1_000).expect("activate");
+        assert_eq!(key.verification_method_id(), None);
+        assert!(
+            matches!(
+                key.sign_prefixed(b"payload"),
+                Err(WalletError::NoKeyContext)
+            ),
+            "signing without a key id must be refused"
+        );
+        assert!(matches!(
+            key.prefixed_message(b"payload"),
+            Err(WalletError::NoKeyContext)
+        ));
+        // And verification refuses too, rather than accepting an unprefixed
+        // message on the way in. The message here is *well formed* — built
+        // with an explicit prefix rather than this identity's, because this
+        // identity has none to build — so the only thing left to refuse on
+        // is the missing key context, not a malformed message.
+        let well_formed = octo_ident::SignedMessage::new(
+            octo_ident::SignablePrefix::new(
+                key.algorithm_id(),
+                VerificationMethodId::derive("key-a"),
+            ),
+            b"payload".to_vec(),
+        )
+        .to_bytes();
+        assert!(matches!(
+            key.verify_prefixed(&well_formed, &[0u8; 64]),
+            Err(WalletError::NoKeyContext)
+        ));
+        // An unprefixed one is refused too, on its own terms.
+        assert!(matches!(
+            key.verify_prefixed(b"payload", &[0u8; 64]),
+            Err(WalletError::Signature(_))
+        ));
+    }
+
+    #[test]
+    fn an_unprefixed_message_is_rejected() {
+        let key = active_with_key_id("key-a");
+        let sig = key.sign_prefixed(b"transfer 25 OCTO").expect("sign");
+        // The legacy shape: a bare payload, no prefix.
+        assert!(matches!(
+            key.verify_prefixed(b"transfer 25 OCTO", &sig),
+            Err(WalletError::Signature(_))
+        ));
+    }
+
+    #[test]
+    fn a_message_naming_another_key_id_is_rejected() {
+        let key = active_with_key_id("key-a");
+        let sig = key.sign_prefixed(b"payload").expect("sign");
+
+        // Rewrapped as this identity's other verification method.
+        let other = key.prefixed_message(b"payload").expect("message");
+        let mut rewrapped = other.clone();
+        rewrapped[16..32].copy_from_slice(VerificationMethodId::derive("key-b").as_bytes());
+        assert!(
+            matches!(
+                key.verify_prefixed(&rewrapped, &sig),
+                Err(WalletError::KeyIdMismatch)
+            ),
+            "a signature must not carry over to another key_id"
+        );
+    }
+
+    #[test]
+    fn a_tampered_payload_is_rejected() {
+        let key = active_with_key_id("key-a");
+        let wire = key.prefixed_message(b"transfer 25 OCTO").expect("message");
+        let sig = key.sign_prefixed(b"transfer 25 OCTO").expect("sign");
+
+        let mut tampered = wire.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        assert!(key.verify_prefixed(&tampered, &sig).is_err());
+    }
+
+    #[test]
+    fn the_key_id_survives_a_clone() {
+        let id = VerificationMethodId::derive("key-a");
+        let key = active_with_key_id("key-a");
+        let cloned = key.clone();
+        assert_eq!(cloned.verification_method_id(), Some(id));
+        assert_eq!(
+            cloned.prefixed_message(b"p").expect("message"),
+            key.prefixed_message(b"p").expect("message"),
+            "a clone must sign the same domain as its original"
+        );
+    }
+
+    #[test]
+    fn verification_follows_the_algorithm_the_prefix_names() {
+        // The decisive property, and the one a verifier is most tempted to
+        // get wrong: RFC-0009 requires verifying "under the algorithm the
+        // prefix names rather than the one it prefers".
+        //
+        // This identity speaks Ed25519. Hand it a message whose prefix names
+        // STARK-curve Schnorr. If the verifier read the algorithm off its
+        // own configuration it would look Ed25519 up and fail with a
+        // *verification* error; reading it off the prefix means it looks
+        // `stark-schnorr` up and fails with *unknown algorithm* — which is
+        // what the assertion below pins.
+        let key = active_with_key_id("key-a");
+        let foreign = octo_ident::SignedMessage::new(
+            octo_ident::SignablePrefix::new(
+                octo_ident::AlgorithmId::derive("stark-schnorr"),
+                VerificationMethodId::derive("key-a"),
+            ),
+            b"payload".to_vec(),
+        );
+        let wire = foreign.to_bytes();
+        let err = key
+            .verify_prefixed(&wire, &[0u8; 64])
+            .expect_err("a foreign algorithm must not verify");
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("unknown algorithm"),
+            "the verifier must dispatch on the PREFIX's algorithm, not its \
+             own. Got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("invalid"),
+            "this must be a lookup miss, not a failed equation — otherwise \
+             the verifier ignored the prefix and used its own algorithm. \
+             Got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn the_prefix_names_the_signers_own_algorithm() {
+        let key = active_with_key_id("key-a");
+        let prefix = key.signable_prefix().expect("prefix");
+        assert_eq!(prefix.algorithm_id(), key.algorithm_id());
+        assert_eq!(prefix.key_id(), VerificationMethodId::derive("key-a"));
+        // And the raw form, never the textual UUID — RFC-0009 makes the
+        // distinction normative and both encodings are in use in this repo.
+        let bytes = prefix.to_bytes();
+        assert_eq!(bytes.len(), 32);
+        assert_eq!(&bytes[..16], key.algorithm_id().as_bytes());
+        assert_ne!(
+            &bytes[..16],
+            hex::encode(key.algorithm_id().as_bytes()).as_bytes()
+        );
+    }
+
+    #[test]
+    fn the_hashed_form_is_a_different_domain_than_the_raw_one() {
+        // Both forms are produced by the same identity; they are simply not
+        // interoperable, which is why an implementation states which it uses.
+        let key = active_with_key_id("key-a");
+        let message = octo_ident::SignedMessage::new(
+            key.signable_prefix().expect("prefix"),
+            b"payload".to_vec(),
+        );
+        let raw = message
+            .signable(octo_ident::SignableForm::Raw)
+            .expect("raw");
+        let hashed_signable = message
+            .signable(octo_ident::SignableForm::Hashed)
+            .expect("hashed");
+        assert_ne!(raw, hashed_signable);
+        assert_eq!(raw.len(), hashed_signable.len());
+
+        // The hashed prefix really is the digest of the domain and the two
+        // identifiers — recomputed here rather than asserted by shape, so
+        // this cannot pass on a constant that happens to differ.
+        let expected = {
+            let mut digest_hasher = blake3::Hasher::new();
+            digest_hasher.update(SIGNABLE_DOMAIN);
+            digest_hasher.update(&key.signable_prefix().expect("prefix").to_bytes());
+            digest_hasher.finalize()
+        };
+        assert_eq!(&hashed_signable[..32], expected.as_bytes());
     }
 }

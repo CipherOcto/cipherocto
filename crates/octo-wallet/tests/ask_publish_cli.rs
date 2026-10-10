@@ -14,6 +14,7 @@ use std::process::Command;
 
 use assert_cmd::prelude::*;
 use ed25519_dalek::VerifyingKey;
+use octo_algo_ed25519::ed25519_algorithm_id;
 use quota_router_storage::ask::{AskSigned, AskSignedError};
 
 const BIN: &str = env!("CARGO_BIN_EXE_octo-wallet");
@@ -79,7 +80,13 @@ fn ask_publish_produces_signed_ask_that_verifies() {
     let verifying_key: VerifyingKey = (&signing_key).into();
 
     // 5. Verify signature.
-    let result = signed.verify(&verifying_key.to_bytes());
+    //
+    // `AskSigned::verify` takes the algorithm identifier first (RFC-0009
+    // AC#11: dispatch rather than assume). It was added to this call site
+    // when mission 0009-c2 changed the signature — and only
+    // `cargo clippy --all-targets` surfaced it, because the mission's own
+    // gate ran `--lib` and never compiled this integration test.
+    let result = signed.verify(&ed25519_algorithm_id(), &verifying_key.to_bytes());
     assert!(
         result.is_ok(),
         "AskSigned::verify failed: {result:?} (expected: {:?})",

@@ -41,6 +41,21 @@ pub enum WalletError {
     #[error("signature verification failed: {0}")]
     Signature(String),
 
+    /// A prefixed signing or verification was attempted on an identity with
+    /// no `key_id` attached.
+    ///
+    /// RFC-0009 forbids deriving the id from the public key and forbids
+    /// allocating one at signing time, so there is nothing to invent here.
+    /// The call is refused rather than downgraded to an unprefixed signature:
+    /// a downgrade path is exactly how an unprefixed message keeps verifying
+    /// after the prefix is deployed.
+    #[error("no verification-method id attached; this identity cannot sign or verify a prefixed message")]
+    NoKeyContext,
+
+    /// The message's prefix names a different key than the one being used.
+    #[error("signable prefix names a different key than this identity's")]
+    KeyIdMismatch,
+
     #[error("HSM error: {0}")]
     Hsm(#[from] HsmError),
 

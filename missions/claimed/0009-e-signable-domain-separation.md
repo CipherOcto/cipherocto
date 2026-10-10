@@ -11,11 +11,164 @@ metadata:
     - 0009-b-algorithm-registry
 ---
 
-# Mission `0009-e-signable-domain-separation` — OPEN 2026-10-09
+# Mission `0009-e-signable-domain-separation` — IMPLEMENTED 2026-10-09
 
 ## Status
 
-Open (2026-10-09). Claimable once `0009-b-algorithm-registry` lands.
+**Claimed and implemented (2026-10-09), with the signer migration explicitly
+outstanding** — see §What this does not cover.
+
+All seven §Test Vectors are in place under their specified names.
+`octo-ident` 95, `octo-wallet` 337, `octo-algo-stark-schnorr` 46 + 5
+integration. Clippy clean with `--all-targets --all-features` across all three.
+
+### Layer decision, written down as §Layer direction demands
+
+The builder is in **`octo-ident`, Layer B**, and it depends on
+**`octo-determin`, Layer A**, for the payload canonicalizer.
+
+The mission's §Layer direction offers two readings of a builder taking
+`[u8; 16]` and calls for a decision. A `[u8; 16]` builder really would be
+Layer A, but it cannot be type-checked against the discriminators — a caller
+passing sixteen arbitrary bytes compiles, and naming `algorithm_id` at all is
+the point. So the builder takes `AlgorithmId` and `VerificationMethodId`,
+which are Layer B, and it lives beside them. Calling it Layer A would be
+wrong; the B → A dependency on `octo-determin` is the correct direction.
+
+### The five findings
+
+**1. `canonical_ser` resolves to none of the five functions by that name.**
+The mission frames this as "which of the five is the DCS substrate
+canonicalizer". The honest answer is that **none of them is**:
+
+| Function                                    | Encoding                                |
+| ------------------------------------------- | --------------------------------------- |
+| `zk_circuit::canonical_ser`                 | hand-rolled, its own domain byte `0xA8` |
+| `CapabilityBundleV2::canonical_ser`         | borsh                                   |
+| `CapabilityBundleV2Envelope::canonical_ser` | borsh                                   |
+| `Caveat::canonical_ser`                     | JSON                                    |
+| `HolderRecord::canonical_ser`               | JSON                                    |
+
+So there was nothing to point at and the mission's own assumption did not
+hold. The builder calls `octo_determin::dcs::dcs_serialize_bytes` by path,
+and `canonical_ser_is_the_rfc0126_substrate_canonicalizer` pins that it is
+DCS and not JSON and not borsh. The JSON exclusion the mission predicted is
+real; the mission just also excluded the other three.
+
+**2. A bare payload longer than 32 bytes parses into an attacker-chosen
+prefix.** `verifier_rejects_missing_prefix` was specified as "the verifier
+refuses a message with no prefix", which suggests a structural check. There
+is no structural check to be had: `SignedMessage::parse` splits the first 32
+bytes off as a prefix, and any payload at least that long _parses_. Feed it
+the ASCII text `transfer 25 OCTO to did:octo:zrecipient` and the prefix reads
+back as whatever those bytes say.
+
+Nothing rejects it structurally, and that is the sharp edge the vector now
+asserts: a real signature still fails, on the **key binding**, and a verifier
+that only asked "does this parse?" would accept the message. The two checks
+that do the work are the `key_id` comparison and dispatching on the prefix's
+algorithm — both of which `verification_follows_the_algorithm_the_prefix_names`
+pins by asserting on _which_ error comes back.
+
+**3. The cross-algorithm replay is refused by the prefix and by key shape,
+and only the key-id swap is attributable to the prefix alone.** Said
+precisely in the test file's header rather than claimed as a clean result:
+Ed25519 keys are 32 bytes and STARK-curve keys are 33, so a STARK public key
+dispatched to Ed25519 is refused on length before any equation runs. The
+`key_id` swap is the clean demonstration — same algorithm, same key, same
+payload, so the only reason it can fail is that the recomputed signable bytes
+differ.
+
+**4. `IdentityKey` cannot fail _open_.** RFC-0009 forbids deriving the
+`key_id` from the public key and forbids allocating one at signing time, so
+an identity with no `key_id` has nothing to invent. `sign_prefixed` and
+`verify_prefixed` return `WalletError::NoKeyContext` rather than falling back
+to an unprefixed signature — a downgrade path is precisely how an unprefixed
+message keeps verifying after the prefix is deployed.
+
+**5. A pre-existing break, found by running a target this mission had no
+reason to.** `crates/octo-wallet/tests/ask_publish_cli.rs` has not compiled
+since mission `0009-c2` changed `AskSigned::verify` to take an `algorithm_id`.
+That mission's gate ran `cargo test -p octo-wallet --lib`, which never
+compiles an integration test, so the break was invisible until
+`cargo clippy --all-targets` ran on the crate this mission had to touch.
+Fixed, and the lesson is recorded rather than the fix alone: **a `--lib` gate
+does not check that the crate's integration tests build.**
+
+### Mutation-verified
+
+Six mutations applied and reverted; five fired red on the first pass.
+
+| Mutation                                                 | Caught by                                                       |
+| -------------------------------------------------------- | --------------------------------------------------------------- |
+| Verifier ignores the prefix's algorithm                  | `verification_follows_the_algorithm_the_prefix_names`           |
+| `key_id` binding check removed                           | `a_message_naming_another_key_id_is_rejected`                   |
+| Signer allocates a `key_id` instead of refusing          | `an_identity_with_no_key_id_refuses_to_sign_a_prefixed_message` |
+| Payload canonicalized without the `u32_be` length prefix | `canonical_ser_is_the_rfc0126_substrate_canonicalizer`          |
+| Prefix emits hex identifiers instead of raw bytes        | `the_prefix_is_thirty_two_bytes_of_raw_identifier_bytes`        |
+| Hashed form collapses onto the raw form                  | `the_hashed_form_is_self_checking_because_it_is_a_digest`       |
+
+**A sixth mutation came back green, and the green was the finding.** The
+first attempt to test the key-id swap deleted the assertion from the test
+rather than breaking the implementation — of course a test that no longer
+asserts anything still passes. A vacuous vector is indistinguishable from a
+passing one if you never try to break it. Redone against
+`SignablePrefix::to_bytes` (drop the `key_id`), it goes red immediately, and
+that is the form the vector is worth keeping in.
+
+A deliberate no-op mutation was also run to confirm the harness does not
+report red for everything.
+
+### Decisions taken here
+
+- **Raw form, declared.** RFC-0009 prefers the hashed form for new
+  implementations; this ships raw and says so, which is what the RFC
+  requires of any implementation that chooses. The reason is that raw is the
+  only form carrying the algorithm **in band**, and "verify under the
+  algorithm the prefix names rather than the one it prefers" is not expressible
+  otherwise — a digest is not invertible, so a hashed-form verifier would have
+  to take the algorithm out of band, back to trusting its own configuration.
+  `SignedMessage::parse` refuses a hashed message for exactly this reason,
+  which is why the two rejection vectors are principled rather than heuristic.
+- **`SignedMessage` stores the payload uncanonicalized** and canonicalizes on
+  demand, so `to_bytes` and `signable` cannot disagree about which bytes the
+  signature covers.
+- **The replay test lives in `octo-algo-stark-schnorr`, not `octo-ident`.**
+  `octo-ident` is Layer B and must not depend on either algorithm crate; the
+  only crate that can see both is one that depends on both.
+- **`from_record` rehydrates without a `key_id`** and refuses prefixed
+  signing. The persisted record does not carry one, and inventing it locally
+  is what the RFC forbids. Carrying it through `IdentityRecord` is the
+  follow-up that lifts the restriction.
+
+## What this does not cover
+
+The mission's §Scope says "every signer and verifier". What is done is the
+**substrate, one real signer end to end, and the two decisive vectors over a
+real algorithm pair**. The mechanical migration is not done, and is recorded
+here rather than left to be discovered:
+
+- `IdentityKey::sign` and `IdentityKey::verify` still sign and verify **bare**
+  messages. `sign_prefixed` / `verify_prefixed` are the prefixed path and are
+  complete, but nothing forces a caller onto them. There are **30 in-crate
+  `sign` call sites** and roughly **ten downstream crates** using
+  `IdentityKey`.
+- `CapabilitySigner::sign(&self, msg: &[u8])` in `octo-cap-macaroon` is
+  unchanged. It carries no key context at all, so the RFC-named "real
+  signers" list is only half covered. Making it carry one is a trait change
+  across every implementor.
+- The `verify_successor_proof` / `verify_revocation_proof` pair already take
+  an `algorithm_id` out of band but sign `b"rotate" ‖ new_pub` and `b"revoke"`
+  with no prefix.
+- `IdentityRecord` does not persist a `key_id`.
+
+The follow-up is a migration mission, not an extension of this one: replace
+`sign`/`verify` at each site and delete the bare path, since RFC-0009's
+§Backward compat forbids a downgrade route and nothing is deployed to
+deprecate towards. **Until then, a prefixed message is rejected by a bare
+verifier and a bare message is rejected by a prefixed verifier** — the two
+shapes are not interoperable, which is the property that keeps the partial
+migration safe rather than silently wrong.
 
 ## Dependencies
 
@@ -229,16 +382,21 @@ which is a warning nobody can act on.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy -p octo-ident -p octo-wallet -p octo-cap-macaroon --all-targets --all-features -- -D warnings
+cargo clippy -p octo-ident -p octo-wallet -p octo-algo-stark-schnorr \
+  --all-targets --all-features -- -D warnings
 cargo test -p octo-ident --lib
 cargo test -p octo-wallet --lib
-cargo test -p octo-cap-macaroon --lib
+cargo test -p octo-wallet --test ask_publish_cli
+cargo test -p octo-algo-stark-schnorr
 ```
 
-The last two are the ones that matter. `octo-ident` alone cannot observe
-whether the prefix is applied, because it does not sign or verify anything.
-`cross_algorithm_signature_replay_rejected` additionally needs `0009-d`'s
-registration before it can run over a real pair.
+`octo-ident --lib` alone cannot observe whether the prefix is applied, because
+it does not sign or verify anything — the mission's own §The gate must compile
+the crates that actually sign and verify. `cross_algorithm_signature_replay_rejected`
+lives in an integration test of the crate that can see both algorithms.
+
+The `--all-targets` flag is not decoration. It is what caught the
+`ask_publish_cli` break described in §Status, which a `--lib` gate cannot see.
 
 ## Backward compat
 
@@ -257,12 +415,15 @@ path. Nothing is deployed, so there is no compatibility window and no shim.
   wrong directory and wrong glob
 - `rfcs/draft/economics/0974-zk-capability-platform-extension-surface.md` —
   §Step 1, the sign-bit defect that is the same class of bug
-- `missions/open/0009-b-algorithm-registry`, `0009-c-verification-dispatch`,
+- `missions/claimed/0009-b-algorithm-registry`, `0009-c-verification-dispatch`,
   `0009-d-stark-schnorr-algorithm`
+- `crates/octo-ident/src/signable_prefix.rs` — the prefix substrate
+- `crates/octo-algo-stark-schnorr/tests/signable_replay.rs` — the two decisive
+  vectors, over a real Ed25519 / STARK-Schnorr pair
 
 ## Claimant
 
-@unassigned
+@mmacedoeu
 
 ## Pull Request
 

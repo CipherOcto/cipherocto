@@ -1690,6 +1690,7 @@ const AC11_ALLOWED: &[(&str, &str)] = &[(
 fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
     let root = workspace_root();
     let mut offenders: Vec<String> = Vec::new();
+    let mut scanned_dirs = 0usize;
 
     let mut dirs: Vec<&str> = AC11_DISPATCHED.to_vec();
     // These two are scanned *only* because of this line — neither is in
@@ -1713,13 +1714,21 @@ fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
     for dir in dirs {
         let abs = root.join(dir);
         let Ok(entries) = std::fs::read_dir(&abs) else {
-            continue;
+            panic!(
+                "AC-11: {dir} is on the scanned list but does not exist. AC#11 covers \
+                 every crate here, so a renamed or moved crate silently drops out of \
+                 coverage while this gate still reports green. Repoint the entry."
+            );
         };
+        // Counted before the allowlist skip, so a crate whose only sources are
+        // excepted files still counts as read.
+        let mut scanned = 0usize;
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                 continue;
             }
+            scanned += 1;
             let rel = path
                 .strip_prefix(&root)
                 .unwrap_or(&path)
@@ -1734,6 +1743,9 @@ fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
                 offenders.push(rel);
             }
         }
+        if scanned > 0 {
+            scanned_dirs += 1;
+        }
     }
 
     assert!(
@@ -1741,6 +1753,11 @@ fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
         "AC-11: these files rebuild an Ed25519 verifying key inline instead \
          of dispatching through AlgorithmRegistry: {offenders:?}. If one of \
          them is a signing site, say so in AC11_ALLOWED with the reason."
+    );
+    assert!(
+        scanned_dirs > 0,
+        "AC-11: no directory on the scanned list yielded a Rust source, so this \
+         gate read nothing and reported success vacuously."
     );
 }
 

@@ -111,15 +111,15 @@ mod tests {
     struct TestSigner(SigningKey);
 
     impl CapabilitySigner for TestSigner {
-        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
-            Ok(self.0.sign(msg).to_bytes())
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+            Ok(self.0.sign(msg).to_bytes().to_vec())
         }
         fn algorithm_id(&self) -> octo_ident::AlgorithmId {
             octo_algo_ed25519::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.0.verifying_key().to_bytes()
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.0.verifying_key().to_bytes().to_vec()
         }
     }
 

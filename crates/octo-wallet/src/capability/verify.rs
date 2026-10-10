@@ -169,7 +169,7 @@ pub fn verify_with_resolve(
     // Deserialize wire with registry-resolved holder_did + holder_pub.
     // The holder_did is the registry's holder_did (R7-N7 fix: registry is
     // authoritative on holder identity, not the wire's claims).
-    let token = deserialize_wire(token_wire, rec.holder_did.clone(), rec.holder_pub)?;
+    let token = deserialize_wire(token_wire, rec.holder_did.clone(), &rec.holder_pub)?;
 
     // Verify macaroon (R7-N9: macaroon.verify_chain is the chain-only check;
     // the holder signature is verified separately. Mission 0957-d ships
@@ -397,7 +397,7 @@ mod tests {
         let minted = crate::capability::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
         let wired = super::super::wire::serialize_wire(&crate::capability::CapabilityToken {
             macaroon: minted.clone(),
-            holder_pub: [0xBB; 32],
+            holder_pub: vec![0xBB; 32],
             holder_did: octo_ident::test_helpers::sample_did(31),
             holder_sig: crate::capability::HolderSignature::new(
                 octo_algo_ed25519::ed25519_algorithm_id(),

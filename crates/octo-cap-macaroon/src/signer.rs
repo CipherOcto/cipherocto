@@ -50,24 +50,26 @@ pub enum CapabilitySignerError {
 
 /// Trait for capability token holder signers.
 ///
-/// Implementors produce 64-byte Ed25519 signatures over arbitrary byte
-/// messages. The `sign` method may fail (HSM transport, user denial,
-/// etc.); the failure mode is surfaced via `CapabilitySignerError`.
+/// Implementors produce signatures over arbitrary byte messages whose length is
+/// the algorithm's, and public keys whose width is likewise the algorithm's.
+/// The `sign` method may fail (HSM transport, user denial, etc.); the failure
+/// mode is surfaced via `CapabilitySignerError`.
 ///
-/// Implementors MUST also return the 32-byte public key via
+/// Implementors MUST also return the holder public key via
 /// `public_key_bytes`, and MUST name the algorithm their key speaks via
 /// [`CapabilitySigner::algorithm_id`]. The verifier dispatches on an
 /// `AlgorithmId` through `AlgorithmRegistry` rather than reconstructing a key
 /// itself (RFC-0009 AC#11), so a signer that reports the wrong algorithm is
 /// dispatched to the wrong verifier.
 pub trait CapabilitySigner {
-    /// Sign `msg`; return the 64-byte Ed25519 signature.
+    /// Sign `msg`; return the signature under whatever algorithm
+    /// [`CapabilitySigner::algorithm_id`] names.
     ///
     /// # Errors
     /// Returns `CapabilitySignerError::Signer` on backend rejection
     /// (transport / user denial / etc.) or `Malformed` on internal
     /// serializer bugs.
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError>;
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError>;
 
     /// The algorithm this signer's key speaks, and therefore the algorithm
     /// `sign` produces.
@@ -95,17 +97,17 @@ pub trait CapabilitySigner {
         did_from_pubkey(&self.public_key_bytes())
     }
 
-    /// Return the 32-byte Ed25519 public key.
+    /// Return the holder public key. The width is the algorithm's.
     #[must_use]
-    fn public_key_bytes(&self) -> [u8; 32];
+    fn public_key_bytes(&self) -> Vec<u8>;
 }
 
 /// Canonical Phase 1 DID form: `did:octo:0x<hex(public_key)>`.
 ///
 /// Production swaps in the RFC-0010 §Canonical OctoID Codec once
 /// `octo-ident` lands the typed form.
-pub fn did_from_pubkey(pk: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(11 + 64);
+pub fn did_from_pubkey(pk: &[u8]) -> String {
+    let mut s = String::with_capacity(11 + 2 * pk.len());
     s.push_str("did:octo:0x");
     for byte in pk {
         s.push_str(&format!("{byte:02x}"));
@@ -157,7 +159,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
 /// Blanket impl for `Box<dyn CapabilitySigner>` — enables `Arc<dyn CapabilitySigner>`
 /// to be passed through generic helpers without re-wrapping.
 impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
         (**self).sign(msg)
     }
     fn algorithm_id(&self) -> octo_ident::AlgorithmId {
@@ -167,14 +169,14 @@ impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
         (**self).did()
     }
 
-    fn public_key_bytes(&self) -> [u8; 32] {
+    fn public_key_bytes(&self) -> Vec<u8> {
         (**self).public_key_bytes()
     }
 }
 
 /// Blanket impl for `Arc<dyn CapabilitySigner>` — same rationale.
 impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
         (**self).sign(msg)
     }
     fn algorithm_id(&self) -> octo_ident::AlgorithmId {
@@ -184,7 +186,7 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
         (**self).did()
     }
 
-    fn public_key_bytes(&self) -> [u8; 32] {
+    fn public_key_bytes(&self) -> Vec<u8> {
         (**self).public_key_bytes()
     }
 }
@@ -208,9 +210,9 @@ mod tests {
     struct TestSigner(SigningKey);
 
     impl CapabilitySigner for TestSigner {
-        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
             let sig = self.0.sign(msg);
-            Ok(sig.to_bytes())
+            Ok(sig.to_bytes().to_vec())
         }
 
         fn did(&self) -> String {
@@ -221,8 +223,8 @@ mod tests {
             octo_algo_ed25519::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.0.verifying_key().to_bytes()
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.0.verifying_key().to_bytes().to_vec()
         }
     }
 
@@ -233,7 +235,7 @@ mod tests {
     struct FailingTestSigner(CapabilitySignerError);
 
     impl CapabilitySigner for FailingTestSigner {
-        fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+        fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
             Err(match &self.0 {
                 // Clone the inner String without moving out of `&self`.
                 CapabilitySignerError::Signer(s) => CapabilitySignerError::Signer(s.clone()),
@@ -245,8 +247,8 @@ mod tests {
             octo_algo_ed25519::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            [0u8; 32]
+        fn public_key_bytes(&self) -> Vec<u8> {
+            vec![0u8; 32]
         }
     }
 

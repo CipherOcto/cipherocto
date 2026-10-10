@@ -119,7 +119,7 @@ impl AttenuateHandler {
         // attenuation envelope arrives with a trusted wire form
         // produced by the wallet's own mint path, per RFC-0010
         // F4 + 0010-d mission).
-        let token = deserialize_wire(&req.existing_token_wire, String::new(), req.holder_pub)
+        let token = deserialize_wire(&req.existing_token_wire, String::new(), &req.holder_pub)
             .map_err(wire_error_to_protocol)?;
 
         // Parse the new caveat from canonical-JSON bytes.
@@ -281,9 +281,12 @@ mod tests {
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
         let new_wire = std::str::from_utf8(&payload).unwrap();
-        let attenuated =
-            deserialize_wire(new_wire, sample_did(), sample_identity().public_key_bytes())
-                .expect("deserialize");
+        let attenuated = deserialize_wire(
+            new_wire,
+            sample_did(),
+            &sample_identity().public_key_bytes(),
+        )
+        .expect("deserialize");
         assert_eq!(attenuated.macaroon.caveats.len(), 1);
         assert_eq!(
             attenuated.macaroon.caveats[0],

@@ -462,8 +462,13 @@ pub struct HandoverRequestEnvelope {
     pub current_epoch: u64,
     /// `BLAKE3-256(header || body)`.
     pub handover_hash: [u8; 32],
-    /// Ed25519 signature over `handover_hash`.
-    pub signature: [u8; 64],
+    /// Signature over `handover_hash`. Width is the signer's algorithm's, not
+    /// this crate's: this envelope is signed through the operator's
+    /// `CapabilitySigner`, and that trait no longer promises Ed25519's 64
+    /// bytes (mission `0009-e8`). It held a `[u8; 64]` and a doc claiming the
+    /// substrate guaranteed the width; that guarantee was the trait's return
+    /// type, and the trait has been widened.
+    pub signature: Vec<u8>,
 }
 
 impl HandoverRequestEnvelope {
@@ -495,7 +500,7 @@ impl HandoverRequestEnvelope {
             nonce: [0u8; 32],
             current_epoch,
             handover_hash: [0u8; 32],
-            signature: [0u8; 64],
+            signature: vec![0u8; 64],
         }
     }
 
@@ -540,7 +545,7 @@ impl HandoverRequestEnvelope {
     /// Sign the envelope in place. Recomputes `handover_hash` and signs it.
     pub fn sign(&mut self, key: &SigningKey) {
         self.handover_hash = self.compute_handover_hash();
-        self.signature = key.sign(&self.handover_hash).to_bytes();
+        self.signature = key.sign(&self.handover_hash).to_bytes().to_vec();
     }
 
     /// Verify the signature against the coordinator's public key.
@@ -553,7 +558,18 @@ impl HandoverRequestEnvelope {
                 &self.handover_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
+        // The envelope field is variable width because the signer is
+        // algorithm-agnostic (mission `0009-e8`). This verifier is Ed25519
+        // and says so, so a wrong-width signature is *malformed* rather
+        // than an ordinary bad signature — refused here rather than coerced.
+        let sig_bytes: [u8; 64] =
+            self.signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| DotError::InvalidSignature {
+                    envelope_id: self.handover_hash,
+                })?;
+        let sig = Signature::from_bytes(&sig_bytes);
         coordinator_pubkey
             .verify(&self.handover_hash, &sig)
             .map_err(|_e| DotError::InvalidSignature {

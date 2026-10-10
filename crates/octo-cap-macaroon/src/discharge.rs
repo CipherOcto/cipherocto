@@ -1100,17 +1100,17 @@ mod tests {
             pub_bytes: [u8; 32],
         }
         impl CapabilitySigner for TestSigner {
-            fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+            fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
                 let sk = SigningKey::from_bytes(&self.key);
                 let sig = sk.sign(msg);
-                Ok(sig.to_bytes())
+                Ok(sig.to_bytes().to_vec())
             }
             fn algorithm_id(&self) -> octo_ident::AlgorithmId {
                 octo_algo_ed25519::ed25519_algorithm_id()
             }
 
-            fn public_key_bytes(&self) -> [u8; 32] {
-                self.pub_bytes
+            fn public_key_bytes(&self) -> Vec<u8> {
+                self.pub_bytes.to_vec()
             }
         }
 

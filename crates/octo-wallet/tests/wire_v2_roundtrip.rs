@@ -61,7 +61,7 @@ fn v1_parser_ignores_4th_segment() {
     let (token, _holder) = sample_token();
     let wire_v2 = serialize_wire_v2(&token, Some(b"sentinel_for_v2")).expect("v2 serialize");
     // v1 deserialize_wire must NOT error on the 4th segment.
-    let back = deserialize_wire(&wire_v2, &token.holder_did, token.holder_pub)
+    let back = deserialize_wire(&wire_v2, &token.holder_did, &token.holder_pub)
         .expect("v1 parser must succeed with v2 wire");
     assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
 }
@@ -93,8 +93,8 @@ fn v2_parser_extracts_proof_bundle_borsh() {
     let pb_bytes = octo_cap_zk::proof_bundle_to_wire(&pb).expect("proof_bundle_to_wire");
 
     let wire_v2 = serialize_wire_v2(&token, Some(&pb_bytes)).expect("v2 serialize");
-    let parsed =
-        deserialize_wire_v2(&wire_v2, &token.holder_did, token.holder_pub).expect("v2 deserialize");
+    let parsed = deserialize_wire_v2(&wire_v2, &token.holder_did, &token.holder_pub)
+        .expect("v2 deserialize");
     // 4th segment round-trips byte-identical.
     let back_bytes = parsed
         .proof_bundle
@@ -113,7 +113,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
 fn v2_parser_accepts_v1_3segment_wire() {
     let (token, _holder) = sample_token();
     let wire_v1 = serialize_wire(&token).expect("v1 serialize");
-    let parsed = deserialize_wire_v2(&wire_v1, &token.holder_did, token.holder_pub)
+    let parsed = deserialize_wire_v2(&wire_v1, &token.holder_did, &token.holder_pub)
         .expect("v2 parser must accept v1 wire");
     assert!(parsed.proof_bundle.is_none(), "v1 wire has no 4th segment");
     assert_eq!(parsed.token.macaroon.root_id, token.macaroon.root_id);
@@ -121,14 +121,14 @@ fn v2_parser_accepts_v1_3segment_wire() {
 
 #[test]
 fn v2_rejects_wrong_segment_count() {
-    let err = deserialize_wire_v2("only.one", sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2("only.one", sample_did(244), &[0u8; 32])
         .expect_err("must reject < 3 segments");
     assert!(matches!(
         err,
         octo_wallet::capability::wire::WireError::SegmentCount(2)
     ));
 
-    let err = deserialize_wire_v2("a.b.c.d.e", sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2("a.b.c.d.e", sample_did(244), &[0u8; 32])
         .expect_err("must reject > 4 segments");
     assert!(matches!(
         err,
@@ -140,7 +140,7 @@ fn v2_rejects_wrong_segment_count() {
 fn v2_rejects_oversize_wire_total() {
     // DoS guard: a >2MiB wire must be rejected before split/decode.
     let huge = "a".repeat(2 * 1024 * 1024 + 1);
-    let err = deserialize_wire_v2(&huge, sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2(&huge, sample_did(244), &[0u8; 32])
         .expect_err("DoS guard: must reject oversize wire");
     assert!(
         matches!(
@@ -156,7 +156,7 @@ fn v2_rejects_oversize_segment() {
     // 1 MiB per-segment cap. A segment slightly over the cap must be rejected.
     let oversize_seg = "b".repeat(1024 * 1024 + 1);
     let wire = format!("a.b.c.{oversize_seg}");
-    let err = deserialize_wire_v2(&wire, sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2(&wire, sample_did(244), &[0u8; 32])
         .expect_err("DoS guard: must reject oversize segment");
     assert!(
         matches!(

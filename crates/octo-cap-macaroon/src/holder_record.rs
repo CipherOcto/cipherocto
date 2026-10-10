@@ -40,9 +40,18 @@ pub struct HolderRecord {
     /// `holder_did` is the DID that owns this credential.
     pub holder_did: String,
 
-    /// Holder Ed25519 public key (32 bytes; per RFC-0009 §Capability Keys).
-    #[serde(with = "serde_bytes_32")]
-    pub holder_pub: [u8; 32],
+    /// Holder public key. The width is the algorithm's, not this crate's:
+    /// 32 bytes for Ed25519 (per RFC-0009 §Capability Keys), something else
+    /// for the next algorithm.
+    ///
+    /// No `serde_bytes_32` here, unlike `cap_root_hash` and `ask_id` which
+    /// are genuinely fixed-width hashes. `Vec<u8>` and `serde_bytes::Bytes`
+    /// both serialize through `serde_json` as a JSON array of integers, so
+    /// dropping the helper leaves the gossip bytes identical for every key
+    /// that exists today and existing rows deserialize unchanged. The field
+    /// type was the only thing enforcing the width, and that is exactly the
+    /// thing that had to go (mission `0009-e8`).
+    pub holder_pub: Vec<u8>,
 
     /// Audience DID (the next hop for `HopCapability`; the buyer for `Bearer` /
     /// `V1` / `ZKBearing`). For `V1` and `ZKBearing` records, this equals `holder_did`.
@@ -158,7 +167,7 @@ impl std::fmt::Debug for HolderRecord {
             .field("cap_root_hash", &"<redacted 32 bytes>")
             .field("kind", &self.kind)
             .field("holder_did", &self.holder_did)
-            .field("holder_pub", &"<redacted 32 bytes>")
+            .field("holder_pub", &"<redacted>")
             .field("audience_did", &self.audience_did)
             .field(
                 "caveats_canonical",
@@ -182,7 +191,7 @@ impl HolderRecord {
     /// NOT NULL and the BearerCapsule does not carry it; must be plumbed in.
     pub fn from_bearer(
         bearer: &BearerCapsule,
-        buyer_holder_pub: &[u8; 32],
+        buyer_holder_pub: &[u8],
         holder_did: &str,
         ask_id: [u8; 32],
         ttl_millis_unix: u64,
@@ -191,7 +200,7 @@ impl HolderRecord {
             cap_root_hash: bearer.bearer_capsule_hash,
             kind: HolderKind::Bearer,
             holder_did: holder_did.to_string(),
-            holder_pub: *buyer_holder_pub,
+            holder_pub: buyer_holder_pub.to_vec(),
             audience_did: holder_did.to_string(),
             caveats_canonical: Vec::new(),
             ask_id: Some(ask_id),
@@ -219,7 +228,7 @@ impl HolderRecord {
             cap_root_hash: cap_token.cap_root_hash,
             kind,
             holder_did: holder_did.to_string(),
-            holder_pub: *holder_pub,
+            holder_pub: holder_pub.to_vec(),
             audience_did: holder_did.to_string(),
             caveats_canonical: Vec::new(),
             ask_id,
@@ -249,7 +258,7 @@ impl HolderRecord {
     pub fn from_hop_capability(
         hop_capacity_id: [u8; 32],
         wrapping_node_did: &str,
-        wrapping_node_pub: &[u8; 32],
+        wrapping_node_pub: &[u8],
         next_hop_did: &str,
         ttl_millis_unix: u64,
     ) -> Self {
@@ -257,7 +266,7 @@ impl HolderRecord {
             cap_root_hash: hop_capacity_id,
             kind: HolderKind::HopCapability,
             holder_did: wrapping_node_did.to_string(),
-            holder_pub: *wrapping_node_pub,
+            holder_pub: wrapping_node_pub.to_vec(),
             audience_did: next_hop_did.to_string(),
             caveats_canonical: Vec::new(),
             ask_id: None,
@@ -479,6 +488,74 @@ mod tests {
     /// Pre-fix, `None` would either fail to parse or coerce to `Some(0)`,
     /// which corrupts the TV14 contract (`Some(0)` means "revoked at
     /// epoch 0", not "active").
+    /// Mission `0009-e8`: pins the claim that widening `holder_pub` needs no
+    /// migration.
+    ///
+    /// The round-trip test above cannot cover this, and that is why it is not
+    /// enough on its own: it round-trips the current type against *itself*, so it
+    /// passes identically before and after the widening, and would pass just as
+    /// happily if the representation had silently changed. Three things are
+    /// pinned instead.
+    #[test]
+    fn holder_pub_gossip_is_stable_across_the_widening() {
+        let r = HolderRecord::from_bearer(
+            &bearer(),
+            &[0x77; 32],
+            &octo_ident::test_helpers::sample_did(229),
+            [0x33; 32],
+            1_700_000_000_000,
+        );
+        let s = serde_json::to_string(&r).expect("serialize");
+
+        // 1. Bytes out. A 32-byte key must appear exactly as the JSON array of
+        //    integers `serde_bytes_32` produced, byte for byte. If a future
+        //    change swapped in a representation that is equal as a value but
+        //    different on the wire, this is where it shows.
+        let expected = format!("\"holder_pub\":[{}]", vec!["119"; 32].join(","));
+        assert!(
+            s.contains(&expected),
+            "the gossip representation of a 32-byte holder key changed; \
+         `serde_bytes::Bytes` and `Vec<u8>` must both be a JSON array of \
+         integers or this is a silent wire break\n  expected: {expected}\n  in: {s}"
+        );
+
+        // 2. Field order. The cross-node mint verifiability contract is
+        //    `serde_json` in struct-declaration order, so widening a field is
+        //    safe but reordering two is a breaking change to a signed digest.
+        let pos = |field: &str| {
+            s.find(field)
+                .unwrap_or_else(|| panic!("{field} missing from {s}"))
+        };
+        assert!(
+            pos("\"holder_did\"") < pos("\"holder_pub\"")
+                && pos("\"holder_pub\"") < pos("\"audience_did\""),
+            "HolderRecord field order changed; the gossip determinism contract is \
+         serde_json in declaration order"
+        );
+
+        // 3. The widening is real, not nominal: a key that is not 32 bytes must
+        //    round-trip. Without this the type could stay `[u8; 32]` and the two
+        //    assertions above would still pass.
+        let odd = HolderRecord::from_bearer(
+            &bearer(),
+            &[0x77; 48],
+            &octo_ident::test_helpers::sample_did(229),
+            [0x33; 32],
+            1_700_000_000_000,
+        );
+        let odd_json = serde_json::to_string(&odd).expect("serialize widened key");
+        assert!(
+            odd_json.contains(&format!("\"holder_pub\":[{}]", vec!["119"; 48].join(","))),
+            "a non-32-byte holder key must serialize as a JSON array of integers too"
+        );
+        let back: HolderRecord = serde_json::from_str(&odd_json).expect("deserialize widened key");
+        assert_eq!(
+            back.holder_pub.len(),
+            48,
+            "widened key must survive the round trip"
+        );
+    }
+
     #[test]
     fn serde_bytes_option_u64_accepts_json_null_as_none() {
         use serde::Deserialize;

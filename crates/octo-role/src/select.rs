@@ -438,9 +438,9 @@ mod tests {
     }
 
     impl CapabilitySigner for TestSigner {
-        fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+        fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
             // Deterministic stub signature (zeros + length marker).
-            Ok([0u8; 64])
+            Ok(vec![0u8; 64])
         }
         fn algorithm_id(&self) -> octo_ident::AlgorithmId {
             // Via `octo-wallet`, which `octo-role` already depends on. Not
@@ -448,8 +448,8 @@ mod tests {
             octo_wallet::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.pk
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.pk.to_vec()
         }
     }
 

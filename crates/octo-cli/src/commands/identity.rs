@@ -1919,14 +1919,14 @@ struct DevSigner {
 }
 
 impl CapabilitySigner for DevSigner {
-    fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+    fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
         // Phase 1 deterministic stub. Production wires HSM-backed signing
         // here; the dev path is intentionally non-cryptographic so it
         // cannot be mistaken for production output.
-        Ok([0u8; 64])
+        Ok(vec![0u8; 64])
     }
-    fn public_key_bytes(&self) -> [u8; 32] {
-        self.pk
+    fn public_key_bytes(&self) -> Vec<u8> {
+        self.pk.to_vec()
     }
     fn algorithm_id(&self) -> octo_ident::AlgorithmId {
         // Via the wallet's re-export rather than a new `octo-algo-ed25519`

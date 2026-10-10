@@ -71,7 +71,7 @@ fn test_record(seed: u8) -> HolderRecord {
         cap_root_hash,
         kind: HolderKind::V1,
         holder_did: holder,
-        holder_pub: pub_key,
+        holder_pub: pub_key.to_vec(),
         audience_did: audience,
         caveats_canonical: vec![0x01, 0x02, 0x03],
         ask_id: Some([0xaa; 32]),

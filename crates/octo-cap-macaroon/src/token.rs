@@ -68,8 +68,9 @@ impl std::fmt::Debug for DischargeMacaroon {
 pub struct CapabilityToken {
     /// Macaroon body (chain + caveats).
     pub macaroon: Macaroon,
-    /// Holder Ed25519 public key (32 bytes).
-    pub holder_pub: [u8; 32],
+    /// Holder public key. Width is the algorithm's, not this crate's —
+    /// 32 bytes for Ed25519, something else for the next algorithm.
+    pub holder_pub: Vec<u8>,
     /// Holder DID string (`did:octo:...`).
     pub holder_did: String,
     /// Holder signature over `canonical_ser(macaroon.root_id || caveats_wire)`,
@@ -94,9 +95,9 @@ impl std::fmt::Debug for CapabilityToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CapabilityToken")
             .field("macaroon", &self.macaroon)
-            .field("holder_pub", &hex::encode(self.holder_pub))
+            .field("holder_pub", &hex::encode(&self.holder_pub))
             .field("holder_did", &self.holder_did)
-            .field("holder_sig", &"[REDACTED 64 bytes]")
+            .field("holder_sig", &"[REDACTED]")
             .field("discharges_count", &self.discharges.len())
             .field("holder_sig_stale", &self.holder_sig_stale)
             .finish()
@@ -122,28 +123,55 @@ impl std::fmt::Debug for CapabilityToken {
 /// describes. The verifier is handed the algorithm; duplicating it in
 /// every message that references a document is how the two drift apart.
 ///
-/// **Signature length is fixed at 64 bytes.** Ed25519 and STARK-Schnorr
-/// both produce 64; an algorithm that does not forces this to change,
-/// which is the same constraint `GovernanceSignatureBytes` already
-/// carries.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// **Signature length is a property of the algorithm, not of this crate.**
+/// It used to be pinned to 64 by the type; it is now read from
+/// `SignatureAlgorithm::signature_len()` at construction, so an algorithm with a
+/// different signature width is representable without touching this type. That
+/// is the same constraint `GovernanceSignatureBytes` already carries.
+#[derive(Clone, PartialEq, Eq)]
 pub struct HolderSignature {
     algorithm_id: octo_ident::AlgorithmId,
-    bytes: [u8; 64],
+    bytes: Vec<u8>,
 }
 
 impl HolderSignature {
     /// Wrap `bytes` as a signature made under `algorithm_id`.
     ///
+    /// The length is checked against the algorithm this signature claims to be
+    /// under, not against a literal. A signature of the wrong width is
+    /// *malformed* and must be refused here — accepting it and letting the
+    /// verify step fail is what turns a truncated signature into an ordinary
+    /// "bad signature", which is indistinguishable from forgery.
+    ///
+    /// An algorithm this deployment has not registered cannot state its
+    /// width, so no length is enforced for it. That is not a hole: an
+    /// unregistered `AlgorithmId` cannot verify either, because
+    /// `verify_dispatch` fails closed on an unknown id. Refusing to *construct*
+    /// such a signature would not add safety, and it would make the verifier's
+    /// own fail-closed arm unreachable — `0009-e5` pins exactly that
+    /// behaviour with vectors that name a deliberately unregistered algorithm,
+    /// and they have to stay buildable for it to be worth anything.
+    ///
     /// # Errors
-    /// [`MintError::HolderSig`] if `bytes` is not exactly 64 long.
+    /// [`MintError::HolderSig`] if the algorithm is registered and `bytes` is
+    /// not exactly its `signature_len()`.
     pub fn new(algorithm_id: octo_ident::AlgorithmId, bytes: &[u8]) -> Result<Self, MintError> {
-        let bytes: [u8; 64] = bytes
-            .try_into()
-            .map_err(|_| MintError::HolderSig("holder signature must be 64 bytes".to_owned()))?;
+        // `shared_registry()` failing and `get()` missing are the same
+        // outcome for this decision: no algorithm to ask for a width.
+        if let Ok(registry) = octo_algo_ed25519::shared_registry() {
+            if let Ok(algorithm) = registry.get(algorithm_id) {
+                let expected = algorithm.signature_len();
+                if bytes.len() != expected {
+                    return Err(MintError::HolderSig(format!(
+                        "holder signature must be {expected} bytes for {algorithm_id:?}, got {}",
+                        bytes.len()
+                    )));
+                }
+            }
+        }
         Ok(Self {
             algorithm_id,
-            bytes,
+            bytes: bytes.to_vec(),
         })
     }
 
@@ -156,8 +184,8 @@ impl HolderSignature {
     /// Raw signature bytes. The encoder's view, and the only place the
     /// bytes leave this type.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 64] {
-        self.bytes
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 
@@ -187,7 +215,7 @@ mod holder_signature_serde {
     pub fn serialize<S: Serializer>(sig: &HolderSignature, ser: S) -> Result<S::Ok, S::Error> {
         let mut out = Vec::with_capacity(16 + sig.to_bytes().len());
         out.extend_from_slice(sig.algorithm_id().as_bytes());
-        out.extend_from_slice(&sig.to_bytes());
+        out.extend_from_slice(sig.to_bytes());
         ser.serialize_bytes(&out)
     }
 
@@ -344,7 +372,7 @@ impl CapabilityToken {
             &self.holder_sig.algorithm_id(),
             &self.holder_pub,
             &msg,
-            &self.holder_sig.to_bytes(),
+            self.holder_sig.to_bytes(),
         )
         .map_err(|e| MintError::HolderSig(e.to_string()))?;
         Ok(())
@@ -448,7 +476,7 @@ mod tests {
         let (mut token, _) = minted_token();
         let stranger = octo_ident::AlgorithmId::derive("not-a-registered-algorithm");
         token.holder_sig =
-            HolderSignature::new(stranger, &token.holder_sig.to_bytes()).expect("wrap");
+            HolderSignature::new(stranger, token.holder_sig.to_bytes()).expect("wrap");
         let err = token
             .verify_holder_sig()
             .expect_err("an unregistered algorithm must not verify");
@@ -464,7 +492,7 @@ mod tests {
         // Dispatch must not have turned the check into a lookup-only
         // operation. Same algorithm, same key, one flipped byte.
         let (mut token, _) = minted_token();
-        let mut bytes = token.holder_sig.to_bytes();
+        let mut bytes = token.holder_sig.to_bytes().to_vec();
         bytes[0] ^= 0x01;
         token.holder_sig =
             HolderSignature::new(token.holder_sig.algorithm_id(), &bytes).expect("wrap");
@@ -527,18 +555,18 @@ mod tests {
     }
 
     impl CapabilitySigner for TestSigner {
-        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
             use ed25519_dalek::{Signer, SigningKey};
             let sk = SigningKey::from_bytes(&self.key);
             let sig = sk.sign(msg);
-            Ok(sig.to_bytes())
+            Ok(sig.to_bytes().to_vec())
         }
         fn algorithm_id(&self) -> octo_ident::AlgorithmId {
             octo_algo_ed25519::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.pub_bytes
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.pub_bytes.to_vec()
         }
     }
 
@@ -710,19 +738,51 @@ mod tests {
             "explicitly: this must not have been rewritten as Ed25519"
         );
 
-        // And a pre-fix value — bare signature bytes, no algorithm — must be
-        // refused rather than guessed at.
+        // And a pre-fix value — bare signature bytes, no algorithm — must not
+        // acquire an algorithm claim nobody made.
+        //
+        // It now *parses*, and that is a real consequence of variable-width
+        // framing rather than a regression to paper over: the first 16 bytes
+        // are read as the algorithm and the remainder as the signature, so a
+        // bare pre-fix blob is indistinguishable from a legitimately framed
+        // value naming an algorithm this deployment has not registered.
+        // Special-casing the old 64-byte length would not restore the old
+        // guarantee, it would just relocate the ambiguity onto whatever the
+        // next algorithm's signature width happens to be.
+        //
+        // So the property moves to where it still holds: the value must never
+        // become an Ed25519 claim, and it must never verify.
         let legacy = serde_json::to_string(&serde_bytes::ByteArray::new([0x5a; 64]))
             .expect("legacy serialize");
-        // It is refused. The exact complaint depends on the byte count — a
-        // 64-byte value has 16 bytes stripped as a bogus algorithm and is then
-        // rejected for length — and pinning the wording would assert on the
-        // accident rather than the property. What matters is that it does not
-        // deserialize into an Ed25519 claim nobody made.
-        let parsed = serde_json::from_str::<Wrapper>(&legacy);
+        let parsed: Wrapper =
+            serde_json::from_str(&legacy).expect("frames as algorithm-prefix || signature");
+
+        assert_ne!(
+            parsed.0.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "a bare pre-fix blob must not be read as an Ed25519 claim nobody made"
+        );
+        assert_ne!(
+            parsed.0.to_bytes().len(),
+            64,
+            "16 bytes were consumed as the algorithm prefix; this must not be the \
+             bare form reinterpreted whole"
+        );
+        // The fabricated algorithm is not in the registry, so verification
+        // fails closed. This is the guarantee the old parse-level refusal used
+        // to stand in for, and it is the one that actually matters;
+        // `a_token_naming_an_unregistered_algorithm_is_refused` covers the same
+        // ground end to end through a full token.
         assert!(
-            parsed.is_err(),
-            "a bare 64-byte signature carries no algorithm and must not parse"
+            octo_algo_ed25519::verify_dispatch(
+                &parsed.0.algorithm_id(),
+                &[0u8; 32],
+                b"probe",
+                parsed.0.to_bytes(),
+            )
+            .is_err(),
+            "a signature whose algorithm was fabricated from arbitrary bytes must \
+             never verify"
         );
     }
 }

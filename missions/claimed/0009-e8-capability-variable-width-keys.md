@@ -11,16 +11,22 @@ metadata:
     - 0009-e5-capability-signer-algorithm-binding
 ---
 
-# Mission `0009-e8-capability-variable-width-keys` — SCOPED, NOT IMPLEMENTED
+# Mission `0009-e8-capability-variable-width-keys` — IMPLEMENTED
 
 ## Status
 
-**Scoped, deliberately not implemented in one commit.** This is the last
-RFC-0009 gap on the capability path: `CapabilitySigner` cannot represent a
-non-Ed25519 holder key, so multi-algorithm capability holders are impossible
-regardless of how much domain separation is layered on top.
+**Implemented.** This was the last RFC-0009 gap on the capability path:
+`CapabilitySigner` could not represent a non-Ed25519 holder key, so
+multi-algorithm capability holders were impossible regardless of how much
+domain separation was layered on top.
 
-The blocker is width, not policy. Measured, not estimated.
+`CapabilitySigner::sign` and `public_key_bytes` now return `Vec<u8>`,
+`HolderSignature` and `CapabilityToken.holder_pub` are variable width, and
+`HolderSignature::new` validates the signature against the algorithm it names.
+The whole workspace compiles with `--all-targets` and clippy is clean at
+`-D warnings`.
+
+The blocker was width, not policy. Measured, not estimated.
 
 **Scoping corrected.** This mission was originally scoped as carrying a
 storage-migration risk. That risk was measured and does not exist: the widened
@@ -201,3 +207,41 @@ distinguish "reads the algorithm" from "assumes Ed25519."** Reverting every
 algorithm-dependent line back to a hardcoded Ed25519 must leave the new tests
 _green_, and that is the signal the set is not testing anything. `0009-e5` hit
 this and needed a second vector to close the gap.
+
+## §What implementing this surfaced
+
+Four things, recorded because each was invisible from reading the types.
+
+**The SQLite registry failed open on a wrong-width key.** `holder_registry`
+read the stored key with `if len() == 32 { copy_from_slice }` and otherwise
+left the buffer zeroed, producing a record carrying `[0u8; 32]` — a
+real-looking but wrong key — instead of an error. The fixed-width type is what
+made that branch look necessary; widening it deleted the branch. This is the
+one genuinely _removed_ bug in the change, and it was sitting in the storage
+path nobody re-reads.
+
+**One doc named the exact invariant being removed.** `HandoverRequestEnvelope.signature`
+carried the comment "always 64 bytes; substrate invariant follows from
+`CapabilitySigner::sign` returning `[u8; 64]`". That guarantee was the trait's
+return type, and it had been removed three files away. A stale doc asserting a
+guarantee from a changed dependency is the same class of defect as the "resolved
+out of band" comments `0009-e5` and `0009-e9` had to kill, so it is worth
+noticing that this codebase grows them.
+
+**The legacy bare form became genuinely ambiguous, and the property had to
+move.** A pre-fix holder signature is 64 bare bytes. Under variable-width
+framing those are read as a 16-byte algorithm plus a 48-byte signature, so parse
+can no longer refuse it. Refusing to _construct_ it is also not available —
+`0009-e5`'s vectors deliberately name an unregistered algorithm to prove
+verification fails closed, and they have to stay buildable. So the guarantee now
+lives where it still holds: such a value never becomes an Ed25519 claim and
+never verifies. Special-casing the old 64-byte length would not have restored
+anything; it would have relocated the ambiguity onto whatever the next
+algorithm's signature width happens to be.
+
+**The measured site count overstates the work by an order of magnitude.** 106
+sites across 18 files is not 106 breakages: `&[u8; 32]` and `&[u8; 64]` coerce
+to `&[u8]` and `Vec<u8>` at most call sites, so widening one leaf type produced
+two errors rather than a cascade. The scoping reason "blast radius" was real but
+the number was not the cost. Worth remembering before treating a site count as
+an effort estimate.

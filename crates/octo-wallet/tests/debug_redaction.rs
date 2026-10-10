@@ -266,7 +266,13 @@ fn private_witness_debug_does_not_leak_root_secret_or_holder_sig() {
         // verifies and would change the committed witness shape — which
         // means a circuit amendment. The capability token's signature type
         // carries the algorithm; the witness carries bytes.
-        holder_sig: ed25519_dalek::Signature::from_bytes(&token.holder_sig.to_bytes()),
+        holder_sig: ed25519_dalek::Signature::from_bytes(
+            &token
+                .holder_sig
+                .to_bytes()
+                .try_into()
+                .expect("an Ed25519 holder signature is 64 bytes"),
+        ),
         caveats_full: vec![],
         discharges_full: vec![],
         inference_trace: None,

@@ -1584,15 +1584,15 @@ mod tests {
             fn sign(
                 &self,
                 msg: &[u8],
-            ) -> Result<[u8; 64], octo_cap_macaroon::CapabilitySignerError> {
+            ) -> Result<Vec<u8>, octo_cap_macaroon::CapabilitySignerError> {
                 let mut out = [0u8; 64];
                 let h = blake3_hash(msg);
                 out[..32].copy_from_slice(&h);
                 out[32..].copy_from_slice(&h);
-                Ok(out)
+                Ok(out.to_vec())
             }
-            fn public_key_bytes(&self) -> [u8; 32] {
-                self.0
+            fn public_key_bytes(&self) -> Vec<u8> {
+                self.0.to_vec()
             }
             fn algorithm_id(&self) -> octo_wallet::AlgorithmId {
                 octo_wallet::ed25519_algorithm_id()

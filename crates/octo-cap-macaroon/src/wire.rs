@@ -57,15 +57,28 @@ pub struct WireV2 {
     pub proof_bundle: Option<Vec<u8>>,
 }
 
-/// Bytes carried in wire segment 2: the RFC-0009 `AlgorithmId` (16 raw
-/// bytes) followed by the 64-byte signature.
+/// Fixed width of the algorithm prefix in wire segment 2, in bytes.
 ///
-/// The algorithm used to be absent from the wire and re-stamped as Ed25519
-/// on parse, which silently downgraded any token minted under another
-/// algorithm — `HolderRecord` has no algorithm field, so there was no
-/// out-of-band source for the parser to use instead. Carrying it here is
-/// what makes the round-trip lossless (mission `0009-e5`).
-const SIG_SEGMENT_LEN: usize = 16 + 64;
+/// Segment 2 is `AlgorithmId ‖ signature`. The algorithm used to be absent
+/// from the wire and re-stamped as Ed25519 on parse, which silently
+/// downgraded any token minted under another algorithm — `HolderRecord` has
+/// no algorithm field, so there was no out-of-band source for the parser to
+/// use instead. Carrying it here is what makes the round-trip lossless
+/// (mission `0009-e5`).
+///
+/// Only the prefix is fixed width. The signature that follows is whatever
+/// `SignatureAlgorithm::signature_len()` says, so the segment has no total
+/// length constant. It does not need one: a fixed-width prefix already
+/// delimits the remainder, so "first 16 bytes, then the rest" is
+/// unambiguous rather than a guess.
+///
+/// `HolderSignature::new` then checks the signature against the algorithm it
+/// names, wherever that algorithm is registered — a stronger check than a
+/// fixed total ever was, because a correctly-sized signature under the wrong
+/// algorithm no longer passes. An algorithm this deployment has not registered
+/// cannot state a width and cannot verify either, so no length is enforced for
+/// it and it fails closed at verification (mission `0009-e8`).
+const ALGORITHM_PREFIX_LEN: usize = 16;
 
 /// Serialize a `CapabilityToken` to v1 wire format (3 segments).
 ///
@@ -79,9 +92,10 @@ const SIG_SEGMENT_LEN: usize = 16 + 64;
 pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
     let macaroon_bytes =
         json_canon::to_vec(&token.macaroon).map_err(|e| WireError::Serialize(e.clone()))?;
-    let mut sig_segment = Vec::with_capacity(SIG_SEGMENT_LEN);
+    let mut sig_segment =
+        Vec::with_capacity(ALGORITHM_PREFIX_LEN + token.holder_sig.to_bytes().len());
     sig_segment.extend_from_slice(token.holder_sig.algorithm_id().as_bytes());
-    sig_segment.extend_from_slice(&token.holder_sig.to_bytes());
+    sig_segment.extend_from_slice(token.holder_sig.to_bytes());
     let discharges_bytes =
         json_canon::to_vec(&token.discharges).map_err(|e| WireError::Serialize(e.clone()))?;
 
@@ -105,7 +119,7 @@ pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
 pub fn deserialize_wire(
     s: &str,
     holder_did: impl Into<String>,
-    holder_pub: [u8; 32],
+    holder_pub: &[u8],
 ) -> Result<CapabilityToken, WireError> {
     let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
     // v1 path discards the v2 4th segment silently.
@@ -144,7 +158,7 @@ pub fn serialize_wire_v2(
 pub fn deserialize_wire_v2(
     s: &str,
     holder_did: impl Into<String>,
-    holder_pub: [u8; 32],
+    holder_pub: &[u8],
 ) -> Result<WireV2, WireError> {
     let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
     Ok(WireV2 {
@@ -165,7 +179,7 @@ struct ParsedWire {
 fn parse_wire_to_token(
     s: &str,
     holder_did: impl Into<String>,
-    holder_pub: [u8; 32],
+    holder_pub: &[u8],
 ) -> Result<ParsedWire, WireError> {
     // DoS guard #1: total wire length cap BEFORE split. Prevents
     // an attacker-supplied 100MB string from allocating on split
@@ -197,24 +211,23 @@ fn parse_wire_to_token(
         .decode(parts[2])
         .map_err(|e| WireError::Parse(format!("discharges b64: {e}")))?;
 
-    if sig_bytes.len() != SIG_SEGMENT_LEN {
+    if sig_bytes.len() <= ALGORITHM_PREFIX_LEN {
         return Err(WireError::Parse(format!(
-            "sig segment must be {SIG_SEGMENT_LEN} bytes (algorithm + signature), got {}",
+            "sig segment must exceed {ALGORITHM_PREFIX_LEN} bytes (algorithm + signature), got {}",
             sig_bytes.len()
         )));
     }
     let mut algorithm_bytes = [0u8; 16];
-    algorithm_bytes.copy_from_slice(&sig_bytes[..16]);
+    algorithm_bytes.copy_from_slice(&sig_bytes[..ALGORITHM_PREFIX_LEN]);
     let algorithm_id = octo_ident::AlgorithmId::from_bytes(algorithm_bytes);
-    let mut sig_arr = [0u8; 64];
-    sig_arr.copy_from_slice(&sig_bytes[16..]);
+    let sig_bytes = &sig_bytes[ALGORITHM_PREFIX_LEN..];
     // The algorithm is read off the wire, not invented. The previous code
     // stamped Ed25519 here, which is a silent downgrade for any other
     // signer: the token would claim Ed25519 and fail verification as though
     // forged. `HolderRecord` carries `holder_pub` but no algorithm, so there
     // was no out-of-band source this could have read instead (mission
     // `0009-e5`).
-    let holder_sig = crate::token::HolderSignature::new(algorithm_id, &sig_arr)
+    let holder_sig = crate::token::HolderSignature::new(algorithm_id, sig_bytes)
         .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
 
     let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
@@ -235,7 +248,7 @@ fn parse_wire_to_token(
     Ok(ParsedWire {
         token: CapabilityToken {
             macaroon,
-            holder_pub,
+            holder_pub: holder_pub.to_vec(),
             holder_did: holder_did.into(),
             holder_sig,
             discharges,
@@ -362,17 +375,17 @@ mod tests {
     }
 
     impl CapabilitySigner for TestSigner {
-        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
             let sk = SigningKey::from_bytes(&self.key);
             let sig = sk.sign(msg);
-            Ok(sig.to_bytes())
+            Ok(sig.to_bytes().to_vec())
         }
         fn algorithm_id(&self) -> octo_ident::AlgorithmId {
             octo_algo_ed25519::ed25519_algorithm_id()
         }
 
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.pub_bytes
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.pub_bytes.to_vec()
         }
     }
 
@@ -393,7 +406,7 @@ mod tests {
         let macaroon = crate::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
         let token = crate::token::CapabilityToken {
             macaroon,
-            holder_pub: [0xCC; 32],
+            holder_pub: vec![0xCC; 32],
             holder_did: octo_ident::test_helpers::sample_did(2),
             holder_sig: crate::token::HolderSignature::new(
                 crate::governance_signature::governance_algorithm_id(),
@@ -414,7 +427,7 @@ mod tests {
         let macaroon = crate::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
         let token = crate::token::CapabilityToken {
             macaroon: macaroon.clone(),
-            holder_pub: [0xCC; 32],
+            holder_pub: vec![0xCC; 32],
             holder_did: octo_ident::test_helpers::sample_did(2),
             holder_sig: crate::token::HolderSignature::new(
                 crate::governance_signature::governance_algorithm_id(),
@@ -478,7 +491,7 @@ mod tests {
         let back = deserialize_wire(
             &wire,
             octo_ident::test_helpers::sample_did(2),
-            token.holder_pub,
+            &token.holder_pub,
         )
         .unwrap();
         assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
@@ -509,7 +522,7 @@ mod tests {
         let back = deserialize_wire(
             &wire_v2,
             octo_ident::test_helpers::sample_did(2),
-            token.holder_pub,
+            &token.holder_pub,
         )
         .unwrap();
         assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
@@ -539,12 +552,12 @@ mod tests {
     }
 
     impl crate::signer::CapabilitySigner for ReportingSigner {
-        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
             use ed25519_dalek::Signer as _;
-            Ok(self.key.sign(msg).to_bytes())
+            Ok(self.key.sign(msg).to_bytes().to_vec())
         }
-        fn public_key_bytes(&self) -> [u8; 32] {
-            self.key.verifying_key().to_bytes()
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.key.verifying_key().to_bytes().to_vec()
         }
         fn algorithm_id(&self) -> octo_ident::AlgorithmId {
             self.reported
@@ -598,7 +611,7 @@ mod tests {
 
         let wire = serialize_wire(&token).expect("serialize");
         let back =
-            deserialize_wire(&wire, "did:octo:zCapHolder", token.holder_pub).expect("deserialize");
+            deserialize_wire(&wire, "did:octo:zCapHolder", &token.holder_pub).expect("deserialize");
 
         assert_eq!(
             back.holder_sig.algorithm_id(),
@@ -624,7 +637,7 @@ mod tests {
 
         let wire = serialize_wire(&token).expect("serialize");
         let back =
-            deserialize_wire(&wire, "did:octo:zCapHolder", token.holder_pub).expect("deserialize");
+            deserialize_wire(&wire, "did:octo:zCapHolder", &token.holder_pub).expect("deserialize");
 
         assert_eq!(
             back.holder_sig.algorithm_id(),

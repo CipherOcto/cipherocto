@@ -66,7 +66,7 @@ fn insert_params(record: &HolderRecord) -> InsertParams {
         record.cap_root_hash.to_vec(),
         record.kind.as_byte() as i64,
         record.holder_did.clone(),
-        record.holder_pub.to_vec(),
+        record.holder_pub.clone(),
         record.audience_did.clone(),
         record.caveats_canonical.clone(),
         record.ask_id.map(|a| a.to_vec()),
@@ -176,10 +176,15 @@ impl StoolapHolderRegistry {
         if cap_root_hash_raw.len() == 32 {
             cap_root_hash.copy_from_slice(&cap_root_hash_raw);
         }
-        let mut holder_pub = [0u8; 32];
-        if holder_pub_raw.len() == 32 {
-            holder_pub.copy_from_slice(&holder_pub_raw);
-        }
+        // The holder key is taken exactly as stored, at whatever width the
+        // algorithm used (mission `0009-e8`).
+        //
+        // This replaces a `if len() == 32 { copy_from_slice } else { leave it
+        // zeroed }` dance that failed *open*: a stored key of any other length
+        // produced a record carrying `[0u8; 32]` — a real-looking but wrong
+        // key — instead of an error. The fixed-width type is what made that
+        // branch look necessary.
+        let holder_pub = holder_pub_raw;
         Ok(HolderRecord {
             cap_root_hash,
             kind,
@@ -444,7 +449,7 @@ mod tests {
             cap_root_hash: [0x66; 32],
             kind: HolderKind::HopCapability,
             holder_did: octo_ident::test_helpers::sample_did(104),
-            holder_pub: [0x77; 32],
+            holder_pub: vec![0x77; 32],
             audience_did: octo_ident::test_helpers::sample_did(23),
             caveats_canonical: vec![],
             ask_id: None,

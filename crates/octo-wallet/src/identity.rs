@@ -1063,18 +1063,25 @@ pub fn derive_capability_key(
 /// can live in `octo-cap-macaroon` (Layer 4) without taking a dep on
 /// `octo-wallet` (Layer B) — preserving the layer model.
 impl octo_cap_macaroon::CapabilitySigner for IdentityKey {
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], octo_cap_macaroon::CapabilitySignerError> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, octo_cap_macaroon::CapabilitySignerError> {
         // Delegate to existing `IdentityKey::sign` (RFC-0009 HSM routing).
         // The HSM adapter (InMemorySigner / MockLedgerSigner / etc.) is
         // consulted; failure is mapped to `CapabilitySignerError::Signer`
         // with the original `WalletError` message preserved.
+        //
+        // Signs the exact bytes handed in, with no prefix composed here. That
+        // is the open capability question mission `0009-e9` deliberately did
+        // not decide: whether the holder message's prefix travels in band.
         IdentityKey::sign(self, msg)
-            .map(|sig| sig.to_bytes())
+            .map(|sig| sig.to_bytes().to_vec())
             .map_err(|e| octo_cap_macaroon::CapabilitySignerError::Signer(e.to_string()))
     }
 
-    fn public_key_bytes(&self) -> [u8; 32] {
-        IdentityKey::public_key_bytes(self)
+    /// `IdentityKey` is Ed25519 and its key is 32 bytes, so the inherent
+    /// method is correctly fixed width; the trait widens only so the
+    /// capability substrate can represent other algorithms (mission `0009-e8`).
+    fn public_key_bytes(&self) -> Vec<u8> {
+        IdentityKey::public_key_bytes(self).to_vec()
     }
 
     /// The algorithm this identity's signer speaks — sourced from the signer

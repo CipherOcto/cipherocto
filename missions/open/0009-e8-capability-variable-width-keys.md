@@ -42,8 +42,24 @@ the capability layer above it:
 | `CapabilitySigner::public_key_bytes` | `-> [u8; 32]`                                | a 33-byte key cannot be returned at all                  |
 | `HolderSignature.bytes`              | `[u8; 64]` + a 64-byte length check in `new` | same                                                     |
 | `CapabilityToken.holder_pub`         | `[u8; 32]`                                   | the token cannot carry a 33-byte key                     |
-| `HolderRecord.holder_pub`            | `[u8; 32]`, via `serde_bytes_32`             | the **registry schema** pins the width                   |
-| `KeySet.keys` / `grace_keys`         | `[u8; 32]`                                   | same, in `octo-runtime`                                  |
+| `HolderRecord.holder_pub`            | `[u8; 32]`, via `serde_bytes_32`             | the registry record pins the width                       |
+| ~~`KeySet.keys` / `grace_keys`~~     | ~~`[u8; 32]`~~                               | **out of scope — see below**                             |
+
+### The `KeySet` row was wrong, and is struck
+
+The original table listed `octo-runtime`'s `KeySet` because it also carries a
+`[u8; 32]`. It is not part of the capability path, and widening it is not
+required for a non-Ed25519 capability holder:
+
+- `octo-cap-macaroon` has no dependency edge on `octo-runtime` at all, so
+  nothing in the capability verification path can reach it.
+- `KeySet` lives entirely under `octo-runtime/src/handle/` — the **attach
+  handle** subsystem owned by `0009-e4` and `0009-e7`, with its own wire
+  format and its own `ENCODING_VERSION`.
+
+Including it would have pulled this mission into a second subsystem and
+doubled the blast radius for no gain in the stated goal. It stays fixed-width
+here, and widening attach handles is its own mission if it is ever wanted.
 
 ## §Measured blast radius
 
@@ -122,6 +138,45 @@ longer the risky one it was scoped to be.
   alone leaves the tree uncompilable.
 
 Order is forced by reason 1: the change is all-or-nothing.
+
+## §Implementation order
+
+Bottom-up, so each step compiles before the next begins. Widening a type
+breaks every caller at once, so the order is "widen the leaf, then fix
+callers outward", never "widen the leaf and hope".
+
+1. **`HolderSignature`** — `bytes: Vec<u8>`, with `new` validating against
+   `shared_registry()?.get(algorithm_id)?.signature_len()` rather than a
+   literal 64. `shared_registry()` is public on `octo-algo-ed25519`, which
+   this crate already depends on, so this needs no new edge.
+2. **`CapabilityToken.holder_pub`** and the wire segments that carry it.
+3. **`HolderRecord.holder_pub`** — drop `serde_bytes_32` on this field only,
+   keep it on `cap_root_hash` and `ask_id`, which are genuinely fixed-width
+   hashes. Update the three constructors to take a slice and the `Debug`
+   redaction string, which currently claims a width it will no longer know.
+4. **`CapabilitySigner`** — `sign` and `public_key_bytes` return `Vec<u8>`,
+   plus the two blanket impls.
+5. **Callers**, crate by crate: `octo-wallet` (5 files), then
+   `octo-cap-macaroon`'s own discharge and CLI surfaces, then the four
+   remaining crates.
+
+### The vector this must add
+
+The retraction in §Why it is decomposed rather than done removed the migration
+concern, but it introduced a new obligation: **nothing now pins the gossip
+bytes**. The old `[u8; 32]` type enforced the width structurally, and the
+`serde_bytes_32` helper pinned the representation. Removing both removes the
+only things standing between a refactor and a silent wire change.
+
+So this mission must land a vector asserting that a 32-byte key serializes to
+exactly the bytes it serialized to before the widening — the same JSON array of
+integers — and that a non-32-byte key round-trips. Without it, the claim that
+no migration is needed is a claim about the past that nothing holds in place.
+
+The existing `serde_json_round_trip` test is not sufficient: it round-trips
+whatever the current type produces, so it would pass identically before and
+after, and it would pass just as happily if the representation changed. It
+needs to compare against pinned bytes, not against itself.
 
 ## §What must not be done
 

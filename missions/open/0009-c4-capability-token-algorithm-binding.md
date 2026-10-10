@@ -99,6 +99,32 @@ for exactly that reason.
 Nothing is deployed, so there is no migration cost. That is not a reason to
 skip the coordination; it is a reason not to add a compatibility shim.
 
+## The wire format does not have to change — and should not
+
+An earlier draft of this file treated "add the algorithm to the token" as
+implying an RFC-0957 wire change, with v1/v2 segment compatibility to
+reason about. That is the wrong frame, and following it would have made
+this mission much larger for no benefit.
+
+`deserialize_wire` **already takes `holder_pub` out of band** — the wire
+carries macaroon, signature and discharges, and the caller passes the
+holder DID and public key separately, resolved from the DID registry. The
+algorithm belongs in exactly that same out-of-band resolution, because
+that is where it already lives: RFC-0009 BC#13 puts `algorithm_id` on the
+`VerificationMethod`, next to the public key it describes.
+
+So the token does not carry the algorithm. The verifier is handed it, the
+way every other dispatched site in this work is, and the wire format is
+untouched. `serialize_wire` calls `holder_sig.to_bytes()`; a
+`HolderSignature` newtype that exposes the same 64 bytes keeps that call
+and the encoded output identical.
+
+**This is the better design, not the cheaper one.** Putting an identifier
+in every message that already references a document is how the two drift
+apart. A token claiming algorithm A while the document says B is a
+contradiction the type system cannot see; a verifier handed A and holding a
+key the document says belongs to B fails closed.
+
 ## Domain separation — audited, and the answer is reassuring
 
 `AlgorithmId` now serialises as the textual UUID while the signable prefix
